@@ -87,7 +87,7 @@ class ResidentRpcServer:
         elif method == "self":
             result = self.resident.life.snapshot_dict()
         elif method == "pulses":
-            limit = max(1, min(200, int(params.get("limit") or 20)))
+            limit = self._limit(params)
             result = [
                 {
                     "sequence": pulse.sequence,
@@ -100,9 +100,28 @@ class ResidentRpcServer:
                 }
                 for pulse in self.resident.life.recent_pulses(limit)
             ]
+        elif method == "situations":
+            result = [
+                asdict(item)
+                for item in self.resident.life.recent_situations(self._limit(params))
+            ]
         elif method == "thoughts":
-            limit = max(1, min(200, int(params.get("limit") or 20)))
-            result = [asdict(thought) for thought in self.resident.life.recent_thoughts(limit)]
+            result = [
+                asdict(item)
+                for item in self.resident.life.recent_thoughts(self._limit(params))
+            ]
+        elif method == "impasses":
+            result = [
+                asdict(item)
+                for item in self.resident.life.recent_impasses(self._limit(params))
+            ]
+        elif method == "learning":
+            result = [
+                asdict(item)
+                for item in self.resident.life.recent_learning_candidates(
+                    self._limit(params)
+                )
+            ]
         elif method == "submit":
             task = str(params.get("task") or "").strip()
             if not task:
@@ -145,6 +164,10 @@ class ResidentRpcServer:
             raise ValueError(f"unknown method: {method}")
 
         return {"id": request_id, "ok": True, "result": result}
+
+    @staticmethod
+    def _limit(params: dict[str, Any]) -> int:
+        return max(1, min(200, int(params.get("limit") or 20)))
 
     def _start_life_loop(self) -> None:
         if self._life_thread and self._life_thread.is_alive():
