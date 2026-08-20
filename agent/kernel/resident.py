@@ -218,6 +218,7 @@ class ZNResidentRuntime:
 
     def status(self) -> dict[str, Any]:
         metrics = self.store.get_runtime_metrics()
+        profile = self.kernel.self_model.profile()
         return {
             "identity": {
                 "name": self.identity.name,
@@ -225,6 +226,19 @@ class ZNResidentRuntime:
                 "created_at": self.identity.created_at,
             },
             "self": self.life.snapshot_dict(),
+            "self_model": {
+                key: [
+                    {
+                        "domain": estimate.name,
+                        "score": estimate.score,
+                        "evidence_count": estimate.evidence_count,
+                        "confidence": estimate.confidence,
+                        "updated_at": estimate.updated_at,
+                    }
+                    for estimate in values
+                ]
+                for key, values in profile.items()
+            },
             "working_state": self.store.get_working_state(),
             "queue_depth": len(self.store.list_events(EventStatus.PENDING, limit=10000)),
             "model_dependency": {
@@ -239,7 +253,17 @@ class ZNResidentRuntime:
             "resident_lease": self.store.get_resident_lease(),
         }
 
+    @staticmethod
+    def _required_capabilities(event: AgentEvent) -> tuple[str, ...]:
+        required = event.payload.get("required_capabilities") or ("general",)
+        if isinstance(required, str):
+            return (required,)
+        return tuple(
+            str(item) for item in required if str(item).strip()
+        ) or ("general",)
+
     def _handle_event(self, event: AgentEvent, state: WorkingState) -> ResidentRunResult:
+        required = self._required_capabilities(event)
         memory_match = None
         if bool(event.payload.get("allow_memory", True)):
             memory_match = self.memory.recall(event.task)
@@ -247,6 +271,11 @@ class ZNResidentRuntime:
             state.stage = "native_memory"
             state.next_action = "complete"
             self.store.save_working_state(state)
+            self.kernel.self_model.observe_knowledge_use(
+                event.task,
+                required,
+                quality=1.0,
+            )
             self.store.record_runtime_task(model_invocations=0)
             return ResidentRunResult(
                 event=event,
@@ -272,6 +301,14 @@ class ZNResidentRuntime:
                     error=f"{type(exc).__name__}: {exc}",
                 )
             if local_result.success:
+                domains = self.kernel.self_model.observe_native_outcome(
+                    event.task,
+                    required,
+                    success=True,
+                    quality=max(0.5, min(1.0, float(confidence))),
+                )
+                state.data["native_domains"] = list(domains)
+                self.store.save_working_state(state)
                 self.store.record_runtime_task(model_invocations=0)
                 return ResidentRunResult(
                     event=event,
@@ -281,17 +318,14 @@ class ZNResidentRuntime:
                     capability_name=capability.name,
                     reason="resolved by compiled local capability",
                 )
+            self.kernel.self_model.observe_native_outcome(
+                event.task,
+                required,
+                success=False,
+            )
             local_failure = local_result.error or "local capability failed"
             state.data["local_failure"] = local_failure
             self.store.save_working_state(state)
-
-        required = event.payload.get("required_capabilities") or ("general",)
-        if isinstance(required, str):
-            required = (required,)
-        else:
-            required = tuple(
-                str(item) for item in required if str(item).strip()
-            ) or ("general",)
 
         decision = self.budget.decide(
             event,
@@ -375,6 +409,14 @@ class ZNResidentRuntime:
                 run,
                 resolution_source=f"external:{route_id}",
             )
+            domains = self.kernel.self_model.integrate_external_learning(
+                event.task,
+                required,
+                quality=kernel_result.assessment.quality,
+                confidence=kernel_result.assessment.confidence,
+            )
+            state.data["integrated_learning_domains"] = list(domains)
+            self.store.save_working_state(state)
         else:
             self.life.mark_impasse_unresolved(event, reason)
         return run
