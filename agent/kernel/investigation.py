@@ -7,6 +7,7 @@ import sqlite3
 import subprocess
 import threading
 import uuid
+from contextlib import closing
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -194,7 +195,7 @@ class NativeInvestigator:
         self._save(state)
 
     def recent(self, limit: int = 20) -> list[InvestigationState]:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             rows = conn.execute(
                 "SELECT data FROM native_investigations ORDER BY updated_at DESC LIMIT ?",
                 (max(1, int(limit)),),
@@ -209,7 +210,7 @@ class NativeInvestigator:
         return list(result.state.evidence[-max(1, int(limit)):])
 
     def _load_for_event(self, event_id: str) -> InvestigationState | None:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             row = conn.execute(
                 "SELECT data FROM native_investigations WHERE event_id=? "
                 "ORDER BY updated_at DESC LIMIT 1",
@@ -221,7 +222,7 @@ class NativeInvestigator:
 
     def _save(self, state: InvestigationState) -> None:
         payload = asdict(state)
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO native_investigations"
                 "(investigation_id,event_id,status,updated_at,data) VALUES(?,?,?,?,?)",
@@ -236,7 +237,7 @@ class NativeInvestigator:
             conn.commit()
 
     def _init_schema(self) -> None:
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn:
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS native_investigations(
@@ -276,9 +277,8 @@ class NativeInvestigator:
         if isinstance(paths_value, (list, tuple)):
             candidates.extend(str(item).strip() for item in paths_value if str(item).strip())
 
-        # Pick up obvious absolute/relative path-shaped tokens from the task.
         for token in re.findall(r"(?:[A-Za-z]:[\\/][^\s'\"]+|(?:\.{0,2}/|/)[^\s'\"]+)", event.task):
-            candidates.append(token.rstrip(".,;:)"))
+            candidates.append(token.rstrip(".,;:!?)]}"))
 
         seen: set[str] = set()
         result: list[dict[str, Any]] = []
