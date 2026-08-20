@@ -28,7 +28,7 @@ class LifeCoreTests(unittest.TestCase):
             self.assertEqual(second_state.name, first_state.name)
             second.store.close()
 
-    def test_pulse_senses_body_without_any_model(self):
+    def test_pulse_senses_body_and_builds_situation_without_any_model(self):
         with tempfile.TemporaryDirectory() as tmp:
             resident = build_resident_runtime_from_existing_stack(config={"model": {}}, store_path=Path(tmp) / "kernel.db")
             pulse = resident.pulse()
@@ -38,6 +38,10 @@ class LifeCoreTests(unittest.TestCase):
             self.assertTrue(state.body.hostname)
             self.assertGreater(state.body.pid, 0)
             self.assertEqual(state.external_brains, ())
+            self.assertIsNotNone(state.current_situation)
+            self.assertEqual(state.current_situation.external_brains, ())
+            self.assertEqual(state.current_situation.body_health, "nominal")
+            self.assertEqual(len(resident.life.recent_situations(1)), 1)
             resident.store.close()
 
     def test_idle_pulse_forms_native_thought_without_model(self):
@@ -61,11 +65,14 @@ class LifeCoreTests(unittest.TestCase):
             self.assertIn("success via capability", state.last_action_summary or "")
             resident.store.close()
 
-    def test_pending_event_enters_attention_and_thought_on_pulse(self):
+    def test_pending_event_enters_situation_attention_and_thought(self):
         with tempfile.TemporaryDirectory() as tmp:
             resident = build_resident_runtime_from_existing_stack(config={"model": {}}, store_path=Path(tmp) / "kernel.db")
             event = resident.enqueue("finish the unfinished thing")
             pulse = resident.pulse()
+            state = resident.life.snapshot()
+            self.assertEqual(state.current_situation.active_event_id, event.event_id)
+            self.assertEqual(state.current_situation.active_task, event.task)
             self.assertEqual(pulse.thought.action_kind, "event")
             self.assertEqual(pulse.thought.action_target, event.event_id)
             self.assertEqual(pulse.thought.focus, event.task)
@@ -96,6 +103,25 @@ class LifeCoreTests(unittest.TestCase):
             self.assertEqual(thought.focus, "what changed in the workspace")
             self.assertEqual(thought.action_kind, "reflect")
             self.assertEqual(thought.action_target, "what changed in the workspace")
+            second.store.close()
+
+    def test_impasse_survives_restart_and_reenters_situation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "kernel.db"
+            first = build_resident_runtime_from_existing_stack(config={"model": {}}, store_path=db)
+            result = first.submit("something I cannot yet do")
+            self.assertFalse(result.success)
+            impasse_id = first.life.snapshot().current_impasse.impasse_id
+            first.store.close()
+
+            second = build_resident_runtime_from_existing_stack(config={"model": {}}, store_path=db)
+            pulse = second.pulse()
+            state = second.life.snapshot()
+            self.assertIsNotNone(state.current_impasse)
+            self.assertEqual(state.current_impasse.impasse_id, impasse_id)
+            self.assertEqual(state.current_situation.active_impasse_id, impasse_id)
+            self.assertEqual(pulse.thought.action_kind, "impasse")
+            self.assertEqual(pulse.thought.action_target, impasse_id)
             second.store.close()
 
     def test_recent_pulses_are_persisted(self):
