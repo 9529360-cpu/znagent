@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import threading
 import uuid
 from typing import Any
@@ -113,18 +114,28 @@ class ZNResidentRuntime:
             if thought.action_kind == "event" and thought.action_target:
                 event = self.store.get_event(thought.action_target)
                 readiness = None
+                learning_evidence: list[dict[str, Any]] = []
                 if event is not None:
                     required = self._required_capabilities(event)
                     readiness = self.kernel.self_model.assess_task(
                         event.task,
                         required,
                     )
-                    self._enrich_thought_with_readiness(thought, readiness)
+                    learning_evidence = self._related_learning_evidence(
+                        event,
+                        readiness,
+                    )
+                    self._enrich_thought_with_readiness(
+                        thought,
+                        readiness,
+                        learning_evidence,
+                    )
                     self._persist_enriched_thought(thought)
                 return self.run_once(
                     thought=thought,
                     target_event_id=thought.action_target,
                     readiness=readiness,
+                    learning_evidence=learning_evidence,
                 )
 
             return None
@@ -135,6 +146,7 @@ class ZNResidentRuntime:
         thought=None,
         target_event_id: str | None = None,
         readiness: TaskReadiness | None = None,
+        learning_evidence: list[dict[str, Any]] | None = None,
     ) -> ResidentRunResult | None:
         """Execute one pending event as a low-level body action."""
         event = (
@@ -150,6 +162,8 @@ class ZNResidentRuntime:
                 event.task,
                 self._required_capabilities(event),
             )
+        if learning_evidence is None:
+            learning_evidence = self._related_learning_evidence(event, readiness)
 
         thought_data: dict[str, Any] = {}
         if thought is not None:
@@ -175,13 +189,20 @@ class ZNResidentRuntime:
                 "event_kind": event.kind,
                 "event_attempt": event.attempts,
                 "self_readiness": self._readiness_data(readiness),
+                "related_learning": learning_evidence,
                 **thought_data,
             },
         )
         self.store.save_working_state(state)
 
         try:
-            result = self._handle_event(event, state, readiness=readiness)
+            result = self._handle_event(
+                event,
+                state,
+                readiness=readiness,
+                learning_evidence=learning_evidence,
+                thought=thought,
+            )
             self.store.finish_event(
                 event.event_id,
                 success=result.success,
@@ -305,7 +326,74 @@ class ZNResidentRuntime:
         }
 
     @staticmethod
-    def _enrich_thought_with_readiness(thought, readiness: TaskReadiness) -> None:
+    def _task_tokens(value: str) -> set[str]:
+        text = str(value or "").lower()
+        return {
+            token
+            for token in re.findall(r"[a-z0-9_+.-]{2,}|[\u4e00-\u9fff]{2,}", text)
+            if token
+        }
+
+    def _related_learning_evidence(
+        self,
+        event: AgentEvent,
+        readiness: TaskReadiness,
+        *,
+        limit: int = 3,
+    ) -> list[dict[str, Any]]:
+        """Recall a bounded amount of relevant experience entirely resident-side."""
+        current_tokens = self._task_tokens(event.task)
+        current_domains = set(readiness.domains)
+        ranked: list[tuple[float, Any, tuple[str, ...]]] = []
+
+        for candidate in self.life.recent_learning_candidates(64):
+            if candidate.event_id == event.event_id:
+                continue
+            candidate_domains = self.kernel.self_model.infer_domains(
+                candidate.task,
+                candidate.required_capabilities,
+            )
+            domain_overlap = current_domains.intersection(candidate_domains)
+            if not domain_overlap:
+                continue
+
+            candidate_tokens = self._task_tokens(candidate.task)
+            union = current_tokens.union(candidate_tokens)
+            lexical = (
+                len(current_tokens.intersection(candidate_tokens)) / len(union)
+                if union
+                else 0.0
+            )
+            domain_score = len(domain_overlap) / max(
+                1,
+                len(current_domains.union(candidate_domains)),
+            )
+            score = (0.65 * lexical) + (0.35 * domain_score)
+            if score < 0.12:
+                continue
+            ranked.append((score, candidate, candidate_domains))
+
+        ranked.sort(key=lambda item: item[0], reverse=True)
+        evidence: list[dict[str, Any]] = []
+        for score, candidate, candidate_domains in ranked[: max(1, int(limit))]:
+            evidence.append(
+                {
+                    "candidate_id": candidate.candidate_id,
+                    "similarity": round(score, 4),
+                    "domains": list(candidate_domains),
+                    "task": candidate.task[:240],
+                    "resolution_summary": candidate.resolution_summary[:320],
+                    "resolution_source": candidate.resolution_source,
+                }
+            )
+        return evidence
+
+    @staticmethod
+    def _enrich_thought_with_readiness(
+        thought,
+        readiness: TaskReadiness,
+        learning_evidence: list[dict[str, Any]],
+    ) -> None:
         domain_text = ", ".join(readiness.domains)
         readiness_text = (
             f"task domains: {domain_text}; posture={readiness.posture}; "
@@ -314,6 +402,10 @@ class ZNResidentRuntime:
         )
         if readiness_text not in thought.known:
             thought.known = (*thought.known, readiness_text)
+        if learning_evidence:
+            evidence_text = f"I remember {len(learning_evidence)} related prior learning record(s)"
+            if evidence_text not in thought.known:
+                thought.known = (*thought.known, evidence_text)
 
         gap = None
         if readiness.posture == "familiar" and readiness.ability_score < 0.6:
@@ -338,6 +430,24 @@ class ZNResidentRuntime:
         self.life._state = state
 
     @staticmethod
+    def _merge_deliberation_into_thought(
+        thought,
+        deliberation: dict[str, Any],
+    ) -> None:
+        if thought is None:
+            return
+        unknown = str(deliberation.get("unknown") or "").strip()
+        if unknown and unknown not in thought.unknown:
+            thought.unknown = (*thought.unknown, unknown)
+        if deliberation.get("related_learning_count"):
+            action = "compare current problem with related internal experience"
+            if action not in thought.possible_actions:
+                thought.possible_actions = (*thought.possible_actions, action)
+        thought.reason = (
+            f"{thought.reason}; native checks completed before any external cognition"
+        )
+
+    @staticmethod
     def _native_deliberation(
         event: AgentEvent,
         readiness: TaskReadiness,
@@ -345,6 +455,7 @@ class ZNResidentRuntime:
         memory_checked: bool,
         local_capability_checked: bool,
         local_failure: str | None,
+        learning_evidence: list[dict[str, Any]],
     ) -> dict[str, Any]:
         checks: list[str] = []
         if memory_checked:
@@ -353,6 +464,10 @@ class ZNResidentRuntime:
             checks.append(f"local execution failed: {local_failure}")
         elif local_capability_checked:
             checks.append("no compiled local capability matched the task")
+        if learning_evidence:
+            checks.append(
+                f"reviewed {len(learning_evidence)} related resident-side learning record(s)"
+            )
 
         explicit = str(
             event.payload.get("cognition_question")
@@ -365,6 +480,12 @@ class ZNResidentRuntime:
             unknown = (
                 "I need the smallest missing explanation or procedure that resolves "
                 f"this specific local failure: {local_failure}"
+            )
+        elif learning_evidence and readiness.posture in {"familiar", "partial"}:
+            unknown = (
+                "I remember related prior resolutions and understand part of this domain, "
+                "but I still lack a verified native procedure for the current case; "
+                "identify only the smallest remaining gap"
             )
         elif readiness.posture == "familiar":
             unknown = (
@@ -388,6 +509,10 @@ class ZNResidentRuntime:
             "knowledge_score": readiness.knowledge_score,
             "ability_score": readiness.ability_score,
             "checks": checks,
+            "related_learning_count": len(learning_evidence),
+            # Evidence stays here, inside ZN. _build_cognition_request does not
+            # forward these records to the external worker.
+            "related_learning": learning_evidence,
             "unknown": unknown,
             "next": "resolve the specific unknown without exporting unrelated self state",
         }
@@ -439,6 +564,8 @@ class ZNResidentRuntime:
         state: WorkingState,
         *,
         readiness: TaskReadiness,
+        learning_evidence: list[dict[str, Any]],
+        thought=None,
     ) -> ResidentRunResult:
         required = self._required_capabilities(event)
         memory_checked = bool(event.payload.get("allow_memory", True))
@@ -514,8 +641,12 @@ class ZNResidentRuntime:
             memory_checked=memory_checked,
             local_capability_checked=local_capability_checked,
             local_failure=local_failure,
+            learning_evidence=learning_evidence,
         )
         state.data["native_deliberation"] = deliberation
+        self._merge_deliberation_into_thought(thought, deliberation)
+        if thought is not None:
+            self._persist_enriched_thought(thought)
         self.store.save_working_state(state)
 
         decision = self.budget.decide(
