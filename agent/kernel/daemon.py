@@ -4,6 +4,7 @@ import json
 import sys
 import threading
 import time
+from dataclasses import asdict
 from typing import Any, TextIO
 
 from .provider_bridge import build_resident_runtime_from_existing_stack
@@ -95,9 +96,13 @@ class ResidentRpcServer:
                     "attention": pulse.attention,
                     "intention": pulse.intention,
                     "observations": list(pulse.observations),
+                    "thought": asdict(pulse.thought) if pulse.thought else None,
                 }
                 for pulse in self.resident.life.recent_pulses(limit)
             ]
+        elif method == "thoughts":
+            limit = max(1, min(200, int(params.get("limit") or 20)))
+            result = [asdict(thought) for thought in self.resident.life.recent_thoughts(limit)]
         elif method == "submit":
             task = str(params.get("task") or "").strip()
             if not task:
