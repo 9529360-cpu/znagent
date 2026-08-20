@@ -32,9 +32,7 @@ class ModelRouter:
         def score(route: ModelRoute) -> tuple[float, str]:
             capability_scores = []
             for capability in required:
-                prior = route.capabilities.get(
-                    capability, route.capabilities.get("general", 0.5)
-                )
+                prior = self._declared_prior(route, capability)
                 capability_scores.append(
                     self.self_model.route_score(route.route_id, capability, prior)
                 )
@@ -48,3 +46,19 @@ class ModelRouter:
             return total, route.route_id
 
         return max(candidates, key=score)
+
+    def _declared_prior(self, route: ModelRoute, capability: str) -> float:
+        """Use the most specific declared prior available in the domain tree."""
+        raw = str(capability or "general").strip().lower() or "general"
+        keys: list[str] = [raw]
+        domains = self.self_model.infer_domains("", (raw,))
+        for domain in reversed(domains):
+            for key in (domain, domain.rsplit("/", 1)[-1]):
+                if key not in keys:
+                    keys.append(key)
+        if "general" not in keys:
+            keys.append("general")
+        for key in keys:
+            if key in route.capabilities:
+                return max(0.0, min(1.0, float(route.capabilities[key])))
+        return 0.5
