@@ -1,0 +1,91 @@
+"""ZN Agent resident kernel.
+
+The resident kernel is the persistent agent. Language models are replaceable,
+on-demand cognitive resources rather than the holder of identity or continuity.
+"""
+
+from .budget import CognitiveBudgetManager
+from .capabilities import CapabilityRegistry, CallableCapability, ExactTaskCapability
+from .capability_loader import LoadedCapability, PromotedCapabilityLoader
+from .critic import DefaultCritic
+from .home import get_zn_home
+from .memory import FactMatch, StructuredMemory
+from .provider_bridge import (
+    build_resident_runtime_from_existing_stack,
+    build_runtime_from_existing_stack,
+    resolve_model_routes,
+    route_from_spec,
+)
+from .models import (
+    AgentEvent,
+    AgentIdentity,
+    Assessment,
+    CapabilityEstimate,
+    CapabilityResult,
+    CognitiveDecision,
+    EventStatus,
+    ExecutionPath,
+    Experience,
+    Goal,
+    GoalStatus,
+    ImprovementProposal,
+    KernelRunResult,
+    ModelRoute,
+    ResidentRunResult,
+    RuntimeMetrics,
+    WorkerResult,
+    WorkingState,
+)
+from .resident import ZNResidentRuntime
+from .router import ModelRouter, NoRouteAvailable
+from .runtime import ZNKernelRuntime
+from .service import ResidentAlreadyRunning, ResidentService
+from .self_model import SelfModel
+from .store import KernelStore
+from .worker import LegacyAIAgentWorkerFactory, Worker, WorkerFactory
+
+__all__ = [
+    "AgentEvent",
+    "AgentIdentity",
+    "Assessment",
+    "build_resident_runtime_from_existing_stack",
+    "build_runtime_from_existing_stack",
+    "CapabilityEstimate",
+    "CapabilityRegistry",
+    "CapabilityResult",
+    "CallableCapability",
+    "CognitiveBudgetManager",
+    "CognitiveDecision",
+    "DefaultCritic",
+    "EventStatus",
+    "ExactTaskCapability",
+    "ExecutionPath",
+    "Experience",
+    "FactMatch",
+    "get_zn_home",
+    "Goal",
+    "GoalStatus",
+    "LegacyAIAgentWorkerFactory",
+    "ImprovementProposal",
+    "KernelRunResult",
+    "KernelStore",
+    "LoadedCapability",
+    "ModelRoute",
+    "ModelRouter",
+    "NoRouteAvailable",
+    "PromotedCapabilityLoader",
+    "ResidentAlreadyRunning",
+    "ResidentRunResult",
+    "ResidentService",
+    "resolve_model_routes",
+    "route_from_spec",
+    "RuntimeMetrics",
+    "SelfModel",
+    "StructuredMemory",
+    "Worker",
+    "WorkerFactory",
+    "WorkerResult",
+    "WorkingState",
+    "ZNKernelRuntime",
+    "ZNResidentRuntime",
+]
