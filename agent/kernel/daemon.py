@@ -37,7 +37,7 @@ class ResidentRpcServer:
 
     def serve_forever(self) -> int:
         self.service.acquire()
-        self.resident.pulse()
+        self.resident.live_once()
         self._start_life_loop()
         self._write({"type": "ready", "status": self.resident.status()})
         try:
@@ -172,10 +172,10 @@ class ResidentRpcServer:
                 if now >= next_lease_heartbeat:
                     self.service.heartbeat()
                     next_lease_heartbeat = now + self.service.heartbeat_interval
-                self.resident.pulse()
+                self.resident.live_once()
             except Exception:
                 # The foreground RPC path remains available to report state even
-                # if one perception cycle fails. The next pulse tries again.
+                # if one perception/action cycle fails. The next cycle tries again.
                 continue
 
     @staticmethod
