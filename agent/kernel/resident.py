@@ -13,6 +13,7 @@ from .models import (
     AgentEvent,
     CapabilityResult,
     CognitionRequest,
+    EventOutcome,
     EventStatus,
     ExecutionPath,
     ResidentRunResult,
@@ -77,6 +78,23 @@ class ZNResidentRuntime:
         self.store.enqueue_event(event)
         return event
 
+    def result_for(self, event_id: str) -> ResidentRunResult | None:
+        """Reconstruct a completed action result regardless of which loop ran it."""
+        outcome = self.store.get_event_outcome(event_id)
+        event = self.store.get_event(event_id)
+        if outcome is None or event is None:
+            return None
+        return ResidentRunResult(
+            event=event,
+            execution_path=outcome.execution_path,
+            success=outcome.success,
+            response=outcome.response,
+            model_invocations=outcome.model_invocations,
+            capability_name=outcome.capability_name,
+            reason=outcome.reason,
+            kernel_result=None,
+        )
+
     def submit(
         self,
         task: str,
@@ -87,19 +105,26 @@ class ZNResidentRuntime:
     ) -> ResidentRunResult:
         event = self.enqueue(task, kind=kind, priority=priority, payload=payload)
         while True:
+            completed = self.result_for(event.event_id)
+            if completed is not None:
+                return completed
+
             result = self.live_once()
-            if result is None:
-                persisted = self.store.get_event(event.event_id)
-                if persisted is not None and persisted.status in {
-                    EventStatus.COMPLETED,
-                    EventStatus.FAILED,
-                }:
-                    raise RuntimeError(
-                        "resident event reached a terminal state without a run result"
-                    )
-                continue
-            if result.event.event_id == event.event_id:
+            if result is not None and result.event.event_id == event.event_id:
                 return result
+
+            completed = self.result_for(event.event_id)
+            if completed is not None:
+                return completed
+
+            persisted = self.store.get_event(event.event_id)
+            if persisted is not None and persisted.status in {
+                EventStatus.COMPLETED,
+                EventStatus.FAILED,
+            }:
+                raise RuntimeError(
+                    "resident event reached a terminal state without a durable outcome"
+                )
 
     def pulse(self):
         return self.life.pulse()
@@ -212,6 +237,7 @@ class ZNResidentRuntime:
             persisted = self.store.get_event(event.event_id)
             if persisted is not None:
                 result.event = persisted
+            self._persist_outcome(result)
             self.life.observe_action(result)
             return result
         except Exception as exc:
@@ -226,10 +252,24 @@ class ZNResidentRuntime:
                 success=False,
                 reason=message,
             )
+            self._persist_outcome(result)
             self.life.observe_action(result)
             return result
         finally:
             self.store.save_working_state(WorkingState(stage="idle"))
+
+    def _persist_outcome(self, run: ResidentRunResult) -> None:
+        self.store.save_event_outcome(
+            EventOutcome(
+                event_id=run.event.event_id,
+                success=run.success,
+                execution_path=run.execution_path,
+                response=run.response,
+                model_invocations=run.model_invocations,
+                capability_name=run.capability_name,
+                reason=run.reason,
+            )
+        )
 
     def run_forever(
         self,
