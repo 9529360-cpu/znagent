@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .models import (
-    AgentEvent, AgentIdentity, Assessment, CapabilityEstimate, EventStatus,
-    Experience, Goal, GoalStatus, ImprovementProposal, ProposalStatus,
-    RuntimeMetrics, WorkingState, utc_now,
+    AgentEvent, AgentIdentity, Assessment, CapabilityEstimate, EventOutcome,
+    EventStatus, ExecutionPath, Experience, Goal, GoalStatus,
+    ImprovementProposal, ProposalStatus, RuntimeMetrics, WorkingState, utc_now,
 )
 
 
@@ -42,6 +42,7 @@ class KernelStore:
             CREATE TABLE IF NOT EXISTS proposals(proposal_id TEXT PRIMARY KEY, goal_id TEXT NOT NULL, data TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS events(event_id TEXT PRIMARY KEY, status TEXT NOT NULL, priority INTEGER NOT NULL, created_at TEXT NOT NULL, data TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS idx_events_queue ON events(status, priority DESC, created_at ASC);
+            CREATE TABLE IF NOT EXISTS event_outcomes(event_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, data TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS working_state(id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS facts(fact_key TEXT PRIMARY KEY, value_json TEXT NOT NULL, aliases_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS runtime_metrics(id INTEGER PRIMARY KEY CHECK(id=1), tasks_total INTEGER NOT NULL DEFAULT 0, tasks_model INTEGER NOT NULL DEFAULT 0, model_invocations INTEGER NOT NULL DEFAULT 0, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL);
@@ -210,6 +211,48 @@ class KernelStore:
         event.status = EventStatus.COMPLETED if success else EventStatus.FAILED
         event.last_error = error
         self._save_event(event)
+
+    def save_event_outcome(self, outcome: EventOutcome) -> None:
+        data = {
+            "event_id": outcome.event_id,
+            "success": outcome.success,
+            "execution_path": outcome.execution_path.value,
+            "response": outcome.response,
+            "model_invocations": outcome.model_invocations,
+            "capability_name": outcome.capability_name,
+            "reason": outcome.reason,
+            "completed_at": outcome.completed_at,
+        }
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO event_outcomes(event_id,created_at,data) VALUES(?,?,?)",
+                (outcome.event_id, outcome.completed_at, self._dump(data)),
+            )
+
+    def get_event_outcome(self, event_id: str) -> EventOutcome | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT data FROM event_outcomes WHERE event_id=?",
+                (event_id,),
+            ).fetchone()
+        if not row:
+            return None
+        data = json.loads(row["data"])
+        data["execution_path"] = ExecutionPath(data["execution_path"])
+        return EventOutcome(**data)
+
+    def list_event_outcomes(self, limit: int = 100) -> list[EventOutcome]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT data FROM event_outcomes ORDER BY created_at DESC LIMIT ?",
+                (max(1, int(limit)),),
+            ).fetchall()
+        outcomes: list[EventOutcome] = []
+        for row in rows:
+            data = json.loads(row["data"])
+            data["execution_path"] = ExecutionPath(data["execution_path"])
+            outcomes.append(EventOutcome(**data))
+        return outcomes
 
     def recover_interrupted_events(self) -> int:
         with self._lock:
