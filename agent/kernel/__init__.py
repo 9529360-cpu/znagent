@@ -9,7 +9,16 @@ from .capabilities import CapabilityRegistry, CallableCapability, ExactTaskCapab
 from .capability_loader import LoadedCapability, PromotedCapabilityLoader
 from .critic import DefaultCritic
 from .home import get_zn_home
-from .life import BodyState, LifePulse, LivingState, ThoughtFrame, ZNLifeCore
+from .life import (
+    BodyState,
+    ImpasseState,
+    LearningCandidate,
+    LifePulse,
+    LivingState,
+    SituationModel,
+    ThoughtFrame,
+    ZNLifeCore,
+)
 from .memory import FactMatch, StructuredMemory
 from .provider_bridge import (
     build_resident_runtime_from_existing_stack,
@@ -67,10 +76,12 @@ __all__ = [
     "get_zn_home",
     "Goal",
     "GoalStatus",
+    "ImpasseState",
     "LegacyAIAgentWorkerFactory",
     "ImprovementProposal",
     "KernelRunResult",
     "KernelStore",
+    "LearningCandidate",
     "LifePulse",
     "LivingState",
     "LoadedCapability",
@@ -85,6 +96,7 @@ __all__ = [
     "route_from_spec",
     "RuntimeMetrics",
     "SelfModel",
+    "SituationModel",
     "StructuredMemory",
     "ThoughtFrame",
     "Worker",
