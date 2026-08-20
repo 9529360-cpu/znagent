@@ -108,8 +108,15 @@ class ZNKernelRuntime:
                 metrics=dict(result.metrics),
             )
             self.store.add_experience(experience)
-            self.self_model.learn(
-                route.route_id, goal.required_capabilities, assessment
+            # A model solving a task is evidence about that external route, not
+            # evidence that ZN can now perform the task independently. ZN's own
+            # knowledge/ability profile is updated later by the resident life
+            # cycle when learning is integrated or native work succeeds.
+            self.self_model.learn_external_route(
+                route.route_id,
+                goal.task,
+                goal.required_capabilities,
+                assessment,
             )
             experiences.append(experience)
 
