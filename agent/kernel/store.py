@@ -170,9 +170,25 @@ class KernelStore:
         d["status"] = EventStatus(d["status"])
         return AgentEvent(**d)
 
-    def claim_next_event(self) -> AgentEvent | None:
+    def peek_next_event(self) -> AgentEvent | None:
+        """Return the event ZN would act on next without claiming it."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT data FROM events WHERE status=? ORDER BY priority DESC, created_at ASC LIMIT 1",
+                (EventStatus.PENDING.value,),
+            ).fetchone()
+        return self._event_from_data(row["data"]) if row else None
+
+    def claim_event(self, event_id: str) -> AgentEvent | None:
+        """Claim one exact pending event selected by the resident's ThoughtFrame."""
+        event_id = str(event_id or "").strip()
+        if not event_id:
+            return None
         with self._lock, self._conn:
-            row = self._conn.execute("SELECT data FROM events WHERE status=? ORDER BY priority DESC, created_at ASC LIMIT 1", (EventStatus.PENDING.value,)).fetchone()
+            row = self._conn.execute(
+                "SELECT data FROM events WHERE event_id=? AND status=?",
+                (event_id, EventStatus.PENDING.value),
+            ).fetchone()
             if not row:
                 return None
             event = self._event_from_data(row["data"])
@@ -180,6 +196,12 @@ class KernelStore:
             event.attempts += 1
             self._save_event(event)
             return event
+
+    def claim_next_event(self) -> AgentEvent | None:
+        next_event = self.peek_next_event()
+        if next_event is None:
+            return None
+        return self.claim_event(next_event.event_id)
 
     def finish_event(self, event_id: str, *, success: bool, error: str | None = None) -> None:
         event = self.get_event(event_id)
@@ -297,8 +319,5 @@ class KernelStore:
 
     def get_resident_lease(self) -> dict[str, Any] | None:
         with self._lock:
-            r = self._conn.execute("SELECT * FROM resident_lease WHERE id=1").fetchone()
-        if not r:
-            return None
-        return {"instance_id": r["instance_id"], "pid": int(r["pid"]), "hostname": r["hostname"],
-                "started_at": r["started_at"], "heartbeat_at": r["heartbeat_at"]}
+            row = self._conn.execute("SELECT * FROM resident_lease WHERE id=1").fetchone()
+        return dict(row) if row else None
