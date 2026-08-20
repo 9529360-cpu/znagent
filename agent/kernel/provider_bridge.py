@@ -7,7 +7,7 @@ from .home import get_zn_home
 from .models import ModelRoute
 from .runtime import ZNKernelRuntime
 from .store import KernelStore
-from .worker import LegacyAIAgentWorkerFactory
+from .worker import LegacyAIAgentWorkerFactory, UnavailableModelWorkerFactory
 
 
 RuntimeResolver = Callable[..., dict[str, Any]]
@@ -71,7 +71,7 @@ def resolve_model_routes(
     return resolved_routes
 
 
-def _current_model_spec(config: dict[str, Any]) -> dict[str, Any]:
+def _current_model_spec(config: dict[str, Any]) -> dict[str, Any] | None:
     model_cfg = config.get("model") or {}
     if isinstance(model_cfg, str):
         model = model_cfg.strip()
@@ -86,10 +86,7 @@ def _current_model_spec(config: dict[str, Any]) -> dict[str, Any]:
         model = ""
         provider = "auto"
     if not model:
-        raise ValueError(
-            "ZN Kernel has no routes and the existing stack has no configured default model. "
-            "Configure a default model or add zn_kernel.routes."
-        )
+        return None
     return {
         "id": "default",
         "provider": provider,
@@ -109,7 +106,12 @@ def build_runtime_from_existing_stack(
     agent_builder: Callable[..., Any] | None = None,
     runtime_resolver: RuntimeResolver | None = None,
 ) -> ZNKernelRuntime:
-    """Create a ZN Kernel using existing runtime config, credentials, and AIAgent workers."""
+    """Create a ZN Kernel while reusing the mature provider/tool stack.
+
+    A configured model is optional. Without one, the resident still boots and
+    System 1 remains fully available; only tasks requiring System 2 fail with a
+    precise "model unavailable" result.
+    """
     if config is None:
         from hermes_cli.config import load_config
 
@@ -121,26 +123,50 @@ def build_runtime_from_existing_stack(
     route_specs = kernel_cfg.get("routes") or []
     if not isinstance(route_specs, list):
         raise ValueError("zn_kernel.routes must be a list")
+
+    model_available = True
     if not route_specs:
-        route_specs = [_current_model_spec(config)]
+        current = _current_model_spec(config)
+        if current is None:
+            model_available = False
+            route_specs = []
+        else:
+            route_specs = [current]
 
-    if runtime_resolver is None:
-        from hermes_cli.runtime_provider import resolve_runtime_provider
+    if model_available:
+        if runtime_resolver is None:
+            from hermes_cli.runtime_provider import resolve_runtime_provider
 
-        runtime_resolver = resolve_runtime_provider
-    routes = resolve_model_routes(route_specs, resolver=runtime_resolver)
+            runtime_resolver = resolve_runtime_provider
+        routes = resolve_model_routes(route_specs, resolver=runtime_resolver)
+    else:
+        routes = [
+            ModelRoute(
+                route_id="system2-unavailable",
+                provider="none",
+                model="none",
+                capabilities={"general": 0.0},
+                reliability=1.0,
+                cost_weight=0.0,
+                latency_weight=0.0,
+                metadata={"model_available": False},
+            )
+        ]
 
     if store_path is None:
         store_path = get_zn_home() / "kernel" / "kernel.db"
 
-    worker_defaults = dict(agent_kwargs or {})
-    worker_defaults.setdefault("quiet_mode", True)
-    worker_defaults.setdefault("platform", "cli")
+    if model_available:
+        worker_defaults = dict(agent_kwargs or {})
+        worker_defaults.setdefault("quiet_mode", True)
+        worker_defaults.setdefault("platform", "cli")
+        factory = LegacyAIAgentWorkerFactory(
+            agent_kwargs=worker_defaults,
+            agent_builder=agent_builder,
+        )
+    else:
+        factory = UnavailableModelWorkerFactory()
 
-    factory = LegacyAIAgentWorkerFactory(
-        agent_kwargs=worker_defaults,
-        agent_builder=agent_builder,
-    )
     return ZNKernelRuntime(
         store=KernelStore(store_path),
         routes=routes,
@@ -157,22 +183,23 @@ def build_resident_runtime_from_existing_stack(
     agent_builder: Callable[..., Any] | None = None,
     runtime_resolver: RuntimeResolver | None = None,
 ):
-    """Build the resident ZN runtime while reusing the mature provider/tool stack."""
+    """Build the resident ZN runtime while reusing mature provider/tool plumbing."""
     from .budget import CognitiveBudgetManager
     from .resident import ZNResidentRuntime
 
-    kernel = build_runtime_from_existing_stack(
-        config=config,
-        store_path=store_path,
-        agent_kwargs=agent_kwargs,
-        agent_builder=agent_builder,
-        runtime_resolver=runtime_resolver,
-    )
     effective_config = config
     if effective_config is None:
         from hermes_cli.config import load_config
 
         effective_config = load_config()
+
+    kernel = build_runtime_from_existing_stack(
+        config=effective_config,
+        store_path=store_path,
+        agent_kwargs=agent_kwargs,
+        agent_builder=agent_builder,
+        runtime_resolver=runtime_resolver,
+    )
     resident_cfg = effective_config.get("zn_resident") or {}
     if not isinstance(resident_cfg, dict):
         raise ValueError("zn_resident config must be a mapping")
