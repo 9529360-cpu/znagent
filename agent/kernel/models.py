@@ -35,6 +35,7 @@ class EventStatus(str, Enum):
 class ExecutionPath(str, Enum):
     MEMORY = "memory"
     CAPABILITY = "capability"
+    INVESTIGATION = "investigation"
     MODEL = "model"
     BUDGET_BLOCKED = "budget_blocked"
 
