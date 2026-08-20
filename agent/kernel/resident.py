@@ -48,9 +48,6 @@ class ZNResidentRuntime:
         self.store.recover_interrupted_events()
         self.store.get_working_state()
 
-        # Import lazily to keep the kernel's low-level modules acyclic. LifeCore
-        # is not a plugin attached to the agent; it is the resident's persistent
-        # first-person state and heartbeat.
         from .life import ZNLifeCore
 
         self.life = ZNLifeCore(self)
@@ -101,35 +98,40 @@ class ZNResidentRuntime:
                 return result
 
     def pulse(self):
-        """Advance ZN's model-independent living loop once."""
         return self.life.pulse()
 
     def live_once(self) -> ResidentRunResult | None:
-        """Let the persistent ZN self think once and execute its chosen action.
-
-        A ThoughtFrame is formed before any event is claimed. This keeps the
-        direction of control as Self -> Thought -> Body. For now the first
-        executable native intention is ``work on event``; observation,
-        recovery and unresolved-question inspection remain internal actions and
-        deliberately do not trigger a model or an automatic retry storm.
-        """
+        """Let ZN think once and execute exactly the action it selected."""
         with self._cycle_lock:
             pulse = self.pulse()
             thought = pulse.thought
             if thought is None:
                 return None
 
-            chosen = str(thought.chosen_action or "").strip()
-            if chosen.startswith("work on event "):
-                return self.run_once(thought=thought)
+            if thought.action_kind == "event" and thought.action_target:
+                return self.run_once(
+                    thought=thought,
+                    target_event_id=thought.action_target,
+                )
 
-            # These are still real internal choices: ZN remains alive, updates
-            # its thought/state, but decides not to perform an external action.
+            # observe / reflect / recover / body are internal actions for now.
+            # They still change durable self-state, but they do not silently
+            # escalate to a model or mutate the computer without a concrete
+            # native action implementation.
             return None
 
-    def run_once(self, *, thought=None) -> ResidentRunResult | None:
+    def run_once(
+        self,
+        *,
+        thought=None,
+        target_event_id: str | None = None,
+    ) -> ResidentRunResult | None:
         """Execute one pending event as a low-level body action."""
-        event = self.store.claim_next_event()
+        event = (
+            self.store.claim_event(target_event_id)
+            if target_event_id
+            else self.store.claim_next_event()
+        )
         if event is None:
             return None
 
@@ -139,6 +141,8 @@ class ZNResidentRuntime:
                 "thought_sequence": getattr(thought, "sequence", None),
                 "thought_focus": getattr(thought, "focus", None),
                 "thought_action": getattr(thought, "chosen_action", None),
+                "thought_action_kind": getattr(thought, "action_kind", None),
+                "thought_action_target": getattr(thought, "action_target", None),
                 "thought_reason": getattr(thought, "reason", None),
                 "thought_confidence": getattr(thought, "confidence", None),
             }
@@ -194,7 +198,6 @@ class ZNResidentRuntime:
         pulse_interval: float = 2.0,
         stop_event: threading.Event | None = None,
     ) -> None:
-        """Run the continuous thought/action loop until stopped."""
         stopper = stop_event or threading.Event()
         sleep_for = max(0.05, float(poll_interval))
         cycle_every = max(0.25, float(pulse_interval))
