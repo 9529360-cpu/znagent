@@ -20,10 +20,6 @@ env:
   PYTHONUNBUFFERED: '1'
   ZN_AGENT_HOME: ${{ github.workspace }}/.ci/zn-home
 
-concurrency:
-  group: zn-ci-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   kernel:
     name: ZN Kernel / Reproducible Python Environment
