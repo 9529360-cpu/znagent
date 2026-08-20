@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
+import time
 from typing import Any, TextIO
 
 from .provider_bridge import build_resident_runtime_from_existing_stack
@@ -11,9 +13,8 @@ from .service import ResidentService
 class ResidentRpcServer:
     """Newline-delimited JSON-RPC over stdio for the Electron host.
 
-    No TCP listener is opened. Electron owns the child process and communicates
-    through its private stdin/stdout pipes, keeping resident control local to
-    the desktop process tree.
+    The RPC pipe is only a face/control surface. ZN's life loop runs on its own
+    background thread, so an idle UI does not mean an idle or recreated self.
     """
 
     def __init__(
@@ -22,15 +23,21 @@ class ResidentRpcServer:
         *,
         input_stream: TextIO | None = None,
         output_stream: TextIO | None = None,
+        life_interval: float = 2.0,
     ):
         self.resident = resident or build_resident_runtime_from_existing_stack()
         self.service = ResidentService(self.resident)
         self.input = input_stream or sys.stdin
         self.output = output_stream or sys.stdout
+        self.life_interval = max(0.25, float(life_interval))
         self._shutdown = False
+        self._life_stop = threading.Event()
+        self._life_thread: threading.Thread | None = None
 
     def serve_forever(self) -> int:
         self.service.acquire()
+        self.resident.pulse()
+        self._start_life_loop()
         self._write({"type": "ready", "status": self.resident.status()})
         try:
             for line in self.input:
@@ -39,7 +46,6 @@ class ResidentRpcServer:
                 line = line.strip()
                 if not line:
                     continue
-                self.service.heartbeat()
                 request: dict[str, Any] | None = None
                 try:
                     request = json.loads(line)
@@ -55,6 +61,7 @@ class ResidentRpcServer:
                     }
                 self._write(response)
         finally:
+            self._stop_life_loop()
             self.service.release()
             try:
                 self.resident.store.close()
@@ -70,9 +77,27 @@ class ResidentRpcServer:
             raise ValueError("params must be an object")
 
         if method == "ping":
-            result: Any = {"alive": True}
+            result: Any = {
+                "alive": True,
+                "pulse_count": self.resident.life.snapshot().pulse_count,
+            }
         elif method == "status":
             result = self.resident.status()
+        elif method == "self":
+            result = self.resident.life.snapshot_dict()
+        elif method == "pulses":
+            limit = max(1, min(200, int(params.get("limit") or 20)))
+            result = [
+                {
+                    "sequence": pulse.sequence,
+                    "at": pulse.at,
+                    "mode": pulse.mode,
+                    "attention": pulse.attention,
+                    "intention": pulse.intention,
+                    "observations": list(pulse.observations),
+                }
+                for pulse in self.resident.life.recent_pulses(limit)
+            ]
         elif method == "submit":
             task = str(params.get("task") or "").strip()
             if not task:
@@ -109,11 +134,44 @@ class ResidentRpcServer:
             result = {"forgotten": True, "key": key}
         elif method == "shutdown":
             self._shutdown = True
+            self._life_stop.set()
             result = {"shutting_down": True}
         else:
             raise ValueError(f"unknown method: {method}")
 
         return {"id": request_id, "ok": True, "result": result}
+
+    def _start_life_loop(self) -> None:
+        if self._life_thread and self._life_thread.is_alive():
+            return
+        self._life_stop.clear()
+        self._life_thread = threading.Thread(
+            target=self._life_loop,
+            name="zn-life",
+            daemon=True,
+        )
+        self._life_thread.start()
+
+    def _stop_life_loop(self) -> None:
+        self._life_stop.set()
+        thread = self._life_thread
+        if thread and thread.is_alive():
+            thread.join(timeout=max(1.0, self.life_interval * 2.0))
+        self._life_thread = None
+
+    def _life_loop(self) -> None:
+        next_lease_heartbeat = 0.0
+        while not self._life_stop.wait(self.life_interval):
+            try:
+                now = time.monotonic()
+                if now >= next_lease_heartbeat:
+                    self.service.heartbeat()
+                    next_lease_heartbeat = now + self.service.heartbeat_interval
+                self.resident.pulse()
+            except Exception:
+                # The foreground RPC path remains available to report state even
+                # if one perception cycle fails. The next pulse tries again.
+                continue
 
     @staticmethod
     def _run_result(run) -> dict[str, Any]:
