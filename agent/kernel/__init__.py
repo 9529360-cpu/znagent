@@ -9,6 +9,7 @@ from .capabilities import CapabilityRegistry, CallableCapability, ExactTaskCapab
 from .capability_loader import LoadedCapability, PromotedCapabilityLoader
 from .critic import DefaultCritic
 from .home import get_zn_home
+from .life import BodyState, LifePulse, LivingState, ZNLifeCore
 from .memory import FactMatch, StructuredMemory
 from .provider_bridge import (
     build_resident_runtime_from_existing_stack,
@@ -48,6 +49,7 @@ __all__ = [
     "AgentEvent",
     "AgentIdentity",
     "Assessment",
+    "BodyState",
     "build_resident_runtime_from_existing_stack",
     "build_runtime_from_existing_stack",
     "CapabilityEstimate",
@@ -69,6 +71,8 @@ __all__ = [
     "ImprovementProposal",
     "KernelRunResult",
     "KernelStore",
+    "LifePulse",
+    "LivingState",
     "LoadedCapability",
     "ModelRoute",
     "ModelRouter",
@@ -87,5 +91,6 @@ __all__ = [
     "WorkerResult",
     "WorkingState",
     "ZNKernelRuntime",
+    "ZNLifeCore",
     "ZNResidentRuntime",
 ]
