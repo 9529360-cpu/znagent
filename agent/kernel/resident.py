@@ -10,6 +10,7 @@ from .memory import StructuredMemory
 from .models import (
     AgentEvent,
     CapabilityResult,
+    CognitionRequest,
     EventStatus,
     ExecutionPath,
     ResidentRunResult,
@@ -262,6 +263,45 @@ class ZNResidentRuntime:
             str(item) for item in required if str(item).strip()
         ) or ("general",)
 
+    @staticmethod
+    def _build_cognition_request(
+        event: AgentEvent,
+        impasse,
+        required: tuple[str, ...],
+    ) -> CognitionRequest:
+        """Extract only the unresolved cognitive gap for an external brain."""
+        explicit = str(
+            event.payload.get("cognition_question")
+            or event.payload.get("unknown")
+            or ""
+        ).strip()
+        context: dict[str, Any] = {"event_kind": event.kind}
+
+        if explicit:
+            question = explicit
+        elif impasse.local_failure:
+            question = (
+                "Explain how to resolve this specific failure: "
+                f"{impasse.local_failure}"
+            )
+            # The original task is useful here only to disambiguate the failure;
+            # cap it rather than forwarding arbitrary resident state.
+            context["task_excerpt"] = event.task[:500]
+        else:
+            # If ZN cannot yet isolate a smaller unknown, the event itself is
+            # the bounded unknown. No memories, identity state, skill catalog,
+            # or unrelated resident context are attached.
+            question = event.task
+
+        return CognitionRequest(
+            request_id=f"cog-{uuid.uuid4().hex[:12]}",
+            impasse_id=impasse.impasse_id,
+            event_id=event.event_id,
+            question=question,
+            required_capabilities=required,
+            context=context,
+        )
+
     def _handle_event(self, event: AgentEvent, state: WorkingState) -> ResidentRunResult:
         required = self._required_capabilities(event)
         memory_match = None
@@ -359,18 +399,29 @@ class ZNResidentRuntime:
                 reason=decision.reason,
             )
 
+        cognition = self._build_cognition_request(event, impasse, required)
         state.stage = "external_cognition"
         state.next_action = "consult_external_brain"
+        state.data["cognition_request"] = {
+            "request_id": cognition.request_id,
+            "impasse_id": cognition.impasse_id,
+            "question": cognition.question,
+            "required_capabilities": list(cognition.required_capabilities),
+            "context": cognition.context,
+        }
         self.store.save_working_state(state)
 
         kernel_result = self.kernel.run_goal(
-            event.task,
-            required_capabilities=required,
+            cognition.question,
+            required_capabilities=cognition.required_capabilities,
             priority=event.priority,
             metadata={
                 "resident_event_id": event.event_id,
                 "impasse_id": impasse.impasse_id,
-                **dict(event.payload),
+                "cognition_request": {
+                    "request_id": cognition.request_id,
+                    "context": cognition.context,
+                },
             },
             max_attempts_override=decision.max_model_calls,
         )
