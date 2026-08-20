@@ -1,0 +1,57 @@
+name: ZN CI
+
+on:
+  push:
+    branches:
+      - dev/zn-agent
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zn-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kernel:
+    name: ZN Kernel / Python 3.12
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compile resident kernel
+        run: python -m compileall -q agent/kernel
+
+      - name: Run ZN kernel tests
+        run: python -m unittest discover -s tests/agent/kernel -p 'test_*.py' -v
+
+  desktop:
+    name: Electron / TypeScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+          cache: npm
+
+      - name: Install workspace dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck Electron desktop
+        run: npm run typecheck --workspace apps/desktop
