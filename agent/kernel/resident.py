@@ -25,6 +25,10 @@ class ZNResidentRuntime:
     capabilities and external models are abilities available to that self; none
     of them is the identity itself. The resident remains alive when no model is
     configured.
+
+    ``live_once`` is the normal control entry point: ZN senses and forms a
+    ThoughtFrame first, then the body executes the action selected by that
+    thought. ``run_once`` remains the lower-level event executor.
     """
 
     def __init__(
@@ -40,6 +44,7 @@ class ZNResidentRuntime:
         self.capabilities = capabilities or CapabilityRegistry()
         self.budget = budget or CognitiveBudgetManager()
         self.memory = StructuredMemory(self.store)
+        self._cycle_lock = threading.RLock()
         self.store.recover_interrupted_events()
         self.store.get_working_state()
 
@@ -81,9 +86,17 @@ class ZNResidentRuntime:
     ) -> ResidentRunResult:
         event = self.enqueue(task, kind=kind, priority=priority, payload=payload)
         while True:
-            result = self.run_once()
+            result = self.live_once()
             if result is None:
-                raise RuntimeError("resident event was enqueued but could not be processed")
+                persisted = self.store.get_event(event.event_id)
+                if persisted is not None and persisted.status in {
+                    EventStatus.COMPLETED,
+                    EventStatus.FAILED,
+                }:
+                    raise RuntimeError(
+                        "resident event reached a terminal state without a run result"
+                    )
+                continue
             if result.event.event_id == event.event_id:
                 return result
 
@@ -91,15 +104,58 @@ class ZNResidentRuntime:
         """Advance ZN's model-independent living loop once."""
         return self.life.pulse()
 
-    def run_once(self) -> ResidentRunResult | None:
+    def live_once(self) -> ResidentRunResult | None:
+        """Let the persistent ZN self think once and execute its chosen action.
+
+        A ThoughtFrame is formed before any event is claimed. This keeps the
+        direction of control as Self -> Thought -> Body. For now the first
+        executable native intention is ``work on event``; observation,
+        recovery and unresolved-question inspection remain internal actions and
+        deliberately do not trigger a model or an automatic retry storm.
+        """
+        with self._cycle_lock:
+            pulse = self.pulse()
+            thought = pulse.thought
+            if thought is None:
+                return None
+
+            chosen = str(thought.chosen_action or "").strip()
+            if chosen.startswith("work on event "):
+                return self.run_once(thought=thought)
+
+            # These are still real internal choices: ZN remains alive, updates
+            # its thought/state, but decides not to perform an external action.
+            return None
+
+    def run_once(self, *, thought=None) -> ResidentRunResult | None:
+        """Execute one pending event as a low-level body action."""
         event = self.store.claim_next_event()
         if event is None:
             return None
+
+        thought_data: dict[str, Any] = {}
+        if thought is not None:
+            thought_data = {
+                "thought_sequence": getattr(thought, "sequence", None),
+                "thought_focus": getattr(thought, "focus", None),
+                "thought_action": getattr(thought, "chosen_action", None),
+                "thought_reason": getattr(thought, "reason", None),
+                "thought_confidence": getattr(thought, "confidence", None),
+            }
+
         state = WorkingState(
             current_event_id=event.event_id,
             stage="orient",
-            next_action="resolve_system1",
-            data={"event_kind": event.kind, "event_attempt": event.attempts},
+            next_action=(
+                str(getattr(thought, "chosen_action", "") or "resolve_system1")
+                if thought is not None
+                else "resolve_system1"
+            ),
+            data={
+                "event_kind": event.kind,
+                "event_attempt": event.attempts,
+                **thought_data,
+            },
         )
         self.store.save_working_state(state)
 
@@ -138,20 +194,19 @@ class ZNResidentRuntime:
         pulse_interval: float = 2.0,
         stop_event: threading.Event | None = None,
     ) -> None:
+        """Run the continuous thought/action loop until stopped."""
         stopper = stop_event or threading.Event()
         sleep_for = max(0.05, float(poll_interval))
-        pulse_every = max(0.25, float(pulse_interval))
+        cycle_every = max(0.25, float(pulse_interval))
         import time
 
-        next_pulse = 0.0
+        next_cycle = 0.0
         while not stopper.is_set():
             now = time.monotonic()
-            if now >= next_pulse:
-                self.pulse()
-                next_pulse = now + pulse_every
-            result = self.run_once()
-            if result is None:
-                stopper.wait(min(sleep_for, max(0.05, next_pulse - time.monotonic())))
+            if now >= next_cycle:
+                self.live_once()
+                next_cycle = now + cycle_every
+            stopper.wait(min(sleep_for, max(0.05, next_cycle - time.monotonic())))
 
     def load_promoted_capabilities(self, root=None):
         from .capability_loader import PromotedCapabilityLoader
