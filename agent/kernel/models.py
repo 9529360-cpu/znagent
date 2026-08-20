@@ -226,6 +226,20 @@ class RuntimeMetrics:
 
 
 @dataclass(slots=True)
+class EventOutcome:
+    """Durable outcome of one body action, independent of the caller that observed it."""
+
+    event_id: str
+    success: bool
+    execution_path: ExecutionPath
+    response: str = ""
+    model_invocations: int = 0
+    capability_name: str | None = None
+    reason: str = ""
+    completed_at: str = field(default_factory=utc_now)
+
+
+@dataclass(slots=True)
 class ResidentRunResult:
     event: AgentEvent
     execution_path: ExecutionPath
