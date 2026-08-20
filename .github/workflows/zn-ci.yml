@@ -78,13 +78,13 @@ jobs:
               ['ZN Kernel / Python 3.12', '${{ needs.kernel.result }}'],
               ['Electron / TypeScript', '${{ needs.desktop.result }}'],
             ]
-            for (const [context, result] of rows) {
+            for (const [statusContext, result] of rows) {
               await github.rest.repos.createCommitStatus({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 sha: context.sha,
                 state: normalize(result),
-                context,
+                context: statusContext,
                 description: `ZN CI: ${result}`.slice(0, 140),
               })
             }
