@@ -4,7 +4,19 @@ import readline from 'node:readline'
 
 export type ZnResidentRequest = {
   id?: string
-  method: 'ping' | 'status' | 'self' | 'pulses' | 'thoughts' | 'submit' | 'remember' | 'forget' | 'shutdown'
+  method:
+    | 'ping'
+    | 'status'
+    | 'self'
+    | 'pulses'
+    | 'situations'
+    | 'thoughts'
+    | 'impasses'
+    | 'learning'
+    | 'submit'
+    | 'remember'
+    | 'forget'
+    | 'shutdown'
   params?: Record<string, unknown>
 }
 
