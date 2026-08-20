@@ -24,7 +24,7 @@ class ZNResidentRuntime:
     System 1 is deterministic and token-free: structured memory plus compiled
     local capabilities. System 2 is the model-backed ZN Kernel and is invoked
     only when System 1 cannot solve the event and the cognitive budget permits
-    it.
+    it. The resident itself remains alive even when no System 2 model exists.
     """
 
     def __init__(
@@ -235,7 +235,11 @@ class ZNResidentRuntime:
             metadata={"resident_event_id": event.event_id, **dict(event.payload)},
             max_attempts_override=decision.max_model_calls,
         )
-        invocations = len(kernel_result.experiences)
+        invocations = sum(
+            1
+            for experience in kernel_result.experiences
+            if experience.metrics.get("model_invoked", True) is not False
+        )
         prompt_tokens, completion_tokens = self._sum_tokens(kernel_result)
         self.store.record_runtime_task(
             model_invocations=invocations,
@@ -246,13 +250,16 @@ class ZNResidentRuntime:
         state.stage = "complete" if kernel_result.assessment.success else "failed"
         state.next_action = None
         self.store.save_working_state(state)
+        reason = decision.reason
+        if not kernel_result.assessment.success and kernel_result.worker_result.error:
+            reason = kernel_result.worker_result.error
         return ResidentRunResult(
             event=event,
             execution_path=ExecutionPath.MODEL,
             success=kernel_result.assessment.success,
             response=kernel_result.worker_result.response,
             model_invocations=invocations,
-            reason=decision.reason,
+            reason=reason,
             kernel_result=kernel_result,
         )
 
