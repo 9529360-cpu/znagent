@@ -17,6 +17,7 @@ from .models import (
     WorkingState,
 )
 from .runtime import ZNKernelRuntime
+from .self_model import TaskReadiness
 
 
 class ZNResidentRuntime:
@@ -110,9 +111,20 @@ class ZNResidentRuntime:
                 return None
 
             if thought.action_kind == "event" and thought.action_target:
+                event = self.store.get_event(thought.action_target)
+                readiness = None
+                if event is not None:
+                    required = self._required_capabilities(event)
+                    readiness = self.kernel.self_model.assess_task(
+                        event.task,
+                        required,
+                    )
+                    self._enrich_thought_with_readiness(thought, readiness)
+                    self._persist_enriched_thought(thought)
                 return self.run_once(
                     thought=thought,
                     target_event_id=thought.action_target,
+                    readiness=readiness,
                 )
 
             # Impasse inspection, reflection, recovery and body inspection are
@@ -125,6 +137,7 @@ class ZNResidentRuntime:
         *,
         thought=None,
         target_event_id: str | None = None,
+        readiness: TaskReadiness | None = None,
     ) -> ResidentRunResult | None:
         """Execute one pending event as a low-level body action."""
         event = (
@@ -134,6 +147,12 @@ class ZNResidentRuntime:
         )
         if event is None:
             return None
+
+        if readiness is None:
+            readiness = self.kernel.self_model.assess_task(
+                event.task,
+                self._required_capabilities(event),
+            )
 
         thought_data: dict[str, Any] = {}
         if thought is not None:
@@ -158,13 +177,14 @@ class ZNResidentRuntime:
             data={
                 "event_kind": event.kind,
                 "event_attempt": event.attempts,
+                "self_readiness": self._readiness_data(readiness),
                 **thought_data,
             },
         )
         self.store.save_working_state(state)
 
         try:
-            result = self._handle_event(event, state)
+            result = self._handle_event(event, state, readiness=readiness)
             self.store.finish_event(
                 event.event_id,
                 success=result.success,
@@ -264,10 +284,130 @@ class ZNResidentRuntime:
         ) or ("general",)
 
     @staticmethod
+    def _readiness_data(readiness: TaskReadiness) -> dict[str, Any]:
+        return {
+            "domains": list(readiness.domains),
+            "knowledge_score": readiness.knowledge_score,
+            "ability_score": readiness.ability_score,
+            "knowledge_confidence": readiness.knowledge_confidence,
+            "ability_confidence": readiness.ability_confidence,
+            "posture": readiness.posture,
+            "reason": readiness.reason,
+            "domain_states": [
+                {
+                    "domain": item.domain,
+                    "knowledge_score": item.knowledge_score,
+                    "knowledge_evidence": item.knowledge_evidence,
+                    "knowledge_confidence": item.knowledge_confidence,
+                    "ability_score": item.ability_score,
+                    "ability_evidence": item.ability_evidence,
+                    "ability_confidence": item.ability_confidence,
+                }
+                for item in readiness.domain_states
+            ],
+        }
+
+    @staticmethod
+    def _enrich_thought_with_readiness(thought, readiness: TaskReadiness) -> None:
+        domain_text = ", ".join(readiness.domains)
+        readiness_text = (
+            f"task domains: {domain_text}; posture={readiness.posture}; "
+            f"knowledge={readiness.knowledge_score:.2f}; "
+            f"independent ability={readiness.ability_score:.2f}"
+        )
+        if readiness_text not in thought.known:
+            thought.known = (*thought.known, readiness_text)
+
+        gap = None
+        if readiness.posture == "familiar" and readiness.ability_score < 0.6:
+            gap = (
+                "I understand relevant parts of this domain better than I can "
+                "execute this task independently"
+            )
+        elif readiness.posture == "partial":
+            gap = "my retained understanding of the relevant domain is incomplete"
+        elif readiness.posture == "novel":
+            gap = "I have little retained knowledge for the relevant domain"
+        if gap and gap not in thought.unknown:
+            thought.unknown = (*thought.unknown, gap)
+
+        thought.reason = f"{readiness.reason}; {thought.reason}"
+
+    def _persist_enriched_thought(self, thought) -> None:
+        """Keep the persisted first-person thought aligned with action choice.
+
+        LifeCore currently owns storage for thought frames. This narrow bridge
+        lets the resident add task-specific self-knowledge after LifeCore has
+        selected the event but before the body acts. It can move fully inside
+        LifeCore once task-readiness becomes part of SituationModel itself.
+        """
+        state = self.life.snapshot()
+        state.current_thought = thought
+        self.life._save_state(state)
+        self.life._append_thought(thought)
+        self.life._state = state
+
+    @staticmethod
+    def _native_deliberation(
+        event: AgentEvent,
+        readiness: TaskReadiness,
+        *,
+        memory_checked: bool,
+        local_capability_checked: bool,
+        local_failure: str | None,
+    ) -> dict[str, Any]:
+        checks: list[str] = []
+        if memory_checked:
+            checks.append("structured memory did not directly answer the task")
+        if local_failure:
+            checks.append(f"local execution failed: {local_failure}")
+        elif local_capability_checked:
+            checks.append("no compiled local capability matched the task")
+
+        explicit = str(
+            event.payload.get("cognition_question")
+            or event.payload.get("unknown")
+            or ""
+        ).strip()
+        if explicit:
+            unknown = explicit
+        elif local_failure:
+            unknown = (
+                "I need the smallest missing explanation or procedure that resolves "
+                f"this specific local failure: {local_failure}"
+            )
+        elif readiness.posture == "familiar":
+            unknown = (
+                "I know the relevant domain, but I do not yet have a verified native "
+                "procedure for this specific task; identify the smallest missing step"
+            )
+        elif readiness.posture == "partial":
+            unknown = (
+                "I recognize parts of the relevant domain, but I need the smallest "
+                "missing concept or procedure required to make progress"
+            )
+        else:
+            unknown = (
+                "I have little retained knowledge for this domain; identify the first "
+                "minimal concept or procedure needed to make progress"
+            )
+
+        return {
+            "domains": list(readiness.domains),
+            "posture": readiness.posture,
+            "knowledge_score": readiness.knowledge_score,
+            "ability_score": readiness.ability_score,
+            "checks": checks,
+            "unknown": unknown,
+            "next": "resolve the specific unknown without exporting unrelated self state",
+        }
+
+    @staticmethod
     def _build_cognition_request(
         event: AgentEvent,
         impasse,
         required: tuple[str, ...],
+        deliberation: dict[str, Any] | None = None,
     ) -> CognitionRequest:
         """Extract only the unresolved cognitive gap for an external brain."""
         explicit = str(
@@ -276,21 +416,25 @@ class ZNResidentRuntime:
             or ""
         ).strip()
         context: dict[str, Any] = {"event_kind": event.kind}
+        deliberation = dict(deliberation or {})
 
         if explicit:
             question = explicit
+        elif deliberation.get("unknown"):
+            question = str(deliberation["unknown"])
+            checks = [str(item) for item in deliberation.get("checks") or () if str(item)]
+            if checks:
+                context["native_checks"] = checks[:4]
+            # A short task excerpt gives the bounded unknown enough referential
+            # context without exporting ZN's memory, identity, or self profile.
+            context["task_excerpt"] = event.task[:500]
         elif impasse.local_failure:
             question = (
                 "Explain how to resolve this specific failure: "
                 f"{impasse.local_failure}"
             )
-            # The original task is useful here only to disambiguate the failure;
-            # cap it rather than forwarding arbitrary resident state.
             context["task_excerpt"] = event.task[:500]
         else:
-            # If ZN cannot yet isolate a smaller unknown, the event itself is
-            # the bounded unknown. No memories, identity state, skill catalog,
-            # or unrelated resident context are attached.
             question = event.task
 
         return CognitionRequest(
@@ -302,10 +446,17 @@ class ZNResidentRuntime:
             context=context,
         )
 
-    def _handle_event(self, event: AgentEvent, state: WorkingState) -> ResidentRunResult:
+    def _handle_event(
+        self,
+        event: AgentEvent,
+        state: WorkingState,
+        *,
+        readiness: TaskReadiness,
+    ) -> ResidentRunResult:
         required = self._required_capabilities(event)
+        memory_checked = bool(event.payload.get("allow_memory", True))
         memory_match = None
-        if bool(event.payload.get("allow_memory", True)):
+        if memory_checked:
             memory_match = self.memory.recall(event.task)
         if memory_match is not None:
             state.stage = "native_memory"
@@ -327,6 +478,7 @@ class ZNResidentRuntime:
 
         local_failure: str | None = None
         resolved = self.capabilities.resolve(event)
+        local_capability_checked = True
         if resolved is not None:
             capability, confidence = resolved
             state.stage = "native_capability"
@@ -367,6 +519,18 @@ class ZNResidentRuntime:
             state.data["local_failure"] = local_failure
             self.store.save_working_state(state)
 
+        state.stage = "native_deliberation"
+        state.next_action = "identify_cognitive_gap"
+        deliberation = self._native_deliberation(
+            event,
+            readiness,
+            memory_checked=memory_checked,
+            local_capability_checked=local_capability_checked,
+            local_failure=local_failure,
+        )
+        state.data["native_deliberation"] = deliberation
+        self.store.save_working_state(state)
+
         decision = self.budget.decide(
             event,
             memory_hit=False,
@@ -374,10 +538,7 @@ class ZNResidentRuntime:
         )
         impasse = self.life.begin_impasse(
             event,
-            reason=(
-                local_failure
-                or "native memory and compiled capabilities could not resolve this event"
-            ),
+            reason=str(deliberation["unknown"]),
             required_capabilities=required,
             local_failure=local_failure,
         )
@@ -399,7 +560,12 @@ class ZNResidentRuntime:
                 reason=decision.reason,
             )
 
-        cognition = self._build_cognition_request(event, impasse, required)
+        cognition = self._build_cognition_request(
+            event,
+            impasse,
+            required,
+            deliberation,
+        )
         state.stage = "external_cognition"
         state.next_action = "consult_external_brain"
         state.data["cognition_request"] = {
