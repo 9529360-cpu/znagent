@@ -13,6 +13,27 @@ class WorkerFactory(Protocol):
     def create(self, route: ModelRoute) -> Worker: ...
 
 
+class UnavailableModelWorker:
+    """System-2 placeholder used when the resident has no configured model.
+
+    The resident agent must remain alive and useful through System 1 even when
+    no LLM exists. Reaching this worker means a task genuinely needs cognition
+    that is not currently installed.
+    """
+
+    def run(self, goal: Goal, kernel_context: str) -> WorkerResult:
+        return WorkerResult(
+            success=False,
+            error="No System 2 model is configured. ZN Resident is still running with local capabilities and structured memory.",
+            metrics={"model_invoked": False},
+        )
+
+
+class UnavailableModelWorkerFactory:
+    def create(self, route: ModelRoute) -> UnavailableModelWorker:
+        return UnavailableModelWorker()
+
+
 class LegacyAIAgentWorker:
     """Adapter that demotes legacy AIAgent to a cognitive worker."""
 
@@ -28,14 +49,23 @@ class LegacyAIAgentWorker:
                     task_id=f"zn-{goal.goal_id}",
                 )
             except Exception as exc:
-                return WorkerResult(success=False, error=f"{type(exc).__name__}: {exc}")
+                return WorkerResult(
+                    success=False,
+                    error=f"{type(exc).__name__}: {exc}",
+                    metrics={"model_invoked": True},
+                )
 
             if isinstance(result, str):
-                return WorkerResult(success=bool(result.strip()), response=result)
+                return WorkerResult(
+                    success=bool(result.strip()),
+                    response=result,
+                    metrics={"model_invoked": True},
+                )
             if not isinstance(result, dict):
                 return WorkerResult(
                     success=False,
                     error=f"unexpected AIAgent result type: {type(result).__name__}",
+                    metrics={"model_invoked": True},
                 )
 
             response = str(
@@ -50,7 +80,7 @@ class LegacyAIAgentWorker:
                 if status:
                     verification = status in {"passed", "success", "ok"}
 
-            metrics: dict[str, Any] = {}
+            metrics: dict[str, Any] = {"model_invoked": True}
             for key in ("usage", "cost", "latency_ms", "iterations", "quality"):
                 if key in result:
                     metrics[key] = result[key]
@@ -63,7 +93,11 @@ class LegacyAIAgentWorker:
             )
         finally:
             try:
-                self.agent.shutdown_memory_provider()
+                session_messages = getattr(self.agent, "_session_messages", None)
+                if isinstance(session_messages, list):
+                    self.agent.shutdown_memory_provider(session_messages)
+                else:
+                    self.agent.shutdown_memory_provider()
             except Exception:
                 pass
             try:
