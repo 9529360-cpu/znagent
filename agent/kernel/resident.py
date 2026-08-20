@@ -127,9 +127,6 @@ class ZNResidentRuntime:
                     readiness=readiness,
                 )
 
-            # Impasse inspection, reflection, recovery and body inspection are
-            # native internal actions. They do not silently escalate to a model
-            # or mutate the computer until ZN has a concrete action path.
             return None
 
     def run_once(
@@ -334,13 +331,6 @@ class ZNResidentRuntime:
         thought.reason = f"{readiness.reason}; {thought.reason}"
 
     def _persist_enriched_thought(self, thought) -> None:
-        """Keep the persisted first-person thought aligned with action choice.
-
-        LifeCore currently owns storage for thought frames. This narrow bridge
-        lets the resident add task-specific self-knowledge after LifeCore has
-        selected the event but before the body acts. It can move fully inside
-        LifeCore once task-readiness becomes part of SituationModel itself.
-        """
         state = self.life.snapshot()
         state.current_thought = thought
         self.life._save_state(state)
@@ -409,7 +399,6 @@ class ZNResidentRuntime:
         required: tuple[str, ...],
         deliberation: dict[str, Any] | None = None,
     ) -> CognitionRequest:
-        """Extract only the unresolved cognitive gap for an external brain."""
         explicit = str(
             event.payload.get("cognition_question")
             or event.payload.get("unknown")
@@ -425,8 +414,6 @@ class ZNResidentRuntime:
             checks = [str(item) for item in deliberation.get("checks") or () if str(item)]
             if checks:
                 context["native_checks"] = checks[:4]
-            # A short task excerpt gives the bounded unknown enough referential
-            # context without exporting ZN's memory, identity, or self profile.
             context["task_excerpt"] = event.task[:500]
         elif impasse.local_failure:
             question = (
@@ -551,7 +538,7 @@ class ZNResidentRuntime:
         self.store.save_working_state(state)
 
         if not decision.use_model:
-            self.life.mark_impasse_unresolved(event, decision.reason)
+            self.life.mark_impasse_unresolved(event, str(deliberation["unknown"]))
             self.store.record_runtime_task(model_invocations=0)
             return ResidentRunResult(
                 event=event,
