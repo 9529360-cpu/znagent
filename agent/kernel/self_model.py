@@ -1,9 +1,41 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 from .models import Assessment, CapabilityEstimate
 from .store import KernelStore
+
+
+@dataclass(slots=True)
+class DomainReadiness:
+    domain: str
+    knowledge_score: float
+    knowledge_evidence: int
+    knowledge_confidence: float
+    ability_score: float
+    ability_evidence: int
+    ability_confidence: float
+
+
+@dataclass(slots=True)
+class TaskReadiness:
+    """ZN's native estimate of how prepared it is for one task.
+
+    This is introspection, not permission to pretend it can execute something.
+    High knowledge means ZN has relevant understanding. High ability means ZN
+    has independent successful evidence. An executable local path is still a
+    separate question handled by the resident body.
+    """
+
+    domains: tuple[str, ...]
+    domain_states: tuple[DomainReadiness, ...]
+    knowledge_score: float
+    ability_score: float
+    knowledge_confidence: float
+    ability_confidence: float
+    posture: str
+    reason: str
 
 
 class SelfModel:
@@ -135,7 +167,9 @@ class SelfModel:
             for item in (capabilities or ())
             if str(item).strip()
         )
-        meaningful_explicit = [item for item in explicit if cls._normalize_path(item) != "general"]
+        meaningful_explicit = [
+            item for item in explicit if cls._normalize_path(item) != "general"
+        ]
         for item in meaningful_explicit:
             add(cls._map_label(item))
 
@@ -147,6 +181,17 @@ class SelfModel:
         if not ordered:
             add("general")
         return tuple(ordered)
+
+    @staticmethod
+    def _leaf_domains(domains: tuple[str, ...]) -> tuple[str, ...]:
+        """Return the most specific non-overlapping domains for aggregation."""
+        leaves: list[str] = []
+        for candidate in domains:
+            prefix = f"{candidate}/"
+            if any(other.startswith(prefix) for other in domains if other != candidate):
+                continue
+            leaves.append(candidate)
+        return tuple(leaves or domains)
 
     def get(self, capability: str, default: float = 0.0) -> CapabilityEstimate:
         """Return ZN's independent ability estimate for a domain."""
@@ -173,6 +218,63 @@ class SelfModel:
             evidence_count=stored.evidence_count,
             confidence=stored.confidence,
             updated_at=stored.updated_at,
+        )
+
+    def assess_task(
+        self,
+        task: str,
+        capabilities: tuple[str, ...] | list[str] | None = None,
+    ) -> TaskReadiness:
+        """Estimate relevant knowledge and independent ability before acting."""
+        domains = self.infer_domains(task, capabilities)
+        states: list[DomainReadiness] = []
+        for domain in domains:
+            knowledge = self.knowledge(domain)
+            ability = self.get(domain)
+            states.append(
+                DomainReadiness(
+                    domain=domain,
+                    knowledge_score=knowledge.score,
+                    knowledge_evidence=knowledge.evidence_count,
+                    knowledge_confidence=knowledge.confidence,
+                    ability_score=ability.score,
+                    ability_evidence=ability.evidence_count,
+                    ability_confidence=ability.confidence,
+                )
+            )
+
+        by_domain = {state.domain: state for state in states}
+        leaf_states = [by_domain[domain] for domain in self._leaf_domains(domains)]
+        count = max(1, len(leaf_states))
+        knowledge_score = sum(item.knowledge_score for item in leaf_states) / count
+        ability_score = sum(item.ability_score for item in leaf_states) / count
+        knowledge_confidence = sum(item.knowledge_confidence for item in leaf_states) / count
+        ability_confidence = sum(item.ability_confidence for item in leaf_states) / count
+        knowledge_evidence = sum(item.knowledge_evidence for item in leaf_states)
+        ability_evidence = sum(item.ability_evidence for item in leaf_states)
+
+        if ability_score >= 0.75 and ability_evidence >= 3 and ability_confidence >= 0.4:
+            posture = "practiced"
+            reason = "I have repeated native evidence in the relevant domain"
+        elif knowledge_score >= 0.7 and knowledge_evidence >= 2:
+            posture = "familiar"
+            reason = "I have relevant knowledge but not enough independent execution evidence"
+        elif knowledge_score >= 0.3 or knowledge_evidence > 0:
+            posture = "partial"
+            reason = "I recognize the domain but my understanding is incomplete"
+        else:
+            posture = "novel"
+            reason = "I have little or no retained evidence for this domain"
+
+        return TaskReadiness(
+            domains=domains,
+            domain_states=tuple(states),
+            knowledge_score=max(0.0, min(1.0, knowledge_score)),
+            ability_score=max(0.0, min(1.0, ability_score)),
+            knowledge_confidence=max(0.0, min(1.0, knowledge_confidence)),
+            ability_confidence=max(0.0, min(1.0, ability_confidence)),
+            posture=posture,
+            reason=reason,
         )
 
     def route_score(self, route_id: str, capability: str, prior: float) -> float:
