@@ -7,6 +7,7 @@ from typing import Any
 
 from .budget import CognitiveBudgetManager
 from .capabilities import CapabilityRegistry
+from .investigation import InvestigationResult, NativeInvestigator
 from .memory import StructuredMemory
 from .models import (
     AgentEvent,
@@ -24,14 +25,13 @@ from .self_model import TaskReadiness
 class ZNResidentRuntime:
     """Long-lived, restart-safe resident agent runtime.
 
-    The resident owns the continuous ZN self. Structured memory, local
-    capabilities and external models are abilities available to that self; none
-    of them is the identity itself. The resident remains alive when no model is
-    configured.
+    ZN owns the continuing self. Memory, body abilities and external models are
+    resources available to it; none of them is the identity itself.
 
-    ``live_once`` is the normal control entry point: ZN senses and forms a
-    ThoughtFrame first, then the body executes the action selected by that
-    thought. ``run_once`` remains the lower-level event executor.
+    ``live_once`` is the normal control entry point: sense -> situation ->
+    thought -> native investigation/action -> outcome -> learning. External
+    cognition is reached only after the resident has tried to understand the
+    task with its own state and body.
     """
 
     def __init__(
@@ -55,6 +55,7 @@ class ZNResidentRuntime:
 
         self.life = ZNLifeCore(self)
         self.life.wake()
+        self.investigator = NativeInvestigator(self)
 
     def enqueue(
         self,
@@ -258,6 +259,7 @@ class ZNResidentRuntime:
     def status(self) -> dict[str, Any]:
         metrics = self.store.get_runtime_metrics()
         profile = self.kernel.self_model.profile()
+        latest_investigation = self.investigator.recent(1)
         return {
             "identity": {
                 "name": self.identity.name,
@@ -278,6 +280,11 @@ class ZNResidentRuntime:
                 ]
                 for key, values in profile.items()
             },
+            "latest_investigation": (
+                self._investigation_data(latest_investigation[0])
+                if latest_investigation
+                else None
+            ),
             "working_state": self.store.get_working_state(),
             "queue_depth": len(self.store.list_events(EventStatus.PENDING, limit=10000)),
             "model_dependency": {
@@ -323,6 +330,23 @@ class ZNResidentRuntime:
                 }
                 for item in readiness.domain_states
             ],
+        }
+
+    @staticmethod
+    def _investigation_data(state) -> dict[str, Any]:
+        return {
+            "investigation_id": state.investigation_id,
+            "event_id": state.event_id,
+            "task": state.task,
+            "domains": list(state.domains),
+            "hypotheses": list(state.hypotheses),
+            "probes": list(state.probes),
+            "evidence": list(state.evidence),
+            "unresolved": state.unresolved,
+            "rounds": state.rounds,
+            "status": state.status,
+            "resolution": state.resolution,
+            "updated_at": state.updated_at,
         }
 
     @staticmethod
@@ -430,6 +454,26 @@ class ZNResidentRuntime:
         self.life._state = state
 
     @staticmethod
+    def _merge_investigation_into_thought(
+        thought,
+        investigation: InvestigationResult,
+    ) -> None:
+        if thought is None:
+            return
+        count = len(investigation.state.evidence)
+        if count:
+            known = f"native investigation collected {count} concrete observation(s)"
+            if known not in thought.known:
+                thought.known = (*thought.known, known)
+        for hypothesis in investigation.state.hypotheses[-3:]:
+            action = f"test hypothesis: {hypothesis}"
+            if action not in thought.possible_actions:
+                thought.possible_actions = (*thought.possible_actions, action)
+        if investigation.state.unresolved and investigation.state.unresolved not in thought.unknown:
+            thought.unknown = (*thought.unknown, investigation.state.unresolved)
+        thought.reason = f"{thought.reason}; I inspected concrete local state before escalating"
+
+    @staticmethod
     def _merge_deliberation_into_thought(
         thought,
         deliberation: dict[str, Any],
@@ -456,6 +500,7 @@ class ZNResidentRuntime:
         local_capability_checked: bool,
         local_failure: str | None,
         learning_evidence: list[dict[str, Any]],
+        investigation: InvestigationResult,
     ) -> dict[str, Any]:
         checks: list[str] = []
         if memory_checked:
@@ -468,6 +513,10 @@ class ZNResidentRuntime:
             checks.append(
                 f"reviewed {len(learning_evidence)} related resident-side learning record(s)"
             )
+        if investigation.state.probes:
+            checks.append(
+                f"ran {len(investigation.state.probes)} native environment probe(s)"
+            )
 
         explicit = str(
             event.payload.get("cognition_question")
@@ -478,20 +527,22 @@ class ZNResidentRuntime:
             unknown = explicit
         elif local_failure:
             unknown = (
-                "I need the smallest missing explanation or procedure that resolves "
-                f"this specific local failure: {local_failure}"
-            )
-        elif learning_evidence and readiness.posture in {"familiar", "partial"}:
-            unknown = (
-                "I remember related prior resolutions and understand part of this domain, "
-                "but I still lack a verified native procedure for the current case; "
-                "identify only the smallest remaining gap"
+                "I inspected local state and need the smallest missing explanation or "
+                f"procedure that resolves this specific failure: {local_failure}"
             )
         elif readiness.posture == "familiar":
             unknown = (
-                "I know the relevant domain, but I do not yet have a verified native "
-                "procedure for this specific task; identify the smallest missing step"
+                "I know the relevant domain and inspected concrete local state, but I "
+                "do not yet have a verified native procedure for this case; identify "
+                "the smallest missing step"
             )
+        elif learning_evidence and readiness.posture == "partial":
+            unknown = (
+                "I remember related prior resolutions and inspected current local state, "
+                "but I still need the smallest missing concept or procedure for this case"
+            )
+        elif investigation.state.unresolved:
+            unknown = investigation.state.unresolved
         elif readiness.posture == "partial":
             unknown = (
                 "I recognize parts of the relevant domain, but I need the smallest "
@@ -510,11 +561,12 @@ class ZNResidentRuntime:
             "ability_score": readiness.ability_score,
             "checks": checks,
             "related_learning_count": len(learning_evidence),
-            # Evidence stays here, inside ZN. _build_cognition_request does not
-            # forward these records to the external worker.
             "related_learning": learning_evidence,
+            "investigation_id": investigation.state.investigation_id,
+            "investigation_evidence_count": len(investigation.state.evidence),
+            "bounded_native_evidence": NativeInvestigator.bounded_evidence(investigation),
             "unknown": unknown,
-            "next": "resolve the specific unknown without exporting unrelated self state",
+            "next": "resolve the remaining gap and continue native action",
         }
 
     @staticmethod
@@ -538,7 +590,14 @@ class ZNResidentRuntime:
             question = str(deliberation["unknown"])
             checks = [str(item) for item in deliberation.get("checks") or () if str(item)]
             if checks:
-                context["native_checks"] = checks[:4]
+                context["native_checks"] = checks[:6]
+            native_evidence = [
+                str(item)
+                for item in deliberation.get("bounded_native_evidence") or ()
+                if str(item).strip()
+            ]
+            if native_evidence:
+                context["native_evidence"] = native_evidence[:6]
             context["task_excerpt"] = event.task[:500]
         elif impasse.local_failure:
             question = (
@@ -633,8 +692,42 @@ class ZNResidentRuntime:
             state.data["local_failure"] = local_failure
             self.store.save_working_state(state)
 
+        state.stage = "native_investigation"
+        state.next_action = "inspect_local_state"
+        investigation = self.investigator.investigate(
+            event,
+            readiness,
+            learning_evidence=learning_evidence,
+            local_failure=local_failure,
+        )
+        state.data["native_investigation"] = self._investigation_data(investigation.state)
+        self._merge_investigation_into_thought(thought, investigation)
+        if thought is not None:
+            self._persist_enriched_thought(thought)
+        self.store.save_working_state(state)
+
+        if investigation.resolved:
+            domains = self.kernel.self_model.observe_native_outcome(
+                event.task,
+                required,
+                success=True,
+                quality=0.95,
+            )
+            state.stage = "complete"
+            state.next_action = None
+            state.data["native_domains"] = list(domains)
+            self.store.save_working_state(state)
+            self.store.record_runtime_task(model_invocations=0)
+            return ResidentRunResult(
+                event=event,
+                execution_path=ExecutionPath.INVESTIGATION,
+                success=True,
+                response=investigation.response,
+                reason="resolved from ZN's own body and environment evidence",
+            )
+
         state.stage = "native_deliberation"
-        state.next_action = "identify_cognitive_gap"
+        state.next_action = "identify_remaining_gap"
         deliberation = self._native_deliberation(
             event,
             readiness,
@@ -642,6 +735,7 @@ class ZNResidentRuntime:
             local_capability_checked=local_capability_checked,
             local_failure=local_failure,
             learning_evidence=learning_evidence,
+            investigation=investigation,
         )
         state.data["native_deliberation"] = deliberation
         self._merge_deliberation_into_thought(thought, deliberation)
@@ -743,6 +837,10 @@ class ZNResidentRuntime:
                 event,
                 run,
                 resolution_source=f"external:{route_id}",
+            )
+            self.investigator.resolve_from_external(
+                event.event_id,
+                run.response or "external cognition resolved the remaining gap",
             )
             domains = self.kernel.self_model.integrate_external_learning(
                 event.task,
