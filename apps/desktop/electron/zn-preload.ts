@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('znDesktop', {
     start: () => ipcRenderer.invoke('zn:resident:start'),
     stop: () => ipcRenderer.invoke('zn:resident:stop'),
     status: () => ipcRenderer.invoke('zn:resident:status'),
+    self: () => ipcRenderer.invoke('zn:resident:self'),
+    pulses: limit => ipcRenderer.invoke('zn:resident:pulses', limit),
     submit: payload => ipcRenderer.invoke('zn:resident:submit', payload),
     remember: payload => ipcRenderer.invoke('zn:resident:remember', payload),
     forget: key => ipcRenderer.invoke('zn:resident:forget', key)
