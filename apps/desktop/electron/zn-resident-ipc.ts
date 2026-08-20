@@ -10,6 +10,10 @@ function getResident(): ZnResidentProcess {
   return resident
 }
 
+function history(method: 'pulses' | 'situations' | 'thoughts' | 'impasses' | 'learning', limit: unknown): Promise<unknown> {
+  return getResident().request(method, { limit: Number(limit || 20) })
+}
+
 export function registerZnResidentIpc(): void {
   if (registered) return
   registered = true
@@ -17,12 +21,11 @@ export function registerZnResidentIpc(): void {
   ipcMain.handle('zn:resident:start', async () => getResident().start())
   ipcMain.handle('zn:resident:status', async () => getResident().request('status'))
   ipcMain.handle('zn:resident:self', async () => getResident().request('self'))
-  ipcMain.handle('zn:resident:pulses', async (_event, limit) =>
-    getResident().request('pulses', { limit: Number(limit || 20) })
-  )
-  ipcMain.handle('zn:resident:thoughts', async (_event, limit) =>
-    getResident().request('thoughts', { limit: Number(limit || 20) })
-  )
+  ipcMain.handle('zn:resident:pulses', async (_event, limit) => history('pulses', limit))
+  ipcMain.handle('zn:resident:situations', async (_event, limit) => history('situations', limit))
+  ipcMain.handle('zn:resident:thoughts', async (_event, limit) => history('thoughts', limit))
+  ipcMain.handle('zn:resident:impasses', async (_event, limit) => history('impasses', limit))
+  ipcMain.handle('zn:resident:learning', async (_event, limit) => history('learning', limit))
   ipcMain.handle('zn:resident:submit', async (_event, payload) => {
     const task = String(payload?.task || '').trim()
     if (!task) throw new Error('task is required')
