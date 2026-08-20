@@ -57,6 +57,7 @@ class ResidentV1Tests(unittest.TestCase):
             self.assertEqual(result.response, "znagent")
             self.assertEqual(result.model_invocations, 0)
             self.assertEqual(factory.calls, 0)
+            self.assertIsNone(resident.life.snapshot().current_impasse)
             self.assertEqual(resident.store.get_runtime_metrics().model_dependency_ratio, 0.0)
             resident.store.close()
 
@@ -81,9 +82,10 @@ class ResidentV1Tests(unittest.TestCase):
             self.assertEqual(result.response, "hello from resident code")
             self.assertEqual(result.model_invocations, 0)
             self.assertEqual(factory.calls, 0)
+            self.assertIsNone(resident.life.snapshot().current_impasse)
             resident.store.close()
 
-    def test_normal_unknown_task_spends_only_one_model_call(self):
+    def test_unknown_task_opens_impasse_then_external_solution_stages_learning(self):
         with tempfile.TemporaryDirectory() as tmp:
             factory = FakeFactory(
                 [
@@ -98,14 +100,25 @@ class ResidentV1Tests(unittest.TestCase):
             resident = resident_for(Path(tmp) / "kernel.db", factory)
 
             result = resident.submit("novel task")
+            state = resident.life.snapshot()
+            impasses = resident.life.recent_impasses(5)
+            candidates = resident.life.recent_learning_candidates(5)
 
             self.assertTrue(result.success)
             self.assertEqual(result.model_invocations, 1)
             self.assertEqual(factory.calls, 1)
+            self.assertIsNone(state.current_impasse)
+            self.assertEqual(len(impasses), 1)
+            self.assertEqual(impasses[0].status, "resolved")
+            self.assertEqual(impasses[0].event_id, result.event.event_id)
+            self.assertEqual(len(candidates), 1)
+            self.assertEqual(candidates[0].event_id, result.event.event_id)
+            self.assertEqual(candidates[0].resolution_source, "external:primary")
+            self.assertIn(candidates[0].candidate_id, state.learning_candidates)
             self.assertEqual(resident.store.get_runtime_metrics().model_dependency_ratio, 1.0)
             resident.store.close()
 
-    def test_model_policy_never_guarantees_zero_model_calls(self):
+    def test_model_policy_never_leaves_persistent_impasse_without_model_call(self):
         with tempfile.TemporaryDirectory() as tmp:
             factory = FakeFactory([WorkerResult(success=True, response="should not run")])
             resident = resident_for(Path(tmp) / "kernel.db", factory)
@@ -114,10 +127,15 @@ class ResidentV1Tests(unittest.TestCase):
                 "unknown local-only task",
                 payload={"model_policy": "never"},
             )
+            state = resident.life.snapshot()
 
             self.assertFalse(result.success)
             self.assertEqual(result.model_invocations, 0)
             self.assertEqual(factory.calls, 0)
+            self.assertIsNotNone(state.current_impasse)
+            self.assertEqual(state.current_impasse.event_id, result.event.event_id)
+            self.assertEqual(state.current_impasse.status, "open")
+            self.assertEqual(resident.life.recent_learning_candidates(5), [])
             resident.store.close()
 
     def test_processing_event_is_recovered_after_restart(self):
@@ -168,9 +186,12 @@ class ResidentV1Tests(unittest.TestCase):
             self.assertEqual(local.model_invocations, 0)
 
             unknown = resident.submit("novel unknown task")
+            state = resident.life.snapshot()
             self.assertFalse(unknown.success)
             self.assertEqual(unknown.model_invocations, 0)
             self.assertIn("No System 2 model is configured", unknown.reason)
+            self.assertIsNotNone(state.current_impasse)
+            self.assertEqual(state.current_impasse.event_id, unknown.event.event_id)
             self.assertEqual(resident.store.get_runtime_metrics().model_invocations, 0)
             resident.store.close()
 
