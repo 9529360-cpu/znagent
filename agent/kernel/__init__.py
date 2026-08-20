@@ -51,7 +51,7 @@ from .resident import ZNResidentRuntime
 from .router import ModelRouter, NoRouteAvailable
 from .runtime import ZNKernelRuntime
 from .service import ResidentAlreadyRunning, ResidentService
-from .self_model import SelfModel
+from .self_model import DomainReadiness, SelfModel, TaskReadiness
 from .store import KernelStore
 from .worker import LegacyAIAgentWorkerFactory, Worker, WorkerFactory
 
@@ -70,6 +70,7 @@ __all__ = [
     "CognitiveBudgetManager",
     "CognitiveDecision",
     "DefaultCritic",
+    "DomainReadiness",
     "EventStatus",
     "ExactTaskCapability",
     "ExecutionPath",
@@ -100,6 +101,7 @@ __all__ = [
     "SelfModel",
     "SituationModel",
     "StructuredMemory",
+    "TaskReadiness",
     "ThoughtFrame",
     "Worker",
     "WorkerFactory",
