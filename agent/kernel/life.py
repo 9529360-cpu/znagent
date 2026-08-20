@@ -34,6 +34,34 @@ class BodyState:
     process_uptime_seconds: float
     captured_at: str = field(default_factory=utc_now)
 
+    @property
+    def disk_free_ratio(self) -> float:
+        if self.disk_total_bytes <= 0:
+            return 0.0
+        return max(0.0, min(1.0, self.disk_free_bytes / self.disk_total_bytes))
+
+
+@dataclass(slots=True)
+class ThoughtFrame:
+    """One model-independent frame of ZN's current internal reasoning.
+
+    It is deliberately structured rather than prose.  The frame records what
+    the resident currently knows, what is unresolved, which actions it can see,
+    and the next move selected by its own control loop.  A model can later be
+    consulted for a specific unresolved part, but it does not create or own the
+    frame itself.
+    """
+
+    sequence: int
+    at: str
+    focus: str
+    known: tuple[str, ...] = ()
+    unknown: tuple[str, ...] = ()
+    possible_actions: tuple[str, ...] = ()
+    chosen_action: str = "observe"
+    reason: str = "maintain continuity"
+    confidence: float = 1.0
+
 
 @dataclass(slots=True)
 class LivingState:
@@ -49,11 +77,13 @@ class LivingState:
     mode: str = "waking"
     attention: str | None = None
     intention: str | None = None
+    drives: tuple[str, ...] = ()
     observations: tuple[str, ...] = ()
     open_questions: tuple[str, ...] = ()
     capabilities: tuple[str, ...] = ()
     external_brains: tuple[str, ...] = ()
     body: BodyState | None = None
+    current_thought: ThoughtFrame | None = None
     last_event_id: str | None = None
     last_action_summary: str | None = None
 
@@ -76,15 +106,17 @@ class LifePulse:
     attention: str | None
     intention: str | None
     observations: tuple[str, ...]
+    thought: ThoughtFrame | None = None
 
 
 class ZNLifeCore:
     """The minimal continuous self-loop of ZN.
 
-    This layer does not need an LLM. It maintains continuity, senses the host,
-    notices changes, keeps an active intention, and records what ZN just did.
-    Models may later be consulted by the resident runtime, but they do not own
-    this state and they are not required for the heartbeat to continue.
+    This layer does not need an LLM.  It maintains continuity, senses the host,
+    notices changes, forms an internal thought frame, keeps an active intention,
+    and records what ZN just did.  Models are cognitive resources that may be
+    consulted later; they do not own this state and are not required for it to
+    continue.
     """
 
     def __init__(self, resident: ZNResidentRuntime):
@@ -117,21 +149,24 @@ class ZNLifeCore:
         material_observations = list(
             self._notice_changes(previous, body, capabilities, external_brains)
         )
-        mode = "engaged" if pending else "observing"
-        attention = previous.attention
-        intention = previous.intention
+        drives = self._derive_drives(previous, body, pending)
+        thought = self._form_thought(
+            previous=previous,
+            body=body,
+            pending=pending,
+            capabilities=capabilities,
+            external_brains=external_brains,
+            drives=drives,
+        )
+
+        mode = "engaged" if pending else ("recovering" if "recover" in thought.chosen_action else "observing")
+        attention = None if thought.focus == "environment" else thought.focus
+        intention = thought.chosen_action
 
         if pending:
-            next_event = pending[-1]
-            attention = next_event.task
-            intention = f"continue event {next_event.event_id}"
-            material_observations.append(f"unfinished event available: {next_event.event_id}")
+            material_observations.append(f"unfinished event available: {pending[0].event_id}")
         elif previous.mode == "engaged":
-            attention = None
-            intention = "remain available and observe"
             material_observations.append("no unfinished event remains")
-        elif not intention:
-            intention = "remain available and observe"
 
         pulse_observations = tuple(material_observations) or ("no material change detected",)
         state = LivingState(
@@ -145,6 +180,7 @@ class ZNLifeCore:
             mode=mode,
             attention=attention,
             intention=intention,
+            drives=drives,
             observations=self._merge_observations(
                 previous.observations,
                 tuple(material_observations),
@@ -153,10 +189,13 @@ class ZNLifeCore:
             capabilities=capabilities,
             external_brains=external_brains,
             body=body,
+            current_thought=thought,
             last_event_id=previous.last_event_id,
             last_action_summary=previous.last_action_summary,
         )
         self._save_state(state)
+        self._append_thought(thought)
+
         pulse = LifePulse(
             sequence=state.pulse_count,
             at=state.last_pulse_at or utc_now(),
@@ -164,6 +203,7 @@ class ZNLifeCore:
             attention=state.attention,
             intention=state.intention,
             observations=pulse_observations,
+            thought=thought,
         )
         self._append_pulse(pulse)
         self._state = state
@@ -176,9 +216,9 @@ class ZNLifeCore:
         state.mode = "observing" if run.success else "recovering"
         state.attention = None if run.success else run.event.task
         state.intention = (
-            "remain available and observe"
+            "observe for the next meaningful change"
             if run.success
-            else f"understand failure of {run.event.event_id}"
+            else f"recover from event {run.event.event_id}"
         )
         observation = (
             f"completed {run.event.event_id} via {run.execution_path.value}"
@@ -186,6 +226,10 @@ class ZNLifeCore:
             else f"failed {run.event.event_id}: {run.reason or 'unknown reason'}"
         )
         state.observations = self._merge_observations(state.observations, (observation,))
+        if not run.success:
+            question = f"why did {run.event.event_id} fail"
+            if question not in state.open_questions:
+                state.open_questions = (*state.open_questions, question)[-16:]
         self._save_state(state)
         self._state = state
         return state
@@ -207,6 +251,8 @@ class ZNLifeCore:
         state = self.snapshot()
         data = asdict(state)
         data["age_seconds"] = state.age_seconds
+        if state.body is not None:
+            data["body"]["disk_free_ratio"] = state.body.disk_free_ratio
         return data
 
     def recent_pulses(self, limit: int = 20) -> list[LifePulse]:
@@ -219,8 +265,18 @@ class ZNLifeCore:
         for row in rows:
             raw = json.loads(row["data"])
             raw["observations"] = tuple(raw.get("observations") or ())
+            thought = raw.get("thought")
+            raw["thought"] = self._thought_from_raw(thought) if isinstance(thought, dict) else None
             pulses.append(LifePulse(**raw))
         return pulses
+
+    def recent_thoughts(self, limit: int = 20) -> list[ThoughtFrame]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT data FROM life_thoughts ORDER BY sequence DESC LIMIT ?",
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [self._thought_from_raw(json.loads(row["data"])) for row in rows]
 
     def _load_or_birth(self) -> LivingState:
         with self._connect() as conn:
@@ -228,8 +284,18 @@ class ZNLifeCore:
         if row:
             raw = json.loads(row["data"])
             body = raw.get("body")
+            thought = raw.get("current_thought")
             raw["body"] = BodyState(**body) if isinstance(body, dict) else None
-            for key in ("observations", "open_questions", "capabilities", "external_brains"):
+            raw["current_thought"] = (
+                self._thought_from_raw(thought) if isinstance(thought, dict) else None
+            )
+            for key in (
+                "drives",
+                "observations",
+                "open_questions",
+                "capabilities",
+                "external_brains",
+            ):
                 raw[key] = tuple(raw.get(key) or ())
             return LivingState(**raw)
 
@@ -238,10 +304,18 @@ class ZNLifeCore:
             name=identity.name,
             version=identity.version,
             born_at=identity.created_at,
-            intention="remain available and observe",
+            intention="observe for the next meaningful change",
+            drives=("maintain continuity",),
         )
         self._save_state(state)
         return state
+
+    @staticmethod
+    def _thought_from_raw(raw: dict[str, Any]) -> ThoughtFrame:
+        data = dict(raw)
+        for key in ("known", "unknown", "possible_actions"):
+            data[key] = tuple(data.get(key) or ())
+        return ThoughtFrame(**data)
 
     def _save_state(self, state: LivingState) -> None:
         payload = asdict(state)
@@ -254,7 +328,6 @@ class ZNLifeCore:
 
     def _append_pulse(self, pulse: LifePulse) -> None:
         payload = asdict(pulse)
-        payload["observations"] = list(pulse.observations)
         with self._connect() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO life_pulses(sequence,created_at,data) VALUES(?,?,?)",
@@ -264,9 +337,24 @@ class ZNLifeCore:
                     json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
                 ),
             )
-            # Heartbeats are evidence of continuity, not an infinite transcript.
             conn.execute(
                 "DELETE FROM life_pulses WHERE sequence < (SELECT COALESCE(MAX(sequence),0)-2048 FROM life_pulses)"
+            )
+            conn.commit()
+
+    def _append_thought(self, thought: ThoughtFrame) -> None:
+        payload = asdict(thought)
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO life_thoughts(sequence,created_at,data) VALUES(?,?,?)",
+                (
+                    thought.sequence,
+                    thought.at,
+                    json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                ),
+            )
+            conn.execute(
+                "DELETE FROM life_thoughts WHERE sequence < (SELECT COALESCE(MAX(sequence),0)-2048 FROM life_thoughts)"
             )
             conn.commit()
 
@@ -280,6 +368,11 @@ class ZNLifeCore:
                     updated_at TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS life_pulses(
+                    sequence INTEGER PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    data TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS life_thoughts(
                     sequence INTEGER PRIMARY KEY,
                     created_at TEXT NOT NULL,
                     data TEXT NOT NULL
@@ -328,6 +421,83 @@ class ZNLifeCore:
             route_id = str(getattr(route, "route_id", "") or "external")
             available.append(route_id)
         return tuple(sorted(set(available)))
+
+    @staticmethod
+    def _derive_drives(
+        previous: LivingState,
+        body: BodyState,
+        pending: list,
+    ) -> tuple[str, ...]:
+        drives: list[str] = ["maintain continuity"]
+        if pending:
+            drives.append("make progress on unfinished work")
+        if previous.mode == "recovering" or previous.open_questions:
+            drives.append("reduce unresolved uncertainty")
+        if body.disk_total_bytes > 0 and body.disk_free_ratio < 0.10:
+            drives.append("preserve body resources")
+        return tuple(drives)
+
+    def _form_thought(
+        self,
+        *,
+        previous: LivingState,
+        body: BodyState,
+        pending: list,
+        capabilities: tuple[str, ...],
+        external_brains: tuple[str, ...],
+        drives: tuple[str, ...],
+    ) -> ThoughtFrame:
+        known = [
+            f"I am {previous.name} {previous.version}",
+            f"I am running on {body.hostname} ({body.system} {body.architecture})",
+            f"I have {len(capabilities)} compiled local capabilities",
+            f"I have {len(external_brains)} external cognitive routes available",
+        ]
+        unknown = list(previous.open_questions[-8:])
+        possible_actions = ["observe for meaningful change"]
+
+        if pending:
+            next_event = pending[0]
+            focus = next_event.task
+            possible_actions.insert(0, f"work on event {next_event.event_id}")
+            chosen = f"work on event {next_event.event_id}"
+            reason = "unfinished work is present and progress is currently possible"
+            confidence = 0.95
+        elif previous.mode == "recovering" and previous.last_event_id:
+            focus = previous.attention or previous.last_event_id
+            possible_actions.insert(0, f"recover from event {previous.last_event_id}")
+            chosen = f"recover from event {previous.last_event_id}"
+            reason = "the most recent action failed and remains unresolved"
+            confidence = 0.85
+        elif unknown:
+            focus = unknown[0]
+            possible_actions.insert(0, "inspect unresolved question")
+            chosen = "inspect unresolved question"
+            reason = "an unresolved question remains in my own state"
+            confidence = 0.75
+        elif body.disk_total_bytes > 0 and body.disk_free_ratio < 0.10:
+            focus = "body resources"
+            possible_actions.insert(0, "inspect low disk space")
+            chosen = "inspect low disk space"
+            reason = "free disk space is below ten percent"
+            confidence = 0.95
+        else:
+            focus = "environment"
+            chosen = "observe for meaningful change"
+            reason = "no unfinished work or unresolved internal issue currently dominates attention"
+            confidence = 1.0
+
+        return ThoughtFrame(
+            sequence=previous.pulse_count + 1,
+            at=utc_now(),
+            focus=focus,
+            known=tuple(known),
+            unknown=tuple(unknown),
+            possible_actions=tuple(possible_actions),
+            chosen_action=chosen,
+            reason=reason,
+            confidence=confidence,
+        )
 
     @staticmethod
     def _notice_changes(
