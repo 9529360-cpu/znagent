@@ -114,10 +114,9 @@ class ZNResidentRuntime:
                     target_event_id=thought.action_target,
                 )
 
-            # observe / reflect / recover / body are internal actions for now.
-            # They still change durable self-state, but they do not silently
-            # escalate to a model or mutate the computer without a concrete
-            # native action implementation.
+            # Impasse inspection, reflection, recovery and body inspection are
+            # native internal actions. They do not silently escalate to a model
+            # or mutate the computer until ZN has a concrete action path.
             return None
 
     def run_once(
@@ -177,6 +176,7 @@ class ZNResidentRuntime:
             return result
         except Exception as exc:
             message = f"{type(exc).__name__}: {exc}"
+            self.life.mark_impasse_unresolved(event, message)
             self.store.finish_event(event.event_id, success=False, error=message)
             self.store.record_runtime_task(model_invocations=0)
             persisted = self.store.get_event(event.event_id) or event
@@ -244,7 +244,7 @@ class ZNResidentRuntime:
         if bool(event.payload.get("allow_memory", True)):
             memory_match = self.memory.recall(event.task)
         if memory_match is not None:
-            state.stage = "system1_memory"
+            state.stage = "native_memory"
             state.next_action = "complete"
             self.store.save_working_state(state)
             self.store.record_runtime_task(model_invocations=0)
@@ -256,10 +256,11 @@ class ZNResidentRuntime:
                 reason=f"recalled structured fact '{memory_match.key}'",
             )
 
+        local_failure: str | None = None
         resolved = self.capabilities.resolve(event)
         if resolved is not None:
             capability, confidence = resolved
-            state.stage = "system1_capability"
+            state.stage = "native_capability"
             state.next_action = capability.name
             state.data["capability_match"] = confidence
             self.store.save_working_state(state)
@@ -280,15 +281,42 @@ class ZNResidentRuntime:
                     capability_name=capability.name,
                     reason="resolved by compiled local capability",
                 )
-            state.data["local_failure"] = local_result.error or "local capability failed"
+            local_failure = local_result.error or "local capability failed"
+            state.data["local_failure"] = local_failure
             self.store.save_working_state(state)
+
+        required = event.payload.get("required_capabilities") or ("general",)
+        if isinstance(required, str):
+            required = (required,)
+        else:
+            required = tuple(
+                str(item) for item in required if str(item).strip()
+            ) or ("general",)
 
         decision = self.budget.decide(
             event,
             memory_hit=False,
             local_capability_available=False,
         )
+        impasse = self.life.begin_impasse(
+            event,
+            reason=(
+                local_failure
+                or "native memory and compiled capabilities could not resolve this event"
+            ),
+            required_capabilities=required,
+            local_failure=local_failure,
+        )
+        state.data["impasse_id"] = impasse.impasse_id
+        state.data["cognitive_budget"] = {
+            "use_external_cognition": decision.use_model,
+            "max_model_calls": decision.max_model_calls,
+            "reason": decision.reason,
+        }
+        self.store.save_working_state(state)
+
         if not decision.use_model:
+            self.life.mark_impasse_unresolved(event, decision.reason)
             self.store.record_runtime_task(model_invocations=0)
             return ResidentRunResult(
                 event=event,
@@ -297,25 +325,19 @@ class ZNResidentRuntime:
                 reason=decision.reason,
             )
 
-        state.stage = "system2_model"
-        state.next_action = "invoke_model_worker"
-        state.data["cognitive_budget"] = {
-            "max_model_calls": decision.max_model_calls,
-            "reason": decision.reason,
-        }
+        state.stage = "external_cognition"
+        state.next_action = "consult_external_brain"
         self.store.save_working_state(state)
-
-        required = event.payload.get("required_capabilities") or ("general",)
-        if isinstance(required, str):
-            required = (required,)
-        else:
-            required = tuple(str(item) for item in required if str(item).strip()) or ("general",)
 
         kernel_result = self.kernel.run_goal(
             event.task,
             required_capabilities=required,
             priority=event.priority,
-            metadata={"resident_event_id": event.event_id, **dict(event.payload)},
+            metadata={
+                "resident_event_id": event.event_id,
+                "impasse_id": impasse.impasse_id,
+                **dict(event.payload),
+            },
             max_attempts_override=decision.max_model_calls,
         )
         invocations = sum(
@@ -336,7 +358,8 @@ class ZNResidentRuntime:
         reason = decision.reason
         if not kernel_result.assessment.success and kernel_result.worker_result.error:
             reason = kernel_result.worker_result.error
-        return ResidentRunResult(
+
+        run = ResidentRunResult(
             event=event,
             execution_path=ExecutionPath.MODEL,
             success=kernel_result.assessment.success,
@@ -345,6 +368,16 @@ class ZNResidentRuntime:
             reason=reason,
             kernel_result=kernel_result,
         )
+        if run.success:
+            route_id = kernel_result.goal.route_id or "external"
+            self.life.resolve_impasse(
+                event,
+                run,
+                resolution_source=f"external:{route_id}",
+            )
+        else:
+            self.life.mark_impasse_unresolved(event, reason)
+        return run
 
     @staticmethod
     def _render_memory_value(value: Any) -> str:
