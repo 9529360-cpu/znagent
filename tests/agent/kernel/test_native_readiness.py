@@ -117,6 +117,37 @@ class NativeReadinessTests(unittest.TestCase):
             )
             resident.store.close()
 
+    def test_related_learning_is_recalled_inside_zn_but_not_exported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            calls: list[tuple[str, str]] = []
+            resident = self._resident(Path(tmp) / "kernel.db", calls)
+
+            first = resident.submit(
+                "debug Python sqlite transaction timeout",
+                payload={"required_capabilities": ["python"]},
+            )
+            self.assertTrue(first.success)
+            candidates = resident.life.recent_learning_candidates(5)
+            self.assertEqual(len(candidates), 1)
+            self.assertIn("bounded cognition result", candidates[0].resolution_summary)
+
+            second = resident.submit(
+                "debug Python sqlite transaction lock",
+                payload={"required_capabilities": ["python"]},
+            )
+            thought = resident.life.recent_thoughts(1)[0]
+
+            self.assertTrue(second.success)
+            self.assertEqual(len(calls), 2)
+            self.assertTrue(
+                any("related prior learning record" in item for item in thought.known)
+            )
+            second_task, second_context = calls[1]
+            self.assertIn("related prior resolutions", second_task)
+            self.assertNotIn("bounded cognition result", second_context)
+            self.assertNotIn(candidates[0].candidate_id, second_context)
+            resident.store.close()
+
 
 if __name__ == "__main__":
     unittest.main()
