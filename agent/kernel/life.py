@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from .models import EventStatus, ResidentRunResult, utc_now
 
 if TYPE_CHECKING:
+    from .models import AgentEvent
     from .resident import ZNResidentRuntime
 
 
@@ -39,6 +40,59 @@ class BodyState:
         if self.disk_total_bytes <= 0:
             return 0.0
         return max(0.0, min(1.0, self.disk_free_bytes / self.disk_total_bytes))
+
+
+@dataclass(slots=True)
+class SituationModel:
+    """ZN's compact model of what is true and relevant right now."""
+
+    sequence: int
+    at: str
+    active_event_id: str | None = None
+    active_task: str | None = None
+    active_priority: int | None = None
+    active_impasse_id: str | None = None
+    body_health: str = "nominal"
+    body_signals: tuple[str, ...] = ()
+    unresolved_questions: tuple[str, ...] = ()
+    local_capabilities: tuple[str, ...] = ()
+    external_brains: tuple[str, ...] = ()
+    recent_outcome: str | None = None
+    changes: tuple[str, ...] = ()
+
+
+@dataclass(slots=True)
+class ImpasseState:
+    """A concrete gap ZN could not resolve with its current native knowledge."""
+
+    impasse_id: str
+    event_id: str
+    task: str
+    opened_at: str
+    updated_at: str
+    reason: str
+    required_capabilities: tuple[str, ...] = ()
+    local_failure: str | None = None
+    attempts: int = 1
+    status: str = "open"
+    resolution_source: str | None = None
+    resolution_summary: str | None = None
+    resolved_at: str | None = None
+
+
+@dataclass(slots=True)
+class LearningCandidate:
+    """A resolved impasse that may be compiled into reusable native ability."""
+
+    candidate_id: str
+    source_impasse_id: str
+    event_id: str
+    task: str
+    created_at: str
+    resolution_source: str
+    resolution_summary: str
+    required_capabilities: tuple[str, ...] = ()
+    status: str = "candidate"
 
 
 @dataclass(slots=True)
@@ -78,7 +132,10 @@ class LivingState:
     capabilities: tuple[str, ...] = ()
     external_brains: tuple[str, ...] = ()
     body: BodyState | None = None
+    current_situation: SituationModel | None = None
     current_thought: ThoughtFrame | None = None
+    current_impasse: ImpasseState | None = None
+    learning_candidates: tuple[str, ...] = ()
     last_event_id: str | None = None
     last_action_summary: str | None = None
 
@@ -105,13 +162,12 @@ class LifePulse:
 
 
 class ZNLifeCore:
-    """The minimal continuous self-loop of ZN.
+    """The continuous native self-loop of ZN.
 
-    This layer does not need an LLM. It maintains continuity, senses the host,
-    notices changes, forms an internal thought frame, keeps an active intention,
-    and records what ZN just did. Models are cognitive resources that may be
-    consulted later; they do not own this state and are not required for it to
-    continue.
+    The sequence is intentionally explicit: sense -> situation -> thought ->
+    action -> outcome -> learning. This loop does not require an LLM. External
+    models are only relevant after ZN identifies a concrete impasse that its
+    own memory and compiled capabilities could not resolve.
     """
 
     def __init__(self, resident: ZNResidentRuntime):
@@ -138,33 +194,48 @@ class ZNLifeCore:
         previous = self._load_or_birth()
         body = self._sense_body()
         next_event = self.store.peek_next_event()
-        pending = [next_event] if next_event is not None else []
         capabilities = tuple(self.resident.capabilities.names())
         external_brains = self._sense_external_brains()
-
         material_observations = list(
             self._notice_changes(previous, body, capabilities, external_brains)
         )
-        drives = self._derive_drives(previous, body, pending)
-        thought = self._form_thought(
+
+        situation = self._build_situation(
             previous=previous,
             body=body,
-            pending=pending,
+            next_event=next_event,
             capabilities=capabilities,
             external_brains=external_brains,
+            changes=tuple(material_observations),
+        )
+        drives = self._derive_drives(situation)
+        thought = self._form_thought(
+            previous=previous,
+            situation=situation,
             drives=drives,
         )
 
-        mode = "engaged" if pending else ("recovering" if thought.action_kind == "recover" else "observing")
+        if situation.active_event_id:
+            mode = "engaged"
+        elif situation.active_impasse_id:
+            mode = "recovering"
+        elif thought.action_kind == "recover":
+            mode = "recovering"
+        else:
+            mode = "observing"
         attention = None if thought.focus == "environment" else thought.focus
         intention = thought.chosen_action
 
-        if pending:
-            material_observations.append(f"unfinished event available: {pending[0].event_id}")
+        if situation.active_event_id:
+            material_observations.append(
+                f"unfinished event available: {situation.active_event_id}"
+            )
         elif previous.mode == "engaged":
             material_observations.append("no unfinished event remains")
 
-        pulse_observations = tuple(material_observations) or ("no material change detected",)
+        pulse_observations = tuple(material_observations) or (
+            "no material change detected",
+        )
         state = LivingState(
             name=previous.name,
             version=previous.version,
@@ -185,11 +256,15 @@ class ZNLifeCore:
             capabilities=capabilities,
             external_brains=external_brains,
             body=body,
+            current_situation=situation,
             current_thought=thought,
+            current_impasse=previous.current_impasse,
+            learning_candidates=previous.learning_candidates,
             last_event_id=previous.last_event_id,
             last_action_summary=previous.last_action_summary,
         )
         self._save_state(state)
+        self._append_situation(situation)
         self._append_thought(thought)
 
         pulse = LifePulse(
@@ -204,6 +279,112 @@ class ZNLifeCore:
         self._append_pulse(pulse)
         self._state = state
         return pulse
+
+    def begin_impasse(
+        self,
+        event: AgentEvent,
+        *,
+        reason: str,
+        required_capabilities: tuple[str, ...] = (),
+        local_failure: str | None = None,
+    ) -> ImpasseState:
+        """Record the exact point where native resolution stopped being enough."""
+        state = self._load_or_birth()
+        current = state.current_impasse
+        now = utc_now()
+        if current and current.event_id == event.event_id and current.status == "open":
+            current.updated_at = now
+            current.reason = str(reason or current.reason)
+            current.local_failure = local_failure or current.local_failure
+            current.required_capabilities = tuple(required_capabilities)
+            current.attempts += 1
+            impasse = current
+        else:
+            impasse = ImpasseState(
+                impasse_id=f"imp-{event.event_id}",
+                event_id=event.event_id,
+                task=event.task,
+                opened_at=now,
+                updated_at=now,
+                reason=str(reason or "native resolution path is unknown"),
+                required_capabilities=tuple(required_capabilities),
+                local_failure=local_failure,
+            )
+        state.current_impasse = impasse
+        state.mode = "recovering"
+        state.attention = event.task
+        state.intention = f"resolve impasse {impasse.impasse_id}"
+        state.observations = self._merge_observations(
+            state.observations,
+            (f"impasse opened: {impasse.impasse_id}",),
+        )
+        self._save_impasse(impasse)
+        self._save_state(state)
+        self._state = state
+        return impasse
+
+    def mark_impasse_unresolved(self, event: AgentEvent, reason: str) -> None:
+        state = self._load_or_birth()
+        impasse = state.current_impasse
+        if not impasse or impasse.event_id != event.event_id:
+            return
+        impasse.updated_at = utc_now()
+        impasse.reason = str(reason or impasse.reason)
+        impasse.status = "open"
+        self._save_impasse(impasse)
+        state.current_impasse = impasse
+        self._save_state(state)
+        self._state = state
+
+    def resolve_impasse(
+        self,
+        event: AgentEvent,
+        run: ResidentRunResult,
+        *,
+        resolution_source: str,
+    ) -> LearningCandidate | None:
+        """Close an impasse and stage its solution as a reusable learning candidate."""
+        state = self._load_or_birth()
+        impasse = state.current_impasse
+        if not impasse or impasse.event_id != event.event_id or not run.success:
+            return None
+
+        now = utc_now()
+        summary = self._summarize_run(run)
+        impasse.status = "resolved"
+        impasse.updated_at = now
+        impasse.resolved_at = now
+        impasse.resolution_source = str(resolution_source or run.execution_path.value)
+        impasse.resolution_summary = summary
+        self._save_impasse(impasse)
+
+        candidate = LearningCandidate(
+            candidate_id=f"learn-{impasse.impasse_id}",
+            source_impasse_id=impasse.impasse_id,
+            event_id=event.event_id,
+            task=event.task,
+            created_at=now,
+            resolution_source=impasse.resolution_source,
+            resolution_summary=summary,
+            required_capabilities=impasse.required_capabilities,
+        )
+        self._save_learning_candidate(candidate)
+        state.current_impasse = None
+        if candidate.candidate_id not in state.learning_candidates:
+            state.learning_candidates = (
+                *state.learning_candidates,
+                candidate.candidate_id,
+            )[-128:]
+        state.observations = self._merge_observations(
+            state.observations,
+            (
+                f"impasse resolved: {impasse.impasse_id}",
+                f"learning candidate staged: {candidate.candidate_id}",
+            ),
+        )
+        self._save_state(state)
+        self._state = state
+        return candidate
 
     def observe_action(self, run: ResidentRunResult) -> LivingState:
         state = self._load_or_birth()
@@ -221,8 +402,14 @@ class ZNLifeCore:
             if run.success
             else f"failed {run.event.event_id}: {run.reason or 'unknown reason'}"
         )
-        state.observations = self._merge_observations(state.observations, (observation,))
-        if not run.success:
+        state.observations = self._merge_observations(
+            state.observations,
+            (observation,),
+        )
+        current_impasse = state.current_impasse
+        if not run.success and not (
+            current_impasse and current_impasse.event_id == run.event.event_id
+        ):
             question = f"why did {run.event.event_id} fail"
             if question not in state.open_questions:
                 state.open_questions = (*state.open_questions, question)[-16:]
@@ -230,7 +417,10 @@ class ZNLifeCore:
         self._state = state
         return state
 
-    def set_open_questions(self, questions: list[str] | tuple[str, ...]) -> LivingState:
+    def set_open_questions(
+        self,
+        questions: list[str] | tuple[str, ...],
+    ) -> LivingState:
         state = self._load_or_birth()
         state.open_questions = tuple(
             text for text in (str(item).strip() for item in questions) if text
@@ -262,9 +452,21 @@ class ZNLifeCore:
             raw = json.loads(row["data"])
             raw["observations"] = tuple(raw.get("observations") or ())
             thought = raw.get("thought")
-            raw["thought"] = self._thought_from_raw(thought) if isinstance(thought, dict) else None
+            raw["thought"] = (
+                self._thought_from_raw(thought)
+                if isinstance(thought, dict)
+                else None
+            )
             pulses.append(LifePulse(**raw))
         return pulses
+
+    def recent_situations(self, limit: int = 20) -> list[SituationModel]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT data FROM life_situations ORDER BY sequence DESC LIMIT ?",
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [self._situation_from_raw(json.loads(row["data"])) for row in rows]
 
     def recent_thoughts(self, limit: int = 20) -> list[ThoughtFrame]:
         with self._connect() as conn:
@@ -274,16 +476,46 @@ class ZNLifeCore:
             ).fetchall()
         return [self._thought_from_raw(json.loads(row["data"])) for row in rows]
 
+    def recent_impasses(self, limit: int = 20) -> list[ImpasseState]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT data FROM life_impasses ORDER BY updated_at DESC LIMIT ?",
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [self._impasse_from_raw(json.loads(row["data"])) for row in rows]
+
+    def recent_learning_candidates(self, limit: int = 20) -> list[LearningCandidate]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT data FROM life_learning_candidates ORDER BY created_at DESC LIMIT ?",
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [self._learning_from_raw(json.loads(row["data"])) for row in rows]
+
     def _load_or_birth(self) -> LivingState:
         with self._connect() as conn:
             row = conn.execute("SELECT data FROM living_self WHERE id=1").fetchone()
         if row:
             raw = json.loads(row["data"])
             body = raw.get("body")
+            situation = raw.get("current_situation")
             thought = raw.get("current_thought")
+            impasse = raw.get("current_impasse")
             raw["body"] = BodyState(**body) if isinstance(body, dict) else None
+            raw["current_situation"] = (
+                self._situation_from_raw(situation)
+                if isinstance(situation, dict)
+                else None
+            )
             raw["current_thought"] = (
-                self._thought_from_raw(thought) if isinstance(thought, dict) else None
+                self._thought_from_raw(thought)
+                if isinstance(thought, dict)
+                else None
+            )
+            raw["current_impasse"] = (
+                self._impasse_from_raw(impasse)
+                if isinstance(impasse, dict)
+                else None
             )
             for key in (
                 "drives",
@@ -291,8 +523,11 @@ class ZNLifeCore:
                 "open_questions",
                 "capabilities",
                 "external_brains",
+                "learning_candidates",
             ):
                 raw[key] = tuple(raw.get(key) or ())
+            raw.setdefault("current_situation", None)
+            raw.setdefault("current_impasse", None)
             return LivingState(**raw)
 
         identity = self.resident.identity
@@ -307,6 +542,19 @@ class ZNLifeCore:
         return state
 
     @staticmethod
+    def _situation_from_raw(raw: dict[str, Any]) -> SituationModel:
+        data = dict(raw)
+        for key in (
+            "body_signals",
+            "unresolved_questions",
+            "local_capabilities",
+            "external_brains",
+            "changes",
+        ):
+            data[key] = tuple(data.get(key) or ())
+        return SituationModel(**data)
+
+    @staticmethod
     def _thought_from_raw(raw: dict[str, Any]) -> ThoughtFrame:
         data = dict(raw)
         for key in ("known", "unknown", "possible_actions"):
@@ -315,12 +563,35 @@ class ZNLifeCore:
         data.setdefault("action_target", None)
         return ThoughtFrame(**data)
 
+    @staticmethod
+    def _impasse_from_raw(raw: dict[str, Any]) -> ImpasseState:
+        data = dict(raw)
+        data["required_capabilities"] = tuple(
+            data.get("required_capabilities") or ()
+        )
+        return ImpasseState(**data)
+
+    @staticmethod
+    def _learning_from_raw(raw: dict[str, Any]) -> LearningCandidate:
+        data = dict(raw)
+        data["required_capabilities"] = tuple(
+            data.get("required_capabilities") or ()
+        )
+        return LearningCandidate(**data)
+
     def _save_state(self, state: LivingState) -> None:
         payload = asdict(state)
         with self._connect() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO living_self(id,data,updated_at) VALUES(1,?,?)",
-                (json.dumps(payload, ensure_ascii=False, separators=(",", ":")), utc_now()),
+                (
+                    json.dumps(
+                        payload,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                    utc_now(),
+                ),
             )
             conn.commit()
 
@@ -336,7 +607,26 @@ class ZNLifeCore:
                 ),
             )
             conn.execute(
-                "DELETE FROM life_pulses WHERE sequence < (SELECT COALESCE(MAX(sequence),0)-2048 FROM life_pulses)"
+                "DELETE FROM life_pulses WHERE sequence < "
+                "(SELECT COALESCE(MAX(sequence),0)-2048 FROM life_pulses)"
+            )
+            conn.commit()
+
+    def _append_situation(self, situation: SituationModel) -> None:
+        payload = asdict(situation)
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO life_situations(sequence,created_at,data) "
+                "VALUES(?,?,?)",
+                (
+                    situation.sequence,
+                    situation.at,
+                    json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                ),
+            )
+            conn.execute(
+                "DELETE FROM life_situations WHERE sequence < "
+                "(SELECT COALESCE(MAX(sequence),0)-2048 FROM life_situations)"
             )
             conn.commit()
 
@@ -344,7 +634,8 @@ class ZNLifeCore:
         payload = asdict(thought)
         with self._connect() as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO life_thoughts(sequence,created_at,data) VALUES(?,?,?)",
+                "INSERT OR REPLACE INTO life_thoughts(sequence,created_at,data) "
+                "VALUES(?,?,?)",
                 (
                     thought.sequence,
                     thought.at,
@@ -352,7 +643,41 @@ class ZNLifeCore:
                 ),
             )
             conn.execute(
-                "DELETE FROM life_thoughts WHERE sequence < (SELECT COALESCE(MAX(sequence),0)-2048 FROM life_thoughts)"
+                "DELETE FROM life_thoughts WHERE sequence < "
+                "(SELECT COALESCE(MAX(sequence),0)-2048 FROM life_thoughts)"
+            )
+            conn.commit()
+
+    def _save_impasse(self, impasse: ImpasseState) -> None:
+        payload = asdict(impasse)
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO life_impasses"
+                "(impasse_id,event_id,status,updated_at,data) VALUES(?,?,?,?,?)",
+                (
+                    impasse.impasse_id,
+                    impasse.event_id,
+                    impasse.status,
+                    impasse.updated_at,
+                    json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                ),
+            )
+            conn.commit()
+
+    def _save_learning_candidate(self, candidate: LearningCandidate) -> None:
+        payload = asdict(candidate)
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO life_learning_candidates"
+                "(candidate_id,source_impasse_id,created_at,status,data) "
+                "VALUES(?,?,?,?,?)",
+                (
+                    candidate.candidate_id,
+                    candidate.source_impasse_id,
+                    candidate.created_at,
+                    candidate.status,
+                    json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                ),
             )
             conn.commit()
 
@@ -370,9 +695,28 @@ class ZNLifeCore:
                     created_at TEXT NOT NULL,
                     data TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS life_situations(
+                    sequence INTEGER PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    data TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS life_thoughts(
                     sequence INTEGER PRIMARY KEY,
                     created_at TEXT NOT NULL,
+                    data TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS life_impasses(
+                    impasse_id TEXT PRIMARY KEY,
+                    event_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    data TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS life_learning_candidates(
+                    candidate_id TEXT PRIMARY KEY,
+                    source_impasse_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    status TEXT NOT NULL,
                     data TEXT NOT NULL
                 );
                 """
@@ -402,7 +746,10 @@ class ZNLifeCore:
             cpu_count=os.cpu_count(),
             disk_total_bytes=disk_total,
             disk_free_bytes=disk_free,
-            process_uptime_seconds=max(0.0, time.monotonic() - self._started_monotonic),
+            process_uptime_seconds=max(
+                0.0,
+                time.monotonic() - self._started_monotonic,
+            ),
         )
 
     def _sense_external_brains(self) -> tuple[str, ...]:
@@ -420,18 +767,56 @@ class ZNLifeCore:
             available.append(route_id)
         return tuple(sorted(set(available)))
 
-    @staticmethod
-    def _derive_drives(
+    def _build_situation(
+        self,
+        *,
         previous: LivingState,
         body: BodyState,
-        pending: list,
-    ) -> tuple[str, ...]:
-        drives: list[str] = ["maintain continuity"]
-        if pending:
-            drives.append("make progress on unfinished work")
-        if previous.mode == "recovering" or previous.open_questions:
-            drives.append("reduce unresolved uncertainty")
+        next_event: AgentEvent | None,
+        capabilities: tuple[str, ...],
+        external_brains: tuple[str, ...],
+        changes: tuple[str, ...],
+    ) -> SituationModel:
+        body_signals: list[str] = []
+        body_health = "nominal"
         if body.disk_total_bytes > 0 and body.disk_free_ratio < 0.10:
+            body_health = "constrained"
+            body_signals.append("disk free space below ten percent")
+        if previous.body and previous.body.pid != body.pid:
+            body_signals.append("resident process identity changed")
+
+        current_impasse = previous.current_impasse
+        active_impasse_id = (
+            current_impasse.impasse_id
+            if current_impasse and current_impasse.status == "open"
+            else None
+        )
+        return SituationModel(
+            sequence=previous.pulse_count + 1,
+            at=utc_now(),
+            active_event_id=next_event.event_id if next_event else None,
+            active_task=next_event.task if next_event else None,
+            active_priority=next_event.priority if next_event else None,
+            active_impasse_id=active_impasse_id,
+            body_health=body_health,
+            body_signals=tuple(body_signals),
+            unresolved_questions=tuple(previous.open_questions[-8:]),
+            local_capabilities=capabilities,
+            external_brains=external_brains,
+            recent_outcome=previous.last_action_summary,
+            changes=changes,
+        )
+
+    @staticmethod
+    def _derive_drives(situation: SituationModel) -> tuple[str, ...]:
+        drives: list[str] = ["maintain continuity"]
+        if situation.active_event_id:
+            drives.append("make progress on unfinished work")
+        if situation.active_impasse_id:
+            drives.append("resolve current cognitive impasse")
+        if situation.unresolved_questions:
+            drives.append("reduce unresolved uncertainty")
+        if situation.body_health != "nominal":
             drives.append("preserve body resources")
         return tuple(drives)
 
@@ -439,40 +824,68 @@ class ZNLifeCore:
         self,
         *,
         previous: LivingState,
-        body: BodyState,
-        pending: list,
-        capabilities: tuple[str, ...],
-        external_brains: tuple[str, ...],
+        situation: SituationModel,
         drives: tuple[str, ...],
     ) -> ThoughtFrame:
         known = [
             f"I am {previous.name} {previous.version}",
-            f"I am running on {body.hostname} ({body.system} {body.architecture})",
-            f"I have {len(capabilities)} compiled local capabilities",
-            f"I have {len(external_brains)} external cognitive routes available",
+            f"my body health is {situation.body_health}",
+            f"I have {len(situation.local_capabilities)} compiled local capabilities",
+            f"I have {len(situation.external_brains)} external cognitive routes available",
         ]
-        unknown = list(previous.open_questions[-8:])
+        if situation.active_event_id:
+            known.append(
+                f"event {situation.active_event_id} is the highest priority unfinished work"
+            )
+        if situation.recent_outcome:
+            known.append(f"my recent outcome was: {situation.recent_outcome[:240]}")
+
+        unknown = list(situation.unresolved_questions)
+        current_impasse = previous.current_impasse
+        if (
+            situation.active_impasse_id
+            and current_impasse
+            and current_impasse.status == "open"
+        ):
+            unknown.insert(0, current_impasse.reason)
+
         possible_actions = ["observe for meaningful change"]
         action_kind = "observe"
         action_target = None
 
-        if pending:
-            next_event = pending[0]
-            focus = next_event.task
-            possible_actions.insert(0, f"work on event {next_event.event_id}")
-            chosen = f"work on event {next_event.event_id}"
+        if situation.active_event_id:
+            focus = situation.active_task or situation.active_event_id
+            possible_actions.insert(
+                0,
+                f"work on event {situation.active_event_id}",
+            )
+            chosen = f"work on event {situation.active_event_id}"
             action_kind = "event"
-            action_target = next_event.event_id
+            action_target = situation.active_event_id
             reason = "unfinished work is present and progress is currently possible"
             confidence = 0.95
+        elif situation.active_impasse_id and current_impasse:
+            focus = current_impasse.task
+            possible_actions.insert(
+                0,
+                f"inspect impasse {current_impasse.impasse_id}",
+            )
+            chosen = f"inspect impasse {current_impasse.impasse_id}"
+            action_kind = "impasse"
+            action_target = current_impasse.impasse_id
+            reason = "my native resolution path stopped at a concrete knowledge gap"
+            confidence = 0.85
         elif previous.mode == "recovering" and previous.last_event_id:
             focus = previous.attention or previous.last_event_id
-            possible_actions.insert(0, f"recover from event {previous.last_event_id}")
+            possible_actions.insert(
+                0,
+                f"recover from event {previous.last_event_id}",
+            )
             chosen = f"recover from event {previous.last_event_id}"
             action_kind = "recover"
             action_target = previous.last_event_id
             reason = "the most recent action failed and remains unresolved"
-            confidence = 0.85
+            confidence = 0.80
         elif unknown:
             focus = unknown[0]
             possible_actions.insert(0, "inspect unresolved question")
@@ -481,22 +894,25 @@ class ZNLifeCore:
             action_target = unknown[0]
             reason = "an unresolved question remains in my own state"
             confidence = 0.75
-        elif body.disk_total_bytes > 0 and body.disk_free_ratio < 0.10:
+        elif situation.body_health != "nominal":
             focus = "body resources"
-            possible_actions.insert(0, "inspect low disk space")
-            chosen = "inspect low disk space"
+            possible_actions.insert(0, "inspect body constraint")
+            chosen = "inspect body constraint"
             action_kind = "body"
-            action_target = "disk"
-            reason = "free disk space is below ten percent"
+            action_target = "body_health"
+            reason = "my body reports a resource constraint"
             confidence = 0.95
         else:
             focus = "environment"
             chosen = "observe for meaningful change"
-            reason = "no unfinished work or unresolved internal issue currently dominates attention"
+            reason = (
+                "no unfinished work, cognitive impasse, or unresolved internal "
+                "issue currently dominates attention"
+            )
             confidence = 1.0
 
         return ThoughtFrame(
-            sequence=previous.pulse_count + 1,
+            sequence=situation.sequence,
             at=utc_now(),
             focus=focus,
             known=tuple(known),
@@ -560,4 +976,7 @@ class ZNLifeCore:
                 if response
                 else f"success via {run.execution_path.value}"
             )
-        return f"failure via {run.execution_path.value}: {run.reason or 'unknown reason'}"
+        return (
+            f"failure via {run.execution_path.value}: "
+            f"{run.reason or 'unknown reason'}"
+        )
