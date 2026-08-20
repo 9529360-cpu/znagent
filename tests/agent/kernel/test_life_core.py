@@ -52,7 +52,25 @@ class LifeCoreTests(unittest.TestCase):
             self.assertGreater(state.body.pid, 0)
             self.assertGreaterEqual(state.body.process_uptime_seconds, 0.0)
             self.assertEqual(state.external_brains, ())
-            self.assertIn(state.mode, {"observing", "engaged"})
+            self.assertIn(state.mode, {"observing", "engaged", "recovering"})
+            resident.store.close()
+
+    def test_idle_pulse_forms_native_thought_without_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+
+            pulse = resident.pulse()
+            thought = pulse.thought
+
+            self.assertIsNotNone(thought)
+            self.assertEqual(thought.focus, "environment")
+            self.assertEqual(thought.chosen_action, "observe for meaningful change")
+            self.assertTrue(any("I am " in item for item in thought.known))
+            self.assertEqual(resident.life.snapshot().current_thought.sequence, thought.sequence)
+            self.assertEqual(len(resident.life.recent_thoughts(1)), 1)
             resident.store.close()
 
     def test_action_becomes_part_of_self_state(self):
@@ -78,11 +96,11 @@ class LifeCoreTests(unittest.TestCase):
             self.assertTrue(result.success)
             self.assertEqual(state.last_event_id, result.event.event_id)
             self.assertIn("success via capability", state.last_action_summary or "")
-            self.assertEqual(state.intention, "remain available and observe")
+            self.assertEqual(state.intention, "observe for the next meaningful change")
             self.assertTrue(any("completed" in item for item in state.observations))
             resident.store.close()
 
-    def test_pending_event_enters_attention_on_pulse(self):
+    def test_pending_event_enters_attention_and_thought_on_pulse(self):
         with tempfile.TemporaryDirectory() as tmp:
             resident = build_resident_runtime_from_existing_stack(
                 config={"model": {}},
@@ -90,13 +108,39 @@ class LifeCoreTests(unittest.TestCase):
             )
             event = resident.enqueue("finish the unfinished thing")
 
-            resident.pulse()
+            pulse = resident.pulse()
             state = resident.life.snapshot()
 
             self.assertEqual(state.mode, "engaged")
             self.assertEqual(state.attention, event.task)
             self.assertIn(event.event_id, state.intention or "")
+            self.assertIsNotNone(pulse.thought)
+            self.assertEqual(pulse.thought.focus, event.task)
+            self.assertIn(event.event_id, pulse.thought.chosen_action)
+            self.assertIn("make progress on unfinished work", state.drives)
             resident.store.close()
+
+    def test_unresolved_question_survives_restart_and_reenters_thought(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "kernel.db"
+            first = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=db,
+            )
+            first.life.set_open_questions(("what changed in the workspace",))
+            first.store.close()
+
+            second = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=db,
+            )
+            pulse = second.pulse()
+
+            self.assertEqual(pulse.thought.focus, "what changed in the workspace")
+            self.assertIn("what changed in the workspace", pulse.thought.unknown)
+            self.assertEqual(pulse.thought.chosen_action, "inspect unresolved question")
+            self.assertIn("reduce unresolved uncertainty", second.life.snapshot().drives)
+            second.store.close()
 
     def test_recent_pulses_are_persisted(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -111,6 +155,7 @@ class LifeCoreTests(unittest.TestCase):
 
             self.assertEqual(len(pulses), 2)
             self.assertGreater(pulses[0].sequence, pulses[1].sequence)
+            self.assertIsNotNone(pulses[0].thought)
             resident.store.close()
 
 
