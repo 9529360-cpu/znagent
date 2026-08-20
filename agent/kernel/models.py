@@ -191,6 +191,24 @@ class CognitiveDecision:
 
 
 @dataclass(slots=True)
+class CognitionRequest:
+    """A bounded question ZN sends to an external cognitive resource.
+
+    It carries the local gap and only the context ZN judged necessary for that
+    gap. It is not a serialization of ZN's identity, memory, or full internal
+    state.
+    """
+
+    request_id: str
+    impasse_id: str
+    event_id: str
+    question: str
+    required_capabilities: tuple[str, ...] = ("general",)
+    context: dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=utc_now)
+
+
+@dataclass(slots=True)
 class RuntimeMetrics:
     tasks_total: int = 0
     tasks_model: int = 0
