@@ -160,32 +160,29 @@ class ZNKernelRuntime:
         attempt: int,
         previous_failures: list[str],
     ) -> str:
-        weakest = [
-            {
-                "capability": estimate.name,
-                "score": round(estimate.score, 3),
-                "evidence": estimate.evidence_count,
-                "confidence": round(estimate.confidence, 3),
-            }
-            for estimate in self.self_model.weakest(limit=5)
-        ]
+        cognition = goal.metadata.get("cognition_request")
+        if not isinstance(cognition, dict):
+            cognition = {}
+        bounded_context = cognition.get("context")
+        if not isinstance(bounded_context, dict):
+            bounded_context = {}
+
+        # The external worker gets only what is needed for this cognition
+        # request. ZN's memories, full self-model, skill/capability catalog and
+        # unrelated internal state stay resident-side.
         state = {
-            "agent": self.identity.name,
-            "kernel_version": self.identity.version,
             "goal_id": goal.goal_id,
             "attempt": attempt,
-            "selected_route": route.route_id,
             "required_capabilities": goal.required_capabilities,
-            "known_weaknesses": weakest,
+            "bounded_context": bounded_context,
             "previous_failures": previous_failures[-3:],
         }
         return (
-            "You are a cognitive worker invoked by the ZN Agent Kernel. "
-            "You are not the top-level agent and you do not own long-term goals. "
-            "The kernel selected you as a model resource for one bounded goal. "
-            "Use the available runtime tools to complete the goal, verify concrete "
-            "changes when possible, and report the result accurately. Do not claim "
-            "that the agent improved itself; improvement is decided by kernel-side "
-            "evidence and benchmarks.\n\nKERNEL STATE:\n"
+            "You are an external cognitive resource temporarily consulted by ZN. "
+            "Answer the bounded question in the goal; you are not the persistent "
+            "agent and you do not own its identity, memories, goals, or body. "
+            "Use only the supplied context unless the task itself requires a tool. "
+            "Return the cognitive or task result accurately so ZN can evaluate and "
+            "integrate it.\n\nBOUNDED CONTEXT:\n"
             + json.dumps(state, ensure_ascii=False, indent=2)
         )
