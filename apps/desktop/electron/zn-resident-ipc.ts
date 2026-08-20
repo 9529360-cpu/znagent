@@ -20,6 +20,9 @@ export function registerZnResidentIpc(): void {
   ipcMain.handle('zn:resident:pulses', async (_event, limit) =>
     getResident().request('pulses', { limit: Number(limit || 20) })
   )
+  ipcMain.handle('zn:resident:thoughts', async (_event, limit) =>
+    getResident().request('thoughts', { limit: Number(limit || 20) })
+  )
   ipcMain.handle('zn:resident:submit', async (_event, payload) => {
     const task = String(payload?.task || '').trim()
     if (!task) throw new Error('task is required')
