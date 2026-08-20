@@ -43,14 +43,7 @@ class BodyState:
 
 @dataclass(slots=True)
 class ThoughtFrame:
-    """One model-independent frame of ZN's current internal reasoning.
-
-    It is deliberately structured rather than prose.  The frame records what
-    the resident currently knows, what is unresolved, which actions it can see,
-    and the next move selected by its own control loop.  A model can later be
-    consulted for a specific unresolved part, but it does not create or own the
-    frame itself.
-    """
+    """One model-independent frame of ZN's current internal reasoning."""
 
     sequence: int
     at: str
@@ -59,6 +52,8 @@ class ThoughtFrame:
     unknown: tuple[str, ...] = ()
     possible_actions: tuple[str, ...] = ()
     chosen_action: str = "observe"
+    action_kind: str = "observe"
+    action_target: str | None = None
     reason: str = "maintain continuity"
     confidence: float = 1.0
 
@@ -112,9 +107,9 @@ class LifePulse:
 class ZNLifeCore:
     """The minimal continuous self-loop of ZN.
 
-    This layer does not need an LLM.  It maintains continuity, senses the host,
+    This layer does not need an LLM. It maintains continuity, senses the host,
     notices changes, forms an internal thought frame, keeps an active intention,
-    and records what ZN just did.  Models are cognitive resources that may be
+    and records what ZN just did. Models are cognitive resources that may be
     consulted later; they do not own this state and are not required for it to
     continue.
     """
@@ -142,7 +137,8 @@ class ZNLifeCore:
     def pulse(self) -> LifePulse:
         previous = self._load_or_birth()
         body = self._sense_body()
-        pending = self.store.list_events(EventStatus.PENDING, limit=100)
+        next_event = self.store.peek_next_event()
+        pending = [next_event] if next_event is not None else []
         capabilities = tuple(self.resident.capabilities.names())
         external_brains = self._sense_external_brains()
 
@@ -159,7 +155,7 @@ class ZNLifeCore:
             drives=drives,
         )
 
-        mode = "engaged" if pending else ("recovering" if "recover" in thought.chosen_action else "observing")
+        mode = "engaged" if pending else ("recovering" if thought.action_kind == "recover" else "observing")
         attention = None if thought.focus == "environment" else thought.focus
         intention = thought.chosen_action
 
@@ -315,6 +311,8 @@ class ZNLifeCore:
         data = dict(raw)
         for key in ("known", "unknown", "possible_actions"):
             data[key] = tuple(data.get(key) or ())
+        data.setdefault("action_kind", "observe")
+        data.setdefault("action_target", None)
         return ThoughtFrame(**data)
 
     def _save_state(self, state: LivingState) -> None:
@@ -455,30 +453,40 @@ class ZNLifeCore:
         ]
         unknown = list(previous.open_questions[-8:])
         possible_actions = ["observe for meaningful change"]
+        action_kind = "observe"
+        action_target = None
 
         if pending:
             next_event = pending[0]
             focus = next_event.task
             possible_actions.insert(0, f"work on event {next_event.event_id}")
             chosen = f"work on event {next_event.event_id}"
+            action_kind = "event"
+            action_target = next_event.event_id
             reason = "unfinished work is present and progress is currently possible"
             confidence = 0.95
         elif previous.mode == "recovering" and previous.last_event_id:
             focus = previous.attention or previous.last_event_id
             possible_actions.insert(0, f"recover from event {previous.last_event_id}")
             chosen = f"recover from event {previous.last_event_id}"
+            action_kind = "recover"
+            action_target = previous.last_event_id
             reason = "the most recent action failed and remains unresolved"
             confidence = 0.85
         elif unknown:
             focus = unknown[0]
             possible_actions.insert(0, "inspect unresolved question")
             chosen = "inspect unresolved question"
+            action_kind = "reflect"
+            action_target = unknown[0]
             reason = "an unresolved question remains in my own state"
             confidence = 0.75
         elif body.disk_total_bytes > 0 and body.disk_free_ratio < 0.10:
             focus = "body resources"
             possible_actions.insert(0, "inspect low disk space")
             chosen = "inspect low disk space"
+            action_kind = "body"
+            action_target = "disk"
             reason = "free disk space is below ten percent"
             confidence = 0.95
         else:
@@ -495,6 +503,8 @@ class ZNLifeCore:
             unknown=tuple(unknown),
             possible_actions=tuple(possible_actions),
             chosen_action=chosen,
+            action_kind=action_kind,
+            action_target=action_target,
             reason=reason,
             confidence=confidence,
         )
