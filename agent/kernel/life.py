@@ -6,7 +6,6 @@ import platform
 import shutil
 import socket
 import sqlite3
-import sys
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -115,7 +114,9 @@ class ZNLifeCore:
         capabilities = tuple(self.resident.capabilities.names())
         external_brains = self._sense_external_brains()
 
-        observations = list(self._notice_changes(previous, body, capabilities, external_brains))
+        material_observations = list(
+            self._notice_changes(previous, body, capabilities, external_brains)
+        )
         mode = "engaged" if pending else "observing"
         attention = previous.attention
         intention = previous.intention
@@ -124,17 +125,15 @@ class ZNLifeCore:
             next_event = pending[-1]
             attention = next_event.task
             intention = f"continue event {next_event.event_id}"
-            observations.append(f"unfinished event available: {next_event.event_id}")
+            material_observations.append(f"unfinished event available: {next_event.event_id}")
         elif previous.mode == "engaged":
             attention = None
             intention = "remain available and observe"
-            observations.append("no unfinished event remains")
+            material_observations.append("no unfinished event remains")
         elif not intention:
             intention = "remain available and observe"
 
-        if not observations:
-            observations.append("no material change detected")
-
+        pulse_observations = tuple(material_observations) or ("no material change detected",)
         state = LivingState(
             name=previous.name,
             version=previous.version,
@@ -146,7 +145,10 @@ class ZNLifeCore:
             mode=mode,
             attention=attention,
             intention=intention,
-            observations=self._merge_observations(previous.observations, tuple(observations)),
+            observations=self._merge_observations(
+                previous.observations,
+                tuple(material_observations),
+            ),
             open_questions=previous.open_questions,
             capabilities=capabilities,
             external_brains=external_brains,
@@ -161,7 +163,7 @@ class ZNLifeCore:
             mode=state.mode,
             attention=state.attention,
             intention=state.intention,
-            observations=tuple(observations),
+            observations=pulse_observations,
         )
         self._append_pulse(pulse)
         self._state = state
@@ -213,7 +215,12 @@ class ZNLifeCore:
                 "SELECT data FROM life_pulses ORDER BY sequence DESC LIMIT ?",
                 (max(1, int(limit)),),
             ).fetchall()
-        return [LifePulse(**json.loads(row["data"])) for row in rows]
+        pulses: list[LifePulse] = []
+        for row in rows:
+            raw = json.loads(row["data"])
+            raw["observations"] = tuple(raw.get("observations") or ())
+            pulses.append(LifePulse(**raw))
+        return pulses
 
     def _load_or_birth(self) -> LivingState:
         with self._connect() as conn:
@@ -238,7 +245,6 @@ class ZNLifeCore:
 
     def _save_state(self, state: LivingState) -> None:
         payload = asdict(state)
-        payload.pop("age_seconds", None)
         with self._connect() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO living_self(id,data,updated_at) VALUES(1,?,?)",
