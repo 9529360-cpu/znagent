@@ -21,10 +21,10 @@ from .runtime import ZNKernelRuntime
 class ZNResidentRuntime:
     """Long-lived, restart-safe resident agent runtime.
 
-    System 1 is deterministic and token-free: structured memory plus compiled
-    local capabilities. System 2 is the model-backed ZN Kernel and is invoked
-    only when System 1 cannot solve the event and the cognitive budget permits
-    it. The resident itself remains alive even when no System 2 model exists.
+    The resident owns the continuous ZN self. Structured memory, local
+    capabilities and external models are abilities available to that self; none
+    of them is the identity itself. The resident remains alive when no model is
+    configured.
     """
 
     def __init__(
@@ -42,6 +42,14 @@ class ZNResidentRuntime:
         self.memory = StructuredMemory(self.store)
         self.store.recover_interrupted_events()
         self.store.get_working_state()
+
+        # Import lazily to keep the kernel's low-level modules acyclic. LifeCore
+        # is not a plugin attached to the agent; it is the resident's persistent
+        # first-person state and heartbeat.
+        from .life import ZNLifeCore
+
+        self.life = ZNLifeCore(self)
+        self.life.wake()
 
     def enqueue(
         self,
@@ -79,6 +87,10 @@ class ZNResidentRuntime:
             if result.event.event_id == event.event_id:
                 return result
 
+    def pulse(self):
+        """Advance ZN's model-independent living loop once."""
+        return self.life.pulse()
+
     def run_once(self) -> ResidentRunResult | None:
         event = self.store.claim_next_event()
         if event is None:
@@ -101,18 +113,21 @@ class ZNResidentRuntime:
             persisted = self.store.get_event(event.event_id)
             if persisted is not None:
                 result.event = persisted
+            self.life.observe_action(result)
             return result
         except Exception as exc:
             message = f"{type(exc).__name__}: {exc}"
             self.store.finish_event(event.event_id, success=False, error=message)
             self.store.record_runtime_task(model_invocations=0)
             persisted = self.store.get_event(event.event_id) or event
-            return ResidentRunResult(
+            result = ResidentRunResult(
                 event=persisted,
                 execution_path=ExecutionPath.BUDGET_BLOCKED,
                 success=False,
                 reason=message,
             )
+            self.life.observe_action(result)
+            return result
         finally:
             self.store.save_working_state(WorkingState(stage="idle"))
 
@@ -120,14 +135,23 @@ class ZNResidentRuntime:
         self,
         *,
         poll_interval: float = 1.0,
+        pulse_interval: float = 2.0,
         stop_event: threading.Event | None = None,
     ) -> None:
         stopper = stop_event or threading.Event()
         sleep_for = max(0.05, float(poll_interval))
+        pulse_every = max(0.25, float(pulse_interval))
+        import time
+
+        next_pulse = 0.0
         while not stopper.is_set():
+            now = time.monotonic()
+            if now >= next_pulse:
+                self.pulse()
+                next_pulse = now + pulse_every
             result = self.run_once()
             if result is None:
-                stopper.wait(sleep_for)
+                stopper.wait(min(sleep_for, max(0.05, next_pulse - time.monotonic())))
 
     def load_promoted_capabilities(self, root=None):
         from .capability_loader import PromotedCapabilityLoader
@@ -142,6 +166,7 @@ class ZNResidentRuntime:
                 "version": self.identity.version,
                 "created_at": self.identity.created_at,
             },
+            "self": self.life.snapshot_dict(),
             "working_state": self.store.get_working_state(),
             "queue_depth": len(self.store.list_events(EventStatus.PENDING, limit=10000)),
             "model_dependency": {
