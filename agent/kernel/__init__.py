@@ -9,7 +9,7 @@ from .capabilities import CapabilityRegistry, CallableCapability, ExactTaskCapab
 from .capability_loader import LoadedCapability, PromotedCapabilityLoader
 from .critic import DefaultCritic
 from .home import get_zn_home
-from .life import BodyState, LifePulse, LivingState, ZNLifeCore
+from .life import BodyState, LifePulse, LivingState, ThoughtFrame, ZNLifeCore
 from .memory import FactMatch, StructuredMemory
 from .provider_bridge import (
     build_resident_runtime_from_existing_stack,
@@ -86,6 +86,7 @@ __all__ = [
     "RuntimeMetrics",
     "SelfModel",
     "StructuredMemory",
+    "ThoughtFrame",
     "Worker",
     "WorkerFactory",
     "WorkerResult",
