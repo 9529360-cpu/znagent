@@ -69,12 +69,14 @@ class ResidentService:
         stopper = stop_event or threading.Event()
         poll = max(0.05, float(poll_interval))
         self.acquire()
+        self.resident.pulse()
         next_heartbeat = time.monotonic()
         try:
             while not stopper.is_set():
                 now = time.monotonic()
                 if now >= next_heartbeat:
                     self.heartbeat()
+                    self.resident.pulse()
                     next_heartbeat = now + self.heartbeat_interval
                 result = self.resident.run_once()
                 if result is None:
