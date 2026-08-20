@@ -9,6 +9,7 @@ from .capabilities import CapabilityRegistry, CallableCapability, ExactTaskCapab
 from .capability_loader import LoadedCapability, PromotedCapabilityLoader
 from .critic import DefaultCritic
 from .home import get_zn_home
+from .investigation import InvestigationResult, InvestigationState, NativeInvestigator
 from .life import (
     BodyState,
     ImpasseState,
@@ -80,6 +81,8 @@ __all__ = [
     "Goal",
     "GoalStatus",
     "ImpasseState",
+    "InvestigationResult",
+    "InvestigationState",
     "LegacyAIAgentWorkerFactory",
     "ImprovementProposal",
     "KernelRunResult",
@@ -90,6 +93,7 @@ __all__ = [
     "LoadedCapability",
     "ModelRoute",
     "ModelRouter",
+    "NativeInvestigator",
     "NoRouteAvailable",
     "PromotedCapabilityLoader",
     "ResidentAlreadyRunning",
