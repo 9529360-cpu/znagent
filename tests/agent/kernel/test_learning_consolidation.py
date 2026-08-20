@@ -7,8 +7,11 @@ from pathlib import Path
 from agent.kernel import (
     CapabilityResult,
     ExactTaskCapability,
+    Goal,
     KernelStore,
     ModelRoute,
+    ModelRouter,
+    SelfModel,
     WorkerResult,
     ZNKernelRuntime,
     ZNResidentRuntime,
@@ -150,6 +153,39 @@ class LearningConsolidationTests(unittest.TestCase):
             self.assertEqual(self_estimate.evidence_count, 0)
             self.assertGreater(knowledge_estimate.evidence_count, 0)
             resident.store.close()
+
+    def test_python_requirement_can_use_programming_route_prior(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = KernelStore(Path(tmp) / "kernel.db")
+            router = ModelRouter(
+                [
+                    ModelRoute(
+                        "generic",
+                        "test",
+                        "generic-model",
+                        {"general": 0.65},
+                        reliability=0.8,
+                    ),
+                    ModelRoute(
+                        "coder",
+                        "test",
+                        "coder-model",
+                        {"programming": 0.95, "general": 0.2},
+                        reliability=0.8,
+                    ),
+                ],
+                SelfModel(store),
+            )
+            goal = Goal(
+                goal_id="goal-route-test",
+                task="debug python",
+                required_capabilities=("python",),
+            )
+
+            selected = router.select(goal)
+
+            self.assertEqual(selected.route_id, "coder")
+            store.close()
 
 
 if __name__ == "__main__":
