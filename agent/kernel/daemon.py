@@ -122,6 +122,85 @@ class ResidentRpcServer:
                     self._limit(params)
                 )
             ]
+        elif method == "neural":
+            nervous = getattr(self.resident, "nervous", None)
+            result = (
+                [asdict(item) for item in nervous.recent_traces(self._limit(params))]
+                if nervous is not None
+                else []
+            )
+        elif method == "perceive":
+            nervous = getattr(self.resident, "nervous", None)
+            if nervous is None:
+                raise ValueError("resident has no nervous system")
+            summary = str(params.get("summary") or "").strip()
+            if not summary:
+                raise ValueError("perceive requires summary")
+            features = params.get("features") or []
+            if not isinstance(features, list):
+                raise ValueError("features must be a list")
+            metadata = params.get("metadata")
+            if metadata is not None and not isinstance(metadata, dict):
+                raise ValueError("metadata must be an object")
+            channel = str(params.get("channel") or "sense").strip().lower()
+            kwargs = {
+                "features": tuple(str(item) for item in features),
+                "source": str(params.get("source") or channel or "sense"),
+                "salience": float(params.get("salience", 0.5)),
+                "valence": float(params.get("valence", 0.0)),
+                "arousal": float(params.get("arousal", 0.3)),
+                "metadata": metadata,
+            }
+            if channel == "vision" and hasattr(self.resident, "perceive_visual"):
+                trace = self.resident.perceive_visual(summary, **kwargs)
+            elif channel in {"world", "web", "world/web"} and hasattr(
+                self.resident, "perceive_world"
+            ):
+                trace = self.resident.perceive_world(summary, **kwargs)
+            else:
+                trace = nervous.perceive(channel, summary, **kwargs)
+            result = asdict(trace)
+        elif method == "world_follow":
+            world = getattr(self.resident, "world", None)
+            if world is None:
+                raise ValueError("resident has no world sensory organ")
+            topic = str(params.get("topic") or "").strip()
+            if not topic:
+                raise ValueError("world_follow requires topic")
+            result = asdict(
+                world.follow(
+                    topic,
+                    priority=int(params.get("priority") or 0),
+                    interval_seconds=int(params.get("interval_seconds") or 1800),
+                    source=str(params.get("source") or "self"),
+                )
+            )
+        elif method == "world_focuses":
+            world = getattr(self.resident, "world", None)
+            result = (
+                [
+                    asdict(item)
+                    for item in world.focuses(
+                        enabled_only=bool(params.get("enabled_only", True)),
+                        limit=self._limit(params),
+                    )
+                ]
+                if world is not None
+                else []
+            )
+        elif method == "world_observe":
+            world = getattr(self.resident, "world", None)
+            if world is None:
+                raise ValueError("resident has no world sensory organ")
+            focus_id = str(params.get("focus_id") or "").strip()
+            if not focus_id:
+                raise ValueError("world_observe requires focus_id")
+            result = asdict(
+                world.observe(
+                    focus_id,
+                    limit=max(1, min(10, int(params.get("limit") or 5))),
+                )
+            )
         elif method == "submit":
             task = str(params.get("task") or "").strip()
             if not task:
@@ -196,9 +275,13 @@ class ResidentRpcServer:
                     self.service.heartbeat()
                     next_lease_heartbeat = now + self.service.heartbeat_interval
                 self.resident.live_once()
+                world = getattr(self.resident, "world", None)
+                if world is not None:
+                    world.maybe_observe()
             except Exception:
                 # The foreground RPC path remains available to report state even
-                # if one perception/action cycle fails. The next cycle tries again.
+                # if one perception/action/sensory cycle fails. The next cycle
+                # keeps the same resident alive and tries again.
                 continue
 
     @staticmethod
