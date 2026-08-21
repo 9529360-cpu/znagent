@@ -25,6 +25,24 @@ class PersistentVisualSenseTests(unittest.TestCase):
         )
 
     @staticmethod
+    def _structured_frame(
+        token: str,
+        regions: tuple[str, ...],
+        *,
+        luminance: float = 0.45,
+    ) -> VisualFrame:
+        return VisualFrame(
+            frame_hash=(token * 64)[:64],
+            width=320,
+            height=180,
+            source="test-structured-screen",
+            region_signatures=regions,
+            grid_columns=4,
+            grid_rows=3,
+            mean_luminance=luminance,
+        )
+
+    @staticmethod
     def _request(endpoint: dict, method: str, params: dict | None = None) -> dict:
         with socket.create_connection(
             (str(endpoint["host"]), int(endpoint["port"])),
@@ -98,6 +116,116 @@ class PersistentVisualSenseTests(unittest.TestCase):
             self.assertEqual(state.sample_count, 3)
             self.assertEqual(state.change_count, 2)
             self.assertEqual(second.store.get_runtime_metrics().model_invocations, 0)
+            second.store.close()
+
+    def test_structured_regions_turn_local_change_into_lived_visual_structure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            base = tuple(f"region-{index}" for index in range(12))
+            changed_regions = list(base)
+            changed_regions[0] = "region-0-changed"
+            changed_regions = tuple(changed_regions)
+
+            retina = NativeVisualSense(
+                resident,
+                capture_fn=lambda: self._structured_frame(
+                    "a",
+                    base,
+                    luminance=0.40,
+                ),
+                interval_seconds=0.1,
+            )
+            initial = retina.sample()
+            self.assertIsNotNone(initial)
+            self.assertEqual(initial.change_scale, "initial")
+
+            retina.capture_fn = lambda: self._structured_frame(
+                "b",
+                changed_regions,
+                luminance=0.55,
+            )
+            local = retina.sample()
+            self.assertIsNotNone(local)
+            self.assertTrue(local.changed)
+            self.assertEqual(local.changed_region_indices, (0,))
+            self.assertAlmostEqual(local.change_ratio, 1 / 12, places=5)
+            self.assertEqual(local.change_scale, "local")
+            self.assertAlmostEqual(local.luminance_delta, 0.15, places=5)
+
+            # A raw frame hash may jitter because of cursor/antialiasing noise.
+            # If the resident's quantized local structure is unchanged, that
+            # noise should not become another lived screen-change event.
+            retina.capture_fn = lambda: self._structured_frame(
+                "c",
+                changed_regions,
+                luminance=0.56,
+            )
+            jitter = retina.sample()
+            self.assertIsNotNone(jitter)
+            self.assertFalse(jitter.changed)
+            self.assertEqual(jitter.change_scale, "none")
+
+            state = retina.status()
+            self.assertEqual(state.sample_count, 3)
+            self.assertEqual(state.change_count, 2)
+            self.assertEqual(state.last_region_signatures, changed_regions)
+
+            visual = [
+                trace
+                for trace in resident.nervous.recent_traces(100)
+                if trace.channel == "vision"
+                and trace.source == "resident-retina"
+                and trace.metadata.get("change_scale") == "local"
+            ]
+            self.assertTrue(visual)
+            trace = visual[-1]
+            self.assertIn("visual_change:local", trace.features)
+            self.assertIn("visual_area:top-left", trace.features)
+            self.assertIn("luminance:brighter", trace.features)
+            self.assertEqual(trace.metadata.get("changed_region_count"), 1)
+            self.assertEqual(trace.metadata.get("changed_region_indices"), [0])
+            self.assertFalse(trace.metadata.get("raw_frame_persisted"))
+            self.assertEqual(resident.store.get_runtime_metrics().model_invocations, 0)
+            resident.store.close()
+
+    def test_structured_visual_state_survives_restart_and_filters_raw_hash_noise(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "kernel.db"
+            regions = tuple(f"stable-{index}" for index in range(12))
+            first = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=db,
+            )
+            first_retina = NativeVisualSense(
+                first,
+                capture_fn=lambda: self._structured_frame("a", regions),
+                interval_seconds=0.1,
+            )
+            first_observation = first_retina.sample()
+            self.assertIsNotNone(first_observation)
+            self.assertTrue(first_observation.changed)
+            first.store.close()
+
+            second = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=db,
+            )
+            restored = NativeVisualSense(
+                second,
+                capture_fn=lambda: self._structured_frame("b", regions),
+                interval_seconds=0.1,
+            )
+            observation = restored.sample()
+            self.assertIsNotNone(observation)
+            self.assertFalse(observation.changed)
+            self.assertEqual(observation.change_scale, "none")
+            state = restored.status()
+            self.assertEqual(state.last_region_signatures, regions)
+            self.assertEqual(state.sample_count, 2)
+            self.assertEqual(state.change_count, 1)
             second.store.close()
 
     def test_socket_service_sees_screen_before_any_ui_client_connects(self):
