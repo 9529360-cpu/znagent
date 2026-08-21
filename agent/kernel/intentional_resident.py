@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any, Iterable
 
+from .adaptive_guidance import schema_attention_focus, schema_reality_score
 from .embodied_resident import EmbodiedResidentRuntime
 from .models import EventStatus, ResidentRunResult
 from .nervous_system import PersistentNervousSystem
@@ -414,6 +415,7 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
                 + 0.10 * trace.arousal
             )
             drive = "integrate"
+            focus = trace.summary
             action = "let this salient experience remain in active consideration"
 
             if trace.valence <= -0.25:
@@ -426,9 +428,19 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
                 drive = "curiosity"
                 action = "keep observing this novel thread without borrowing a model"
             elif trace.channel == "schema":
-                score += 0.10 * familiarity + 0.06 * trace.strength
+                reality = schema_reality_score(trace)
+                score += (
+                    0.10 * familiarity
+                    + 0.06 * trace.strength
+                    + 0.18 * reality
+                )
+                focus = schema_attention_focus(trace)
                 drive = "integrate"
-                action = "keep a consolidated life pattern available to current thought"
+                action = (
+                    "keep a reality-updated life pattern available to current thought"
+                    if reality >= 0.50
+                    else "keep a consolidated life pattern available to current thought"
+                )
             else:
                 score += 0.08 * abs(trace.valence) + 0.05 * familiarity
 
@@ -436,7 +448,7 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
                 {
                     "drive": drive,
                     "score": score,
-                    "focus": trace.summary,
+                    "focus": focus,
                     "action": action,
                     "trace_id": trace.trace_id,
                 }
