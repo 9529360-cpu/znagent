@@ -2,7 +2,7 @@
 
 > Current development branch: `dev/zn-agent`
 >
-> This file is the primary entry point for ZN development. The existing `README.md` still documents the Hermes Agent ancestor and mature infrastructure that this repository inherited. ZN is not intended to be a white-label rename of Hermes; the long-term product and kernel architecture are being rebuilt around a different subject/model relationship while retaining useful mature infrastructure and the upstream MIT attribution.
+> This file is the primary entry point for ZN development. Treat the repository code as authoritative if this document and implementation ever disagree. The existing `README.md` still documents the Hermes Agent ancestor and mature infrastructure that this repository inherited. ZN is not intended to be a white-label rename of Hermes; the product and kernel architecture are being rebuilt around a resident subject that uses models rather than being owned by one.
 
 ## 1. What ZN is
 
@@ -31,9 +31,9 @@ Disconnecting all external models must not erase ZN's identity or stop its resid
 
 ### 2.1 Build the organism before hard constraints
 
-Current development priority is the body, nervous system, perception, thought, will and closed life loop. Do not lead development by adding large policy, permission, sandbox or governance frameworks before the organism exists.
+Current development priority is the resident body, nervous system, perception, thought, Will and closed learning loop. Do not lead development by adding large policy, permission, sandbox or governance frameworks before the organism exists.
 
-External models do **not** inherently own ZN's body permissions, but this should remain a capability decision made by ZN/runtime architecture rather than a prematurely hard-coded permanent prohibition.
+External models do **not** inherently own ZN's body permissions. Capability allocation can be strengthened later without turning the current architecture back into a prompt-governed agent stack.
 
 ### 2.2 Internal modules are organs, not separate agents
 
@@ -53,7 +53,7 @@ ZN
 └── External brain access
 ```
 
-Avoid turning each concern into an independent manager/agent that must coordinate through prompts.
+Avoid turning each concern into an independent manager/agent that coordinates through prompts.
 
 ### 2.3 Models provide cognitive increments
 
@@ -109,7 +109,7 @@ A hundred related experiences should tend toward stronger generalized understand
 
 ## 3. Current resident life loop
 
-The resident is now multi-pulse and resumable. One pulse advances one piece of cognition rather than running an arbitrary fixed number of reasoning rounds.
+The resident is multi-pulse and resumable. One pulse advances one piece of cognition rather than running an arbitrary fixed number of reasoning rounds.
 
 Current high-level loop:
 
@@ -176,13 +176,13 @@ Situation / nervous experience
 Thought
 ```
 
-The embodied investigator routes host observation through the Body so investigation does not maintain a parallel hidden filesystem/process implementation.
+The embodied investigator routes host observation through the Body so Investigation does not maintain a parallel hidden filesystem/process implementation.
 
 A failed body movement returns new evidence to Investigation/Thought rather than being treated as terminal success or blindly retried forever.
 
 ## 5. Persistent nervous system
 
-The primary lived-memory direction is `PersistentNervousSystem`, not a conventional conversation-memory layer.
+The primary lived-memory direction is `PersistentNervousSystem`, extended by reality-aware and integrated-transfer behavior. This is not a conventional conversation-memory layer.
 
 A `NeuralTrace` is an associative trace left by perception, thought, action or outcome. Repetition strengthens an existing trace instead of blindly appending duplicate memories. Co-active traces form persistent links. Cue-based recall can spread through those links.
 
@@ -220,11 +220,9 @@ Examples:
 - familiar associated experience can modestly stabilize confidence;
 - high tension can reduce confidence and favor further observation.
 
-### 5.2 Consolidation and forgetting
+### 5.2 Consolidation, forgetting and schema structure
 
-Neural memory now supports local consolidation without any model call.
-
-The direction is:
+Neural memory supports local consolidation without any model call.
 
 ```text
 many lived traces
@@ -238,104 +236,172 @@ shared repeated structure forms a schema trace
 schema stays linked to source experience
 ```
 
-A schema is still a neural trace in the same network, not a second memory database.
+A schema remains a neural trace in the same network, not a second memory database.
 
-Schemas participate in resident-side recall, native deliberation, attention and reflection. They are not automatically serialized into an external model prompt.
+Schemas now carry structured prediction profiles, including features, relation families/values, confidence, support, alternatives and prediction-error state. Redundant compatible schemas can be structurally merged while preserving source experience and archived merge identity. Conflicting schemas are not blindly collapsed.
 
-Forgetting is intentionally conservative: weak, isolated, old and unreactivated details may fade; repeated or important lived structure should remain.
+Forgetting remains conservative: weak, isolated, old and unreactivated detail may fade; repeated or important lived structure should remain.
 
-## 6. Experience → prediction → reality
+## 6. Experience → prediction → reality → reconsolidation
 
-Consolidated schemas have begun to act as native predictions.
+The prediction/reality loop is implemented and resident-native.
 
-When a current task activates a relevant schema, Investigation can form an explicit hypothesis such as:
-
-```text
-a consolidated lived pattern predicts relevant structure here
-```
-
-This is **not** treated as truth.
-
-The next step remains reality checking through current body/environment evidence:
+Current chain:
 
 ```text
-past experience / schema
-       ↓
-     prediction
-       ↓
- current body/world probe
-       ↓
- evidence confirms, refines or contradicts prediction
+lived experience
+→ consolidation
+→ structured schema
+→ native prediction
+→ current body/world/vision observation
+→ prediction error
+→ support / refinement / contradiction
+→ one confirming recheck when needed
+→ reconsolidation
+→ relation stabilization or restructuring
+→ future recall and Will behavior change
 ```
 
-The next major memory/cognition step is reconsolidation: reality feedback should be able to strengthen, weaken or restructure an existing schema instead of allowing old experience to become permanent bias.
+Important properties:
 
-## 7. Will and self-initiated work
+- schemas are predictions, not truth;
+- comparison is relation-aware rather than naive text equality;
+- supported relations can stabilize from prediction error;
+- contradicted old relations can remain contested while alternatives emerge;
+- current active relations guide future attention and candidate selection;
+- historical summary/features remain available even when live recall suppresses superseded relation values;
+- the loop works without a model call.
 
-`NativeWill` owns persistent `ResidentIntention` objects. An intention is not a model Goal and not a prompt queue.
+Reality-aware recall now follows the reconsolidated relation state instead of allowing stale wording to dominate activation.
 
-A long-lived intention survives restarts and can outlive individual events used to advance it.
+## 7. Cross-context transfer and Will
 
-### 7.1 Explicit next steps
+ZN can now cautiously reuse what it learned in one situation inside a related but different situation.
 
-If an intention already has a concrete `next_task`, Thought may convert it into an internal event and run it through the same resident cognition/body loop.
-
-### 7.2 Incubating a next step
-
-When no concrete next step exists, ZN no longer has to wait forever.
-
-Will now supports one durable incubating candidate rather than a growing plan list. The candidate keeps:
-
-- candidate kind
-- candidate step
-- reason
-- support trace IDs
-- confidence
-- repetition count
-- maturity
-- incubation count
-
-The same candidate becoming relevant repeatedly strengthens the one slot instead of creating many micro-plans.
-
-Current autonomous path:
+This is not free schema-to-schema propagation. Transfer remains bounded through actual lived evidence:
 
 ```text
-long-term intention
-  ↓
-related schema / lived traces repeatedly activate
-  ↓
-one candidate next step incubates
-  ↓
-repeated support raises maturity
-  ↓
-ZN commits the candidate when sufficiently mature
-  ↓
-internal `intention_probe` event
-  ↓
-Experience + Body observation
-  ↓
-local Outcome
-  ↓
-Outcome returns to the same Will
+reality-corrected source schema
+        ↓
+existing neural link
+        ↓
+shared lived non-schema trace
+        ↓
+existing neural link
+        ↓
+neighboring target schema
 ```
 
-Initial self-initiated schema probes are deliberately local and use zero model calls. The resident does not spend an external-model token merely because an internal thought appeared.
+A source gains transfer authority only after a relation was formed/stabilized through prediction error. Relation conflicts can block transfer.
 
-A completed probe is recorded so the exact same schema does not immediately trigger an infinite repeat loop.
+### 7.1 Situation-gated incubation
 
-## 8. Native reflection and endogenous attention
+A transferred activation does **not** directly become an action.
+
+Current chain:
+
+```text
+weak cross-context activation
+→ Will candidate may seed
+→ current Situation/body must independently support target relation
+→ unsupported candidate remains frozen
+→ repeated present support raises maturity
+→ matured candidate becomes an intention probe
+```
+
+This expresses:
+
+> I may remember something useful from another context, but I do not blindly apply it here.
+
+The resident still uses one durable candidate slot rather than an ever-growing planning list.
+
+### 7.2 Outcome plasticity
+
+When a transferred candidate is actually tested, learning follows relation-level prediction feedback rather than merely checking whether the probe process returned `success=True`.
+
+```text
+transferred candidate
+→ current probe
+→ relation-specific prediction feedback
+  ├─ supported
+  │    → strengthen contributing transfer path(s)
+  ├─ contradicted
+  │    → weaken target-side applicability of those path(s)
+  └─ untested / execution failure only
+       → do not punish transfer truth
+```
+
+A transfer failure in context B must not rewrite a source relation that was correctly learned in context A.
+
+## 8. Context-sensitive transfer tendency
+
+Lived bridges retain bounded history about whether past transfers through that bridge held up in reality.
+
+This is stored on the lived trace itself, not in a separate policy/rule database.
+
+Repeated support gradually makes the same route easier to recall. Repeated contradiction suppresses it. A single lucky or unlucky observation only nudges the route; repeated lived feedback is required before a strong tendency emerges.
+
+History is bounded and survives restart.
+
+Conceptually:
+
+```text
+same initial neural strength
+
+B bridge: repeatedly supported    → tendency rises
+C bridge: repeatedly contradicted → tendency falls
+D bridge: never tested            → remains neutral
+
+future recall: B > D > C
+```
+
+## 9. Multi-source transfer evidence integration
+
+Transfer no longer collapses every target to one `max(path)` winner.
+
+Several directly recalled, reality-corrected source schemas may independently reach the same target through different lived bridges.
+
+The integrated transfer layer now:
+
+- gives one source schema at most one vote per target;
+- considers a bounded number of competing sources;
+- combines up to a bounded number of mutually compatible contributor paths;
+- adds limited corroboration when independent sources agree;
+- applies conflict pressure when source schemas disagree on the same structured relation family;
+- carries contributor provenance, consensus and conflict into Will/event state;
+- reshapes every path that actually contributed after reality feedback.
+
+Example:
+
+```text
+source A ─ lived bridge A ┐
+source B ─ lived bridge B ├→ target schema
+source C ─ lived bridge C ┘
+```
+
+If A/B/C are mutually compatible, their independent lived evidence can modestly reinforce the target activation. If one source contradicts the others, it is not summed into the coherent bundle and instead lowers consensus/transfer pressure.
+
+This is evidence integration inside one nervous system, not a committee of agents.
+
+### 9.1 Merge continuity
+
+Transfer history survives structural schema merges.
+
+Old bridge history may still reference an archived schema ID. Integrated transfer resolves `schema_merged → merged_into_schema_id` lazily and merges compatible historical counters onto the surviving canonical identity when the path is next updated.
+
+No global history migration or second memory store is required.
+
+## 10. Native reflection and endogenous attention
 
 When idle, ZN can perform low-frequency native association/reflection without creating a self-prompt or calling a model.
 
-Will, affect and salient neural traces compete for attention.
-
-Real user/internal events and open impasses remain higher priority than idle reflection.
+Will, affect and salient neural traces compete for attention. Real user/internal events and open impasses remain higher priority than idle reflection.
 
 Reflection can leave another neural trace, meaning internal processing can influence future thought while remaining resident-native.
 
 This is intentionally not a general-purpose Planner.
 
-## 9. World sense and visual sense
+## 11. World sense and visual sense
 
 ### World
 
@@ -345,15 +411,15 @@ World sensing has its own rhythm instead of blocking the main heartbeat. Observa
 
 ### Vision
 
-The Electron desktop currently provides a first low-level retina-like screen-change sensor. It detects lightweight screen-frame changes/fingerprints and sends a visual stimulus into the nervous system without automatically shipping screenshots to a multimodal model.
+The Electron desktop provides a low-level retina-like screen-change sensor. It detects lightweight screen-frame changes/fingerprints and sends a visual stimulus into the nervous system without automatically shipping screenshots to a multimodal model.
+
+Visual schemas participate in the same resident prediction → observation → prediction-error → reconsolidation loop.
 
 Current limitation: the retina still relies on Electron capture APIs. If the desktop process is closed, the resident can continue living but this visual sensor currently stops. A future persistent visual helper should let vision continue independently of the UI process.
 
-## 10. Resident process and desktop lifecycle
+## 12. Resident process and desktop lifecycle
 
 The resident is no longer conceptually owned by the Electron window.
-
-Current lifecycle direction:
 
 ```text
 Resident service = life/process continuity
@@ -366,15 +432,11 @@ Only an explicit Stop/shutdown should intentionally terminate the resident.
 
 Lease recovery can detect a dead local PID and let a replacement resident reclaim the lease immediately instead of waiting for a fixed stale timeout.
 
-A future production step is to finish OS-level service installation/update/recovery so the resident is fully independent of the desktop lifecycle on Windows/macOS/Linux.
+A future production step is to finish OS-level service installation/update/recovery so the resident is fully independent of desktop lifecycle on Windows/macOS/Linux.
 
-## 11. External cognition boundary
+## 13. External cognition boundary
 
-The mature provider/router/worker infrastructure is still reused, but the embodied resident changed the meaning of a successful model call.
-
-A model success no longer directly equals a completed ZN event.
-
-Current path:
+The mature provider/router/worker infrastructure is still reused, but a successful model call does not directly equal a completed ZN event.
 
 ```text
 Impasse
@@ -394,9 +456,9 @@ only then update knowledge / close impasse / continue action
 
 The impasse remains open until ZN's integration step. SelfModel learning and LearningCandidate creation are delayed until that integration step rather than happening merely because a provider returned `success=True`.
 
-Neural traces and consolidated schemas can influence resident-side deliberation, but the external request is still built from the isolated unknown plus bounded native checks/evidence; it does not dump the resident's full associative life into the model context.
+Neural traces and schemas influence resident-side cognition, but the external request remains a bounded isolated unknown plus relevant evidence; do not dump ZN's associative life into model context.
 
-## 12. SelfModel and capability model
+## 14. SelfModel and capability model
 
 `SelfModel` distinguishes:
 
@@ -408,9 +470,9 @@ A model solving a task may improve ZN's retained understanding after native inte
 
 The domain model is intentionally hierarchical/coarse (`it`, `it/programming`, `it/data`, `it/security`, etc.) instead of becoming a catalog of one-off skills.
 
-## 13. Important code map
+## 15. Important code map
 
-Core resident files currently include:
+Core resident files now include:
 
 ```text
 agent/kernel/
@@ -421,6 +483,13 @@ agent/kernel/
 ├── embodied_resident.py
 ├── intentional_resident.py
 ├── nervous_system.py
+├── adaptive_guidance.py
+├── adaptive_nervous_system.py
+├── integrated_transfer.py
+├── transfer_incubation.py
+├── intention_formation.py
+├── reconsolidation.py
+├── schema_structure.py
 ├── will.py
 ├── investigation.py
 ├── embodied_investigation.py
@@ -444,9 +513,11 @@ apps/desktop/electron/
 └── zn-retina.ts
 ```
 
-Tests under `tests/agent/kernel/` are part of the architecture specification. In particular, restart/continuity tests are important: a feature is not considered resident-native if it disappears merely because the process restarts.
+Tests under `tests/agent/kernel/` are part of the architecture specification. Important current suites include the nervous-system, prediction/reconsolidation, adapted-schema guidance, reality-aware recall, reality-gated transfer, transfer incubation, transfer outcome plasticity, contextual transfer tendency and integrated transfer evidence tests.
 
-## 14. CI and development branch
+Restart/continuity tests remain essential: a feature is not considered resident-native if it disappears merely because the process restarts.
+
+## 16. CI and development branch
 
 Active development branch:
 
@@ -460,27 +531,29 @@ The current CI baseline checks:
 
 - locked/reproducible Python environment and kernel tests;
 - Electron locked workspace and TypeScript typecheck;
-- container/runtime smoke coverage in the workflow configuration.
+- container/runtime smoke coverage in workflow configuration, normally skipped on ordinary development pushes to control cost.
 
-The last verified functional code head before this documentation update was:
+The last verified functional code head before this documentation update is:
 
 ```text
-aaccdd3691c38106b20a9143067546e9d66a5fcf
+0c62f933d710701cf189c57249a826d8cff05e1b
+feat: integrate competing transfer evidence
 ```
 
-Its latest reported core statuses were:
+Latest verified CI:
 
 ```text
 ZN Kernel / Python       success
 Electron / TypeScript    success
-Actions run              32471738863
+Actions run              32518796510
+ZN CI run number         187
 ```
 
-Historical cancelled/failed runs from earlier incomplete CI environments do not need to be made green for cosmetic reasons. Evaluate the latest head in the current reproducible environment.
+Historical cancelled/failed runs from superseded commits do not need to be made green for cosmetic reasons. Evaluate the latest head in the current reproducible environment.
 
-GitHub Actions time costs money. Use normal CI practice: do not rerun superseded historical commits just to clean the history, and avoid a stream of tiny commits that repeatedly starts expensive runs when changes can be grouped coherently.
+GitHub Actions time costs money. Group coherent work, avoid a stream of tiny dev pushes, do not rerun superseded historical commits, and keep expensive runtime/container smoke out of ordinary pushes unless the change actually needs it.
 
-## 15. Architecture traps to avoid
+## 17. Architecture traps to avoid
 
 When continuing development, avoid drifting back into conventional LLM-agent architecture:
 
@@ -493,70 +566,113 @@ When continuing development, avoid drifting back into conventional LLM-agent arc
 7. Do not make idle reflection a hidden self-prompt loop that consumes model tokens.
 8. Do not equate model success with ZN accepting or completing a task.
 9. Do not make Electron window lifetime equal resident lifetime.
-10. Do not spend the current phase primarily on hard policy/permission frameworks; finish the organism's principal closed loops first.
+10. Do not allow cross-context association to become direct action without present Situation evidence.
+11. Do not treat one transfer success as a permanent context rule; tendency must emerge from repeated lived feedback.
+12. Do not collapse competing source evidence into a single strongest path when independent agreement/conflict is available.
+13. Do not let a transfer failure in context B erase a relation correctly learned in context A.
+14. Do not create a second context-policy memory store for behavior that can remain in the lived neural substrate.
+15. Do not spend the current phase primarily on hard policy/permission frameworks; continue closing the organism's principal loops first.
 
-## 16. Next development target
+## 18. Next development target
 
-The immediate next major step is **prediction error and neural reconsolidation**.
+The immediate next target for the next development session is **evidence-driven attention persistence and re-probe rhythm**.
 
-Current code can already do:
-
-```text
-experience
-→ consolidation
-→ schema
-→ native prediction/hypothesis
-→ body/world observation
-```
-
-The next loop should become:
+The transfer/reconsolidation chain can already do:
 
 ```text
-schema prediction
-        ↓
-current evidence
-        ↓
-comparison / prediction error
-  ├─ supported      → strengthen/reinforce schema
-  ├─ partly wrong   → refine/restructure schema
-  └─ contradicted   → weaken schema and preserve the exception/new pattern
-        ↓
-future Thought changes
+reality-corrected source experience
+→ cross-context recall through lived evidence
+→ single- or multi-source transfer integration
+→ consensus / conflict pressure
+→ current Situation confirmation
+→ Will incubation
+→ probe
+→ relation-specific outcome feedback
+→ path plasticity / tendency
 ```
 
-Important: do not implement this as naive text equality or string similarity. Schema metadata should increasingly represent shared features/channels/relations so current sensory/body evidence can produce a meaningful native prediction error.
+The next step is to let the quality of that integrated evidence shape **how long ZN keeps observing and when it decides another probe is warranted**, without adding a planner, confidence manager or new rule table.
 
-After this stabilizes, likely follow-up targets are:
+Desired behavior:
 
-- richer schema restructuring/merging so schemas themselves do not proliferate forever;
-- more native formation of useful next steps from Will + schema + current Situation;
+```text
+high consensus + repeated lived support
+→ retain useful attention
+→ require current reality confirmation
+→ avoid redundant repeated probing
+→ allow Will to mature with less epistemic churn
+
+low consensus / strong source conflict / fresh prediction error
+→ keep the matter cognitively open across pulses
+→ maintain attention longer
+→ delay Will commitment
+→ seek another native observation at an appropriate later pulse
+→ reconsolidate if reality resolves the conflict
+```
+
+Important constraints for this target:
+
+- use existing Life / Situation / Thought / Will / Investigation state rather than adding a scheduler-agent;
+- do not skip current Situation confirmation merely because historical consensus is high;
+- do not turn uncertainty into rapid repeated probes every heartbeat;
+- high consensus should reduce redundant epistemic work, not create blind certainty;
+- conflict should extend observation, not automatically trigger an external model;
+- persistence/re-probe state must survive restart if it is intended to span pulses;
+- zero-model-call tests should cover the native path;
+- preserve the existing relation-specific prediction-error/reconsolidation semantics;
+- keep the explicit confirming-recheck behavior bounded rather than allowing repeated contradiction loops.
+
+A good completion test for this target is:
+
+```text
+same current target + same Situation
+
+well-supported coherent transfer
+→ ZN confirms once, keeps stable attention, does not repeatedly re-probe
+
+conflicted transfer
+→ ZN does not commit early
+→ attention persists across pulses
+→ a later native observation is selected
+→ new evidence changes the same resident learning loop
+```
+
+After that stabilizes, likely follow-up areas are:
+
 - persistent visual sensing independent of Electron UI lifetime;
-- richer native perception of the online world;
-- eventual OS service lifecycle and upgrade/recovery integration;
-- later, only when the organism is mature enough, stronger capability allocation/policy/safety layers.
+- richer native online-world perception;
+- cleanup/unification of reality-aware nervous-system construction where useful;
+- OS service installation/update/recovery;
+- only later, stronger capability allocation/policy/safety layers once the organism is mature enough.
 
-## 17. New-conversation handoff
+## 19. New-conversation handoff
 
-If a new ChatGPT conversation is used to continue development, start with the following instruction:
+For the next ChatGPT conversation, use this instruction:
 
-> Continue development of `9529360-cpu/znagent` on branch `dev/zn-agent`. Read `ZN.md` first and treat the repository as authoritative. Do not redesign this as a conventional LLM-centric agent. Check the latest branch head and CI before writing. Continue from the "Next development target" section unless newer repository code supersedes it. Make repository changes directly on `dev/zn-agent`; do not merge to `main` or create a PR unless explicitly requested. Keep normal CI cost in mind.
+> Continue development of `9529360-cpu/znagent` on branch `dev/zn-agent`. Read root `ZN.md` first and treat the latest repository code as authoritative. Check the current `dev/zn-agent` head and latest CI before writing. Continue from the "Next development target" section: evidence-driven attention persistence and re-probe rhythm. Do not redesign ZN as a conventional LLM-centric agent, do not lead by adding policy/constraint layers, and do not turn integrated transfer evidence into a planner or rule table. Keep building the resident organism's closed loop, preserve zero-model native paths, control GitHub CI cost, and do not touch `main`.
 
-Then inspect the latest versions of at least:
+Before implementing, inspect the latest relevant files, especially:
 
 ```text
 ZN.md
-agent/kernel/nervous_system.py
+agent/kernel/integrated_transfer.py
+agent/kernel/transfer_incubation.py
+agent/kernel/adaptive_nervous_system.py
 agent/kernel/intentional_resident.py
+agent/kernel/intention_formation.py
 agent/kernel/will.py
-agent/kernel/embodied_investigation.py
-agent/kernel/embodied_resident.py
-tests/agent/kernel/test_nervous_system.py
-tests/agent/kernel/test_intention_incubation.py
+agent/kernel/investigation.py
+agent/kernel/reconsolidation.py
+agent/kernel/schema_structure.py
+agent/kernel/life.py
+tests/agent/kernel/test_integrated_transfer_evidence.py
+tests/agent/kernel/test_contextual_transfer_tendency.py
+tests/agent/kernel/test_transfer_outcome_plasticity.py
 .github/workflows/zn-ci.yml
 ```
 
 Repository state must override any stale conversation summary.
 
-## 18. Provenance
+## 20. Provenance
 
 This repository started from the Hermes Agent source and continues to reuse mature infrastructure where doing so saves engineering work. Preserve upstream license/attribution requirements. The architectural work described above is the ZN development direction, not a claim that the inherited Hermes code originally implemented these ZN concepts.
