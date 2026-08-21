@@ -129,50 +129,68 @@ class NativeIntentionFormation:
                 # confirming recheck therefore follows the first lived probe as
                 # attempt 2 regardless of that neural bookkeeping detail.
                 attempt = 2 if is_recheck else 1
+                confidence = round(
+                    max(
+                        0.0,
+                        min(
+                            1.0,
+                            float(relation.get("confidence") or 0.0),
+                        ),
+                    ),
+                    5,
+                )
+                support_ratio = round(
+                    max(
+                        0.0,
+                        min(
+                            1.0,
+                            float(relation.get("support_ratio") or 0.0),
+                        ),
+                    ),
+                    5,
+                )
+                status = str(relation.get("status") or "expected")
                 payload = {
                     **common_payload,
                     **target,
-                    # ``native_probe_key`` is the formation-side identity. The
-                    # compatibility observation key lets Investigation honor the
-                    # structured route directly instead of rediscovering it from
-                    # generated task wording.
                     "native_probe_key": probe_key,
-                    "schema_probe_observation": probe_key,
                     "schema_expectation": {
                         "family": family,
                         "value": value,
-                        "confidence": round(
-                            max(
-                                0.0,
-                                min(
-                                    1.0,
-                                    float(relation.get("confidence") or 0.0),
-                                ),
-                            ),
-                            5,
-                        ),
-                        "support_ratio": round(
-                            max(
-                                0.0,
-                                min(
-                                    1.0,
-                                    float(relation.get("support_ratio") or 0.0),
-                                ),
-                            ),
-                            5,
-                        ),
-                        "status": str(relation.get("status") or "expected"),
+                        "confidence": confidence,
+                        "support_ratio": support_ratio,
+                        "status": status,
                         "signature": signature,
                         "recheck": is_recheck,
                         "attempt": attempt,
                     },
                     "tested_schema_expectations": sorted(tested)[-12:],
                 }
+                # Body relations existed before situated formation and already
+                # have a structured Investigation contract. Preserve that
+                # outward shape while letting the relation itself be selected by
+                # Will + schema + current Situation. Other situated probes keep
+                # their established ordering and do not opt into the legacy
+                # prediction-first observation route.
+                if probe_key == "body":
+                    payload.update(
+                        {
+                            "schema_probe_observation": "body",
+                            "schema_probe_relation": {
+                                "family": family,
+                                "value": value,
+                                "support_ratio": support_ratio,
+                                "status": status,
+                            },
+                            "schema_probe_confidence": confidence,
+                        }
+                    )
                 return NativeIntentionCandidate(
                     kind="situated_schema_probe",
                     step=self._step_text(
                         probe_key,
                         family,
+                        value,
                         signature,
                         target,
                         recheck=is_recheck,
@@ -334,6 +352,7 @@ class NativeIntentionFormation:
     def _step_text(
         probe_key: str,
         family: str,
+        value: str,
         signature: str,
         target: dict[str, Any],
         *,
@@ -345,7 +364,9 @@ class NativeIntentionFormation:
         if probe_key == "git":
             return f"{prefix}current git workspace relation {family} {suffix}"
         if probe_key == "body":
-            return f"{prefix}current body relation {family} {suffix}"
+            return (
+                f"{prefix}current body state relation {family}:{value} {suffix}"
+            )
         if probe_key == "paths":
             return f"{prefix}path {target.get('path')} relation {family} {suffix}"
         if probe_key == "processes":

@@ -11,10 +11,8 @@ from agent.kernel.provider_bridge import build_resident_runtime_from_existing_st
 class SituatedBodyIntentionTests(unittest.TestCase):
     @staticmethod
     def _seed_body_schema(resident):
-        body = resident.life.snapshot().body
-        if body is None:
-            raise AssertionError("resident body should be available")
-        system = str(body.system or "").strip().lower()
+        body = resident.body.sense()
+        system = str(body.get("system") or "").strip().lower()
         if not system:
             raise AssertionError("resident system should be observable")
         features = ("body_pattern", f"system:{system}", "resident_host")
@@ -64,17 +62,20 @@ class SituatedBodyIntentionTests(unittest.TestCase):
             self.assertIsNotNone(current)
             payload = current.candidate_payload
             expectation = payload.get("schema_expectation") or {}
+            relation = payload.get("schema_probe_relation") or {}
             context = payload.get("native_situation_context") or {}
 
             self.assertEqual(current.candidate_kind, "situated_schema_probe")
-            self.assertIn("current body relation system", current.candidate_step)
+            self.assertIn("current body state relation system:", current.candidate_step)
             self.assertIn(schema.trace_id, current.candidate_support)
             self.assertEqual(payload.get("native_probe_key"), "body")
             self.assertEqual(payload.get("schema_probe_observation"), "body")
             self.assertEqual(expectation.get("family"), "system")
             self.assertEqual(expectation.get("value"), system)
-            self.assertEqual(context.get("body_system"), body.system)
-            self.assertEqual(context.get("body_architecture"), body.architecture)
+            self.assertEqual(relation.get("family"), "system")
+            self.assertEqual(relation.get("value"), system)
+            self.assertEqual(context.get("body_system"), body.get("system"))
+            self.assertEqual(context.get("body_architecture"), body.get("architecture"))
             self.assertIn("body_disk_free_ratio", context)
             self.assertEqual(resident.store.get_runtime_metrics().model_invocations, 0)
             resident.store.close()
