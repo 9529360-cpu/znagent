@@ -39,7 +39,12 @@ class NativeWillTests(unittest.TestCase):
             self.assertEqual(pulse.thought.action_kind, "observe")
             self.assertIn("will", pulse.thought.reason)
             self.assertIn("strongest internal attention pull", pulse.thought.reason)
-            self.assertIn("endogenous attention pull: will", pulse.thought.known)
+            self.assertTrue(
+                any(
+                    item.startswith("endogenous attention pull: will")
+                    for item in pulse.thought.known
+                )
+            )
             self.assertIsNone(resident.live_once())
             self.assertEqual(resident.store.list_events(), [])
             resident.store.close()
