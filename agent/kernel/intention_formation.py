@@ -34,9 +34,10 @@ class NativeIntentionFormation:
 
     This is not a planner and does not call a model. It translates structured
     expectations already present in a consolidated schema into a concrete
-    observation that ZN's existing Investigation/Body loop can perform. When
-    no structured relation is actionable, formation falls back to the older
-    generic schema applicability probe instead of inventing a task.
+    observation that ZN's existing Investigation/Body loop can perform. Reality
+    feedback is part of formation: an already-tested relation is not selected
+    again unless the latest prediction error still needs one confirming recheck,
+    and a restructured emerging relation can become the next single candidate.
     """
 
     _PROBE_BY_FAMILY = {
@@ -61,6 +62,7 @@ class NativeIntentionFormation:
         r"(?:[A-Za-z]:[\\/][^\s'\"]+|(?:\.{0,2}/|/)[^\s'\"]+)"
     )
     _PID_RE = re.compile(r"\bpid\s*[:=#]?\s*(\d+)\b", flags=re.IGNORECASE)
+    _EXPECTATION_RE = re.compile(r"schema expectation ([0-9a-f]{10})")
 
     def __init__(self, nervous: PersistentNervousSystem):
         self.nervous = nervous
@@ -73,7 +75,7 @@ class NativeIntentionFormation:
         *,
         situation: SituationModel | None,
         body: BodyState | None,
-    ) -> NativeIntentionCandidate:
+    ) -> NativeIntentionCandidate | None:
         schema = activation.trace
         profile = self.reconsolidator._profile(schema)
         support = (
@@ -93,10 +95,14 @@ class NativeIntentionFormation:
             "native_situation_context": self._situation_context(situation, body),
         }
 
+        tested = self._tested_expectation_signatures(intention)
+        recheck = self._recheck_expectation_signatures(schema.metadata)
+        allowed_rechecks = tested.intersection(recheck)
         relation = self._select_relation(
             profile,
             intention.description,
             body=body,
+            excluded_signatures=tested - allowed_rechecks,
         )
         if relation is not None:
             family = str(relation.get("family") or "")
@@ -109,6 +115,9 @@ class NativeIntentionFormation:
             )
             if target is not None:
                 signature = self._expectation_signature(family, value)
+                is_recheck = signature in allowed_rechecks
+                conflicts = max(0, int(relation.get("conflicts") or 0))
+                attempt = max(1, conflicts + 1) if is_recheck else 1
                 payload = {
                     **common_payload,
                     **target,
@@ -138,7 +147,10 @@ class NativeIntentionFormation:
                         ),
                         "status": str(relation.get("status") or "expected"),
                         "signature": signature,
+                        "recheck": is_recheck,
+                        "attempt": attempt,
                     },
+                    "tested_schema_expectations": sorted(tested)[-12:],
                 }
                 return NativeIntentionCandidate(
                     kind="situated_schema_probe",
@@ -147,12 +159,15 @@ class NativeIntentionFormation:
                         family,
                         signature,
                         target,
+                        recheck=is_recheck,
+                        attempt=attempt,
                     ),
                     reason=self._reason_text(
                         probe_key,
                         family,
                         situation=situation,
                         body=body,
+                        recheck=is_recheck,
                     ),
                     support=support,
                     payload=payload,
@@ -160,6 +175,19 @@ class NativeIntentionFormation:
                     relation_family=family,
                     relation_value=value,
                 )
+
+        # Once this enduring intention has already tested a structured relation,
+        # exhausting the currently testable structure is meaningful. Do not fall
+        # back to a generic applicability probe and accidentally restart the same
+        # loop under different wording. Another activated schema may still offer
+        # a genuinely new relation, which the resident runtime can select.
+        if tested and self._select_relation(
+            profile,
+            intention.description,
+            body=body,
+            excluded_signatures=set(),
+        ) is not None:
+            return None
 
         return NativeIntentionCandidate(
             kind="schema_probe",
@@ -181,8 +209,10 @@ class NativeIntentionFormation:
         intention_text: str,
         *,
         body: BodyState | None,
+        excluded_signatures: set[str] | None = None,
     ) -> dict[str, Any] | None:
         text = str(intention_text or "").lower()
+        excluded = excluded_signatures or set()
         ranked: list[tuple[float, str, str, dict[str, Any]]] = []
         for relation in profile.get("relations") or ():
             family = str(relation.get("family") or "")
@@ -191,6 +221,9 @@ class NativeIntentionFormation:
             if not probe_key or not value:
                 continue
             if str(relation.get("status") or "") == "contested":
+                continue
+            signature = self._expectation_signature(family, value)
+            if signature in excluded:
                 continue
             if self._probe_target(probe_key, text, body=body) is None:
                 continue
@@ -218,6 +251,42 @@ class NativeIntentionFormation:
             return None
         ranked.sort(key=lambda item: (-item[0], item[1], item[2]))
         return ranked[0][3]
+
+    @classmethod
+    def _tested_expectation_signatures(
+        cls,
+        intention: ResidentIntention,
+    ) -> set[str]:
+        if not intention.last_outcome:
+            return set()
+        texts = [
+            str(intention.current_step or ""),
+            *(str(item) for item in intention.progress),
+        ]
+        return {
+            match.group(1)
+            for text in texts
+            for match in cls._EXPECTATION_RE.finditer(text)
+        }
+
+    @classmethod
+    def _recheck_expectation_signatures(
+        cls,
+        metadata: dict[str, Any],
+    ) -> set[str]:
+        feedback = metadata.get("last_prediction_feedback")
+        if not isinstance(feedback, dict):
+            return set()
+        if str(feedback.get("status") or "") not in {"refined", "contradicted"}:
+            return set()
+        signatures: set[str] = set()
+        for item in feedback.get("contradictions") or ():
+            expected, _, _observed = str(item).partition("->")
+            family, separator, value = expected.partition(":")
+            if not separator or not family or not value:
+                continue
+            signatures.add(cls._expectation_signature(family, value))
+        return signatures
 
     def _probe_target(
         self,
@@ -251,15 +320,19 @@ class NativeIntentionFormation:
         family: str,
         signature: str,
         target: dict[str, Any],
+        *,
+        recheck: bool = False,
+        attempt: int = 1,
     ) -> str:
+        prefix = f"recheck {attempt} " if recheck else "inspect "
         suffix = f"for my current intention (schema expectation {signature})"
         if probe_key == "git":
-            return f"inspect current git workspace relation {family} {suffix}"
+            return f"{prefix}current git workspace relation {family} {suffix}"
         if probe_key == "paths":
-            return f"inspect path {target.get('path')} relation {family} {suffix}"
+            return f"{prefix}path {target.get('path')} relation {family} {suffix}"
         if probe_key == "processes":
-            return f"inspect pid {target.get('pid')} relation {family} {suffix}"
-        return f"inspect current state relation {family} {suffix}"
+            return f"{prefix}pid {target.get('pid')} relation {family} {suffix}"
+        return f"{prefix}current state relation {family} {suffix}"
 
     @staticmethod
     def _reason_text(
@@ -268,6 +341,7 @@ class NativeIntentionFormation:
         *,
         situation: SituationModel | None,
         body: BodyState | None,
+        recheck: bool = False,
     ) -> str:
         context: list[str] = []
         cwd = str(getattr(body, "cwd", "") or "").strip()
@@ -278,6 +352,12 @@ class NativeIntentionFormation:
             if changes:
                 context.append(f"{len(changes)} current situation change(s)")
         basis = "; ".join(context) if context else "the current Situation"
+        if recheck:
+            return (
+                f"the last reality check produced prediction error for structured {family}; "
+                f"one confirming {probe_key} recheck against {basis} can determine whether "
+                "the relation should restructure instead of being repeated indefinitely"
+            )
         return (
             f"the activated schema carries a structured {family} expectation and "
             f"{basis} provides a concrete {probe_key} observation path"
@@ -338,29 +418,45 @@ class SituatedIntentionalResidentRuntime(IntentionalResidentRuntime):
         if primary.next_task or primary.related_event_id:
             return False
 
-        activations = self.nervous.activate(
-            primary.description,
-            channels=self._INCUBATION_CHANNELS,
-            limit=6,
-        )
-        schema_activation = next(
-            (item for item in activations if item.trace.channel == "schema"),
-            None,
-        )
-        if schema_activation is None or schema_activation.activation < 0.30:
+        activations = [
+            item
+            for item in self.nervous.activate(
+                primary.description,
+                channels=self._INCUBATION_CHANNELS,
+                limit=6,
+            )
+            if item.trace.channel == "schema" and item.activation >= 0.30
+        ]
+        if not activations:
             existing = self.will.get(primary.intention_id)
             if existing is not None and existing.candidate_step:
                 self._surface_incubating_candidate(thought, existing)
                 return True
             return False
 
-        schema = schema_activation.trace
-        candidate = self.intention_formation.form(
-            primary,
-            schema_activation,
-            situation=situation,
-            body=life_state.body,
+        formed: list[tuple[NeuralActivation, NativeIntentionCandidate]] = []
+        for activation in activations:
+            candidate = self.intention_formation.form(
+                primary,
+                activation,
+                situation=situation,
+                body=life_state.body,
+            )
+            if candidate is not None:
+                formed.append((activation, candidate))
+        if not formed:
+            return False
+
+        selected = next(
+            (
+                item
+                for item in formed
+                if item[1].kind == "situated_schema_probe"
+            ),
+            formed[0],
         )
+        schema_activation, candidate = selected
+        schema = schema_activation.trace
         step = candidate.step
         if primary.current_step == step and primary.last_outcome:
             return False
