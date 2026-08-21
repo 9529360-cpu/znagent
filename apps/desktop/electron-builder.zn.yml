@@ -22,6 +22,8 @@ afterPack: scripts/after-pack.mjs
 extraResources:
   - from: build/install-stamp.json
     to: install-stamp.json
+  - from: build/zn-runtime
+    to: zn-runtime
   - from: assets/icon.ico
     to: icon.ico
 asar: true

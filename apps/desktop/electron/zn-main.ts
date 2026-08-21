@@ -1,18 +1,36 @@
-import { app } from 'electron'
+import { app, dialog } from 'electron'
 
-// Keep the mature desktop shell intact while ZN takes ownership of the new
-// resident lifecycle around it. The legacy main module remains an implementation
-// dependency during migration, not the identity/control plane of the product.
-import './main'
-import {
-  registerZnResidentIpc,
-  startZnResidentOnDesktopReady
-} from './zn-resident-ipc'
-import { registerZnReleaseUpdaterIpc } from './zn-release-updater'
+import { configureZnPackagedRuntime } from './zn-packaged-runtime'
 
-registerZnResidentIpc()
-registerZnReleaseUpdaterIpc()
+async function bootstrapZnDesktop() {
+  if (app.isPackaged) {
+    const runtime = configureZnPackagedRuntime({ resourcesPath: process.resourcesPath })
+    console.info(
+      `[ZN] packaged runtime ${runtime.manifest.runtime_id.slice(0, 12)} ready at ${runtime.root}`
+    )
+  }
 
-void app.whenReady().then(async () => {
+  await import('./main')
+
+  const [{ registerZnResidentIpc, startZnResidentOnDesktopReady }, { registerZnReleaseUpdaterIpc }] =
+    await Promise.all([import('./zn-resident-ipc'), import('./zn-release-updater')])
+
+  registerZnResidentIpc()
+  registerZnReleaseUpdaterIpc()
+
+  await app.whenReady()
   await startZnResidentOnDesktopReady()
+}
+
+void bootstrapZnDesktop().catch(error => {
+  const message = error instanceof Error ? error.message : String(error)
+  console.error('[ZN] desktop bootstrap failed:', error)
+
+  try {
+    dialog.showErrorBox('ZN runtime unavailable', message)
+  } catch {
+    void 0
+  }
+
+  app.quit()
 })

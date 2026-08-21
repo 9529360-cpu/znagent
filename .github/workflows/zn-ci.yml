@@ -101,6 +101,9 @@ jobs:
       - name: Typecheck Electron desktop
         run: npm run typecheck --workspace apps/desktop
 
+      - name: Test ZN packaged runtime contract
+        run: npm run test --workspace apps/desktop -- electron/zn-packaged-runtime.test.ts
+
   container:
     name: Container / Runtime Smoke
     if: ${{ github.event_name != 'push' }}

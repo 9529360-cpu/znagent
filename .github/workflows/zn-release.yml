@@ -54,6 +54,13 @@ jobs:
           node-version: '22.22.0'
           cache: npm
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
       - name: Install locked workspace dependencies
         run: npm ci
 
@@ -82,13 +89,19 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
+      - name: Stage ZN-owned packaged runtime
+        env:
+          ZN_RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          ZN_RELEASE_COMMIT: ${{ github.sha }}
+        run: node apps/desktop/scripts/stage-zn-runtime.mjs
+
       - name: Build renderer and Electron runtime
         run: npm run build --workspace apps/desktop
 
       - name: Build ZN installer artifacts
         run: npm run builder --workspace apps/desktop -- --config electron-builder.zn.yml --${{ matrix.builder_target }} --publish never
 
-      - name: Write signed-asset manifest
+      - name: Write release asset manifest
         run: node apps/desktop/scripts/write-zn-release-manifest.mjs ${{ matrix.manifest_platform }} "${{ steps.version.outputs.version }}" "${{ steps.version.outputs.tag }}"
 
       - name: Upload packaged artifacts
