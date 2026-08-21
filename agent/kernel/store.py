@@ -172,8 +172,30 @@ class KernelStore:
         return AgentEvent(**d)
 
     def peek_next_event(self) -> AgentEvent | None:
-        """Return the event ZN would act on next without claiming it."""
+        """Return current active work first, otherwise the next queued event.
+
+        A processing event remains part of ZN's Situation across cognition
+        pulses. This lets Thought -> probe -> evidence -> Thought continue
+        without making the event disappear merely because one body step claimed it.
+        """
         with self._lock:
+            state_row = self._conn.execute(
+                "SELECT data FROM working_state WHERE id=1"
+            ).fetchone()
+            if state_row:
+                try:
+                    working = json.loads(state_row["data"])
+                    current_event_id = str(working.get("current_event_id") or "").strip()
+                except Exception:
+                    current_event_id = ""
+                if current_event_id:
+                    active = self._conn.execute(
+                        "SELECT data FROM events WHERE event_id=? AND status=?",
+                        (current_event_id, EventStatus.PROCESSING.value),
+                    ).fetchone()
+                    if active:
+                        return self._event_from_data(active["data"])
+
             row = self._conn.execute(
                 "SELECT data FROM events WHERE status=? ORDER BY priority DESC, created_at ASC LIMIT 1",
                 (EventStatus.PENDING.value,),
@@ -181,18 +203,32 @@ class KernelStore:
         return self._event_from_data(row["data"]) if row else None
 
     def claim_event(self, event_id: str) -> AgentEvent | None:
-        """Claim one exact pending event selected by the resident's ThoughtFrame."""
+        """Claim pending work or resume the resident's exact processing event."""
         event_id = str(event_id or "").strip()
         if not event_id:
             return None
         with self._lock, self._conn:
             row = self._conn.execute(
-                "SELECT data FROM events WHERE event_id=? AND status=?",
-                (event_id, EventStatus.PENDING.value),
+                "SELECT data FROM events WHERE event_id=?",
+                (event_id,),
             ).fetchone()
             if not row:
                 return None
             event = self._event_from_data(row["data"])
+            if event.status == EventStatus.PROCESSING:
+                state_row = self._conn.execute(
+                    "SELECT data FROM working_state WHERE id=1"
+                ).fetchone()
+                if state_row:
+                    try:
+                        working = json.loads(state_row["data"])
+                        if str(working.get("current_event_id") or "") == event_id:
+                            return event
+                    except Exception:
+                        pass
+                return None
+            if event.status != EventStatus.PENDING:
+                return None
             event.status = EventStatus.PROCESSING
             event.attempts += 1
             self._save_event(event)
@@ -202,6 +238,8 @@ class KernelStore:
         next_event = self.peek_next_event()
         if next_event is None:
             return None
+        if next_event.status == EventStatus.PROCESSING:
+            return next_event
         return self.claim_event(next_event.event_id)
 
     def finish_event(self, event_id: str, *, success: bool, error: str | None = None) -> None:
