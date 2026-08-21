@@ -11,6 +11,7 @@ from pathlib import Path
 from agent.kernel.daemon import ResidentRpcServer
 from agent.kernel.provider_bridge import build_resident_runtime_from_existing_stack
 from agent.kernel.resident_server import ResidentSocketService
+from agent.kernel.service import ResidentService
 
 
 class ResidentSocketServiceTests(unittest.TestCase):
@@ -102,6 +103,32 @@ class ResidentSocketServiceTests(unittest.TestCase):
             thread.join(timeout=5.0)
             self.assertFalse(thread.is_alive())
             self.assertFalse(endpoint_path.exists())
+
+    def test_dead_same_host_lease_is_reclaimed_without_waiting_for_timeout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            resident.store.claim_resident_lease(
+                instance_id="dead-resident",
+                pid=2_147_483_647,
+                hostname=socket.gethostname(),
+                stale_after_seconds=3600,
+            )
+            service = ResidentService(
+                resident,
+                lease_timeout=3600,
+                instance_id="replacement-resident",
+            )
+
+            service.acquire()
+            lease = resident.store.get_resident_lease()
+
+            self.assertIsNotNone(lease)
+            self.assertEqual(lease["instance_id"], "replacement-resident")
+            service.release()
+            resident.store.close()
 
 
 if __name__ == "__main__":
