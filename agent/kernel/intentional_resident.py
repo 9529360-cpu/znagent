@@ -7,6 +7,7 @@ from .embodied_resident import EmbodiedResidentRuntime
 from .models import EventStatus, ResidentRunResult
 from .nervous_system import PersistentNervousSystem
 from .will import NativeWill, ResidentIntention
+from .world_sense import NativeWorldSense, WorldObservation
 
 
 class IntentionalResidentRuntime(EmbodiedResidentRuntime):
@@ -33,6 +34,7 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
         self.will.reconcile_outcomes()
         self.nervous = PersistentNervousSystem(self.store)
         self.nervous.heartbeat(body=self.body.sense())
+        self.world = NativeWorldSense(self)
 
     def intend(
         self,
@@ -63,6 +65,31 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
             metadata={"intention_id": intention.intention_id},
         )
         return intention
+
+    def follow_world(
+        self,
+        topic: str,
+        *,
+        priority: int = 0,
+        interval_seconds: int = 1800,
+        source: str = "self",
+    ):
+        """Keep noticing a topic in the outside world without repeated prompts."""
+        return self.world.follow(
+            topic,
+            priority=priority,
+            interval_seconds=interval_seconds,
+            source=source,
+        )
+
+    def observe_world_once(
+        self,
+        focus_id: str,
+        *,
+        search_fn=None,
+        limit: int = 5,
+    ) -> WorldObservation:
+        return self.world.observe(focus_id, search_fn=search_fn, limit=limit)
 
     def perceive_visual(
         self,
@@ -265,6 +292,12 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
             "tone": self.nervous.describe_state(),
             "affect": asdict(affect),
             "recent_trace_count": len(self.nervous.recent_traces(50)),
+        }
+        data["world_sense"] = {
+            "focuses": [asdict(item) for item in self.world.focuses(enabled_only=True, limit=20)],
+            "due_focus": (
+                asdict(due) if (due := self.world.due_focus()) is not None else None
+            ),
         }
         return data
 
