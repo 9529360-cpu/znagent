@@ -187,6 +187,7 @@ def build_resident_runtime_from_existing_stack(
     from .body import NativeBody
     from .budget import CognitiveBudgetManager
     from .embodied_investigation import EmbodiedInvestigator
+    from .embodied_life import EmbodiedLifeCore
     from .resident import ZNResidentRuntime
 
     effective_config = config
@@ -214,8 +215,9 @@ def build_resident_runtime_from_existing_stack(
     )
     resident = ZNResidentRuntime(kernel=kernel, budget=budget)
     # Body is an organ of the resident, not a skill in the capability registry.
-    # Native investigation is then re-bound to that body so every concrete
-    # probe becomes a body movement with its own durable evidence trail.
+    # Investigation moves through that body, and Life then forms each new
+    # Thought from the cognition stage and evidence that actually resulted.
     resident.body = NativeBody(resident=resident)
     resident.investigator = EmbodiedInvestigator(resident)
+    resident.life = EmbodiedLifeCore(resident)
     return resident
