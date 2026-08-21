@@ -83,6 +83,7 @@ class CognitiveIncrementTests(unittest.TestCase):
             self.assertIsNone(resident.live_once())
             state = resident.store.get_working_state()
             persisted_event = resident.store.get_event(event.event_id)
+            living = resident.life.snapshot()
 
             self.assertEqual(len(calls), 1)
             self.assertEqual(state.stage, "cognition_integration")
@@ -92,6 +93,16 @@ class CognitiveIncrementTests(unittest.TestCase):
             self.assertIsInstance(increment, dict)
             self.assertEqual(increment["content"], "specific external insight")
             self.assertEqual(increment["source"], "external:primary")
+
+            # Model success is not ZN acceptance. The impasse is still open,
+            # learning has not been staged, and the knowledge profile has not
+            # yet been credited by this increment.
+            self.assertIsNotNone(living.current_impasse)
+            self.assertEqual(living.current_impasse.event_id, event.event_id)
+            self.assertEqual(living.current_impasse.status, "open")
+            self.assertEqual(resident.life.recent_learning_candidates(5), [])
+            before_knowledge = resident.kernel.self_model.knowledge("general")
+            self.assertEqual(before_knowledge.evidence_count, 0)
 
             pulse = resident.pulse()
             situation = resident.life.snapshot().current_situation
@@ -110,6 +121,9 @@ class CognitiveIncrementTests(unittest.TestCase):
             self.assertEqual(result.event.status, EventStatus.COMPLETED)
             self.assertIsNotNone(resident.result_for(event.event_id))
             self.assertEqual(len(resident.life.recent_learning_candidates(5)), 1)
+            self.assertIsNone(resident.life.snapshot().current_impasse)
+            after_knowledge = resident.kernel.self_model.knowledge("general")
+            self.assertGreater(after_knowledge.evidence_count, 0)
             resident.store.close()
 
     def test_restart_after_model_call_integrates_without_calling_model_again(self):
@@ -124,6 +138,8 @@ class CognitiveIncrementTests(unittest.TestCase):
             increment_id = state.data["cognitive_increment"]["increment_id"]
             self.assertEqual(state.stage, "cognition_integration")
             self.assertEqual(len(first_calls), 1)
+            self.assertIsNotNone(first.life.snapshot().current_impasse)
+            self.assertEqual(first.life.recent_learning_candidates(5), [])
             first.store.close()
 
             second_calls: list[str] = []
@@ -143,6 +159,8 @@ class CognitiveIncrementTests(unittest.TestCase):
             self.assertEqual(result.response, "increment survives restart")
             self.assertEqual(result.model_invocations, 1)
             self.assertEqual(second_calls, [])
+            self.assertEqual(len(second.life.recent_learning_candidates(5)), 1)
+            self.assertIsNone(second.life.snapshot().current_impasse)
             second.store.close()
 
 
