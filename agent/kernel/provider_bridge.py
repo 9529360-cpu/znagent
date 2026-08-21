@@ -185,7 +185,7 @@ def build_resident_runtime_from_existing_stack(
 ):
     """Build the resident ZN runtime while reusing mature provider/tool plumbing."""
     from .budget import CognitiveBudgetManager
-    from .embodied_resident import EmbodiedResidentRuntime
+    from .intentional_resident import IntentionalResidentRuntime
 
     effective_config = config
     if effective_config is None:
@@ -210,7 +210,7 @@ def build_resident_runtime_from_existing_stack(
             0.0, min(1.0, float(resident_cfg.get("high_risk_threshold", 0.8)))
         ),
     )
-    # The embodied resident is born with Body, Investigation and Life already
-    # attached. Provider plumbing only supplies its durable store, model routes
-    # and cognitive budget; it no longer assembles the subject after birth.
-    return EmbodiedResidentRuntime(kernel=kernel, budget=budget)
+    # Normal product construction now yields one resident subject that already
+    # has Body, Investigation, embodied Life and durable Will. Provider plumbing
+    # supplies resources; it does not become the owner of identity or goals.
+    return IntentionalResidentRuntime(kernel=kernel, budget=budget)
