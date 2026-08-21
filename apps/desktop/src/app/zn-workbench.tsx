@@ -4,6 +4,7 @@ import { registry } from '@/contrib/registry'
 
 import { ContribController } from './contrib'
 import { ZnResidentStatus } from './zn/resident-status'
+import { ZnUpdateStatus } from './zn/update-status'
 
 /**
  * ZN's default desktop posture is a workbench, not an IDE.
@@ -40,6 +41,14 @@ registry.register({
   source: 'core',
   order: -100,
   render: () => <ZnResidentStatus />
+})
+
+registry.register({
+  id: 'zn.release-update',
+  area: 'statusBar.right',
+  source: 'core',
+  order: -100,
+  render: () => <ZnUpdateStatus />
 })
 
 export default function ZnWorkbench() {

@@ -8,8 +8,10 @@ import {
   registerZnResidentIpc,
   startZnResidentOnDesktopReady
 } from './zn-resident-ipc'
+import { registerZnReleaseUpdaterIpc } from './zn-release-updater'
 
 registerZnResidentIpc()
+registerZnReleaseUpdaterIpc()
 
 void app.whenReady().then(async () => {
   await startZnResidentOnDesktopReady()

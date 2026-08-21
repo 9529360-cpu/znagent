@@ -23,5 +23,9 @@ contextBridge.exposeInMainWorld('znDesktop', {
     submit: payload => ipcRenderer.invoke('zn:resident:submit', payload),
     remember: payload => ipcRenderer.invoke('zn:resident:remember', payload),
     forget: key => ipcRenderer.invoke('zn:resident:forget', key)
+  },
+  updates: {
+    check: () => ipcRenderer.invoke('zn:updates:check'),
+    apply: () => ipcRenderer.invoke('zn:updates:apply')
   }
 })

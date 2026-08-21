@@ -1,6 +1,22 @@
 export {}
 
 declare global {
+  type ZnDesktopUpdateStatus = {
+    supported: boolean
+    currentVersion: string
+    updateAvailable: boolean
+    availableVersion?: string
+    releaseUrl?: string
+    assetName?: string
+    message?: string
+  }
+
+  type ZnDesktopUpdateApplyResult = {
+    ok: boolean
+    message?: string
+    error?: string
+  }
+
   interface Window {
     znDesktop?: {
       resident: {
@@ -21,6 +37,10 @@ declare global {
         submit: (payload: Record<string, unknown>) => Promise<unknown>
         remember: (payload: Record<string, unknown>) => Promise<unknown>
         forget: (key: string) => Promise<unknown>
+      }
+      updates: {
+        check: () => Promise<ZnDesktopUpdateStatus>
+        apply: () => Promise<ZnDesktopUpdateApplyResult>
       }
     }
   }
