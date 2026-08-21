@@ -59,7 +59,7 @@ class NativeWorldSense:
 
     This is deliberately not a research agent and does not ask an LLM what the
     web means. ZN chooses a durable focus, this organ periodically samples the
-    outside world through the mature Hermes web-search stack, and the resulting
+    outside world through a ZN-owned replaceable web resource, and the resulting
     percept enters the same associative nervous system as vision, action, and
     thought. Meaning and follow-up remain ZN's job.
 
@@ -323,9 +323,9 @@ class NativeWorldSense:
 
     @staticmethod
     def _search(query: str, limit: int) -> str:
-        from tools.web_tools import web_search_tool
+        from .web_resource import web_search_json
 
-        return web_search_tool(query, limit=limit)
+        return web_search_json(query, limit=limit)
 
     @classmethod
     def _sensor_snapshot(
