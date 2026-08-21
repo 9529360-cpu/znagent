@@ -104,7 +104,7 @@ class NativeWillTests(unittest.TestCase):
             completed = resident.will.get(intention.intention_id)
             self.assertEqual(completed.status, "completed")
             self.assertIsNone(completed.related_event_id)
-            self.assertIn("completed by resident will", completed.last_outcome)
+            self.assertIn(str(target), completed.last_outcome)
             self.assertEqual(resident.will.active(), [])
             resident.store.close()
 
