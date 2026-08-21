@@ -184,6 +184,7 @@ def build_resident_runtime_from_existing_stack(
     runtime_resolver: RuntimeResolver | None = None,
 ):
     """Build the resident ZN runtime while reusing mature provider/tool plumbing."""
+    from .body import NativeBody
     from .budget import CognitiveBudgetManager
     from .resident import ZNResidentRuntime
 
@@ -210,4 +211,11 @@ def build_resident_runtime_from_existing_stack(
             0.0, min(1.0, float(resident_cfg.get("high_risk_threshold", 0.8)))
         ),
     )
-    return ZNResidentRuntime(kernel=kernel, budget=budget)
+    resident = ZNResidentRuntime(kernel=kernel, budget=budget)
+    # Body is an organ of the resident, not a skill in the capability registry.
+    # Attach it to the normal product construction path while the kernel is
+    # still evolving; existing direct ZNResidentRuntime construction remains a
+    # compatible low-level API.
+    resident.body = NativeBody(resident=resident)
+    resident.investigator.body = resident.body
+    return resident
