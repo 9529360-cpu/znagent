@@ -18,6 +18,7 @@ permissions:
 env:
   CI: 'true'
   NODE_OPTIONS: --max-old-space-size=4096
+  ZN_DESKTOP_UPDATE_CHANNEL_URL: ${{ vars.ZN_UPDATE_CHANNEL_URL }}
 
 concurrency:
   group: zn-release-${{ github.ref }}
@@ -88,6 +89,15 @@ jobs:
           NODE
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Require public update channel for formal tags
+        if: ${{ github.ref_type == 'tag' }}
+        shell: bash
+        run: |
+          if [[ -z "$ZN_DESKTOP_UPDATE_CHANNEL_URL" ]]; then
+            echo "::error::Set repository variable ZN_UPDATE_CHANNEL_URL to the public ZN stable.json endpoint before publishing a formal tag."
+            exit 1
+          fi
 
       - name: Stage ZN-owned packaged runtime
         env:

@@ -1,49 +1,28 @@
 import { execFile, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { constants as fsConstants, createWriteStream } from 'node:fs'
+import { constants as fsConstants, createReadStream, createWriteStream } from 'node:fs'
 import { promises as fs } from 'node:fs'
-import * as https from 'node:https'
+import * as http from 'node:http'
 import type { IncomingMessage } from 'node:http'
+import * as https from 'node:https'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
 import { app, ipcMain } from 'electron'
 
+import {
+  parseZnReleaseChannel,
+  znUpdatePlatform,
+  type ZnReleaseChannelResolution,
+  type ZnReleaseNotes,
+  type ZnReleaseTarget
+} from './zn-release-channel'
+
 const execFileAsync = promisify(execFile)
-const REPOSITORY = '9529360-cpu/znagent'
-const LATEST_RELEASE_URL = `https://api.github.com/repos/${REPOSITORY}/releases/latest`
-const USER_AGENT = 'ZN-Desktop-Updater/1'
+const USER_AGENT = 'ZN-Desktop-Updater/2'
 const MAX_REDIRECTS = 6
 
-interface ReleaseAsset {
-  name: string
-  size?: number
-  browser_download_url: string
-}
-
-interface GitHubRelease {
-  tag_name: string
-  html_url: string
-  prerelease?: boolean
-  draft?: boolean
-  assets: ReleaseAsset[]
-}
-
-interface ManifestAsset {
-  name: string
-  size: number
-  sha256: string
-}
-
-interface ReleaseManifest {
-  schema: number
-  product: string
-  repository: string
-  version: string
-  platform: string
-  arch: string
-  assets: ManifestAsset[]
-}
+type ZnDownloadState = 'idle' | 'downloading' | 'ready' | 'failed'
 
 export interface ZnReleaseUpdateStatus {
   supported: boolean
@@ -52,6 +31,11 @@ export interface ZnReleaseUpdateStatus {
   availableVersion?: string
   releaseUrl?: string
   assetName?: string
+  releaseNotes?: ZnReleaseNotes
+  downloadState?: ZnDownloadState
+  downloadedBytes?: number
+  downloadTotalBytes?: number
+  downloadError?: string
   message?: string
 }
 
@@ -63,20 +47,22 @@ export interface ZnReleaseApplyResult {
 
 interface UpdatePlan {
   status: ZnReleaseUpdateStatus
-  release: GitHubRelease
-  manifest: ReleaseManifest
-  expected: ManifestAsset
-  asset: ReleaseAsset
+  release: ZnReleaseChannelResolution
+  target: ZnReleaseTarget
+}
+
+interface PreparationState {
+  key: string
+  state: ZnDownloadState
+  downloadedBytes: number
+  totalBytes: number
+  path?: string
+  error?: string
+  promise?: Promise<string>
 }
 
 let registered = false
-
-function platformKey(): 'windows' | 'macos' | 'linux' | null {
-  if (process.platform === 'win32') return 'windows'
-  if (process.platform === 'darwin') return 'macos'
-  if (process.platform === 'linux') return 'linux'
-  return null
-}
+let preparation: PreparationState | null = null
 
 function parseVersion(value: string): { core: number[]; prerelease: string | null } | null {
   const normalized = value.trim().replace(/^zn-v/i, '').replace(/^v/i, '')
@@ -101,13 +87,48 @@ export function compareZnVersions(left: string, right: string): number {
   return a.prerelease.localeCompare(b.prerelease, undefined, { numeric: true })
 }
 
+function allowInsecureUpdateUrls(): boolean {
+  return !app.isPackaged && process.env.ZN_DESKTOP_ALLOW_INSECURE_UPDATE_URLS === '1'
+}
+
+function configuredChannelUrl(): string | null {
+  const raw = String(process.env.ZN_DESKTOP_UPDATE_CHANNEL_URL || '').trim()
+  if (!raw) return null
+
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    throw new Error('configured ZN update channel URL is invalid')
+  }
+
+  if (url.protocol !== 'https:' && !(allowInsecureUpdateUrls() && url.protocol === 'http:')) {
+    throw new Error('configured ZN update channel must use HTTPS')
+  }
+
+  return url.toString()
+}
+
 function request(url: string, redirects = MAX_REDIRECTS): Promise<IncomingMessage> {
   return new Promise((resolve, reject) => {
-    const req = https.get(
+    const parsed = new URL(url)
+    const client =
+      parsed.protocol === 'https:'
+        ? https
+        : allowInsecureUpdateUrls() && parsed.protocol === 'http:'
+          ? http
+          : null
+
+    if (!client) {
+      reject(new Error('ZN update requests must use HTTPS'))
+      return
+    }
+
+    const req = client.get(
       url,
       {
         headers: {
-          Accept: 'application/vnd.github+json',
+          Accept: '*/*',
           'User-Agent': USER_AGENT
         }
       },
@@ -144,18 +165,11 @@ function request(url: string, redirects = MAX_REDIRECTS): Promise<IncomingMessag
   })
 }
 
-async function readJson<T>(url: string): Promise<T> {
+async function readJson(url: string): Promise<unknown> {
   const response = await request(url)
   const chunks: Buffer[] = []
   for await (const chunk of response) chunks.push(Buffer.from(chunk))
-  return JSON.parse(Buffer.concat(chunks).toString('utf8')) as T
-}
-
-function preferredExtension(platform: 'windows' | 'macos' | 'linux'): string | null {
-  if (platform === 'windows') return '.exe'
-  if (platform === 'macos') return '.zip'
-  if (platform === 'linux' && process.env.APPIMAGE) return '.AppImage'
-  return null
+  return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
 }
 
 async function resolvePlan(): Promise<UpdatePlan | { status: ZnReleaseUpdateStatus }> {
@@ -171,7 +185,19 @@ async function resolvePlan(): Promise<UpdatePlan | { status: ZnReleaseUpdateStat
     }
   }
 
-  const platform = platformKey()
+  const channelUrl = configuredChannelUrl()
+  if (!channelUrl) {
+    return {
+      status: {
+        supported: false,
+        currentVersion,
+        updateAvailable: false,
+        message: 'this ZN build has no public update channel configured'
+      }
+    }
+  }
+
+  const platform = znUpdatePlatform()
   if (!platform) {
     return {
       status: {
@@ -183,86 +209,87 @@ async function resolvePlan(): Promise<UpdatePlan | { status: ZnReleaseUpdateStat
     }
   }
 
-  const release = await readJson<GitHubRelease>(LATEST_RELEASE_URL)
-  const availableVersion = release.tag_name.replace(/^zn-v/i, '')
-  const updateAvailable =
-    release.tag_name.startsWith('zn-v') && compareZnVersions(availableVersion, currentVersion) > 0
+  const release = parseZnReleaseChannel(await readJson(channelUrl), {
+    baseUrl: channelUrl,
+    platform,
+    arch: process.arch,
+    allowInsecureUrls: allowInsecureUpdateUrls()
+  })
+  const updateAvailable = compareZnVersions(release.version, currentVersion) > 0
   const baseStatus: ZnReleaseUpdateStatus = {
-    supported: false,
+    supported: true,
     currentVersion,
     updateAvailable,
-    availableVersion,
-    releaseUrl: release.html_url
+    availableVersion: release.version,
+    releaseUrl: release.releaseUrl,
+    releaseNotes: release.notes
   }
 
-  if (!release.tag_name.startsWith('zn-v') || release.draft || release.prerelease) {
-    return { status: { ...baseStatus, updateAvailable: false, message: 'no stable ZN release is available' } }
-  }
   if (!updateAvailable) {
-    return { status: { ...baseStatus, supported: true, updateAvailable: false } }
+    return { status: baseStatus }
   }
 
-  const extension = preferredExtension(platform)
-  if (!extension) {
+  if (platform === 'linux' && !process.env.APPIMAGE) {
     return {
       status: {
         ...baseStatus,
-        message: 'automatic Linux install is supported for AppImage; use the release asset for deb/rpm installs'
+        supported: false,
+        message: 'automatic Linux install is supported for AppImage; use the published package for deb/rpm installs'
       }
     }
   }
 
-  const manifestName = `zn-release-${platform}-${process.arch}.json`
-  const manifestAsset = release.assets.find(asset => asset.name === manifestName)
-  if (!manifestAsset) {
+  if (!release.target) {
     return {
       status: {
         ...baseStatus,
-        message: `release has no ${platform}/${process.arch} update manifest`
+        supported: false,
+        message: `update channel has no ${platform}/${process.arch} installer`
       }
     }
   }
-
-  const manifest = await readJson<ReleaseManifest>(manifestAsset.browser_download_url)
-  if (
-    manifest.schema !== 1 ||
-    manifest.product !== 'ZN' ||
-    manifest.repository !== REPOSITORY ||
-    manifest.version !== availableVersion ||
-    manifest.platform !== platform ||
-    manifest.arch !== process.arch
-  ) {
-    throw new Error('release manifest does not match this ZN desktop')
-  }
-
-  const expected = manifest.assets.find(item => item.name.endsWith(extension))
-  if (!expected) {
-    return {
-      status: {
-        ...baseStatus,
-        message: `release manifest has no ${extension} installer`
-      }
-    }
-  }
-  const asset = release.assets.find(item => item.name === expected.name)
-  if (!asset) throw new Error(`release asset missing: ${expected.name}`)
 
   return {
     status: {
       ...baseStatus,
-      supported: true,
-      assetName: asset.name
+      assetName: release.target.name
     },
     release,
-    manifest,
-    expected,
-    asset
+    target: release.target
+  }
+}
+
+function planKey(plan: UpdatePlan): string {
+  return `${plan.release.version}:${plan.target.sha256}:${plan.target.url}`
+}
+
+function statusWithPreparation(plan: UpdatePlan): ZnReleaseUpdateStatus {
+  const key = planKey(plan)
+  if (!preparation || preparation.key !== key) {
+    return {
+      ...plan.status,
+      downloadState: 'idle',
+      downloadedBytes: 0,
+      downloadTotalBytes: plan.target.size
+    }
+  }
+
+  return {
+    ...plan.status,
+    downloadState: preparation.state,
+    downloadedBytes: preparation.downloadedBytes,
+    downloadTotalBytes: preparation.totalBytes,
+    downloadError: preparation.error
   }
 }
 
 export async function checkZnReleaseUpdate(): Promise<ZnReleaseUpdateStatus> {
   try {
-    return (await resolvePlan()).status
+    const resolved = await resolvePlan()
+    if (!('target' in resolved)) return resolved.status
+
+    void ensurePrepared(resolved).catch(() => {})
+    return statusWithPreparation(resolved)
   } catch (error) {
     return {
       supported: false,
@@ -273,41 +300,109 @@ export async function checkZnReleaseUpdate(): Promise<ZnReleaseUpdateStatus> {
   }
 }
 
-async function downloadVerified(plan: UpdatePlan): Promise<string> {
-  const directory = path.join(app.getPath('temp'), 'zn-updates', plan.manifest.version)
+async function fileSha256(filePath: string): Promise<string> {
+  const hash = createHash('sha256')
+  const input = createReadStream(filePath)
+  for await (const chunk of input) hash.update(Buffer.from(chunk))
+  return hash.digest('hex')
+}
+
+async function isVerifiedDownload(filePath: string, target: ZnReleaseTarget): Promise<boolean> {
+  try {
+    const stat = await fs.stat(filePath)
+    if (!stat.isFile() || stat.size !== target.size) return false
+    return (await fileSha256(filePath)) === target.sha256
+  } catch {
+    return false
+  }
+}
+
+async function downloadVerified(plan: UpdatePlan, state: PreparationState): Promise<string> {
+  const directory = path.join(app.getPath('userData'), 'updates', plan.release.version)
   await fs.mkdir(directory, { recursive: true })
-  const finalPath = path.join(directory, plan.asset.name)
+  const finalPath = path.join(directory, plan.target.name)
+
+  if (await isVerifiedDownload(finalPath, plan.target)) {
+    state.downloadedBytes = plan.target.size
+    return finalPath
+  }
+
+  await fs.rm(finalPath, { force: true })
   const temporaryPath = `${finalPath}.${process.pid}.part`
   await fs.rm(temporaryPath, { force: true })
 
-  const response = await request(plan.asset.browser_download_url)
-  const output = createWriteStream(temporaryPath, { flags: 'w' })
-  const hash = createHash('sha256')
-  let size = 0
+  try {
+    const response = await request(plan.target.url)
+    const output = createWriteStream(temporaryPath, { flags: 'w' })
+    const hash = createHash('sha256')
+    let size = 0
 
-  await new Promise<void>((resolve, reject) => {
-    const fail = (error: Error) => {
-      output.destroy()
-      reject(error)
-    }
-    response.on('data', chunk => {
-      const bytes = Buffer.from(chunk)
-      size += bytes.length
-      hash.update(bytes)
+    await new Promise<void>((resolve, reject) => {
+      const fail = (error: Error) => {
+        output.destroy()
+        reject(error)
+      }
+      response.on('data', chunk => {
+        const bytes = Buffer.from(chunk)
+        size += bytes.length
+        state.downloadedBytes = size
+        hash.update(bytes)
+      })
+      response.once('error', fail)
+      output.once('error', fail)
+      output.once('finish', resolve)
+      response.pipe(output)
     })
-    response.once('error', fail)
-    output.once('error', fail)
-    output.once('finish', resolve)
-    response.pipe(output)
-  })
 
-  const digest = hash.digest('hex')
-  if (size !== Number(plan.expected.size) || digest !== plan.expected.sha256.toLowerCase()) {
+    const digest = hash.digest('hex')
+    if (size !== plan.target.size || digest !== plan.target.sha256) {
+      throw new Error('downloaded ZN update failed channel verification')
+    }
+
+    await fs.rename(temporaryPath, finalPath)
+    state.downloadedBytes = size
+    return finalPath
+  } catch (error) {
     await fs.rm(temporaryPath, { force: true })
-    throw new Error('downloaded ZN update failed manifest verification')
+    throw error
   }
-  await fs.rename(temporaryPath, finalPath)
-  return finalPath
+}
+
+function ensurePrepared(plan: UpdatePlan, retryFailed = false): Promise<string> {
+  const key = planKey(plan)
+
+  if (preparation?.key === key) {
+    if (preparation.state === 'ready' && preparation.path) return Promise.resolve(preparation.path)
+    if (preparation.state === 'downloading' && preparation.promise) return preparation.promise
+    if (preparation.state === 'failed' && !retryFailed) {
+      return Promise.reject(new Error(preparation.error || 'ZN update download failed'))
+    }
+  }
+
+  const state: PreparationState = {
+    key,
+    state: 'downloading',
+    downloadedBytes: 0,
+    totalBytes: plan.target.size
+  }
+
+  const promise = downloadVerified(plan, state)
+    .then(filePath => {
+      state.state = 'ready'
+      state.path = filePath
+      state.error = undefined
+      state.downloadedBytes = state.totalBytes
+      return filePath
+    })
+    .catch(error => {
+      state.state = 'failed'
+      state.error = error instanceof Error ? error.message : String(error)
+      throw error
+    })
+
+  state.promise = promise
+  preparation = state
+  return promise
 }
 
 function macBundlePath(): string {
@@ -399,7 +494,7 @@ exit 1
 export async function applyZnReleaseUpdate(): Promise<ZnReleaseApplyResult> {
   try {
     const resolved = await resolvePlan()
-    if (!('asset' in resolved)) {
+    if (!('target' in resolved)) {
       return {
         ok: false,
         error: 'unavailable',
@@ -410,14 +505,14 @@ export async function applyZnReleaseUpdate(): Promise<ZnReleaseApplyResult> {
       return { ok: true, message: 'ZN is already current' }
     }
 
-    const installer = await downloadVerified(resolved)
+    const installer = await ensurePrepared(resolved, true)
     if (process.platform === 'win32') await handoffWindows(installer)
     else if (process.platform === 'darwin') await handoffMac(installer)
     else if (process.platform === 'linux') await handoffLinux(installer)
     else return { ok: false, error: 'unsupported-platform', message: process.platform }
 
     setTimeout(() => app.quit(), 100)
-    return { ok: true, message: `installing ZN ${resolved.manifest.version}` }
+    return { ok: true, message: `installing ZN ${resolved.release.version}` }
   } catch (error) {
     return {
       ok: false,

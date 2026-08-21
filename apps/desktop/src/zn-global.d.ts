@@ -1,6 +1,13 @@
 export {}
 
 declare global {
+  type ZnDesktopReleaseNotes = {
+    new: string[]
+    improvements: string[]
+    fixes: string[]
+    impact: string[]
+  }
+
   type ZnDesktopUpdateStatus = {
     supported: boolean
     currentVersion: string
@@ -8,6 +15,11 @@ declare global {
     availableVersion?: string
     releaseUrl?: string
     assetName?: string
+    releaseNotes?: ZnDesktopReleaseNotes
+    downloadState?: 'idle' | 'downloading' | 'ready' | 'failed'
+    downloadedBytes?: number
+    downloadTotalBytes?: number
+    downloadError?: string
     message?: string
   }
 

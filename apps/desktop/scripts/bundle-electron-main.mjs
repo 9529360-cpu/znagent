@@ -26,14 +26,18 @@ const preloadEntry = resolve(root, 'electron/zn-preload.ts')
 const preloadOut = resolve(distDir, 'electron-preload.js')
 
 const external = ['electron', 'node-pty', 'get-windows', 'fs']
-// Production bundles bake packaged=true so unpackaged `electron .` still
-// behaves like a packaged build. Dev bundles (`--dev`) leave the env alone
-// so HERMES_DESKTOP_DEV_SERVER / source-tree resolution keep working while
-// the compatibility shell is still being migrated.
+// Production bundles bake packaged=true and the public ZN update-channel URL.
+// Dev bundles (`--dev`) leave process.env alone so local update-channel fixtures
+// and source-tree resolution can be changed without rebuilding the bundle.
 const isDev = process.argv.includes('--dev')
 const define = isDev
   ? {}
-  : { 'process.env.HERMES_DESKTOP_IS_PACKAGED': JSON.stringify(true) }
+  : {
+      'process.env.HERMES_DESKTOP_IS_PACKAGED': JSON.stringify(true),
+      'process.env.ZN_DESKTOP_UPDATE_CHANNEL_URL': JSON.stringify(
+        process.env.ZN_DESKTOP_UPDATE_CHANNEL_URL || ''
+      )
+    }
 
 // Bundle ZN wrapper main → dist/electron-main.mjs
 await build({
@@ -45,10 +49,10 @@ await build({
   outfile: mainOut,
   external,
   banner: {
-    js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);",
+    js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);"
   },
   define,
-  logLevel: 'info',
+  logLevel: 'info'
 })
 console.log(`bundled ${mainOut}${isDev ? ' (dev)' : ''}`)
 
@@ -62,6 +66,6 @@ await build({
   outfile: preloadOut,
   external,
   define,
-  logLevel: 'info',
+  logLevel: 'info'
 })
 console.log(`bundled ${preloadOut}${isDev ? ' (dev)' : ''}`)
