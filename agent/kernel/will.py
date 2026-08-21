@@ -72,6 +72,21 @@ class NativeWill:
     strengthen or replace the one candidate that currently makes most sense.
     """
 
+    _SCHEMA_PROBE_FAMILIES = {
+        "workspace": "git",
+        "branch": "git",
+        "changes": "git",
+        "system": "body",
+        "architecture": "body",
+        "disk_state": "body",
+    }
+    _SCHEMA_RELATION_ALIASES = {
+        "dirty": ("workspace", "dirty"),
+        "clean": ("workspace", "clean"),
+        "low_disk": ("disk_state", "low"),
+        "disk_ok": ("disk_state", "healthy"),
+    }
+
     def __init__(self, store: KernelStore):
         self.store = store
         self._init_schema()
@@ -170,6 +185,12 @@ class NativeWill:
         the same candidate again strengthens it. A different candidate replaces
         the current one only when it has materially stronger support or the old
         candidate never became established.
+
+        A schema-probe candidate is made concrete when the activated schema has
+        a structured expectation that ZN can test with its current body. This is
+        native step formation, not a planner/model call: Will selects one
+        observable relation and leaves the actual reality check to Investigation
+        and Body.
         """
         intention = self._require(intention_id)
         if intention.status != "active" or intention.related_event_id:
@@ -180,9 +201,38 @@ class NativeWill:
         normalized_kind = str(kind or "native_reflection").strip() or "native_reflection"
         normalized_step = str(step or "").strip()
         normalized_reason = str(reason or "").strip()
+        payload_data = dict(payload or {})
+        probe_reason: str | None = None
+        if normalized_kind == "schema_probe":
+            normalized_step, payload_data, probe_reason = self._shape_schema_probe_candidate(
+                normalized_step,
+                payload_data,
+            )
+            if probe_reason:
+                normalized_reason = (
+                    f"{normalized_reason}; {probe_reason}"
+                    if normalized_reason
+                    else probe_reason
+                )
+
         if not normalized_step:
             raise ValueError("incubating intention step must not be empty")
+
+        if intention.last_outcome and intention.current_step == normalized_step:
+            return intention
+
         incoming_confidence = max(0.0, min(1.0, float(confidence)))
+        try:
+            probe_confidence = float(payload_data.get("schema_probe_confidence"))
+        except (TypeError, ValueError):
+            probe_confidence = None
+        if probe_confidence is not None:
+            probe_confidence = max(0.0, min(1.0, probe_confidence))
+            incoming_confidence = min(
+                1.0,
+                0.76 * incoming_confidence + 0.24 * probe_confidence,
+            )
+
         incoming_support = tuple(
             dict.fromkeys(
                 str(item).strip()
@@ -207,10 +257,10 @@ class NativeWill:
             )[-12:]
             if normalized_reason:
                 intention.candidate_reason = normalized_reason[:1000]
-            if payload:
+            if payload_data:
                 intention.candidate_payload = {
                     **intention.candidate_payload,
-                    **dict(payload),
+                    **payload_data,
                 }
         else:
             existing_maturity = intention.candidate_maturity
@@ -223,7 +273,7 @@ class NativeWill:
                 intention.candidate_kind = normalized_kind
                 intention.candidate_step = normalized_step
                 intention.candidate_reason = normalized_reason[:1000] or None
-                intention.candidate_payload = dict(payload or {})
+                intention.candidate_payload = payload_data
                 intention.candidate_support = incoming_support
                 intention.candidate_confidence = incoming_confidence
                 intention.candidate_repetitions = 1
@@ -233,6 +283,188 @@ class NativeWill:
         intention.updated_at = intention.last_incubated_at
         self._save(intention)
         return intention
+
+    def _shape_schema_probe_candidate(
+        self,
+        step: str,
+        payload: dict[str, Any],
+    ) -> tuple[str, dict[str, Any], str | None]:
+        schema_id = str(payload.get("schema_trace_id") or "").strip()
+        if not schema_id:
+            return step, payload, None
+        schema = self._load_neural_trace_data(schema_id)
+        if not schema or str(schema.get("channel") or "") != "schema":
+            return step, payload, None
+
+        relation = self._best_schema_probe_relation(schema)
+        if relation is None:
+            return step, payload, None
+        family, value, observation, confidence, support_ratio, status = relation
+        summary = str(schema.get("summary") or "").strip()
+        base = step.strip()
+        if summary and summary not in base:
+            base = f"{base}: {summary[:420]}" if base else summary[:420]
+        target = "git repository" if observation == "git" else "body"
+        shaped = (
+            f"{base.rstrip('. ')}; observe current {target} state and test structured "
+            f"expectation {family}:{value}"
+        )[:1000]
+        shaped_payload = {
+            **payload,
+            "schema_probe_observation": observation,
+            "schema_probe_relation": {
+                "family": family,
+                "value": value,
+                "support_ratio": round(support_ratio, 5),
+                "status": status,
+            },
+            "schema_probe_confidence": round(confidence, 5),
+        }
+        reason = (
+            f"the activated schema contains a {status} {family}:{value} relation "
+            f"that current {target} evidence can test directly"
+        )
+        return shaped, shaped_payload, reason
+
+    def _best_schema_probe_relation(
+        self,
+        schema: dict[str, Any],
+    ) -> tuple[str, str, str, float, float, str] | None:
+        metadata = schema.get("metadata") if isinstance(schema.get("metadata"), dict) else {}
+        profile = metadata.get("prediction_profile")
+        ranked: list[tuple[float, str, str, str, float, float, str]] = []
+        if isinstance(profile, dict):
+            for item in profile.get("relations") or ():
+                if not isinstance(item, dict):
+                    continue
+                family = str(item.get("family") or "").strip().lower()
+                value = str(item.get("value") or "").strip().lower()
+                observation = self._SCHEMA_PROBE_FAMILIES.get(family)
+                status = str(item.get("status") or "expected").strip().lower()
+                if not observation or not value or status == "contested":
+                    continue
+                try:
+                    support_ratio = max(
+                        0.0,
+                        min(1.0, float(item.get("support_ratio") or 0.0)),
+                    )
+                    confidence = max(
+                        0.0,
+                        min(1.0, float(item.get("confidence") or 0.0)),
+                    )
+                except (TypeError, ValueError):
+                    continue
+                anchor = bool(item.get("anchor"))
+                if support_ratio < 0.35 and confidence < 0.40 and not anchor:
+                    continue
+                score = (
+                    0.50 * support_ratio
+                    + 0.45 * confidence
+                    + (0.05 if anchor else 0.0)
+                )
+                ranked.append(
+                    (
+                        score,
+                        family,
+                        value,
+                        observation,
+                        confidence,
+                        support_ratio,
+                        status,
+                    )
+                )
+        if ranked:
+            ranked.sort(key=lambda item: item[0], reverse=True)
+            _, family, value, observation, confidence, support_ratio, status = ranked[0]
+            return family, value, observation, confidence, support_ratio, status
+
+        source_ids = [
+            str(item).strip()
+            for item in (metadata.get("source_trace_ids") or ())
+            if str(item).strip()
+        ][:24]
+        sources = [
+            item
+            for item in (self._load_neural_trace_data(trace_id) for trace_id in source_ids)
+            if item is not None
+        ]
+        if not sources:
+            sources = [schema]
+        counts: dict[tuple[str, str, str], int] = {}
+        for source in sources:
+            seen: set[tuple[str, str, str]] = set()
+            for feature in source.get("features") or ():
+                relation = self._schema_relation(str(feature))
+                if relation is None:
+                    continue
+                family, value = relation
+                observation = self._SCHEMA_PROBE_FAMILIES.get(family)
+                if not observation:
+                    continue
+                key = (family, value, observation)
+                if key in seen:
+                    continue
+                seen.add(key)
+                counts[key] = counts.get(key, 0) + 1
+        if not counts:
+            return None
+        source_count = max(1, len(sources))
+        fallback: list[tuple[float, str, str, str, float]] = []
+        for (family, value, observation), count in counts.items():
+            support_ratio = max(0.0, min(1.0, count / source_count))
+            if support_ratio < 0.45:
+                continue
+            confidence = min(0.92, 0.40 + 0.50 * support_ratio)
+            fallback.append(
+                (
+                    support_ratio,
+                    family,
+                    value,
+                    observation,
+                    confidence,
+                )
+            )
+        if not fallback:
+            return None
+        fallback.sort(key=lambda item: item[0], reverse=True)
+        support_ratio, family, value, observation, confidence = fallback[0]
+        return family, value, observation, confidence, support_ratio, "derived"
+
+    def _load_neural_trace_data(self, trace_id: str) -> dict[str, Any] | None:
+        try:
+            with closing(self._connect()) as conn:
+                row = conn.execute(
+                    "SELECT data FROM neural_traces WHERE trace_id=?",
+                    (str(trace_id),),
+                ).fetchone()
+        except sqlite3.OperationalError:
+            return None
+        if not row:
+            return None
+        try:
+            raw = json.loads(row["data"])
+        except (TypeError, json.JSONDecodeError):
+            return None
+        if not isinstance(raw, dict):
+            return None
+        raw["features"] = tuple(raw.get("features") or ())
+        raw["metadata"] = dict(raw.get("metadata") or {})
+        return raw
+
+    @classmethod
+    def _schema_relation(cls, feature: str) -> tuple[str, str] | None:
+        text = str(feature or "").strip().lower().replace(" ", "_")
+        if text in cls._SCHEMA_RELATION_ALIASES:
+            return cls._SCHEMA_RELATION_ALIASES[text]
+        for separator in (":", "="):
+            if separator not in text:
+                continue
+            family, value = text.split(separator, 1)
+            family = family.strip()
+            value = value.strip()
+            if family in cls._SCHEMA_PROBE_FAMILIES and value:
+                return family, value[:120]
+        return None
 
     def clear_candidate(self, intention_id: str) -> ResidentIntention:
         intention = self._require(intention_id)
