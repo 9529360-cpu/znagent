@@ -116,8 +116,13 @@ class NativeIntentionFormation:
             if target is not None:
                 signature = self._expectation_signature(family, value)
                 is_recheck = signature in allowed_rechecks
-                conflicts = max(0, int(relation.get("conflicts") or 0))
-                attempt = max(1, conflicts + 1) if is_recheck else 1
+                # ``attempt`` describes Will's lived probe history, not the
+                # schema node's aggregate conflict count. Structural compaction
+                # may merge several equivalent schema representations and sum
+                # their conflict counters after a single observation. The one
+                # confirming recheck therefore follows the first lived probe as
+                # attempt 2 regardless of that neural bookkeeping detail.
+                attempt = 2 if is_recheck else 1
                 payload = {
                     **common_payload,
                     **target,
