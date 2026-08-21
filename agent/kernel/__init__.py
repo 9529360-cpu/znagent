@@ -28,12 +28,6 @@ from .life import (
     ZNLifeCore,
 )
 from .memory import FactMatch, StructuredMemory
-from .provider_bridge import (
-    build_resident_runtime_from_existing_stack,
-    build_runtime_from_existing_stack,
-    resolve_model_routes,
-    route_from_spec,
-)
 from .models import (
     AgentEvent,
     AgentIdentity,
@@ -56,6 +50,18 @@ from .models import (
     WorkerResult,
     WorkingState,
 )
+from .nervous_system import (
+    AffectiveState,
+    NeuralActivation,
+    NeuralTrace,
+    PersistentNervousSystem,
+)
+from .provider_bridge import (
+    build_resident_runtime_from_existing_stack,
+    build_runtime_from_existing_stack,
+    resolve_model_routes,
+    route_from_spec,
+)
 from .resident import ZNResidentRuntime
 from .router import ModelRouter, NoRouteAvailable
 from .runtime import ZNKernelRuntime
@@ -66,6 +72,7 @@ from .will import NativeWill, ResidentIntention
 from .worker import LegacyAIAgentWorkerFactory, Worker, WorkerFactory
 
 __all__ = [
+    "AffectiveState",
     "AgentEvent",
     "AgentIdentity",
     "Assessment",
@@ -116,7 +123,10 @@ __all__ = [
     "NativeBody",
     "NativeInvestigator",
     "NativeWill",
+    "NeuralActivation",
+    "NeuralTrace",
     "NoRouteAvailable",
+    "PersistentNervousSystem",
     "PromotedCapabilityLoader",
     "ResidentAlreadyRunning",
     "ResidentIntention",
