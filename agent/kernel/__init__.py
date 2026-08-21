@@ -53,6 +53,7 @@ from .models import (
 from .nervous_system import (
     AffectiveState,
     NeuralActivation,
+    NeuralConsolidationReport,
     NeuralTrace,
     PersistentNervousSystem,
 )
@@ -126,6 +127,7 @@ __all__ = [
     "NativeWill",
     "NativeWorldSense",
     "NeuralActivation",
+    "NeuralConsolidationReport",
     "NeuralTrace",
     "NoRouteAvailable",
     "PersistentNervousSystem",
