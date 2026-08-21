@@ -4,12 +4,38 @@ import argparse
 import json
 import os
 import socketserver
+import sys
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from .models import utc_now
 from .visual_sense import NativeVisualSense, VisualCaptureFn
+
+
+def _process_runtime_id(
+    *,
+    environ: Mapping[str, str] | None = None,
+    python_executable: str | Path | None = None,
+) -> str | None:
+    env = environ if environ is not None else os.environ
+    explicit = str(env.get("ZN_RUNTIME_ID") or "").strip()
+    if explicit:
+        return explicit
+
+    executable = Path(python_executable or sys.executable).expanduser().resolve()
+    for parent in executable.parents[:8]:
+        manifest_path = parent / "runtime.json"
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(manifest, dict):
+            continue
+        runtime_id = str(manifest.get("runtime_id") or "").strip()
+        if manifest.get("product") == "ZN" and runtime_id:
+            return runtime_id
+    return None
 
 
 class _ResidentTcpServer(socketserver.ThreadingTCPServer):
@@ -165,6 +191,8 @@ class ResidentSocketService:
             "pid": os.getpid(),
             "instance_id": self.rpc.service.instance_id,
             "started_at": utc_now(),
+            "runtime_id": _process_runtime_id(),
+            "python": sys.executable,
         }
         temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
         temporary.write_text(

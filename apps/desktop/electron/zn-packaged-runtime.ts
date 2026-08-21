@@ -217,6 +217,7 @@ function configureZnPackagedRuntime({
 
   env.ZN_AGENT_HOME = resolvedHome
   env.ZN_PACKAGED_RUNTIME_ROOT = runtime.root
+  env.ZN_RUNTIME_ID = runtime.manifest.runtime_id
   env.ZN_RESIDENT_PYTHON = runtime.python
   env.HERMES_DESKTOP_HERMES_ROOT = runtime.backendRoot
   env.HERMES_DESKTOP_PYTHON = runtime.python

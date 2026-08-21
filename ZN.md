@@ -279,7 +279,7 @@ Visual sensing is owned by the long-lived resident service, not the Electron win
 
 When idle, ZN can perform low-frequency native association/reflection without creating a hidden self-prompt/token loop. Real events and open impasses have higher priority.
 
-## 8. Resident process, UI lifecycle and autostart
+## 8. Resident process, runtime identity and autostart
 
 ```text
 Resident service = life/process continuity
@@ -295,6 +295,17 @@ OS-login autostart exists in `agent/kernel/resident_autostart.py`:
 - Windows: current-user Scheduled Task.
 
 The startup entry pins the Python executable and ZN home used to install it. Electron refreshes that entry after the resident is reachable.
+
+The resident endpoint also reports process-level runtime identity:
+
+```text
+runtime_id
+python
+```
+
+This metadata belongs to process/body lifecycle, not SelfModel or neural memory. A packaged desktop can therefore distinguish "the same persistent ZN is currently running on runtime N" from "the installed desktop wants runtime N+1" without polluting the cognition model.
+
+When `ZN_RUNTIME_ID` is unavailable (notably an OS-login autostart process), the resident derives its runtime ID from the nearest valid ZN `runtime.json` above `sys.executable`. This keeps runtime identity accurate across login/startup boundaries.
 
 ## 9. ZN-owned packaged runtime
 
@@ -322,6 +333,7 @@ Packaged desktop start:
 <installer resources>/zn-runtime
 → validate runtime.json, platform, arch and entrypoints
 → atomically materialize to <ZN_HOME>/runtime/<runtime_id>
+→ expose desired ZN_RUNTIME_ID
 → set ZN_RESIDENT_PYTHON to that interpreter
 → point inherited desktop backend seam at the same Python/site-packages
 → load mature shell infrastructure
@@ -329,11 +341,52 @@ Packaged desktop start:
 → refresh OS autostart with the actual runtime Python
 ```
 
-The versioned runtime directory is deliberate: an old resident can keep running the previous runtime while the desktop updates; the new desktop activates a new runtime and refreshes autostart without replacing an in-use Python executable inside the application directory.
+The versioned runtime directory is deliberate: runtime N and N+1 coexist under the same persistent ZN home rather than replacing an interpreter that may still be executing.
 
 Clean packaged launch should no longer require a Hermes checkout, a ZN source checkout, system Python that happens to import the kernel, or private GitHub source access.
 
-## 10. ZN desktop and update channel
+### 9.1 Safe N → N+1 resident handoff
+
+Desktop update and resident update are related but not identical. Replacing Electron does not automatically mean the already-running resident process changed interpreters.
+
+The handoff policy is deliberately conservative:
+
+```text
+Desktop N+1 starts
+→ materialize runtime N+1 beside runtime N
+→ connect to existing resident if one is alive
+→ refresh autostart to N+1 Python FIRST
+→ compare endpoint runtime identity with desired N+1
+
+if resident already runs N+1
+  → continue
+
+if resident runs N / legacy runtime AND current Situation has active event
+  → do not restart
+  → keep subject alive and working
+  → bounded delayed recheck
+
+if resident runs N / legacy runtime AND no active event
+  → graceful shutdown RPC
+  → wait briefly for old endpoint retirement
+  → launch/reconnect with N+1 Python
+  → same ZN home / same persistent state
+  → verify endpoint now reports N+1
+```
+
+The desktop retry window is bounded. Closing Electron cancels only the UI-side retry timer; it does not kill a busy resident. Because N+1 autostart is installed before handoff, a later login/restart still activates the new runtime.
+
+The status bar surfaces `runtime handoff pending` when ZN is alive on an older/legacy runtime. This is not reported as offline.
+
+Tests protect the lower-level continuity invariants:
+
+- N and N+1 runtime directories coexist;
+- persistent files under ZN home survive runtime activation;
+- active events classify the resident as busy and block immediate handoff;
+- endpoint runtime identity reports the actual interpreter/runtime;
+- autostart-launched portable Python can recover runtime identity from `runtime.json` without inherited environment variables.
+
+## 10. ZN desktop and public update channel
 
 The active ZN desktop layer owns runtime setup, resident IPC/lifecycle and update UI while still reusing mature inherited shell infrastructure.
 
@@ -398,7 +451,7 @@ Installer verification is currently **hash verification**, not independent crypt
 
 ## 11. ZN-owned public release publisher
 
-Formal tag publishing now produces a provider-neutral static channel bundle using `apps/desktop/scripts/prepare-zn-public-channel.mjs`:
+Formal tag publishing produces a provider-neutral static channel bundle using `apps/desktop/scripts/prepare-zn-public-channel.mjs`:
 
 ```text
 public-channel/
@@ -410,7 +463,7 @@ public-channel/
         └── Linux installers
 ```
 
-The producer consumes the per-platform release manifests, checks preferred updater artifacts, rejects unsafe asset names, verifies copied asset sizes and emits target SHA-256 metadata.
+The producer consumes per-platform release manifests, checks preferred updater artifacts, rejects unsafe asset names, verifies copied asset sizes and emits target SHA-256 metadata.
 
 User-facing release notes are derived from conventional commit subjects since the previous `zn-v*` tag:
 
@@ -420,9 +473,9 @@ User-facing release notes are derived from conventional commit subjects since th
 - conventional `!` breaking marker → Possible impact;
 - internal `ci:`, `test:`, `docs:` and unrelated prefixes are not automatically presented as product changes.
 
-The resulting bundle is preserved as a GitHub Actions audit artifact and published through a generic **S3-compatible transport adapter**. This is transport infrastructure, not the client protocol, so the storage provider remains replaceable (for example AWS S3, Cloudflare R2, Backblaze B2 or another compatible service).
+The bundle is preserved as a GitHub Actions audit artifact and published through a generic **S3-compatible transport adapter**. Storage provider remains replaceable; the client protocol does not depend on AWS/R2/B2/etc.
 
-Release order is intentionally:
+Release order:
 
 ```text
 package self-contained ZN desktop + runtime
@@ -432,7 +485,7 @@ package self-contained ZN desktop + runtime
 → upload/replace stable.json LAST
 ```
 
-`stable.json` is the only mutable pointer. Versioned assets use immutable caching; `stable.json` uses no-cache semantics. Clients therefore should not observe a version before all referenced assets are available.
+`stable.json` is the only mutable pointer. Versioned assets use immutable caching; `stable.json` uses no-cache semantics.
 
 Formal release configuration:
 
@@ -443,11 +496,11 @@ Formal release configuration:
 - secrets `ZN_UPDATE_S3_ACCESS_KEY_ID` and `ZN_UPDATE_S3_SECRET_ACCESS_KEY`;
 - optional `ZN_PUBLIC_RELEASE_URL` for a human-facing public release page.
 
-The actual bucket/domain/credentials are operational configuration and are not provisioned by this source commit. Do not hide missing deployment configuration by falling back to Hermes or the private source repository.
+The actual bucket/domain/credentials are operational configuration and are not provisioned by source code. Do not hide missing deployment configuration by falling back to Hermes or the private source repository.
 
 ## 12. Immediate next development target
 
-The resident kernel, transfer-attention rhythm, persistent world/vision sensing, detached resident/autostart, self-contained runtime, client stable-channel protocol, background updater and release-side static publisher now exist.
+The resident kernel, transfer-attention rhythm, persistent world/vision sensing, detached resident/autostart, self-contained runtime, runtime identity/handoff, client stable-channel protocol, background updater and release-side static publisher now exist.
 
 The next target is:
 
@@ -458,8 +511,8 @@ Priority order:
 1. Provision/configure the actual public ZN bucket/domain and point `ZN_UPDATE_CHANNEL_URL` at its `stable.json`.
 2. Run the manual multi-OS release workflow and inspect the portable runtime inside Windows/macOS/Linux installer artifacts.
 3. Validate a clean machine can install and boot ZN without Hermes, a source checkout or system Python.
-4. Validate update continuity with a resident already running from version N while desktop N+1 installs.
-5. Verify autostart switches to the N+1 runtime after activation without destroying ZN home/state.
+4. Validate N → N+1 with a real running resident: active work must not be interrupted; idle handoff must switch to N+1 using the same ZN home.
+5. Verify autostart points to N+1 and runtime identity remains correct after login when no desktop environment variables are inherited.
 6. Confirm public assets are reachable without GitHub/source credentials and `stable.json` moves only after immutable assets exist.
 7. Continue removing product-facing Hermes names/assumptions from the active desktop path.
 8. Preserve applicable upstream license/attribution even as product ownership moves fully to ZN.
@@ -475,19 +528,19 @@ Normal dev CI intentionally remains cheap:
 - zero-model resident boot smoke;
 - Python kernel test suite;
 - Electron/TypeScript typecheck;
-- focused packaged-runtime/update-channel contract tests;
+- focused packaged-runtime/update-channel/runtime-handoff contract tests;
 - public-channel bundle producer test;
 - expensive container/runtime smoke skipped on ordinary dev pushes.
 
-Last verified development head before this publisher commit:
+Last verified development head before the runtime-handoff change in this document:
 
 ```text
-844a5505a61fbb871932154e01d2f6da8da8ae6a
-feat: own the ZN public update channel
+85451685c4d04d9096be5b1c2a9e60eb4c6162ab
+feat: publish ZN stable channel bundle
 
 ZN Kernel / Python       success
 Electron / TypeScript    success
-Actions run              32533406082
+Actions run              32533891437
 ```
 
 Cost rules:
@@ -531,6 +584,7 @@ apps/desktop/
 ├── electron/
 │   ├── zn-main.ts
 │   ├── zn-packaged-runtime.ts
+│   ├── zn-resident-runtime-state.ts
 │   ├── zn-release-channel.ts
 │   ├── zn-release-updater.ts
 │   ├── zn-preload.ts
@@ -555,7 +609,7 @@ CI/release:
 .github/workflows/zn-release.yml
 ```
 
-Tests are part of the architecture specification. Restart/continuity behavior matters: resident-native behavior should not disappear merely because a process restarts.
+Tests are part of the architecture specification. Restart/continuity behavior matters: resident-native behavior should not disappear merely because a process or UI restarts.
 
 ## 15. Architecture traps to avoid
 
@@ -568,23 +622,24 @@ Tests are part of the architecture specification. Restart/continuity behavior ma
 7. Do not make idle reflection a hidden self-prompt token loop.
 8. Do not equate model success with ZN accepting/completing a task.
 9. Do not make Electron window lifetime equal resident lifetime.
-10. Do not allow cross-context association to become action without present Situation evidence.
-11. Do not turn one transfer success into a permanent context rule.
-12. Do not collapse independent agreeing/conflicting transfer evidence into one strongest path.
-13. Do not let failure in context B erase a relation correctly learned in context A.
-14. Do not create a second context-policy memory store for behavior that belongs in lived neural state.
-15. Do not spend this phase primarily on policy frameworks instead of the organism's core loops.
-16. Do not make Hermes availability, releases, commit history or update infrastructure necessary for ZN to install, boot or update.
-17. Do not make the private ZN source repository itself a client update dependency.
-18. Do not rewrite mature infrastructure merely to claim originality; adopt it deliberately under ZN ownership when it solves the right problem.
-19. Do not automatically merge `upstream/hermes` into ZN branches.
-20. Do not publish `stable.json` before all immutable assets it references are available.
+10. Do not interrupt active resident work merely to activate a newer packaged runtime.
+11. Do not allow cross-context association to become action without present Situation evidence.
+12. Do not turn one transfer success into a permanent context rule.
+13. Do not collapse independent agreeing/conflicting transfer evidence into one strongest path.
+14. Do not let failure in context B erase a relation correctly learned in context A.
+15. Do not create a second context-policy memory store for behavior that belongs in lived neural state.
+16. Do not spend this phase primarily on policy frameworks instead of the organism's core loops.
+17. Do not make Hermes availability, releases, commit history or update infrastructure necessary for ZN to install, boot or update.
+18. Do not make the private ZN source repository itself a client update dependency.
+19. Do not rewrite mature infrastructure merely to claim originality; adopt it deliberately under ZN ownership when it solves the right problem.
+20. Do not automatically merge `upstream/hermes` into ZN branches.
+21. Do not publish `stable.json` before all immutable assets it references are available.
 
 ## 16. Handoff
 
 Use this as the next-session starting instruction:
 
-> Continue `9529360-cpu/znagent` from the latest repository state on `dev/zn-agent`. Read actual code first, then `ZN.md`; code remains authoritative. ZN is the subject/product and Hermes is only an engineering reference. Do not depend on Hermes or the private source repository as a clean-client bootstrap/update channel. The resident kernel, transfer-attention rhythm, persistent world/vision sensing, detached resident/autostart, ZN-owned packaged runtime, public stable-channel protocol, background updater and S3-compatible release publisher already exist. The next target is real packaged clean-machine/update-continuity validation, then product-facing Hermes cleanup and the intentional `main`/`upstream/hermes` migration. Preserve native zero-model paths and model-as-resource architecture. Control CI cost. Do not modify `main` until the verified promotion step.
+> Continue `9529360-cpu/znagent` from the latest repository state on `dev/zn-agent`. Read actual code first, then `ZN.md`; code remains authoritative. ZN is the subject/product and Hermes is only an engineering reference. Do not depend on Hermes or the private source repository as a clean-client bootstrap/update channel. The resident kernel, transfer-attention rhythm, persistent world/vision sensing, detached resident/autostart, ZN-owned packaged runtime, safe runtime identity/handoff, public stable-channel protocol, background updater and S3-compatible release publisher already exist. The next target is real packaged clean-machine/N→N+1 continuity validation, then product-facing Hermes cleanup and the intentional `main`/`upstream/hermes` migration. Preserve native zero-model paths and model-as-resource architecture. Control CI cost. Do not modify `main` until the verified promotion step.
 
 ## 17. Provenance
 

@@ -46,6 +46,11 @@ export type ZnResidentLaunch = {
   endpointPath: string
 }
 
+export type ZnResidentRuntimeIdentity = {
+  runtimeId: string | null
+  python: string | null
+}
+
 type ZnResidentEndpoint = {
   version: number
   transport: 'tcp'
@@ -54,6 +59,8 @@ type ZnResidentEndpoint = {
   pid?: number
   instance_id?: string
   started_at?: string
+  runtime_id?: string | null
+  python?: string | null
 }
 
 type Pending = {
@@ -115,6 +122,15 @@ export class ZnResidentProcess extends EventEmitter {
     return Boolean(this.socket && !this.socket.destroyed)
   }
 
+  get runtimeIdentity(): ZnResidentRuntimeIdentity {
+    const runtimeId = typeof this.endpoint?.runtime_id === 'string' ? this.endpoint.runtime_id.trim() : ''
+    const python = typeof this.endpoint?.python === 'string' ? this.endpoint.python.trim() : ''
+    return {
+      runtimeId: runtimeId || null,
+      python: python || null
+    }
+  }
+
   async start(timeoutMs = 15_000): Promise<unknown> {
     if (this.running) return this.requestConnected('status', {}, Math.min(timeoutMs, 5_000))
     if (this.readyPromise) return this.readyPromise
@@ -158,6 +174,17 @@ export class ZnResidentProcess extends EventEmitter {
     }
   }
 
+  /**
+   * Gracefully replace the resident process while preserving the same ZN home.
+   * The endpoint is allowed a short retirement window before reconnect/start,
+   * which avoids racing the old socket service during a runtime upgrade.
+   */
+  async restart(timeoutMs = 15_000): Promise<unknown> {
+    await this.stop()
+    await this.waitForEndpointRetirement(Math.min(5_000, Math.max(750, Math.floor(timeoutMs / 2))))
+    return this.start(timeoutMs)
+  }
+
   /** Detach this UI client while leaving the resident service alive. */
   disconnect(): void {
     const socket = this.socket
@@ -167,6 +194,18 @@ export class ZnResidentProcess extends EventEmitter {
     this.lines = null
     if (socket && !socket.destroyed) socket.destroy()
     this.rejectPending(new Error('ZN Resident client disconnected'))
+  }
+
+  private async waitForEndpointRetirement(timeoutMs: number): Promise<void> {
+    const deadline = Date.now() + Math.max(250, timeoutMs)
+    while (Date.now() < deadline) {
+      try {
+        await fs.access(this.launch.endpointPath)
+      } catch {
+        return
+      }
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
   }
 
   private async ensureConnected(timeoutMs: number): Promise<unknown> {
@@ -266,7 +305,9 @@ export class ZnResidentProcess extends EventEmitter {
       port,
       pid: parsed.pid,
       instance_id: parsed.instance_id,
-      started_at: parsed.started_at
+      started_at: parsed.started_at,
+      runtime_id: typeof parsed.runtime_id === 'string' ? parsed.runtime_id : null,
+      python: typeof parsed.python === 'string' ? parsed.python : null
     }
   }
 

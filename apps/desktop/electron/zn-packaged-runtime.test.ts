@@ -6,6 +6,7 @@ import path from 'node:path'
 import { test } from 'vitest'
 
 import { configureZnPackagedRuntime, resolveRuntime, resolveZnHome } from './zn-packaged-runtime'
+import { describeZnResidentRuntime } from './zn-resident-runtime-state'
 
 function mkTmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'zn-packaged-runtime-test-'))
@@ -60,6 +61,7 @@ test('packaged runtime is materialized under ZN home and owns both backend and r
     assert.equal(runtime.root, expectedRoot)
     assert.equal(env.ZN_AGENT_HOME, znHome)
     assert.equal(env.ZN_PACKAGED_RUNTIME_ROOT, expectedRoot)
+    assert.equal(env.ZN_RUNTIME_ID, runtimeId)
     assert.equal(env.ZN_RESIDENT_PYTHON, runtime.python)
     assert.equal(env.HERMES_DESKTOP_PYTHON, runtime.python)
     assert.equal(env.HERMES_DESKTOP_HERMES_ROOT, runtime.backendRoot)
@@ -74,6 +76,66 @@ test('packaged runtime is materialized under ZN home and owns both backend and r
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('N to N+1 activation preserves the previous runtime and persistent ZN home', () => {
+  const root = mkTmpRoot()
+  const resourcesPath = path.join(root, 'resources')
+  const znHome = path.join(root, 'zn-home')
+  const env: Record<string, string | undefined> = {}
+
+  try {
+    writeBundledRuntime(resourcesPath, 'runtime-n')
+    const first = configureZnPackagedRuntime({ resourcesPath, znHome, env })
+    const statePath = path.join(znHome, 'kernel', 'subject-state.txt')
+    fs.mkdirSync(path.dirname(statePath), { recursive: true })
+    fs.writeFileSync(statePath, 'persistent-subject-state')
+
+    writeBundledRuntime(resourcesPath, 'runtime-n-plus-1')
+    const second = configureZnPackagedRuntime({ resourcesPath, znHome, env })
+
+    assert.notEqual(second.root, first.root)
+    assert.ok(fs.existsSync(first.python), 'old runtime remains intact while its resident may still be alive')
+    assert.ok(fs.existsSync(second.python), 'new runtime is materialized independently')
+    assert.equal(env.ZN_RUNTIME_ID, 'runtime-n-plus-1')
+    assert.equal(env.ZN_RESIDENT_PYTHON, second.python)
+    assert.equal(fs.readFileSync(statePath, 'utf8'), 'persistent-subject-state')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('resident runtime relation distinguishes current, busy pending, and legacy processes', () => {
+  assert.deepEqual(
+    describeZnResidentRuntime(
+      { runtimeId: 'runtime-n-plus-1', python: '/runtime/new/python' },
+      'runtime-n-plus-1',
+      { self: { current_situation: { active_event_id: null } } }
+    ),
+    {
+      state: 'current',
+      desiredRuntimeId: 'runtime-n-plus-1',
+      activeRuntimeId: 'runtime-n-plus-1',
+      activePython: '/runtime/new/python',
+      busy: false
+    }
+  )
+
+  const pending = describeZnResidentRuntime(
+    { runtimeId: 'runtime-n', python: '/runtime/old/python' },
+    'runtime-n-plus-1',
+    { self: { current_situation: { active_event_id: 'evt-live' } } }
+  )
+  assert.equal(pending.state, 'pending')
+  assert.equal(pending.busy, true, 'active resident work blocks runtime handoff')
+
+  const legacy = describeZnResidentRuntime(
+    { runtimeId: null, python: null },
+    'runtime-n-plus-1',
+    { self: { current_situation: { active_event_id: null } } }
+  )
+  assert.equal(legacy.state, 'legacy')
+  assert.equal(legacy.busy, false)
 })
 
 test('packaged runtime rejects paths that escape the installer payload root', () => {

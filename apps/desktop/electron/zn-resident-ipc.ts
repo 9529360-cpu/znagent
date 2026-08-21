@@ -2,13 +2,100 @@ import { app, ipcMain } from 'electron'
 
 import { ensureZnResidentAutostart } from './zn-resident-autostart'
 import { ZnResidentProcess, defaultZnResidentLaunch } from './zn-resident-process'
+import { describeZnResidentRuntime, type ZnResidentRuntimeRelation } from './zn-resident-runtime-state'
+
+const RUNTIME_HANDOFF_RETRY_MS = 5_000
+const RUNTIME_HANDOFF_MAX_WAIT_MS = 10 * 60_000
 
 let resident: ZnResidentProcess | null = null
 let registered = false
+let runtimeHandoffTimer: NodeJS.Timeout | null = null
+let runtimeHandoffDeadline = 0
+let runtimeHandoffRunning = false
 
 export function getZnResidentProcess(): ZnResidentProcess {
   if (!resident) resident = new ZnResidentProcess(defaultZnResidentLaunch())
   return resident
+}
+
+function runtimeRelation(residentProcess: ZnResidentProcess, status: unknown): ZnResidentRuntimeRelation {
+  return describeZnResidentRuntime(residentProcess.runtimeIdentity, process.env.ZN_RUNTIME_ID, status)
+}
+
+function withDesktopRuntime(status: unknown, residentProcess: ZnResidentProcess): unknown {
+  const relation = runtimeRelation(residentProcess, status)
+  if (status && typeof status === 'object' && !Array.isArray(status)) {
+    return { ...(status as Record<string, unknown>), desktop_runtime: relation }
+  }
+  return { status, desktop_runtime: relation }
+}
+
+function clearRuntimeHandoffTimer() {
+  if (runtimeHandoffTimer) clearTimeout(runtimeHandoffTimer)
+  runtimeHandoffTimer = null
+}
+
+function scheduleRuntimeHandoff(residentProcess: ZnResidentProcess) {
+  if (runtimeHandoffTimer || Date.now() >= runtimeHandoffDeadline) return
+  runtimeHandoffTimer = setTimeout(() => {
+    runtimeHandoffTimer = null
+    void attemptRuntimeHandoff(residentProcess)
+  }, RUNTIME_HANDOFF_RETRY_MS)
+}
+
+async function attemptRuntimeHandoff(residentProcess: ZnResidentProcess, knownStatus?: unknown): Promise<void> {
+  if (runtimeHandoffRunning || Date.now() >= runtimeHandoffDeadline) return
+  runtimeHandoffRunning = true
+  let retry = false
+
+  try {
+    const status = knownStatus ?? (await residentProcess.request('status', {}, 5_000))
+    const relation = runtimeRelation(residentProcess, status)
+
+    if (relation.state === 'unmanaged' || relation.state === 'current') {
+      clearRuntimeHandoffTimer()
+      return
+    }
+
+    if (relation.busy) {
+      retry = true
+      return
+    }
+
+    console.info(
+      `[zn-resident] activating runtime ${relation.desiredRuntimeId}; ` +
+        `resident currently uses ${relation.activeRuntimeId || relation.activePython || 'legacy runtime'}`
+    )
+
+    const restartedStatus = await residentProcess.restart()
+    const after = runtimeRelation(residentProcess, restartedStatus)
+    if (after.state === 'current') {
+      clearRuntimeHandoffTimer()
+      console.info(`[zn-resident] runtime ${after.desiredRuntimeId} is active`)
+      return
+    }
+
+    retry = true
+    console.warn(
+      `[zn-resident] runtime handoff did not activate ${after.desiredRuntimeId}; ` +
+        `active=${after.activeRuntimeId || after.activePython || 'unknown'}`
+    )
+  } catch (error) {
+    retry = true
+    console.error('[zn-resident] runtime handoff failed', error)
+  } finally {
+    runtimeHandoffRunning = false
+    if (retry) scheduleRuntimeHandoff(residentProcess)
+  }
+}
+
+function beginRuntimeHandoff(residentProcess: ZnResidentProcess, status: unknown) {
+  const relation = runtimeRelation(residentProcess, status)
+  if (relation.state === 'unmanaged' || relation.state === 'current') return
+
+  runtimeHandoffDeadline = Date.now() + RUNTIME_HANDOFF_MAX_WAIT_MS
+  clearRuntimeHandoffTimer()
+  void attemptRuntimeHandoff(residentProcess, status)
 }
 
 function history(
@@ -22,8 +109,14 @@ export function registerZnResidentIpc(): void {
   if (registered) return
   registered = true
 
-  ipcMain.handle('zn:resident:start', async () => getZnResidentProcess().start())
-  ipcMain.handle('zn:resident:status', async () => getZnResidentProcess().request('status'))
+  ipcMain.handle('zn:resident:start', async () => {
+    const residentProcess = getZnResidentProcess()
+    return withDesktopRuntime(await residentProcess.start(), residentProcess)
+  })
+  ipcMain.handle('zn:resident:status', async () => {
+    const residentProcess = getZnResidentProcess()
+    return withDesktopRuntime(await residentProcess.request('status'), residentProcess)
+  })
   ipcMain.handle('zn:resident:self', async () => getZnResidentProcess().request('self'))
   ipcMain.handle('zn:resident:pulses', async (_event, limit) => history('pulses', limit))
   ipcMain.handle('zn:resident:situations', async (_event, limit) => history('situations', limit))
@@ -94,6 +187,7 @@ export function registerZnResidentIpc(): void {
     return getZnResidentProcess().request('forget', { key: normalized })
   })
   ipcMain.handle('zn:resident:stop', async () => {
+    clearRuntimeHandoffTimer()
     if (!resident) return { stopped: true }
     await resident.stop()
     resident = null
@@ -103,6 +197,7 @@ export function registerZnResidentIpc(): void {
   app.on('before-quit', () => {
     // The window is only ZN's face. Closing Electron detaches this client but
     // deliberately leaves the resident service, heartbeat, Will, and senses alive.
+    clearRuntimeHandoffTimer()
     resident?.disconnect()
     resident = null
   })
@@ -110,14 +205,19 @@ export function registerZnResidentIpc(): void {
 
 export async function startZnResidentOnDesktopReady(): Promise<void> {
   try {
-    await getZnResidentProcess().start()
+    const residentProcess = getZnResidentProcess()
+    const status = await residentProcess.start()
     try {
+      // Install N+1 autostart before any live-process handoff. If the desktop
+      // closes or the handoff is deferred, the next login still boots the new
+      // packaged runtime rather than the previous interpreter.
       await ensureZnResidentAutostart()
     } catch (error) {
       // The resident is already alive, so an unavailable OS service manager is
       // a recoverable installation concern rather than a reason to take down UI.
       console.error('[zn-resident] failed to install login autostart', error)
     }
+    beginRuntimeHandoff(residentProcess, status)
   } catch (error) {
     // Desktop shell remains usable when the resident cannot boot. Renderer can
     // surface the failure through zn:resident:start/status and offer repair.
