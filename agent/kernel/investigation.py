@@ -767,6 +767,7 @@ class NativeInvestigator:
     @staticmethod
     def _answer_from_native_facts(event: AgentEvent, facts: dict[str, Any]) -> str:
         text = event.task.strip().lower()
+        payload = event.payload or {}
         body = facts.get("body") if isinstance(facts.get("body"), dict) else {}
         git = facts.get("git") if isinstance(facts.get("git"), dict) else {}
         paths = facts.get("paths") if isinstance(facts.get("paths"), list) else []
@@ -818,6 +819,43 @@ class NativeInvestigator:
             if len(paths) == 1:
                 item = paths[0]
                 return f"{item['path']}: {'exists' if item['exists'] else 'does not exist'}"
+
+        requested_path = (
+            payload.get("path")
+            or payload.get("file")
+            or payload.get("target")
+            or payload.get("directory")
+        )
+        has_requested_text = "content" in payload or "text" in payload
+        requested_text = payload.get("content", payload.get("text", ""))
+        append_requested = bool(
+            payload.get("append", "append" in text or "追加" in text)
+        )
+        text_state_request = any(
+            token in text
+            for token in (
+                "write ", "create ", "save ", "ensure ", "replace ",
+                "写", "创建", "保存", "确保", "替换",
+            )
+        )
+        if (
+            previews
+            and requested_path
+            and has_requested_text
+            and text_state_request
+            and not append_requested
+        ):
+            target = str(Path(str(requested_path)).expanduser())
+            for item in previews:
+                if not isinstance(item, dict):
+                    continue
+                observed_path = str(
+                    Path(str(item.get("path") or "")).expanduser()
+                )
+                if observed_path != target or bool(item.get("truncated")):
+                    continue
+                if str(item.get("preview") or "") == str(requested_text):
+                    return f"{target}: requested text state is already satisfied"
 
         if previews and any(phrase in text for phrase in (
             "read ", "show ", "contents", "content of", "inside the file", "打开", "读取", "内容", "看看文件"

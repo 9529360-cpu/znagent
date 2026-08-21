@@ -5,6 +5,8 @@ import unittest
 from pathlib import Path
 
 from agent.kernel import CognitiveSituation, EmbodiedResidentRuntime, ExecutionPath
+from agent.kernel.action import derive_native_action_intent
+from agent.kernel.models import AgentEvent
 from agent.kernel.provider_bridge import build_resident_runtime_from_existing_stack
 
 
@@ -23,6 +25,14 @@ class NativeActionTests(unittest.TestCase):
             f"resident did not reach stage {stage}; current="
             f"{resident.store.get_working_state().stage}"
         )
+
+    @staticmethod
+    def _run_to_terminal(resident, limit: int = 20):
+        for _ in range(limit):
+            result = resident.live_once()
+            if result is not None:
+                return result
+        raise AssertionError("resident did not reach a terminal result")
 
     def test_native_evidence_becomes_body_intent_then_outcome(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -48,6 +58,7 @@ class NativeActionTests(unittest.TestCase):
             self.assertIsInstance(raw_intent, dict)
             self.assertEqual(raw_intent["kind"], "write_text")
             self.assertEqual(raw_intent["event_id"], event.event_id)
+            self.assertIn("target is missing", raw_intent["reason"])
 
             pulse = resident.pulse()
             situation = resident.life.snapshot().current_situation
@@ -74,6 +85,90 @@ class NativeActionTests(unittest.TestCase):
             self.assertIn("write_text", movements)
             self.assertLess(movements.index("inspect_path"), movements.index("write_text"))
             resident.store.close()
+
+    def test_already_satisfied_text_state_completes_from_evidence_without_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "already.txt"
+            target.write_text("already here", encoding="utf-8")
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=root / "kernel.db",
+            )
+            event = resident.enqueue(
+                f"ensure {target} contains the requested content",
+                payload={
+                    "path": str(target),
+                    "content": "already here",
+                    "model_policy": "never",
+                },
+            )
+
+            result = self._run_to_terminal(resident)
+
+            self.assertTrue(result.success)
+            self.assertEqual(result.execution_path, ExecutionPath.INVESTIGATION)
+            self.assertEqual(result.model_invocations, 0)
+            self.assertIn("requested text state is already satisfied", result.response)
+            self.assertEqual(target.read_text(encoding="utf-8"), "already here")
+
+            movements = [
+                item.kind
+                for item in resident.body.recent_actions(20)
+                if item.event_id == event.event_id
+            ]
+            self.assertIn("inspect_path", movements)
+            self.assertIn("read_text", movements)
+            self.assertNotIn("write_text", movements)
+            self.assertEqual(resident.store.get_runtime_metrics().model_invocations, 0)
+            resident.store.close()
+
+    def test_observed_git_root_anchors_native_command_intent(self):
+        event = AgentEvent(
+            event_id="evt-observed-root",
+            task="run tests in the current repository",
+            payload={"command": "python -m unittest"},
+        )
+
+        intent = derive_native_action_intent(
+            event,
+            facts={
+                "git": {
+                    "available": True,
+                    "root": "/observed/repository",
+                    "branch": "dev/zn-agent",
+                }
+            },
+        )
+
+        self.assertIsNotNone(intent)
+        self.assertEqual(intent.kind, "command")
+        self.assertEqual(intent.args.get("workdir"), "/observed/repository")
+        self.assertEqual(intent.source, "native_deliberation")
+        self.assertIn("observed the repository root", intent.reason)
+
+    def test_observed_directory_prevents_blind_file_write_intent(self):
+        target = "/observed/target"
+        event = AgentEvent(
+            event_id="evt-incompatible-target",
+            task=f"ensure {target} contains the requested content",
+            payload={"path": target, "content": "text"},
+        )
+
+        intent = derive_native_action_intent(
+            event,
+            facts={
+                "paths": [
+                    {
+                        "path": target,
+                        "exists": True,
+                        "type": "directory",
+                    }
+                ]
+            },
+        )
+
+        self.assertIsNone(intent)
 
     def test_native_action_intent_survives_restart_and_continues_same_event(self):
         with tempfile.TemporaryDirectory() as tmp:

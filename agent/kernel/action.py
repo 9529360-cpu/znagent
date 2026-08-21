@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any
 
 from .models import AgentEvent, utc_now
@@ -42,11 +43,11 @@ def derive_native_action_intent(
 ) -> NativeActionIntent | None:
     """Compile a concrete local action from an already-oriented event.
 
-    The first implementation deliberately uses information ZN already owns:
-    structured event payload plus native investigation facts. It does not ask a
-    model to turn prose into a command. As richer native cognition develops,
-    additional action derivation can feed the same intent shape without
-    changing the Thought -> Body -> Outcome loop.
+    Action formation uses only state ZN already owns: the structured event and
+    concrete native investigation facts. Facts are not decorative context. They
+    can anchor where a movement happens, distinguish a missing file from an
+    incompatible directory, or prevent a body movement that current evidence
+    says cannot satisfy the requested state.
 
     ``None`` means only "no action intent was derived". It never means the task
     is already complete; task completion must be represented by an explicit
@@ -54,7 +55,7 @@ def derive_native_action_intent(
     """
 
     payload = event.payload or {}
-    _ = facts  # Reserved for evidence-derived action selection as cognition grows.
+    observed = facts if isinstance(facts, dict) else {}
     explicit = payload.get("body_action") or payload.get("native_action")
 
     if explicit:
@@ -87,17 +88,27 @@ def derive_native_action_intent(
             "运行", "执行", "构建", "测试", "启动",
         )
     ):
+        explicit_workdir = payload.get("workdir")
+        observed_workdir = None
+        git = observed.get("git") if isinstance(observed.get("git"), dict) else {}
+        if not explicit_workdir and git.get("available") is not False and git.get("root"):
+            observed_workdir = str(git["root"])
+        workdir = explicit_workdir or observed_workdir
         return NativeActionIntent(
             intent_id=f"act-{uuid.uuid4().hex[:12]}",
             event_id=event.event_id,
             kind="command",
             args={
                 "command": str(command),
-                **({"workdir": str(payload["workdir"])} if payload.get("workdir") else {}),
+                **({"workdir": str(workdir)} if workdir else {}),
                 **({"timeout": int(payload["timeout"])} if payload.get("timeout") is not None else {}),
             },
-            reason="native orientation identified an explicit local command to execute",
-            source="native_orientation",
+            reason=(
+                "native investigation observed the repository root that anchors the requested command"
+                if observed_workdir
+                else "native orientation identified an explicit local command to execute"
+            ),
+            source="native_deliberation" if observed_workdir else "native_orientation",
         )
 
     if path and has_content and any(
@@ -107,6 +118,44 @@ def derive_native_action_intent(
             "写", "创建", "保存", "确保", "替换", "追加",
         )
     ):
+        append = bool(payload.get("append", "append" in task or "追加" in task))
+        path_fact = _matching_path_fact(observed, path)
+        preview = _matching_file_preview(observed, path)
+        if path_fact is not None and bool(path_fact.get("exists")):
+            path_type = str(path_fact.get("type") or "").strip().lower()
+            if path_type in {"directory", "other", "unavailable"}:
+                return None
+
+        if path_fact is not None and not bool(path_fact.get("exists")):
+            reason = (
+                "native investigation observed that the requested file target is missing, "
+                "so the requested text state requires one write movement"
+            )
+        elif preview is not None and not append:
+            observed_text = str(preview.get("preview") or "")
+            if bool(preview.get("truncated")):
+                reason = (
+                    "native investigation observed the current file but not its complete "
+                    "contents; the requested text state still implies a concrete write movement"
+                )
+            elif observed_text != str(content):
+                reason = (
+                    "native investigation observed that current file content differs from "
+                    "the requested text state, so a write movement is needed"
+                )
+            else:
+                reason = (
+                    "native investigation confirmed the current file before the explicitly "
+                    "requested write movement"
+                )
+        elif path_fact is not None:
+            reason = (
+                "native investigation confirmed a compatible file target and the requested "
+                "text state implies a concrete filesystem movement"
+            )
+        else:
+            reason = "native evidence and requested state imply a concrete filesystem movement"
+
         return NativeActionIntent(
             intent_id=f"act-{uuid.uuid4().hex[:12]}",
             event_id=event.event_id,
@@ -114,10 +163,10 @@ def derive_native_action_intent(
             args={
                 "path": str(path),
                 "content": str(content),
-                "append": bool(payload.get("append", "append" in task or "追加" in task)),
+                "append": append,
                 "create_parents": bool(payload.get("create_parents", True)),
             },
-            reason="native evidence and requested state imply a concrete filesystem movement",
+            reason=reason,
             source="native_deliberation",
         )
 
@@ -125,16 +174,68 @@ def derive_native_action_intent(
         token in task
         for token in ("list directory", "list folder", "列出目录", "列出文件")
     ):
+        path_fact = _matching_path_fact(observed, path)
+        if path_fact is not None:
+            if not bool(path_fact.get("exists")):
+                return None
+            if str(path_fact.get("type") or "").strip().lower() != "directory":
+                return None
         return NativeActionIntent(
             intent_id=f"act-{uuid.uuid4().hex[:12]}",
             event_id=event.event_id,
             kind="list_directory",
             args={"path": str(path)},
-            reason="the requested state can be obtained directly through the filesystem body",
+            reason=(
+                "native investigation confirmed that the requested target is a directory"
+                if path_fact is not None
+                else "the requested state can be obtained directly through the filesystem body"
+            ),
             source="native_deliberation",
         )
 
     return None
+
+
+def _matching_path_fact(
+    facts: dict[str, Any],
+    path: Any,
+) -> dict[str, Any] | None:
+    target = _path_key(path)
+    paths = facts.get("paths") if isinstance(facts.get("paths"), list) else []
+    for item in paths:
+        if not isinstance(item, dict):
+            continue
+        if _path_key(item.get("path")) == target:
+            return item
+    return None
+
+
+def _matching_file_preview(
+    facts: dict[str, Any],
+    path: Any,
+) -> dict[str, Any] | None:
+    target = _path_key(path)
+    previews = (
+        facts.get("file_previews")
+        if isinstance(facts.get("file_previews"), list)
+        else []
+    )
+    for item in previews:
+        if not isinstance(item, dict):
+            continue
+        if _path_key(item.get("path")) == target:
+            return item
+    return None
+
+
+def _path_key(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        return str(Path(text).expanduser())
+    except (OSError, RuntimeError, ValueError):
+        return text
 
 
 def _explicit_action(
