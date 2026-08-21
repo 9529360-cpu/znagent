@@ -40,6 +40,7 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
         "action",
         "schema",
     )
+    _INCUBATION_CHANNELS = ("schema", "outcome", "world", "vision", "action")
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(
@@ -161,7 +162,10 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
         pulse = super().pulse()
         thought = pulse.thought
         if thought is not None:
-            if self._shape_endogenous_attention(thought):
+            changed = self._shape_endogenous_attention(thought)
+            if self._incubate_primary_intention(thought):
+                changed = True
+            if changed:
                 self._persist_enriched_thought(thought)
             unknown_pressure = min(1.0, len(thought.unknown) / 4.0)
             action_pressure = 0.15 if thought.action_kind == "observe" else 0.45
@@ -183,6 +187,119 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
                 },
             )
         return pulse
+
+    def _incubate_primary_intention(self, thought) -> bool:
+        """Let a durable Will grow one native candidate step over time.
+
+        This is not a planner call. A consolidated pattern must repeatedly
+        become relevant to the same intention before Thought is willing to turn
+        it into a concrete internal probe. Only one candidate lives inside the
+        intention at a time.
+        """
+        situation = self.life.snapshot().current_situation
+        if situation is not None and (
+            situation.active_event_id or situation.active_impasse_id
+        ):
+            return False
+        primary = self.will.primary()
+        if primary is None or primary.status != "active":
+            return False
+        if primary.next_task or primary.related_event_id:
+            return False
+
+        activations = self.nervous.activate(
+            primary.description,
+            channels=self._INCUBATION_CHANNELS,
+            limit=6,
+        )
+        schema_activation = next(
+            (item for item in activations if item.trace.channel == "schema"),
+            None,
+        )
+        if schema_activation is None or schema_activation.activation < 0.30:
+            existing = self.will.get(primary.intention_id)
+            if existing is not None and existing.candidate_step:
+                self._surface_incubating_candidate(thought, existing)
+                return True
+            return False
+
+        schema = schema_activation.trace
+        step = (
+            "test whether this consolidated pattern applies to my current "
+            f"intention: {schema.summary[:420]}"
+        )
+        # Do not keep repeating the exact same self-initiated probe after it has
+        # already produced an outcome. New lived evidence must first change the
+        # candidate before Will will choose another step.
+        if primary.current_step == step and primary.last_outcome:
+            return False
+
+        confidence = min(
+            0.96,
+            0.34
+            + 0.42 * schema_activation.activation
+            + 0.14 * schema.strength
+            + 0.10 * schema.salience,
+        )
+        support = (
+            schema.trace_id,
+            *tuple(
+                str(item)
+                for item in schema.metadata.get("source_trace_ids", ())
+                if str(item).strip()
+            )[:6],
+        )
+        updated = self.will.incubate_candidate(
+            primary.intention_id,
+            kind="schema_probe",
+            step=step,
+            reason=(
+                "the same consolidated lived pattern repeatedly activates while "
+                "this intention holds attention"
+            ),
+            confidence=confidence,
+            support=support,
+            payload={
+                "model_policy": "never",
+                "incubated_event_kind": "intention_probe",
+                "schema_trace_id": schema.trace_id,
+                "schema_summary": schema.summary[:700],
+            },
+        )
+        self._surface_incubating_candidate(thought, updated)
+
+        if updated.candidate_repetitions >= 2 and updated.candidate_maturity >= 0.72:
+            action = "commit the matured native candidate as my next intention step"
+            if action not in thought.possible_actions:
+                thought.possible_actions = (*thought.possible_actions, action)
+            thought.chosen_action = action
+            thought.action_kind = "incubate"
+            thought.action_target = updated.intention_id
+            thought.reason = (
+                f"{thought.reason}; a candidate next step matured through repeated "
+                f"resident-side evidence (maturity={updated.candidate_maturity:.2f})"
+            )
+            thought.confidence = max(
+                thought.confidence,
+                min(0.95, updated.candidate_maturity),
+            )
+        return True
+
+    @staticmethod
+    def _surface_incubating_candidate(thought, intention: ResidentIntention) -> None:
+        if not intention.candidate_step:
+            return
+        known = (
+            "my enduring intention is incubating one candidate next step: "
+            f"{intention.candidate_step[:500]} "
+            f"(repetitions={intention.candidate_repetitions}, "
+            f"maturity={intention.candidate_maturity:.2f})"
+        )
+        if known not in thought.known:
+            thought.known = (*thought.known, known)
+        action = "let the candidate mature against more lived evidence"
+        if action not in thought.possible_actions:
+            thought.possible_actions = (*thought.possible_actions, action)
 
     def _shape_endogenous_attention(self, thought) -> bool:
         """Let lived affect and Will compete for idle attention inside ZN.
@@ -376,6 +493,29 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
             pulse = self.pulse()
             thought = pulse.thought
             if thought is None:
+                return None
+
+            if thought.action_kind == "incubate" and thought.action_target:
+                before = self.will.get(thought.action_target)
+                promoted = self.will.promote_candidate(thought.action_target)
+                if (
+                    before is not None
+                    and before.candidate_step
+                    and promoted.next_task == before.candidate_step
+                ):
+                    self.nervous.perceive(
+                        "will",
+                        f"I committed an incubated next step: {promoted.next_task}",
+                        features=("incubation", "next_step", "committed"),
+                        source="will",
+                        salience=0.66,
+                        valence=0.18,
+                        arousal=0.44,
+                        metadata={
+                            "intention_id": promoted.intention_id,
+                            "model_invocations": 0,
+                        },
+                    )
                 return None
 
             if thought.action_kind == "intention" and thought.action_target:
@@ -626,9 +766,12 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
         payload.setdefault("intention_id", intention.intention_id)
         payload.setdefault("intention_description", intention.description)
         payload.setdefault("intention_source", intention.source)
+        event_kind = str(
+            payload.get("incubated_event_kind") or "intention_step"
+        ).strip() or "intention_step"
         event = self.enqueue(
             task,
-            kind="intention_step",
+            kind=event_kind,
             priority=intention.priority,
             payload=payload,
         )
@@ -636,7 +779,7 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
         self.nervous.perceive(
             "will",
             f"I began the next step of intention {intention.intention_id}: {task}",
-            features=("intention_step", "engaged"),
+            features=("intention_step", "engaged", event_kind),
             source="will",
             salience=0.62,
             valence=0.12,
@@ -744,5 +887,14 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
             "related_event_id": intention.related_event_id,
             "last_outcome": intention.last_outcome,
             "complete_on_step_success": intention.complete_on_step_success,
+            "candidate_kind": intention.candidate_kind,
+            "candidate_step": intention.candidate_step,
+            "candidate_reason": intention.candidate_reason,
+            "candidate_confidence": intention.candidate_confidence,
+            "candidate_repetitions": intention.candidate_repetitions,
+            "candidate_maturity": intention.candidate_maturity,
+            "candidate_support": list(intention.candidate_support),
+            "incubation_count": intention.incubation_count,
+            "last_incubated_at": intention.last_incubated_at,
             "updated_at": intention.updated_at,
         }
