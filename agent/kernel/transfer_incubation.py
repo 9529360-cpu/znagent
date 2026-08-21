@@ -34,6 +34,9 @@ class TransferAwareSituatedResidentRuntime(SituatedIntentionalResidentRuntime):
 
     _TRANSFER_MIN_GAIN = 0.04
     _TRANSFER_CONTRIBUTOR_LIMIT = 4
+    _TRANSFER_STABLE_CONSENSUS = 0.82
+    _TRANSFER_CONFLICT_CONSENSUS = 0.66
+    _TRANSFER_MAX_REVIEW_PERIOD = 5
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
@@ -198,6 +201,204 @@ class TransferAwareSituatedResidentRuntime(SituatedIntentionalResidentRuntime):
             score -= min(0.10, 0.025 * conflict_count)
         return score
 
+    @classmethod
+    def _transfer_attention_state(
+        cls,
+        activation: NeuralActivation,
+        candidate: NativeIntentionCandidate,
+        *,
+        sequence: int,
+        existing,
+    ) -> dict:
+        contributors = cls._transfer_contributors(activation)
+        try:
+            consensus = max(
+                0.0,
+                min(1.0, float(getattr(activation, "transfer_consensus", 1.0))),
+            )
+        except (TypeError, ValueError):
+            consensus = 1.0
+        try:
+            conflict_count = max(
+                0,
+                int(getattr(activation, "transfer_conflict_count", 0)),
+            )
+        except (TypeError, ValueError):
+            conflict_count = 0
+
+        expectation = candidate.payload.get("schema_expectation")
+        if not isinstance(expectation, dict):
+            expectation = {}
+        prediction_recheck = bool(expectation.get("recheck"))
+        repeated_support = sum(
+            max(0, int(item.get("feedback_count") or 0))
+            for item in contributors
+            if float(item.get("tendency") or 1.0) > 1.0
+        )
+
+        if prediction_recheck:
+            evidence_state = "prediction_error"
+        elif conflict_count or consensus < cls._TRANSFER_CONFLICT_CONSENSUS:
+            evidence_state = "conflicted"
+        elif consensus >= cls._TRANSFER_STABLE_CONSENSUS:
+            evidence_state = "coherent"
+        else:
+            evidence_state = "mixed"
+
+        if evidence_state == "coherent":
+            review_period = 1
+        elif evidence_state == "mixed":
+            review_period = 2
+        else:
+            review_period = min(
+                cls._TRANSFER_MAX_REVIEW_PERIOD,
+                2 + max(1, conflict_count),
+            )
+        if evidence_state == "conflicted" and consensus < 0.50:
+            review_period = min(
+                cls._TRANSFER_MAX_REVIEW_PERIOD,
+                review_period + 1,
+            )
+        if prediction_recheck:
+            review_period = max(3, review_period)
+        if repeated_support >= 3 and conflict_count == 0 and not prediction_recheck:
+            evidence_state = "coherent"
+            review_period = 1
+
+        schema_id = str(candidate.payload.get("schema_trace_id") or "").strip()
+        relation_key = str(expectation.get("signature") or "").strip()
+        if not relation_key:
+            family = str(expectation.get("family") or "").strip().lower()
+            value = str(expectation.get("value") or "").strip().lower()
+            relation_key = f"{family}:{value}" if family or value else "unstructured"
+        contributor_key = ",".join(
+            sorted(
+                f"{item['source_trace_id']}@{item['bridge_trace_id']}"
+                for item in contributors
+            )
+        )
+        evidence_key = "::".join(
+            (
+                schema_id or "schema",
+                relation_key,
+                contributor_key or "no-provenance",
+                f"state:{evidence_state}",
+                f"conflicts:{conflict_count}",
+                f"period:{review_period}",
+            )
+        )
+
+        first_sequence = max(0, int(sequence))
+        if (
+            existing is not None
+            and existing.candidate_kind == candidate.kind
+            and existing.candidate_step == candidate.step
+        ):
+            prior = existing.candidate_payload.get("transfer_attention")
+            if (
+                isinstance(prior, dict)
+                and str(prior.get("evidence_key") or "") == evidence_key
+            ):
+                try:
+                    first_sequence = max(
+                        0,
+                        int(prior.get("first_sequence") or first_sequence),
+                    )
+                except (TypeError, ValueError):
+                    pass
+
+        return {
+            "version": 1,
+            "evidence_key": evidence_key,
+            "evidence_state": evidence_state,
+            "first_sequence": first_sequence,
+            "review_period_pulses": review_period,
+            "consensus": round(consensus, 5),
+            "conflict_count": conflict_count,
+            "contributor_count": len(contributors),
+            "repeated_support": repeated_support,
+            "prediction_recheck": prediction_recheck,
+        }
+
+    @staticmethod
+    def _transfer_review_due(attention: dict, sequence: int) -> bool:
+        try:
+            period = max(1, int(attention.get("review_period_pulses") or 1))
+        except (TypeError, ValueError):
+            period = 1
+        if period <= 1:
+            return True
+        try:
+            first = max(0, int(attention.get("first_sequence") or 0))
+        except (TypeError, ValueError):
+            first = 0
+        current = max(0, int(sequence))
+        if current <= first:
+            return False
+        return (current - first) % period == 0
+
+    def _hold_transfer_attention(self, thought, intention, attention: dict) -> None:
+        self._surface_incubating_candidate(thought, intention)
+        try:
+            period = max(1, int(attention.get("review_period_pulses") or 1))
+        except (TypeError, ValueError):
+            period = 1
+        try:
+            first = max(0, int(attention.get("first_sequence") or 0))
+        except (TypeError, ValueError):
+            first = 0
+        sequence = max(0, int(getattr(thought, "sequence", 0) or 0))
+        if sequence <= first:
+            remaining = period
+        else:
+            offset = (sequence - first) % period
+            remaining = period - offset if offset else period
+
+        state = str(attention.get("evidence_state") or "mixed")
+        try:
+            consensus = max(
+                0.0,
+                min(1.0, float(attention.get("consensus") or 0.0)),
+            )
+        except (TypeError, ValueError):
+            consensus = 0.0
+        try:
+            conflicts = max(0, int(attention.get("conflict_count") or 0))
+        except (TypeError, ValueError):
+            conflicts = 0
+        known = (
+            "transfer attention remains open across pulses: "
+            f"{state.replace('_', ' ')}, consensus={consensus:.2f}, "
+            f"conflicts={conflicts}; next native review in {remaining} pulse(s)"
+        )
+        if known not in thought.known:
+            thought.known = (*thought.known, known)
+        action = "keep this transfer question open until another native observation is due"
+        if action not in thought.possible_actions:
+            thought.possible_actions = (*thought.possible_actions, action)
+
+        expectation = intention.candidate_payload.get("schema_expectation")
+        if not isinstance(expectation, dict):
+            expectation = {}
+        family = str(expectation.get("family") or "").strip()
+        value = str(expectation.get("value") or "").strip()
+        relation = f"{family}:{value}" if family and value else "transferred expectation"
+        thought.focus = f"re-evaluate {relation} against current reality"
+        thought.chosen_action = action
+        thought.action_kind = "observe"
+        thought.action_target = None
+        prior_reason = str(thought.reason or "").strip()
+        rhythm_reason = (
+            f"transfer evidence remains {state.replace('_', ' ')}; current reality still "
+            f"gates commitment, so Will preserves attention and spaces native review "
+            f"every {period} pulse(s)"
+        )
+        thought.reason = (
+            f"{prior_reason}; {rhythm_reason}" if prior_reason else rhythm_reason
+        )
+        ceiling = 0.68 if state in {"conflicted", "prediction_error"} else 0.78
+        thought.confidence = min(float(thought.confidence), ceiling)
+
     def _incubate_primary_intention(self, thought) -> bool:
         life_state = self.life.snapshot()
         situation = life_state.current_situation
@@ -324,13 +525,37 @@ class TransferAwareSituatedResidentRuntime(SituatedIntentionalResidentRuntime):
                     f"{candidate.reason}; {integration}; {context_basis}"
                 )
                 if context_supported:
+                    coherent_support: list[str] = []
+                    if (
+                        conflict_count == 0
+                        and consensus >= self._TRANSFER_STABLE_CONSENSUS
+                    ):
+                        for item in contributors:
+                            coherent_support.extend(
+                                (
+                                    str(item.get("source_trace_id") or ""),
+                                    str(item.get("bridge_trace_id") or ""),
+                                )
+                            )
+                        repeated_support = sum(
+                            max(0, int(item.get("feedback_count") or 0))
+                            for item in contributors
+                            if float(item.get("tendency") or 1.0) > 1.0
+                        )
+                        if repeated_support >= 2:
+                            coherent_support.append(
+                                f"transfer_history:{repeated_support}"
+                            )
                     candidate.support = tuple(
                         dict.fromkeys(
-                            (
+                            item
+                            for item in (
                                 *candidate.support,
                                 f"current:{context_basis}",
                                 f"transfer_sources:{len(contributors) or 1}",
+                                *coherent_support,
                             )
+                            if str(item).strip()
                         )
                     )[-12:]
             formed.append((activation, candidate, context_supported, context_basis))
@@ -398,6 +623,37 @@ class TransferAwareSituatedResidentRuntime(SituatedIntentionalResidentRuntime):
                 - min(0.06, 0.02 * conflict_count),
             )
 
+        attention = None
+        sequence = max(0, int(getattr(thought, "sequence", 0) or 0))
+        if is_transfer and context_supported:
+            attention = self._transfer_attention_state(
+                schema_activation,
+                candidate,
+                sequence=sequence,
+                existing=existing,
+            )
+            candidate.payload = {
+                **candidate.payload,
+                "transfer_attention": attention,
+            }
+            existing_attention = None
+            if (
+                existing is not None
+                and existing.candidate_kind == candidate.kind
+                and existing.candidate_step == step
+            ):
+                existing_attention = existing.candidate_payload.get(
+                    "transfer_attention"
+                )
+            if (
+                isinstance(existing_attention, dict)
+                and str(existing_attention.get("evidence_key") or "")
+                == str(attention.get("evidence_key") or "")
+                and not self._transfer_review_due(attention, sequence)
+            ):
+                self._hold_transfer_attention(thought, existing, attention)
+                return True
+
         updated = self.will.incubate_candidate(
             primary.intention_id,
             kind=candidate.kind,
@@ -418,7 +674,23 @@ class TransferAwareSituatedResidentRuntime(SituatedIntentionalResidentRuntime):
                 thought.known = (*thought.known, waiting)
             return True
 
-        if updated.candidate_repetitions >= 2 and updated.candidate_maturity >= 0.72:
+        matured = (
+            updated.candidate_repetitions >= 2
+            and updated.candidate_maturity >= 0.72
+        )
+        if attention is not None and not matured:
+            try:
+                review_period = max(
+                    1,
+                    int(attention.get("review_period_pulses") or 1),
+                )
+            except (TypeError, ValueError):
+                review_period = 1
+            if review_period > 1:
+                self._hold_transfer_attention(thought, updated, attention)
+                return True
+
+        if matured:
             action = "commit the matured native candidate as my next intention step"
             if action not in thought.possible_actions:
                 thought.possible_actions = (*thought.possible_actions, action)
