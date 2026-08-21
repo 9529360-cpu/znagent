@@ -23,6 +23,8 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
         *EmbodiedResidentRuntime._ACTIVE_THOUGHT_KINDS,
         "intention",
     }
+    _REFLECTION_PERIOD_PULSES = 30
+    _REFLECTION_CHANNELS = ("will", "outcome", "world", "vision", "action")
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(
@@ -166,7 +168,7 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
         return pulse
 
     def live_once(self) -> ResidentRunResult | None:
-        """Form one Thought and advance one event or one intention step."""
+        """Form one Thought and advance one event, intention, or native reflection."""
         with self._cycle_lock:
             pulse = self.pulse()
             thought = pulse.thought
@@ -175,6 +177,9 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
 
             if thought.action_kind == "intention" and thought.action_target:
                 self._advance_intention(thought.action_target)
+                return None
+
+            if thought.action_kind == "observe" and self._native_reflect_if_due(thought):
                 return None
 
             if thought.action_kind not in self._ACTIVE_THOUGHT_KINDS:
@@ -202,6 +207,111 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
                 readiness=readiness,
                 learning_evidence=learning_evidence,
             )
+
+    def _native_reflect_if_due(self, thought) -> bool:
+        """Perform one low-frequency association entirely inside the resident.
+
+        Reflection is not a planning request and does not create an event. It
+        lets Will, affect, and salient lived traces co-activate periodically so
+        later Thoughts can be changed by the resident's own accumulated life.
+        """
+        sequence = max(0, int(getattr(thought, "sequence", 0) or 0))
+        if sequence <= 0 or sequence % self._REFLECTION_PERIOD_PULSES:
+            return False
+
+        situation = self.life.snapshot().current_situation
+        if situation is not None and (
+            situation.active_event_id or situation.active_impasse_id
+        ):
+            return False
+
+        primary = self.will.primary()
+        affect = self.nervous.snapshot()
+        activations = []
+        focus = None
+        if primary is not None:
+            focus = primary.description
+            activations = self.nervous.activate(
+                primary.description,
+                channels=self._REFLECTION_CHANNELS,
+                limit=5,
+            )
+        else:
+            candidates = [
+                trace
+                for trace in self.nervous.recent_traces(64)
+                if trace.channel in self._REFLECTION_CHANNELS
+            ]
+            candidates.sort(
+                key=lambda trace: (
+                    0.50 * trace.salience
+                    + 0.30 * trace.strength
+                    + 0.12 * abs(trace.valence)
+                    + 0.08 * trace.arousal
+                ),
+                reverse=True,
+            )
+            if candidates:
+                top = candidates[0]
+                score = (
+                    0.50 * top.salience
+                    + 0.30 * top.strength
+                    + 0.12 * abs(top.valence)
+                    + 0.08 * top.arousal
+                )
+                if score >= 0.58 and (
+                    affect.curiosity >= 0.40
+                    or affect.tension >= 0.40
+                    or abs(affect.valence) >= 0.30
+                ):
+                    focus = top.summary
+                    activations = self.nervous.activate(
+                        top.summary,
+                        channels=self._REFLECTION_CHANNELS,
+                        limit=5,
+                    )
+
+        if not focus or not activations:
+            return False
+
+        traces = [item.trace for item in activations[:3]]
+        top = traces[0]
+        if len(traces) >= 2:
+            summary = (
+                f"While thinking about {focus[:220]}, I associated "
+                f"{top.summary[:260]} with {traces[1].summary[:260]}."
+            )
+        else:
+            summary = (
+                f"While thinking about {focus[:220]}, the lived trace "
+                f"{top.summary[:360]} remained salient."
+            )
+        average_valence = sum(trace.valence for trace in traces) / len(traces)
+        self.nervous.perceive(
+            "reflection",
+            summary,
+            features=(
+                "native_reflection",
+                *(f"source:{trace.channel}" for trace in traces),
+            ),
+            source="self",
+            salience=min(
+                0.82,
+                0.42
+                + 0.20 * max(item.activation for item in activations[:3])
+                + 0.12 * affect.curiosity
+                + 0.08 * affect.tension,
+            ),
+            valence=max(-1.0, min(1.0, average_valence)),
+            arousal=min(0.78, 0.24 + 0.20 * affect.curiosity + 0.20 * affect.tension),
+            metadata={
+                "thought_sequence": sequence,
+                "intention_id": primary.intention_id if primary is not None else None,
+                "source_trace_ids": [trace.trace_id for trace in traces],
+                "model_invocations": 0,
+            },
+        )
+        return True
 
     def _related_learning_evidence(
         self,
