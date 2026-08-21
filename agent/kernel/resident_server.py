@@ -135,3 +135,24 @@ class ResidentSocketService:
             path.unlink(missing_ok=True)
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return
+
+
+def main() -> int:
+    # Import lazily so daemon.py remains the transport-agnostic JSON-RPC face
+    # and this module can be launched directly as the long-lived local service.
+    from .daemon import ResidentRpcServer
+
+    host = (os.getenv("ZN_RESIDENT_HOST") or "127.0.0.1").strip() or "127.0.0.1"
+    try:
+        port = max(0, int(os.getenv("ZN_RESIDENT_PORT") or "0"))
+    except ValueError:
+        port = 0
+    return ResidentSocketService(
+        ResidentRpcServer(),
+        host=host,
+        port=port,
+    ).serve_forever()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
