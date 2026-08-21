@@ -34,10 +34,23 @@ class ResidentService:
     def acquire(self) -> None:
         if self._acquired:
             return
+        hostname = socket.gethostname()
+        lease = self.store.get_resident_lease()
+        if (
+            lease
+            and str(lease.get("instance_id") or "") != self.instance_id
+            and str(lease.get("hostname") or "") == hostname
+            and not self._local_pid_alive(lease.get("pid"))
+        ):
+            # A resident that died abruptly cannot release its SQLite lease.
+            # Same-host dead PID evidence is stronger than waiting for the
+            # heartbeat timeout, so a new body can resume the durable self now.
+            self.store.release_resident_lease(str(lease.get("instance_id") or ""))
+
         acquired = self.store.claim_resident_lease(
             instance_id=self.instance_id,
             pid=os.getpid(),
-            hostname=socket.gethostname(),
+            hostname=hostname,
             stale_after_seconds=self.lease_timeout,
         )
         if not acquired:
@@ -83,3 +96,22 @@ class ResidentService:
                     stopper.wait(min(poll, max(0.05, next_heartbeat - time.monotonic())))
         finally:
             self.release()
+
+    @staticmethod
+    def _local_pid_alive(value: object) -> bool:
+        try:
+            pid = int(value)
+        except (TypeError, ValueError):
+            return False
+        if pid <= 0:
+            return False
+        if pid == os.getpid():
+            return True
+        try:
+            import psutil
+
+            return bool(psutil.pid_exists(pid))
+        except Exception:
+            # If the process table cannot be inspected, preserve the lease and
+            # fall back to its normal heartbeat timeout instead of guessing.
+            return True
