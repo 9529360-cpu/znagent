@@ -119,13 +119,13 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
         if thought is not None:
             unknown_pressure = min(1.0, len(thought.unknown) / 4.0)
             action_pressure = 0.15 if thought.action_kind == "observe" else 0.45
+            features = [thought.action_kind]
+            if thought.unknown:
+                features.append("uncertain")
             self.nervous.perceive(
                 "thought",
                 f"{thought.focus} -> {thought.chosen_action}",
-                features=(
-                    thought.action_kind,
-                    *("uncertain",) if thought.unknown else (),
-                ),
+                features=tuple(features),
                 source="thought",
                 salience=min(1.0, 0.30 + action_pressure + 0.20 * unknown_pressure),
                 valence=-0.18 * unknown_pressure,
