@@ -114,6 +114,8 @@ class TransferInformedIncubationTests(unittest.TestCase):
                 store_path=Path(tmp) / "kernel.db",
             )
             body = resident.body.sense()
+            system = str(body.get("system") or "").lower()
+            self.assertTrue(system)
             source = self._schema(
                 resident,
                 "source_transfer_anchor",
@@ -125,7 +127,7 @@ class TransferInformedIncubationTests(unittest.TestCase):
                 resident,
                 "neighbor_body_pattern",
                 "system",
-                str(body.system).lower(),
+                system,
             )
             bridge = resident.nervous.perceive(
                 "world",
@@ -153,6 +155,8 @@ class TransferInformedIncubationTests(unittest.TestCase):
                 target_activation.transfer_gain,
                 target_activation.associative_gain,
             )
+            self.assertEqual(target_activation.transfer_source_trace_id, source.trace_id)
+            self.assertEqual(target_activation.transfer_bridge_trace_id, bridge.trace_id)
             self.assertEqual(resident.store.get_runtime_metrics().model_invocations, 0)
             resident.store.close()
 
