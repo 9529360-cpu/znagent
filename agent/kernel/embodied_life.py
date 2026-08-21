@@ -9,7 +9,7 @@ from .models import AgentEvent
 
 @dataclass(slots=True)
 class CognitiveSituation(SituationModel):
-    """Situation enriched with the resident's currently lived cognition step."""
+    """Situation enriched with what ZN is cognitively and intentionally living now."""
 
     working_event_id: str | None = None
     working_stage: str = "idle"
@@ -28,16 +28,21 @@ class CognitiveSituation(SituationModel):
     cognitive_increment_source: str | None = None
     cognitive_increment_question: str | None = None
     cognitive_increment_confidence: float | None = None
+    active_intention_id: str | None = None
+    active_intention_description: str | None = None
+    active_intention_status: str | None = None
+    active_intention_priority: int | None = None
+    active_intention_next_task: str | None = None
+    active_intention_related_event_id: str | None = None
+    active_intention_last_outcome: str | None = None
 
 
 class EmbodiedLifeCore(ZNLifeCore):
-    """Life core where Thought is formed from the resident's active cognition state.
+    """Life core where Thought is formed from ZN's lived state.
 
-    The base life loop already supplies continuity, body sensing, events,
-    impasses and native Thought. This layer makes ongoing orientation,
-    investigation, deliberation, body movement and borrowed cognition part of
-    Situation itself, so each new Thought is a consequence of what ZN just
-    experienced.
+    Ongoing investigation, body movement, borrowed cognition and durable Will
+    are all present in Situation before Thought is formed. An external caller
+    does not need to reconstruct these after the pulse.
     """
 
     def _build_situation(
@@ -68,8 +73,16 @@ class EmbodiedLifeCore(ZNLifeCore):
             except Exception:
                 investigation = None
 
+        intention = None
+        will = getattr(self.resident, "will", None)
+        if will is not None:
+            try:
+                intention = will.primary()
+            except Exception:
+                intention = None
+
         raw_intent = working.data.get("native_action_intent")
-        intent = raw_intent if isinstance(raw_intent, dict) else {}
+        action_intent = raw_intent if isinstance(raw_intent, dict) else {}
         raw_result = working.data.get("native_action_result")
         action_result = raw_result if isinstance(raw_result, dict) else {}
         raw_increment = working.data.get("cognitive_increment")
@@ -91,13 +104,15 @@ class EmbodiedLifeCore(ZNLifeCore):
                 investigation.next_probe if investigation is not None else None
             ),
             native_action_intent_id=(
-                str(intent.get("intent_id")) if intent.get("intent_id") else None
+                str(action_intent.get("intent_id"))
+                if action_intent.get("intent_id")
+                else None
             ),
             native_action_kind=(
-                str(intent.get("kind")) if intent.get("kind") else None
+                str(action_intent.get("kind")) if action_intent.get("kind") else None
             ),
             native_action_reason=(
-                str(intent.get("reason")) if intent.get("reason") else None
+                str(action_intent.get("reason")) if action_intent.get("reason") else None
             ),
             last_body_action_kind=(
                 str(action_result.get("kind")) if action_result.get("kind") else None
@@ -126,6 +141,21 @@ class EmbodiedLifeCore(ZNLifeCore):
                 if increment.get("confidence") is not None
                 else None
             ),
+            active_intention_id=(intention.intention_id if intention is not None else None),
+            active_intention_description=(
+                intention.description if intention is not None else None
+            ),
+            active_intention_status=(intention.status if intention is not None else None),
+            active_intention_priority=(intention.priority if intention is not None else None),
+            active_intention_next_task=(
+                intention.next_task if intention is not None else None
+            ),
+            active_intention_related_event_id=(
+                intention.related_event_id if intention is not None else None
+            ),
+            active_intention_last_outcome=(
+                intention.last_outcome if intention is not None else None
+            ),
         )
 
     def _form_thought(
@@ -142,7 +172,58 @@ class EmbodiedLifeCore(ZNLifeCore):
         )
         if not isinstance(situation, CognitiveSituation):
             return thought
+
+        # When no event or impasse currently owns attention, ZN still has a
+        # durable Will. A concrete next step may become an internal event; an
+        # intention without a step remains present without inventing work.
         if not situation.active_event_id:
+            if situation.active_impasse_id:
+                return thought
+            if situation.active_intention_id and situation.active_intention_description:
+                known = (
+                    f"I still hold intention {situation.active_intention_id}: "
+                    f"{situation.active_intention_description}"
+                )
+                if known not in thought.known:
+                    thought.known = (*thought.known, known)
+                if situation.active_intention_last_outcome:
+                    outcome = (
+                        "the last step of this intention resulted in: "
+                        f"{situation.active_intention_last_outcome}"
+                    )
+                    if outcome not in thought.known:
+                        thought.known = (*thought.known, outcome)
+                thought.focus = situation.active_intention_description
+
+                if (
+                    situation.active_intention_status == "active"
+                    and situation.active_intention_next_task
+                    and not situation.active_intention_related_event_id
+                ):
+                    action = (
+                        "advance intention with next step: "
+                        f"{situation.active_intention_next_task}"
+                    )
+                    if action not in thought.possible_actions:
+                        thought.possible_actions = (*thought.possible_actions, action)
+                    thought.chosen_action = action
+                    thought.action_kind = "intention"
+                    thought.action_target = situation.active_intention_id
+                    thought.reason = (
+                        "a durable intention has a concrete native next step ready to pursue"
+                    )
+                    thought.confidence = max(thought.confidence, 0.95)
+                else:
+                    action = "maintain the active intention until a concrete next step exists"
+                    if action not in thought.possible_actions:
+                        thought.possible_actions = (*thought.possible_actions, action)
+                    thought.chosen_action = action
+                    thought.action_kind = "observe"
+                    thought.action_target = None
+                    thought.reason = (
+                        "the intention persists, but there is no new concrete step to execute"
+                    )
+                return thought
             return thought
 
         stage = situation.working_stage
@@ -167,7 +248,9 @@ class EmbodiedLifeCore(ZNLifeCore):
                 )
                 if body_unknown not in thought.unknown:
                     thought.unknown = (*thought.unknown, body_unknown)
-                body_known = f"my last body movement was {situation.last_body_action_kind} and it failed"
+                body_known = (
+                    f"my last body movement was {situation.last_body_action_kind} and it failed"
+                )
             else:
                 body_known = f"my last body movement was {situation.last_body_action_kind}"
             if body_known not in thought.known:
@@ -265,4 +348,11 @@ class EmbodiedLifeCore(ZNLifeCore):
         data.setdefault("cognitive_increment_source", None)
         data.setdefault("cognitive_increment_question", None)
         data.setdefault("cognitive_increment_confidence", None)
+        data.setdefault("active_intention_id", None)
+        data.setdefault("active_intention_description", None)
+        data.setdefault("active_intention_status", None)
+        data.setdefault("active_intention_priority", None)
+        data.setdefault("active_intention_next_task", None)
+        data.setdefault("active_intention_related_event_id", None)
+        data.setdefault("active_intention_last_outcome", None)
         return CognitiveSituation(**data)
