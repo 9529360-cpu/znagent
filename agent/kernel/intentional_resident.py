@@ -203,6 +203,65 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
                 learning_evidence=learning_evidence,
             )
 
+    def _related_learning_evidence(
+        self,
+        event,
+        readiness,
+        *,
+        limit: int = 3,
+    ) -> list[dict[str, Any]]:
+        """Blend explicit learning evidence with bounded associative lived memory.
+
+        Neural traces stay resident-side. They can change deliberation and help
+        ZN recognize a familiar situation, but this method does not put them
+        into an external-model prompt.
+        """
+        bounded_limit = max(1, int(limit))
+        merged = list(
+            super()._related_learning_evidence(
+                event,
+                readiness,
+                limit=bounded_limit,
+            )
+        )
+        allowed_channels = {"outcome", "world", "vision", "action", "will"}
+        for activation in self.nervous.activate(event.task, limit=bounded_limit * 3):
+            trace = activation.trace
+            if trace.channel not in allowed_channels:
+                continue
+            if str(trace.metadata.get("event_id") or "") == event.event_id:
+                continue
+            merged.append(
+                {
+                    "candidate_id": f"neural:{trace.trace_id}",
+                    "similarity": round(activation.activation, 4),
+                    "domains": list(readiness.domains),
+                    "task": trace.summary[:240],
+                    "resolution_summary": trace.summary[:320],
+                    "resolution_source": f"neural:{trace.channel}",
+                    "neural_trace_id": trace.trace_id,
+                    "salience": round(trace.salience, 4),
+                    "valence": round(trace.valence, 4),
+                }
+            )
+
+        deduped: dict[str, dict[str, Any]] = {}
+        for item in merged:
+            key = str(item.get("candidate_id") or item.get("neural_trace_id") or "")
+            if not key:
+                continue
+            prior = deduped.get(key)
+            if prior is None or float(item.get("similarity") or 0.0) > float(
+                prior.get("similarity") or 0.0
+            ):
+                deduped[key] = item
+        ranked = sorted(
+            deduped.values(),
+            key=lambda item: float(item.get("similarity") or 0.0),
+            reverse=True,
+        )
+        return ranked[:bounded_limit]
+
     def _advance_intention(self, intention_id: str) -> None:
         intention = self.will.get(intention_id)
         if intention is None:
