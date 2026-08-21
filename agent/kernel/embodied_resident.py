@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import asdict
 from typing import Any
 
 from .action import NativeActionIntent, derive_native_action_intent
+from .budget import CognitiveBudgetManager
+from .capabilities import CapabilityRegistry
 from .cognition import CognitiveIncrement
+from .memory import StructuredMemory
 from .models import AgentEvent, ExecutionPath, ResidentRunResult, WorkingState
 from .resident import ZNResidentRuntime
 from .self_model import TaskReadiness
@@ -14,9 +18,10 @@ from .self_model import TaskReadiness
 class EmbodiedResidentRuntime(ZNResidentRuntime):
     """Resident runtime whose native cognition can produce concrete body action.
 
-    The base resident owns continuity, memory, impasses and external cognition.
-    This embodied resident is born with its Body, embodied Investigation and
-    stage-aware Life core already attached, then closes the native loops:
+    The compatibility base class still provides the mature event/action methods,
+    but this resident owns its birth sequence so it never instantiates a legacy
+    LifeCore and then swaps in a richer one. Body, Investigation and embodied
+    Life are present from the first loaded durable state.
 
         Situation -> Thought -> Body -> evidence/outcome -> Situation
         Impasse -> external cognition -> CognitiveIncrement -> Thought -> result
@@ -33,14 +38,21 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
     }
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
-        super().__init__(
-            kernel=kernel,
-            capabilities=capabilities,
-            budget=budget,
-        )
-        # The compatibility base constructor establishes the durable self and
-        # wake transition first. The embodied organs then replace the base
-        # implementations while retaining exactly the same persistent state.
+        # Do not call ZNResidentRuntime.__init__: it deliberately constructs the
+        # compatibility ZNLifeCore first, which cannot deserialize the richer
+        # CognitiveSituation persisted by this resident. An embodied resident is
+        # born once with the correct organs instead of being assembled after a
+        # temporary legacy birth.
+        self.kernel = kernel
+        self.store = kernel.store
+        self.identity = kernel.identity
+        self.capabilities = capabilities or CapabilityRegistry()
+        self.budget = budget or CognitiveBudgetManager()
+        self.memory = StructuredMemory(self.store)
+        self._cycle_lock = threading.RLock()
+        self.store.recover_interrupted_events()
+        self.store.get_working_state()
+
         from .body import NativeBody
         from .embodied_investigation import EmbodiedInvestigator
         from .embodied_life import EmbodiedLifeCore
@@ -48,6 +60,7 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         self.body = NativeBody(resident=self)
         self.investigator = EmbodiedInvestigator(self)
         self.life = EmbodiedLifeCore(self)
+        self.life.wake()
 
     def _advance_event_step(
         self,
