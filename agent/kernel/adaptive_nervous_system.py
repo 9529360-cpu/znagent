@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from contextlib import closing
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -10,7 +11,17 @@ from .adaptive_guidance import (
     schema_reality_score,
     schema_superseded_relation_terms,
 )
+from .models import utc_now
 from .nervous_system import NeuralActivation, NeuralTrace, PersistentNervousSystem
+
+
+@dataclass(slots=True)
+class RealityTransferEvidence:
+    """The strongest lived two-hop path responsible for one schema transfer."""
+
+    gain: float
+    source_trace_id: str
+    bridge_trace_id: str
 
 
 @dataclass(slots=True)
@@ -18,6 +29,8 @@ class RealityAwareActivation(NeuralActivation):
     """One neural activation with explicit bounded-transfer provenance."""
 
     transfer_gain: float = 0.0
+    transfer_source_trace_id: str = ""
+    transfer_bridge_trace_id: str = ""
 
 
 class RealityAwareNervousSystem(PersistentNervousSystem):
@@ -98,8 +111,11 @@ class RealityAwareNervousSystem(PersistentNervousSystem):
             by_id=by_id,
             allowed=allowed,
         )
-        for trace_id, gain in transfer.items():
-            associative[trace_id] = max(associative.get(trace_id, 0.0), gain)
+        for trace_id, evidence in transfer.items():
+            associative[trace_id] = max(
+                associative.get(trace_id, 0.0),
+                evidence.gain,
+            )
 
         activations: list[NeuralActivation] = []
         for trace_id in set((*direct.keys(), *associative.keys())):
@@ -110,7 +126,8 @@ class RealityAwareNervousSystem(PersistentNervousSystem):
                 continue
             direct_score, overlap = direct.get(trace_id, (0.0, 0.0))
             gain = associative.get(trace_id, 0.0)
-            transfer_gain = transfer.get(trace_id, 0.0)
+            transfer_evidence = transfer.get(trace_id)
+            transfer_gain = transfer_evidence.gain if transfer_evidence is not None else 0.0
             score = self._unit(direct_score + gain)
             threshold = 0.04 if transfer_gain > 0.0 and direct_score <= 0.0 else 0.12
             if score < threshold:
@@ -122,6 +139,16 @@ class RealityAwareNervousSystem(PersistentNervousSystem):
                     cue_overlap=overlap,
                     associative_gain=gain,
                     transfer_gain=transfer_gain,
+                    transfer_source_trace_id=(
+                        transfer_evidence.source_trace_id
+                        if transfer_evidence is not None
+                        else ""
+                    ),
+                    transfer_bridge_trace_id=(
+                        transfer_evidence.bridge_trace_id
+                        if transfer_evidence is not None
+                        else ""
+                    ),
                 )
             )
         activations.sort(key=lambda item: item.activation, reverse=True)
@@ -156,7 +183,7 @@ class RealityAwareNervousSystem(PersistentNervousSystem):
         *,
         by_id: dict[str, NeuralTrace],
         allowed: set[str],
-    ) -> dict[str, float]:
+    ) -> dict[str, RealityTransferEvidence]:
         """Spread corrected structure across one shared lived-evidence bridge.
 
         This is not arbitrary graph diffusion. A source must be a directly
@@ -166,6 +193,10 @@ class RealityAwareNervousSystem(PersistentNervousSystem):
         its current structured relations do not contradict the source. The
         resulting gain is a weak associative activation and cannot outrank a
         strong direct cue by itself.
+
+        The strongest source/bridge path is retained as provenance so later Will
+        feedback can reshape that exact transfer route without rewriting either
+        schema's structured relations.
         """
         sources: list[tuple[NeuralTrace, float, float]] = []
         for trace_id, (score, _overlap) in direct.items():
@@ -185,7 +216,7 @@ class RealityAwareNervousSystem(PersistentNervousSystem):
         if not sources:
             return {}
 
-        gains: dict[str, float] = {}
+        gains: dict[str, RealityTransferEvidence] = {}
         for source, source_score, source_reality in sorted(
             sources,
             key=lambda item: item[1],
@@ -218,7 +249,7 @@ class RealityAwareNervousSystem(PersistentNervousSystem):
                     if compatibility <= 0.0:
                         continue
                     bridge_strength = math.sqrt(first_strength * second_strength)
-                    gain = (
+                    gain = self._unit(
                         source_score
                         * bridge_strength
                         * source_reality
@@ -227,8 +258,61 @@ class RealityAwareNervousSystem(PersistentNervousSystem):
                     )
                     if gain < 0.04:
                         continue
-                    gains[target_id] = max(gains.get(target_id, 0.0), self._unit(gain))
+                    evidence = RealityTransferEvidence(
+                        gain=gain,
+                        source_trace_id=source.trace_id,
+                        bridge_trace_id=bridge_id,
+                    )
+                    prior = gains.get(target_id)
+                    if prior is None or evidence.gain > prior.gain:
+                        gains[target_id] = evidence
         return gains
+
+    def weaken_transfer_link(
+        self,
+        left_id: str,
+        right_id: str,
+        *,
+        amount: float,
+    ) -> float:
+        """Weaken one specific learned transfer edge without changing schema truth."""
+        if left_id == right_id:
+            return 0.0
+        left, right = sorted((str(left_id), str(right_id)))
+        penalty = self._unit(amount)
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT strength FROM neural_links WHERE left_id=? AND right_id=?",
+                (left, right),
+            ).fetchone()
+            if not row:
+                return 0.0
+            old = self._unit(float(row["strength"]))
+            strength = self._unit(old * (1.0 - penalty))
+            if strength < 0.02:
+                conn.execute(
+                    "DELETE FROM neural_links WHERE left_id=? AND right_id=?",
+                    (left, right),
+                )
+                strength = 0.0
+            else:
+                conn.execute(
+                    "UPDATE neural_links SET strength=?,updated_at=? "
+                    "WHERE left_id=? AND right_id=?",
+                    (strength, utc_now(), left, right),
+                )
+            conn.commit()
+        return strength
+
+    def link_strength(self, left_id: str, right_id: str) -> float:
+        """Read one existing neural edge strength for bounded plasticity checks."""
+        if left_id == right_id:
+            return 0.0
+        left, right = sorted((str(left_id), str(right_id)))
+        for seen_left, seen_right, strength in self._links_for([left]):
+            if seen_left == left and seen_right == right:
+                return self._unit(strength)
+        return 0.0
 
     @staticmethod
     def _schema_transfer_compatibility(source: NeuralTrace, target: NeuralTrace) -> float:
