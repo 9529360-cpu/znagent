@@ -188,7 +188,7 @@ def build_resident_runtime_from_existing_stack(
     from .budget import CognitiveBudgetManager
     from .embodied_investigation import EmbodiedInvestigator
     from .embodied_life import EmbodiedLifeCore
-    from .resident import ZNResidentRuntime
+    from .embodied_resident import EmbodiedResidentRuntime
 
     effective_config = config
     if effective_config is None:
@@ -213,10 +213,11 @@ def build_resident_runtime_from_existing_stack(
             0.0, min(1.0, float(resident_cfg.get("high_risk_threshold", 0.8)))
         ),
     )
-    resident = ZNResidentRuntime(kernel=kernel, budget=budget)
+    resident = EmbodiedResidentRuntime(kernel=kernel, budget=budget)
     # Body is an organ of the resident, not a skill in the capability registry.
-    # Investigation moves through that body, and Life then forms each new
-    # Thought from the cognition stage and evidence that actually resulted.
+    # Investigation moves through that body, Life forms Thought from the lived
+    # cognition stage, and EmbodiedResidentRuntime can turn deliberation into a
+    # structured body intent and observed outcome.
     resident.body = NativeBody(resident=resident)
     resident.investigator = EmbodiedInvestigator(resident)
     resident.life = EmbodiedLifeCore(resident)
