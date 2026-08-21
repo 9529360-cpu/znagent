@@ -35,14 +35,23 @@ class CognitiveSituation(SituationModel):
     active_intention_next_task: str | None = None
     active_intention_related_event_id: str | None = None
     active_intention_last_outcome: str | None = None
+    nervous_tone: str | None = None
+    nervous_valence: float = 0.0
+    nervous_arousal: float = 0.0
+    nervous_tension: float = 0.0
+    nervous_curiosity: float = 0.0
+    nervous_familiarity: float = 0.0
+    nervous_fatigue: float = 0.0
+    activated_neural_traces: tuple[str, ...] = ()
 
 
 class EmbodiedLifeCore(ZNLifeCore):
     """Life core where Thought is formed from ZN's lived state.
 
-    Ongoing investigation, body movement, borrowed cognition and durable Will
-    are all present in Situation before Thought is formed. An external caller
-    does not need to reconstruct these after the pulse.
+    Ongoing investigation, body movement, borrowed cognition, durable Will,
+    associative neural memory, and persistent affect are all present in
+    Situation before Thought is formed. An external caller does not reconstruct
+    these after the pulse.
     """
 
     def _build_situation(
@@ -80,6 +89,31 @@ class EmbodiedLifeCore(ZNLifeCore):
                 intention = will.primary()
             except Exception:
                 intention = None
+
+        nervous = getattr(self.resident, "nervous", None)
+        affect = None
+        neural_summaries: tuple[str, ...] = ()
+        nervous_tone: str | None = None
+        if nervous is not None:
+            try:
+                affect = nervous.snapshot()
+                nervous_tone = nervous.describe_state()
+                cue = (
+                    base.active_task
+                    or (intention.description if intention is not None else None)
+                    or working.next_action
+                    or previous.attention
+                    or ""
+                )
+                if cue:
+                    activations = nervous.activate(cue, limit=4)
+                    neural_summaries = tuple(
+                        item.trace.summary[:500] for item in activations[:4]
+                    )
+            except Exception:
+                affect = None
+                neural_summaries = ()
+                nervous_tone = None
 
         raw_intent = working.data.get("native_action_intent")
         action_intent = raw_intent if isinstance(raw_intent, dict) else {}
@@ -156,6 +190,16 @@ class EmbodiedLifeCore(ZNLifeCore):
             active_intention_last_outcome=(
                 intention.last_outcome if intention is not None else None
             ),
+            nervous_tone=nervous_tone,
+            nervous_valence=(float(affect.valence) if affect is not None else 0.0),
+            nervous_arousal=(float(affect.arousal) if affect is not None else 0.0),
+            nervous_tension=(float(affect.tension) if affect is not None else 0.0),
+            nervous_curiosity=(float(affect.curiosity) if affect is not None else 0.0),
+            nervous_familiarity=(
+                float(affect.familiarity) if affect is not None else 0.0
+            ),
+            nervous_fatigue=(float(affect.fatigue) if affect is not None else 0.0),
+            activated_neural_traces=neural_summaries,
         )
 
     def _form_thought(
@@ -172,6 +216,23 @@ class EmbodiedLifeCore(ZNLifeCore):
         )
         if not isinstance(situation, CognitiveSituation):
             return thought
+
+        if situation.nervous_tone:
+            tone_known = f"my current internal tone is {situation.nervous_tone}"
+            if tone_known not in thought.known:
+                thought.known = (*thought.known, tone_known)
+        for trace in situation.activated_neural_traces[:3]:
+            memory_known = f"an associated lived trace became active: {trace}"
+            if memory_known not in thought.known:
+                thought.known = (*thought.known, memory_known)
+
+        # Persistent affect has a functional influence on cognition. Familiar
+        # associated experience slightly stabilizes confidence; strong tension
+        # slightly reduces it so native observation is favored over certainty.
+        if situation.activated_neural_traces and situation.nervous_familiarity >= 0.60:
+            thought.confidence = min(1.0, thought.confidence + 0.05)
+        if situation.nervous_tension >= 0.70:
+            thought.confidence = max(0.0, thought.confidence - 0.12)
 
         # When no event or impasse currently owns attention, ZN still has a
         # durable Will. A concrete next step may become an internal event; an
@@ -329,6 +390,7 @@ class EmbodiedLifeCore(ZNLifeCore):
             "local_capabilities",
             "external_brains",
             "changes",
+            "activated_neural_traces",
         ):
             data[key] = tuple(data.get(key) or ())
         data.setdefault("working_event_id", None)
@@ -355,4 +417,12 @@ class EmbodiedLifeCore(ZNLifeCore):
         data.setdefault("active_intention_next_task", None)
         data.setdefault("active_intention_related_event_id", None)
         data.setdefault("active_intention_last_outcome", None)
+        data.setdefault("nervous_tone", None)
+        data.setdefault("nervous_valence", 0.0)
+        data.setdefault("nervous_arousal", 0.0)
+        data.setdefault("nervous_tension", 0.0)
+        data.setdefault("nervous_curiosity", 0.0)
+        data.setdefault("nervous_familiarity", 0.0)
+        data.setdefault("nervous_fatigue", 0.0)
+        data.setdefault("activated_neural_traces", ())
         return CognitiveSituation(**data)
