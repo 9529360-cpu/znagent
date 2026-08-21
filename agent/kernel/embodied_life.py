@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from .life import BodyState, LivingState, SituationModel, ThoughtFrame, ZNLifeCore
-from .models import AgentEvent, utc_now
+from .models import AgentEvent
 
 
 @dataclass(slots=True)
@@ -18,6 +18,9 @@ class CognitiveSituation(SituationModel):
     investigation_round: int = 0
     investigation_evidence_count: int = 0
     investigation_next_probe: str | None = None
+    native_action_intent_id: str | None = None
+    native_action_kind: str | None = None
+    native_action_reason: str | None = None
 
 
 class EmbodiedLifeCore(ZNLifeCore):
@@ -25,9 +28,8 @@ class EmbodiedLifeCore(ZNLifeCore):
 
     The base life loop already supplies continuity, body sensing, events,
     impasses and native Thought. This layer makes ongoing orientation,
-    investigation and deliberation part of Situation itself, so the next
-    Thought is a consequence of what ZN just did rather than a post-hoc rewrite
-    by the caller.
+    investigation, deliberation and body intention part of Situation itself,
+    so each new Thought is a consequence of what ZN just experienced.
     """
 
     def _build_situation(
@@ -58,6 +60,8 @@ class EmbodiedLifeCore(ZNLifeCore):
             except Exception:
                 investigation = None
 
+        raw_intent = working.data.get("native_action_intent")
+        intent = raw_intent if isinstance(raw_intent, dict) else {}
         data = asdict(base)
         return CognitiveSituation(
             **data,
@@ -73,6 +77,15 @@ class EmbodiedLifeCore(ZNLifeCore):
             ),
             investigation_next_probe=(
                 investigation.next_probe if investigation is not None else None
+            ),
+            native_action_intent_id=(
+                str(intent.get("intent_id")) if intent.get("intent_id") else None
+            ),
+            native_action_kind=(
+                str(intent.get("kind")) if intent.get("kind") else None
+            ),
+            native_action_reason=(
+                str(intent.get("reason")) if intent.get("reason") else None
             ),
         )
 
@@ -123,6 +136,19 @@ class EmbodiedLifeCore(ZNLifeCore):
             action = "integrate native evidence and isolate the remaining gap"
             kind = "deliberate"
             reason = "native probes are exhausted and their evidence must now be integrated"
+        elif stage == "native_action" and situation.native_action_kind:
+            action = f"perform body action: {situation.native_action_kind}"
+            kind = "body_action"
+            reason = (
+                situation.native_action_reason
+                or "native cognition selected a concrete movement of my body"
+            )
+            intent_known = (
+                f"I intend body action {situation.native_action_kind} "
+                f"as {situation.native_action_intent_id or 'the next movement'}"
+            )
+            if intent_known not in thought.known:
+                thought.known = (*thought.known, intent_known)
         elif stage == "external_cognition":
             action = "consult an external cognitive resource for the isolated gap"
             kind = "external_cognition"
@@ -157,4 +183,7 @@ class EmbodiedLifeCore(ZNLifeCore):
         data.setdefault("investigation_round", 0)
         data.setdefault("investigation_evidence_count", 0)
         data.setdefault("investigation_next_probe", None)
+        data.setdefault("native_action_intent_id", None)
+        data.setdefault("native_action_kind", None)
+        data.setdefault("native_action_reason", None)
         return CognitiveSituation(**data)
