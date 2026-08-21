@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent.kernel import NativeBody
+from agent.kernel import EmbodiedInvestigator, NativeBody
 from agent.kernel.provider_bridge import build_resident_runtime_from_existing_stack
 
 
@@ -18,7 +18,8 @@ class NativeBodyTests(unittest.TestCase):
             )
 
             self.assertIsInstance(resident.body, NativeBody)
-            self.assertIs(resident.investigator.body, resident.body)
+            self.assertIsInstance(resident.investigator, EmbodiedInvestigator)
+            self.assertIs(resident.investigator.resident.body, resident.body)
             self.assertEqual(resident.capabilities.names(), ())
 
             sensed = resident.body.act("sense", event_id="evt-sense")
@@ -88,6 +89,35 @@ class NativeBodyTests(unittest.TestCase):
             self.assertTrue(result.data["alive"])
             self.assertEqual(result.data["pid"], os.getpid())
             self.assertEqual(resident.capabilities.names(), ())
+            resident.store.close()
+
+    def test_multi_pulse_investigation_uses_body_for_evidence_and_next_action(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "evidence.txt"
+            target.write_text("evidence from the world", encoding="utf-8")
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=root / "kernel.db",
+            )
+
+            result = resident.submit(
+                f"read {target}",
+                payload={"path": str(target)},
+            )
+            event_actions = [
+                item
+                for item in reversed(resident.body.recent_actions(20))
+                if item.event_id == result.event.event_id
+            ]
+
+            self.assertTrue(result.success)
+            self.assertEqual(result.output if hasattr(result, "output") else result.response, "evidence from the world")
+            self.assertGreaterEqual(len(event_actions), 2)
+            self.assertEqual(event_actions[0].kind, "inspect_path")
+            self.assertEqual(event_actions[1].kind, "read_text")
+            self.assertEqual(resident.capabilities.names(), ())
+            self.assertEqual(result.model_invocations, 0)
             resident.store.close()
 
 
