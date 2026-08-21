@@ -2,15 +2,15 @@ from __future__ import annotations
 
 """ZN-owned Telegram Bot API channel.
 
-This is the first source extraction from the mature Telegram implementation in
-``plugins/platforms/telegram`` and ``gateway/platforms/base.py``. The initial
+This is source extraction from the mature Telegram implementation in
+``plugins/platforms/telegram`` and ``gateway/platforms/base.py``. The current
 slice keeps transport behaviors that matter to a resident channel -- UTF-16
 message limits, thread/reply routing, long-poll offsets, update normalization,
-credential redaction and reconnect-friendly stateless requests -- while leaving
-old gateway/AIAgent/session ownership behind.
+credential redaction and explicit inbound authorization -- while leaving old
+gateway/AIAgent/session ownership behind.
 
-Media, rich Markdown, fallback-IP transport and webhook mode can be extracted in
-later slices behind the same ChannelAdapter contract.
+Media, rich Markdown, proxy/fallback-IP transport and webhook mode can be
+extracted in later slices behind the same ChannelAdapter contract.
 """
 
 import os
@@ -92,6 +92,7 @@ class TelegramBotApiChannel:
         *,
         base_url: str = "https://api.telegram.org",
         allowed_chat_ids: Iterable[str | int] | None = None,
+        allow_all: bool = False,
         client: Any | None = None,
         request_timeout: float = 35.0,
     ):
@@ -104,6 +105,7 @@ class TelegramBotApiChannel:
             if allowed_chat_ids is not None
             else None
         )
+        self.allow_all = bool(allow_all)
         self.request_timeout = max(1.0, float(request_timeout))
         self._client = client or httpx.Client()
         self._owns_client = client is None
@@ -132,6 +134,7 @@ class TelegramBotApiChannel:
             token,
             base_url=str(telegram.get("base_url") or "https://api.telegram.org"),
             allowed_chat_ids=allowed if isinstance(allowed, list) else None,
+            allow_all=bool(telegram.get("allow_all", False)),
             client=client,
             request_timeout=float(telegram.get("request_timeout") or 35.0),
         )
@@ -139,6 +142,10 @@ class TelegramBotApiChannel:
     @property
     def offset(self) -> int:
         return self._offset
+
+    @property
+    def inbound_authorized(self) -> bool:
+        return self.allow_all or bool(self.allowed_chat_ids)
 
     def poll(self, *, timeout: float = 0.0) -> list[ChannelEvent]:
         poll_timeout = max(0, min(50, int(timeout)))
@@ -172,6 +179,8 @@ class TelegramBotApiChannel:
             if event is not None:
                 events.append(event)
         if max_update_id >= 0:
+            # Advance past denied/unsupported messages as well. Otherwise one
+            # unauthorized update would be replayed forever and starve the bot.
             self._offset = max(self._offset, max_update_id + 1)
         return events
 
@@ -182,8 +191,9 @@ class TelegramBotApiChannel:
         if not chat_id:
             raise ValueError("Telegram conversation_id must not be empty")
 
+        chunks = split_utf16_message(message.text, self.MAX_MESSAGE_LENGTH)
         sent_ids: list[str] = []
-        for index, chunk in enumerate(split_utf16_message(message.text, self.MAX_MESSAGE_LENGTH)):
+        for index, chunk in enumerate(chunks):
             payload: dict[str, Any] = {
                 "chat_id": chat_id,
                 "text": chunk,
@@ -206,7 +216,7 @@ class TelegramBotApiChannel:
             channel=self.name,
             conversation_id=chat_id,
             message_ids=tuple(sent_ids),
-            metadata={"chunks": len(sent_ids) or len(split_utf16_message(message.text, self.MAX_MESSAGE_LENGTH))},
+            metadata={"chunks": len(chunks)},
         )
 
     def close(self) -> None:
@@ -231,8 +241,13 @@ class TelegramBotApiChannel:
         if not isinstance(chat, dict) or chat.get("id") is None:
             return None
         chat_id = str(chat["id"])
-        if self.allowed_chat_ids is not None and chat_id not in self.allowed_chat_ids:
-            return None
+
+        # Mature gateways have explicit authorization/pairing because a bot
+        # token alone is not consent to let arbitrary Telegram users submit work
+        # to the resident. ZN keeps that boundary but owns the policy/config.
+        if not self.allow_all:
+            if self.allowed_chat_ids is None or chat_id not in self.allowed_chat_ids:
+                return None
 
         sender = message.get("from") or message.get("sender_chat") or {}
         sender_id = str(sender.get("id") or chat_id) if isinstance(sender, dict) else chat_id
