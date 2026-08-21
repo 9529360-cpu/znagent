@@ -44,6 +44,15 @@ class VisualObservation:
     luminance_delta: float | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class VisualSamplingRhythm:
+    """Current resident-derived sampling tendency for the visual organ."""
+
+    interval_seconds: float
+    mode: str = "baseline"
+    reasons: tuple[str, ...] = ()
+
+
 @dataclass(slots=True)
 class VisualSenseState:
     sensor_id: str = "host-screen"
@@ -59,6 +68,7 @@ class VisualSenseState:
     last_error: str | None = None
     sample_count: int = 0
     change_count: int = 0
+    unchanged_sample_streak: int = 0
 
 
 VisualCaptureFn = Callable[[], VisualFrame]
@@ -73,10 +83,17 @@ class NativeVisualSense:
     region signatures, screen dimensions and aggregate luminance. This gives
     native Thought something richer than a binary "screen changed" signal while
     keeping image interpretation local and model-free.
+
+    Sampling rhythm remains part of the organ itself. Stable unchanged scenes
+    gradually back off, while visual Thought/Will pressure can temporarily pull
+    the retina closer without introducing a scheduler agent or a model call.
     """
 
     _GRID_COLUMNS = 4
     _GRID_ROWS = 3
+    _STABLE_BACKOFF_AFTER = 3
+    _DEEP_STABLE_BACKOFF_AFTER = 8
+    _VISUAL_RELATION_FAMILIES = frozenset({"visual_change", "luminance"})
 
     def __init__(
         self,
@@ -104,6 +121,10 @@ class NativeVisualSense:
             self._save_state(state)
         return state
 
+    def rhythm(self) -> VisualSamplingRhythm:
+        """Expose the organ's current native sampling tendency."""
+        return self._sampling_rhythm(self.status())
+
     def due(self, *, now: datetime | None = None) -> bool:
         state = self.status()
         if not state.enabled:
@@ -112,7 +133,8 @@ class NativeVisualSense:
         if last is None:
             return True
         current = now or datetime.now(timezone.utc)
-        return current >= last + timedelta(seconds=state.interval_seconds)
+        rhythm = self._sampling_rhythm(state)
+        return current >= last + timedelta(seconds=rhythm.interval_seconds)
 
     def maybe_sample(self) -> VisualObservation | None:
         if not self.due():
@@ -202,6 +224,9 @@ class NativeVisualSense:
         if changed:
             state.last_change_at = captured_at
             state.change_count += 1
+            state.unchanged_sample_streak = 0
+        else:
+            state.unchanged_sample_streak += 1
         self._save_state(state)
 
         observation = VisualObservation(
@@ -277,6 +302,118 @@ class NativeVisualSense:
         state.enabled = bool(enabled)
         self._save_state(state)
         return state
+
+    def _sampling_rhythm(self, state: VisualSenseState) -> VisualSamplingRhythm:
+        base = max(0.1, float(state.interval_seconds))
+        pressure = self._visual_attention_pressure()
+        if pressure is not None:
+            mode, factor, reason = pressure
+            return VisualSamplingRhythm(
+                interval_seconds=round(max(0.1, base * factor), 3),
+                mode=mode,
+                reasons=(reason,),
+            )
+
+        streak = max(0, int(state.unchanged_sample_streak))
+        if streak >= self._DEEP_STABLE_BACKOFF_AFTER:
+            return VisualSamplingRhythm(
+                interval_seconds=round(base * 4.0, 3),
+                mode="settled",
+                reasons=(
+                    f"screen structure stayed unchanged for {streak} samples",
+                ),
+            )
+        if streak >= self._STABLE_BACKOFF_AFTER:
+            return VisualSamplingRhythm(
+                interval_seconds=round(base * 2.0, 3),
+                mode="stable",
+                reasons=(
+                    f"screen structure stayed unchanged for {streak} samples",
+                ),
+            )
+        return VisualSamplingRhythm(interval_seconds=round(base, 3))
+
+    def _visual_attention_pressure(self) -> tuple[str, float, str] | None:
+        primary = self.resident.will.primary()
+        if primary is not None:
+            for payload in (primary.candidate_payload, primary.next_payload):
+                pressure = self._visual_payload_pressure(payload)
+                if pressure is not None:
+                    return pressure
+
+        try:
+            thought = self.resident.life.snapshot().current_thought
+        except Exception:
+            thought = None
+        if thought is None or str(thought.action_kind or "") != "observe":
+            return None
+
+        focus = self._norm_focus(thought.focus)
+        if not focus:
+            return None
+        if "visual_change:" in focus or "luminance:" in focus:
+            return (
+                "thought_attention",
+                0.75,
+                "current Thought is holding a visual relation open",
+            )
+        try:
+            traces = self.resident.nervous.recent_traces(24)
+        except Exception:
+            traces = ()
+        for trace in traces:
+            if str(getattr(trace, "channel", "")) != "vision":
+                continue
+            if self._norm_focus(getattr(trace, "summary", "")) != focus:
+                continue
+            return (
+                "thought_attention",
+                0.75,
+                "current Thought is still attending to a lived visual observation",
+            )
+        return None
+
+    @classmethod
+    def _visual_payload_pressure(
+        cls,
+        payload,
+    ) -> tuple[str, float, str] | None:
+        if not isinstance(payload, dict):
+            return None
+        expectation = payload.get("schema_expectation")
+        if not isinstance(expectation, dict):
+            return None
+        family = str(expectation.get("family") or "").strip().lower().replace(" ", "_")
+        if family not in cls._VISUAL_RELATION_FAMILIES:
+            return None
+
+        attention = payload.get("transfer_attention")
+        evidence_state = ""
+        if isinstance(attention, dict):
+            evidence_state = str(attention.get("evidence_state") or "").strip().lower()
+        if bool(expectation.get("recheck")) or evidence_state == "prediction_error":
+            return (
+                "prediction_error",
+                0.50,
+                f"visual prediction error keeps {family} under closer native observation",
+            )
+        if evidence_state == "conflicted":
+            return (
+                "conflicted",
+                0.60,
+                f"conflicting visual evidence keeps {family} under closer native observation",
+            )
+        if evidence_state == "mixed":
+            return (
+                "mixed",
+                0.75,
+                f"mixed visual evidence keeps {family} somewhat closer to attention",
+            )
+        return None
+
+    @staticmethod
+    def _norm_focus(value) -> str:
+        return " ".join(str(value or "").strip().lower().split())[:1000]
 
     @classmethod
     def _capture_primary_screen(cls) -> VisualFrame:
@@ -461,6 +598,7 @@ class NativeVisualSense:
         raw.setdefault("last_error", None)
         raw.setdefault("sample_count", 0)
         raw.setdefault("change_count", 0)
+        raw.setdefault("unchanged_sample_streak", 0)
         return VisualSenseState(**raw)
 
     def _save_state(self, state: VisualSenseState) -> None:
