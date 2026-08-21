@@ -31,6 +31,18 @@ class _Client:
         return self.responses.pop(0)
 
 
+def _message_update(update_id=1, chat_id=4, text="hello ZN"):
+    return {
+        "update_id": update_id,
+        "message": {
+            "message_id": 2,
+            "text": text,
+            "from": {"id": 3},
+            "chat": {"id": chat_id, "type": "private"},
+        },
+    }
+
+
 class TelegramChannelTests(unittest.TestCase):
     def test_utf16_limit_counts_non_bmp_as_two_units(self):
         self.assertEqual(utf16_len("a😀b"), 4)
@@ -60,7 +72,7 @@ class TelegramChannelTests(unittest.TestCase):
                 )
             ]
         )
-        adapter = TelegramBotApiChannel("token", client=client)
+        adapter = TelegramBotApiChannel("token", allow_all=True, client=client)
         events = adapter.poll(timeout=10)
         self.assertEqual(events[0].conversation_id, "-100")
         self.assertEqual(events[0].sender_id, "12")
@@ -69,6 +81,14 @@ class TelegramChannelTests(unittest.TestCase):
         self.assertEqual(adapter.offset, 41)
         self.assertEqual(client.calls[0][1]["json"]["timeout"], 10)
 
+    def test_default_inbound_authorization_is_deny_all(self):
+        client = _Client([_Response({"ok": True, "result": [_message_update()]})])
+        adapter = TelegramBotApiChannel("token", client=client)
+        self.assertFalse(adapter.inbound_authorized)
+        self.assertEqual(adapter.poll(), [])
+        # Denied updates are still consumed so they cannot starve long polling.
+        self.assertEqual(adapter.offset, 2)
+
     def test_allowed_chat_ids_filter_without_starting_another_agent(self):
         client = _Client(
             [
@@ -76,23 +96,18 @@ class TelegramChannelTests(unittest.TestCase):
                     {
                         "ok": True,
                         "result": [
-                            {
-                                "update_id": 1,
-                                "message": {
-                                    "message_id": 2,
-                                    "text": "ignored",
-                                    "from": {"id": 3},
-                                    "chat": {"id": 4, "type": "private"},
-                                },
-                            }
+                            _message_update(update_id=1, chat_id=4, text="ignored"),
+                            _message_update(update_id=2, chat_id=5, text="accepted"),
                         ],
                     }
                 )
             ]
         )
         adapter = TelegramBotApiChannel("token", allowed_chat_ids=[5], client=client)
-        self.assertEqual(adapter.poll(), [])
-        self.assertEqual(adapter.offset, 2)
+        events = adapter.poll()
+        self.assertTrue(adapter.inbound_authorized)
+        self.assertEqual([event.text for event in events], ["accepted"])
+        self.assertEqual(adapter.offset, 3)
 
     def test_send_preserves_thread_reply_and_splits_long_text(self):
         long_text = "😀" * 3000
@@ -132,7 +147,7 @@ class TelegramChannelTests(unittest.TestCase):
         self.assertNotIn(token, str(caught.exception))
         self.assertIn("<redacted-token>", str(caught.exception))
 
-    def test_from_zn_config_uses_zn_channel_config(self):
+    def test_from_zn_config_uses_explicit_zn_channel_authorization(self):
         adapter = TelegramBotApiChannel.from_zn_config(
             {"channels": {"telegram": {"allowed_chat_ids": [1, 2]}}},
             environ={"TELEGRAM_BOT_TOKEN": "env-token"},
@@ -140,6 +155,16 @@ class TelegramChannelTests(unittest.TestCase):
         )
         self.assertEqual(adapter.token, "env-token")
         self.assertEqual(adapter.allowed_chat_ids, {"1", "2"})
+        self.assertFalse(adapter.allow_all)
+        self.assertTrue(adapter.inbound_authorized)
+
+        open_adapter = TelegramBotApiChannel.from_zn_config(
+            {"channels": {"telegram": {"allow_all": True}}},
+            environ={"TELEGRAM_BOT_TOKEN": "env-token"},
+            client=_Client([]),
+        )
+        self.assertTrue(open_adapter.allow_all)
+        self.assertTrue(open_adapter.inbound_authorized)
 
 
 if __name__ == "__main__":
