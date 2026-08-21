@@ -97,13 +97,20 @@ class EmbodiedLifeTests(unittest.TestCase):
             self.assertEqual(pulse.thought.action_kind, "investigate")
             self.assertIn("file_preview", pulse.thought.chosen_action)
 
-            result = second.submit(
-                "a separate local fact lookup should not erase resumed state",
-                payload={"model_policy": "never"},
-            )
-            # The separate submission may fail because there is no external
-            # brain, but the resident must remain a coherent running subject.
+            # Continue the exact unfinished event. Reopening the runtime is not
+            # a new conversation/task; the same resident subject resumes the
+            # same investigation and reaches its original outcome.
+            result = second.live_once()
             self.assertIsNotNone(result)
+            self.assertEqual(result.event.event_id, event.event_id)
+            self.assertTrue(result.success)
+            self.assertEqual(result.response, "resume evidence")
+            self.assertEqual(result.model_invocations, 0)
+
+            restored = second.investigator.current(event.event_id)
+            self.assertIsNotNone(restored)
+            self.assertEqual(restored.investigation_id, investigation_id)
+            self.assertEqual(restored.status, "resolved")
             second.store.close()
 
 
