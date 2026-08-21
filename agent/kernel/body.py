@@ -8,6 +8,7 @@ import socket
 import sqlite3
 import subprocess
 import uuid
+from contextlib import closing
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -118,7 +119,7 @@ class NativeBody:
     def recent_actions(self, limit: int = 50) -> list[BodyActionResult]:
         if self.store is None:
             return []
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             rows = conn.execute(
                 "SELECT result_json FROM native_body_actions "
                 "ORDER BY completed_at DESC LIMIT ?",
@@ -393,7 +394,7 @@ class NativeBody:
         )
 
     def _init_schema(self) -> None:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS native_body_actions(
@@ -414,7 +415,7 @@ class NativeBody:
     def _record(self, action: BodyAction, result: BodyActionResult) -> None:
         if self.store is None:
             return
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO native_body_actions"
                 "(action_id,event_id,kind,success,completed_at,action_json,result_json) "
