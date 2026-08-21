@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import socketserver
@@ -185,16 +186,34 @@ class ResidentSocketService:
             return
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     # Import lazily so daemon.py remains the transport-agnostic JSON-RPC face
     # and this module can be launched directly as the long-lived local service.
     from .daemon import ResidentRpcServer
 
-    host = (os.getenv("ZN_RESIDENT_HOST") or "127.0.0.1").strip() or "127.0.0.1"
-    try:
-        port = max(0, int(os.getenv("ZN_RESIDENT_PORT") or "0"))
-    except ValueError:
-        port = 0
+    parser = argparse.ArgumentParser(prog="zn-resident-server", add_help=True)
+    parser.add_argument("--home", default=None)
+    parser.add_argument("--host", default=None)
+    parser.add_argument("--port", type=int, default=None)
+    args = parser.parse_args(argv)
+
+    if args.home:
+        # Autostart entries must not depend on whatever environment happens to
+        # exist at the next login. Pin the whole resident process to the same ZN
+        # home that was active when the startup entry was installed.
+        os.environ["ZN_AGENT_HOME"] = str(Path(args.home).expanduser().resolve())
+
+    host = (
+        str(args.host or os.getenv("ZN_RESIDENT_HOST") or "127.0.0.1").strip()
+        or "127.0.0.1"
+    )
+    if args.port is not None:
+        port = max(0, int(args.port))
+    else:
+        try:
+            port = max(0, int(os.getenv("ZN_RESIDENT_PORT") or "0"))
+        except ValueError:
+            port = 0
     return ResidentSocketService(
         ResidentRpcServer(),
         host=host,

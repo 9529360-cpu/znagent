@@ -1,5 +1,6 @@
 import { app, ipcMain } from 'electron'
 
+import { ensureZnResidentAutostart } from './zn-resident-autostart'
 import { ZnResidentProcess, defaultZnResidentLaunch } from './zn-resident-process'
 
 let resident: ZnResidentProcess | null = null
@@ -110,6 +111,13 @@ export function registerZnResidentIpc(): void {
 export async function startZnResidentOnDesktopReady(): Promise<void> {
   try {
     await getZnResidentProcess().start()
+    try {
+      await ensureZnResidentAutostart()
+    } catch (error) {
+      // The resident is already alive, so an unavailable OS service manager is
+      // a recoverable installation concern rather than a reason to take down UI.
+      console.error('[zn-resident] failed to install login autostart', error)
+    }
   } catch (error) {
     // Desktop shell remains usable when the resident cannot boot. Renderer can
     // surface the failure through zn:resident:start/status and offer repair.

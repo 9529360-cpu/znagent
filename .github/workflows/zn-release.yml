@@ -1,0 +1,137 @@
+name: ZN Release
+
+on:
+  push:
+    tags:
+      - 'zn-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to package without publishing a GitHub Release
+        required: true
+        default: '0.17.0'
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CI: 'true'
+  NODE_OPTIONS: --max-old-space-size=4096
+
+concurrency:
+  group: zn-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Package ZN / ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux
+            os: ubuntu-latest
+            builder_target: linux
+            manifest_platform: linux
+          - label: Windows
+            os: windows-latest
+            builder_target: win
+            manifest_platform: windows
+          - label: macOS
+            os: macos-14
+            builder_target: mac
+            manifest_platform: macos
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+          cache: npm
+
+      - name: Install locked workspace dependencies
+        run: npm ci
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#zn-v}"
+            TAG="$GITHUB_REF_NAME"
+          else
+            VERSION="${{ inputs.version }}"
+            TAG=""
+          fi
+          node - "$VERSION" <<'NODE'
+          const fs = require('node:fs')
+          const version = process.argv[2]
+          if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) {
+            throw new Error(`invalid desktop version: ${version}`)
+          }
+          const path = 'apps/desktop/package.json'
+          const pkg = JSON.parse(fs.readFileSync(path, 'utf8'))
+          pkg.version = version
+          fs.writeFileSync(path, `${JSON.stringify(pkg, null, 2)}\n`, 'utf8')
+          NODE
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Build renderer and Electron runtime
+        run: npm run build --workspace apps/desktop
+
+      - name: Build ZN installer artifacts
+        run: npm run builder --workspace apps/desktop -- --config electron-builder.zn.yml --${{ matrix.builder_target }} --publish never
+
+      - name: Write signed-asset manifest
+        run: node apps/desktop/scripts/write-zn-release-manifest.mjs ${{ matrix.manifest_platform }} "${{ steps.version.outputs.version }}" "${{ steps.version.outputs.tag }}"
+
+      - name: Upload packaged artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: zn-desktop-${{ matrix.manifest_platform }}
+          if-no-files-found: error
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.msi
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/*.deb
+            apps/desktop/release/*.rpm
+            apps/desktop/release/zn-release-*.json
+          retention-days: 14
+
+  publish:
+    name: Publish GitHub Release
+    if: ${{ startsWith(github.ref, 'refs/tags/zn-v') }}
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create release and upload installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          VERSION="${TAG#zn-v}"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" dist/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "ZN $VERSION" \
+              --generate-notes
+          fi

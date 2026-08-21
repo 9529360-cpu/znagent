@@ -18,7 +18,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { HashRouter } from 'react-router'
 
-import App from './app'
+import App from './app/zn-workbench'
 import { RootErrorBoundary } from './components/error-boundary'
 import { HapticsProvider } from './components/haptics-provider'
 import { RootTooltipProvider } from './components/ui/tooltip'
@@ -40,9 +40,7 @@ if (import.meta.env.MODE !== 'production' || import.meta.env.VITE_PERF_PROBE ===
 
 const winParam = new URLSearchParams(window.location.search).get('win')
 
-if (winParam === 'hud') {
-  document.title = 'Hermes HUD'
-}
+document.title = winParam === 'hud' ? 'ZN HUD' : 'ZN'
 
 if (winParam === 'overlay') {
   void import('./app/pet-overlay/overlay-root').then(({ mountPetOverlay }) => mountPetOverlay())
