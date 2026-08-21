@@ -4,11 +4,9 @@
 >
 > Source-extraction contract: [`ZN-SOURCE-EXTRACTION.md`](ZN-SOURCE-EXTRACTION.md)
 >
-> This file records **what is actually implemented now**. It is deliberately separate from the forward blueprint so current code state never silently redefines the intended product.
+> This file records **what is actually implemented now**. `ZN.md` remains the forward product contract; this ledger must be updated after implementation so a later development session never has to infer architecture from scattered code.
 
 ## Current development rule
-
-The development order remains:
 
 ```text
 ZN.md / extraction contract first
@@ -19,44 +17,68 @@ ZN.md / extraction contract first
 → update this status ledger
 ```
 
-Formal packaging is not the current architecture driver. The inherited package path remains transitional until the active runtime/desktop boundaries are independently ZN-owned.
+Formal packaging is not the current architecture driver. The inherited package path remains transitional until the active runtime and desktop boundaries are independently ZN-owned.
+
+## Current verification
+
+The source-extraction baseline through commit `998f680` passed ordinary branch CI:
+
+- `ZN Kernel / Python`: success
+- `Electron / TypeScript`: success
+
+Later extraction commits are verified by the same ordinary branch CI before they are treated as a stable baseline. Expensive multi-OS release packaging remains opt-in only.
 
 ## Source extraction ledger
 
 ### External cognitive resources
 
-Status: **first production seam extracted; expansion in progress**
+Status: **OpenAI-compatible, Anthropic native and Gemini native production seams extracted**
 
 Implemented:
 
 - `agent/kernel/cognitive_resource.py`
   - ZN-owned `CognitiveResource` / `CognitiveIncrement` boundary;
   - direct OpenAI-compatible transport;
-  - ZN-owned route/endpoint/credential resolution for OpenAI, OpenRouter, DeepSeek, Groq, Mistral, xAI and local compatible endpoints;
+  - ZN-owned endpoint/credential resolution for OpenAI, OpenRouter, DeepSeek, Groq, Mistral, xAI and local compatible endpoints;
   - bounded context + bounded question request shape;
-  - response/usage normalization;
-  - no production need to construct old `AIAgent` for this path.
+  - normalized response and token usage;
+  - no need to construct the old `AIAgent` on the default path.
+- `agent/kernel/anthropic_resource.py`
+  - native Anthropic Messages API resource;
+  - native system/user request shape;
+  - text/thinking content-block normalization;
+  - mature stop-reason mapping;
+  - input/output/cache token accounting;
+  - empty terminal `end_turn` / `refusal` recognized as protocol-terminal rather than malformed transport.
+- `agent/kernel/gemini_resource.py`
+  - native Gemini `generateContent` transport rather than Google's OpenAI-compat endpoint;
+  - Gemini model-prefix normalization;
+  - native system instruction and generation config;
+  - thinking text/signature observation;
+  - finish-reason and usage/cached/reasoning token normalization.
+- `agent/kernel/cognitive_factory.py`
+  - ZN-owned protocol dispatch:
+
+```text
+OpenAI-compatible providers -> OpenAICompatibleCognitiveResource
+Anthropic                  -> AnthropicCognitiveResource
+Gemini / Google            -> GeminiCognitiveResource
+```
+
 - `agent/kernel/config.py`
   - ZN-owned resident config under ZN home / explicit `ZN_CONFIG_PATH`.
-- default `provider_bridge` runtime construction now chooses ZN cognitive resources.
+- default `provider_bridge` runtime construction now selects ZN cognitive resources.
 
-Still transitional:
+Still transitional / next extraction work:
 
-- `LegacyAIAgentWorkerFactory` remains as an explicit compatibility seam for old tests/callers;
-- Anthropic native protocol has not yet been extracted;
-- Gemini native protocol has not yet been extracted;
-- remaining provider-specific reasoning/tool-request edge cases need selective source extraction.
-
-Next:
-
-1. preserve CI behavior contracts for the new default path;
-2. extract Anthropic transport;
-3. extract Gemini transport;
-4. delete legacy worker from production callers once no active caller needs it.
+- `LegacyAIAgentWorkerFactory` remains only as an explicit compatibility seam for old tests/callers;
+- provider-specific advanced tool-turn/replay behavior should be extracted only when ZN's bounded cognition path actually needs it;
+- additional native providers may be ported as concrete ZN requirements appear;
+- production provider dependency installation/config UX still needs to become fully ZN-owned.
 
 ### Local terminal / computer body
 
-Status: **local non-PTY active resident path extracted; more mature backends remain**
+Status: **local non-PTY active resident path extracted; mature interactive/remote slices remain**
 
 Implemented:
 
@@ -69,10 +91,10 @@ Implemented:
   - POSIX process-group termination and Windows process-tree termination;
   - background process handles with poll/stop;
   - bounded head/tail output;
-  - inherited ZN/provider/channel credential isolation;
+  - inherited provider/channel credential isolation;
   - packaged-Python environment isolation.
 - `NativeBody._command()` now calls the ZN terminal directly.
-- explicit body actions can poll/stop background ZN terminal sessions.
+- body actions can poll/stop ZN terminal background sessions.
 
 Active old-product dependency removed:
 
@@ -85,11 +107,11 @@ Remaining extraction work:
 - PTY/interactive execution;
 - mature stdin streaming;
 - spill-to-disk for very large output;
-- Docker backend if/when ZN has a concrete need;
-- SSH backend if/when ZN has a concrete need;
-- cloud backends only when there is a ZN product requirement.
+- Docker backend only when ZN has a concrete consumer;
+- SSH backend only when ZN has a concrete consumer;
+- cloud execution backends only when there is a ZN product requirement.
 
-Do not pull the old terminal gateway/session/approval control plane back in to obtain those features.
+Do not restore the old terminal gateway/session/approval control plane to obtain those features. Extract the relevant mechanisms behind the ZN terminal interface.
 
 ### Web search / world sense
 
@@ -119,13 +141,13 @@ Remaining extraction work:
 - Firecrawl provider;
 - Parallel provider;
 - SearXNG / other useful providers;
-- provider selection/failover based on ZN config and availability;
-- shared URL/network-safety mechanisms that are worth porting;
-- browser/content extraction only where the resident actually needs it.
+- ZN-owned provider selection/failover;
+- shared URL/network-safety mechanisms worth retaining from the mature source;
+- browser/content extraction only where resident behavior actually requires it.
 
 ### Communication channels
 
-Status: **ZN channel ownership established; Telegram first slice implemented but not yet a full mature replacement**
+Status: **ZN channel ownership established; Telegram first transport slice implemented**
 
 Implemented:
 
@@ -134,47 +156,49 @@ Implemented:
   - normalized `ChannelMessage`;
   - `ChannelDelivery`;
   - `ChannelAdapter` contract;
-  - `ResidentChannelService` that feeds inbound communication to the same resident via `resident.submit()` and routes the resident response back out.
+  - `ResidentChannelService` feeds inbound communication to the same resident via `resident.submit()` and routes the resident response back out.
 - `agent/kernel/telegram_channel.py`
   - direct Telegram Bot API transport;
   - long-poll update offsets;
-  - message/channel-post normalization;
+  - message / edited-message / channel-post normalization;
   - chat/thread/reply routing;
-  - UTF-16-aware 4096-unit message splitting extracted from mature Telegram behavior;
-  - token redaction from transport failures;
-  - allowed-chat filtering support;
-  - ZN-owned channel config loading boundary.
+  - UTF-16-aware 4096-unit splitting extracted from the mature Telegram behavior;
+  - token redaction from transport errors;
+  - allowed-chat filtering;
+  - ZN-owned channel config boundary.
 
-Architectural invariant now represented in code:
+Architectural invariant:
 
 ```text
-Telegram/Discord/Slack/etc.
+Telegram / Discord / Slack / WhatsApp / ...
+→ ZN ChannelAdapter
 → ChannelEvent
 → SAME ZN resident
-→ resident cognition/body
+→ Situation / Thought / body / cognition
 → ChannelMessage
-→ platform adapter
+→ ZN ChannelAdapter
+→ platform
 ```
 
-A channel does not own an agent identity.
+A communication channel is an I/O organ. It does not own a separate agent identity.
 
-Still to extract from the mature Telegram implementation:
+Still to extract from mature Telegram source:
 
-- stricter authorization/pairing defaults;
+- stricter authorization/pairing defaults before enabling the channel by default;
 - proxy handling;
-- IPv4/DoH fallback transport for broken Telegram network paths;
+- IPv4/DoH fallback for broken Telegram network paths;
 - reconnect/watchdog behavior;
 - media receive/send;
 - voice/audio semantics;
-- rich-message formatting and robust fallback;
+- rich-message formatting and fallback;
 - typing/status behavior;
-- webhook mode if needed.
+- webhook mode only if the product needs it.
 
-After Telegram reaches the required product baseline, port Discord/Slack/WhatsApp as adapters to the same channel contract rather than copying the old gateway wholesale.
+After Telegram reaches the required product baseline, Discord/Slack/WhatsApp should be ported as adapters to the same channel contract rather than by reviving the old gateway.
 
 ## Desktop/UI ownership
 
-Status: **not fixed yet; explicitly next major product boundary after runtime resource extraction**
+Status: **not fixed yet; intentionally follows runtime capability ownership**
 
 Current wrong/transitional state still includes:
 
@@ -185,36 +209,42 @@ zn-workbench.tsx -> inherited ContribController
 apps/desktop/package.json -> inherited Hermes product metadata
 ```
 
-Target remains the independent ChatGPT-style ZN workbench defined in `ZN.md`.
+Target remains the independent ChatGPT-style ZN workbench defined in `ZN.md`:
 
-Do not spend product effort polishing the inherited UI shell. Reusable generic implementation patterns/components may be source-extracted later, but the final application root, navigation, work thread, artifact panel, settings and resident view are ZN-owned.
+- calm left navigation/history/workspaces;
+- central conversation/work surface;
+- one clear composer;
+- contextual artifact/tool/file/terminal surfaces;
+- resident view and settings owned by ZN;
+- no inherited Hermes application root.
+
+Do not polish the inherited UI shell as if it were the product. Reusable implementation patterns may be source-extracted later into ZN-owned components.
 
 ## Packaging/release ownership
 
 Status: **paused as architecture driver**
 
-Useful release mechanisms already written may be retained later:
+Useful release mechanisms may be retained later:
 
 - portable Python staging concept;
 - versioned runtime identity;
 - resident N -> N+1 handoff;
 - ZN release manifest/stable channel;
-- updater hash/size verification;
-- multi-OS builder workflow structure.
+- updater size/hash verification;
+- multi-OS workflow structure.
 
-But the current inherited package shape is not the release target. Multi-OS release CI is opt-in only again so ordinary source extraction does not burn three-platform build cost.
+But the current inherited package shape is not the release target. Multi-OS release CI is opt-in only so source extraction does not burn three-platform build cost.
 
-Formal package work resumes after the runtime and desktop active paths are independently ZN-owned.
+Formal packaging resumes only after the active runtime and desktop are independently ZN-owned.
 
 ## Immediate next development sequence
 
-Unless a newly discovered code fact requires updating `ZN.md` first, continue in this order:
+Unless new repository facts require a blueprint correction first:
 
-1. get the current source-extraction commits green under ordinary ZN CI;
-2. finish the local terminal behavior slice needed by resident work (especially PTY/streaming only if the resident actually needs it now);
-3. extract the next real external cognition protocols (Anthropic, Gemini);
-4. harden and complete the Telegram adapter using the mature reference behavior, then add the next channel through the common contract;
-5. extract useful additional web providers/failover;
-6. remove any remaining active runtime imports from old product control-plane modules;
-7. begin the independent Electron main/preload and new ZN workbench milestone from `ZN.md`;
-8. only after those boundaries are owned, rebuild formal packaging around the actual ZN product.
+1. verify the latest Anthropic/Gemini source extraction under ordinary ZN CI;
+2. harden the local terminal seam where resident behavior proves a need, especially PTY/stdin/large-output handling rather than blindly copying all backends;
+3. harden Telegram from the mature source: authorization first, then reconnect/network fallback and media according to product need;
+4. port additional Web providers and ZN-owned failover;
+5. remove remaining active runtime imports from old product control-plane modules;
+6. start the independent Electron main/preload and ChatGPT-style ZN workbench milestone from `ZN.md`;
+7. rebuild formal packaging only around that actual ZN product.
