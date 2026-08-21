@@ -58,6 +58,65 @@ def active_schema_relations(trace: NeuralTrace) -> tuple[dict[str, Any], ...]:
     return tuple(active[:12])
 
 
+def contested_schema_relations(trace: NeuralTrace) -> tuple[dict[str, Any], ...]:
+    """Return retained historical relations that no longer describe current reality."""
+    profile = trace.metadata.get("prediction_profile")
+    if not isinstance(profile, dict):
+        return ()
+    contested: list[dict[str, Any]] = []
+    for raw in profile.get("relations") or ():
+        if not isinstance(raw, dict):
+            continue
+        if str(raw.get("status") or "").strip().lower() != "contested":
+            continue
+        family = str(raw.get("family") or "").strip().lower()
+        value = str(raw.get("value") or "").strip().lower()
+        if not family or not value:
+            continue
+        item = dict(raw)
+        item["family"] = family
+        item["value"] = value
+        item["status"] = "contested"
+        contested.append(item)
+    return tuple(contested[:12])
+
+
+def schema_current_relation_terms(trace: NeuralTrace) -> tuple[str, ...]:
+    """Semantic terms that should participate in current schema recall."""
+    terms: list[str] = []
+    for item in active_schema_relations(trace):
+        family = str(item.get("family") or "").strip()
+        value = str(item.get("value") or "").strip()
+        if family and family not in terms:
+            terms.append(family)
+        if value and value not in terms:
+            terms.append(value)
+        label = f"{family}:{value}" if family and value else ""
+        if label and label not in terms:
+            terms.append(label)
+    return tuple(terms[:36])
+
+
+def schema_superseded_relation_terms(trace: NeuralTrace) -> tuple[str, ...]:
+    """Value terms retained for history but suppressed from current schema recall.
+
+    The relation family remains recallable because the schema can still be about
+    that aspect of reality. Only the superseded value is removed from the live
+    semantic view, unless the same value is also carried by a current relation.
+    """
+    current_values = {
+        str(item.get("value") or "").strip().lower()
+        for item in active_schema_relations(trace)
+        if str(item.get("value") or "").strip()
+    }
+    values: list[str] = []
+    for item in contested_schema_relations(trace):
+        value = str(item.get("value") or "").strip().lower()
+        if value and value not in current_values and value not in values:
+            values.append(value)
+    return tuple(values[:12])
+
+
 def schema_reality_score(trace: NeuralTrace) -> float:
     """How strongly current lived reality should let this schema steer thought."""
     profile = trace.metadata.get("prediction_profile")
