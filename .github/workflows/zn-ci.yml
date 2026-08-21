@@ -104,6 +104,9 @@ jobs:
       - name: Test ZN packaged runtime and update-channel contracts
         run: npm run test --workspace apps/desktop -- electron/zn-packaged-runtime.test.ts electron/zn-release-channel.test.ts
 
+      - name: Test public update-channel bundle producer
+        run: node --test apps/desktop/scripts/prepare-zn-public-channel.test.mjs
+
   container:
     name: Container / Runtime Smoke
     if: ${{ github.event_name != 'push' }}

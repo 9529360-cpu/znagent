@@ -98,6 +98,13 @@ jobs:
             echo "::error::Set repository variable ZN_UPDATE_CHANNEL_URL to the public ZN stable.json endpoint before publishing a formal tag."
             exit 1
           fi
+          node - <<'NODE'
+          const raw = process.env.ZN_DESKTOP_UPDATE_CHANNEL_URL
+          const url = new URL(raw)
+          if (url.protocol !== 'https:' || !url.pathname.endsWith('/stable.json')) {
+            throw new Error('ZN_UPDATE_CHANNEL_URL must be an HTTPS URL ending in /stable.json')
+          }
+          NODE
 
       - name: Stage ZN-owned packaged runtime
         env:
@@ -131,19 +138,67 @@ jobs:
           retention-days: 14
 
   publish:
-    name: Publish GitHub Release
+    name: Publish ZN Release Channel
     if: ${{ startsWith(github.ref, 'refs/tags/zn-v') }}
     needs: package
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
+      - name: Checkout release source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download platform artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
 
-      - name: Create release and upload installers
+      - name: Prepare public update-channel bundle
+        env:
+          ZN_PUBLIC_RELEASE_URL: ${{ vars.ZN_PUBLIC_RELEASE_URL }}
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#zn-v}"
+          node apps/desktop/scripts/prepare-zn-public-channel.mjs dist "$VERSION" public-channel
+
+      - name: Upload public-channel audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zn-public-channel-${{ github.ref_name }}
+          if-no-files-found: error
+          path: public-channel/**
+          retention-days: 30
+
+      - name: Publish immutable update assets
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.ZN_UPDATE_S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.ZN_UPDATE_S3_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.ZN_UPDATE_S3_REGION || 'us-east-1' }}
+          AWS_EC2_METADATA_DISABLED: 'true'
+          ZN_UPDATE_S3_BUCKET: ${{ vars.ZN_UPDATE_S3_BUCKET }}
+          ZN_UPDATE_S3_ENDPOINT: ${{ vars.ZN_UPDATE_S3_ENDPOINT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#zn-v}"
+          if [[ -z "$ZN_UPDATE_S3_BUCKET" || -z "$AWS_ACCESS_KEY_ID" || -z "$AWS_SECRET_ACCESS_KEY" ]]; then
+            echo "::error::Configure ZN_UPDATE_S3_BUCKET and ZN_UPDATE_S3_ACCESS_KEY_ID / ZN_UPDATE_S3_SECRET_ACCESS_KEY before formal release."
+            exit 1
+          fi
+          aws --version
+          if [[ -n "$ZN_UPDATE_S3_ENDPOINT" ]]; then
+            AWS=(aws --endpoint-url "$ZN_UPDATE_S3_ENDPOINT")
+          else
+            AWS=(aws)
+          fi
+          "${AWS[@]}" s3 cp "public-channel/releases/$VERSION/" "s3://$ZN_UPDATE_S3_BUCKET/releases/$VERSION/" \
+            --recursive \
+            --cache-control 'public,max-age=31536000,immutable' \
+            --only-show-errors
+
+      - name: Create release and upload archival installers
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -158,3 +213,24 @@ jobs:
               --title "ZN $VERSION" \
               --generate-notes
           fi
+
+      - name: Advance stable update channel last
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.ZN_UPDATE_S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.ZN_UPDATE_S3_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.ZN_UPDATE_S3_REGION || 'us-east-1' }}
+          AWS_EC2_METADATA_DISABLED: 'true'
+          ZN_UPDATE_S3_BUCKET: ${{ vars.ZN_UPDATE_S3_BUCKET }}
+          ZN_UPDATE_S3_ENDPOINT: ${{ vars.ZN_UPDATE_S3_ENDPOINT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "$ZN_UPDATE_S3_ENDPOINT" ]]; then
+            AWS=(aws --endpoint-url "$ZN_UPDATE_S3_ENDPOINT")
+          else
+            AWS=(aws)
+          fi
+          "${AWS[@]}" s3 cp public-channel/stable.json "s3://$ZN_UPDATE_S3_BUCKET/stable.json" \
+            --content-type 'application/json' \
+            --cache-control 'no-cache, max-age=0' \
+            --only-show-errors
