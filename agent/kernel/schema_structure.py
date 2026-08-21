@@ -371,7 +371,6 @@ class SchemaStructurePlasticity:
             / total_weight
         )
         canonical.last_seen_at = at
-        canonical.summary = self._schema_summary(canonical, profile)
         self.nervous._save_trace(canonical)
 
         self._rewire_sources(canonical, absorbed, all_sources)
