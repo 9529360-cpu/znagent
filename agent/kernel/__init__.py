@@ -9,6 +9,7 @@ from .body import BodyAction, BodyActionResult, NativeBody
 from .budget import CognitiveBudgetManager
 from .capabilities import CapabilityRegistry, CallableCapability, ExactTaskCapability
 from .capability_loader import LoadedCapability, PromotedCapabilityLoader
+from .cognition import CognitiveIncrement
 from .critic import DefaultCritic
 from .embodied_investigation import EmbodiedInvestigator
 from .embodied_life import CognitiveSituation, EmbodiedLifeCore
@@ -78,6 +79,7 @@ __all__ = [
     "CognitionRequest",
     "CognitiveBudgetManager",
     "CognitiveDecision",
+    "CognitiveIncrement",
     "CognitiveSituation",
     "DefaultCritic",
     "derive_native_action_intent",
