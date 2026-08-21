@@ -29,7 +29,9 @@ class TransferAwareSituatedResidentRuntime(SituatedIntentionalResidentRuntime):
     prediction feedback reshapes the exact lived transfer path that recalled it.
     Supported transfer becomes easier to recall again; contradicted transfer
     weakens only the target side of that path and never rewrites the source
-    schema's already-stabilized relation.
+    schema's already-stabilized relation. The lived bridge also retains bounded
+    support/contradiction history so repeated outcomes form a context-sensitive
+    transfer tendency without becoming a rule table.
     """
 
     _TRANSFER_MIN_GAIN = 0.04
@@ -178,6 +180,20 @@ class TransferAwareSituatedResidentRuntime(SituatedIntentionalResidentRuntime):
                 bridge_trace_id = str(
                     getattr(activation, "transfer_bridge_trace_id", "") or ""
                 ).strip()
+                try:
+                    tendency = max(
+                        0.0,
+                        float(getattr(activation, "transfer_tendency", 1.0)),
+                    )
+                except (TypeError, ValueError):
+                    tendency = 1.0
+                try:
+                    feedback_count = max(
+                        0,
+                        int(getattr(activation, "transfer_feedback_count", 0)),
+                    )
+                except (TypeError, ValueError):
+                    feedback_count = 0
                 candidate.payload = {
                     **candidate.payload,
                     "transfer_informed": True,
@@ -186,6 +202,8 @@ class TransferAwareSituatedResidentRuntime(SituatedIntentionalResidentRuntime):
                     "transfer_context_basis": context_basis,
                     "transfer_source_schema_id": source_schema_id,
                     "transfer_bridge_trace_id": bridge_trace_id,
+                    "transfer_tendency": round(tendency, 5),
+                    "transfer_feedback_count": feedback_count,
                 }
                 candidate.reason = (
                     f"{candidate.reason}; a reality-corrected neighboring schema "
@@ -364,6 +382,12 @@ class TransferAwareSituatedResidentRuntime(SituatedIntentionalResidentRuntime):
                 bridge.trace_id,
                 amount=0.05 + 0.12 * gain,
             )
+            self.nervous.record_transfer_feedback(
+                source.trace_id,
+                bridge.trace_id,
+                target.trace_id,
+                status="supported",
+            )
             return "supported"
 
         if label in contradicted:
@@ -374,6 +398,12 @@ class TransferAwareSituatedResidentRuntime(SituatedIntentionalResidentRuntime):
                 target.trace_id,
                 bridge.trace_id,
                 amount=min(0.45, 0.18 + 0.55 * gain),
+            )
+            self.nervous.record_transfer_feedback(
+                source.trace_id,
+                bridge.trace_id,
+                target.trace_id,
+                status="contradicted",
             )
             return "contradicted"
 
