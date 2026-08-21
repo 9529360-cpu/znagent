@@ -349,7 +349,8 @@ class SchemaReconsolidator:
                     else "labile"
                 )
                 salience = 0.82
-            self._revise_relations(profile, feedback)
+        self._revise_relations(profile, feedback)
+        if feedback.status != "supported":
             self._preserve_exception(
                 schema,
                 feedback,
@@ -401,6 +402,7 @@ class SchemaReconsolidator:
             for item in profile.get("relations") or ()
         }
         emerging: list[dict[str, Any]] = []
+        stabilized = False
         for relation in profile.get("relations") or ():
             family = str(relation.get("family") or "")
             value = str(relation.get("value") or "")
@@ -414,6 +416,22 @@ class SchemaReconsolidator:
                     self._unit(confidence + (1.0 - confidence) * 0.08),
                     5,
                 )
+                if (
+                    str(relation.get("status") or "") == "emerging"
+                    and bool(relation.get("formed_from_prediction_error"))
+                ):
+                    relation["status"] = "expected"
+                    relation["stabilized_from_prediction_error"] = True
+                    relation["stabilized_at"] = feedback.at
+                    relation["support_ratio"] = round(
+                        max(0.60, float(relation.get("support_ratio") or 0.0)),
+                        5,
+                    )
+                    relation["weight"] = round(
+                        max(0.56, float(relation.get("weight") or 0.0)),
+                        5,
+                    )
+                    stabilized = True
                 continue
             alternative = conflicts.get((family, value))
             if alternative is None:
@@ -455,6 +473,8 @@ class SchemaReconsolidator:
         if emerging:
             profile.setdefault("relations", []).extend(emerging)
             profile["last_restructured_at"] = feedback.at
+        if stabilized:
+            profile["last_stabilized_at"] = feedback.at
 
     def _preserve_exception(
         self,

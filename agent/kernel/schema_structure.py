@@ -465,7 +465,9 @@ class SchemaStructurePlasticity:
                         "anchor": False,
                         "confirmations": 0,
                         "conflicts": 0,
-                        "status": "expected",
+                        "status": "",
+                        "stabilized_from_prediction_error": False,
+                        "stabilized_at": "",
                     },
                 )
                 row["support_total"] += (
@@ -495,6 +497,12 @@ class SchemaStructurePlasticity:
                     )
                 if item.get("formed_from_prediction_error"):
                     row["formed_from_prediction_error"] = True
+                if item.get("stabilized_from_prediction_error"):
+                    row["stabilized_from_prediction_error"] = True
+                    row["stabilized_at"] = max(
+                        str(row.get("stabilized_at") or ""),
+                        str(item.get("stabilized_at") or ""),
+                    )
         merged_relations: list[dict[str, Any]] = []
         for row in relations.values():
             item = {
@@ -516,12 +524,16 @@ class SchemaStructurePlasticity:
                 ),
                 "confirmations": row["confirmations"],
                 "conflicts": row["conflicts"],
-                "status": row["status"],
+                "status": row["status"] or "expected",
             }
             if "leading_alternative" in row:
                 item["leading_alternative"] = row["leading_alternative"]
             if row.get("formed_from_prediction_error"):
                 item["formed_from_prediction_error"] = True
+            if row.get("stabilized_from_prediction_error"):
+                item["stabilized_from_prediction_error"] = True
+                if row.get("stabilized_at"):
+                    item["stabilized_at"] = row["stabilized_at"]
             merged_relations.append(item)
 
         alternatives: dict[str, dict[str, int]] = {}
@@ -579,6 +591,12 @@ class SchemaStructurePlasticity:
         )
         if restructured:
             merged["last_restructured_at"] = restructured
+        stabilized = max(
+            str(left.get("last_stabilized_at") or ""),
+            str(right.get("last_stabilized_at") or ""),
+        )
+        if stabilized:
+            merged["last_stabilized_at"] = stabilized
         return merged
 
     def _rewire_sources(
@@ -739,8 +757,9 @@ class SchemaStructurePlasticity:
     @staticmethod
     def _stronger_relation_state(left: str, right: str) -> str:
         priority = {
-            "expected": 0,
-            "emerging": 1,
+            "": -1,
+            "emerging": 0,
+            "expected": 1,
             "contested": 2,
         }
         return max(
