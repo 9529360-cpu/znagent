@@ -70,6 +70,7 @@ from .self_model import DomainReadiness, SelfModel, TaskReadiness
 from .store import KernelStore
 from .will import NativeWill, ResidentIntention
 from .worker import LegacyAIAgentWorkerFactory, Worker, WorkerFactory
+from .world_sense import NativeWorldSense, WorldFocus, WorldObservation
 
 __all__ = [
     "AffectiveState",
@@ -123,6 +124,7 @@ __all__ = [
     "NativeBody",
     "NativeInvestigator",
     "NativeWill",
+    "NativeWorldSense",
     "NeuralActivation",
     "NeuralTrace",
     "NoRouteAvailable",
@@ -144,6 +146,8 @@ __all__ = [
     "WorkerFactory",
     "WorkerResult",
     "WorkingState",
+    "WorldFocus",
+    "WorldObservation",
     "ZNKernelRuntime",
     "ZNLifeCore",
     "ZNResidentRuntime",
