@@ -100,7 +100,7 @@ class LearningConsolidationTests(unittest.TestCase):
             self.assertIn("it/programming", knowledge)
             self.assertIn("it/security", knowledge)
             self.assertGreaterEqual(knowledge["it"].evidence_count, 2)
-            self.assertEqual(resident.capabilities.names(), [])
+            self.assertEqual(resident.capabilities.names(), ())
             resident.store.close()
 
     def test_native_success_is_evidence_of_independent_ability(self):
