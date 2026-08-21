@@ -1,5 +1,9 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
+import { promises as fs } from 'node:fs'
+import { createConnection, type Socket } from 'node:net'
+import { homedir } from 'node:os'
+import * as path from 'node:path'
 import readline from 'node:readline'
 
 export type ZnResidentRequest = {
@@ -39,6 +43,17 @@ export type ZnResidentLaunch = {
   args: string[]
   cwd?: string
   env?: NodeJS.ProcessEnv
+  endpointPath: string
+}
+
+type ZnResidentEndpoint = {
+  version: number
+  transport: 'tcp'
+  host: string
+  port: number
+  pid?: number
+  instance_id?: string
+  started_at?: string
 }
 
 type Pending = {
@@ -47,83 +62,241 @@ type Pending = {
   timer: NodeJS.Timeout
 }
 
+function expandHome(value: string): string {
+  if (value === '~') return homedir()
+  if (value.startsWith('~/') || value.startsWith('~\\')) {
+    return path.join(homedir(), value.slice(2))
+  }
+  return value
+}
+
+function defaultZnHome(env: NodeJS.ProcessEnv): string {
+  const explicit = (env.ZN_AGENT_HOME || env.ZN_HOME || '').trim()
+  if (explicit) return path.resolve(expandHome(explicit))
+  if (process.platform === 'win32') {
+    const local = (env.LOCALAPPDATA || '').trim()
+    if (local) return path.join(local, 'znagent')
+  }
+  return path.join(homedir(), '.znagent')
+}
+
 export function defaultZnResidentLaunch(env: NodeJS.ProcessEnv = process.env): ZnResidentLaunch {
   const explicit = (env.ZN_RESIDENT_PYTHON || '').trim()
   const command = explicit || (process.platform === 'win32' ? 'python' : 'python3')
+  const home = defaultZnHome(env)
   return {
     command,
-    args: ['-m', 'agent.kernel.daemon'],
-    env: { ...env, PYTHONUNBUFFERED: '1' }
+    args: ['-m', 'agent.kernel.resident_server'],
+    env: { ...env, PYTHONUNBUFFERED: '1' },
+    endpointPath: path.join(home, 'kernel', 'resident-endpoint.json')
   }
 }
 
+/**
+ * Desktop-side connection to the long-lived ZN resident service.
+ *
+ * The historical class name remains for compatibility, but Electron no longer
+ * owns the Python process. It reconnects to an existing resident endpoint and
+ * only launches a detached service when no resident is reachable.
+ */
 export class ZnResidentProcess extends EventEmitter {
-  private child: ChildProcessWithoutNullStreams | null = null
+  private socket: Socket | null = null
+  private lines: readline.Interface | null = null
   private sequence = 0
   private pending = new Map<string, Pending>()
   private readyPromise: Promise<unknown> | null = null
+  private endpoint: ZnResidentEndpoint | null = null
 
   constructor(private readonly launch: ZnResidentLaunch = defaultZnResidentLaunch()) {
     super()
   }
 
   get running(): boolean {
-    return Boolean(this.child && this.child.exitCode === null && !this.child.killed)
+    return Boolean(this.socket && !this.socket.destroyed)
   }
 
   async start(timeoutMs = 15_000): Promise<unknown> {
-    if (this.running && this.readyPromise) return this.readyPromise
+    if (this.running) return this.requestConnected('status', {}, Math.min(timeoutMs, 5_000))
+    if (this.readyPromise) return this.readyPromise
 
-    const child = spawn(this.launch.command, this.launch.args, {
-      cwd: this.launch.cwd,
-      env: this.launch.env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true
-    })
-    this.child = child
-
-    this.readyPromise = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('ZN Resident did not become ready in time')), timeoutMs)
-      const onReady = (status: unknown) => {
-        clearTimeout(timer)
-        cleanup()
-        resolve(status)
-      }
-      const onError = (error: Error) => {
-        clearTimeout(timer)
-        cleanup()
-        reject(error)
-      }
-      const cleanup = () => {
-        this.off('ready', onReady)
-        this.off('process-error', onError)
-      }
-      this.once('ready', onReady)
-      this.once('process-error', onError)
-    })
-
-    const lines = readline.createInterface({ input: child.stdout })
-    lines.on('line', line => this.onLine(line))
-    child.stderr.on('data', chunk => this.emit('stderr', String(chunk)))
-    child.on('error', error => this.emit('process-error', error))
-    child.on('exit', (code, signal) => {
-      this.child = null
-      this.readyPromise = null
-      for (const pending of this.pending.values()) {
-        clearTimeout(pending.timer)
-        pending.reject(new Error(`ZN Resident exited (code=${code}, signal=${signal})`))
-      }
-      this.pending.clear()
-      this.emit('exit', { code, signal })
-    })
-
-    return this.readyPromise
+    const promise = this.ensureConnected(timeoutMs)
+    this.readyPromise = promise
+    try {
+      const status = await promise
+      this.emit('ready', status)
+      return status
+    } finally {
+      if (this.readyPromise === promise) this.readyPromise = null
+    }
   }
 
-  async request(method: ZnResidentRequest['method'], params: Record<string, unknown> = {}, timeoutMs = 120_000): Promise<unknown> {
+  async request(
+    method: ZnResidentRequest['method'],
+    params: Record<string, unknown> = {},
+    timeoutMs = 120_000
+  ): Promise<unknown> {
     if (!this.running) await this.start()
-    const child = this.child
-    if (!child) throw new Error('ZN Resident process is unavailable')
+    return this.requestConnected(method, params, timeoutMs)
+  }
+
+  /** Explicitly stop the resident service. App/window shutdown must not call this. */
+  async stop(): Promise<void> {
+    if (!this.running) {
+      try {
+        await this.start(3_000)
+      } catch {
+        this.disconnect()
+        return
+      }
+    }
+    try {
+      await this.requestConnected('shutdown', {}, 3_000)
+    } catch {
+      // The service can close the connection immediately after acknowledging.
+    } finally {
+      this.disconnect()
+    }
+  }
+
+  /** Detach this UI client while leaving the resident service alive. */
+  disconnect(): void {
+    const socket = this.socket
+    this.socket = null
+    this.endpoint = null
+    this.lines?.close()
+    this.lines = null
+    if (socket && !socket.destroyed) socket.destroy()
+    this.rejectPending(new Error('ZN Resident client disconnected'))
+  }
+
+  private async ensureConnected(timeoutMs: number): Promise<unknown> {
+    const deadline = Date.now() + Math.max(1_000, timeoutMs)
+    let lastError: unknown = null
+
+    try {
+      await this.connectFromEndpoint(Math.min(1_500, Math.max(500, timeoutMs)))
+      return await this.requestConnected('status', {}, 5_000)
+    } catch (error) {
+      lastError = error
+      this.disconnect()
+    }
+
+    try {
+      await this.launchDetachedService()
+    } catch (error) {
+      lastError = error
+    }
+
+    while (Date.now() < deadline) {
+      try {
+        await this.connectFromEndpoint(Math.min(1_500, Math.max(250, deadline - Date.now())))
+        return await this.requestConnected('status', {}, Math.min(5_000, Math.max(500, deadline - Date.now())))
+      } catch (error) {
+        lastError = error
+        this.disconnect()
+        await new Promise(resolve => setTimeout(resolve, 120))
+      }
+    }
+
+    const detail = lastError instanceof Error ? `: ${lastError.message}` : ''
+    throw new Error(`ZN Resident service did not become reachable${detail}`)
+  }
+
+  private async launchDetachedService(): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(this.launch.command, this.launch.args, {
+        cwd: this.launch.cwd,
+        env: this.launch.env,
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true
+      })
+      const onError = (error: Error) => {
+        child.off('spawn', onSpawn)
+        reject(error)
+      }
+      const onSpawn = () => {
+        child.off('error', onError)
+        child.unref()
+        resolve()
+      }
+      child.once('error', onError)
+      child.once('spawn', onSpawn)
+    })
+  }
+
+  private async connectFromEndpoint(timeoutMs: number): Promise<void> {
+    const endpoint = await this.readEndpoint()
+    if (endpoint.transport !== 'tcp') throw new Error(`Unsupported resident transport: ${endpoint.transport}`)
+
+    await new Promise<void>((resolve, reject) => {
+      const socket = createConnection({ host: endpoint.host, port: endpoint.port })
+      const timer = setTimeout(() => {
+        socket.destroy()
+        reject(new Error('Timed out connecting to ZN Resident endpoint'))
+      }, Math.max(250, timeoutMs))
+
+      const onError = (error: Error) => {
+        clearTimeout(timer)
+        socket.destroy()
+        reject(error)
+      }
+      socket.once('error', onError)
+      socket.once('connect', () => {
+        clearTimeout(timer)
+        socket.off('error', onError)
+        this.attachSocket(socket, endpoint)
+        resolve()
+      })
+    })
+  }
+
+  private async readEndpoint(): Promise<ZnResidentEndpoint> {
+    const raw = await fs.readFile(this.launch.endpointPath, 'utf8')
+    const parsed = JSON.parse(raw) as Partial<ZnResidentEndpoint>
+    const port = Number(parsed.port || 0)
+    const host = String(parsed.host || '').trim()
+    if (parsed.transport !== 'tcp' || !host || !Number.isInteger(port) || port <= 0 || port > 65_535) {
+      throw new Error('ZN Resident endpoint file is invalid')
+    }
+    return {
+      version: Number(parsed.version || 1),
+      transport: 'tcp',
+      host,
+      port,
+      pid: parsed.pid,
+      instance_id: parsed.instance_id,
+      started_at: parsed.started_at
+    }
+  }
+
+  private attachSocket(socket: Socket, endpoint: ZnResidentEndpoint): void {
+    this.disconnect()
+    this.socket = socket
+    this.endpoint = endpoint
+    this.lines = readline.createInterface({ input: socket })
+    this.lines.on('line', line => this.onLine(line))
+    socket.on('error', error => {
+      if (this.socket === socket) this.emit('process-error', error)
+    })
+    socket.on('close', () => {
+      if (this.socket !== socket) return
+      this.socket = null
+      this.endpoint = null
+      this.lines?.close()
+      this.lines = null
+      this.rejectPending(new Error('ZN Resident service connection closed'))
+      this.emit('disconnect')
+    })
+  }
+
+  private requestConnected(
+    method: ZnResidentRequest['method'],
+    params: Record<string, unknown>,
+    timeoutMs: number
+  ): Promise<unknown> {
+    const socket = this.socket
+    if (!socket || socket.destroyed) return Promise.reject(new Error('ZN Resident service is not connected'))
 
     const id = `zn-${process.pid}-${Date.now()}-${++this.sequence}`
     const payload: ZnResidentRequest = { id, method, params }
@@ -131,22 +304,26 @@ export class ZnResidentProcess extends EventEmitter {
       const timer = setTimeout(() => {
         this.pending.delete(id)
         reject(new Error(`ZN Resident request timed out: ${method}`))
-      }, timeoutMs)
+      }, Math.max(250, timeoutMs))
       this.pending.set(id, { resolve, reject, timer })
     })
-    child.stdin.write(`${JSON.stringify(payload)}\n`)
+    socket.write(`${JSON.stringify(payload)}\n`, error => {
+      if (!error) return
+      const pending = this.pending.get(id)
+      if (!pending) return
+      this.pending.delete(id)
+      clearTimeout(pending.timer)
+      pending.reject(error)
+    })
     return response
   }
 
-  async stop(): Promise<void> {
-    const child = this.child
-    if (!child) return
-    try {
-      await this.request('shutdown', {}, 3_000)
-    } catch {
-      // Graceful RPC shutdown is best effort.
+  private rejectPending(error: Error): void {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer)
+      pending.reject(error)
     }
-    if (child.exitCode === null && !child.killed) child.kill('SIGTERM')
+    this.pending.clear()
   }
 
   private onLine(line: string): void {
@@ -155,11 +332,6 @@ export class ZnResidentProcess extends EventEmitter {
       message = JSON.parse(line) as ZnResidentResponse
     } catch {
       this.emit('protocol-error', new Error(`Invalid ZN Resident JSON: ${line.slice(0, 200)}`))
-      return
-    }
-
-    if (message.type === 'ready') {
-      this.emit('ready', message.status)
       return
     }
 
