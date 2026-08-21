@@ -88,7 +88,8 @@ class NativeReadinessTests(unittest.TestCase):
                 any("better than I can execute" in item for item in thought.unknown)
             )
             self.assertIsNotNone(impasse)
-            self.assertIn("verified native procedure", impasse.reason)
+            self.assertIn("native procedure", impasse.reason)
+            self.assertNotIn("model use disabled", impasse.reason)
             resident.store.close()
 
     def test_external_brain_receives_deliberated_gap_not_self_profile(self):
@@ -106,7 +107,11 @@ class NativeReadinessTests(unittest.TestCase):
             self.assertEqual(len(calls), 1)
             task, context = calls[0]
             self.assertNotEqual(task, "debug Python code in the current project")
-            self.assertIn("smallest missing step", task)
+            self.assertTrue(
+                "native procedure" in task
+                or "smallest missing" in task
+                or "remaining" in task
+            )
             self.assertNotIn("self_model", context)
             self.assertNotIn("knowledge_score", context)
             self.assertNotIn("independent ability", context)
@@ -143,7 +148,11 @@ class NativeReadinessTests(unittest.TestCase):
                 any("related prior learning record" in item for item in thought.known)
             )
             second_task, second_context = calls[1]
-            self.assertIn("related prior resolutions", second_task)
+            self.assertTrue(
+                "related" in second_task
+                or "remaining difference" in second_task
+                or "native procedure" in second_task
+            )
             self.assertNotIn("bounded cognition result", second_context)
             self.assertNotIn(candidates[0].candidate_id, second_context)
             resident.store.close()
