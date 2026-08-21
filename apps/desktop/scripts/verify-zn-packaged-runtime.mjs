@@ -1,9 +1,38 @@
 #!/usr/bin/env node
+import { execFile } from 'node:child_process'
 import fs from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import { pathToFileURL } from 'node:url'
 
 const MAX_SCAN_DEPTH = 8
+const PACKAGED_RUNTIME_SMOKE_TIMEOUT_MS = 60_000
+const execFileAsync = promisify(execFile)
+
+const PACKAGED_RUNTIME_SMOKE = `
+import os
+from pathlib import Path
+
+import hermes_cli.main
+import agent.kernel.resident_server
+from agent.kernel.provider_bridge import build_resident_runtime_from_existing_stack
+
+home = Path(os.environ["ZN_AGENT_HOME"])
+home.mkdir(parents=True, exist_ok=True)
+resident = build_resident_runtime_from_existing_stack(
+    config={"model": {}},
+    store_path=home / "kernel.db",
+)
+try:
+    pulse = resident.pulse()
+    state = resident.life.snapshot()
+    assert pulse.sequence >= 1
+    assert state.body is not None
+    assert state.external_brains == ()
+finally:
+    resident.store.close()
+`
 
 function resolveInside(root, relativePath, label) {
   if (typeof relativePath !== 'string' || !relativePath.trim() || path.isAbsolute(relativePath)) {
@@ -41,6 +70,17 @@ async function requireDirectory(dirPath, label) {
   if (!stat.isDirectory()) {
     throw new Error(`ZN packaged runtime ${label} is not a directory: ${dirPath}`)
   }
+}
+
+function smokeFailureDetail(error) {
+  if (error && typeof error === 'object') {
+    const stderr = typeof error.stderr === 'string' ? error.stderr.trim() : ''
+    if (stderr) return stderr
+    const stdout = typeof error.stdout === 'string' ? error.stdout.trim() : ''
+    if (stdout) return stdout
+    if (error instanceof Error && error.message) return error.message
+  }
+  return String(error)
 }
 
 export async function findPackagedZnRuntimeRoots(releaseDir) {
@@ -98,6 +138,14 @@ export async function verifyPackagedZnRuntime(runtimeRoot, { version, commit }) 
     throw new Error(`packaged runtime architecture mismatch: expected ${process.arch}, got ${manifest.arch}`)
   }
 
+  const runtimeId = String(manifest.runtime_id || '').trim()
+  if (!runtimeId) {
+    throw new Error(`packaged runtime id is missing: ${manifestPath}`)
+  }
+  if (/^[0-9a-f]{40}$/i.test(commit) && runtimeId.toLowerCase() !== commit.toLowerCase()) {
+    throw new Error(`packaged runtime id mismatch: expected ${commit.toLowerCase()}, got ${runtimeId}`)
+  }
+
   const python = resolveInside(runtimeRoot, manifest.python, 'python')
   const backendRoot = resolveInside(runtimeRoot, manifest.backend_root, 'backend_root')
   const pythonStat = await requireFile(python, 'python executable')
@@ -110,9 +158,35 @@ export async function verifyPackagedZnRuntime(runtimeRoot, { version, commit }) 
 
   return {
     runtimeRoot: path.resolve(runtimeRoot),
-    runtimeId: String(manifest.runtime_id || ''),
+    runtimeId,
     python,
     backendRoot
+  }
+}
+
+export async function smokePackagedZnRuntime(runtime, { run = execFileAsync } = {}) {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'zn-packaged-runtime-smoke-'))
+  try {
+    await run(runtime.python, ['-I', '-c', PACKAGED_RUNTIME_SMOKE], {
+      cwd: runtime.runtimeRoot,
+      env: {
+        ...process.env,
+        CI: 'true',
+        PYTHONUTF8: '1',
+        PYTHONUNBUFFERED: '1',
+        ZN_AGENT_HOME: home,
+        ZN_RUNTIME_ID: runtime.runtimeId
+      },
+      timeout: PACKAGED_RUNTIME_SMOKE_TIMEOUT_MS,
+      maxBuffer: 1024 * 1024,
+      windowsHide: true
+    })
+  } catch (error) {
+    throw new Error(
+      `packaged ZN runtime smoke failed for ${runtime.runtimeRoot}: ${smokeFailureDetail(error)}`
+    )
+  } finally {
+    await fs.rm(home, { recursive: true, force: true })
   }
 }
 
@@ -138,7 +212,8 @@ async function main() {
   }
   const verified = await verifyPackagedZnRelease({ releaseDir, version, commit })
   for (const item of verified) {
-    console.log(`[zn-runtime] verified packaged runtime ${item.runtimeId} at ${item.runtimeRoot}`)
+    await smokePackagedZnRuntime(item)
+    console.log(`[zn-runtime] verified and booted packaged runtime ${item.runtimeId} at ${item.runtimeRoot}`)
   }
 }
 
