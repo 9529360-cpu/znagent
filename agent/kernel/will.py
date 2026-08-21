@@ -100,6 +100,35 @@ class NativeWill:
         intentions = self.active(1)
         return intentions[0] if intentions else None
 
+    def reconcile_outcomes(self, limit: int = 100) -> int:
+        """Repair the small crash window between event outcome and Will update.
+
+        Event outcomes are durable resident experience. If a process dies after
+        an intention step has completed but before ``observe_event_outcome`` ran,
+        the intention must not remain permanently engaged. On wake, Will can
+        infer the missing handoff from the already-persisted event outcome.
+        """
+        repaired = 0
+        for intention in self.active(limit):
+            if intention.status != "engaged" or not intention.related_event_id:
+                continue
+            outcome = self.store.get_event_outcome(intention.related_event_id)
+            if outcome is None:
+                continue
+            summary = (
+                outcome.response
+                or outcome.reason
+                or ("step succeeded" if outcome.success else "step failed")
+            )
+            self.observe_event_outcome(
+                intention.intention_id,
+                event_id=intention.related_event_id,
+                success=outcome.success,
+                summary=summary,
+            )
+            repaired += 1
+        return repaired
+
     def set_next_step(
         self,
         intention_id: str,
