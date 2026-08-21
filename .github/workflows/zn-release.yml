@@ -118,6 +118,9 @@ jobs:
       - name: Build ZN installer artifacts
         run: npm run builder --workspace apps/desktop -- --config electron-builder.zn.yml --${{ matrix.builder_target }} --publish never
 
+      - name: Verify runtime inside packaged app
+        run: node apps/desktop/scripts/verify-zn-packaged-runtime.mjs apps/desktop/release "${{ steps.version.outputs.version }}" "${{ github.sha }}"
+
       - name: Write release asset manifest
         run: node apps/desktop/scripts/write-zn-release-manifest.mjs ${{ matrix.manifest_platform }} "${{ steps.version.outputs.version }}" "${{ steps.version.outputs.tag }}"
 

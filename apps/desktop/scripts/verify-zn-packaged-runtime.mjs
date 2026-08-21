@@ -1,0 +1,147 @@
+#!/usr/bin/env node
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import { pathToFileURL } from 'node:url'
+
+const MAX_SCAN_DEPTH = 8
+
+function resolveInside(root, relativePath, label) {
+  if (typeof relativePath !== 'string' || !relativePath.trim() || path.isAbsolute(relativePath)) {
+    throw new Error(`ZN packaged runtime ${label} must be a non-empty relative path`)
+  }
+  const resolvedRoot = path.resolve(root)
+  const target = path.resolve(resolvedRoot, relativePath)
+  const relative = path.relative(resolvedRoot, target)
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error(`ZN packaged runtime ${label} escapes runtime root`)
+  }
+  return target
+}
+
+async function requireFile(filePath, label) {
+  let stat
+  try {
+    stat = await fs.stat(filePath)
+  } catch {
+    throw new Error(`ZN packaged runtime ${label} is missing: ${filePath}`)
+  }
+  if (!stat.isFile()) {
+    throw new Error(`ZN packaged runtime ${label} is not a file: ${filePath}`)
+  }
+  return stat
+}
+
+async function requireDirectory(dirPath, label) {
+  let stat
+  try {
+    stat = await fs.stat(dirPath)
+  } catch {
+    throw new Error(`ZN packaged runtime ${label} is missing: ${dirPath}`)
+  }
+  if (!stat.isDirectory()) {
+    throw new Error(`ZN packaged runtime ${label} is not a directory: ${dirPath}`)
+  }
+}
+
+export async function findPackagedZnRuntimeRoots(releaseDir) {
+  const root = path.resolve(releaseDir)
+  const found = []
+  const queue = [{ dir: root, depth: 0 }]
+
+  while (queue.length) {
+    const current = queue.shift()
+    let entries
+    try {
+      entries = await fs.readdir(current.dir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const child = path.join(current.dir, entry.name)
+      if (entry.name === 'zn-runtime') {
+        try {
+          const stat = await fs.stat(path.join(child, 'runtime.json'))
+          if (stat.isFile()) found.push(child)
+        } catch {
+          void 0
+        }
+        continue
+      }
+      if (current.depth < MAX_SCAN_DEPTH) {
+        queue.push({ dir: child, depth: current.depth + 1 })
+      }
+    }
+  }
+
+  return found.sort()
+}
+
+export async function verifyPackagedZnRuntime(runtimeRoot, { version, commit }) {
+  const manifestPath = path.join(runtimeRoot, 'runtime.json')
+  const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'))
+
+  if (manifest?.schema !== 1 || manifest?.product !== 'ZN') {
+    throw new Error(`unsupported packaged ZN runtime manifest: ${manifestPath}`)
+  }
+  if (manifest.version !== version) {
+    throw new Error(`packaged runtime version mismatch: expected ${version}, got ${manifest.version}`)
+  }
+  if (manifest.commit !== commit) {
+    throw new Error(`packaged runtime commit mismatch: expected ${commit}, got ${manifest.commit}`)
+  }
+  if (manifest.platform && manifest.platform !== process.platform) {
+    throw new Error(`packaged runtime platform mismatch: expected ${process.platform}, got ${manifest.platform}`)
+  }
+  if (manifest.arch && manifest.arch !== process.arch) {
+    throw new Error(`packaged runtime architecture mismatch: expected ${process.arch}, got ${manifest.arch}`)
+  }
+
+  const python = resolveInside(runtimeRoot, manifest.python, 'python')
+  const backendRoot = resolveInside(runtimeRoot, manifest.backend_root, 'backend_root')
+  const pythonStat = await requireFile(python, 'python executable')
+  if (process.platform !== 'win32' && (pythonStat.mode & 0o111) === 0) {
+    throw new Error(`packaged runtime python is not executable: ${python}`)
+  }
+  await requireDirectory(backendRoot, 'backend root')
+  await requireFile(path.join(backendRoot, 'hermes_cli', 'main.py'), 'desktop backend entrypoint')
+  await requireFile(path.join(backendRoot, 'agent', 'kernel', 'resident_server.py'), 'resident entrypoint')
+
+  return {
+    runtimeRoot: path.resolve(runtimeRoot),
+    runtimeId: String(manifest.runtime_id || ''),
+    python,
+    backendRoot
+  }
+}
+
+export async function verifyPackagedZnRelease({ releaseDir, version, commit }) {
+  const roots = await findPackagedZnRuntimeRoots(releaseDir)
+  if (roots.length === 0) {
+    throw new Error(`no packaged ZN runtime found under ${path.resolve(releaseDir)}`)
+  }
+
+  const verified = []
+  for (const runtimeRoot of roots) {
+    verified.push(await verifyPackagedZnRuntime(runtimeRoot, { version, commit }))
+  }
+  return verified
+}
+
+async function main() {
+  const releaseDir = path.resolve(process.argv[2] || 'apps/desktop/release')
+  const version = String(process.argv[3] || '').trim()
+  const commit = String(process.argv[4] || '').trim()
+  if (!version || !commit) {
+    throw new Error('usage: verify-zn-packaged-runtime.mjs <release-dir> <version> <commit>')
+  }
+  const verified = await verifyPackagedZnRelease({ releaseDir, version, commit })
+  for (const item of verified) {
+    console.log(`[zn-runtime] verified packaged runtime ${item.runtimeId} at ${item.runtimeRoot}`)
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  await main()
+}
