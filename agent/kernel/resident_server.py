@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import utc_now
+from .visual_sense import NativeVisualSense, VisualCaptureFn
 
 
 class _ResidentTcpServer(socketserver.ThreadingTCPServer):
@@ -60,6 +61,10 @@ class ResidentSocketService:
     The resident runtime owns the lease, heartbeat, state, and endpoint. Desktop
     windows are clients. Closing a client connection therefore does not end the
     resident; another Electron process can later reconnect to the same subject.
+
+    The same service process also owns ZN's low-level visual sampling rhythm.
+    Screen fingerprints therefore continue to enter resident memory while no
+    Electron window or UI client is connected.
     """
 
     def __init__(
@@ -69,6 +74,8 @@ class ResidentSocketService:
         host: str = "127.0.0.1",
         port: int = 0,
         endpoint_path: str | Path | None = None,
+        visual_capture_fn: VisualCaptureFn | None = None,
+        visual_interval: float = 5.0,
     ):
         self.rpc = rpc
         self.host = str(host or "127.0.0.1")
@@ -78,13 +85,24 @@ class ResidentSocketService:
             if endpoint_path is not None
             else Path(self.rpc.resident.store.path).parent / "resident-endpoint.json"
         )
+        self.visual = NativeVisualSense(
+            self.rpc.resident,
+            capture_fn=visual_capture_fn,
+            interval_seconds=visual_interval,
+        )
+        # Expose the organ on the subject while this persistent service owns its
+        # sampling lifecycle. This is resident state, not an Electron adapter.
+        self.rpc.resident.vision = self.visual
         self._server: _ResidentTcpServer | None = None
+        self._visual_stop = threading.Event()
+        self._visual_thread: threading.Thread | None = None
 
     def serve_forever(self) -> int:
         self.rpc.service.acquire()
         try:
             self.rpc.resident.live_once()
             self.rpc._start_life_loop()
+            self._start_visual_loop()
             with _ResidentTcpServer(
                 (self.host, self.port),
                 _ResidentTcpHandler,
@@ -97,6 +115,7 @@ class ResidentSocketService:
         finally:
             self._server = None
             self._remove_owned_endpoint()
+            self._stop_visual_loop()
             self.rpc._stop_life_loop()
             self.rpc.service.release()
             try:
@@ -104,6 +123,35 @@ class ResidentSocketService:
             except Exception:
                 pass
         return 0
+
+    def _start_visual_loop(self) -> None:
+        self._visual_stop.clear()
+        if self._visual_thread and self._visual_thread.is_alive():
+            return
+        self._visual_thread = threading.Thread(
+            target=self._visual_loop,
+            name="zn-visual-sense",
+            daemon=True,
+        )
+        self._visual_thread.start()
+
+    def _stop_visual_loop(self) -> None:
+        self._visual_stop.set()
+        thread = self._visual_thread
+        if thread and thread.is_alive():
+            thread.join(timeout=max(1.0, self.visual.interval_seconds * 2.0))
+        self._visual_thread = None
+
+    def _visual_loop(self) -> None:
+        tick = max(0.1, min(1.0, self.visual.interval_seconds / 2.0))
+        while not self._visual_stop.wait(tick):
+            try:
+                self.visual.maybe_sample()
+            except Exception:
+                # Missing OS screen permission, a locked session, or a headless
+                # host may make this sense unavailable. Vision failure must not
+                # stop the resident's life, Will, world sense, or other organs.
+                continue
 
     def _write_endpoint(self, host: str, port: int) -> None:
         path = self.endpoint_path
