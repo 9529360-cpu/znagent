@@ -184,12 +184,8 @@ def build_resident_runtime_from_existing_stack(
     runtime_resolver: RuntimeResolver | None = None,
 ):
     """Build the resident ZN runtime while reusing mature provider/tool plumbing."""
-    from .adaptive_nervous_system import RealityAwareNervousSystem
     from .budget import CognitiveBudgetManager
-    from .intention_formation import (
-        NativeIntentionFormation,
-        SituatedIntentionalResidentRuntime,
-    )
+    from .transfer_incubation import TransferAwareSituatedResidentRuntime
 
     effective_config = config
     if effective_config is None:
@@ -214,14 +210,7 @@ def build_resident_runtime_from_existing_stack(
             0.0, min(1.0, float(resident_cfg.get("high_risk_threshold", 0.8)))
         ),
     )
-    # Normal product construction yields one resident subject with one durable
-    # nervous substrate. The reality-aware implementation reuses the same store,
-    # links, affect and consolidation machinery; it only changes the live schema
-    # view used during recall after reconsolidation has changed what is expected.
-    resident = SituatedIntentionalResidentRuntime(kernel=kernel, budget=budget)
-    resident.nervous = RealityAwareNervousSystem(resident.store)
-    resident.intention_formation = NativeIntentionFormation(
-        resident.nervous,
-        resident=resident,
-    )
-    return resident
+    # Provider plumbing supplies replaceable resources. The resident owns one
+    # persistent nervous substrate and lets reality-gated cross-context recall
+    # influence Will only after the present Situation independently supports it.
+    return TransferAwareSituatedResidentRuntime(kernel=kernel, budget=budget)
