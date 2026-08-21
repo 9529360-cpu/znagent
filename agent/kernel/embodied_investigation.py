@@ -253,6 +253,36 @@ class EmbodiedInvestigator(NativeInvestigator):
         )
 
     @staticmethod
+    def _answer_from_native_facts(event: AgentEvent, facts: dict[str, Any]) -> str:
+        response = NativeInvestigator._answer_from_native_facts(event, facts)
+        if response:
+            return response
+        if event.kind != "intention_probe":
+            return ""
+
+        predictions = facts.get("schema_predictions")
+        if not isinstance(predictions, list) or not predictions:
+            return ""
+        concrete = {
+            key: value
+            for key, value in facts.items()
+            if key not in {"related_experience_count", "schema_predictions"}
+            and value not in (None, [], {}, "")
+        }
+        if not concrete:
+            return ""
+
+        prediction = predictions[0]
+        summary = str(prediction.get("summary") or "a consolidated pattern")[:360]
+        observed = ", ".join(sorted(concrete.keys()))[:180]
+        return (
+            "Native intention probe completed. I activated the consolidated "
+            f"pattern '{summary}' and checked current {observed} evidence. "
+            "The pattern remains a hypothesis: this observation updates my "
+            "current state without treating past experience as proof."
+        )
+
+    @staticmethod
     def _schema_evidence(
         learning_evidence: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
