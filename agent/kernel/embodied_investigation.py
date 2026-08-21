@@ -7,6 +7,7 @@ from .models import AgentEvent
 from .reconsolidation import SchemaReconsolidator
 from .schema_structure import SchemaStructurePlasticity
 from .self_model import TaskReadiness
+from .visual_sense import NativeVisualSense
 
 
 class EmbodiedInvestigator(NativeInvestigator):
@@ -18,6 +19,11 @@ class EmbodiedInvestigator(NativeInvestigator):
     predictions. Perception, action, and prior lived structure therefore meet
     inside one investigation instead of becoming separate agent components.
     """
+
+    _PROBE_LABELS = {
+        **NativeInvestigator._PROBE_LABELS,
+        "vision": "sample current resident vision state",
+    }
 
     def investigate(
         self,
@@ -236,7 +242,7 @@ class EmbodiedInvestigator(NativeInvestigator):
         if concrete_keys:
             self._append_unique(
                 hypotheses,
-                "current body evidence should confirm, refine, or contradict the "
+                "current resident evidence should confirm, refine, or contradict the "
                 "activated consolidated pattern rather than assuming it is correct",
             )
 
@@ -277,6 +283,51 @@ class EmbodiedInvestigator(NativeInvestigator):
                 return evidence or [
                     f"related experience records available: {len(learning_evidence)}"
                 ]
+
+        if key == "vision":
+            vision = getattr(self.resident, "vision", None)
+            if vision is None:
+                facts["vision"] = {"available": False}
+                return ["resident vision is currently unavailable"]
+            try:
+                observation = vision.sample()
+            except Exception as exc:
+                message = f"{type(exc).__name__}: {exc}"
+                facts["vision"] = {"available": False, "error": message}
+                return [f"resident vision probe failed: {message}"]
+            if observation is None:
+                facts["vision"] = {"available": False, "error": "no visual observation"}
+                return ["resident vision produced no current observation"]
+            state = vision.status()
+            areas = NativeVisualSense._visual_areas(
+                tuple(observation.changed_region_indices),
+                int(getattr(state, "last_grid_columns", 0) or 0),
+                int(getattr(state, "last_grid_rows", 0) or 0),
+            )
+            luminance = NativeVisualSense._luminance_direction(
+                observation.luminance_delta
+            )
+            facts["vision"] = {
+                "available": True,
+                "changed": bool(observation.changed),
+                "change_scale": str(observation.change_scale or "none"),
+                "change_ratio": float(observation.change_ratio or 0.0),
+                "changed_region_indices": list(observation.changed_region_indices),
+                "visual_areas": list(areas),
+                "luminance_delta": observation.luminance_delta,
+                "luminance": luminance,
+                "source": observation.source,
+                "width": observation.width,
+                "height": observation.height,
+                "captured_at": observation.captured_at,
+            }
+            return [
+                "vision: "
+                f"changed={observation.changed}; scale={observation.change_scale}; "
+                f"ratio={observation.change_ratio:.3f}; "
+                f"areas={','.join(areas) or 'none'}; "
+                f"luminance={luminance or 'unknown'}"
+            ]
 
         body = getattr(self.resident, "body", None)
         if body is None:

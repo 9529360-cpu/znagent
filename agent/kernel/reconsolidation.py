@@ -35,7 +35,7 @@ class SchemaReconsolidator:
     _EXCLUSIVE = {
         "workspace", "branch", "system", "architecture", "disk_state",
         "outcome", "changes", "process_state", "presence", "path_state",
-        "path_type",
+        "path_type", "visual_change", "luminance",
     }
     _ALIASES = {
         "dirty": ("workspace", "dirty"),
@@ -576,6 +576,17 @@ class SchemaReconsolidator:
                         f"process_state:"
                         f"{'alive' if item.get('alive') else 'dead'}"
                     )
+        vision = facts.get("vision") if isinstance(facts.get("vision"), dict) else None
+        if vision and vision.get("available") is not False:
+            channels.add("vision")
+            change_scale = str(vision.get("change_scale") or "").strip()
+            if change_scale:
+                add(f"visual_change:{change_scale}")
+            luminance = str(vision.get("luminance") or "").strip()
+            if luminance:
+                add(f"luminance:{luminance}")
+            for area in (vision.get("visual_areas") or ())[:6]:
+                add(f"visual_area:{area}")
         previews = (
             facts.get("file_previews")
             if isinstance(facts.get("file_previews"), list)

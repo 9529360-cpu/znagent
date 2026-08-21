@@ -34,10 +34,11 @@ class NativeIntentionFormation:
 
     This is not a planner and does not call a model. It translates structured
     expectations already present in a consolidated schema into a concrete
-    observation that ZN's existing Investigation/Body loop can perform. Reality
-    feedback is part of formation: an already-tested relation is not selected
-    again unless the latest prediction error still needs one confirming recheck,
-    and a restructured emerging relation can become the next single candidate.
+    observation that ZN's existing Investigation/sensory loop can perform.
+    Reality feedback is part of formation: an already-tested relation is not
+    selected again unless the latest prediction error still needs one confirming
+    recheck, and a restructured emerging relation can become the next single
+    candidate.
     """
 
     _PROBE_BY_FAMILY = {
@@ -51,6 +52,8 @@ class NativeIntentionFormation:
         "path_type": "paths",
         "presence": "paths",
         "process_state": "processes",
+        "visual_change": "vision",
+        "luminance": "vision",
     }
     _FAMILY_BONUS = {
         "workspace": 0.08,
@@ -63,6 +66,8 @@ class NativeIntentionFormation:
         "path_type": 0.08,
         "presence": 0.08,
         "process_state": 0.10,
+        "visual_change": 0.12,
+        "luminance": 0.07,
     }
     _PATH_RE = re.compile(
         r"(?:[A-Za-z]:[\\/][^\s'\"]+|(?:\.{0,2}/|/)[^\s'\"]+)"
@@ -70,8 +75,14 @@ class NativeIntentionFormation:
     _PID_RE = re.compile(r"\bpid\s*[:=#]?\s*(\d+)\b", flags=re.IGNORECASE)
     _EXPECTATION_RE = re.compile(r"schema expectation ([0-9a-f]{10})")
 
-    def __init__(self, nervous: PersistentNervousSystem):
+    def __init__(
+        self,
+        nervous: PersistentNervousSystem,
+        *,
+        resident: IntentionalResidentRuntime | None = None,
+    ):
         self.nervous = nervous
+        self.resident = resident
         self.reconsolidator = SchemaReconsolidator(nervous)
 
     def form(
@@ -180,9 +191,9 @@ class NativeIntentionFormation:
                 # Body relations existed before situated formation and already
                 # have a structured Investigation contract. Preserve that
                 # outward shape while letting the relation itself be selected by
-                # Will + schema + current Situation. Other situated probes keep
-                # their established ordering and do not opt into the legacy
-                # prediction-first observation route.
+                # Will + schema + current Situation. Vision deliberately opts in
+                # to prediction-first ordering because a current frame is useful
+                # only after the lived schema has been activated as a prediction.
                 if probe_key == "body":
                     payload.update(
                         {
@@ -196,6 +207,8 @@ class NativeIntentionFormation:
                             "schema_probe_confidence": confidence,
                         }
                     )
+                elif probe_key == "vision":
+                    payload["schema_probe_observation"] = "vision"
                 return NativeIntentionCandidate(
                     kind="situated_schema_probe",
                     step=self._step_text(
@@ -398,6 +411,8 @@ class NativeIntentionFormation:
     ) -> dict[str, Any] | None:
         if probe_key in {"git", "body"}:
             return {}
+        if probe_key == "vision":
+            return {} if self._vision_ready() else None
         if probe_key == "paths":
             match = self._PATH_RE.search(str(intention_text or ""))
             if match is None:
@@ -414,6 +429,19 @@ class NativeIntentionFormation:
                 return None
             return {"pid": pid} if pid > 0 else None
         return None
+
+    def _vision_ready(self) -> bool:
+        vision = getattr(self.resident, "vision", None) if self.resident is not None else None
+        if vision is None:
+            return False
+        try:
+            state = vision.status()
+        except Exception:
+            return False
+        return bool(
+            getattr(state, "enabled", False)
+            and str(getattr(state, "last_frame_hash", "") or "").strip()
+        )
 
     @staticmethod
     def _step_text(
@@ -434,6 +462,8 @@ class NativeIntentionFormation:
             return (
                 f"{prefix}current body state relation {family}:{value} {suffix}"
             )
+        if probe_key == "vision":
+            return f"{prefix}current resident vision relation {family}:{value} {suffix}"
         if probe_key == "paths":
             return f"{prefix}path {target.get('path')} relation {family} {suffix}"
         if probe_key == "processes":
@@ -461,6 +491,8 @@ class NativeIntentionFormation:
                     "current body "
                     f"system={system or 'unknown'} architecture={architecture or 'unknown'}"
                 )
+        if probe_key == "vision":
+            context.append("resident retina has a prior frame for comparison")
         if situation is not None:
             changes = tuple(getattr(situation, "changes", ()) or ())
             if changes:
@@ -524,7 +556,10 @@ class SituatedIntentionalResidentRuntime(IntentionalResidentRuntime):
             capabilities=capabilities,
             budget=budget,
         )
-        self.intention_formation = NativeIntentionFormation(self.nervous)
+        self.intention_formation = NativeIntentionFormation(
+            self.nervous,
+            resident=self,
+        )
 
     def _incubate_primary_intention(self, thought) -> bool:
         life_state = self.life.snapshot()
