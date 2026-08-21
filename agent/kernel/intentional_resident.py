@@ -28,6 +28,7 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
             budget=budget,
         )
         self.will = NativeWill(self.store)
+        self.will.reconcile_outcomes()
 
     def intend(
         self,
