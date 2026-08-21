@@ -8,6 +8,7 @@ from contextlib import closing
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Callable
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .models import utc_now
 
@@ -30,6 +31,7 @@ class WorldFocus:
     source: str = "self"
     last_observed_at: str | None = None
     last_observation_hash: str | None = None
+    last_source_state: dict[str, dict[str, str]] = field(default_factory=dict)
     last_error: str | None = None
     created_at: str = field(default_factory=utc_now)
     updated_at: str = field(default_factory=utc_now)
@@ -44,6 +46,11 @@ class WorldObservation:
     source: str
     result_hash: str
     changed: bool
+    source_count: int = 0
+    new_sources: tuple[str, ...] = ()
+    updated_sources: tuple[str, ...] = ()
+    removed_sources: tuple[str, ...] = ()
+    stable_sources: tuple[str, ...] = ()
     captured_at: str = field(default_factory=utc_now)
 
 
@@ -55,7 +62,24 @@ class NativeWorldSense:
     outside world through the mature Hermes web-search stack, and the resulting
     percept enters the same associative nervous system as vision, action, and
     thought. Meaning and follow-up remain ZN's job.
+
+    Search result order and provider formatting are not treated as world change.
+    When structured sources are available, the organ retains a bounded source
+    snapshot and compares stable source identity plus content fingerprints. This
+    lets later perception distinguish new, updated, removed, and stable sources
+    across resident restarts without using a model or naive aggregate text
+    equality.
     """
+
+    _TRACKING_QUERY_PREFIXES = ("utm_",)
+    _TRACKING_QUERY_KEYS = {
+        "fbclid",
+        "gclid",
+        "mc_cid",
+        "mc_eid",
+        "ref",
+        "ref_src",
+    }
 
     def __init__(self, resident: IntentionalResidentRuntime):
         self.resident = resident
@@ -160,9 +184,26 @@ class NativeWorldSense:
         search = search_fn or self._search
         try:
             raw = search(focus.topic, max(1, min(10, int(limit))))
-            summary, features = self._sensor_summary(raw, focus.topic)
-            digest = hashlib.sha256(summary.encode("utf-8")).hexdigest()
-            changed = digest != focus.last_observation_hash
+            summary, features, source_state = self._sensor_snapshot(raw, focus.topic)
+            previous_state = dict(focus.last_source_state or {})
+            new_keys: tuple[str, ...] = ()
+            updated_keys: tuple[str, ...] = ()
+            removed_keys: tuple[str, ...] = ()
+            stable_keys: tuple[str, ...] = ()
+
+            if source_state:
+                new_keys, updated_keys, removed_keys, stable_keys = self._diff_sources(
+                    previous_state,
+                    source_state,
+                )
+                digest = self._source_state_hash(source_state)
+                changed = bool(new_keys or updated_keys or removed_keys)
+                if not previous_state:
+                    changed = True
+            else:
+                digest = hashlib.sha256(summary.encode("utf-8")).hexdigest()
+                changed = digest != focus.last_observation_hash
+
             observation = WorldObservation(
                 observation_id=f"obs-{uuid.uuid4().hex[:12]}",
                 focus_id=focus.focus_id,
@@ -171,13 +212,26 @@ class NativeWorldSense:
                 source="web",
                 result_hash=digest,
                 changed=changed,
+                source_count=len(source_state),
+                new_sources=self._source_labels(source_state, new_keys),
+                updated_sources=self._source_labels(source_state, updated_keys),
+                removed_sources=self._source_labels(previous_state, removed_keys),
+                stable_sources=self._source_labels(source_state, stable_keys),
             )
             focus.last_observed_at = observation.captured_at
             focus.last_observation_hash = digest
+            if source_state:
+                focus.last_source_state = source_state
             focus.last_error = None
             focus.updated_at = observation.captured_at
             self._save_focus(focus)
 
+            delta = {
+                "new": list(observation.new_sources),
+                "updated": list(observation.updated_sources),
+                "removed": list(observation.removed_sources),
+                "stable": list(observation.stable_sources),
+            }
             self.resident.perceive_world(
                 summary,
                 features=(focus.topic, *features),
@@ -189,8 +243,12 @@ class NativeWorldSense:
                     "focus_id": focus.focus_id,
                     "observation_id": observation.observation_id,
                     "changed": changed,
+                    "source_count": observation.source_count,
+                    "world_delta": delta,
                 },
             )
+            if previous_state and source_state and changed:
+                self._remember_delta(focus, observation, source_state, previous_state)
             return observation
         except Exception as exc:
             message = f"{type(exc).__name__}: {exc}"
@@ -210,6 +268,59 @@ class NativeWorldSense:
             )
             raise
 
+    def _remember_delta(
+        self,
+        focus: WorldFocus,
+        observation: WorldObservation,
+        current: dict[str, dict[str, str]],
+        previous: dict[str, dict[str, str]],
+    ) -> None:
+        features = ["world_delta"]
+        parts: list[str] = []
+        if observation.new_sources:
+            features.append("new_source")
+            parts.append("new: " + ", ".join(observation.new_sources[:4]))
+        if observation.updated_sources:
+            features.append("updated_source")
+            parts.append("updated: " + ", ".join(observation.updated_sources[:4]))
+        if observation.removed_sources:
+            features.append("removed_source")
+            parts.append("removed: " + ", ".join(observation.removed_sources[:4]))
+
+        involved = {
+            *observation.new_sources,
+            *observation.updated_sources,
+            *observation.removed_sources,
+        }
+        for state in (current, previous):
+            for item in state.values():
+                label = self._source_label(item, "")
+                domain = str(item.get("domain") or "").strip().lower()
+                if label in involved and domain:
+                    features.append(f"source_domain:{domain}")
+
+        summary = (
+            f"World change about {focus.topic}: "
+            + ("; ".join(parts) if parts else "structured sources changed")
+        )[:2200]
+        self.resident.nervous.perceive(
+            "world",
+            summary,
+            features=(focus.topic, *tuple(dict.fromkeys(features))[:20]),
+            source="world_sense",
+            salience=0.78,
+            valence=0.0,
+            arousal=0.58,
+            metadata={
+                "focus_id": focus.focus_id,
+                "observation_id": observation.observation_id,
+                "world_change": True,
+                "new_sources": list(observation.new_sources),
+                "updated_sources": list(observation.updated_sources),
+                "removed_sources": list(observation.removed_sources),
+            },
+        )
+
     @staticmethod
     def _search(query: str, limit: int) -> str:
         from tools.web_tools import web_search_tool
@@ -217,34 +328,51 @@ class NativeWorldSense:
         return web_search_tool(query, limit=limit)
 
     @classmethod
-    def _sensor_summary(cls, raw: str, topic: str) -> tuple[str, tuple[str, ...]]:
+    def _sensor_snapshot(
+        cls,
+        raw: str,
+        topic: str,
+    ) -> tuple[str, tuple[str, ...], dict[str, dict[str, str]]]:
         text = str(raw or "").strip()
         if not text:
-            return f"No world observations were returned for {topic}", ("empty",)
+            return f"No world observations were returned for {topic}", ("empty",), {}
 
         try:
             payload = json.loads(text)
         except (TypeError, json.JSONDecodeError):
             compact = " ".join(text.split())[:5000]
-            return f"World observation about {topic}: {compact}", ("web",)
+            return f"World observation about {topic}: {compact}", ("web",), {}
 
         items = cls._result_items(payload)
         if not items:
             compact = " ".join(text.split())[:5000]
-            return f"World observation about {topic}: {compact}", ("web",)
+            return f"World observation about {topic}: {compact}", ("web",), {}
 
-        lines: list[str] = []
-        features: list[str] = ["web"]
-        for item in items[:8]:
+        records: dict[str, dict[str, str]] = {}
+        display: dict[str, str] = {}
+        features: list[str] = ["web", "structured_world"]
+        for item in items[:16]:
             if isinstance(item, str):
-                line = " ".join(item.split())[:700]
-                if line:
-                    lines.append(line)
+                compact = " ".join(item.split())[:900]
+                if not compact:
+                    continue
+                identity = f"text:{hashlib.sha256(compact.lower().encode()).hexdigest()[:20]}"
+                fingerprint = hashlib.sha256(compact.encode()).hexdigest()[:24]
+                records[identity] = {
+                    "fingerprint": fingerprint,
+                    "title": compact[:300],
+                    "url": "",
+                    "domain": "",
+                }
+                display[identity] = compact
+                features.extend(cls._feature_tokens(compact))
                 continue
             if not isinstance(item, dict):
                 continue
             title = str(item.get("title") or item.get("name") or "").strip()
-            url = str(item.get("url") or item.get("href") or "").strip()
+            url = cls._canonical_url(
+                str(item.get("url") or item.get("href") or "").strip()
+            )
             excerpt = str(
                 item.get("snippet")
                 or item.get("text")
@@ -252,18 +380,141 @@ class NativeWorldSense:
                 or item.get("description")
                 or ""
             ).strip()
+            identity_basis = url or cls._normalize_identity(title)
+            if not identity_basis:
+                identity_basis = cls._normalize_identity(excerpt[:500])
+            if not identity_basis:
+                continue
+            identity = (
+                f"url:{identity_basis}"
+                if url
+                else f"title:{hashlib.sha256(identity_basis.encode()).hexdigest()[:20]}"
+            )
+            content = "\n".join(
+                part for part in (title, excerpt[:1600], url) if part
+            )
+            fingerprint = hashlib.sha256(content.encode()).hexdigest()[:24]
+            domain = cls._url_domain(url)
+            records[identity] = {
+                "fingerprint": fingerprint,
+                "title": title[:300],
+                "url": url[:1200],
+                "domain": domain[:200],
+            }
             parts = [part for part in (title, excerpt[:600], url) if part]
-            if parts:
-                lines.append(" | ".join(parts)[:900])
+            display[identity] = " | ".join(parts)[:900]
+            if domain:
+                features.append(f"source_domain:{domain}")
             if title:
                 features.extend(cls._feature_tokens(title))
-        if not lines:
+
+        if not records:
             compact = " ".join(text.split())[:5000]
-            return f"World observation about {topic}: {compact}", tuple(features)
+            return f"World observation about {topic}: {compact}", ("web",), {}
+
+        lines = [display[key] for key in sorted(records) if display.get(key)]
+        summary = f"World observation about {topic}: " + " || ".join(lines)[:5000]
+        return summary, tuple(dict.fromkeys(features))[:32], records
+
+    @classmethod
+    def _sensor_summary(cls, raw: str, topic: str) -> tuple[str, tuple[str, ...]]:
+        summary, features, _state = cls._sensor_snapshot(raw, topic)
+        return summary, features
+
+    @staticmethod
+    def _diff_sources(
+        previous: dict[str, dict[str, str]],
+        current: dict[str, dict[str, str]],
+    ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+        previous_keys = set(previous)
+        current_keys = set(current)
+        new_keys = current_keys - previous_keys
+        removed_keys = previous_keys - current_keys
+        shared = previous_keys & current_keys
+        updated_keys = {
+            key
+            for key in shared
+            if str(previous[key].get("fingerprint") or "")
+            != str(current[key].get("fingerprint") or "")
+        }
+        stable_keys = shared - updated_keys
         return (
-            f"World observation about {topic}: " + " || ".join(lines)[:5000],
-            tuple(dict.fromkeys(features))[:24],
+            tuple(sorted(new_keys)),
+            tuple(sorted(updated_keys)),
+            tuple(sorted(removed_keys)),
+            tuple(sorted(stable_keys)),
         )
+
+    @staticmethod
+    def _source_state_hash(state: dict[str, dict[str, str]]) -> str:
+        normalized = {
+            key: str(value.get("fingerprint") or "")
+            for key, value in sorted(state.items())
+        }
+        return hashlib.sha256(
+            json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+
+    @classmethod
+    def _source_labels(
+        cls,
+        state: dict[str, dict[str, str]],
+        keys: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        return tuple(cls._source_label(state.get(key) or {}, key) for key in keys)
+
+    @staticmethod
+    def _source_label(item: dict[str, str], fallback: str) -> str:
+        return str(
+            item.get("title")
+            or item.get("domain")
+            or item.get("url")
+            or fallback
+        )[:300]
+
+    @classmethod
+    def _canonical_url(cls, raw: str) -> str:
+        text = str(raw or "").strip()
+        if not text:
+            return ""
+        try:
+            parsed = urlsplit(text)
+        except ValueError:
+            return text[:1200]
+        if not parsed.scheme or not parsed.netloc:
+            return text[:1200]
+        query = [
+            (key, value)
+            for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+            if key.lower() not in cls._TRACKING_QUERY_KEYS
+            and not any(
+                key.lower().startswith(prefix)
+                for prefix in cls._TRACKING_QUERY_PREFIXES
+            )
+        ]
+        path = parsed.path or "/"
+        return urlunsplit(
+            (
+                parsed.scheme.lower(),
+                parsed.netloc.lower(),
+                path.rstrip("/") or "/",
+                urlencode(query, doseq=True),
+                "",
+            )
+        )[:1200]
+
+    @staticmethod
+    def _url_domain(url: str) -> str:
+        if not url:
+            return ""
+        try:
+            return urlsplit(url).netloc.lower()
+        except ValueError:
+            return ""
+
+    @staticmethod
+    def _normalize_identity(text: str) -> str:
+        return " ".join(str(text or "").lower().split())[:1000]
 
     @staticmethod
     def _result_items(payload: Any) -> list[Any]:
@@ -347,6 +598,16 @@ class NativeWorldSense:
         data = dict(raw)
         data.setdefault("last_observed_at", None)
         data.setdefault("last_observation_hash", None)
+        source_state = data.get("last_source_state")
+        data["last_source_state"] = (
+            {
+                str(key): dict(value)
+                for key, value in source_state.items()
+                if isinstance(value, dict)
+            }
+            if isinstance(source_state, dict)
+            else {}
+        )
         data.setdefault("last_error", None)
         return WorldFocus(**data)
 
