@@ -47,10 +47,14 @@ def derive_native_action_intent(
     model to turn prose into a command. As richer native cognition develops,
     additional action derivation can feed the same intent shape without
     changing the Thought -> Body -> Outcome loop.
+
+    ``None`` means only "no action intent was derived". It never means the task
+    is already complete; task completion must be represented by an explicit
+    observed outcome elsewhere in the resident loop.
     """
 
     payload = event.payload or {}
-    facts = dict(facts or {})
+    _ = facts  # Reserved for evidence-derived action selection as cognition grows.
     explicit = payload.get("body_action") or payload.get("native_action")
 
     if explicit:
@@ -103,15 +107,6 @@ def derive_native_action_intent(
             "写", "创建", "保存", "确保", "替换", "追加",
         )
     ):
-        # Native evidence can show that an ensure-style request is already
-        # satisfied. In that case no body movement is necessary.
-        previews = facts.get("file_previews") if isinstance(facts.get("file_previews"), list) else []
-        if "ensure" in task or "确保" in task:
-            for preview in previews:
-                if str(preview.get("path") or "") == str(path):
-                    if str(preview.get("preview") or "") == str(content):
-                        return None
-
         return NativeActionIntent(
             intent_id=f"act-{uuid.uuid4().hex[:12]}",
             event_id=event.event_id,
@@ -171,4 +166,6 @@ def _explicit_action(
     ):
         if key in payload and key not in args:
             args[key] = payload[key]
+    if "content" not in args and "text" in args:
+        args["content"] = args["text"]
     return kind, args
