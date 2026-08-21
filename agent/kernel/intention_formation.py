@@ -44,6 +44,9 @@ class NativeIntentionFormation:
         "workspace": "git",
         "branch": "git",
         "changes": "git",
+        "system": "body",
+        "architecture": "body",
+        "disk_state": "body",
         "path_state": "paths",
         "path_type": "paths",
         "presence": "paths",
@@ -53,6 +56,9 @@ class NativeIntentionFormation:
         "workspace": 0.08,
         "branch": 0.07,
         "changes": 0.06,
+        "system": 0.09,
+        "architecture": 0.08,
+        "disk_state": 0.10,
         "path_state": 0.10,
         "path_type": 0.08,
         "presence": 0.08,
@@ -126,7 +132,12 @@ class NativeIntentionFormation:
                 payload = {
                     **common_payload,
                     **target,
+                    # ``native_probe_key`` is the formation-side identity. The
+                    # compatibility observation key lets Investigation honor the
+                    # structured route directly instead of rediscovering it from
+                    # generated task wording.
                     "native_probe_key": probe_key,
+                    "schema_probe_observation": probe_key,
                     "schema_expectation": {
                         "family": family,
                         "value": value,
@@ -300,7 +311,7 @@ class NativeIntentionFormation:
         *,
         body: BodyState | None,
     ) -> dict[str, Any] | None:
-        if probe_key == "git":
+        if probe_key in {"git", "body"}:
             return {}
         if probe_key == "paths":
             match = self._PATH_RE.search(str(intention_text or ""))
@@ -333,6 +344,8 @@ class NativeIntentionFormation:
         suffix = f"for my current intention (schema expectation {signature})"
         if probe_key == "git":
             return f"{prefix}current git workspace relation {family} {suffix}"
+        if probe_key == "body":
+            return f"{prefix}current body relation {family} {suffix}"
         if probe_key == "paths":
             return f"{prefix}path {target.get('path')} relation {family} {suffix}"
         if probe_key == "processes":
@@ -352,6 +365,14 @@ class NativeIntentionFormation:
         cwd = str(getattr(body, "cwd", "") or "").strip()
         if cwd and probe_key == "git":
             context.append(f"current cwd {cwd}")
+        if body is not None and probe_key == "body":
+            system = str(getattr(body, "system", "") or "").strip()
+            architecture = str(getattr(body, "architecture", "") or "").strip()
+            if system or architecture:
+                context.append(
+                    "current body "
+                    f"system={system or 'unknown'} architecture={architecture or 'unknown'}"
+                )
         if situation is not None:
             changes = tuple(getattr(situation, "changes", ()) or ())
             if changes:
@@ -392,6 +413,13 @@ class NativeIntentionFormation:
             context["body_architecture"] = str(
                 getattr(body, "architecture", "") or ""
             )
+            try:
+                context["body_disk_free_ratio"] = round(
+                    float(getattr(body, "disk_free_ratio", 0.0) or 0.0),
+                    6,
+                )
+            except (TypeError, ValueError):
+                pass
         return context
 
     @staticmethod
