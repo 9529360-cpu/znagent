@@ -77,7 +77,7 @@ export class ZnVisualSense {
 
       const previous = this.lastFrameHash
       this.lastFrameHash = frameHash
-      if (previous === frameHash) return snapshot
+      if (previous === frameHash || !this.running) return snapshot
 
       await this.resident.request(
         'perceive',
