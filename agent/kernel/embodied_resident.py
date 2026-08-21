@@ -5,6 +5,7 @@ from dataclasses import asdict
 from typing import Any
 
 from .action import NativeActionIntent, derive_native_action_intent
+from .cognition import CognitiveIncrement
 from .models import AgentEvent, ExecutionPath, ResidentRunResult, WorkingState
 from .resident import ZNResidentRuntime
 from .self_model import TaskReadiness
@@ -15,17 +16,20 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
 
     The base resident owns continuity, memory, impasses and external cognition.
     This embodied resident is born with its Body, embodied Investigation and
-    stage-aware Life core already attached, then closes the native loop:
+    stage-aware Life core already attached, then closes the native loops:
 
         Situation -> Thought -> Body -> evidence/outcome -> Situation
+        Impasse -> external cognition -> CognitiveIncrement -> Thought -> result
 
     It does not turn tools into skills and it does not add policy gates. Body
-    remains an organ; the resident decides when and why to move it.
+    and external brains remain resources; the resident decides how to use and
+    integrate them.
     """
 
     _ACTIVE_THOUGHT_KINDS = {
         *ZNResidentRuntime._ACTIVE_THOUGHT_KINDS,
         "body_action",
+        "integrate_cognition",
     }
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
@@ -56,6 +60,13 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
     ) -> ResidentRunResult | None:
         if state.stage == "native_action":
             return self._native_action_step(
+                event,
+                state,
+                readiness=readiness,
+                thought=thought,
+            )
+        if state.stage == "cognition_integration":
+            return self._cognition_integration_step(
                 event,
                 state,
                 readiness=readiness,
@@ -181,22 +192,152 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
             self._persist_enriched_thought(thought)
         return None
 
+    def _external_cognition_step(
+        self,
+        event: AgentEvent,
+        state: WorkingState,
+    ) -> ResidentRunResult | None:
+        """Borrow cognition, then return it to ZN instead of completing the event."""
+        run = super()._external_cognition_step(event, state)
+        if not run.success:
+            return run
+
+        raw_request = state.data.get("cognition_request")
+        request = raw_request if isinstance(raw_request, dict) else {}
+        kernel_result = run.kernel_result
+        route_id = (
+            kernel_result.goal.route_id
+            if kernel_result is not None and kernel_result.goal.route_id
+            else "external"
+        )
+        assessment = kernel_result.assessment if kernel_result is not None else None
+        increment = CognitiveIncrement.create(
+            event_id=event.event_id,
+            impasse_id=(
+                str(request.get("impasse_id"))
+                if request.get("impasse_id")
+                else str(state.data.get("impasse_id") or "") or None
+            ),
+            source=f"external:{route_id}",
+            question=str(request.get("question") or ""),
+            content=run.response,
+            quality=(assessment.quality if assessment is not None else 0.0),
+            confidence=(assessment.confidence if assessment is not None else 0.0),
+        )
+        state.data["cognitive_increment"] = increment.to_dict()
+        state.data["external_cognition_result"] = {
+            "model_invocations": run.model_invocations,
+            "reason": run.reason,
+            "source": increment.source,
+        }
+        state.stage = "cognition_integration"
+        state.next_action = "integrate borrowed cognition into my own thought"
+        self.store.save_working_state(state)
+        return None
+
+    def _cognition_integration_step(
+        self,
+        event: AgentEvent,
+        state: WorkingState,
+        *,
+        readiness: TaskReadiness,
+        thought=None,
+    ) -> ResidentRunResult | None:
+        raw = state.data.get("cognitive_increment")
+        if not isinstance(raw, dict):
+            state.stage = "native_deliberation"
+            state.next_action = "recover missing cognitive increment"
+            self.store.save_working_state(state)
+            return None
+
+        increment = CognitiveIncrement.from_dict(raw)
+        if thought is not None:
+            known = (
+                f"I received a bounded cognitive increment from {increment.source} "
+                f"with confidence={increment.confidence:.2f}"
+            )
+            if known not in thought.known:
+                thought.known = (*thought.known, known)
+            thought.reason = (
+                f"{thought.reason}; borrowed cognition has returned to my own state for integration"
+            )
+            self._persist_enriched_thought(thought)
+
+        # Re-check whether the integrated knowledge now accompanies a concrete
+        # native body intent. Today the derivation uses resident-owned event and
+        # environment structure; future native cognition can enrich that same
+        # intent without changing the action loop.
+        investigation = self.investigator.current(event.event_id)
+        facts = dict(investigation.facts) if investigation is not None else {}
+        intent = derive_native_action_intent(event, facts=facts)
+        if intent is not None:
+            signature = self._intent_signature(intent)
+            failed_signature = str(
+                state.data.get("native_action_failure_signature") or ""
+            )
+            if signature != failed_signature:
+                state.data["native_action_intent"] = intent.to_dict()
+                state.stage = "native_action"
+                state.next_action = f"move body after cognition: {intent.kind}"
+                self.store.save_working_state(state)
+                return None
+
+        external = state.data.get("external_cognition_result")
+        external_data = external if isinstance(external, dict) else {}
+        invocations = max(0, int(external_data.get("model_invocations") or 0))
+        state.data["cognition_integration"] = {
+            "increment_id": increment.increment_id,
+            "accepted": True,
+            "source": increment.source,
+            "quality": increment.quality,
+            "confidence": increment.confidence,
+        }
+        state.stage = "complete"
+        state.next_action = None
+        self.store.save_working_state(state)
+        return ResidentRunResult(
+            event=event,
+            execution_path=ExecutionPath.MODEL,
+            success=True,
+            response=increment.content,
+            model_invocations=invocations,
+            reason=(
+                f"ZN integrated a bounded cognitive increment from {increment.source} "
+                "before completing the event"
+            ),
+        )
+
     def _enrich_thought_with_working_stage(self, thought, event: AgentEvent) -> None:
         super()._enrich_thought_with_working_stage(thought, event)
         state = self.store.get_working_state()
-        if state.current_event_id != event.event_id or state.stage != "native_action":
+        if state.current_event_id != event.event_id:
             return
-        raw = state.data.get("native_action_intent")
-        if not isinstance(raw, dict):
+
+        if state.stage == "native_action":
+            raw = state.data.get("native_action_intent")
+            if not isinstance(raw, dict):
+                return
+            intent = NativeActionIntent.from_dict(raw)
+            action = f"perform body action: {intent.kind}"
+            if action not in thought.possible_actions:
+                thought.possible_actions = (*thought.possible_actions, action)
+            thought.chosen_action = action
+            thought.action_kind = "body_action"
+            thought.action_target = event.event_id
+            thought.reason = "native cognition has selected a concrete movement of my body"
             return
-        intent = NativeActionIntent.from_dict(raw)
-        action = f"perform body action: {intent.kind}"
-        if action not in thought.possible_actions:
-            thought.possible_actions = (*thought.possible_actions, action)
-        thought.chosen_action = action
-        thought.action_kind = "body_action"
-        thought.action_target = event.event_id
-        thought.reason = "native cognition has selected a concrete movement of my body"
+
+        if state.stage == "cognition_integration":
+            raw = state.data.get("cognitive_increment")
+            increment = raw if isinstance(raw, dict) else {}
+            source = str(increment.get("source") or "external cognition")
+            action = "integrate borrowed cognition into my own state"
+            if action not in thought.possible_actions:
+                thought.possible_actions = (*thought.possible_actions, action)
+            thought.chosen_action = action
+            thought.action_kind = "integrate_cognition"
+            thought.action_target = event.event_id
+            thought.reason = f"a bounded increment from {source} has returned for my judgment"
 
     @staticmethod
     def _intent_signature(intent: NativeActionIntent) -> str:
