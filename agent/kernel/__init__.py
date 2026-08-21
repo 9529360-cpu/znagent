@@ -10,6 +10,7 @@ from .capabilities import CapabilityRegistry, CallableCapability, ExactTaskCapab
 from .capability_loader import LoadedCapability, PromotedCapabilityLoader
 from .critic import DefaultCritic
 from .embodied_investigation import EmbodiedInvestigator
+from .embodied_life import CognitiveSituation, EmbodiedLifeCore
 from .home import get_zn_home
 from .investigation import InvestigationResult, InvestigationState, NativeInvestigator
 from .life import (
@@ -75,9 +76,11 @@ __all__ = [
     "CognitionRequest",
     "CognitiveBudgetManager",
     "CognitiveDecision",
+    "CognitiveSituation",
     "DefaultCritic",
     "DomainReadiness",
     "EmbodiedInvestigator",
+    "EmbodiedLifeCore",
     "EventOutcome",
     "EventStatus",
     "ExactTaskCapability",
