@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import Iterable
 
 from .adaptive_guidance import (
@@ -10,6 +11,13 @@ from .adaptive_guidance import (
     schema_superseded_relation_terms,
 )
 from .nervous_system import NeuralActivation, NeuralTrace, PersistentNervousSystem
+
+
+@dataclass(slots=True)
+class RealityAwareActivation(NeuralActivation):
+    """One neural activation with explicit bounded-transfer provenance."""
+
+    transfer_gain: float = 0.0
 
 
 class RealityAwareNervousSystem(PersistentNervousSystem):
@@ -102,16 +110,18 @@ class RealityAwareNervousSystem(PersistentNervousSystem):
                 continue
             direct_score, overlap = direct.get(trace_id, (0.0, 0.0))
             gain = associative.get(trace_id, 0.0)
+            transfer_gain = transfer.get(trace_id, 0.0)
             score = self._unit(direct_score + gain)
-            threshold = 0.04 if trace_id in transfer and direct_score <= 0.0 else 0.12
+            threshold = 0.04 if transfer_gain > 0.0 and direct_score <= 0.0 else 0.12
             if score < threshold:
                 continue
             activations.append(
-                NeuralActivation(
+                RealityAwareActivation(
                     trace=trace,
                     activation=score,
                     cue_overlap=overlap,
                     associative_gain=gain,
+                    transfer_gain=transfer_gain,
                 )
             )
         activations.sort(key=lambda item: item.activation, reverse=True)
