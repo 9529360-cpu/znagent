@@ -25,6 +25,7 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
     }
     _REFLECTION_PERIOD_PULSES = 30
     _REFLECTION_CHANNELS = ("will", "outcome", "world", "vision", "action")
+    _ATTENTION_CHANNELS = ("will", "outcome", "world", "vision", "action")
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(
@@ -146,6 +147,8 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
         pulse = super().pulse()
         thought = pulse.thought
         if thought is not None:
+            if self._shape_endogenous_attention(thought):
+                self._persist_enriched_thought(thought)
             unknown_pressure = min(1.0, len(thought.unknown) / 4.0)
             action_pressure = 0.15 if thought.action_kind == "observe" else 0.45
             features = [thought.action_kind]
@@ -166,6 +169,179 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
                 },
             )
         return pulse
+
+    def _shape_endogenous_attention(self, thought) -> bool:
+        """Let lived affect and Will compete for idle attention inside ZN.
+
+        This is not a planner. It does not invent work, call a model, or execute
+        a body action. It only changes what an otherwise-idle Thought is pulled
+        toward, using state that already belongs to the resident.
+        """
+        situation = self.life.snapshot().current_situation
+        if situation is not None and (
+            situation.active_event_id or situation.active_impasse_id
+        ):
+            return False
+        if thought.action_kind != "observe":
+            return False
+
+        affect = self.nervous.snapshot()
+        candidate = self._select_endogenous_attention(affect)
+        if candidate is None:
+            return False
+
+        action = str(candidate["action"])
+        drive = str(candidate["drive"])
+        score = float(candidate["score"])
+        focus = str(candidate["focus"])
+        if action not in thought.possible_actions:
+            thought.possible_actions = (*thought.possible_actions, action)
+        pull = f"endogenous attention pull: {drive} score={score:.2f}"
+        if pull not in thought.known:
+            thought.known = (*thought.known, pull)
+        thought.focus = focus
+        thought.chosen_action = action
+        thought.action_kind = "observe"
+        thought.action_target = None
+        thought.reason = (
+            f"{drive} currently has the strongest internal attention pull; "
+            f"tension={affect.tension:.2f}, curiosity={affect.curiosity:.2f}, "
+            f"fatigue={affect.fatigue:.2f}"
+        )
+        thought.confidence = max(
+            0.45,
+            min(0.90, 0.52 + 0.34 * score - 0.08 * affect.tension),
+        )
+        return True
+
+    def _select_endogenous_attention(self, affect) -> dict[str, Any] | None:
+        candidates: list[dict[str, Any]] = []
+        fatigue = max(0.0, min(1.0, float(affect.fatigue)))
+        tension = max(0.0, min(1.0, float(affect.tension)))
+        curiosity = max(0.0, min(1.0, float(affect.curiosity)))
+        familiarity = max(0.0, min(1.0, float(affect.familiarity)))
+
+        primary = self.will.primary()
+        if primary is not None:
+            score = (
+                0.50
+                + min(0.24, max(0, int(primary.priority)) * 0.03)
+                + 0.08 * (1.0 - fatigue)
+                + 0.05 * familiarity
+            )
+            candidates.append(
+                {
+                    "drive": "will",
+                    "score": score,
+                    "focus": primary.description,
+                    "action": "hold attention on my enduring intention",
+                }
+            )
+
+        due = self.world.due_focus()
+        if due is not None:
+            score = (
+                0.22
+                + 0.38 * curiosity
+                + min(0.20, max(0, int(due.priority)) * 0.03)
+                + 0.10 * (1.0 - fatigue)
+                - 0.18 * fatigue
+            )
+            candidates.append(
+                {
+                    "drive": "curiosity",
+                    "score": score,
+                    "focus": due.topic,
+                    "action": f"stay attentive to changes in world focus: {due.topic}",
+                }
+            )
+
+        if fatigue >= 0.45:
+            candidates.append(
+                {
+                    "drive": "recovery",
+                    "score": 0.20 + 0.72 * fatigue,
+                    "focus": "internal recovery and continuity",
+                    "action": "reduce active exploration and let recent experience settle",
+                }
+            )
+
+        for trace in self.nervous.recent_traces(96):
+            if trace.channel not in self._ATTENTION_CHANNELS:
+                continue
+            novelty = 1.0 / (1.0 + 0.35 * max(1, int(trace.repetitions)))
+            score = (
+                0.18
+                + 0.30 * trace.salience
+                + 0.18 * trace.strength
+                + 0.10 * trace.arousal
+            )
+            drive = "integrate"
+            action = "let this salient experience remain in active consideration"
+
+            if trace.valence <= -0.25:
+                score += 0.34 * tension * abs(trace.valence)
+                drive = "protect"
+                action = "re-examine a salient risk before letting it fade"
+            elif trace.channel in {"world", "vision"}:
+                score += 0.24 * curiosity * novelty
+                score -= 0.24 * fatigue
+                drive = "curiosity"
+                action = "keep observing this novel thread without borrowing a model"
+            else:
+                score += 0.08 * abs(trace.valence) + 0.05 * familiarity
+
+            candidates.append(
+                {
+                    "drive": drive,
+                    "score": score,
+                    "focus": trace.summary,
+                    "action": action,
+                    "trace_id": trace.trace_id,
+                }
+            )
+
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: float(item["score"]), reverse=True)
+        strongest = candidates[0]
+        return strongest if float(strongest["score"]) >= 0.45 else None
+
+    def _reflection_period_for(self, affect=None) -> int:
+        state = affect or self.nervous.snapshot()
+        fatigue = float(state.fatigue)
+        tension = float(state.tension)
+        curiosity = float(state.curiosity)
+        valence = abs(float(state.valence))
+
+        if fatigue >= 0.75:
+            return self._REFLECTION_PERIOD_PULSES * 2
+
+        period = self._REFLECTION_PERIOD_PULSES
+        if tension >= 0.75:
+            period = min(period, 8)
+        elif tension >= 0.60:
+            period = min(period, 15)
+        if curiosity >= 0.78:
+            period = min(period, 12)
+        elif curiosity >= 0.68:
+            period = min(period, 20)
+        if valence >= 0.70:
+            period = min(period, 18)
+        if fatigue >= 0.55:
+            period = max(period, self._REFLECTION_PERIOD_PULSES)
+        return max(6, int(period))
+
+    def _last_reflection_sequence(self) -> int:
+        latest = 0
+        for trace in self.nervous.recent_traces(128):
+            if trace.channel != "reflection":
+                continue
+            try:
+                latest = max(latest, int(trace.metadata.get("thought_sequence") or 0))
+            except (TypeError, ValueError):
+                continue
+        return latest
 
     def live_once(self) -> ResidentRunResult | None:
         """Form one Thought and advance one event, intention, or native reflection."""
@@ -216,7 +392,15 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
         later Thoughts can be changed by the resident's own accumulated life.
         """
         sequence = max(0, int(getattr(thought, "sequence", 0) or 0))
-        if sequence <= 0 or sequence % self._REFLECTION_PERIOD_PULSES:
+        affect = self.nervous.snapshot()
+        period = self._reflection_period_for(affect)
+        last_reflection = self._last_reflection_sequence()
+        if sequence <= 0:
+            return False
+        if last_reflection:
+            if sequence - last_reflection < period:
+                return False
+        elif sequence < period:
             return False
 
         situation = self.life.snapshot().current_situation
@@ -226,17 +410,22 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
             return False
 
         primary = self.will.primary()
-        affect = self.nervous.snapshot()
         activations = []
-        focus = None
-        if primary is not None:
+        focus = str(getattr(thought, "focus", "") or "").strip()
+        if focus and focus not in {"environment", "internal recovery and continuity"}:
+            activations = self.nervous.activate(
+                focus,
+                channels=self._REFLECTION_CHANNELS,
+                limit=5,
+            )
+        if not activations and primary is not None:
             focus = primary.description
             activations = self.nervous.activate(
                 primary.description,
                 channels=self._REFLECTION_CHANNELS,
                 limit=5,
             )
-        else:
+        if not activations:
             candidates = [
                 trace
                 for trace in self.nervous.recent_traces(64)
@@ -306,6 +495,8 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
             arousal=min(0.78, 0.24 + 0.20 * affect.curiosity + 0.20 * affect.tension),
             metadata={
                 "thought_sequence": sequence,
+                "reflection_period": period,
+                "attention_focus": focus[:500],
                 "intention_id": primary.intention_id if primary is not None else None,
                 "source_trace_ids": [trace.trace_id for trace in traces],
                 "model_invocations": 0,
@@ -461,6 +652,7 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
             "tone": self.nervous.describe_state(),
             "affect": asdict(affect),
             "recent_trace_count": len(self.nervous.recent_traces(50)),
+            "reflection_period_pulses": self._reflection_period_for(affect),
         }
         data["world_sense"] = {
             "focuses": [asdict(item) for item in self.world.focuses(enabled_only=True, limit=20)],
