@@ -150,16 +150,23 @@ class RealityAwareNervousSystem(PersistentNervousSystem):
         """Spread corrected structure across one shared lived-evidence bridge.
 
         This is not arbitrary graph diffusion. A source must be a directly
-        activated schema with a meaningful reality-facing profile. The first hop
-        must land on a non-schema lived trace. The second hop may reach another
-        schema only when its current structured relations do not contradict the
-        source. The resulting gain is a weak associative activation and cannot
-        outrank a strong direct cue by itself.
+        activated schema with at least one relation that was corrected and then
+        stabilized by lived prediction error. The first hop must land on a
+        non-schema lived trace. The second hop may reach another schema only when
+        its current structured relations do not contradict the source. The
+        resulting gain is a weak associative activation and cannot outrank a
+        strong direct cue by itself.
         """
         sources: list[tuple[NeuralTrace, float, float]] = []
         for trace_id, (score, _overlap) in direct.items():
             trace = by_id.get(trace_id) or self._get_trace(trace_id)
             if trace is None or trace.channel != "schema":
+                continue
+            current_relations = active_schema_relations(trace)
+            if not any(
+                bool(item.get("stabilized_from_prediction_error"))
+                for item in current_relations
+            ):
                 continue
             reality = schema_reality_score(trace)
             if reality < 0.50:
