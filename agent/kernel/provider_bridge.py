@@ -184,10 +184,7 @@ def build_resident_runtime_from_existing_stack(
     runtime_resolver: RuntimeResolver | None = None,
 ):
     """Build the resident ZN runtime while reusing mature provider/tool plumbing."""
-    from .body import NativeBody
     from .budget import CognitiveBudgetManager
-    from .embodied_investigation import EmbodiedInvestigator
-    from .embodied_life import EmbodiedLifeCore
     from .embodied_resident import EmbodiedResidentRuntime
 
     effective_config = config
@@ -213,12 +210,7 @@ def build_resident_runtime_from_existing_stack(
             0.0, min(1.0, float(resident_cfg.get("high_risk_threshold", 0.8)))
         ),
     )
-    resident = EmbodiedResidentRuntime(kernel=kernel, budget=budget)
-    # Body is an organ of the resident, not a skill in the capability registry.
-    # Investigation moves through that body, Life forms Thought from the lived
-    # cognition stage, and EmbodiedResidentRuntime can turn deliberation into a
-    # structured body intent and observed outcome.
-    resident.body = NativeBody(resident=resident)
-    resident.investigator = EmbodiedInvestigator(resident)
-    resident.life = EmbodiedLifeCore(resident)
-    return resident
+    # The embodied resident is born with Body, Investigation and Life already
+    # attached. Provider plumbing only supplies its durable store, model routes
+    # and cognitive budget; it no longer assembles the subject after birth.
+    return EmbodiedResidentRuntime(kernel=kernel, budget=budget)
