@@ -11,11 +11,60 @@ class EmbodiedInvestigator(NativeInvestigator):
     """Native investigation whose probes are movements of ZN's Body.
 
     The parent class owns hypothesis selection, evidence accumulation and the
-    multi-pulse reasoning loop. This subclass only changes *how* a concrete
-    probe touches the computer: all host interaction goes through NativeBody,
-    so perception and action share one body history instead of parallel ad-hoc
-    filesystem/process implementations.
+    multi-pulse reasoning loop. This subclass changes *how* a concrete probe
+    touches the computer and lets consolidated neural schemas become native
+    predictions. Perception, action, and prior lived structure therefore meet
+    inside one investigation instead of becoming separate agent components.
     """
+
+    def _seed_hypotheses(
+        self,
+        hypotheses: list[str],
+        readiness: TaskReadiness,
+        *,
+        learning_evidence: list[dict[str, Any]],
+        local_failure: str | None,
+    ) -> None:
+        super()._seed_hypotheses(
+            hypotheses,
+            readiness,
+            learning_evidence=learning_evidence,
+            local_failure=local_failure,
+        )
+        for schema in self._schema_evidence(learning_evidence)[:2]:
+            summary = str(schema.get("resolution_summary") or "").strip()
+            if not summary:
+                continue
+            self._append_unique(
+                hypotheses,
+                "a consolidated lived pattern predicts relevant structure here: "
+                f"{summary[:520]}",
+            )
+
+    def _derive_hypotheses_from_facts(
+        self,
+        hypotheses: list[str],
+        facts: dict[str, Any],
+    ) -> None:
+        super()._derive_hypotheses_from_facts(hypotheses, facts)
+        predictions = facts.get("schema_predictions")
+        if not isinstance(predictions, list) or not predictions:
+            return
+        concrete_keys = {
+            key
+            for key in facts
+            if key
+            not in {
+                "related_experience_count",
+                "schema_predictions",
+            }
+        }
+        if concrete_keys:
+            self._append_unique(
+                hypotheses,
+                "current body evidence should confirm, refine, or contradict the "
+                "activated consolidated pattern rather than assuming it is correct",
+            )
 
     def _run_probe(
         self,
@@ -26,6 +75,35 @@ class EmbodiedInvestigator(NativeInvestigator):
         facts: dict[str, Any],
         learning_evidence: list[dict[str, Any]],
     ) -> list[str]:
+        if key == "experience":
+            schemas = self._schema_evidence(learning_evidence)
+            facts["related_experience_count"] = len(learning_evidence)
+            if schemas:
+                predictions = [
+                    {
+                        "trace_id": str(item.get("neural_trace_id") or ""),
+                        "summary": str(item.get("resolution_summary") or "")[:700],
+                        "similarity": float(item.get("similarity") or 0.0),
+                        "salience": float(item.get("salience") or 0.0),
+                    }
+                    for item in schemas[:3]
+                ]
+                facts["schema_predictions"] = predictions
+                evidence = [
+                    "consolidated schema prediction activated: "
+                    f"{item['summary']}"
+                    for item in predictions
+                    if item["summary"]
+                ]
+                ordinary = len(learning_evidence) - len(schemas)
+                if ordinary > 0:
+                    evidence.append(
+                        f"additional related lived experience records available: {ordinary}"
+                    )
+                return evidence or [
+                    f"related experience records available: {len(learning_evidence)}"
+                ]
+
         body = getattr(self.resident, "body", None)
         if body is None:
             return super()._run_probe(
@@ -147,11 +225,15 @@ class EmbodiedInvestigator(NativeInvestigator):
                     event_id=event.event_id,
                     pid=pid,
                 )
-                item = dict(result.data) if result.success else {
-                    "pid": pid,
-                    "alive": False,
-                    "error": result.error,
-                }
+                item = (
+                    dict(result.data)
+                    if result.success
+                    else {
+                        "pid": pid,
+                        "alive": False,
+                        "error": result.error,
+                    }
+                )
                 process_facts.append(item)
                 evidence.append(
                     f"process: pid={pid} alive={item.get('alive')}"
@@ -160,7 +242,8 @@ class EmbodiedInvestigator(NativeInvestigator):
             return evidence or ["process probe found no referenced process"]
 
         # Experience comparison is cognition over ZN-owned state, not a body
-        # movement, so keep the parent's resident-side implementation.
+        # movement, so keep the parent's resident-side implementation when no
+        # consolidated schema was activated.
         return super()._run_probe(
             key,
             event,
@@ -168,3 +251,22 @@ class EmbodiedInvestigator(NativeInvestigator):
             facts=facts,
             learning_evidence=learning_evidence,
         )
+
+    @staticmethod
+    def _schema_evidence(
+        learning_evidence: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        schemas = [
+            item
+            for item in learning_evidence
+            if item.get("consolidated") is True
+            or item.get("resolution_source") == "neural:schema"
+        ]
+        schemas.sort(
+            key=lambda item: (
+                float(item.get("similarity") or 0.0),
+                float(item.get("salience") or 0.0),
+            ),
+            reverse=True,
+        )
+        return schemas
