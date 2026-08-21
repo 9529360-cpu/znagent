@@ -6,6 +6,8 @@ from pathlib import Path
 
 from agent.kernel import (
     CognitiveSituation,
+    EventOutcome,
+    EventStatus,
     ExecutionPath,
     IntentionalResidentRuntime,
 )
@@ -163,6 +165,52 @@ class NativeWillTests(unittest.TestCase):
                 if event.payload.get("intention_id") == intention.intention_id
             ]
             self.assertEqual(len(intention_events), 1)
+            second.store.close()
+
+    def test_will_reconciles_if_process_dies_after_outcome_before_handoff(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "kernel.db"
+            first = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=db,
+            )
+            intention = first.intend(
+                "survive the event-to-will handoff crash window",
+                next_task="perform one durable step",
+                complete_on_step_success=True,
+            )
+            self.assertIsNone(first.live_once())
+            engaged = first.will.get(intention.intention_id)
+            event_id = engaged.related_event_id
+            self.assertIsNotNone(event_id)
+
+            # Simulate the exact crash window: event and outcome are durable,
+            # but Will has not yet received the outcome callback.
+            first.store.finish_event(event_id, success=True)
+            first.store.save_event_outcome(
+                EventOutcome(
+                    event_id=event_id,
+                    success=True,
+                    execution_path=ExecutionPath.BODY,
+                    response="durable step already finished",
+                    model_invocations=0,
+                    reason="simulated crash after outcome persistence",
+                )
+            )
+            self.assertEqual(first.will.get(intention.intention_id).status, "engaged")
+            self.assertEqual(first.store.get_event(event_id).status, EventStatus.COMPLETED)
+            first.store.close()
+
+            second = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=db,
+            )
+            repaired = second.will.get(intention.intention_id)
+
+            self.assertEqual(repaired.status, "completed")
+            self.assertIsNone(repaired.related_event_id)
+            self.assertIn("durable step already finished", repaired.last_outcome)
+            self.assertEqual(second.will.active(), [])
             second.store.close()
 
 
