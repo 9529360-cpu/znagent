@@ -22,6 +22,8 @@ class RealityTransferEvidence:
     gain: float
     source_trace_id: str
     bridge_trace_id: str
+    tendency: float = 1.0
+    feedback_count: int = 0
 
 
 @dataclass(slots=True)
@@ -31,6 +33,8 @@ class RealityAwareActivation(NeuralActivation):
     transfer_gain: float = 0.0
     transfer_source_trace_id: str = ""
     transfer_bridge_trace_id: str = ""
+    transfer_tendency: float = 1.0
+    transfer_feedback_count: int = 0
 
 
 class RealityAwareNervousSystem(PersistentNervousSystem):
@@ -45,7 +49,16 @@ class RealityAwareNervousSystem(PersistentNervousSystem):
     shared lived evidence. This transfer is deliberately bounded to two neural
     hops (schema -> lived trace -> schema) and is blocked when the two schemas
     currently disagree about the same structured relation family.
+
+    Lived bridge traces retain bounded feedback about whether their past transfers
+    held up in reality. Repeated support gradually favors that same bridge in
+    future recall; repeated contradiction suppresses it. This history remains
+    part of the neural substrate instead of becoming a separate context-rule
+    store or planner policy.
     """
+
+    _TRANSFER_HISTORY_KEY = "reality_transfer_history"
+    _TRANSFER_HISTORY_LIMIT = 32
 
     def activate(
         self,
@@ -149,6 +162,16 @@ class RealityAwareNervousSystem(PersistentNervousSystem):
                         if transfer_evidence is not None
                         else ""
                     ),
+                    transfer_tendency=(
+                        transfer_evidence.tendency
+                        if transfer_evidence is not None
+                        else 1.0
+                    ),
+                    transfer_feedback_count=(
+                        transfer_evidence.feedback_count
+                        if transfer_evidence is not None
+                        else 0
+                    ),
                 )
             )
         activations.sort(key=lambda item: item.activation, reverse=True)
@@ -196,7 +219,8 @@ class RealityAwareNervousSystem(PersistentNervousSystem):
 
         The strongest source/bridge path is retained as provenance so later Will
         feedback can reshape that exact transfer route without rewriting either
-        schema's structured relations.
+        schema's structured relations. Repeated relation-level feedback stored on
+        the lived bridge gently biases which otherwise-compatible route wins.
         """
         sources: list[tuple[NeuralTrace, float, float]] = []
         for trace_id, (score, _overlap) in direct.items():
@@ -248,6 +272,11 @@ class RealityAwareNervousSystem(PersistentNervousSystem):
                     compatibility = self._schema_transfer_compatibility(source, target)
                     if compatibility <= 0.0:
                         continue
+                    tendency, feedback_count = self.transfer_tendency(
+                        source.trace_id,
+                        bridge_id,
+                        target.trace_id,
+                    )
                     bridge_strength = math.sqrt(first_strength * second_strength)
                     gain = self._unit(
                         source_score
@@ -255,6 +284,7 @@ class RealityAwareNervousSystem(PersistentNervousSystem):
                         * source_reality
                         * compatibility
                         * 0.60
+                        * tendency
                     )
                     if gain < 0.04:
                         continue
@@ -262,11 +292,137 @@ class RealityAwareNervousSystem(PersistentNervousSystem):
                         gain=gain,
                         source_trace_id=source.trace_id,
                         bridge_trace_id=bridge_id,
+                        tendency=tendency,
+                        feedback_count=feedback_count,
                     )
                     prior = gains.get(target_id)
                     if prior is None or evidence.gain > prior.gain:
                         gains[target_id] = evidence
         return gains
+
+    def record_transfer_feedback(
+        self,
+        source_id: str,
+        bridge_id: str,
+        target_id: str,
+        *,
+        status: str,
+    ) -> dict | None:
+        """Keep bounded reality feedback on the lived bridge that carried transfer."""
+        outcome = str(status or "").strip().lower()
+        if outcome not in {"supported", "contradicted"}:
+            return None
+
+        source = self._get_trace(str(source_id))
+        bridge = self._get_trace(str(bridge_id))
+        target = self._get_trace(str(target_id))
+        if (
+            source is None
+            or target is None
+            or bridge is None
+            or source.channel != "schema"
+            or target.channel != "schema"
+            or bridge.channel == "schema"
+            or source.trace_id == target.trace_id
+        ):
+            return None
+
+        raw_history = bridge.metadata.get(self._TRANSFER_HISTORY_KEY)
+        history = [
+            dict(item)
+            for item in (raw_history if isinstance(raw_history, list) else ())
+            if isinstance(item, dict)
+        ]
+        index = next(
+            (
+                idx
+                for idx, item in enumerate(history)
+                if str(item.get("source_trace_id") or "") == source.trace_id
+                and str(item.get("target_trace_id") or "") == target.trace_id
+            ),
+            None,
+        )
+        prior = history[index] if index is not None else {}
+        try:
+            supported = max(0, int(prior.get("supported") or 0))
+        except (TypeError, ValueError):
+            supported = 0
+        try:
+            contradicted = max(0, int(prior.get("contradicted") or 0))
+        except (TypeError, ValueError):
+            contradicted = 0
+
+        # Preserve a long-running ratio without allowing unbounded counters.
+        if supported + contradicted >= 64:
+            supported //= 2
+            contradicted //= 2
+        if outcome == "supported":
+            supported += 1
+        else:
+            contradicted += 1
+
+        record = {
+            "source_trace_id": source.trace_id,
+            "target_trace_id": target.trace_id,
+            "supported": supported,
+            "contradicted": contradicted,
+            "feedback_count": supported + contradicted,
+            "last_status": outcome,
+            "last_feedback_at": utc_now(),
+        }
+        if index is None:
+            history.append(record)
+        else:
+            history[index] = record
+        history.sort(key=lambda item: str(item.get("last_feedback_at") or ""))
+        bridge.metadata[self._TRANSFER_HISTORY_KEY] = history[
+            -self._TRANSFER_HISTORY_LIMIT :
+        ]
+        self._save_trace(bridge)
+        return dict(record)
+
+    def transfer_tendency(
+        self,
+        source_id: str,
+        bridge_id: str,
+        target_id: str,
+    ) -> tuple[float, int]:
+        """Return a smoothed path multiplier learned from repeated lived feedback."""
+        bridge = self._get_trace(str(bridge_id))
+        if bridge is None or bridge.channel == "schema":
+            return 1.0, 0
+        raw_history = bridge.metadata.get(self._TRANSFER_HISTORY_KEY)
+        history = raw_history if isinstance(raw_history, list) else ()
+        record = next(
+            (
+                item
+                for item in history
+                if isinstance(item, dict)
+                and str(item.get("source_trace_id") or "") == str(source_id)
+                and str(item.get("target_trace_id") or "") == str(target_id)
+            ),
+            None,
+        )
+        if not isinstance(record, dict):
+            return 1.0, 0
+        try:
+            supported = max(0, int(record.get("supported") or 0))
+            contradicted = max(0, int(record.get("contradicted") or 0))
+        except (TypeError, ValueError):
+            return 1.0, 0
+        total = supported + contradicted
+        if total <= 0:
+            return 1.0, 0
+
+        # Beta(1,1) smoothing keeps one lucky or unlucky observation from becoming
+        # policy. Evidence influence reaches full weight only after four tested
+        # transfers, so tendency emerges from repeated life rather than one event.
+        posterior_support = (supported + 1.0) / (total + 2.0)
+        direction = (posterior_support - 0.5) * 2.0
+        evidence = min(1.0, total / 4.0)
+        scale = 0.30 if direction >= 0.0 else 0.45
+        tendency = 1.0 + evidence * scale * direction
+        return max(0.55, min(1.30, tendency)), total
 
     def weaken_transfer_link(
         self,
