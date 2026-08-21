@@ -2,8 +2,6 @@ name: ZN Release
 
 on:
   push:
-    branches:
-      - dev/zn-agent
     tags:
       - 'zn-v*'
   workflow_dispatch:
