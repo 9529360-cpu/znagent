@@ -100,7 +100,10 @@ export function registerZnResidentIpc(): void {
   })
 
   app.on('before-quit', () => {
-    void resident?.stop()
+    // The window is only ZN's face. Closing Electron detaches this client but
+    // deliberately leaves the resident service, heartbeat, Will, and senses alive.
+    resident?.disconnect()
+    resident = null
   })
 }
 
@@ -110,6 +113,6 @@ export async function startZnResidentOnDesktopReady(): Promise<void> {
   } catch (error) {
     // Desktop shell remains usable when the resident cannot boot. Renderer can
     // surface the failure through zn:resident:start/status and offer repair.
-    console.error('[zn-resident] failed to start', error)
+    console.error('[zn-resident] failed to connect or start', error)
   }
 }
