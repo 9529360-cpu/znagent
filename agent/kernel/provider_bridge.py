@@ -185,7 +185,7 @@ def build_resident_runtime_from_existing_stack(
 ):
     """Build the resident ZN runtime while reusing mature provider/tool plumbing."""
     from .budget import CognitiveBudgetManager
-    from .transfer_incubation import TransferAwareSituatedResidentRuntime
+    from .world_closed_loop import WorldAwareTransferResidentRuntime
 
     effective_config = config
     if effective_config is None:
@@ -213,4 +213,4 @@ def build_resident_runtime_from_existing_stack(
     # Provider plumbing supplies replaceable resources. The resident owns one
     # persistent nervous substrate and lets reality-gated cross-context recall
     # influence Will only after the present Situation independently supports it.
-    return TransferAwareSituatedResidentRuntime(kernel=kernel, budget=budget)
+    return WorldAwareTransferResidentRuntime(kernel=kernel, budget=budget)
