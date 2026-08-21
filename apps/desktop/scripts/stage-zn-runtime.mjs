@@ -108,11 +108,19 @@ run('uv', [
   requirementsPath
 ])
 
+// `uv python install` deliberately marks managed interpreters as externally
+// managed. This interpreter is not the runner/system Python: it is a disposable
+// release payload owned by ZN and exists specifically so dependencies can be
+// installed into it before electron-builder carries it into the installer.
+// Opt in explicitly rather than deleting uv's marker or falling back to a
+// machine-global Python environment.
+const stagedPythonInstallArgs = ['--python', pythonPath, '--break-system-packages']
+
 console.log('[zn-runtime] installing locked dependencies into portable Python')
-run('uv', ['pip', 'install', '--python', pythonPath, '--requirement', requirementsPath])
+run('uv', ['pip', 'install', ...stagedPythonInstallArgs, '--requirement', requirementsPath])
 
 console.log('[zn-runtime] installing ZN runtime package into portable Python')
-run('uv', ['pip', 'install', '--python', pythonPath, '--no-deps', repoRoot])
+run('uv', ['pip', 'install', ...stagedPythonInstallArgs, '--no-deps', repoRoot])
 
 const backendRoot = capture(pythonPath, [
   '-c',
