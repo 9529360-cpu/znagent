@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .models import utc_now
+from .terminal import TerminalRequest, TerminalResult, get_zn_local_terminal
 
 if TYPE_CHECKING:
     from .resident import ZNResidentRuntime
@@ -54,8 +55,10 @@ class NativeBody:
     contains no planning or model logic: Thought chooses an action; Body
     executes it and returns evidence.
 
-    The terminal path reuses Hermes' mature execution stack, including its
-    local/container/SSH/cloud backends, instead of rebuilding shell plumbing.
+    Local terminal execution is owned by ZN. Mature process/cwd/timeout ideas
+    were extracted into ``agent.kernel.terminal`` rather than keeping the old
+    product terminal as a production dependency. Optional remote/container
+    backends can be extracted behind the same ZN boundary when they are needed.
     """
 
     def __init__(
@@ -146,6 +149,10 @@ class NativeBody:
             return self._git_state(action, started)
         if kind in {"command", "terminal", "shell"}:
             return self._command(action, started)
+        if kind in {"terminal_poll", "command_poll"}:
+            return self._terminal_session(action, started, operation="poll")
+        if kind in {"terminal_stop", "command_stop"}:
+            return self._terminal_session(action, started, operation="stop")
         raise ValueError(f"unknown body action kind: {kind or '<empty>'}")
 
     def _inspect_path(self, action: BodyAction, started: str) -> BodyActionResult:
@@ -319,49 +326,79 @@ class NativeBody:
         if not command:
             raise ValueError("command body action requires command")
 
-        # Reuse the mature Hermes terminal stack rather than implementing a
-        # second shell/session/container subsystem in the resident kernel.
-        from tools.terminal_tool import terminal_tool
-
-        raw = terminal_tool(
-            command=command,
-            background=bool(action.args.get("background", False)),
-            timeout=(
-                int(action.args["timeout"])
-                if action.args.get("timeout") is not None
-                else None
-            ),
-            task_id=str(action.args.get("task_id") or action.event_id or "zn-resident"),
-            session_id=str(action.args.get("session_id") or action.event_id or "zn-resident"),
-            workdir=(
-                str(action.args["workdir"])
-                if action.args.get("workdir") is not None
-                else None
-            ),
-            pty=bool(action.args.get("pty", False)),
-            notify_on_complete=bool(action.args.get("notify_on_complete", False)),
+        context_id = str(
+            action.args.get("session_id")
+            or action.args.get("task_id")
+            or action.event_id
+            or "zn-resident"
         )
-        try:
-            payload = json.loads(raw)
-        except (TypeError, json.JSONDecodeError):
-            payload = {"output": str(raw), "exit_code": None}
-
-        exit_code = payload.get("exit_code")
-        status = str(payload.get("status") or "").lower()
-        success = bool(
-            status in {"running", "success", "completed"}
-            or exit_code == 0
-            or (bool(action.args.get("background")) and payload.get("session_id"))
+        explicit_env = action.args.get("env")
+        env = (
+            {str(key): str(value) for key, value in explicit_env.items()}
+            if isinstance(explicit_env, dict)
+            else {}
         )
-        output = str(payload.get("output") or payload.get("stdout") or "")
-        error = payload.get("error")
+        result = get_zn_local_terminal().execute(
+            TerminalRequest(
+                command=command,
+                context_id=context_id,
+                workdir=(
+                    str(action.args["workdir"])
+                    if action.args.get("workdir") is not None
+                    else None
+                ),
+                timeout=float(action.args.get("timeout", 60.0)),
+                background=bool(action.args.get("background", False)),
+                pty=bool(action.args.get("pty", False)),
+                env=env,
+                max_output_chars=max(128, int(action.args.get("max_output_chars", 50_000))),
+            )
+        )
+        return self._terminal_body_result(action, started, result)
+
+    def _terminal_session(
+        self,
+        action: BodyAction,
+        started: str,
+        *,
+        operation: str,
+    ) -> BodyActionResult:
+        session_id = str(action.args.get("session_id") or "").strip()
+        if not session_id:
+            raise ValueError(f"{action.kind} body action requires session_id")
+        terminal = get_zn_local_terminal()
+        if operation == "poll":
+            result = terminal.poll(session_id)
+            return self._terminal_body_result(action, started, result)
+        if operation == "stop":
+            result = terminal.stop(session_id)
+            payload = asdict(result)
+            return BodyActionResult(
+                action_id=action.action_id,
+                kind=action.kind,
+                success=True,
+                output=result.output,
+                data=payload,
+                error=None,
+                event_id=action.event_id,
+                started_at=started,
+                completed_at=utc_now(),
+            )
+        raise ValueError(f"unknown terminal session operation: {operation}")
+
+    @staticmethod
+    def _terminal_body_result(
+        action: BodyAction,
+        started: str,
+        result: TerminalResult,
+    ) -> BodyActionResult:
         return BodyActionResult(
             action_id=action.action_id,
             kind=action.kind,
-            success=success,
-            output=output,
-            data=payload,
-            error=str(error) if error else None,
+            success=result.success,
+            output=result.output,
+            data=asdict(result),
+            error=result.error,
             event_id=action.event_id,
             started_at=started,
             completed_at=utc_now(),
