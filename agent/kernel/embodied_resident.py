@@ -13,10 +13,11 @@ from .self_model import TaskReadiness
 class EmbodiedResidentRuntime(ZNResidentRuntime):
     """Resident runtime whose native cognition can produce concrete body action.
 
-    The base resident owns continuity, memory, investigation, impasses and
-    external cognition. This layer closes the missing native loop:
+    The base resident owns continuity, memory, impasses and external cognition.
+    This embodied resident is born with its Body, embodied Investigation and
+    stage-aware Life core already attached, then closes the native loop:
 
-        Thought -> structured action intent -> Body -> observed result -> Self
+        Situation -> Thought -> Body -> evidence/outcome -> Situation
 
     It does not turn tools into skills and it does not add policy gates. Body
     remains an organ; the resident decides when and why to move it.
@@ -26,6 +27,23 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         *ZNResidentRuntime._ACTIVE_THOUGHT_KINDS,
         "body_action",
     }
+
+    def __init__(self, *, kernel, capabilities=None, budget=None):
+        super().__init__(
+            kernel=kernel,
+            capabilities=capabilities,
+            budget=budget,
+        )
+        # The compatibility base constructor establishes the durable self and
+        # wake transition first. The embodied organs then replace the base
+        # implementations while retaining exactly the same persistent state.
+        from .body import NativeBody
+        from .embodied_investigation import EmbodiedInvestigator
+        from .embodied_life import EmbodiedLifeCore
+
+        self.body = NativeBody(resident=self)
+        self.investigator = EmbodiedInvestigator(self)
+        self.life = EmbodiedLifeCore(self)
 
     def _advance_event_step(
         self,
@@ -112,15 +130,7 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
             return None
 
         intent = NativeActionIntent.from_dict(raw)
-        body = getattr(self, "body", None)
-        if body is None:
-            state.data["local_failure"] = "native body is not attached to this runtime"
-            state.stage = "native_deliberation"
-            state.next_action = "reason about unavailable body"
-            self.store.save_working_state(state)
-            return None
-
-        result = body.act(
+        result = self.body.act(
             intent.kind,
             event_id=event.event_id,
             **dict(intent.args),
