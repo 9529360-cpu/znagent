@@ -21,6 +21,9 @@ class CognitiveSituation(SituationModel):
     native_action_intent_id: str | None = None
     native_action_kind: str | None = None
     native_action_reason: str | None = None
+    last_body_action_kind: str | None = None
+    last_body_action_success: bool | None = None
+    last_body_action_error: str | None = None
 
 
 class EmbodiedLifeCore(ZNLifeCore):
@@ -28,8 +31,9 @@ class EmbodiedLifeCore(ZNLifeCore):
 
     The base life loop already supplies continuity, body sensing, events,
     impasses and native Thought. This layer makes ongoing orientation,
-    investigation, deliberation and body intention part of Situation itself,
-    so each new Thought is a consequence of what ZN just experienced.
+    investigation, deliberation, body intention and body feedback part of
+    Situation itself, so each new Thought is a consequence of what ZN just
+    experienced.
     """
 
     def _build_situation(
@@ -62,6 +66,8 @@ class EmbodiedLifeCore(ZNLifeCore):
 
         raw_intent = working.data.get("native_action_intent")
         intent = raw_intent if isinstance(raw_intent, dict) else {}
+        raw_result = working.data.get("native_action_result")
+        action_result = raw_result if isinstance(raw_result, dict) else {}
         data = asdict(base)
         return CognitiveSituation(
             **data,
@@ -86,6 +92,17 @@ class EmbodiedLifeCore(ZNLifeCore):
             ),
             native_action_reason=(
                 str(intent.get("reason")) if intent.get("reason") else None
+            ),
+            last_body_action_kind=(
+                str(action_result.get("kind")) if action_result.get("kind") else None
+            ),
+            last_body_action_success=(
+                bool(action_result.get("success"))
+                if "success" in action_result
+                else None
+            ),
+            last_body_action_error=(
+                str(action_result.get("error")) if action_result.get("error") else None
             ),
         )
 
@@ -119,6 +136,20 @@ class EmbodiedLifeCore(ZNLifeCore):
             )
             if investigation_known not in thought.known:
                 thought.known = (*thought.known, investigation_known)
+
+        if situation.last_body_action_kind:
+            if situation.last_body_action_success is False:
+                body_unknown = (
+                    situation.last_body_action_error
+                    or f"body action {situation.last_body_action_kind} failed"
+                )
+                if body_unknown not in thought.unknown:
+                    thought.unknown = (*thought.unknown, body_unknown)
+                body_known = f"my last body movement was {situation.last_body_action_kind} and it failed"
+            else:
+                body_known = f"my last body movement was {situation.last_body_action_kind}"
+            if body_known not in thought.known:
+                thought.known = (*thought.known, body_known)
 
         if stage in {"idle", "orient"}:
             action = "orient to the active event using my own state"
@@ -186,4 +217,7 @@ class EmbodiedLifeCore(ZNLifeCore):
         data.setdefault("native_action_intent_id", None)
         data.setdefault("native_action_kind", None)
         data.setdefault("native_action_reason", None)
+        data.setdefault("last_body_action_kind", None)
+        data.setdefault("last_body_action_success", None)
+        data.setdefault("last_body_action_error", None)
         return CognitiveSituation(**data)
