@@ -6,6 +6,14 @@ if TYPE_CHECKING:
     from .nervous_system import NeuralTrace
 
 
+def _unit_float(raw: Any) -> float:
+    try:
+        value = float(raw or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, min(1.0, value))
+
+
 def active_schema_relations(trace: NeuralTrace) -> tuple[dict[str, Any], ...]:
     """Return current usable schema relations, not superseded predictions.
 
@@ -26,11 +34,8 @@ def active_schema_relations(trace: NeuralTrace) -> tuple[dict[str, Any], ...]:
         status = str(raw.get("status") or "expected").strip().lower()
         if not family or not value or status == "contested":
             continue
-        try:
-            confidence = max(0.0, min(1.0, float(raw.get("confidence") or 0.0)))
-            support = max(0.0, min(1.0, float(raw.get("support_ratio") or 0.0)))
-        except (TypeError, ValueError):
-            continue
+        confidence = _unit_float(raw.get("confidence"))
+        support = _unit_float(raw.get("support_ratio"))
         if confidence < 0.35 and support < 0.45 and not raw.get("anchor"):
             continue
         item = dict(raw)
@@ -44,8 +49,8 @@ def active_schema_relations(trace: NeuralTrace) -> tuple[dict[str, Any], ...]:
         key=lambda item: (
             bool(item.get("stabilized_from_prediction_error")),
             str(item.get("status") or "") == "expected",
-            float(item.get("confidence") or 0.0),
-            float(item.get("support_ratio") or 0.0),
+            _unit_float(item.get("confidence")),
+            _unit_float(item.get("support_ratio")),
             bool(item.get("anchor")),
         ),
         reverse=True,
@@ -61,9 +66,8 @@ def schema_reality_score(trace: NeuralTrace) -> float:
     relations = active_schema_relations(trace)
     if not relations:
         return 0.0
-    prediction_confidence = max(
-        0.0,
-        min(1.0, float(trace.metadata.get("prediction_confidence") or 0.0)),
+    prediction_confidence = _unit_float(
+        trace.metadata.get("prediction_confidence")
     )
     stable = [
         item for item in relations
@@ -82,8 +86,8 @@ def schema_reality_score(trace: NeuralTrace) -> float:
     top = relations[0]
     score = (
         0.34 * prediction_confidence
-        + 0.28 * float(top.get("confidence") or 0.0)
-        + 0.20 * float(top.get("support_ratio") or 0.0)
+        + 0.28 * _unit_float(top.get("confidence"))
+        + 0.20 * _unit_float(top.get("support_ratio"))
         + 0.12 * min(1.0, len(stable) / 2.0)
         + 0.06 * min(1.0, len(relations) / 4.0)
     )
@@ -128,6 +132,6 @@ def relation_reality_bonus(trace: NeuralTrace, family: str, value: str) -> float
             bonus += 0.06
         if item.get("stabilized_from_prediction_error"):
             bonus += 0.14
-        bonus += 0.06 * float(item.get("confidence") or 0.0)
+        bonus += 0.06 * _unit_float(item.get("confidence"))
         return min(0.30, bonus)
     return 0.0
