@@ -4,6 +4,7 @@ from typing import Any
 
 from .investigation import NativeInvestigator
 from .models import AgentEvent
+from .reconsolidation import SchemaReconsolidator
 from .self_model import TaskReadiness
 
 
@@ -16,6 +17,94 @@ class EmbodiedInvestigator(NativeInvestigator):
     predictions. Perception, action, and prior lived structure therefore meet
     inside one investigation instead of becoming separate agent components.
     """
+
+    def investigate(
+        self,
+        event: AgentEvent,
+        readiness: TaskReadiness,
+        *,
+        learning_evidence: list[dict[str, Any]] | None = None,
+        local_failure: str | None = None,
+    ):
+        result = super().investigate(
+            event,
+            readiness,
+            learning_evidence=learning_evidence,
+            local_failure=local_failure,
+        )
+        predictions = result.state.facts.get("schema_predictions")
+        nervous = getattr(self.resident, "nervous", None)
+        if not isinstance(predictions, list) or not predictions or nervous is None:
+            return result
+
+        feedback = SchemaReconsolidator(nervous).evaluate(
+            predictions,
+            result.state.facts,
+            event_id=event.event_id,
+        )
+        if not feedback:
+            return result
+
+        existing = result.state.facts.get("schema_prediction_feedback")
+        records = list(existing) if isinstance(existing, list) else []
+        known_keys = {
+            str(item.get("reconsolidation_key") or "")
+            for item in records
+            if isinstance(item, dict)
+        }
+        evidence = list(result.state.evidence)
+        for item in feedback:
+            if item.reconsolidation_key not in known_keys:
+                records.append(item.to_dict())
+                known_keys.add(item.reconsolidation_key)
+            if item.status == "supported":
+                note = (
+                    f"prediction error {item.prediction_error:.3f}: current evidence "
+                    f"supports schema {item.schema_trace_id}; the schema was reinforced"
+                )
+            elif item.status == "refined":
+                note = (
+                    f"prediction error {item.prediction_error:.3f}: current evidence "
+                    f"partly contradicts schema {item.schema_trace_id}; the schema was "
+                    "reconsolidated and the exception was preserved"
+                )
+            elif item.status == "contradicted":
+                note = (
+                    f"prediction error {item.prediction_error:.3f}: current evidence "
+                    f"contradicts schema {item.schema_trace_id}; the schema was weakened "
+                    "and the exception was preserved"
+                )
+            else:
+                note = (
+                    f"current {', '.join(item.observation_channels) or 'body'} evidence "
+                    f"did not directly test schema {item.schema_trace_id}; no neural "
+                    "prediction strength was changed"
+                )
+            self._append_unique(evidence, note)
+
+        result.state.facts["schema_prediction_feedback"] = records[-16:]
+        result.state.evidence = tuple(evidence[-64:])
+        result.state.updated_at = feedback[-1].at
+
+        if event.kind == "intention_probe" and result.resolved:
+            changed = [item for item in feedback if item.status != "untested"]
+            if changed:
+                latest = changed[-1]
+                suffix = (
+                    f" Reality feedback {latest.status} the activated pattern "
+                    f"(prediction error={latest.prediction_error:.3f}); the result was "
+                    "written back into my persistent neural state."
+                )
+            else:
+                suffix = (
+                    " The current observation did not test a structured expectation "
+                    "inside the schema, so I left its neural strength unchanged."
+                )
+            result.response = f"{result.response}{suffix}"
+            result.state.resolution = result.response
+
+        self._save(result.state)
+        return result
 
     def _seed_hypotheses(
         self,
@@ -50,6 +139,30 @@ class EmbodiedInvestigator(NativeInvestigator):
         predictions = facts.get("schema_predictions")
         if not isinstance(predictions, list) or not predictions:
             return
+        feedback = facts.get("schema_prediction_feedback")
+        if isinstance(feedback, list) and feedback:
+            latest = feedback[-1] if isinstance(feedback[-1], dict) else {}
+            status = str(latest.get("status") or "")
+            error = float(latest.get("prediction_error") or 0.0)
+            if status == "supported":
+                self._append_unique(
+                    hypotheses,
+                    "current reality supports the activated schema with "
+                    f"prediction error {error:.3f}",
+                )
+            elif status == "refined":
+                self._append_unique(
+                    hypotheses,
+                    f"current reality partly contradicts the activated schema; its "
+                    f"prediction structure was reconsolidated (error={error:.3f})",
+                )
+            elif status == "contradicted":
+                self._append_unique(
+                    hypotheses,
+                    f"current reality contradicts the activated schema; the old pattern "
+                    f"was weakened and an exception retained (error={error:.3f})",
+                )
+
         concrete_keys = {
             key
             for key in facts
@@ -57,6 +170,8 @@ class EmbodiedInvestigator(NativeInvestigator):
             not in {
                 "related_experience_count",
                 "schema_predictions",
+                "schema_prediction_feedback",
+                "schema_reconsolidation_keys",
             }
         }
         if concrete_keys:
@@ -266,7 +381,12 @@ class EmbodiedInvestigator(NativeInvestigator):
         concrete = {
             key: value
             for key, value in facts.items()
-            if key not in {"related_experience_count", "schema_predictions"}
+            if key not in {
+                "related_experience_count",
+                "schema_predictions",
+                "schema_prediction_feedback",
+                "schema_reconsolidation_keys",
+            }
             and value not in (None, [], {}, "")
         }
         if not concrete:
