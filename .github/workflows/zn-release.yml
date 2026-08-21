@@ -2,6 +2,8 @@ name: ZN Release
 
 on:
   push:
+    branches:
+      - dev/zn-agent
     tags:
       - 'zn-v*'
   workflow_dispatch:
@@ -14,6 +16,7 @@ on:
 
 permissions:
   contents: write
+  statuses: write
 
 env:
   CI: 'true'
@@ -73,7 +76,7 @@ jobs:
             VERSION="${GITHUB_REF_NAME#zn-v}"
             TAG="$GITHUB_REF_NAME"
           else
-            VERSION="${{ inputs.version }}"
+            VERSION="${{ inputs.version || '0.17.0' }}"
             TAG=""
           fi
           node - "$VERSION" <<'NODE'
@@ -139,6 +142,30 @@ jobs:
             apps/desktop/release/*.rpm
             apps/desktop/release/zn-release-*.json
           retention-days: 14
+
+  package-status:
+    name: Publish multi-OS package status
+    if: ${{ always() }}
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Publish package verification status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const result = '${{ needs.package.result }}'
+            const state = result === 'success' ? 'success' : result === 'failure' ? 'failure' : 'error'
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state,
+              context: 'ZN Release Package / multi-OS',
+              description: `ZN release package: ${result}`.slice(0, 140),
+              target_url: runUrl,
+            })
 
   publish:
     name: Publish ZN Release Channel
