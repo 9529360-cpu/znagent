@@ -15,6 +15,11 @@ contextBridge.exposeInMainWorld('znDesktop', {
     thoughts: limit => ipcRenderer.invoke('zn:resident:thoughts', limit),
     impasses: limit => ipcRenderer.invoke('zn:resident:impasses', limit),
     learning: limit => ipcRenderer.invoke('zn:resident:learning', limit),
+    neural: limit => ipcRenderer.invoke('zn:resident:neural', limit),
+    perceive: payload => ipcRenderer.invoke('zn:resident:perceive', payload),
+    worldFollow: payload => ipcRenderer.invoke('zn:resident:world-follow', payload),
+    worldFocuses: payload => ipcRenderer.invoke('zn:resident:world-focuses', payload || {}),
+    worldObserve: payload => ipcRenderer.invoke('zn:resident:world-observe', payload),
     submit: payload => ipcRenderer.invoke('zn:resident:submit', payload),
     remember: payload => ipcRenderer.invoke('zn:resident:remember', payload),
     forget: key => ipcRenderer.invoke('zn:resident:forget', key)
