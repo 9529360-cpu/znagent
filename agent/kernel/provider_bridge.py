@@ -1,8 +1,21 @@
 from __future__ import annotations
 
+"""ZN runtime construction and temporary legacy compatibility seams.
+
+The public function names are retained while callers migrate, but the default
+resident path is now ZN-owned: ZN config + ZN route resolution + ZN cognitive
+resources.  Legacy provider/AIAgent construction is used only when a caller
+explicitly injects a legacy resolver/builder/agent kwargs.
+"""
+
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from .cognitive_resource import (
+    CognitiveResourceWorkerFactory,
+    resolve_openai_compatible_route,
+)
+from .config import load_zn_config
 from .home import get_zn_home
 from .models import ModelRoute
 from .runtime import ZNKernelRuntime
@@ -11,6 +24,19 @@ from .worker import LegacyAIAgentWorkerFactory, UnavailableModelWorkerFactory
 
 
 RuntimeResolver = Callable[..., dict[str, Any]]
+
+
+_ROUTE_METADATA_KEYS = (
+    "base_url",
+    "api_key",
+    "api_mode",
+    "temperature",
+    "max_tokens",
+    "top_p",
+    "seed",
+    "timeout",
+    "extra_body",
+)
 
 
 def route_from_spec(spec: dict[str, Any], index: int = 0) -> ModelRoute:
@@ -36,7 +62,7 @@ def route_from_spec(spec: dict[str, Any], index: int = 0) -> ModelRoute:
         latency_weight=max(0.0, min(1.0, float(spec.get("latency_weight", 0.5)))),
         metadata={
             key: spec[key]
-            for key in ("base_url", "api_key", "api_mode")
+            for key in _ROUTE_METADATA_KEYS
             if spec.get(key) is not None
         },
     )
@@ -47,6 +73,7 @@ def resolve_model_routes(
     *,
     resolver: RuntimeResolver,
 ) -> list[ModelRoute]:
+    """Temporary adapter for callers that explicitly request the old resolver."""
     resolved_routes: list[ModelRoute] = []
     for index, spec in enumerate(specs):
         route = route_from_spec(spec, index)
@@ -71,20 +98,39 @@ def resolve_model_routes(
     return resolved_routes
 
 
+def resolve_zn_routes(specs: Iterable[dict[str, Any]]) -> list[ModelRoute]:
+    """Resolve configured routes entirely inside ZN's resource layer."""
+    return [
+        resolve_openai_compatible_route(route_from_spec(spec, index))
+        for index, spec in enumerate(specs)
+    ]
+
+
 def _current_model_spec(config: dict[str, Any]) -> dict[str, Any] | None:
     model_cfg = config.get("model") or {}
     if isinstance(model_cfg, str):
         model = model_cfg.strip()
         provider = "auto"
+        metadata: dict[str, Any] = {}
     elif isinstance(model_cfg, dict):
         raw_model = model_cfg.get("default") or model_cfg.get("model") or ""
+        nested: dict[str, Any] = {}
         if isinstance(raw_model, dict):
+            nested = raw_model
             raw_model = raw_model.get("model") or raw_model.get("id") or ""
         model = str(raw_model or "").strip()
-        provider = str(model_cfg.get("provider") or "auto").strip() or "auto"
+        provider = str(
+            nested.get("provider") or model_cfg.get("provider") or "auto"
+        ).strip() or "auto"
+        metadata = {
+            key: nested.get(key, model_cfg.get(key))
+            for key in _ROUTE_METADATA_KEYS
+            if nested.get(key, model_cfg.get(key)) is not None
+        }
     else:
         model = ""
         provider = "auto"
+        metadata = {}
     if not model:
         return None
     return {
@@ -95,6 +141,7 @@ def _current_model_spec(config: dict[str, Any]) -> dict[str, Any] | None:
         "reliability": 0.8,
         "cost_weight": 0.5,
         "latency_weight": 0.5,
+        **metadata,
     }
 
 
@@ -106,16 +153,15 @@ def build_runtime_from_existing_stack(
     agent_builder: Callable[..., Any] | None = None,
     runtime_resolver: RuntimeResolver | None = None,
 ) -> ZNKernelRuntime:
-    """Create a ZN Kernel while reusing the mature provider/tool stack.
+    """Build ZN runtime; legacy plumbing is now explicit opt-in only.
 
-    A configured model is optional. Without one, the resident still boots and
-    System 1 remains fully available; only tasks requiring System 2 fail with a
-    precise "model unavailable" result.
+    The compatibility name remains while call sites migrate.  With no injected
+    legacy resolver/builder/agent kwargs this function loads ZN's own config,
+    resolves OpenAI-compatible resources in ZN, and never imports hermes_cli or
+    constructs run_agent.AIAgent.
     """
     if config is None:
-        from hermes_cli.config import load_config
-
-        config = load_config()
+        config = load_zn_config()
 
     kernel_cfg = config.get("zn_kernel") or {}
     if not isinstance(kernel_cfg, dict):
@@ -133,12 +179,17 @@ def build_runtime_from_existing_stack(
         else:
             route_specs = [current]
 
-    if model_available:
-        if runtime_resolver is None:
-            from hermes_cli.runtime_provider import resolve_runtime_provider
+    legacy_requested = (
+        runtime_resolver is not None
+        or agent_builder is not None
+        or agent_kwargs is not None
+    )
 
-            runtime_resolver = resolve_runtime_provider
-        routes = resolve_model_routes(route_specs, resolver=runtime_resolver)
+    if model_available:
+        if runtime_resolver is not None:
+            routes = resolve_model_routes(route_specs, resolver=runtime_resolver)
+        else:
+            routes = resolve_zn_routes(route_specs)
     else:
         routes = [
             ModelRoute(
@@ -156,7 +207,9 @@ def build_runtime_from_existing_stack(
     if store_path is None:
         store_path = get_zn_home() / "kernel" / "kernel.db"
 
-    if model_available:
+    if not model_available:
+        factory = UnavailableModelWorkerFactory()
+    elif legacy_requested:
         worker_defaults = dict(agent_kwargs or {})
         worker_defaults.setdefault("quiet_mode", True)
         worker_defaults.setdefault("platform", "cli")
@@ -165,7 +218,7 @@ def build_runtime_from_existing_stack(
             agent_builder=agent_builder,
         )
     else:
-        factory = UnavailableModelWorkerFactory()
+        factory = CognitiveResourceWorkerFactory()
 
     return ZNKernelRuntime(
         store=KernelStore(store_path),
@@ -183,15 +236,11 @@ def build_resident_runtime_from_existing_stack(
     agent_builder: Callable[..., Any] | None = None,
     runtime_resolver: RuntimeResolver | None = None,
 ):
-    """Build the resident ZN runtime while reusing mature provider/tool plumbing."""
+    """Build the resident with ZN-owned resources by default."""
     from .budget import CognitiveBudgetManager
     from .world_closed_loop import WorldAwareTransferResidentRuntime
 
-    effective_config = config
-    if effective_config is None:
-        from hermes_cli.config import load_config
-
-        effective_config = load_config()
+    effective_config = config if config is not None else load_zn_config()
 
     kernel = build_runtime_from_existing_stack(
         config=effective_config,
@@ -210,7 +259,4 @@ def build_resident_runtime_from_existing_stack(
             0.0, min(1.0, float(resident_cfg.get("high_risk_threshold", 0.8)))
         ),
     )
-    # Provider plumbing supplies replaceable resources. The resident owns one
-    # persistent nervous substrate and lets reality-gated cross-context recall
-    # influence Will only after the present Situation independently supports it.
     return WorldAwareTransferResidentRuntime(kernel=kernel, budget=budget)
