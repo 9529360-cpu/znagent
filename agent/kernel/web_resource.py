@@ -2,15 +2,13 @@ from __future__ import annotations
 
 """ZN-owned web search/extract resources.
 
-The reference repository already contains mature provider implementations.  ZN
+The reference repository already contains mature provider implementations. ZN
 extracts their transport and normalization behavior behind a resident-owned
 resource interface instead of making ``tools.web_tools`` / the old plugin
 registry the owner of world sensing.
 
-The first concrete provider is Tavily because its mature implementation covers
-both keyed and keyless HTTP search/extract with a small, well-defined protocol.
-Additional providers can be ported behind the same interface without changing
-NativeWorldSense.
+Tavily and Exa are the first extracted providers. Additional mature providers
+can be ported behind the same interface without changing NativeWorldSense.
 """
 
 import json
@@ -180,12 +178,12 @@ class TavilyWebResource:
             detail = str(getattr(response, "text", "") or "").strip() or f"HTTP {status}"
             raise WebResourceError(f"Tavily {endpoint} failed: {detail[:1000]}")
         try:
-            payload = response.json()
+            response_payload = response.json()
         except Exception as exc:
             raise WebResourceError(f"Tavily {endpoint} returned invalid JSON") from exc
-        if not isinstance(payload, dict):
+        if not isinstance(response_payload, dict):
             raise WebResourceError(f"Tavily {endpoint} returned a non-object response")
-        return payload
+        return response_payload
 
 
 def build_zn_web_resource(
@@ -206,32 +204,47 @@ def build_zn_web_resource(
         or web_cfg.get("backend")
         or "tavily"
     ).strip().lower()
-    if provider != "tavily":
-        raise WebResourceError(
-            f"ZN web provider {provider!r} is not extracted yet; available: tavily"
+
+    if provider == "tavily":
+        tavily_cfg = web_cfg.get("tavily") or {}
+        if not isinstance(tavily_cfg, dict):
+            raise ValueError("ZN web.tavily config must be a mapping")
+        api_key = str(
+            tavily_cfg.get("api_key")
+            or web_cfg.get("api_key")
+            or env.get("TAVILY_API_KEY")
+            or ""
+        ).strip()
+        base_url = str(
+            tavily_cfg.get("base_url")
+            or web_cfg.get("base_url")
+            or env.get("TAVILY_BASE_URL")
+            or "https://api.tavily.com"
+        ).strip()
+        timeout = float(tavily_cfg.get("timeout") or web_cfg.get("timeout") or 60.0)
+        return TavilyWebResource(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=timeout,
+            client=client,
         )
 
-    tavily_cfg = web_cfg.get("tavily") or {}
-    if not isinstance(tavily_cfg, dict):
-        raise ValueError("ZN web.tavily config must be a mapping")
-    api_key = str(
-        tavily_cfg.get("api_key")
-        or web_cfg.get("api_key")
-        or env.get("TAVILY_API_KEY")
-        or ""
-    ).strip()
-    base_url = str(
-        tavily_cfg.get("base_url")
-        or web_cfg.get("base_url")
-        or env.get("TAVILY_BASE_URL")
-        or "https://api.tavily.com"
-    ).strip()
-    timeout = float(tavily_cfg.get("timeout") or web_cfg.get("timeout") or 60.0)
-    return TavilyWebResource(
-        api_key=api_key,
-        base_url=base_url,
-        timeout=timeout,
-        client=client,
+    if provider == "exa":
+        from .exa_web_resource import ExaWebResource
+
+        exa_cfg = web_cfg.get("exa") or {}
+        if not isinstance(exa_cfg, dict):
+            raise ValueError("ZN web.exa config must be a mapping")
+        api_key = str(
+            exa_cfg.get("api_key")
+            or web_cfg.get("api_key")
+            or env.get("EXA_API_KEY")
+            or ""
+        ).strip()
+        return ExaWebResource(api_key=api_key, client=client)
+
+    raise WebResourceError(
+        f"ZN web provider {provider!r} is not extracted yet; available: tavily, exa"
     )
 
 
