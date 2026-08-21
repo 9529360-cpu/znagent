@@ -46,6 +46,11 @@ class EmbodiedInvestigator(NativeInvestigator):
         if not feedback:
             return result
 
+        self._bind_prediction_feedback_to_event(
+            nervous,
+            feedback,
+            event.event_id,
+        )
         structural_merges = SchemaStructurePlasticity(nervous).compact(
             seed_ids=[item.schema_trace_id for item in feedback],
         )
@@ -137,6 +142,27 @@ class EmbodiedInvestigator(NativeInvestigator):
 
         self._save(result.state)
         return result
+
+    @staticmethod
+    def _bind_prediction_feedback_to_event(nervous, feedback, event_id: str) -> None:
+        """Bind the latest neural reality check to the lived event that caused it."""
+        for item in feedback:
+            if item.status == "untested":
+                continue
+            schema = nervous._get_trace(item.schema_trace_id)
+            if schema is None or schema.channel != "schema":
+                continue
+            record = schema.metadata.get("last_prediction_feedback")
+            if not isinstance(record, dict):
+                continue
+            if str(record.get("reconsolidation_key") or "") != str(
+                item.reconsolidation_key
+            ):
+                continue
+            bound = dict(record)
+            bound["event_id"] = str(event_id)
+            schema.metadata["last_prediction_feedback"] = bound
+            nervous._save_trace(schema)
 
     def _seed_hypotheses(
         self,

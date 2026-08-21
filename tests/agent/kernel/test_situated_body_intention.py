@@ -6,6 +6,7 @@ from pathlib import Path
 
 from agent.kernel import ExecutionPath
 from agent.kernel.provider_bridge import build_resident_runtime_from_existing_stack
+from agent.kernel.schema_structure import SchemaStructurePlasticity
 
 
 class SituatedBodyIntentionTests(unittest.TestCase):
@@ -44,6 +45,59 @@ class SituatedBodyIntentionTests(unittest.TestCase):
         if not schemas:
             raise AssertionError("expected a body schema")
         return schemas[0], body, system
+
+    @staticmethod
+    def _seed_body_snapshot_schema(resident):
+        body = resident.body.sense()
+        system = str(body.get("system") or "").strip().lower()
+        architecture = str(body.get("architecture") or "").strip().lower()
+        total = max(1, int(body.get("disk_total_bytes") or 1))
+        free = max(0, int(body.get("disk_free_bytes") or 0))
+        ratio = free / total
+        disk_state = (
+            "low"
+            if ratio < 0.10
+            else "constrained"
+            if ratio < 0.20
+            else "healthy"
+        )
+        if not system or not architecture:
+            raise AssertionError("resident body identity should be observable")
+        relations = (
+            f"system:{system}",
+            f"architecture:{architecture}",
+            f"disk_state:{disk_state}",
+        )
+        features = ("body_snapshot_pattern", *relations)
+        resident.perceive_world(
+            "body_snapshot_pattern carried the same host snapshot relations",
+            features=features,
+            salience=0.86,
+            arousal=0.54,
+        )
+        resident.perceive_visual(
+            "the body snapshot pattern repeated across current visual context",
+            features=features,
+            salience=0.84,
+            arousal=0.52,
+        )
+        resident.nervous.perceive(
+            "action",
+            "body sensing encountered body_snapshot_pattern again",
+            features=features,
+            salience=0.82,
+            arousal=0.50,
+        )
+        resident.nervous.consolidate()
+        schemas = [
+            trace
+            for trace in resident.nervous.recent_traces(100)
+            if trace.channel == "schema"
+            and "body_snapshot_pattern" in trace.features
+        ]
+        if not schemas:
+            raise AssertionError("expected a body snapshot schema")
+        return schemas[0], relations
 
     def test_body_relation_forms_through_situated_structure(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -122,6 +176,90 @@ class SituatedBodyIntentionTests(unittest.TestCase):
             self.assertEqual(feedback[-1].get("status"), "supported")
             support = set(feedback[-1].get("support") or ())
             self.assertIn(f"system:{system}", support)
+            self.assertEqual(resident.store.get_runtime_metrics().model_invocations, 0)
+            resident.store.close()
+
+    def test_one_body_snapshot_covers_all_relations_for_next_formation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            schema, relations = self._seed_body_snapshot_schema(resident)
+            intention = resident.intend(
+                "understand body_snapshot_pattern current host behavior",
+                priority=7,
+            )
+
+            terminal = None
+            for _ in range(30):
+                terminal = resident.live_once()
+                if terminal is not None:
+                    break
+
+            self.assertIsNotNone(terminal)
+            self.assertTrue(terminal.success)
+            self.assertEqual(terminal.execution_path, ExecutionPath.INVESTIGATION)
+            self.assertEqual(terminal.model_invocations, 0)
+            investigation = resident.investigator.current(terminal.event.event_id)
+            self.assertIsNotNone(investigation)
+            feedback = investigation.facts.get("schema_prediction_feedback") or []
+            current_feedback = next(
+                item
+                for item in feedback
+                if item.get("schema_trace_id") == schema.trace_id
+            )
+            support = set(current_feedback.get("support") or ())
+            for relation in relations:
+                self.assertIn(relation, support)
+
+            resolved = SchemaStructurePlasticity(resident.nervous).resolve_schema(
+                schema.trace_id
+            )
+            self.assertIsNotNone(resolved)
+            persisted_feedback = (
+                resolved.metadata.get("last_prediction_feedback") or {}
+            )
+            self.assertEqual(
+                persisted_feedback.get("event_id"),
+                terminal.event.event_id,
+            )
+
+            lived = resident.will.get(intention.intention_id)
+            self.assertIsNotNone(lived)
+            targeted = resident.intention_formation._targeted_expectation_signatures(
+                lived
+            )
+            tested = resident.intention_formation._tested_expectation_signatures(
+                lived,
+                resolved.metadata,
+            )
+            expected_signatures = {
+                resident.intention_formation._expectation_signature(
+                    *relation.split(":", 1)
+                )
+                for relation in relations
+            }
+            self.assertTrue(targeted)
+            self.assertTrue(targeted.issubset(tested))
+            self.assertTrue(expected_signatures.issubset(tested))
+
+            activation = next(
+                item
+                for item in resident.nervous.activate(
+                    intention.description,
+                    channels=resident._INCUBATION_CHANNELS,
+                    limit=12,
+                )
+                if item.trace.trace_id == resolved.trace_id
+            )
+            follow_up = resident.intention_formation.form(
+                lived,
+                activation,
+                situation=resident.life.snapshot().current_situation,
+                body=resident.life.snapshot().body,
+            )
+            self.assertIsNone(follow_up)
             self.assertEqual(resident.store.get_runtime_metrics().model_invocations, 0)
             resident.store.close()
 

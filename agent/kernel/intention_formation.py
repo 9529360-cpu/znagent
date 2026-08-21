@@ -101,9 +101,20 @@ class NativeIntentionFormation:
             "native_situation_context": self._situation_context(situation, body),
         }
 
-        tested = self._tested_expectation_signatures(intention)
-        recheck = self._recheck_expectation_signatures(schema.metadata)
-        allowed_rechecks = tested.intersection(recheck)
+        targeted = self._targeted_expectation_signatures(intention)
+        tested = self._tested_expectation_signatures(
+            intention,
+            schema.metadata,
+        )
+        recheck = self._recheck_expectation_signatures(
+            schema.metadata,
+            intention=intention,
+        )
+        # A single observation can test several relations at once, but only the
+        # relation Will deliberately targeted earns one confirming recheck after
+        # prediction error. Incidental relations are lived evidence, not new
+        # micro-plans.
+        allowed_rechecks = targeted.intersection(recheck)
         relation = self._select_relation(
             profile,
             intention.description,
@@ -287,7 +298,7 @@ class NativeIntentionFormation:
         return ranked[0][3]
 
     @classmethod
-    def _tested_expectation_signatures(
+    def _targeted_expectation_signatures(
         cls,
         intention: ResidentIntention,
     ) -> set[str]:
@@ -304,22 +315,78 @@ class NativeIntentionFormation:
         }
 
     @classmethod
+    def _tested_expectation_signatures(
+        cls,
+        intention: ResidentIntention,
+        metadata: dict[str, Any] | None = None,
+    ) -> set[str]:
+        targeted = cls._targeted_expectation_signatures(intention)
+        if not targeted:
+            return set()
+        tested = set(targeted)
+        feedback = (metadata or {}).get("last_prediction_feedback")
+        if not isinstance(feedback, dict):
+            return tested
+        if not cls._feedback_belongs_to_intention(feedback, intention):
+            return tested
+
+        for item in feedback.get("support") or ():
+            signature = cls._feedback_relation_signature(item)
+            if signature:
+                tested.add(signature)
+        for item in feedback.get("contradictions") or ():
+            signature = cls._feedback_relation_signature(item)
+            if signature:
+                tested.add(signature)
+        return tested
+
+    @classmethod
+    def _feedback_relation_signature(cls, raw: Any) -> str | None:
+        expected, _, _observed = str(raw or "").partition("->")
+        family, separator, value = expected.partition(":")
+        family = family.strip().lower()
+        value = value.strip().lower()
+        if (
+            not separator
+            or family not in cls._PROBE_BY_FAMILY
+            or not value
+        ):
+            return None
+        return cls._expectation_signature(family, value)
+
+    @staticmethod
+    def _feedback_belongs_to_intention(
+        feedback: dict[str, Any],
+        intention: ResidentIntention,
+    ) -> bool:
+        event_id = str(feedback.get("event_id") or "").strip()
+        if not event_id or not intention.last_outcome:
+            return False
+        marker = f"event {event_id} "
+        return any(marker in str(item) for item in intention.progress)
+
+    @classmethod
     def _recheck_expectation_signatures(
         cls,
         metadata: dict[str, Any],
+        *,
+        intention: ResidentIntention | None = None,
     ) -> set[str]:
         feedback = metadata.get("last_prediction_feedback")
         if not isinstance(feedback, dict):
+            return set()
+        if intention is not None and not cls._feedback_belongs_to_intention(
+            feedback,
+            intention,
+        ):
             return set()
         if str(feedback.get("status") or "") not in {"refined", "contradicted"}:
             return set()
         signatures: set[str] = set()
         for item in feedback.get("contradictions") or ():
-            expected, _, _observed = str(item).partition("->")
-            family, separator, value = expected.partition(":")
-            if not separator or not family or not value:
-                continue
-            signatures.add(cls._expectation_signature(family, value))
+            signature = cls._feedback_relation_signature(item)
+            if signature:
+                signatures.add(signature)
         return signatures
 
     def _probe_target(
