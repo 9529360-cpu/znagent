@@ -103,7 +103,8 @@ class RealityAwareNervousSystem(PersistentNervousSystem):
             direct_score, overlap = direct.get(trace_id, (0.0, 0.0))
             gain = associative.get(trace_id, 0.0)
             score = self._unit(direct_score + gain)
-            if score < 0.12:
+            threshold = 0.04 if trace_id in transfer and direct_score <= 0.0 else 0.12
+            if score < threshold:
                 continue
             activations.append(
                 NeuralActivation(
@@ -152,9 +153,10 @@ class RealityAwareNervousSystem(PersistentNervousSystem):
         activated schema with a meaningful reality-facing profile. The first hop
         must land on a non-schema lived trace. The second hop may reach another
         schema only when its current structured relations do not contradict the
-        source. The resulting gain stays weaker than ordinary one-hop recall.
+        source. The resulting gain is a weak associative activation and cannot
+        outrank a strong direct cue by itself.
         """
-        sources: list[tuple[NeuralTrace, float]] = []
+        sources: list[tuple[NeuralTrace, float, float]] = []
         for trace_id, (score, _overlap) in direct.items():
             trace = by_id.get(trace_id) or self._get_trace(trace_id)
             if trace is None or trace.channel != "schema":
@@ -162,12 +164,12 @@ class RealityAwareNervousSystem(PersistentNervousSystem):
             reality = schema_reality_score(trace)
             if reality < 0.50:
                 continue
-            sources.append((trace, score))
+            sources.append((trace, score, reality))
         if not sources:
             return {}
 
         gains: dict[str, float] = {}
-        for source, source_score in sorted(
+        for source, source_score, source_reality in sorted(
             sources,
             key=lambda item: item[1],
             reverse=True,
@@ -198,16 +200,15 @@ class RealityAwareNervousSystem(PersistentNervousSystem):
                     compatibility = self._schema_transfer_compatibility(source, target)
                     if compatibility <= 0.0:
                         continue
-                    source_reality = schema_reality_score(source)
+                    bridge_strength = math.sqrt(first_strength * second_strength)
                     gain = (
                         source_score
-                        * first_strength
-                        * second_strength
+                        * bridge_strength
                         * source_reality
                         * compatibility
-                        * 0.22
+                        * 0.60
                     )
-                    if gain < 0.03:
+                    if gain < 0.04:
                         continue
                     gains[target_id] = max(gains.get(target_id, 0.0), self._unit(gain))
         return gains
