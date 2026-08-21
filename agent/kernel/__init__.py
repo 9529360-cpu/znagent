@@ -4,6 +4,7 @@ The resident kernel is the persistent agent. Language models are replaceable,
 on-demand cognitive resources rather than the holder of identity or continuity.
 """
 
+from .action import NativeActionIntent, derive_native_action_intent
 from .body import BodyAction, BodyActionResult, NativeBody
 from .budget import CognitiveBudgetManager
 from .capabilities import CapabilityRegistry, CallableCapability, ExactTaskCapability
@@ -11,6 +12,7 @@ from .capability_loader import LoadedCapability, PromotedCapabilityLoader
 from .critic import DefaultCritic
 from .embodied_investigation import EmbodiedInvestigator
 from .embodied_life import CognitiveSituation, EmbodiedLifeCore
+from .embodied_resident import EmbodiedResidentRuntime
 from .home import get_zn_home
 from .investigation import InvestigationResult, InvestigationState, NativeInvestigator
 from .life import (
@@ -78,9 +80,11 @@ __all__ = [
     "CognitiveDecision",
     "CognitiveSituation",
     "DefaultCritic",
+    "derive_native_action_intent",
     "DomainReadiness",
     "EmbodiedInvestigator",
     "EmbodiedLifeCore",
+    "EmbodiedResidentRuntime",
     "EventOutcome",
     "EventStatus",
     "ExactTaskCapability",
@@ -103,6 +107,7 @@ __all__ = [
     "LoadedCapability",
     "ModelRoute",
     "ModelRouter",
+    "NativeActionIntent",
     "NativeBody",
     "NativeInvestigator",
     "NoRouteAvailable",
