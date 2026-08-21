@@ -3,12 +3,14 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from .adaptive_guidance import active_schema_relations
 from .adaptive_nervous_system import RealityAwareNervousSystem
 from .intention_formation import (
     NativeIntentionCandidate,
     NativeIntentionFormation,
     SituatedIntentionalResidentRuntime,
 )
+from .schema_structure import SchemaStructurePlasticity
 
 if TYPE_CHECKING:
     from .life import BodyState, SituationModel
@@ -22,6 +24,12 @@ class TransferAwareSituatedResidentRuntime(SituatedIntentionalResidentRuntime):
     candidate, but association alone cannot mature it. Current Situation evidence
     must independently support the candidate relation before repetition is
     allowed to strengthen Will.
+
+    If that matured candidate is later reality-tested, relation-specific
+    prediction feedback reshapes the exact lived transfer path that recalled it.
+    Supported transfer becomes easier to recall again; contradicted transfer
+    weakens only the target side of that path and never rewrites the source
+    schema's already-stabilized relation.
     """
 
     _TRANSFER_MIN_GAIN = 0.04
@@ -164,12 +172,20 @@ class TransferAwareSituatedResidentRuntime(SituatedIntentionalResidentRuntime):
                     situation=situation,
                     body=life_state.body,
                 )
+                source_schema_id = str(
+                    getattr(activation, "transfer_source_trace_id", "") or ""
+                ).strip()
+                bridge_trace_id = str(
+                    getattr(activation, "transfer_bridge_trace_id", "") or ""
+                ).strip()
                 candidate.payload = {
                     **candidate.payload,
                     "transfer_informed": True,
                     "transfer_gain": round(transfer_gain, 5),
                     "transfer_context_supported": context_supported,
                     "transfer_context_basis": context_basis,
+                    "transfer_source_schema_id": source_schema_id,
+                    "transfer_bridge_trace_id": bridge_trace_id,
                 }
                 candidate.reason = (
                     f"{candidate.reason}; a reality-corrected neighboring schema "
@@ -264,3 +280,101 @@ class TransferAwareSituatedResidentRuntime(SituatedIntentionalResidentRuntime):
                 min(0.95, updated.candidate_maturity),
             )
         return True
+
+    def _complete_result(self, event, result):
+        completed = super()._complete_result(event, result)
+        self._apply_transfer_outcome_plasticity(completed.event)
+        return completed
+
+    def _apply_transfer_outcome_plasticity(self, event) -> str | None:
+        """Reward or weaken the exact transfer path after relation-level feedback."""
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        if not bool(payload.get("transfer_informed")):
+            return None
+        if not bool(payload.get("transfer_context_supported")):
+            return None
+
+        target_id = str(payload.get("schema_trace_id") or "").strip()
+        source_id = str(payload.get("transfer_source_schema_id") or "").strip()
+        bridge_id = str(payload.get("transfer_bridge_trace_id") or "").strip()
+        expectation = payload.get("schema_expectation")
+        if not target_id or not source_id or not bridge_id or not isinstance(expectation, dict):
+            return None
+
+        plasticity = SchemaStructurePlasticity(self.nervous)
+        source = plasticity.resolve_schema(source_id)
+        target = plasticity.resolve_schema(target_id)
+        bridge = self.nervous._get_trace(bridge_id)
+        if (
+            source is None
+            or target is None
+            or source.channel != "schema"
+            or target.channel != "schema"
+            or source.trace_id == target.trace_id
+            or bridge is None
+            or bridge.channel == "schema"
+        ):
+            return None
+        if not any(
+            bool(item.get("stabilized_from_prediction_error"))
+            for item in active_schema_relations(source)
+        ):
+            return None
+
+        source_edge = self.nervous.link_strength(source.trace_id, bridge.trace_id)
+        target_edge = self.nervous.link_strength(target.trace_id, bridge.trace_id)
+        if source_edge <= 0.0 or target_edge <= 0.0:
+            return None
+
+        feedback = target.metadata.get("last_prediction_feedback")
+        if not isinstance(feedback, dict):
+            return None
+        if str(feedback.get("event_id") or "").strip() != str(event.event_id):
+            return None
+
+        family = self._norm_relation_part(expectation.get("family"))
+        value = self._norm_relation_part(expectation.get("value"))
+        if not family or not value:
+            return None
+        label = f"{family}:{value}"
+        supported = {
+            self._norm_signal(item)
+            for item in feedback.get("support") or ()
+            if str(item).strip()
+        }
+        contradicted = {
+            self._norm_signal(str(item).partition("->")[0])
+            for item in feedback.get("contradictions") or ()
+            if str(item).strip()
+        }
+
+        try:
+            gain = max(0.0, min(1.0, float(payload.get("transfer_gain") or 0.0)))
+        except (TypeError, ValueError):
+            gain = 0.0
+
+        if label in supported:
+            self.nervous._strengthen_link(
+                source.trace_id,
+                bridge.trace_id,
+                amount=0.02 + 0.05 * gain,
+            )
+            self.nervous._strengthen_link(
+                target.trace_id,
+                bridge.trace_id,
+                amount=0.05 + 0.12 * gain,
+            )
+            return "supported"
+
+        if label in contradicted:
+            # The source schema remains untouched: it was already learned in A.
+            # Only the target side of this particular A -> lived bridge -> B path
+            # loses strength because B showed that the transfer did not apply.
+            self.nervous.weaken_transfer_link(
+                target.trace_id,
+                bridge.trace_id,
+                amount=min(0.45, 0.18 + 0.55 * gain),
+            )
+            return "contradicted"
+
+        return "untested"
