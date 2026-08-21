@@ -116,6 +116,51 @@ class NativeActionTests(unittest.TestCase):
             self.assertEqual(result.model_invocations, 0)
             second.store.close()
 
+    def test_failed_body_action_becomes_next_thought_evidence_not_a_retry_loop(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            event = resident.enqueue(
+                "perform the requested local body movement",
+                payload={"body_action": {"kind": "movement_that_does_not_exist"}},
+            )
+            self._advance_until_stage(resident, "native_action")
+
+            # Execute the selected movement. Failure is not terminal here: it
+            # becomes fresh evidence and sends cognition back to investigation.
+            self.assertIsNone(resident.live_once())
+            state = resident.store.get_working_state()
+            self.assertEqual(state.stage, "native_investigation")
+            self.assertIn("unknown body action kind", state.data["local_failure"])
+
+            pulse = resident.pulse()
+            situation = resident.life.snapshot().current_situation
+            self.assertEqual(situation.last_body_action_kind, "movement_that_does_not_exist")
+            self.assertFalse(situation.last_body_action_success)
+            self.assertIn("unknown body action kind", situation.last_body_action_error)
+            self.assertTrue(
+                any("unknown body action kind" in item for item in pulse.thought.unknown)
+            )
+
+            terminal = None
+            for _ in range(12):
+                terminal = resident.live_once()
+                if terminal is not None:
+                    break
+            self.assertIsNotNone(terminal)
+            self.assertFalse(terminal.success)
+
+            repeated = [
+                item
+                for item in resident.body.recent_actions(20)
+                if item.event_id == event.event_id
+                and item.kind == "movement_that_does_not_exist"
+            ]
+            self.assertEqual(len(repeated), 1)
+            resident.store.close()
+
 
 if __name__ == "__main__":
     unittest.main()
