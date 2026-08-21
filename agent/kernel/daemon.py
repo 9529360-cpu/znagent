@@ -16,6 +16,8 @@ class ResidentRpcServer:
 
     The RPC pipe is only a face/control surface. ZN's life loop runs on its own
     background thread, so an idle UI does not mean an idle or recreated self.
+    Slower outside-world perception has its own rhythm and cannot stall the
+    resident heartbeat/thought loop.
     """
 
     def __init__(
@@ -34,6 +36,7 @@ class ResidentRpcServer:
         self._shutdown = False
         self._life_stop = threading.Event()
         self._life_thread: threading.Thread | None = None
+        self._world_thread: threading.Thread | None = None
 
     def serve_forever(self) -> int:
         self.service.acquire()
@@ -249,22 +252,33 @@ class ResidentRpcServer:
         return max(1, min(200, int(params.get("limit") or 20)))
 
     def _start_life_loop(self) -> None:
-        if self._life_thread and self._life_thread.is_alive():
-            return
         self._life_stop.clear()
-        self._life_thread = threading.Thread(
-            target=self._life_loop,
-            name="zn-life",
-            daemon=True,
-        )
-        self._life_thread.start()
+        if not self._life_thread or not self._life_thread.is_alive():
+            self._life_thread = threading.Thread(
+                target=self._life_loop,
+                name="zn-life",
+                daemon=True,
+            )
+            self._life_thread.start()
+
+        world = getattr(self.resident, "world", None)
+        if world is not None and (
+            not self._world_thread or not self._world_thread.is_alive()
+        ):
+            self._world_thread = threading.Thread(
+                target=self._world_loop,
+                name="zn-world-sense",
+                daemon=True,
+            )
+            self._world_thread.start()
 
     def _stop_life_loop(self) -> None:
         self._life_stop.set()
-        thread = self._life_thread
-        if thread and thread.is_alive():
-            thread.join(timeout=max(1.0, self.life_interval * 2.0))
+        for thread in (self._life_thread, self._world_thread):
+            if thread and thread.is_alive():
+                thread.join(timeout=max(1.0, self.life_interval * 2.0))
         self._life_thread = None
+        self._world_thread = None
 
     def _life_loop(self) -> None:
         next_lease_heartbeat = 0.0
@@ -275,13 +289,21 @@ class ResidentRpcServer:
                     self.service.heartbeat()
                     next_lease_heartbeat = now + self.service.heartbeat_interval
                 self.resident.live_once()
-                world = getattr(self.resident, "world", None)
-                if world is not None:
-                    world.maybe_observe()
             except Exception:
-                # The foreground RPC path remains available to report state even
-                # if one perception/action/sensory cycle fails. The next cycle
-                # keeps the same resident alive and tries again.
+                # One failed thought/action cycle does not stop the resident.
+                continue
+
+    def _world_loop(self) -> None:
+        sense_interval = max(5.0, self.life_interval * 2.0)
+        while not self._life_stop.wait(sense_interval):
+            world = getattr(self.resident, "world", None)
+            if world is None:
+                continue
+            try:
+                world.maybe_observe()
+            except Exception:
+                # A slow/broken web provider is a sensory failure, not a heart
+                # failure. Life continues independently on zn-life.
                 continue
 
     @staticmethod
