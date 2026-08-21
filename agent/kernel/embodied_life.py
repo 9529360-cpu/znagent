@@ -24,6 +24,10 @@ class CognitiveSituation(SituationModel):
     last_body_action_kind: str | None = None
     last_body_action_success: bool | None = None
     last_body_action_error: str | None = None
+    cognitive_increment_id: str | None = None
+    cognitive_increment_source: str | None = None
+    cognitive_increment_question: str | None = None
+    cognitive_increment_confidence: float | None = None
 
 
 class EmbodiedLifeCore(ZNLifeCore):
@@ -31,7 +35,7 @@ class EmbodiedLifeCore(ZNLifeCore):
 
     The base life loop already supplies continuity, body sensing, events,
     impasses and native Thought. This layer makes ongoing orientation,
-    investigation, deliberation, body intention and body feedback part of
+    investigation, deliberation, body movement and borrowed cognition part of
     Situation itself, so each new Thought is a consequence of what ZN just
     experienced.
     """
@@ -68,6 +72,8 @@ class EmbodiedLifeCore(ZNLifeCore):
         intent = raw_intent if isinstance(raw_intent, dict) else {}
         raw_result = working.data.get("native_action_result")
         action_result = raw_result if isinstance(raw_result, dict) else {}
+        raw_increment = working.data.get("cognitive_increment")
+        increment = raw_increment if isinstance(raw_increment, dict) else {}
         data = asdict(base)
         return CognitiveSituation(
             **data,
@@ -103,6 +109,22 @@ class EmbodiedLifeCore(ZNLifeCore):
             ),
             last_body_action_error=(
                 str(action_result.get("error")) if action_result.get("error") else None
+            ),
+            cognitive_increment_id=(
+                str(increment.get("increment_id"))
+                if increment.get("increment_id")
+                else None
+            ),
+            cognitive_increment_source=(
+                str(increment.get("source")) if increment.get("source") else None
+            ),
+            cognitive_increment_question=(
+                str(increment.get("question")) if increment.get("question") else None
+            ),
+            cognitive_increment_confidence=(
+                float(increment.get("confidence"))
+                if increment.get("confidence") is not None
+                else None
             ),
         )
 
@@ -151,6 +173,18 @@ class EmbodiedLifeCore(ZNLifeCore):
             if body_known not in thought.known:
                 thought.known = (*thought.known, body_known)
 
+        if situation.cognitive_increment_id:
+            increment_known = (
+                f"borrowed cognition {situation.cognitive_increment_id} returned from "
+                f"{situation.cognitive_increment_source or 'an external resource'}"
+            )
+            if situation.cognitive_increment_confidence is not None:
+                increment_known += (
+                    f" with confidence={situation.cognitive_increment_confidence:.2f}"
+                )
+            if increment_known not in thought.known:
+                thought.known = (*thought.known, increment_known)
+
         if stage in {"idle", "orient"}:
             action = "orient to the active event using my own state"
             kind = "event"
@@ -184,6 +218,13 @@ class EmbodiedLifeCore(ZNLifeCore):
             action = "consult an external cognitive resource for the isolated gap"
             kind = "external_cognition"
             reason = "native cognition has already isolated a specific unresolved gap"
+        elif stage == "cognition_integration" and situation.cognitive_increment_id:
+            action = "integrate borrowed cognition into my own state"
+            kind = "integrate_cognition"
+            reason = (
+                "external cognition has returned as bounded input and must be judged "
+                "inside my own continuing state before I complete or act"
+            )
         else:
             return thought
 
@@ -220,4 +261,8 @@ class EmbodiedLifeCore(ZNLifeCore):
         data.setdefault("last_body_action_kind", None)
         data.setdefault("last_body_action_success", None)
         data.setdefault("last_body_action_error", None)
+        data.setdefault("cognitive_increment_id", None)
+        data.setdefault("cognitive_increment_source", None)
+        data.setdefault("cognitive_increment_question", None)
+        data.setdefault("cognitive_increment_confidence", None)
         return CognitiveSituation(**data)
