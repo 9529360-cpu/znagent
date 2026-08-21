@@ -67,10 +67,7 @@ class SituatedIntentionFormationTests(unittest.TestCase):
             )
             self.assertIn(schema.trace_id, current.candidate_support)
             self.assertEqual(payload.get("native_probe_key"), "git")
-            self.assertEqual(
-                payload.get("workspace_path"),
-                resident.life.snapshot().body.cwd,
-            )
+            self.assertNotIn("workspace_path", payload)
             self.assertEqual(expectation.get("family"), "workspace")
             self.assertEqual(expectation.get("value"), "dirty")
             self.assertEqual(context.get("body_cwd"), resident.life.snapshot().body.cwd)
