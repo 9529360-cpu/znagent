@@ -9,6 +9,7 @@ from .adaptive_nervous_system import (
     RealityAwareNervousSystem,
     RealityTransferEvidence,
 )
+from .models import utc_now
 from .nervous_system import NeuralActivation, NeuralTrace
 
 
@@ -82,6 +83,27 @@ class IntegratedTransferNervousSystem(RealityAwareNervousSystem):
                 for row in bundle.get("contributors", ())
                 if isinstance(row, dict)
             )[: self._MAX_TRANSFER_CONTRIBUTORS]
+            raw_consensus = bundle.get("consensus")
+            try:
+                consensus = (
+                    1.0
+                    if raw_consensus is None
+                    else max(0.0, min(1.0, float(raw_consensus)))
+                )
+            except (TypeError, ValueError):
+                consensus = 1.0
+            try:
+                aggregate_tendency = float(
+                    bundle.get("aggregate_tendency", item.transfer_tendency)
+                )
+            except (TypeError, ValueError):
+                aggregate_tendency = item.transfer_tendency
+            try:
+                aggregate_feedback_count = int(
+                    bundle.get("aggregate_feedback_count", item.transfer_feedback_count)
+                )
+            except (TypeError, ValueError):
+                aggregate_feedback_count = item.transfer_feedback_count
             integrated.append(
                 IntegratedTransferActivation(
                     trace=item.trace,
@@ -91,13 +113,10 @@ class IntegratedTransferNervousSystem(RealityAwareNervousSystem):
                     transfer_gain=item.transfer_gain,
                     transfer_source_trace_id=item.transfer_source_trace_id,
                     transfer_bridge_trace_id=item.transfer_bridge_trace_id,
-                    transfer_tendency=item.transfer_tendency,
-                    transfer_feedback_count=item.transfer_feedback_count,
+                    transfer_tendency=max(0.55, min(1.30, aggregate_tendency)),
+                    transfer_feedback_count=max(0, aggregate_feedback_count),
                     transfer_contributors=contributors,
-                    transfer_consensus=max(
-                        0.0,
-                        min(1.0, float(bundle.get("consensus") or 1.0)),
-                    ),
+                    transfer_consensus=consensus,
                     transfer_conflict_count=max(
                         0,
                         int(bundle.get("conflict_count") or 0),
@@ -282,7 +301,7 @@ class IntegratedTransferNervousSystem(RealityAwareNervousSystem):
             gain=gain,
             source_trace_id=primary.source.trace_id,
             bridge_trace_id=primary.bridge_trace_id,
-            tendency=self._unit(tendency),
+            tendency=max(0.55, min(1.30, tendency)),
             feedback_count=feedback_count,
         )
         bundle = {
@@ -290,6 +309,8 @@ class IntegratedTransferNervousSystem(RealityAwareNervousSystem):
             "consensus": round(max(0.0, min(1.0, consensus)), 5),
             "conflict_count": len(conflicting),
             "competing_source_count": len(paths),
+            "aggregate_tendency": round(max(0.55, min(1.30, tendency)), 5),
+            "aggregate_feedback_count": feedback_count,
         }
         return evidence, bundle
 
@@ -456,11 +477,9 @@ class IntegratedTransferNervousSystem(RealityAwareNervousSystem):
                 "contradicted": contradicted,
                 "feedback_count": supported + contradicted,
                 "last_status": outcome,
+                "last_feedback_at": utc_now(),
             }
         )
-        from .models import utc_now
-
-        record["last_feedback_at"] = utc_now()
         history.sort(key=lambda item: str(item.get("last_feedback_at") or ""))
         bridge.metadata[self._TRANSFER_HISTORY_KEY] = history[
             -self._TRANSFER_HISTORY_LIMIT :
