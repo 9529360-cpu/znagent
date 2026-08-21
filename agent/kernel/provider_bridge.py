@@ -186,6 +186,7 @@ def build_resident_runtime_from_existing_stack(
     """Build the resident ZN runtime while reusing mature provider/tool plumbing."""
     from .body import NativeBody
     from .budget import CognitiveBudgetManager
+    from .embodied_investigation import EmbodiedInvestigator
     from .resident import ZNResidentRuntime
 
     effective_config = config
@@ -213,9 +214,8 @@ def build_resident_runtime_from_existing_stack(
     )
     resident = ZNResidentRuntime(kernel=kernel, budget=budget)
     # Body is an organ of the resident, not a skill in the capability registry.
-    # Attach it to the normal product construction path while the kernel is
-    # still evolving; existing direct ZNResidentRuntime construction remains a
-    # compatible low-level API.
+    # Native investigation is then re-bound to that body so every concrete
+    # probe becomes a body movement with its own durable evidence trail.
     resident.body = NativeBody(resident=resident)
-    resident.investigator.body = resident.body
+    resident.investigator = EmbodiedInvestigator(resident)
     return resident
