@@ -155,6 +155,7 @@ jobs:
               if (result === 'failure') return 'failure'
               return 'error'
             }
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
             const rows = [
               ['ZN Kernel / Python', '${{ needs.kernel.result }}'],
               ['Electron / TypeScript', '${{ needs.desktop.result }}'],
@@ -170,5 +171,6 @@ jobs:
                 state: normalize(result),
                 context: statusContext,
                 description: `ZN CI: ${result}`.slice(0, 140),
+                target_url: runUrl,
               })
             }
