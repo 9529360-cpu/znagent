@@ -15,6 +15,7 @@ from .embodied_investigation import EmbodiedInvestigator
 from .embodied_life import CognitiveSituation, EmbodiedLifeCore
 from .embodied_resident import EmbodiedResidentRuntime
 from .home import get_zn_home
+from .intentional_resident import IntentionalResidentRuntime
 from .investigation import InvestigationResult, InvestigationState, NativeInvestigator
 from .life import (
     BodyState,
@@ -61,6 +62,7 @@ from .runtime import ZNKernelRuntime
 from .service import ResidentAlreadyRunning, ResidentService
 from .self_model import DomainReadiness, SelfModel, TaskReadiness
 from .store import KernelStore
+from .will import NativeWill, ResidentIntention
 from .worker import LegacyAIAgentWorkerFactory, Worker, WorkerFactory
 
 __all__ = [
@@ -97,6 +99,7 @@ __all__ = [
     "Goal",
     "GoalStatus",
     "ImpasseState",
+    "IntentionalResidentRuntime",
     "InvestigationResult",
     "InvestigationState",
     "LegacyAIAgentWorkerFactory",
@@ -112,9 +115,11 @@ __all__ = [
     "NativeActionIntent",
     "NativeBody",
     "NativeInvestigator",
+    "NativeWill",
     "NoRouteAvailable",
     "PromotedCapabilityLoader",
     "ResidentAlreadyRunning",
+    "ResidentIntention",
     "ResidentRunResult",
     "ResidentService",
     "resolve_model_routes",
