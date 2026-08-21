@@ -354,6 +354,26 @@ class NativeInvestigator:
         task = event.task.lower()
         candidates: list[str] = []
 
+        # A Will-formed schema probe carries the observation that can test its
+        # structured expectation. Preserve the cognition order here: activate
+        # the relevant lived prediction first, then obtain the requested current
+        # evidence. Generic task heuristics must not silently replace that body
+        # or Git observation with an unrelated probe.
+        structured_observation = str(
+            event.payload.get("schema_probe_observation") or ""
+        ).strip().lower()
+        structured_probe = (
+            structured_observation
+            if structured_observation in self._PROBE_LABELS
+            and structured_observation != "experience"
+            else ""
+        )
+        if event.kind == "intention_probe" and structured_probe:
+            if learning_evidence and "experience" not in performed:
+                candidates.append("experience")
+            elif structured_probe not in performed:
+                candidates.append(structured_probe)
+
         path_candidates = self._path_candidates(event)
         process_relevant = bool(self._process_candidates(event))
         body_question = any(
