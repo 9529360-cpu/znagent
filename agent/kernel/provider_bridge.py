@@ -4,16 +4,16 @@ from __future__ import annotations
 
 The public function names are retained while callers migrate, but the default
 resident path is now ZN-owned: ZN config + ZN route resolution + ZN cognitive
-resources.  Legacy provider/AIAgent construction is used only when a caller
+resources. Legacy provider/AIAgent construction is used only when a caller
 explicitly injects a legacy resolver/builder/agent kwargs.
 """
 
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from .cognitive_resource import (
-    CognitiveResourceWorkerFactory,
-    resolve_openai_compatible_route,
+from .cognitive_factory import (
+    ZNCognitiveResourceWorkerFactory,
+    resolve_zn_cognitive_route,
 )
 from .config import load_zn_config
 from .home import get_zn_home
@@ -36,6 +36,7 @@ _ROUTE_METADATA_KEYS = (
     "seed",
     "timeout",
     "extra_body",
+    "thinking",
 )
 
 
@@ -99,9 +100,9 @@ def resolve_model_routes(
 
 
 def resolve_zn_routes(specs: Iterable[dict[str, Any]]) -> list[ModelRoute]:
-    """Resolve configured routes entirely inside ZN's resource layer."""
+    """Resolve configured routes entirely inside ZN's cognitive resource layer."""
     return [
-        resolve_openai_compatible_route(route_from_spec(spec, index))
+        resolve_zn_cognitive_route(route_from_spec(spec, index))
         for index, spec in enumerate(specs)
     ]
 
@@ -155,9 +156,9 @@ def build_runtime_from_existing_stack(
 ) -> ZNKernelRuntime:
     """Build ZN runtime; legacy plumbing is now explicit opt-in only.
 
-    The compatibility name remains while call sites migrate.  With no injected
+    The compatibility name remains while call sites migrate. With no injected
     legacy resolver/builder/agent kwargs this function loads ZN's own config,
-    resolves OpenAI-compatible resources in ZN, and never imports hermes_cli or
+    resolves ZN-owned cognitive resources, and never imports hermes_cli or
     constructs run_agent.AIAgent.
     """
     if config is None:
@@ -218,7 +219,7 @@ def build_runtime_from_existing_stack(
             agent_builder=agent_builder,
         )
     else:
-        factory = CognitiveResourceWorkerFactory()
+        factory = ZNCognitiveResourceWorkerFactory()
 
     return ZNKernelRuntime(
         store=KernelStore(store_path),
