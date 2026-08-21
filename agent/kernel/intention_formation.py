@@ -227,8 +227,7 @@ class NativeIntentionFormation:
         body: BodyState | None,
     ) -> dict[str, Any] | None:
         if probe_key == "git":
-            cwd = str(getattr(body, "cwd", "") or "").strip()
-            return {"workspace_path": cwd} if cwd else {}
+            return {}
         if probe_key == "paths":
             match = self._PATH_RE.search(str(intention_text or ""))
             if match is None:
