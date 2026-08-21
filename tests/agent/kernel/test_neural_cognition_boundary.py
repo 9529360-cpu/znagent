@@ -75,12 +75,13 @@ class NeuralCognitionBoundaryTests(unittest.TestCase):
                 )
             )
 
-            result = resident.submit(
-                "repair sqlite writer lock contention",
-                payload={"required_capabilities": ["database"]},
-            )
+            # Drive the same event to completion. Creating a second user event
+            # here would test queue ordering rather than cognition boundaries.
+            result = resident.run_once()
 
+            self.assertIsNotNone(result)
             self.assertTrue(result.success)
+            self.assertEqual(result.event.event_id, event.event_id)
             self.assertEqual(len(factory.contexts), 1)
             external_context = json.dumps(factory.contexts[0], ensure_ascii=False, default=str)
             self.assertNotIn(secret, external_context)
