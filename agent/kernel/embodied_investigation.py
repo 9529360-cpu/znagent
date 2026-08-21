@@ -5,6 +5,7 @@ from typing import Any
 from .investigation import NativeInvestigator
 from .models import AgentEvent
 from .reconsolidation import SchemaReconsolidator
+from .schema_structure import SchemaStructurePlasticity
 from .self_model import TaskReadiness
 
 
@@ -45,6 +46,9 @@ class EmbodiedInvestigator(NativeInvestigator):
         if not feedback:
             return result
 
+        structural_merges = SchemaStructurePlasticity(nervous).compact(
+            seed_ids=[item.schema_trace_id for item in feedback],
+        )
         existing = result.state.facts.get("schema_prediction_feedback")
         records = list(existing) if isinstance(existing, list) else []
         known_keys = {
@@ -82,9 +86,32 @@ class EmbodiedInvestigator(NativeInvestigator):
                 )
             self._append_unique(evidence, note)
 
+        merge_records = [item.to_dict() for item in structural_merges]
+        for item in structural_merges:
+            self._append_unique(
+                evidence,
+                "structural neural plasticity merged redundant schema "
+                f"{item.absorbed_schema_id} into {item.canonical_schema_id} "
+                f"(shared lived support={item.source_overlap:.3f}, "
+                f"shared structure={item.feature_overlap:.3f})",
+            )
+
         result.state.facts["schema_prediction_feedback"] = records[-16:]
+        if merge_records:
+            prior_merges = result.state.facts.get("schema_structural_merges")
+            merged_history = (
+                list(prior_merges)
+                if isinstance(prior_merges, list)
+                else []
+            )
+            merged_history.extend(merge_records)
+            result.state.facts["schema_structural_merges"] = merged_history[-16:]
         result.state.evidence = tuple(evidence[-64:])
-        result.state.updated_at = feedback[-1].at
+        result.state.updated_at = (
+            structural_merges[-1].at
+            if structural_merges
+            else feedback[-1].at
+        )
 
         if event.kind == "intention_probe" and result.resolved:
             changed = [item for item in feedback if item.status != "untested"]
@@ -99,6 +126,11 @@ class EmbodiedInvestigator(NativeInvestigator):
                 suffix = (
                     " The current observation did not test a structured expectation "
                     "inside the schema, so I left its neural strength unchanged."
+                )
+            if structural_merges:
+                suffix += (
+                    f" I also collapsed {len(structural_merges)} redundant schema "
+                    "representation(s) into the surviving lived pattern."
                 )
             result.response = f"{result.response}{suffix}"
             result.state.resolution = result.response
@@ -172,6 +204,7 @@ class EmbodiedInvestigator(NativeInvestigator):
                 "schema_predictions",
                 "schema_prediction_feedback",
                 "schema_reconsolidation_keys",
+                "schema_structural_merges",
             }
         }
         if concrete_keys:
@@ -386,6 +419,7 @@ class EmbodiedInvestigator(NativeInvestigator):
                 "schema_predictions",
                 "schema_prediction_feedback",
                 "schema_reconsolidation_keys",
+                "schema_structural_merges",
             }
             and value not in (None, [], {}, "")
         }
