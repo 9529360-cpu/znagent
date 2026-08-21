@@ -24,8 +24,22 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
         "intention",
     }
     _REFLECTION_PERIOD_PULSES = 30
-    _REFLECTION_CHANNELS = ("will", "outcome", "world", "vision", "action")
-    _ATTENTION_CHANNELS = ("will", "outcome", "world", "vision", "action")
+    _REFLECTION_CHANNELS = (
+        "will",
+        "outcome",
+        "world",
+        "vision",
+        "action",
+        "schema",
+    )
+    _ATTENTION_CHANNELS = (
+        "will",
+        "outcome",
+        "world",
+        "vision",
+        "action",
+        "schema",
+    )
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(
@@ -203,10 +217,16 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
         thought.chosen_action = action
         thought.action_kind = "observe"
         thought.action_target = None
-        thought.reason = (
+        prior_reason = str(thought.reason or "").strip()
+        endogenous_reason = (
             f"{drive} currently has the strongest internal attention pull; "
             f"tension={affect.tension:.2f}, curiosity={affect.curiosity:.2f}, "
             f"fatigue={affect.fatigue:.2f}"
+        )
+        thought.reason = (
+            f"{prior_reason}; {endogenous_reason}"
+            if prior_reason
+            else endogenous_reason
         )
         thought.confidence = max(
             0.45,
@@ -288,6 +308,10 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
                 score -= 0.24 * fatigue
                 drive = "curiosity"
                 action = "keep observing this novel thread without borrowing a model"
+            elif trace.channel == "schema":
+                score += 0.10 * familiarity + 0.06 * trace.strength
+                drive = "integrate"
+                action = "keep a consolidated life pattern available to current thought"
             else:
                 score += 0.08 * abs(trace.valence) + 0.05 * familiarity
 
@@ -338,7 +362,10 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
             if trace.channel != "reflection":
                 continue
             try:
-                latest = max(latest, int(trace.metadata.get("thought_sequence") or 0))
+                latest = max(
+                    latest,
+                    int(trace.metadata.get("thought_sequence") or 0),
+                )
             except (TypeError, ValueError):
                 continue
         return latest
@@ -492,12 +519,17 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
                 + 0.08 * affect.tension,
             ),
             valence=max(-1.0, min(1.0, average_valence)),
-            arousal=min(0.78, 0.24 + 0.20 * affect.curiosity + 0.20 * affect.tension),
+            arousal=min(
+                0.78,
+                0.24 + 0.20 * affect.curiosity + 0.20 * affect.tension,
+            ),
             metadata={
                 "thought_sequence": sequence,
                 "reflection_period": period,
                 "attention_focus": focus[:500],
-                "intention_id": primary.intention_id if primary is not None else None,
+                "intention_id": (
+                    primary.intention_id if primary is not None else None
+                ),
                 "source_trace_ids": [trace.trace_id for trace in traces],
                 "model_invocations": 0,
             },
@@ -525,8 +557,18 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
                 limit=bounded_limit,
             )
         )
-        allowed_channels = {"outcome", "world", "vision", "action", "will"}
-        for activation in self.nervous.activate(event.task, limit=bounded_limit * 3):
+        allowed_channels = {
+            "outcome",
+            "world",
+            "vision",
+            "action",
+            "will",
+            "schema",
+        }
+        for activation in self.nervous.activate(
+            event.task,
+            limit=bounded_limit * 3,
+        ):
             trace = activation.trace
             if trace.channel not in allowed_channels:
                 continue
@@ -543,12 +585,17 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
                     "neural_trace_id": trace.trace_id,
                     "salience": round(trace.salience, 4),
                     "valence": round(trace.valence, 4),
+                    "consolidated": trace.channel == "schema",
                 }
             )
 
         deduped: dict[str, dict[str, Any]] = {}
         for item in merged:
-            key = str(item.get("candidate_id") or item.get("neural_trace_id") or "")
+            key = str(
+                item.get("candidate_id")
+                or item.get("neural_trace_id")
+                or ""
+            )
             if not key:
                 continue
             prior = deduped.get(key)
@@ -616,7 +663,10 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
                 "success" if completed.success else "failure",
             ),
             source="self",
-            salience=min(1.0, 0.58 + (0.18 if not completed.success else 0.0)),
+            salience=min(
+                1.0,
+                0.58 + (0.18 if not completed.success else 0.0),
+            ),
             valence=0.52 if completed.success else -0.78,
             arousal=0.42 if completed.success else 0.82,
             metadata={
@@ -644,20 +694,39 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
         data = super().status()
         primary = self.will.primary()
         affect = self.nervous.snapshot()
+        consolidation = self.nervous.latest_consolidation()
         data["will"] = {
-            "primary": self._intention_data(primary) if primary is not None else None,
-            "active": [self._intention_data(item) for item in self.will.active(20)],
+            "primary": (
+                self._intention_data(primary)
+                if primary is not None
+                else None
+            ),
+            "active": [
+                self._intention_data(item)
+                for item in self.will.active(20)
+            ],
         }
         data["nervous_system"] = {
             "tone": self.nervous.describe_state(),
             "affect": asdict(affect),
             "recent_trace_count": len(self.nervous.recent_traces(50)),
             "reflection_period_pulses": self._reflection_period_for(affect),
+            "latest_consolidation": (
+                asdict(consolidation) if consolidation is not None else None
+            ),
         }
         data["world_sense"] = {
-            "focuses": [asdict(item) for item in self.world.focuses(enabled_only=True, limit=20)],
+            "focuses": [
+                asdict(item)
+                for item in self.world.focuses(
+                    enabled_only=True,
+                    limit=20,
+                )
+            ],
             "due_focus": (
-                asdict(due) if (due := self.world.due_focus()) is not None else None
+                asdict(due)
+                if (due := self.world.due_focus()) is not None
+                else None
             ),
         }
         return data
