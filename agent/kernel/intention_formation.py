@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from .adaptive_guidance import relation_reality_bonus, schema_reality_score
 from .intentional_resident import IntentionalResidentRuntime
 from .reconsolidation import SchemaReconsolidator
 from .schema_structure import SchemaStructurePlasticity
@@ -302,6 +303,10 @@ class NativeIntentionFormation:
             score = 0.46 * confidence + 0.30 * support + 0.16 * weight
             score += 0.08 if bool(relation.get("anchor")) else 0.0
             score += self._FAMILY_BONUS.get(family, 0.04)
+            if relation.get("formed_from_prediction_error"):
+                score += 0.06
+            if relation.get("stabilized_from_prediction_error"):
+                score += 0.12
             if family in text or value in text:
                 score += 0.05
             ranked.append((score, family, value, relation))
@@ -561,6 +566,37 @@ class SituatedIntentionalResidentRuntime(IntentionalResidentRuntime):
             resident=self,
         )
 
+    @staticmethod
+    def _formed_candidate_score(
+        activation: NeuralActivation,
+        candidate: NativeIntentionCandidate,
+    ) -> float:
+        schema = activation.trace
+        expectation = candidate.payload.get("schema_expectation")
+        if not isinstance(expectation, dict):
+            expectation = {}
+        family = str(expectation.get("family") or candidate.relation_family or "")
+        value = str(expectation.get("value") or candidate.relation_value or "")
+        score = (
+            0.52 * float(activation.activation)
+            + 0.15 * float(schema.strength)
+            + 0.09 * float(schema.salience)
+            + 0.12 * schema_reality_score(schema)
+        )
+        if candidate.kind == "situated_schema_probe":
+            score += 0.08
+        if bool(expectation.get("recheck")):
+            score += 0.08
+        if str(expectation.get("status") or "") == "emerging":
+            score += 0.05
+        score += relation_reality_bonus(schema, family, value)
+        memory_state = str(schema.metadata.get("memory_state") or "consolidated")
+        if memory_state == "contested":
+            score -= 0.16
+        elif memory_state == "reconsolidating":
+            score -= 0.04
+        return score
+
     def _incubate_primary_intention(self, thought) -> bool:
         life_state = self.life.snapshot()
         situation = life_state.current_situation
@@ -603,13 +639,9 @@ class SituatedIntentionalResidentRuntime(IntentionalResidentRuntime):
         if not formed:
             return False
 
-        selected = next(
-            (
-                item
-                for item in formed
-                if item[1].kind == "situated_schema_probe"
-            ),
-            formed[0],
+        selected = max(
+            formed,
+            key=lambda item: self._formed_candidate_score(item[0], item[1]),
         )
         schema_activation, candidate = selected
         schema = schema_activation.trace
