@@ -13,15 +13,18 @@
 Latest source implementation baseline:
 
 ```text
-1ac78c06bf28da299094318921e0ff5fcf256887
+f8679e0487df68623bf08fc6941fd848169b3044
 ```
 
 Latest coherent M5/M6 source slice:
 
 ```text
-5be1916970b6b339e85efcaf1a9aa0893af93842  feat: present resident work artifacts contextually
-8cea9fdd552bc414c0af61ce7fda59fc756d3d44  test: isolate resident artifact assertions
-1ac78c06bf28da299094318921e0ff5fcf256887  perf: bound resident artifact snapshots
+9015246f0c2b28858a848bcc88241af9bbc25c91  feat: persist contextual terminal artifacts
+e9a31f854866633ec338871fdf73f6899b60dc1d  test: cover contextual terminal artifacts
+6b444302975e65dae2d5402c3ba7ba802adcf2ec  feat: type contextual terminal artifacts
+30dfeb91ce252e277c3a30a4bbdb56cda0efb905  feat: hydrate terminal artifact kind
+3fe4e5558c98fb9ef5d8b978b27b89785cae7411  feat: label invoked terminal context
+f8679e0487df68623bf08fc6941fd848169b3044  test: keep terminal surface contextual
 ```
 
 Normal ZN CI for that verified source HEAD:
@@ -29,10 +32,8 @@ Normal ZN CI for that verified source HEAD:
 ```text
 ZN Kernel / Python      success
 Electron / TypeScript  success
-Actions run             32575297967
+Actions run             32582229428
 ```
-
-The first artifact CI run exposed a test assertion that depended on an unrelated native-investigation response string rather than on artifact behavior. The repository was independently confirmed dirty before the work ran, and the test was corrected to verify the artifact contract itself. No production cognition behavior was weakened to satisfy that test.
 
 Documentation-only synchronization commits use `[skip ci]`; the source baseline above is the executable/CI evidence for this ledger.
 
@@ -44,7 +45,8 @@ M5/M6 now has:
 
 - resident-backed durable work/thread continuity;
 - real resident-backed local workspace/folder association;
-- contextual resident-backed file/diff artifact presentation.
+- contextual resident-backed file/diff artifact presentation;
+- contextual resident-backed terminal evidence after actual terminal/body invocation.
 
 The desktop remains a face/client. Work identity, workspace context and artifact records are resident-owned.
 
@@ -98,7 +100,24 @@ Implemented and CI-verified:
 - browser artifact cache is bounded and non-authoritative;
 - resident RPC hydration is bounded further: recent work list carries only the newest artifact per thread, while active get/submit snapshots carry at most eight artifacts.
 
-Current artifact scope is intentionally partial rather than universal. File artifacts currently materialize from ZN Body file observations/writes and dirty-workspace Git context. General rendered documents, binary artifact rendering, every clean native-investigation preview, and richer historical artifact browsing remain future product work.
+### Contextual terminal artifacts
+
+Implemented and CI-verified:
+
+- terminal is still a ZN Body capability owned by `NativeBody` / `ZNLocalTerminal`; the workbench does not become a terminal owner;
+- `ResidentWorkLedger` derives `WorkArtifact(kind="terminal")` only from terminal/body actions actually recorded for the same resident event;
+- supported evidence includes command/shell execution plus existing PTY poll/stop/input/resize action aliases;
+- terminal artifacts persist through the same bounded resident work-artifact store and therefore survive desktop reconnect/restart;
+- terminal evidence can exist without a workspace attachment, because terminal use itself is the invocation condition;
+- bounded presentation records include command/output/error plus operation, status, cwd, exit code, pid/session, timeout/truncation and source action ID where available;
+- renderer recognizes the `terminal` artifact kind and labels it `Terminal` in the optional context panel;
+- the existing contextual panel opens when work returns an artifact; there is no permanent terminal pane;
+- renderer does not import/instantiate xterm and does not receive a direct terminal-execution client API in this slice;
+- artifact collection snapshots event body actions before its own workspace Git-diff observation, preventing presentation-layer helper commands from being misrepresented as user-work terminal artifacts.
+
+This is a contextual terminal evidence surface, not yet a full interactive PTY UI. Interactive controls should be added only when a concrete product work flow needs them, and must continue to route through the same resident/body ownership boundary.
+
+Current artifact scope is intentionally partial rather than universal. File artifacts materialize from ZN Body file observations/writes and dirty-workspace Git context; terminal artifacts materialize from actual terminal/body invocation. General rendered documents, binary artifact rendering, browser interaction artifacts, every clean native-investigation preview, and richer historical artifact browsing remain future product work.
 
 Current work loop:
 
@@ -114,7 +133,7 @@ user work
 → contextual workbench panel
 ```
 
-Artifact collection after an event is bounded/read-only presentation context. Destructive movements are not performed by the presentation layer.
+Artifact collection after an event is bounded presentation context. Destructive movements are not performed by the presentation layer.
 
 ## Current subsystem ledger
 
@@ -128,7 +147,7 @@ Zero-model operation remains a hard behavior contract: removing external models 
 
 ### Work/thread/workspace/artifact continuity
 
-Status: **resident-backed durable work + workspace + contextual file/diff artifact foundation active; M6 still partial**.
+Status: **resident-backed durable work + workspace + contextual file/diff/terminal artifact foundation active; M6 still partial**.
 
 Implemented:
 
@@ -138,14 +157,14 @@ Implemented:
 - real workspace attach/change/detach;
 - workspace propagation into native Git/body context;
 - workspace-relative native file-action resolution;
-- resident-backed file/diff artifact records;
+- resident-backed file/diff/terminal artifact records;
 - bounded artifact hydration/presentation;
-- contextual workbench file/diff preview.
+- contextual workbench file/diff/terminal preview;
+- terminal surface appears only after actual resident terminal/body evidence exists.
 
 Still pending:
 
-- contextual terminal surface only when a work event invokes/needs terminal interaction;
-- contextual browser surface only when browser interaction exists;
+- contextual browser surface only when a real browser interaction body/sense path exists;
 - broader artifact types/renderers and richer artifact history/navigation;
 - richer ongoing progress/activity delivery while work is running;
 - final thread/search/accessibility/keyboard polish.
@@ -167,13 +186,13 @@ Additional provider-specific mechanisms remain demand-driven.
 
 ### Local terminal / computer body
 
-Status: **active local body extracted, including interactive PTY lifecycle and completed-session reclamation**.
+Status: **active local body extracted; interactive PTY lifecycle plus contextual work presentation active**.
 
 `agent/kernel/terminal.py` and `agent/kernel/pty.py` own local foreground/background execution, cwd continuity, timeout/process cleanup, bounded output, interactive PTY lifecycle, stdin/resize and completion cleanup.
 
 A PTY operation such as `write_stdin()` can itself observe completion and return the final result while reclaiming the session. The real POSIX PTY smoke consumes that returned state rather than performing a stale extra poll.
 
-`NativeBody` is also the source for artifact file/diff presentation observations; this does not transfer filesystem ownership to the workbench.
+`NativeBody` is the source for terminal and file/diff presentation evidence. The workbench only receives bounded resident-backed artifacts; terminal/process ownership does not move into Electron or React.
 
 ### Web search / world sense
 
@@ -186,6 +205,8 @@ Implemented:
 - Firecrawl search/scrape;
 - URL/network target safety;
 - `NativeWorldSense` routes through the ZN resource layer.
+
+Browser automation/rendering remains a separate body/sense requirement and is not yet represented as a contextual browser surface.
 
 ### Communication channels
 
@@ -226,14 +247,15 @@ Implemented product boundaries include:
 - ZN-only active deep-link handling and bundle entries;
 - resident-backed work history;
 - native folder picker + resident workspace continuity;
-- contextual resident-backed file/diff artifacts;
-- renderer does not directly own arbitrary host-path attachment or filesystem reads;
+- contextual resident-backed file/diff/terminal artifacts;
+- terminal evidence uses the existing optional artifact panel rather than a permanent IDE terminal;
+- renderer does not directly own arbitrary host-path attachment, filesystem reads or terminal execution;
 - settings/update and resident context surfaces;
 - ownership regression tests for all these active seams.
 
 M5/M6 still require:
 
-- terminal/browser surfaces only when invoked;
+- contextual browser surface only when browser interaction exists;
 - provider/credential editor connected to ZN config/secure storage;
 - richer ongoing activity/progress delivery;
 - broader artifact rendering/history;
@@ -269,8 +291,10 @@ workspace association must survive restart and anchor native Git observation
 relative native file action can inherit workspace context
 artifact auto-preview must reject workspace symlink escape
 resident dirty-workspace context must persist file + diff artifacts
-work RPC must expose resident artifacts
-active renderer must hydrate/render artifacts without direct filesystem access
+actual terminal/body action can persist a terminal artifact without a workspace
+work RPC must expose resident terminal artifacts
+active renderer must hydrate/render terminal artifacts without a permanent terminal executor
+active renderer must not instantiate xterm for this contextual surface
 artifact browser/RPC snapshots must remain bounded
 ```
 
@@ -283,7 +307,7 @@ M2  ZN-native bounded provider cognition                   COMPLETE for active m
 M3  ZN-owned terminal + web body/sense paths               COMPLETE for active local/web paths
 M4  independent Electron main + preload + zn://            COMPLETE
 M5  independent content-first ZN workbench                 IN PROGRESS; work/workspace/context artifacts active
-M6  resident work/artifact/workspace end-to-end loop       PARTIAL; durable file/diff context active
+M6  resident work/artifact/workspace end-to-end loop       PARTIAL; file/diff/terminal context active
 M7  formal packaging around owned product                  NOT COMPLETE
 M8  clean-machine/continuity multi-OS validation           NOT STARTED as release gate
 M9  product completeness/hardening                         LATER
@@ -294,12 +318,14 @@ M10 repository migration / formal main promotion           LATER; main untouched
 
 Unless current code reveals a need to change the architecture contract first:
 
-1. add contextual terminal/browser surfaces only when explicitly invoked by work rather than permanent IDE panes;
+1. add a contextual browser surface only when a real resident browser body/sense interaction exists; do not fake browser ownership by relabeling web-search results;
 2. broaden artifact rendering/history only where concrete work output requires it;
 3. connect provider/credential settings to the ZN-owned config/secure-storage boundary;
 4. wire Telegram outbound attachments only through `OutboundMediaPathPolicy` when an explicit resident artifact/message egress flow exists;
 5. replace inherited desktop package metadata with ZN-owned metadata and ensure formal builder registers only `zn://`;
 6. rebuild formal self-contained installers around independent ZN desktop + `zn_agent` runtime;
 7. only then spend multi-OS/clean-machine CI budget validating install, autostart, resident continuity and N → N+1 handoff.
+
+If no concrete browser body/sense seam exists yet, provider/credential settings are the next implementable M5 target rather than inventing a browser facade.
 
 The architecture driver remains **finish the owned workbench/product loop, then close formal package identity**. Do not add compatibility wrappers or route active product behavior back through inherited control planes.
