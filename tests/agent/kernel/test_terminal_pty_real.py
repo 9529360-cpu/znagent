@@ -35,15 +35,17 @@ class RealPosixPtySmokeTests(unittest.TestCase):
         self.assertEqual(started.status, "running")
         session_id = started.session_id or ""
 
-        terminal.write_stdin(session_id, "hello-pty\n")
-        final = None
+        # write_stdin is itself an observation boundary. A fast child may exit
+        # while the write is being drained; in that case write_stdin returns the
+        # terminal result and correctly reclaims the completed PTY immediately.
+        # Poll only while the returned state says the session is still running.
+        final = terminal.write_stdin(session_id, "hello-pty\n")
         for _ in range(100):
-            final = terminal.poll(session_id)
             if final.status != "running":
                 break
             time.sleep(0.02)
+            final = terminal.poll(session_id)
 
-        self.assertIsNotNone(final)
         self.assertEqual(final.status, "completed")
         self.assertTrue(final.success)
         self.assertEqual(final.exit_code, 0)
