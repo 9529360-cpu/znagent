@@ -93,7 +93,7 @@ class ResidentRpcServer:
             result = self.resident.life.snapshot_dict()
         elif method == "work_list":
             result = [
-                self._work_snapshot(snapshot)
+                self._work_snapshot(snapshot, artifact_limit=1)
                 for snapshot in self.work.list_snapshots(
                     thread_limit=max(1, min(100, int(params.get("limit") or 24))),
                     message_limit=max(
@@ -110,7 +110,7 @@ class ResidentRpcServer:
                 title=str(params.get("title") or "New work"),
                 metadata=metadata,
             )
-            result = self._work_snapshot((thread, []))
+            result = self._work_snapshot((thread, []), artifact_limit=0)
         elif method == "work_get":
             thread_id = str(params.get("thread_id") or "").strip()
             if not thread_id:
@@ -339,9 +339,19 @@ class ResidentRpcServer:
     def _limit(params: dict[str, Any]) -> int:
         return max(1, min(200, int(params.get("limit") or 20)))
 
-    def _work_snapshot(self, snapshot) -> dict[str, Any]:
+    def _work_snapshot(
+        self,
+        snapshot,
+        *,
+        artifact_limit: int = 8,
+    ) -> dict[str, Any]:
         thread, messages = snapshot
-        artifacts = self.work.list_artifacts(thread.thread_id, limit=48)
+        bounded_artifact_limit = max(0, min(8, int(artifact_limit)))
+        artifacts = (
+            self.work.list_artifacts(thread.thread_id, limit=bounded_artifact_limit)
+            if bounded_artifact_limit > 0
+            else []
+        )
         return {
             "id": thread.thread_id,
             "title": thread.title,
