@@ -28,26 +28,34 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-test('release application defers installer handoff while resident-owned work is busy', async () => {
-  const handoff = vi.fn()
-  mocks.checkReadiness.mockResolvedValue({
-    ready: false,
-    reason: 'busy',
-    message: 'ZN is still working'
+test('release application can replace the desktop while resident-owned work remains busy', async () => {
+  const order: string[] = []
+  const handoff = vi.fn(async () => {
+    order.push('handoff')
+  })
+  mocks.checkReadiness.mockImplementation(async () => {
+    order.push('readiness')
+    return {
+      ready: true,
+      reason: 'busy',
+      message: 'desktop can update while resident runtime handoff remains deferred'
+    }
+  })
+  mocks.quit.mockImplementation(() => {
+    order.push('quit')
   })
 
   const result = await applyZnReleaseInstallerWithResidentGate({ version: '0.18.0', handoff })
 
-  assert.deepEqual(result, {
-    ok: false,
-    error: 'resident-busy',
-    message: 'ZN is still working'
-  })
-  assert.equal(handoff.mock.calls.length, 0)
+  assert.deepEqual(result, { ok: true, message: 'installing ZN 0.18.0' })
+  assert.deepEqual(order, ['readiness', 'handoff'])
   assert.equal(mocks.quit.mock.calls.length, 0)
+
+  await vi.advanceTimersByTimeAsync(100)
+  assert.deepEqual(order, ['readiness', 'handoff', 'quit'])
 })
 
-test('release application hands off installer and quits only after resident is idle', async () => {
+test('release application hands off installer and quits after an idle readiness check', async () => {
   const order: string[] = []
   const handoff = vi.fn(async () => {
     order.push('handoff')
