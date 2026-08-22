@@ -282,6 +282,11 @@
       "maintainer": "ZN Project",
       "synopsis": "Resident AI workbench for ZN.",
       "syncDesktopName": true,
+      "desktop": {
+        "entry": {
+          "StartupWMClass": "ai.zn.desktop"
+        }
+      },
       "target": [
         "AppImage",
         "deb",

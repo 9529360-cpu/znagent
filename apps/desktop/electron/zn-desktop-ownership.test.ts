@@ -200,8 +200,10 @@ test('formal Linux desktop identity keeps launcher and running window aligned', 
   assert.equal(pkg.desktopName, 'ai.zn.desktop')
   assert.equal(pkg.build?.appId, 'ai.zn.desktop')
   assert.equal(pkg.build?.linux?.syncDesktopName, true)
+  assert.equal(pkg.build?.linux?.desktop?.entry?.StartupWMClass, 'ai.zn.desktop')
   assert.match(builder, /^appId:\s+ai\.zn\.desktop$/m)
   assert.match(builder, /^\s+syncDesktopName:\s+true$/m)
+  assert.match(builder, /^\s+StartupWMClass:\s+ai\.zn\.desktop$/m)
 })
 
 test('ZN deep links reject inherited and web schemes and preserve inert navigation data', () => {
