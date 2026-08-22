@@ -1,0 +1,71 @@
+name: ZN Formal Package Smoke
+
+on:
+  push:
+    branches:
+      - dev/zn-agent
+    paths:
+      - .github/workflows/zn-package-smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  package-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CI: 'true'
+      NODE_OPTIONS: --max-old-space-size=4096
+      ZN_RELEASE_VERSION: '0.17.0'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+          cache: npm
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked workspace dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Stage self-contained ZN runtime
+        env:
+          ZN_RELEASE_COMMIT: ${{ github.sha }}
+        run: node apps/desktop/scripts/stage-zn-runtime.mjs
+
+      - name: Build independent ZN desktop
+        run: npm run build --workspace apps/desktop
+
+      - name: Pack Linux unpacked app only
+        run: npm run builder --workspace apps/desktop -- --config electron-builder.zn.yml --linux --dir --publish never
+
+      - name: Verify packaged resident runtime and zero-model boot
+        run: node apps/desktop/scripts/verify-zn-packaged-runtime.mjs apps/desktop/release "$ZN_RELEASE_VERSION" "$GITHUB_SHA"
+
+      - name: Verify formal package shape
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP='apps/desktop/release/linux-unpacked'
+          test -x "$APP/ZN"
+          test -f "$APP/resources/app.asar"
+          test -f "$APP/resources/zn-runtime/runtime.json"
+          test ! -e "$APP/resources/install-stamp.json"
+          test ! -d "$APP/resources/zn-runtime/python/site-packages/hermes_cli"
+          node - "$APP/resources/zn-runtime/runtime.json" <<'NODE'
+          const fs = require('node:fs')
+          const manifest = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))
+          if (manifest.product !== 'ZN') throw new Error(`unexpected runtime product: ${manifest.product}`)
+          if (manifest.version !== process.env.ZN_RELEASE_VERSION) throw new Error(`unexpected runtime version: ${manifest.version}`)
+          if (manifest.commit !== process.env.GITHUB_SHA) throw new Error(`unexpected runtime commit: ${manifest.commit}`)
+          NODE
