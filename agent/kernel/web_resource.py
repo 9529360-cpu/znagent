@@ -7,9 +7,10 @@ their transport and normalization behavior behind a resident-owned resource
 interface instead of making ``tools.web_tools`` / the old plugin registry the
 owner of world sensing.
 
-Tavily and Exa are currently extracted. Explicit provider selection remains
-pinned; an explicit ``auto``/``failover`` mode composes those resources through
-a small ZN-owned failover chain without reviving the old provider control plane.
+Tavily, Exa and Firecrawl are currently extracted. Explicit provider selection
+remains pinned; an explicit ``auto``/``failover`` mode composes those resources
+through a small ZN-owned failover chain without reviving the old provider
+control plane.
 """
 
 import json
@@ -257,7 +258,9 @@ class FailoverWebResource:
             for document in documents:
                 url = str(document.url or "").strip()
                 if url and url in errors:
-                    by_url[url] = document
+                    existing = by_url.get(url)
+                    if existing is None or (existing.error and not document.error):
+                        by_url[url] = document
 
             next_pending: list[str] = []
             for url in requested:
@@ -325,6 +328,7 @@ def _build_provider(
     provider: str,
     web_cfg: Mapping[str, Any],
     *,
+    root_config: Mapping[str, Any],
     environ: Mapping[str, str],
     client: Any | None = None,
     optional: bool = False,
@@ -369,10 +373,35 @@ def _build_provider(
             return None
         return ExaWebResource(api_key=api_key, client=client)
 
-    if optional:
-        return None
+    if name == "firecrawl":
+        from .firecrawl_web_resource import FirecrawlWebResource
+
+        firecrawl_cfg = web_cfg.get("firecrawl") or {}
+        if not isinstance(firecrawl_cfg, Mapping):
+            raise ValueError("ZN web.firecrawl config must be a mapping")
+        api_key = str(
+            firecrawl_cfg.get("api_key")
+            or environ.get("FIRECRAWL_API_KEY")
+            or ""
+        ).strip()
+        api_url = str(
+            firecrawl_cfg.get("api_url")
+            or firecrawl_cfg.get("base_url")
+            or environ.get("FIRECRAWL_API_URL")
+            or "https://api.firecrawl.dev"
+        ).strip()
+        timeout = float(firecrawl_cfg.get("timeout") or web_cfg.get("timeout") or 60.0)
+        return FirecrawlWebResource(
+            api_key=api_key,
+            api_url=api_url,
+            timeout=timeout,
+            client=client,
+            safety_config=root_config,
+            environ=environ,
+        )
+
     raise WebResourceError(
-        f"ZN web provider {name!r} is not extracted yet; available: tavily, exa"
+        f"ZN web provider {name!r} is not extracted yet; available: tavily, exa, firecrawl"
     )
 
 
@@ -399,6 +428,7 @@ def build_zn_web_resource(
         resource = _build_provider(
             provider,
             web_cfg,
+            root_config=cfg,
             environ=env,
             client=client,
             optional=False,
@@ -411,6 +441,7 @@ def build_zn_web_resource(
         resource = _build_provider(
             name,
             web_cfg,
+            root_config=cfg,
             environ=env,
             client=client,
             optional=True,
