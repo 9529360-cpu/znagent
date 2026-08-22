@@ -115,8 +115,8 @@ jobs:
       - name: Test ZN desktop ownership, packaged runtime and update-channel contracts
         run: npm run test --workspace apps/desktop -- electron/zn-desktop-ownership.test.ts electron/zn-packaged-runtime.test.ts electron/zn-release-channel.test.ts
 
-      - name: Test release-channel and packaged-artifact verifiers
-        run: node --test apps/desktop/scripts/prepare-zn-public-channel.test.mjs apps/desktop/scripts/verify-zn-packaged-runtime.test.mjs
+      - name: Test release-channel, runtime staging and packaged-artifact verifiers
+        run: node --test apps/desktop/scripts/prepare-zn-public-channel.test.mjs apps/desktop/scripts/stage-zn-runtime.test.mjs apps/desktop/scripts/verify-zn-packaged-runtime.test.mjs
 
   container:
     name: Container / Runtime Smoke
@@ -139,7 +139,7 @@ jobs:
           load: true
           tags: znagent-ci:dev
           cache-from: type=gha
-          cache-to: type=gha,mode=min
+          cache-to: type=gha,mode=max
 
       - name: Boot ZN inside container without a model
         run: |
