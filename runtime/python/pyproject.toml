@@ -12,6 +12,8 @@ dependencies = [
   "httpx[socks]==0.28.1",
   "openai==2.24.0",
   "PyYAML==6.0.3",
+  "ptyprocess>=0.7.0,<1; sys_platform != 'win32'",
+  "pywinpty>=2.0.0,<3; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

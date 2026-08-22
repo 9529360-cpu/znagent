@@ -46,22 +46,30 @@ jobs:
         with:
           version: '0.11.6'
           enable-cache: true
-          cache-dependency-glob: uv.lock
+          cache-dependency-glob: |
+            uv.lock
+            runtime/python/pyproject.toml
 
-      - name: Install locked Python dependencies
+      - name: Install locked repository test dependencies
         run: uv sync --frozen --extra dev
 
-      - name: Boot ZN without a model
+      - name: Install isolated ZN runtime distribution
         run: |
-          uv run python - <<'PY'
+          uv venv .ci/runtime-venv --python 3.12
+          uv pip install --python .ci/runtime-venv/bin/python runtime/python
+
+      - name: Boot isolated ZN distribution without a model
+        run: |
+          .ci/runtime-venv/bin/python -I - <<'PY'
           import os
           from pathlib import Path
 
-          from agent.kernel.provider_bridge import build_resident_runtime_from_existing_stack
+          import zn_agent.resident
+          from zn_agent.core.provider_bridge import build_resident_runtime
 
-          home = Path(os.environ['ZN_AGENT_HOME'])
+          home = Path(os.environ['ZN_AGENT_HOME']) / 'isolated-runtime'
           home.mkdir(parents=True, exist_ok=True)
-          resident = build_resident_runtime_from_existing_stack(
+          resident = build_resident_runtime(
               config={'model': {}},
               store_path=home / 'kernel.db',
           )
@@ -140,7 +148,7 @@ jobs:
             -e PYTHONUNBUFFERED=1 \
             -e ZN_AGENT_HOME=/tmp/znagent-ci \
             znagent-ci:dev \
-            -c "from pathlib import Path; from agent.kernel.provider_bridge import build_resident_runtime_from_existing_stack; p=Path('/tmp/znagent-ci'); p.mkdir(parents=True, exist_ok=True); r=build_resident_runtime_from_existing_stack(config={'model': {}}, store_path=p/'kernel.db'); pulse=r.pulse(); s=r.life.snapshot(); assert pulse.sequence >= 1 and s.body is not None and s.external_brains == (); r.store.close()"
+            -c "from pathlib import Path; from agent.kernel.provider_bridge import build_resident_runtime; p=Path('/tmp/znagent-ci'); p.mkdir(parents=True, exist_ok=True); r=build_resident_runtime(config={'model': {}}, store_path=p/'kernel.db'); pulse=r.pulse(); s=r.life.snapshot(); assert pulse.sequence >= 1 and s.body is not None and s.external_brains == (); r.store.close()"
 
   publish-status:
     name: Publish commit statuses
