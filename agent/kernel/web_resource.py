@@ -2,18 +2,19 @@ from __future__ import annotations
 
 """ZN-owned web search/extract resources.
 
-The reference repository already contains mature provider implementations. ZN
-extracts their transport and normalization behavior behind a resident-owned
-resource interface instead of making ``tools.web_tools`` / the old plugin
-registry the owner of world sensing.
+The reference repository contains mature provider implementations. ZN extracts
+their transport and normalization behavior behind a resident-owned resource
+interface instead of making ``tools.web_tools`` / the old plugin registry the
+owner of world sensing.
 
-Tavily and Exa are the first extracted providers. Additional mature providers
-can be ported behind the same interface without changing NativeWorldSense.
+Tavily and Exa are currently extracted. Explicit provider selection remains
+pinned; an explicit ``auto``/``failover`` mode composes those resources through
+a small ZN-owned failover chain without reviving the old provider control plane.
 """
 
 import json
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Mapping, Protocol
 
 import httpx
@@ -186,39 +187,163 @@ class TavilyWebResource:
         return response_payload
 
 
-def build_zn_web_resource(
-    config: dict[str, Any] | None = None,
+class FailoverWebResource:
+    """Small resident-owned provider chain with evidence-preserving semantics.
+
+    Search fails over only when a provider raises. An empty result is a valid
+    observation and therefore stops the chain. Extraction is finer-grained:
+    URLs that a provider cannot extract remain pending for the next resource,
+    while successful documents are retained immediately.
+    """
+
+    name = "failover"
+
+    def __init__(self, resources: list[WebResource] | tuple[WebResource, ...]):
+        self.resources = tuple(resources)
+        if not self.resources:
+            raise ValueError("web failover requires at least one resource")
+        names = [str(resource.name or "").strip().lower() for resource in self.resources]
+        if any(not name for name in names):
+            raise ValueError("web resource name must not be empty")
+        if len(set(names)) != len(names):
+            raise ValueError("web failover resource names must be unique")
+        self.last_provider: str | None = None
+
+    def search(self, query: str, *, limit: int = 5) -> list[WebSearchItem]:
+        failures: list[str] = []
+        for resource in self.resources:
+            try:
+                items = resource.search(query, limit=limit)
+            except Exception as exc:
+                failures.append(f"{resource.name}: {type(exc).__name__}: {exc}")
+                continue
+            self.last_provider = resource.name
+            return [self._search_item_with_provider(item, resource.name) for item in items]
+        self.last_provider = None
+        raise WebResourceError(
+            "all ZN web search resources failed: " + " | ".join(failures)
+        )
+
+    def extract(self, urls: list[str]) -> list[WebDocument]:
+        normalized = list(
+            dict.fromkeys(
+                str(url or "").strip()
+                for url in urls
+                if str(url or "").strip()
+            )
+        )
+        if not normalized:
+            return []
+
+        settled: dict[str, WebDocument] = {}
+        errors: dict[str, list[str]] = {url: [] for url in normalized}
+        pending = list(normalized)
+        used_providers: list[str] = []
+
+        for resource in self.resources:
+            if not pending:
+                break
+            requested = list(pending)
+            try:
+                documents = resource.extract(requested)
+            except Exception as exc:
+                detail = f"{resource.name}: {type(exc).__name__}: {exc}"
+                for url in requested:
+                    errors[url].append(detail)
+                continue
+
+            used_providers.append(resource.name)
+            by_url: dict[str, WebDocument] = {}
+            for document in documents:
+                url = str(document.url or "").strip()
+                if url and url in errors:
+                    by_url[url] = document
+
+            next_pending: list[str] = []
+            for url in requested:
+                document = by_url.get(url)
+                if document is None:
+                    errors[url].append(f"{resource.name}: returned no document")
+                    next_pending.append(url)
+                    continue
+                if document.error:
+                    errors[url].append(f"{resource.name}: {document.error}")
+                    next_pending.append(url)
+                    continue
+                settled[url] = self._document_with_provider(document, resource.name)
+            pending = next_pending
+
+        if used_providers:
+            self.last_provider = used_providers[-1]
+        else:
+            self.last_provider = None
+
+        output: list[WebDocument] = []
+        for url in normalized:
+            if url in settled:
+                output.append(settled[url])
+                continue
+            detail = " | ".join(errors[url]) or "no ZN web resource returned a document"
+            output.append(
+                WebDocument(
+                    url=url,
+                    metadata={"sourceURL": url, "providers": list(used_providers)},
+                    error=detail[:2000],
+                )
+            )
+        return output
+
+    @staticmethod
+    def _search_item_with_provider(item: WebSearchItem, provider: str) -> WebSearchItem:
+        metadata = dict(item.metadata)
+        metadata.setdefault("provider", provider)
+        return replace(item, metadata=metadata)
+
+    @staticmethod
+    def _document_with_provider(document: WebDocument, provider: str) -> WebDocument:
+        metadata = dict(document.metadata)
+        metadata.setdefault("provider", provider)
+        return replace(document, metadata=metadata)
+
+
+def _provider_order(web_cfg: Mapping[str, Any]) -> list[str]:
+    raw = web_cfg.get("provider_order") or ["exa", "tavily"]
+    if isinstance(raw, str):
+        raw = [part.strip() for part in raw.split(",")]
+    if not isinstance(raw, (list, tuple)):
+        raise ValueError("ZN web.provider_order must be a list or comma-separated string")
+    order = [str(item or "").strip().lower() for item in raw]
+    order = [name for name in order if name]
+    if not order:
+        raise ValueError("ZN web.provider_order must not be empty")
+    if len(set(order)) != len(order):
+        raise ValueError("ZN web.provider_order must not contain duplicates")
+    return order
+
+
+def _build_provider(
+    provider: str,
+    web_cfg: Mapping[str, Any],
     *,
-    environ: Mapping[str, str] | None = None,
+    environ: Mapping[str, str],
     client: Any | None = None,
-) -> WebResource:
-    """Build the configured ZN web resource without loading old product config."""
-    cfg = config if config is not None else load_zn_config()
-    env = environ if environ is not None else os.environ
-    web_cfg = cfg.get("web") or {}
-    if not isinstance(web_cfg, dict):
-        raise ValueError("ZN web config must be a mapping")
-
-    provider = str(
-        web_cfg.get("search_backend")
-        or web_cfg.get("backend")
-        or "tavily"
-    ).strip().lower()
-
-    if provider == "tavily":
+    optional: bool = False,
+) -> WebResource | None:
+    name = str(provider or "").strip().lower()
+    if name == "tavily":
         tavily_cfg = web_cfg.get("tavily") or {}
-        if not isinstance(tavily_cfg, dict):
+        if not isinstance(tavily_cfg, Mapping):
             raise ValueError("ZN web.tavily config must be a mapping")
         api_key = str(
             tavily_cfg.get("api_key")
             or web_cfg.get("api_key")
-            or env.get("TAVILY_API_KEY")
+            or environ.get("TAVILY_API_KEY")
             or ""
         ).strip()
         base_url = str(
             tavily_cfg.get("base_url")
             or web_cfg.get("base_url")
-            or env.get("TAVILY_BASE_URL")
+            or environ.get("TAVILY_BASE_URL")
             or "https://api.tavily.com"
         ).strip()
         timeout = float(tavily_cfg.get("timeout") or web_cfg.get("timeout") or 60.0)
@@ -229,23 +354,72 @@ def build_zn_web_resource(
             client=client,
         )
 
-    if provider == "exa":
+    if name == "exa":
         from .exa_web_resource import ExaWebResource
 
         exa_cfg = web_cfg.get("exa") or {}
-        if not isinstance(exa_cfg, dict):
+        if not isinstance(exa_cfg, Mapping):
             raise ValueError("ZN web.exa config must be a mapping")
         api_key = str(
             exa_cfg.get("api_key")
-            or web_cfg.get("api_key")
-            or env.get("EXA_API_KEY")
+            or environ.get("EXA_API_KEY")
             or ""
         ).strip()
+        if not api_key and optional:
+            return None
         return ExaWebResource(api_key=api_key, client=client)
 
+    if optional:
+        return None
     raise WebResourceError(
-        f"ZN web provider {provider!r} is not extracted yet; available: tavily, exa"
+        f"ZN web provider {name!r} is not extracted yet; available: tavily, exa"
     )
+
+
+def build_zn_web_resource(
+    config: dict[str, Any] | None = None,
+    *,
+    environ: Mapping[str, str] | None = None,
+    client: Any | None = None,
+) -> WebResource:
+    """Build the configured ZN web resource without old product config."""
+    cfg = config if config is not None else load_zn_config()
+    env = environ if environ is not None else os.environ
+    web_cfg = cfg.get("web") or {}
+    if not isinstance(web_cfg, Mapping):
+        raise ValueError("ZN web config must be a mapping")
+
+    provider = str(
+        web_cfg.get("search_backend")
+        or web_cfg.get("backend")
+        or "tavily"
+    ).strip().lower()
+
+    if provider not in {"auto", "failover"}:
+        resource = _build_provider(
+            provider,
+            web_cfg,
+            environ=env,
+            client=client,
+            optional=False,
+        )
+        assert resource is not None
+        return resource
+
+    resources: list[WebResource] = []
+    for name in _provider_order(web_cfg):
+        resource = _build_provider(
+            name,
+            web_cfg,
+            environ=env,
+            client=client,
+            optional=True,
+        )
+        if resource is not None:
+            resources.append(resource)
+    if not resources:
+        raise WebResourceError("no configured ZN web resource is available for failover")
+    return FailoverWebResource(resources)
 
 
 def web_search_json(
@@ -257,9 +431,10 @@ def web_search_json(
     """Compatibility shape consumed by NativeWorldSense's structured parser."""
     active = resource or build_zn_web_resource()
     results = active.search(query, limit=max(1, int(limit)))
+    provider = str(getattr(active, "last_provider", None) or active.name)
     payload = {
         "success": True,
-        "provider": active.name,
+        "provider": provider,
         "data": {"web": [asdict(item) for item in results]},
     }
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
