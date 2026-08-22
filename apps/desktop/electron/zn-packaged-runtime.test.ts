@@ -59,6 +59,35 @@ test('packaged runtime materializes under ZN home and uses only ZN runtime entry
   }
 })
 
+test('packaged N+1 materializes beside N without replacing the active runtime', () => {
+  const root = mkTmpRoot()
+  const resourcesPath = path.join(root, 'resources')
+  const znHome = path.join(root, 'zn-home')
+  const env: Record<string, string | undefined> = {}
+  try {
+    writeBundledRuntime(resourcesPath, 'runtime-n')
+    const current = configureZnPackagedRuntime({ resourcesPath, znHome, env })
+    const currentMarker = path.join(current.root, 'active-runtime-marker')
+    fs.writeFileSync(currentMarker, 'resident-n-is-still-using-this-runtime')
+
+    fs.rmSync(path.join(resourcesPath, 'zn-runtime'), { recursive: true, force: true })
+    writeBundledRuntime(resourcesPath, 'runtime-n-plus-1')
+    const desired = configureZnPackagedRuntime({ resourcesPath, znHome, env })
+
+    assert.equal(current.root, path.join(znHome, 'runtime', 'runtime-n'))
+    assert.equal(desired.root, path.join(znHome, 'runtime', 'runtime-n-plus-1'))
+    assert.notEqual(desired.root, current.root)
+    assert.equal(fs.readFileSync(currentMarker, 'utf8'), 'resident-n-is-still-using-this-runtime')
+    assert.equal(resolveRuntime(current.root, 'runtime-n').manifest.runtime_id, 'runtime-n')
+    assert.equal(resolveRuntime(desired.root, 'runtime-n-plus-1').manifest.runtime_id, 'runtime-n-plus-1')
+    assert.equal(env.ZN_AGENT_HOME, znHome)
+    assert.equal(env.ZN_RUNTIME_ID, 'runtime-n-plus-1')
+    assert.equal(env.ZN_RESIDENT_PYTHON, desired.python)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('packaged runtime rejects inherited Hermes package content', () => {
   const root = mkTmpRoot()
   const resourcesPath = path.join(root, 'resources')
