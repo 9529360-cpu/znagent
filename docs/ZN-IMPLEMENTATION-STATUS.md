@@ -11,7 +11,7 @@
 Latest source implementation baseline verified before this documentation-only update:
 
 ```text
-7fa92de864ed47a145a9afba033f08fea00b274d
+2849e4d46e1e0ea5d1f9c414e7adac9b38c95d37
 ```
 
 Normal ZN CI:
@@ -19,10 +19,12 @@ Normal ZN CI:
 ```text
 ZN Kernel / Python      success
 Electron / TypeScript  success
-Actions run             32566228134
+Actions run             32566761653
 ```
 
-The preceding broad extraction batch was also verified at `bd15481db2cd80547d9fdd81386c6770a80b23bf` / Actions run `32565873478`.
+This baseline includes deterministic external-event ingress, durable channel routing/checkpoints, restart-safe outcome delivery, real PTY coverage, Telegram network/media extraction, and the ZN-owned multi-provider Web path.
+
+Earlier broad extraction baselines were also verified at `7fa92de864ed47a145a9afba033f08fea00b274d` / Actions run `32566228134` and `bd15481db2cd80547d9fdd81386c6770a80b23bf` / Actions run `32565873478`.
 
 ## Current development rule
 
@@ -39,7 +41,7 @@ inspect mature reference source
 
 Hermes/reference code is a source mine, not ZN's runtime dependency graph or product control plane.
 
-Formal packaging is not the current architecture driver. Useful release mechanisms stay available for later, but product/runtime ownership comes first.
+Formal installer polishing is not the current architecture driver. Useful release mechanisms stay available for later, but runtime/product ownership comes first.
 
 ## Source extraction ledger
 
@@ -73,6 +75,7 @@ Still transitional:
 
 - `LegacyAIAgentWorkerFactory` remains only as an explicit compatibility seam for old tests/callers;
 - provider-specific external tool-turn replay and uncommon reasoning edge cases should be source-extracted only when ZN has a concrete use;
+- the root Python distribution/package identity is still inherited and therefore M1 is not complete even though active cognition transport is largely ZN-owned;
 - remove the legacy worker entirely once no active compatibility caller remains.
 
 ### Local terminal / computer body
@@ -170,7 +173,7 @@ Deferred deliberately:
 
 ### Communication channels
 
-Status: **resident-owned communication lifecycle, durable routing and Telegram inbound media active**
+Status: **resident-owned communication lifecycle with idempotent ingress, durable routing/checkpoints and Telegram inbound media active**
 
 Core contract:
 
@@ -180,6 +183,11 @@ Core contract:
   - normalized `ChannelAttachment`;
   - `ChannelDelivery`;
   - `ChannelAdapter` contract.
+- `agent/kernel/event_ingress.py`
+  - deterministic external resident event IDs derived from namespace + stable source key;
+  - idempotent enqueue for replayed external percepts;
+  - an already-existing resident event is never replaced or re-queued;
+  - closes the crash window where an event can reach the resident queue before its channel route is persisted, without creating a second task store.
 
 Resident lifecycle:
 
@@ -188,9 +196,10 @@ Resident lifecycle:
   - each transport gets an isolated polling/reconnect thread;
   - channel transport failures use bounded exponential backoff;
   - **channel threads do not drive cognition**;
-  - inbound percepts call `resident.enqueue()` only;
+  - inbound percepts enter the resident durable event queue through idempotent external ingress;
   - cognition remains owned by the resident life loop;
-  - completed results are observed through `resident.result_for()` and routed outward.
+  - completed results are observed through `resident.result_for()` and routed outward;
+  - replayed percepts with the same stable source key resolve to the same resident event identity.
 - `agent/kernel/channel_delivery.py`
   - durable `channel source percept -> resident event -> conversation/thread` routing ledger;
   - pending outcomes survive resident process restart;
@@ -201,7 +210,7 @@ Resident lifecycle:
 - `agent/kernel/telegram_resident_channel.py`
   - Telegram long-poll offset checkpoint/restore seam;
   - offset only moves forward;
-  - supervisor persists it only after all percepts from that poll have reached the durable route ledger.
+  - supervisor persists it only after all percepts from that poll have reached durable resident ingress/routing.
 
 Telegram transport:
 
@@ -233,7 +242,7 @@ Current communication invariant:
 ```text
 Telegram / future Discord / future Slack / ...
 → ChannelEvent
-→ durable resident event queue
+→ deterministic durable resident event ingress
 → SAME ZN resident life loop
 → durable outcome
 → channel delivery ledger
@@ -244,10 +253,9 @@ A channel does not own an agent identity or cognition loop.
 
 Remaining communication work:
 
-- remove the very small crash window between `resident.enqueue()` and insertion of the matching channel route, ideally by reserving a deterministic resident event id or making the enqueue/route write atomic;
 - extract a ZN-owned outbound media path authorization policy before allowing local-file uploads;
 - then add Telegram outbound attachments/media, rich formatting/status/typing only where product value justifies them;
-- add Discord/Slack/other adapters behind the same contract rather than copying the old gateway wholesale.
+- add Discord/Slack/other adapters behind the same durable contract rather than copying the old gateway wholesale.
 
 ### Desktop/UI ownership
 
@@ -266,6 +274,19 @@ Target remains the independent ZN workbench defined in `ZN.md`.
 
 Do not spend product effort polishing the inherited shell. Reusable generic implementation may be source-extracted, but the final app root, navigation, work thread, artifact panel, settings and resident view must be ZN-owned.
 
+## Python/runtime package ownership
+
+Status: **active resident mechanisms are increasingly ZN-owned, but M1 distribution ownership is not complete**
+
+Current verified CI still installs the repository root as the inherited `hermes-agent` distribution. That means the source-extracted cognition/body/world/channel seams do not yet make the packaged Python runtime an independently owned ZN distribution.
+
+The next runtime-ownership work should therefore finish the remaining M1 boundary without going back to polishing the inherited installer shell:
+
+- finalize ZN-owned Python distribution/package metadata;
+- provide the final ZN resident entrypoint;
+- remove `hermes_cli` / inherited distribution identity from packaged-runtime validity and staging requirements;
+- preserve current zero-model boot and all already-extracted ZN resource/body/channel behavior while cutting that package boundary.
+
 ## Packaging/release ownership
 
 Status: **paused as architecture driver**
@@ -279,17 +300,18 @@ Useful release mechanisms already written can be retained later:
 - updater hash/size verification;
 - multi-OS builder workflow structure.
 
-The inherited package shape is not the release target. Formal package work resumes after the active runtime and desktop paths are independently ZN-owned.
+The inherited package shape is not the release target. Formal installer work resumes after the active Python runtime and desktop paths are independently ZN-owned.
 
 ## Immediate next development sequence
 
 Unless a newly discovered code fact requires changing the architecture contract first:
 
-1. close the channel enqueue -> route atomicity gap without creating a second task store;
-2. close the remaining PTY completed-session cleanup edge;
-3. extract ZN-owned outbound media path authorization before Telegram file sending;
-4. finish only the Telegram rich/status/media behaviors the resident actually needs;
-5. add the next communication platform through the common durable channel contract;
-6. remove remaining active old-product control-plane dependencies as they are encountered;
-7. begin the independent Electron main/preload/workbench ownership milestone;
-8. only after those boundaries are owned, rebuild formal packaging around the actual ZN product.
+1. finish the remaining M1 Python distribution/runtime ownership seam without reverting to inherited package control;
+2. close the small PTY completed-session cleanup edge;
+3. extract ZN-owned outbound media path authorization before Telegram local-file sending;
+4. remove remaining active old-product runtime/control-plane dependencies as they are encountered;
+5. begin M4 independent Electron main/preload ownership;
+6. build the M5 content-first ZN workbench on that independent desktop foundation;
+7. rebuild formal packaging only around the actual ZN-owned runtime + desktop product.
+
+Do not interpret step 1 as “resume installer polishing.” The target is the Python/runtime ownership boundary itself; expensive multi-OS artifact validation remains release-relevant work for the later packaging milestone.
