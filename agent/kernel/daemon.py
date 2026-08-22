@@ -339,9 +339,9 @@ class ResidentRpcServer:
     def _limit(params: dict[str, Any]) -> int:
         return max(1, min(200, int(params.get("limit") or 20)))
 
-    @staticmethod
-    def _work_snapshot(snapshot) -> dict[str, Any]:
+    def _work_snapshot(self, snapshot) -> dict[str, Any]:
         thread, messages = snapshot
+        artifacts = self.work.list_artifacts(thread.thread_id, limit=48)
         return {
             "id": thread.thread_id,
             "title": thread.title,
@@ -357,6 +357,19 @@ class ResidentRpcServer:
                     "created_at": message.created_at,
                 }
                 for message in messages
+            ],
+            "artifacts": [
+                {
+                    "id": artifact.artifact_id,
+                    "event_id": artifact.event_id,
+                    "kind": artifact.kind,
+                    "name": artifact.name,
+                    "path": artifact.path,
+                    "content": artifact.content,
+                    "metadata": artifact.metadata,
+                    "created_at": artifact.created_at,
+                }
+                for artifact in artifacts
             ],
         }
 

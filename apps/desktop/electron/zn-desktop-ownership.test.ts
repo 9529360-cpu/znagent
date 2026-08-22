@@ -75,9 +75,13 @@ test('active ZN renderer root is content-first and independent of inherited shel
   assert.match(workbench, /attachZnWorkspace/)
   assert.match(workbench, /detachZnWorkspace/)
   assert.match(workbench, /Attach folder/)
+  assert.match(workbench, /selectedArtifactId/)
+  assert.match(workbench, /Work artifacts/)
+  assert.match(workbench, /artifactKindLabel/)
   assert.match(residentClient, /resident\.workList/)
   assert.match(residentClient, /resident\.workSubmit/)
   assert.match(residentClient, /bridge\.workspaces\.attach/)
+  assert.match(residentClient, /normalizeArtifact/)
   assert.match(html, /zn-shell-renderer\.css/)
   assert.match(html, /zn-shell-renderer\.js/)
 
@@ -85,6 +89,8 @@ test('active ZN renderer root is content-first and independent of inherited shel
     assert.doesNotMatch(source, /ContribController|hermesDesktop|@hermes|src\/main/i)
   }
   assert.doesNotMatch(workbench, /gateway/i)
+  assert.doesNotMatch(workbench, /showOpenDialog|readFileSync|readFile\(/)
+  assert.doesNotMatch(residentClient, /node:fs|electron/)
   assert.doesNotMatch(html, /hermes/i)
 })
 
@@ -94,10 +100,24 @@ test('workbench browser cache is bounded fallback state, not resident authority'
 
   assert.match(state, /MAX_THREADS = 24/)
   assert.match(state, /MAX_MESSAGES_PER_THREAD = 120/)
+  assert.match(state, /MAX_ARTIFACTS_PER_THREAD = 48/)
   assert.match(state, /Resident identity\/memory must never/)
   assert.match(workbench, /const authoritative = residentThreads\.length > 0/)
   assert.match(workbench, /setThreads\(authoritative\)/)
   assert.doesNotMatch(state, /nervous|kernel\.db|structured memory/i)
+})
+
+test('artifact context remains resident-backed and contextual rather than a permanent file tree', () => {
+  const workbench = read('src/zn/workbench.tsx')
+  const client = read('src/zn/resident-client.ts')
+  const state = read('src/zn/state.ts')
+
+  assert.match(state, /ZnArtifact/)
+  assert.match(client, /rawArtifacts/)
+  assert.match(workbench, /activeArtifacts/)
+  assert.match(workbench, /zn-artifact-preview/)
+  assert.match(workbench, /setContextOpen\(true\)/)
+  assert.doesNotMatch(workbench, /file tree|treeview|react-arborist/i)
 })
 
 test('Electron bundler emits only ZN control-plane and renderer entries', () => {

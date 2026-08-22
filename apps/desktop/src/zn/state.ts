@@ -14,18 +14,33 @@ export type ZnWorkspace = {
   attachedAt?: number
 }
 
+export type ZnArtifactKind = 'file' | 'diff' | 'other'
+
+export type ZnArtifact = {
+  id: string
+  eventId: string
+  kind: ZnArtifactKind
+  name: string
+  content: string
+  path?: string
+  createdAt: number
+  metadata?: Record<string, unknown>
+}
+
 export type ZnThread = {
   id: string
   title: string
   createdAt: number
   updatedAt: number
   messages: ZnThreadMessage[]
+  artifacts: ZnArtifact[]
   workspace?: ZnWorkspace
 }
 
 const STORAGE_KEY = 'zn.desktop.thread-cache.v1'
 const MAX_THREADS = 24
 const MAX_MESSAGES_PER_THREAD = 120
+const MAX_ARTIFACTS_PER_THREAD = 48
 
 function id(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`
@@ -37,7 +52,8 @@ export function newZnThread(now = Date.now()): ZnThread {
     title: 'New work',
     createdAt: now,
     updatedAt: now,
-    messages: []
+    messages: [],
+    artifacts: []
   }
 }
 
@@ -90,7 +106,10 @@ export function loadZnThreadCache(): ZnThread[] {
     if (!Array.isArray(parsed)) return []
     return parsed.filter(isThread).slice(0, MAX_THREADS).map(thread => ({
       ...thread,
-      messages: thread.messages.slice(-MAX_MESSAGES_PER_THREAD)
+      messages: thread.messages.slice(-MAX_MESSAGES_PER_THREAD),
+      artifacts: Array.isArray(thread.artifacts)
+        ? thread.artifacts.slice(0, MAX_ARTIFACTS_PER_THREAD)
+        : []
     }))
   } catch {
     return []
@@ -104,7 +123,8 @@ export function saveZnThreadCache(threads: readonly ZnThread[]): void {
       .slice(0, MAX_THREADS)
       .map(thread => ({
         ...thread,
-        messages: thread.messages.slice(-MAX_MESSAGES_PER_THREAD)
+        messages: thread.messages.slice(-MAX_MESSAGES_PER_THREAD),
+        artifacts: thread.artifacts.slice(0, MAX_ARTIFACTS_PER_THREAD)
       }))
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(bounded))
   } catch {

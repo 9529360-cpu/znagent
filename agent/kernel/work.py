@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -10,14 +11,24 @@ from pathlib import Path
 from typing import Any
 
 from .models import ResidentRunResult, utc_now
+from .path_context import resolved_within
 
 
 _WORK_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _RESERVED_METADATA_KEYS = {"workspace"}
+_ARTIFACT_CONTENT_LIMIT = 60_000
+_MAX_ARTIFACTS_PER_THREAD = 96
 
 
 def _id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:16]}"
+
+
+def _artifact_id(event_id: str, kind: str, key: str) -> str:
+    digest = hashlib.sha256(
+        f"{event_id}\x00{kind}\x00{key}".encode("utf-8", errors="replace")
+    ).hexdigest()[:20]
+    return f"artifact-{digest}"
 
 
 def title_for_work_task(task: str) -> str:
@@ -60,13 +71,27 @@ class WorkMessage:
     created_at: str = field(default_factory=utc_now)
 
 
+@dataclass(slots=True)
+class WorkArtifact:
+    artifact_id: str
+    thread_id: str
+    event_id: str
+    kind: str
+    name: str
+    content: str
+    path: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=utc_now)
+
+
 class ResidentWorkLedger:
     """Resident-owned durable work/thread history for desktop and future faces.
 
-    Work history is durable interaction state, not lived-memory facts and not a
-    separate agent. User work still enters the same ``ZNResidentRuntime`` event
-    loop; this ledger owns thread/message continuity and the durable local
-    workspace associated with that work.
+    Work history and contextual artifacts are durable interaction state, not
+    lived-memory facts and not a separate agent. User work still enters the same
+    ``ZNResidentRuntime`` event loop; this ledger owns thread/message continuity,
+    the durable local workspace, and bounded presentation records derived from
+    ZN Body observations for that work.
     """
 
     def __init__(self, resident):
@@ -106,6 +131,22 @@ class ResidentWorkLedger:
                 );
                 CREATE INDEX IF NOT EXISTS idx_work_messages_thread
                     ON work_messages(thread_id, created_at ASC);
+                CREATE TABLE IF NOT EXISTS work_artifacts(
+                    artifact_id TEXT PRIMARY KEY,
+                    thread_id TEXT NOT NULL,
+                    event_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    path TEXT,
+                    content TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(thread_id) REFERENCES work_threads(thread_id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_work_artifacts_thread
+                    ON work_artifacts(thread_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_work_artifacts_event
+                    ON work_artifacts(event_id, created_at DESC);
                 """
             )
 
@@ -147,6 +188,22 @@ class ResidentWorkLedger:
             role=str(row["role"]),
             text=str(row["text"]),
             detail=detail,
+            created_at=str(row["created_at"]),
+        )
+
+    @staticmethod
+    def _artifact_from_row(row: sqlite3.Row) -> WorkArtifact:
+        raw_metadata = json.loads(row["metadata_json"] or "{}")
+        metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+        return WorkArtifact(
+            artifact_id=str(row["artifact_id"]),
+            thread_id=str(row["thread_id"]),
+            event_id=str(row["event_id"]),
+            kind=str(row["kind"]),
+            name=str(row["name"]),
+            path=str(row["path"]) if row["path"] is not None else None,
+            content=str(row["content"]),
+            metadata=metadata,
             created_at=str(row["created_at"]),
         )
 
@@ -226,6 +283,17 @@ class ResidentWorkLedger:
                 (normalized_id, bounded),
             ).fetchall()
         return [self._message_from_row(row) for row in rows]
+
+    def list_artifacts(self, thread_id: str, *, limit: int = 48) -> list[WorkArtifact]:
+        normalized_id = self._normalize_thread_id(thread_id)
+        bounded = max(1, min(_MAX_ARTIFACTS_PER_THREAD, int(limit)))
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM work_artifacts WHERE thread_id=? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (normalized_id, bounded),
+            ).fetchall()
+        return [self._artifact_from_row(row) for row in rows]
 
     def get_snapshot(
         self,
@@ -380,6 +448,12 @@ class ResidentWorkLedger:
             ),
         )
 
+        new_artifacts = self._collect_artifacts(
+            thread,
+            run,
+            task=normalized_task,
+            workspace=workspace,
+        )
         activity: dict[str, Any] = {
             "event_id": run.event.event_id,
             "execution_path": run.execution_path.value,
@@ -387,6 +461,16 @@ class ResidentWorkLedger:
         }
         if workspace is not None:
             activity["workspace"] = workspace.to_dict()
+        if new_artifacts:
+            activity["artifacts"] = [
+                {
+                    "id": artifact.artifact_id,
+                    "kind": artifact.kind,
+                    "name": artifact.name,
+                    "path": artifact.path,
+                }
+                for artifact in new_artifacts
+            ]
         if run.capability_name:
             activity["capability_name"] = run.capability_name
         if run.reason:
@@ -402,6 +486,248 @@ class ResidentWorkLedger:
             ),
         )
         return self.get_snapshot(thread.thread_id), run
+
+    def _collect_artifacts(
+        self,
+        thread: WorkThread,
+        run: ResidentRunResult,
+        *,
+        task: str,
+        workspace: WorkspaceAssociation | None,
+    ) -> list[WorkArtifact]:
+        if workspace is None:
+            return []
+        body = getattr(self.resident, "body", None)
+        if body is None:
+            return []
+
+        created: dict[str, WorkArtifact] = {}
+        event_actions = [
+            item
+            for item in reversed(body.recent_actions(160))
+            if item.event_id == run.event.event_id
+        ]
+        for action in event_actions:
+            if not action.success or action.kind not in {
+                "read_text",
+                "read_file",
+                "write_text",
+                "write_file",
+            }:
+                continue
+            raw_path = str(action.data.get("path") or "").strip()
+            if not raw_path:
+                continue
+            resolved = resolved_within(workspace.path, raw_path)
+            if resolved is None or not resolved.is_file():
+                continue
+
+            relative = resolved.relative_to(Path(workspace.path).resolve()).as_posix()
+            content = action.output
+            truncated = bool(action.data.get("truncated", False))
+            chars = int(action.data.get("chars") or len(content))
+            mode = "read"
+            source_action_id = action.action_id
+            if action.kind in {"write_text", "write_file"}:
+                observed = body.act(
+                    "read_text",
+                    event_id=run.event.event_id,
+                    path=str(resolved),
+                    max_chars=_ARTIFACT_CONTENT_LIMIT,
+                )
+                if not observed.success:
+                    continue
+                content = observed.output
+                truncated = bool(observed.data.get("truncated", False))
+                chars = int(observed.data.get("chars") or len(content))
+                mode = "write"
+                source_action_id = observed.action_id
+
+            artifact = WorkArtifact(
+                artifact_id=_artifact_id(run.event.event_id, "file", str(resolved)),
+                thread_id=thread.thread_id,
+                event_id=run.event.event_id,
+                kind="file",
+                name=relative,
+                path=str(resolved),
+                content=content[:_ARTIFACT_CONTENT_LIMIT],
+                metadata={
+                    "workspace_relative_path": relative,
+                    "mode": mode,
+                    "chars": chars,
+                    "truncated": truncated or len(content) > _ARTIFACT_CONTENT_LIMIT,
+                    "source_action_id": source_action_id,
+                },
+            )
+            self._save_artifact(artifact)
+            created[artifact.artifact_id] = artifact
+
+        if self._workspace_context_relevant(task, event_actions):
+            for artifact in self._collect_workspace_git_context(
+                thread,
+                run.event.event_id,
+                workspace,
+                body,
+            ):
+                created[artifact.artifact_id] = artifact
+        return list(created.values())
+
+    @staticmethod
+    def _workspace_context_relevant(task: str, event_actions: list[Any]) -> bool:
+        if any(
+            action.kind in {"read_text", "read_file", "write_text", "write_file", "git_state", "git"}
+            for action in event_actions
+        ):
+            return True
+        text = str(task or "").lower()
+        return any(
+            token in text
+            for token in (
+                "file", "code", "git", "diff", "change", "changed", "workspace",
+                "project", "repo", "read", "write", "create", "modify", "patch",
+                "文件", "代码", "差异", "修改", "工作区", "项目", "仓库", "读取", "写",
+            )
+        )
+
+    def _collect_workspace_git_context(
+        self,
+        thread: WorkThread,
+        event_id: str,
+        workspace: WorkspaceAssociation,
+        body,
+    ) -> list[WorkArtifact]:
+        git = body.act(
+            "git_state",
+            event_id=event_id,
+            path=workspace.path,
+            timeout=8,
+        )
+        if not git.success or not bool(git.data.get("dirty")):
+            return []
+
+        created: list[WorkArtifact] = []
+        seen_paths: set[str] = set()
+        for status_line in list(git.data.get("changes") or ())[:12]:
+            relative = self._path_from_porcelain(str(status_line))
+            if not relative or relative in seen_paths:
+                continue
+            seen_paths.add(relative)
+            candidate = resolved_within(workspace.path, Path(workspace.path) / relative)
+            if candidate is None or not candidate.is_file():
+                continue
+            observed = body.act(
+                "read_text",
+                event_id=event_id,
+                path=str(candidate),
+                max_chars=_ARTIFACT_CONTENT_LIMIT,
+            )
+            if not observed.success:
+                continue
+            artifact = WorkArtifact(
+                artifact_id=_artifact_id(event_id, "file", str(candidate)),
+                thread_id=thread.thread_id,
+                event_id=event_id,
+                kind="file",
+                name=relative,
+                path=str(candidate),
+                content=observed.output[:_ARTIFACT_CONTENT_LIMIT],
+                metadata={
+                    "workspace_relative_path": relative,
+                    "mode": "workspace_change",
+                    "chars": int(observed.data.get("chars") or len(observed.output)),
+                    "truncated": bool(observed.data.get("truncated", False))
+                    or len(observed.output) > _ARTIFACT_CONTENT_LIMIT,
+                    "source_action_id": observed.action_id,
+                },
+            )
+            self._save_artifact(artifact)
+            created.append(artifact)
+            if len(created) >= 4:
+                break
+
+        diff_parts: list[str] = []
+        truncated = False
+        for label, command in (
+            ("Working tree", "git diff --no-ext-diff --no-color -- ."),
+            ("Staged", "git diff --cached --no-ext-diff --no-color -- ."),
+        ):
+            result = body.act(
+                "command",
+                event_id=event_id,
+                command=command,
+                workdir=workspace.path,
+                timeout=10,
+                max_output_chars=_ARTIFACT_CONTENT_LIMIT // 2,
+            )
+            if not result.success or not result.output.strip():
+                continue
+            diff_parts.append(f"## {label}\n{result.output.rstrip()}")
+            truncated = truncated or bool(result.data.get("truncated", False))
+        diff_content = "\n\n".join(diff_parts)
+        if diff_content:
+            artifact = WorkArtifact(
+                artifact_id=_artifact_id(event_id, "diff", workspace.path),
+                thread_id=thread.thread_id,
+                event_id=event_id,
+                kind="diff",
+                name="Current workspace diff",
+                path=workspace.path,
+                content=diff_content[:_ARTIFACT_CONTENT_LIMIT],
+                metadata={
+                    "workspace": workspace.to_dict(),
+                    "scope": "current_workspace_after_event",
+                    "truncated": truncated or len(diff_content) > _ARTIFACT_CONTENT_LIMIT,
+                },
+            )
+            self._save_artifact(artifact)
+            created.append(artifact)
+        return created
+
+    @staticmethod
+    def _path_from_porcelain(status_line: str) -> str:
+        text = str(status_line or "")
+        if len(text) < 4:
+            return ""
+        path = text[3:].strip()
+        if " -> " in path:
+            path = path.rsplit(" -> ", 1)[-1].strip()
+        if path.startswith('"') and path.endswith('"'):
+            path = path[1:-1]
+        return path
+
+    def _save_artifact(self, artifact: WorkArtifact) -> None:
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO work_artifacts(
+                    artifact_id,thread_id,event_id,kind,name,path,content,metadata_json,created_at
+                ) VALUES(?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(artifact_id) DO UPDATE SET
+                    kind=excluded.kind,
+                    name=excluded.name,
+                    path=excluded.path,
+                    content=excluded.content,
+                    metadata_json=excluded.metadata_json,
+                    created_at=excluded.created_at
+                """,
+                (
+                    artifact.artifact_id,
+                    artifact.thread_id,
+                    artifact.event_id,
+                    artifact.kind,
+                    artifact.name,
+                    artifact.path,
+                    artifact.content,
+                    json.dumps(artifact.metadata, ensure_ascii=False, separators=(",", ":")),
+                    artifact.created_at,
+                ),
+            )
+            conn.execute(
+                "DELETE FROM work_artifacts WHERE artifact_id IN ("
+                "SELECT artifact_id FROM work_artifacts WHERE thread_id=? "
+                "ORDER BY created_at DESC LIMIT -1 OFFSET ?) ",
+                (artifact.thread_id, _MAX_ARTIFACTS_PER_THREAD),
+            )
 
     def _append(self, thread: WorkThread, message: WorkMessage) -> None:
         with self._lock, self._connect() as conn:

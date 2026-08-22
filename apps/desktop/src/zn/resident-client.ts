@@ -1,4 +1,11 @@
-import type { ZnThread, ZnThreadMessage, ZnThreadRole, ZnWorkspace } from './state'
+import type {
+  ZnArtifact,
+  ZnArtifactKind,
+  ZnThread,
+  ZnThreadMessage,
+  ZnThreadRole,
+  ZnWorkspace
+} from './state'
 
 export type ZnResidentSnapshot = {
   status: unknown
@@ -35,6 +42,10 @@ function role(value: unknown): ZnThreadRole {
   return value === 'user' || value === 'activity' ? value : 'zn'
 }
 
+function artifactKind(value: unknown): ZnArtifactKind {
+  return value === 'file' || value === 'diff' ? value : 'other'
+}
+
 function normalizeMessage(value: unknown): ZnThreadMessage | null {
   const item = record(value)
   if (!item) return null
@@ -48,6 +59,25 @@ function normalizeMessage(value: unknown): ZnThreadMessage | null {
     text,
     at: timestamp(item.created_at || item.at),
     ...(detail ? { detail } : {})
+  }
+}
+
+function normalizeArtifact(value: unknown): ZnArtifact | null {
+  const item = record(value)
+  if (!item) return null
+  const id = String(item.id || '').trim()
+  if (!id) return null
+  const path = String(item.path || '').trim()
+  const metadata = record(item.metadata)
+  return {
+    id,
+    eventId: String(item.event_id || item.eventId || '').trim(),
+    kind: artifactKind(item.kind),
+    name: String(item.name || path || 'Artifact'),
+    content: String(item.content || ''),
+    ...(path ? { path } : {}),
+    createdAt: timestamp(item.created_at || item.createdAt),
+    ...(metadata ? { metadata } : {})
   }
 }
 
@@ -75,6 +105,10 @@ function normalizeThread(value: unknown): ZnThread {
   const messages = rawMessages
     .map(normalizeMessage)
     .filter((message): message is ZnThreadMessage => Boolean(message))
+  const rawArtifacts = Array.isArray(item.artifacts) ? item.artifacts : []
+  const artifacts = rawArtifacts
+    .map(normalizeArtifact)
+    .filter((artifact): artifact is ZnArtifact => Boolean(artifact))
   const workspace = normalizeWorkspace(item.metadata)
   return {
     id,
@@ -82,6 +116,7 @@ function normalizeThread(value: unknown): ZnThread {
     createdAt: timestamp(item.created_at || item.createdAt),
     updatedAt: timestamp(item.updated_at || item.updatedAt),
     messages,
+    artifacts,
     ...(workspace ? { workspace } : {})
   }
 }

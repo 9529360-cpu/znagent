@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import AgentEvent, utc_now
+from .path_context import resolve_context_path
 
 
 @dataclass(slots=True)
@@ -61,6 +62,7 @@ def derive_native_action_intent(
     if explicit:
         kind, args = _explicit_action(explicit, payload)
         if kind:
+            args = _contextualize_action_args(args, payload)
             return NativeActionIntent(
                 intent_id=f"act-{uuid.uuid4().hex[:12]}",
                 event_id=event.event_id,
@@ -71,11 +73,16 @@ def derive_native_action_intent(
             )
 
     task = event.task.lower()
-    path = (
+    raw_path = (
         payload.get("path")
         or payload.get("file")
         or payload.get("target")
         or payload.get("directory")
+    )
+    path = (
+        str(resolve_context_path(str(raw_path), payload))
+        if raw_path is not None and str(raw_path).strip()
+        else None
     )
     command = payload.get("command")
     has_content = "content" in payload or "text" in payload
@@ -161,7 +168,7 @@ def derive_native_action_intent(
             event_id=event.event_id,
             kind="write_text",
             args={
-                "path": str(path),
+                "path": path,
                 "content": str(content),
                 "append": append,
                 "create_parents": bool(payload.get("create_parents", True)),
@@ -184,7 +191,7 @@ def derive_native_action_intent(
             intent_id=f"act-{uuid.uuid4().hex[:12]}",
             event_id=event.event_id,
             kind="list_directory",
-            args={"path": str(path)},
+            args={"path": path},
             reason=(
                 "native investigation confirmed that the requested target is a directory"
                 if path_fact is not None
@@ -236,6 +243,20 @@ def _path_key(value: Any) -> str:
         return str(Path(text).expanduser())
     except (OSError, RuntimeError, ValueError):
         return text
+
+
+def _contextualize_action_args(
+    args: dict[str, Any],
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    contextualized = dict(args)
+    raw_path = contextualized.get("path") or contextualized.get("target")
+    if raw_path is not None and str(raw_path).strip():
+        contextualized["path"] = str(resolve_context_path(str(raw_path), payload))
+        contextualized.pop("target", None)
+    if contextualized.get("workdir") is None and payload.get("workdir") is not None:
+        contextualized["workdir"] = payload["workdir"]
+    return contextualized
 
 
 def _explicit_action(

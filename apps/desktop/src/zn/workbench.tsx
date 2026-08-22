@@ -35,12 +35,19 @@ function timeLabel(value: number): string {
   return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(new Date(value))
 }
 
+function artifactKindLabel(kind: string): string {
+  if (kind === 'diff') return 'Diff'
+  if (kind === 'file') return 'File'
+  return 'Artifact'
+}
+
 export function ZnWorkbench() {
   const [threads, setThreads] = useState<ZnThread[]>(() => {
     const cached = loadZnThreadCache()
     return cached.length > 0 ? cached : [newZnThread()]
   })
   const [activeThreadId, setActiveThreadId] = useState(() => threads[0]?.id || '')
+  const [selectedArtifactId, setSelectedArtifactId] = useState('')
   const [view, setView] = useState<MainView>('work')
   const [query, setQuery] = useState('')
   const [draft, setDraft] = useState('')
@@ -59,6 +66,11 @@ export function ZnWorkbench() {
     [activeThreadId, threads]
   )
   const activeWorkspace = activeThread?.workspace || null
+  const activeArtifacts = useMemo(() => activeThread?.artifacts || [], [activeThread])
+  const selectedArtifact = useMemo(
+    () => activeArtifacts.find(artifact => artifact.id === selectedArtifactId) || activeArtifacts[0] || null,
+    [activeArtifacts, selectedArtifactId]
+  )
   const recentThreads = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     return [...threads]
@@ -67,6 +79,14 @@ export function ZnWorkbench() {
   }, [query, threads])
 
   useEffect(() => saveZnThreadCache(threads), [threads])
+
+  useEffect(() => {
+    setSelectedArtifactId(current =>
+      activeArtifacts.some(artifact => artifact.id === current)
+        ? current
+        : activeArtifacts[0]?.id || ''
+    )
+  }, [activeArtifacts])
 
   const replaceThread = useCallback((updated: ZnThread) => {
     setThreads(current =>
@@ -114,6 +134,7 @@ export function ZnWorkbench() {
     const thread = newZnThread()
     setThreads(current => [thread, ...current])
     setActiveThreadId(thread.id)
+    setSelectedArtifactId('')
     setView('work')
     setDraft('')
     void createZnWorkThread(thread)
@@ -173,6 +194,10 @@ export function ZnWorkbench() {
       try {
         const result = await submitZnWork(threadId, task)
         replaceThread(result.thread)
+        if (result.thread.artifacts.length > 0) {
+          setSelectedArtifactId(result.thread.artifacts[0].id)
+          setContextOpen(true)
+        }
         setResidentError(null)
         setResidentHealth('live')
         void loadZnResidentSnapshot().then(setResidentSnapshot).catch(() => undefined)
@@ -392,7 +417,7 @@ export function ZnWorkbench() {
                   <span className="zn-eyebrow">Persistent resident</span>
                   <h1>What should ZN attend to?</h1>
                   <p>
-                    Work enters the resident's own event loop. Attach a local folder when this work belongs to a project; ZN will use that durable workspace as its local context.
+                    Work enters the resident's own event loop. Attach a local folder when this work belongs to a project; files and diffs appear contextually only when the resident observes relevant work evidence.
                   </p>
                 </div>
               )}
@@ -430,7 +455,7 @@ export function ZnWorkbench() {
           <div className="zn-context-header">
             <div>
               <div className="zn-section-label">Context</div>
-              <strong>Resident</strong>
+              <strong>{selectedArtifact ? artifactKindLabel(selectedArtifact.kind) : 'Resident'}</strong>
             </div>
             <button type="button" aria-label="Close context panel" onClick={() => setContextOpen(false)}>×</button>
           </div>
@@ -464,14 +489,45 @@ export function ZnWorkbench() {
             </div>
             {residentError ? <div className="zn-error-text">{residentError}</div> : null}
           </section>
-          <section className="zn-context-section zn-context-grow">
-            <div className="zn-context-title">Current resident state</div>
-            <pre>{residentSnapshot ? renderUnknown(residentSnapshot) : 'Waiting for resident…'}</pre>
-          </section>
-          <section className="zn-context-section">
-            <div className="zn-context-title">Artifacts</div>
-            <p className="zn-muted zn-small">Artifacts appear here contextually when work produces them.</p>
-          </section>
+          {activeArtifacts.length > 0 ? (
+            <section className="zn-context-section zn-context-grow zn-artifact-section">
+              <div className="zn-context-title">Artifacts</div>
+              <div className="zn-artifact-list" aria-label="Work artifacts">
+                {activeArtifacts.map(artifact => (
+                  <button
+                    className={`zn-artifact-link${artifact.id === selectedArtifact?.id ? ' active' : ''}`}
+                    key={artifact.id}
+                    type="button"
+                    onClick={() => setSelectedArtifactId(artifact.id)}
+                  >
+                    <span className="zn-artifact-kind">{artifactKindLabel(artifact.kind)}</span>
+                    <span className="zn-artifact-name">{artifact.name}</span>
+                  </button>
+                ))}
+              </div>
+              {selectedArtifact ? (
+                <div className="zn-artifact-preview">
+                  <div className="zn-artifact-preview-head">
+                    <strong>{selectedArtifact.name}</strong>
+                    {selectedArtifact.path ? (
+                      <span title={selectedArtifact.path}>{selectedArtifact.path}</span>
+                    ) : null}
+                  </div>
+                  <pre>{selectedArtifact.content || 'No textual preview available.'}</pre>
+                  {selectedArtifact.metadata?.truncated ? (
+                    <div className="zn-artifact-note">Preview is bounded; content was truncated.</div>
+                  ) : null}
+                </div>
+              ) : null}
+            </section>
+          ) : (
+            <section className="zn-context-section zn-context-grow">
+              <div className="zn-context-title">Current resident state</div>
+              <pre>{residentSnapshot ? renderUnknown(residentSnapshot) : 'Waiting for resident…'}</pre>
+              <div className="zn-context-title zn-context-title-spaced">Artifacts</div>
+              <p className="zn-muted zn-small">Relevant workspace files and diffs appear here after resident work observes them.</p>
+            </section>
+          )}
         </aside>
       ) : null}
     </div>

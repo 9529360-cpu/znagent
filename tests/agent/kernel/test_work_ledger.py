@@ -32,10 +32,7 @@ class ResidentWorkLedgerTests(unittest.TestCase):
             self.assertEqual(saved_thread.title, "unknown task with no external brain")
             self.assertEqual([message.role for message in messages], ["user", "zn", "activity"])
             self.assertEqual(messages[-1].detail["event_id"], run.event.event_id)
-            self.assertEqual(
-                run.event.payload["work_thread_id"],
-                "work-persistent",
-            )
+            self.assertEqual(run.event.payload["work_thread_id"], "work-persistent")
             self.assertEqual(
                 run.event.payload["work_message_id"],
                 messages[0].message_id,
@@ -140,6 +137,100 @@ class ResidentWorkLedgerTests(unittest.TestCase):
                 ledger.attach_workspace(thread.thread_id, file_path)
             resident.store.close()
 
+    def test_dirty_workspace_produces_persistent_file_and_diff_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / "project"
+            workspace.mkdir()
+            subprocess.run(
+                ["git", "init", str(workspace)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            target = workspace / "notes.txt"
+            target.write_text("before\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "-C", str(workspace), "add", "notes.txt"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                [
+                    "git", "-C", str(workspace),
+                    "-c", "user.name=ZN Test",
+                    "-c", "user.email=zn-test@example.invalid",
+                    "commit", "-m", "baseline",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            target.write_text("after\n", encoding="utf-8")
+
+            store_path = root / "kernel.db"
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=store_path,
+            )
+            ledger = ResidentWorkLedger(resident)
+            thread = ledger.create_thread(thread_id="work-artifacts")
+            ledger.attach_workspace(thread.thread_id, workspace, name="Project")
+
+            snapshot, run = ledger.submit(
+                thread.thread_id,
+                "which files changed in this workspace?",
+            )
+            self.assertTrue(run.success)
+            self.assertIn("notes.txt", run.response)
+
+            artifacts = ledger.list_artifacts(thread.thread_id)
+            self.assertTrue(any(item.kind == "file" for item in artifacts))
+            self.assertTrue(any(item.kind == "diff" for item in artifacts))
+            file_artifact = next(item for item in artifacts if item.kind == "file")
+            diff_artifact = next(item for item in artifacts if item.kind == "diff")
+            self.assertEqual(file_artifact.name, "notes.txt")
+            self.assertEqual(file_artifact.content, "after\n")
+            self.assertIn("-before", diff_artifact.content)
+            self.assertIn("+after", diff_artifact.content)
+            self.assertEqual(
+                diff_artifact.metadata["scope"],
+                "current_workspace_after_event",
+            )
+            self.assertEqual(
+                snapshot[1][-1].detail["artifacts"][0]["id"].split("-")[0],
+                "artifact",
+            )
+
+            server = ResidentRpcServer(
+                resident=resident,
+                input_stream=io.StringIO(),
+                output_stream=io.StringIO(),
+            )
+            rpc = server.handle(
+                {
+                    "id": "get-artifacts",
+                    "method": "work_get",
+                    "params": {"thread_id": thread.thread_id},
+                }
+            )
+            self.assertTrue(rpc["ok"])
+            self.assertTrue(any(item["kind"] == "diff" for item in rpc["result"]["artifacts"]))
+            resident.store.close()
+
+            restored = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=store_path,
+            )
+            restored_ledger = ResidentWorkLedger(restored)
+            restored_artifacts = restored_ledger.list_artifacts(thread.thread_id)
+            self.assertEqual(
+                {item.artifact_id for item in restored_artifacts},
+                {item.artifact_id for item in artifacts},
+            )
+            restored.store.close()
+
     def test_work_rpc_is_resident_backed_and_updates_workspace(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -165,6 +256,7 @@ class ResidentWorkLedgerTests(unittest.TestCase):
             self.assertTrue(created["ok"])
             self.assertEqual(created["result"]["id"], "work-rpc")
             self.assertEqual(created["result"]["messages"], [])
+            self.assertEqual(created["result"]["artifacts"], [])
 
             attached = server.handle(
                 {
