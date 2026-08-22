@@ -38,6 +38,7 @@ function timeLabel(value: number): string {
 function artifactKindLabel(kind: string): string {
   if (kind === 'diff') return 'Diff'
   if (kind === 'file') return 'File'
+  if (kind === 'terminal') return 'Terminal'
   return 'Artifact'
 }
 
@@ -417,7 +418,7 @@ export function ZnWorkbench() {
                   <span className="zn-eyebrow">Persistent resident</span>
                   <h1>What should ZN attend to?</h1>
                   <p>
-                    Work enters the resident's own event loop. Attach a local folder when this work belongs to a project; files and diffs appear contextually only when the resident observes relevant work evidence.
+                    Work enters the resident's own event loop. Attach a local folder when this work belongs to a project; files, diffs and invoked terminal output appear contextually only when the resident produces relevant work evidence.
                   </p>
                 </div>
               )}
@@ -525,7 +526,7 @@ export function ZnWorkbench() {
               <div className="zn-context-title">Current resident state</div>
               <pre>{residentSnapshot ? renderUnknown(residentSnapshot) : 'Waiting for resident…'}</pre>
               <div className="zn-context-title zn-context-title-spaced">Artifacts</div>
-              <p className="zn-muted zn-small">Relevant workspace files and diffs appear here after resident work observes them.</p>
+              <p className="zn-muted zn-small">Relevant files, diffs and invoked terminal output appear here after resident work produces them.</p>
             </section>
           )}
         </aside>
