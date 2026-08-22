@@ -91,6 +91,8 @@ Implemented in `agent/kernel/terminal.py` and `agent/kernel/pty.py`:
 - interactive session start/poll/stop/stdin/resize;
 - completed-session reclamation and exit/cwd evidence preservation.
 
+The real POSIX PTY smoke explicitly consumes a final result returned by `write_stdin()` when the child exits during that observation boundary. This preserves immediate completed-session reclamation rather than weakening the lifecycle to accommodate a stale extra poll.
+
 Optional Docker/SSH/cloud backends remain demand-driven. Do not restore the old gateway/session control plane to obtain them.
 
 ### 3.3 Web search / world sense
@@ -138,40 +140,63 @@ Outbound local-file security is separated from transport. Telegram outbound medi
 
 ## 4. Independent desktop extraction and current native product work
 
-Status: **M4 ownership seam complete; M5 workbench foundation active; resident-backed work continuity now active**.
+Status: **M4 ownership seam complete; M5 workbench materially advanced; resident-backed work and workspace continuity active**.
 
 The active ZN desktop does not route through inherited Electron main, preload or `ContribController`.
 
 Current ZN-owned desktop control plane:
 
-- `apps/desktop/electron/zn-main.ts` — BrowserWindow, single-instance lifecycle, packaged runtime activation, resident/update IPC, navigation and `zn://` ownership;
+- `apps/desktop/electron/zn-main.ts` — BrowserWindow, single-instance lifecycle, packaged runtime activation, resident/update/workspace IPC, navigation and `zn://` ownership;
 - `apps/desktop/electron/zn-preload.ts` — intentional `window.znDesktop` bridge only;
 - `apps/desktop/electron/zn-protocol.ts` — ZN-only deep-link parsing;
+- `apps/desktop/electron/zn-workspace-ipc.ts` — OS-native local folder selection/canonicalization for work association;
 - `apps/desktop/electron/zn-shell.html` — minimal CSP-bound renderer document;
 - `apps/desktop/src/zn/main.tsx` — independent React renderer root;
 - `apps/desktop/src/zn/workbench.tsx` — content-first workbench;
 - `apps/desktop/src/zn/state.ts` — bounded browser convenience cache only;
-- `apps/desktop/src/zn/resident-client.ts` — direct ZN resident/update client;
+- `apps/desktop/src/zn/resident-client.ts` — direct ZN resident/update/workspace client;
 - `apps/desktop/scripts/bundle-electron-main.mjs` — ZN-only active bundle entries.
 
-The latest verified M5/M6 slice adds `agent/kernel/work.py` and makes work/thread continuity resident-backed:
+The latest verified M5/M6 state is:
 
 ```text
 ZnWorkbench
 → ZN preload / IPC
 → resident work RPC
 → ResidentWorkLedger
+→ durable thread + canonical workspace association
 → same ZNResidentRuntime submit/event loop
-→ durable work thread/messages/activity
+→ workspace_path / workdir into native investigation/body context
+→ durable response/activity
 → resident snapshot back to workbench
 ```
 
-This slice is native ZN product implementation, not an extraction from Hermes. It matters to the extraction ledger because it prevents browser state or an inherited desktop/session model from becoming the owner of work continuity.
+Workspace association is native ZN product implementation, not an extraction from Hermes. It matters to the extraction ledger because it prevents an inherited project/session model or renderer-local folder state from becoming the owner of project continuity.
 
-Verified source baseline:
+The normal attach boundary is intentionally narrow:
 
 ```text
-0c3ba8e3c5b2c3450d9fd305f4b012d804994acd
+renderer supplies threadId only
+→ Electron OS-native openDirectory picker
+→ Electron realpath + directory check
+→ resident work_attach_workspace
+→ resident realpath + directory check
+→ durable resident work metadata
+```
+
+Generic work metadata cannot forge the reserved workspace field. The durable resident association is then propagated into event `workspace_path`/`workdir`, so the existing ZN-native Git/body mechanisms operate against the associated folder.
+
+Verified source HEAD:
+
+```text
+d66d2b5d95b82bd7ba7fd9a7fcee3f7223a5d7a9
+```
+
+Key source commits:
+
+```text
+8ccbb324c875af506ef45cb3ab21d864504e9064  feat: attach durable workspaces to resident work
+d66d2b5d95b82bd7ba7fd9a7fcee3f7223a5d7a9  test: honor PTY completion from stdin write
 ```
 
 CI:
@@ -179,12 +204,11 @@ CI:
 ```text
 ZN Kernel / Python      success
 Electron / TypeScript  success
-Actions run             32573559233
+Actions run             32574451330
 ```
 
 Remaining workbench/product work includes:
 
-- real workspace/folder association;
 - contextual artifacts/files/diffs;
 - invoked terminal/browser surfaces;
 - provider/credential editor connected to ZN config/secure storage;
@@ -256,12 +280,12 @@ E10 verify clean-machine install/upgrade/multi-OS release      NOT STARTED as pr
 
 ## 9. Immediate code target
 
-The next work should continue from the owned runtime, desktop and resident-backed work foundations rather than adding compatibility wrappers.
+The next work should continue from the owned runtime, desktop and resident-backed work/workspace foundations rather than adding compatibility wrappers.
 
 Priority order:
 
-1. add real workspace/folder association to resident-backed work;
-2. add contextual artifact/file/diff presentation and terminal/browser surfaces only when invoked;
+1. add contextual artifact/file/diff production and presentation to resident-backed work;
+2. add terminal/browser surfaces only when explicitly invoked by work;
 3. connect provider/settings editing to the ZN-owned configuration/credential boundary;
 4. wire outbound channel attachments only through `OutboundMediaPathPolicy` when the resident has a concrete artifact/message egress path;
 5. remove remaining package/release identity debt: make `apps/desktop/package.json` ZN-owned and ensure the formal builder registers only `zn://`;
@@ -282,7 +306,8 @@ The source-extraction phase is structurally complete for the active runtime/desk
 - launch its own Electron main/preload/renderer and `zn://` protocol;
 - install/start its own `zn_agent` resident distribution;
 - preserve desktop work/thread continuity in resident-owned state rather than inherited/session/browser authority;
+- preserve real local workspace association in resident-owned work state and propagate it into native Git/body context;
 
 without importing the old product CLI/agent/gateway/desktop as the control plane.
 
-The current code has reached that structural ownership boundary for the active runtime/desktop slices. Remaining work is product completeness plus release/repository migration: workspaces/artifacts/settings, outbound-media transport wiring, package/release identity, clean formal installers, then supported-OS continuity validation.
+The current code has reached that structural ownership boundary for the active runtime/desktop slices. Remaining work is product completeness plus release/repository migration: artifacts/contextual tools/settings, outbound-media transport wiring, package/release identity, clean formal installers, then supported-OS continuity validation.

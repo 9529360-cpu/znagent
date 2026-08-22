@@ -13,22 +13,25 @@
 Latest source implementation baseline:
 
 ```text
-0c3ba8e3c5b2c3450d9fd305f4b012d804994acd
+d66d2b5d95b82bd7ba7fd9a7fcee3f7223a5d7a9
 ```
 
-Commit:
+Source commits in the latest coherent M5/M6 slice:
 
 ```text
-feat: persist resident work threads
+8ccbb324c875af506ef45cb3ab21d864504e9064  feat: attach durable workspaces to resident work
+d66d2b5d95b82bd7ba7fd9a7fcee3f7223a5d7a9  test: honor PTY completion from stdin write
 ```
 
-Normal ZN CI for that source baseline:
+Normal ZN CI for that verified source HEAD:
 
 ```text
 ZN Kernel / Python      success
 Electron / TypeScript  success
-Actions run             32573559233
+Actions run             32574451330
 ```
+
+The first CI run for the workspace feature exposed an existing real-PTY smoke race in which the test discarded a terminal completion returned directly by `write_stdin()` and then polled an intentionally reclaimed session. Production PTY cleanup already matched the established contract, so the corrective commit fixes the smoke test to consume the returned terminal state instead of changing completed-session reclamation semantics.
 
 Documentation-only synchronization commits use `[skip ci]`; the source baseline above is therefore the current executable/CI evidence for this ledger.
 
@@ -36,39 +39,57 @@ Documentation-only synchronization commits use `[skip ci]`; the source baseline 
 
 The active product boundary remains ZN-owned across the resident runtime, main provider families, local terminal/PTTY, web sensing, channel lifecycle, Electron main/preload/protocol and active React renderer.
 
-This baseline advances M5/M6 by moving work/thread continuity out of renderer-owned browser storage and into resident-owned durable state.
+M5/M6 now has both resident-backed work continuity and real resident-backed local workspace association.
 
 ### Resident-backed work/thread continuity
 
-Implemented in this baseline:
+Implemented:
 
-- added `agent/kernel/work.py` with `ResidentWorkLedger`;
+- `agent/kernel/work.py` provides `ResidentWorkLedger`;
 - work threads and work messages persist in resident-owned SQLite state beside the kernel store, but remain a separate interaction/history substrate rather than nervous-memory facts;
 - work submission still enters the same `ZNResidentRuntime.submit()` event loop;
 - resident events are linked to the originating work thread/message through event payload metadata;
 - completed responses and compact resident activity are persisted back into the durable thread;
-- added resident RPC methods for work list/create/get/submit;
-- added Electron IPC/preload bridge methods for the same work boundary;
-- `ZnWorkbench` now loads resident work history as authoritative state when the resident is available;
-- the bounded browser cache remains only an offline/convenience fallback and is replaced by resident snapshots after reconnection;
-- New work creates the durable resident thread rather than only a renderer object;
-- regression tests cover persistence across resident reconstruction and RPC access;
-- desktop ownership tests verify that the active workbench uses the resident work APIs.
+- resident RPC provides work list/create/get/submit;
+- Electron IPC/preload and the renderer consume the resident work boundary;
+- `ZnWorkbench` hydrates resident work history as authoritative state when the resident is available;
+- bounded browser storage remains only an offline/convenience fallback;
+- New work becomes a durable resident thread rather than a renderer-owned identity.
 
-Result:
+### Real workspace/folder association
+
+Implemented and CI-verified:
+
+- each resident work thread can persist one local `WorkspaceAssociation` containing canonical path, display name and attachment time;
+- workspace metadata is a reserved resident-owned field, so generic work metadata cannot forge a workspace association;
+- the normal desktop attach flow accepts only a thread ID from the renderer;
+- Electron uses an OS-native `openDirectory` picker, resolves the selected directory with `realpath`, verifies it is a directory, then sends the canonical path to the resident;
+- the resident independently resolves/verifies the directory before storing it;
+- attaching a folder to the first empty work is enough to make that work durable;
+- attach/change/detach state is visible in the workbench sidebar and contextual panel;
+- resident work hydration restores the workspace after desktop/re-resident reconstruction;
+- every work submission from an associated thread injects resident-owned `workspace_path`, `workdir` and `workspace_name` into the event payload;
+- existing native Git investigation consumes `workspace_path`, so repository observations are anchored to the selected project rather than the resident process cwd;
+- existing terminal/body action paths can consume `workdir`, so the same durable association is the execution anchor when a local command is formed;
+- regression coverage creates a real temporary Git repository, attaches it to a work thread, and verifies zero-model native branch inspection against that repository.
+
+Current work loop:
 
 ```text
-renderer
-→ ZN preload / IPC
-→ resident work RPC
-→ ResidentWorkLedger
-→ SAME ZNResidentRuntime task/event loop
+OS-native folder selection
+→ ZN Electron canonicalization
+→ resident work_attach_workspace RPC
+→ ResidentWorkLedger durable workspace
+→ work_submit
+→ SAME ZNResidentRuntime event loop
+→ event payload workspace_path / workdir
+→ native Git/body investigation or action
 → durable response/activity
 → resident-backed thread snapshot
 → renderer
 ```
 
-Closing/reopening the desktop no longer makes browser `localStorage` the authority for work history.
+The workspace is therefore resident work context, not a renderer label and not an inherited project/session control plane.
 
 ## Current subsystem ledger
 
@@ -80,9 +101,9 @@ The resident owns identity, life pulses, Situation, Thought, Will, nervous memor
 
 Zero-model operation remains a hard behavior contract: disconnecting external cognition does not erase resident identity/state or stop native pulses.
 
-### Work/thread continuity
+### Work/thread/workspace continuity
 
-Status: **resident-backed durable work history active; richer work/project semantics still in progress**.
+Status: **resident-backed durable work history and real local workspace association active; artifact/tool presentation still in progress**.
 
 Implemented:
 
@@ -91,13 +112,16 @@ Implemented:
 - resident RPC list/create/get/submit;
 - desktop bridge and renderer hydration from resident history;
 - event-to-thread/message linkage;
-- browser cache demoted to non-authoritative fallback.
+- browser cache demoted to non-authoritative fallback;
+- real attach/change/detach local folder association;
+- canonical directory validation in Electron and resident boundaries;
+- durable workspace restoration across restart;
+- automatic workspace propagation to native investigation/body execution context.
 
 Still pending around this product loop:
 
-- real workspace/folder association;
-- artifact/file/diff production and presentation;
-- contextual terminal/browser invocation surfaces;
+- contextual artifact/file/diff production and presentation;
+- terminal/browser surfaces only when explicitly invoked by work;
 - richer ongoing progress/activity streaming while work is running;
 - final thread/search UX polish.
 
@@ -121,6 +145,8 @@ Production no longer constructs the inherited full AIAgent. Additional provider-
 Status: **active local body extracted, including interactive PTY lifecycle and completed-session reclamation**.
 
 `agent/kernel/terminal.py` and `agent/kernel/pty.py` own local foreground/background process execution, cwd continuity, timeout/process cleanup, bounded output, interactive PTY lifecycle, stdin/resize and completion-race cleanup.
+
+A PTY operation such as `write_stdin()` can itself observe terminal completion, return the final `TerminalResult`, and reclaim the session. Callers must consume that returned state rather than assuming a later `poll()` remains valid. The real POSIX PTY smoke now verifies this lifecycle without weakening the cleanup contract.
 
 `NativeBody` routes local terminal work through the ZN-owned path. Optional Docker/SSH/cloud backends remain demand-driven.
 
@@ -180,7 +206,7 @@ The repository root still contains inherited/reference Python source and distrib
 
 ### Desktop/UI ownership
 
-Status: **M4 complete; M5 foundation active; M6 materially advanced but still partial**.
+Status: **M4 complete; M5 materially advanced; M6 partial**.
 
 Active ZN product path:
 
@@ -192,7 +218,7 @@ ZN Electron main
 → long-lived zn_agent resident
 ```
 
-Implemented ownership boundaries:
+Implemented ownership/product boundaries:
 
 - no inherited Electron main import from active `zn-main.ts`;
 - no inherited preload import from active `zn-preload.ts`;
@@ -200,12 +226,13 @@ Implemented ownership boundaries:
 - active `zn://` parsing, single-instance routing and renderer delivery;
 - ZN-only active desktop bundle entries;
 - resident-backed durable work/thread continuity;
+- OS-native local folder selection and resident-backed workspace continuity;
+- renderer does not receive a bridge that accepts arbitrary workspace paths for the normal attach flow;
 - settings/update and resident context surfaces;
 - ownership regression tests covering the active path.
 
 M5/M6 work still required:
 
-- real workspace/folder association;
 - contextual artifacts/files/diffs;
 - terminal/browser work surfaces only when invoked;
 - provider/credential editor connected to ZN config and appropriate secure storage;
@@ -251,6 +278,10 @@ ZN deep links must reject hermes:// as a ZN protocol
 active bundle must emit the ZN control-plane/renderer entries
 resident work history must survive resident reconstruction
 active workbench must hydrate/submit through resident work APIs
+workspace attach must use the OS folder picker before resident association
+renderer preload must not accept an arbitrary workspace_path for normal attach
+workspace association must survive resident reconstruction and anchor native Git observation
+reserved work metadata must not forge workspace association
 ```
 
 These tests protect active ownership. They do not imply inactive reference source has been deleted from the repository.
@@ -263,8 +294,8 @@ M1  independently packageable ZN Python resident runtime   COMPLETE for active p
 M2  ZN-native bounded provider cognition                   COMPLETE for active main provider families
 M3  ZN-owned terminal + web body/sense paths               COMPLETE for active local/web paths
 M4  independent Electron main + preload + zn://            COMPLETE
-M5  independent content-first ZN workbench                 IN PROGRESS; resident work history now active
-M6  resident/work/artifact/workspace end-to-end loop       PARTIAL; durable work continuity active
+M5  independent content-first ZN workbench                 IN PROGRESS; resident work + real workspace active
+M6  resident/work/artifact/workspace end-to-end loop       PARTIAL; durable work/workspace continuity active
 M7  formal packaging around owned product                  NOT COMPLETE
 M8  clean-machine/continuity multi-OS validation           NOT STARTED as release gate
 M9  product completeness/hardening                         LATER
@@ -275,8 +306,8 @@ M10 repository migration / formal main promotion           LATER; main untouched
 
 Unless a newly discovered code fact requires changing the architecture contract first:
 
-1. add real workspace/folder association to the resident-backed work model;
-2. add contextual artifact/file/diff surfaces and terminal/browser surfaces only when invoked;
+1. add contextual artifact/file/diff production and presentation to resident-backed work;
+2. add terminal/browser surfaces only when explicitly invoked by work rather than permanent IDE panes;
 3. connect provider/credential settings to the ZN-owned config/secure-storage boundary;
 4. wire Telegram outbound attachments only through `OutboundMediaPathPolicy` when an explicit resident artifact/message egress flow exists;
 5. replace inherited desktop package metadata with ZN-owned metadata and ensure the formal builder registers only `zn://`;
