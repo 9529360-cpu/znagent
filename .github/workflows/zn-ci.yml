@@ -109,8 +109,11 @@ jobs:
       - name: Typecheck Electron desktop
         run: npm run typecheck --workspace apps/desktop
 
-      - name: Test ZN packaged runtime and update-channel contracts
-        run: npm run test --workspace apps/desktop -- electron/zn-packaged-runtime.test.ts electron/zn-release-channel.test.ts
+      - name: Bundle independent ZN desktop control plane
+        run: node apps/desktop/scripts/bundle-electron-main.mjs --dev
+
+      - name: Test ZN desktop ownership, packaged runtime and update-channel contracts
+        run: npm run test --workspace apps/desktop -- electron/zn-desktop-ownership.test.ts electron/zn-packaged-runtime.test.ts electron/zn-release-channel.test.ts
 
       - name: Test release-channel and packaged-artifact verifiers
         run: node --test apps/desktop/scripts/prepare-zn-public-channel.test.mjs apps/desktop/scripts/verify-zn-packaged-runtime.test.mjs
