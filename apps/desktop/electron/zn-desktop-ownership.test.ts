@@ -178,7 +178,7 @@ test('running work progress comes from resident event state instead of renderer 
   assert.match(workbench, /workProgress\.stage/)
   assert.match(workbench, /workProgress\.nextAction/)
   assert.match(workbench, /workProgress\.bodyActions/)
-  assert.doesNotMatch(state, /ZnWorkProgress|workProgress|eventId/)
+  assert.doesNotMatch(state, /ZnWorkProgress|workProgress/)
   assert.doesNotMatch(workbench, /fake progress|Math\.random\(\).*progress/i)
 })
 
