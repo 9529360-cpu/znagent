@@ -50,15 +50,12 @@ class BodyActionResult:
 class NativeBody:
     """ZN's unified interface for sensing and acting on its computer environment.
 
-    Files, processes, Git and the terminal are not separate cognitive skills.
-    They are different movements of the same body. This class deliberately
-    contains no planning or model logic: Thought chooses an action; Body
-    executes it and returns evidence.
+    Files, processes, Git and the terminal are different movements of the same
+    body. This class contains no planning/model logic: Thought chooses an action;
+    Body executes it and returns evidence.
 
-    Local terminal execution is owned by ZN. Mature process/cwd/timeout ideas
-    were extracted into ``agent.kernel.terminal`` rather than keeping the old
-    product terminal as a production dependency. Optional remote/container
-    backends can be extracted behind the same ZN boundary when they are needed.
+    Local terminal execution, including interactive PTY sessions, is owned by ZN
+    rather than delegated to the old product terminal control plane.
     """
 
     def __init__(
@@ -73,7 +70,6 @@ class NativeBody:
             self._init_schema()
 
     def sense(self) -> dict[str, Any]:
-        """Return a fresh native snapshot of the body and immediate host."""
         disk = shutil.disk_usage(Path.cwd())
         return {
             "hostname": socket.gethostname(),
@@ -96,7 +92,6 @@ class NativeBody:
         event_id: str | None = None,
         **args: Any,
     ) -> BodyActionResult:
-        """Perform one concrete body action and durably record its outcome."""
         action = BodyAction(
             action_id=f"body-{uuid.uuid4().hex[:12]}",
             kind=str(kind or "").strip().lower(),
@@ -133,8 +128,7 @@ class NativeBody:
     def _dispatch(self, action: BodyAction, started: str) -> BodyActionResult:
         kind = action.kind
         if kind == "sense":
-            data = self.sense()
-            return self._ok(action, started, data=data)
+            return self._ok(action, started, data=self.sense())
         if kind in {"inspect_path", "path"}:
             return self._inspect_path(action, started)
         if kind in {"read_text", "read_file"}:
@@ -153,6 +147,10 @@ class NativeBody:
             return self._terminal_session(action, started, operation="poll")
         if kind in {"terminal_stop", "command_stop"}:
             return self._terminal_session(action, started, operation="stop")
+        if kind in {"terminal_input", "terminal_write", "command_input"}:
+            return self._terminal_session(action, started, operation="input")
+        if kind in {"terminal_resize", "command_resize"}:
+            return self._terminal_session(action, started, operation="resize")
         raise ValueError(f"unknown body action kind: {kind or '<empty>'}")
 
     def _inspect_path(self, action: BodyAction, started: str) -> BodyActionResult:
@@ -305,7 +303,6 @@ class NativeBody:
                 started_at=started,
                 completed_at=utc_now(),
             )
-        root = root_proc.stdout.strip()
         branch_proc = run("branch", "--show-current")
         status_proc = run("status", "--porcelain")
         changed = [line for line in status_proc.stdout.splitlines() if line.strip()]
@@ -313,7 +310,7 @@ class NativeBody:
             action,
             started,
             data={
-                "root": root,
+                "root": root_proc.stdout.strip(),
                 "branch": branch_proc.stdout.strip() if branch_proc.returncode == 0 else "",
                 "dirty": bool(changed),
                 "changed_files": len(changed),
@@ -352,6 +349,8 @@ class NativeBody:
                 pty=bool(action.args.get("pty", False)),
                 env=env,
                 max_output_chars=max(128, int(action.args.get("max_output_chars", 50_000))),
+                cols=max(1, int(action.args.get("cols", 80))),
+                rows=max(1, int(action.args.get("rows", 24))),
             )
         )
         return self._terminal_body_result(action, started, result)
@@ -368,17 +367,34 @@ class NativeBody:
             raise ValueError(f"{action.kind} body action requires session_id")
         terminal = get_zn_local_terminal()
         if operation == "poll":
-            result = terminal.poll(session_id)
+            return self._terminal_body_result(action, started, terminal.poll(session_id))
+        if operation == "input":
+            if "data" in action.args:
+                data = action.args["data"]
+            elif "input" in action.args:
+                data = action.args["input"]
+            else:
+                raise ValueError(f"{action.kind} body action requires data/input")
+            return self._terminal_body_result(
+                action,
+                started,
+                terminal.write_stdin(session_id, str(data)),
+            )
+        if operation == "resize":
+            result = terminal.resize(
+                session_id,
+                cols=max(1, int(action.args.get("cols", 80))),
+                rows=max(1, int(action.args.get("rows", 24))),
+            )
             return self._terminal_body_result(action, started, result)
         if operation == "stop":
             result = terminal.stop(session_id)
-            payload = asdict(result)
             return BodyActionResult(
                 action_id=action.action_id,
                 kind=action.kind,
                 success=True,
                 output=result.output,
-                data=payload,
+                data=asdict(result),
                 error=None,
                 event_id=action.event_id,
                 started_at=started,
