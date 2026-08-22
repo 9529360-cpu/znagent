@@ -214,7 +214,7 @@ class ResidentSocketServiceTests(unittest.TestCase):
                     {"thread_id": "upgrade-continuity"},
                 )
                 self.assertTrue(work["ok"])
-                self.assertEqual(work["result"]["thread_id"], "upgrade-continuity")
+                self.assertEqual(work["result"]["id"], "upgrade-continuity")
                 self.assertEqual(work["result"]["title"], "Runtime continuity marker")
                 self.assertEqual(work["result"]["metadata"]["proof"], "same-home")
 
