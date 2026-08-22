@@ -56,7 +56,10 @@ class ResidentAutostartTests(unittest.TestCase):
                 self.assertEqual(os.environ["ZN_AGENT_HOME"], str(home.resolve()))
                 rpc_factory.assert_called_once_with()
                 service_factory.assert_called_once_with(
-                    fake_rpc, host="127.0.0.1", port=43210
+                    fake_rpc,
+                    host="127.0.0.1",
+                    port=43210,
+                    channel_adapters=(),
                 )
 
     def test_linux_unit_starts_at_login_and_has_bounded_failure_restart(self):
