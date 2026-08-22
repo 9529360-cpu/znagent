@@ -210,7 +210,7 @@ The active product boundary has moved substantially:
 | Workbench ↔ resident | resident-backed durable work/thread history, workspace association, contextual file/diff/terminal artifacts, provider/settings editing and active work progress are implemented | M5/M6 materially advanced; M6 still partial |
 | Desktop package metadata | `apps/desktop/package.json` identifies `zn-desktop` / `ZN` and the ZN repository | Formal identity owned |
 | Formal builder | ZN builder registers only `zn://`, includes the independent runtime and excludes inherited install/bootstrap resources | Formal identity owned |
-| Formal installers | Linux x86_64, Windows x64 and macOS arm64 artifact shape/runtime identity verified; Linux amd64 deb also verified on a fresh Ubuntu installation | M7 artifact shape verified; M8 in progress |
+| Formal installers | Linux x86_64, Windows x64 and macOS arm64 artifact shape/runtime identity verified; Linux amd64 deb additionally has fresh-install and installed autostart/start-stop-login-target continuity evidence | M7 artifact shape verified; M8 in progress |
 
 Important distinction: inactive inherited source can remain as a reference quarry during migration. **Active product control-plane independence does not mean the repository has already been cosmetically purged of all inherited files.**
 
@@ -818,8 +818,8 @@ Current release evidence/debt is explicit:
 - formal package/repository/product/app/executable/artifact identity is ZN-owned;
 - formal package and builder protocol registration is `zn` only;
 - real Linux AppImage/deb/rpm, Windows NSIS/MSI and macOS arm64 DMG/ZIP payloads preserve ZN identity and an independently bootable embedded resident;
-- Linux amd64 deb has additionally survived a fresh Ubuntu installation with embedded zero-model resident boot;
-- OS-login autostart continuity, N → N+1 handoff, equivalent intended-platform clean installs and signing/notarization remain separate M8/release gates.
+- Linux amd64 deb has survived a fresh Ubuntu installation with embedded zero-model resident boot and a fresh installed systemd user autostart/start-stop-login-target restart cycle using packaged `zn_agent.core` modules;
+- N → N+1 handoff, equivalent intended-platform clean install/login evidence and signing/notarization remain separate M8/release gates.
 
 ### 14.3 Public update channel
 
@@ -1111,24 +1111,24 @@ This closes current artifact-shape ownership evidence, not full release readines
 
 ### M8 — Clean-machine and continuity validation
 
-Status: **IN PROGRESS; Linux amd64 deb fresh-install resident boot verified**.
+Status: **IN PROGRESS; Linux amd64 deb fresh-install + installed autostart continuity verified**.
 
 Already verified:
 
 1. a Linux amd64 deb can cross an artifact-only handoff to a fresh Ubuntu 24.04 runner with no repository checkout;
 2. that package installs under `/opt/ZN` with ZN desktop/protocol identity;
-3. its embedded portable Python / `zn_agent` runtime boots the resident zero-model without source/system Python.
+3. its embedded portable Python / `zn_agent` runtime boots the resident zero-model without source/system Python;
+4. its packaged `zn_agent.core.resident_autostart` can install an enabled systemd user login entry, start the resident, stop it gracefully with endpoint/lease cleanup, and return the resident after `default.target` activation.
 
 Still validate as separate gates:
 
-1. OS-login autostart and graceful service stop/restart continuity;
-2. close/reopen desktop while resident continuity remains valid where not already behavior-covered;
-3. N → N+1 while resident busy — no interruption;
-4. N → N+1 while idle — clean handoff;
-5. same ZN identity/state after upgrade;
-6. Windows/macOS clean installation for the intended release matrix;
-7. public update asset reachability without private source credentials;
-8. signing/notarization when operationally configured.
+1. close/reopen desktop while resident continuity remains valid where not already behavior-covered;
+2. N → N+1 while resident busy — no interruption;
+3. N → N+1 while idle — clean handoff;
+4. same ZN identity/state after upgrade;
+5. Windows/macOS clean installation/login continuity for the intended release matrix;
+6. public update asset reachability without private source credentials;
+7. signing/notarization when operationally configured.
 
 ### M9 — Product completeness and hardening
 
@@ -1298,20 +1298,21 @@ These run only when a release milestone needs them, through explicit workflow di
 
 ## 22. Immediate next development target
 
-The ownership migration has closed the current M7 artifact-shape exercise and entered M8 continuity validation. The immediate target is now:
+The ownership migration has closed the current M7 artifact-shape exercise and Linux installed-autostart slice of M8. The immediate target is now:
 
-**prove OS-login resident continuity on an actually installed ZN package, then validate N → N+1 application/runtime/resident handoff as a separate gate.**
+**validate N → N+1 application/runtime/resident continuity without interrupting active work or changing ZN identity/state.**
 
 Concrete order:
 
-1. do not rebuild already-proven installer/artifact gates merely to recreate evidence;
-2. finish the Linux installed autostart gate by repairing resident/service lifecycle defects at their source boundary, including graceful stop and lease release;
-3. after autostart is proven, validate N → N+1 busy and idle handoff without interrupting active work or changing ZN identity/state;
-4. add Windows/macOS clean-install coverage only where it provides genuinely new release evidence;
-5. keep signing/notarization explicit and operational—never infer it from unsigned artifact success;
-6. establish browser interaction only through a clean resident-owned body/sense seam;
-7. define explicit resident artifact/message egress nomination before Telegram outbound attachment transport;
-8. continue M5/M6 polish only around concrete product outputs without regressing the content-first workbench.
+1. do not rebuild already-proven installer/clean-install/autostart gates merely to recreate evidence;
+2. trace the active ZN-owned update/runtime-selection/resident call chain and its current busy/idle evidence before changing behavior;
+3. validate the busy case first: materializing/selecting N+1 must not interrupt an active resident or active `WorkRun`;
+4. validate the idle case separately: point future autostart to N+1, gracefully shut down the old resident, wait for endpoint retirement, start N+1 using the same ZN home, and verify active runtime identity plus persistent ZN identity/state;
+5. add Windows/macOS clean-install/login coverage only where it provides genuinely new release evidence;
+6. keep signing/notarization explicit and operational—never infer it from unsigned artifact success;
+7. establish browser interaction only through a clean resident-owned body/sense seam;
+8. define explicit resident artifact/message egress nomination before Telegram outbound attachment transport;
+9. continue M5/M6 polish only around concrete product outputs without regressing the content-first workbench.
 
 Do not regress by reintroducing inherited main/preload/renderer/runtime control planes to accelerate these steps.
 
@@ -1321,7 +1322,7 @@ Do not regress by reintroducing inherited main/preload/renderer/runtime control 
 
 Use this as the canonical restart prompt:
 
-> Continue `9529360-cpu/znagent` on `dev/zn-agent`. Read the current repository code first, then read `ZN.md`, `docs/ZN-IMPLEMENTATION-STATUS.md`, and `docs/ZN-SOURCE-EXTRACTION.md` completely before changing code. ZN is the only product/subject. Hermes is source reference only: inspect mature mechanisms, extract/adapt them behind ZN-owned interfaces/config/lifecycle/tests, then switch the active caller; never make Hermes the runtime, UI, desktop control plane, gateway brain or release dependency. The active packaged resident is the independent `runtime/python` `znagent` distribution booting `zn_agent.resident`; production runtime construction no longer uses `run_agent.AIAgent`. Active local terminal/PTTY and web paths are ZN-owned. The independent Electron main, preload, React workbench and `zn://` protocol are active; resident-backed work/thread/workspace/artifact/progress and provider/settings ownership are materially implemented. Formal package identity is ZN-owned, formal builder protocol is `zn` only, and real Linux/Windows/macOS artifacts preserve the self-contained ZN runtime. M8 has started: Linux amd64 deb fresh installation and embedded zero-model resident boot are proven. Current priority is to finish installed OS-login autostart by fixing graceful resident stop/lease-release lifecycle at source, then validate N → N+1 busy/idle runtime continuity as a separate gate. Preserve zero-model organism behavior, CI cost discipline and `main` untouched until M10.
+> Continue `9529360-cpu/znagent` on `dev/zn-agent`. Read the current repository code first, then read `ZN.md`, `docs/ZN-IMPLEMENTATION-STATUS.md`, and `docs/ZN-SOURCE-EXTRACTION.md` completely before changing code. ZN is the only product/subject. Hermes is source reference only: inspect mature mechanisms, extract/adapt them behind ZN-owned interfaces/config/lifecycle/tests, then switch the active caller; never make Hermes the runtime, UI, desktop control plane, gateway brain or release dependency. The active packaged resident is the independent `runtime/python` `znagent` distribution booting `zn_agent.resident`; production runtime construction no longer uses `run_agent.AIAgent`. Active local terminal/PTTY and web paths are ZN-owned. The independent Electron main, preload, React workbench and `zn://` protocol are active; resident-backed work/thread/workspace/artifact/progress and provider/settings ownership are materially implemented. Formal package identity is ZN-owned, formal builder protocol is `zn` only, and real Linux/Windows/macOS artifacts preserve the self-contained ZN runtime. M8 has Linux amd64 deb fresh-install and installed systemd user autostart/start-stop-login-target continuity proofs; graceful SIGTERM now retires the endpoint and durable lease before resident exit. Current priority is to trace and validate N → N+1 busy/idle runtime continuity without interrupting active work or changing ZN identity/state. Preserve zero-model organism behavior, CI cost discipline and `main` untouched until M10.
 
 ---
 
