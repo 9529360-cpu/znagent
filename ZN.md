@@ -4,35 +4,39 @@
 >
 > This document is the architecture and product contract for ZN.
 >
-> **ZN.md must stay ahead of implementation.** Before a substantial product or architecture change is coded, the target state and migration step must exist here first. Code is still the source of truth for what currently exists, but code is not allowed to silently redefine where the product is going.
+> Current implementation details live in [`docs/ZN-IMPLEMENTATION-STATUS.md`](docs/ZN-IMPLEMENTATION-STATUS.md). Mature-source extraction rules and the current extraction ledger live in [`docs/ZN-SOURCE-EXTRACTION.md`](docs/ZN-SOURCE-EXTRACTION.md).
+>
+> **ZN.md must stay ahead of architecture changes.** Code is authoritative for what currently exists; this file is authoritative for where the product is going and which directions are prohibited.
 
 ---
 
-## 0. Development contract: document first, then code
+## 0. Development contract: inspect first, document architecture, then code
 
-The repository started from a large mature codebase, so it is very easy to make a locally reasonable change that accidentally continues the old product architecture. The development process therefore has a strict order:
+The repository started from a mature inherited codebase. A locally convenient implementation can therefore accidentally keep the old product as ZN's real control plane.
+
+The required development order is:
 
 ```text
 inspect current repository code
-→ identify actual current boundary
-→ update ZN.md with the intended target/migration step
-→ implement that step
-→ test the real path
-→ update only status/checklists after implementation
+→ identify the actual active boundary
+→ read this blueprint completely
+→ if architecture/direction must change, update ZN.md first
+→ implement the smallest coherent ZN-owned step
+→ test the real active path
+→ update implementation/extraction status after verification
 ```
 
 Rules:
 
-1. Do not start a new architectural direction only because an inherited module already exists.
-2. Do not let a temporary compatibility path silently become the product architecture.
+1. Do not choose an architecture merely because an inherited module already exists.
+2. Do not let a compatibility path silently become permanent product architecture.
 3. Do not describe transitional code as complete ZN ownership.
-4. If code reveals that this document is factually wrong about the current state, correct the current-state section before continuing implementation.
-5. Architectural decisions should be written here before they are spread across multiple commits.
-6. Tests specify behavior, but they do not replace the product architecture described here.
-7. A green inherited test suite does not prove that the ZN product boundary is correct.
-8. `main` remains untouched until the explicit migration/promotion milestone in this document.
-
-This rule is intentionally stronger than the usual “keep docs in sync with code.” For ZN, the design document is the route map; implementation moves along that route.
+4. If code proves a current-state statement in this blueprint wrong, synchronize that statement before continuing.
+5. Tests specify behavior but do not replace the product architecture.
+6. A green inherited test suite does not prove the ZN product boundary is correct.
+7. `main` remains untouched until the explicit M10 migration/promotion milestone.
+8. Mature mechanisms should be studied and extracted; old product control planes should not be embedded.
+9. Ordinary development CI stays cheap. Multi-OS packaging/clean-machine release work runs only when the milestone needs it.
 
 ---
 
@@ -56,6 +60,7 @@ Product ownership:
 - Senses are ways ZN obtains current evidence from the computer/world.
 - Memory is lived experience that changes the resident itself.
 - Code is part of ZN's computational body.
+- Communication channels are I/O organs for the same resident, not separate agent identities.
 - Electron/Desktop is a face and work surface, not the owner of ZN's life.
 - Installation, runtime selection, configuration, updates and user data are owned by ZN.
 
@@ -65,111 +70,104 @@ Disconnecting every external model must not erase ZN's identity, memory, residen
 
 ZN should feel like one persistent digital subject with a calm workbench around it, not a collection of agents, dashboards and developer panes.
 
-The normal user experience is:
+Normal experience:
 
 ```text
 open ZN
-→ immediately reconnect to the same resident
-→ see current/previous work and conversations
+→ reconnect to the same resident
+→ see/continue current and previous work
 → ask, inspect, create or continue work
 → ZN acts through its own body and senses
-→ external models appear only as resources when needed
-→ closing the window does not erase ZN or terminate its resident life
+→ external models appear only as resources when useful
+→ closing the window does not erase ZN or define its identity
 ```
-
-The UI may expose resident activity, memory, work artifacts, files and tools, but those surfaces are views into one subject.
 
 ---
 
 ## 2. Hermes boundary: source reference only
 
-The repository began from uploaded Hermes Agent source because mature solved engineering should be studied instead of ignored.
+The repository began from Hermes Agent source because mature solved engineering should be studied instead of ignored.
 
-Hermes is a **reference codebase and implementation source**. It is not the ZN product, not the ZN UI, not the ZN runtime, not the ZN release path and not a permanent dependency boundary.
+Hermes is a **reference codebase and implementation source**. It is not the ZN product, UI, runtime, release path or permanent dependency boundary.
 
 Correct reuse pattern:
 
 ```text
 ZN needs a solved engineering mechanism
 → inspect Hermes/reference implementation
-→ understand the mechanism and its edge cases
-→ extract/adapt only the useful implementation
-→ place it under a ZN-owned interface/module
+→ understand mechanism + edge cases
+→ extract/adapt the coherent useful slice
+→ place it behind a ZN-owned interface/module/config/lifecycle
 → remove inherited product assumptions
-→ test it as ZN behavior
-→ maintain it from ZN thereafter
+→ add ZN tests
+→ switch the active ZN caller
+→ maintain it as ZN code
 ```
 
 Incorrect reuse patterns:
 
 ```text
-ZN needs a desktop
-→ start the entire Hermes desktop
-→ put a ZN wrapper around it
+need desktop
+→ start inherited Electron main and wrap it with ZN
 
-ZN needs provider access
-→ instantiate the entire Hermes AIAgent as ZN's worker forever
+need provider access
+→ instantiate the inherited full AIAgent forever
 
-ZN needs a release runtime
-→ pip install the Hermes project into a package named ZN
+need runtime
+→ install the inherited Python distribution into a ZN package
 
-ZN needs a UI
-→ render the Hermes ContribController with a different default layout
+need UI
+→ render inherited ContribController under a ZN theme
+
+need messaging
+→ run the inherited gateway as ZN's communications brain
 ```
 
-Those patterns preserve the old product as the actual control plane. They are explicitly not the target architecture.
-
-### 2.1 Hard product-ownership rules
+### 2.1 Hard ownership rules
 
 Final active ZN paths must satisfy all of the following:
 
-- ZN artifacts are built from `9529360-cpu/znagent`.
-- ZN does not resolve runtime code or release commits from `NousResearch/hermes-agent`.
-- ZN install/bootstrap does not require Hermes to be online or installed.
-- ZN updates do not track Hermes releases.
-- A clean user machine does not require a Hermes checkout.
-- The private ZN source repository is not a credentialless client update dependency.
-- ZN user data lives under ZN-owned locations and names.
-- ZN desktop process, preload API, protocol, updater and renderer are ZN-owned.
-- ZN runtime package metadata and executable entrypoints are ZN-owned.
-- ZN provider/resource adapters are ZN-owned interfaces.
-- ZN body/sense adapters are ZN-owned interfaces.
-- No final ZN product path requires `hermes_cli`, `run_agent`, a Hermes desktop main process or Hermes renderer root.
-- No final ZN installer registers `hermes://` as a product protocol.
-- No final ZN package presents Hermes product metadata to the OS or package manager.
+- artifacts are built from `9529360-cpu/znagent`;
+- install/bootstrap does not require Hermes to be online or installed;
+- a clean user machine does not require a Hermes checkout;
+- updates do not track Hermes releases;
+- private ZN source credentials are not a client update dependency;
+- user data lives under ZN-owned locations/names;
+- desktop main, preload API, protocol, updater and renderer are ZN-owned;
+- runtime distribution metadata and executable entrypoints are ZN-owned;
+- provider/resource, body/sense and channel interfaces are ZN-owned;
+- no final active product path requires `hermes_cli`, `run_agent`, inherited Electron main/preload or inherited renderer root;
+- no formal ZN installer registers `hermes://`;
+- no formal ZN package presents Hermes product metadata to the OS/package manager.
 
-Reference code may remain temporarily in the development branch while a mechanism is being extracted. That is migration debt, not an accepted final dependency.
+Reference source may remain temporarily in the development branch while mechanisms are extracted. That is migration debt, not an accepted runtime dependency.
 
 ### 2.2 What “borrow code” means
 
-ZN is allowed to reuse mature implementation, including substantial algorithms, provider handling, terminal edge cases and platform work, when doing so is legally and technically appropriate.
+ZN may reuse substantial mature implementation when legally and technically appropriate. Cosmetic originality is not the goal. Ownership transfer is.
 
-Reuse does **not** require rewriting every line for cosmetic originality. It does require moving product ownership:
+A reused mechanism must:
 
-- choose the specific mechanism;
-- move/copy/adapt it into a ZN namespace;
-- replace Hermes configuration/state assumptions with ZN equivalents;
-- reduce dependencies to what that mechanism actually needs;
+- have a concrete ZN consumer;
+- move behind a ZN-owned public contract;
+- use ZN config/state/session ownership;
+- drop inherited product assumptions that are not required by the mechanism;
 - preserve applicable license/provenance;
-- give it ZN tests and ZN lifecycle ownership.
-
-The goal is not “no shared ancestry.” The goal is “no old product underneath the new one.”
+- have ZN behavior tests;
+- be packageable/testable without starting the old product control plane.
 
 ---
 
-## 3. Repository reality at the blueprint reset
+## 3. Repository reality and current ownership checkpoint
 
-This section records the actual state discovered before this blueprint rewrite. It deliberately distinguishes strong ZN work from transitional paths that must be replaced.
-
-### 3.1 Branch state
+### 3.1 Branch policy
 
 ```text
 main
-  = original Hermes-derived snapshot
+  = inherited/original snapshot until M10
 
 dev/zn-agent
   = active ZN development branch
-  = contains the resident/kernel work and current desktop/release experiments
 ```
 
 Desired eventual topology:
@@ -182,41 +180,39 @@ dev/zn-agent
   = active ZN development branch
 
 upstream/hermes
-  = optional reference mirror/snapshot for studying and diffing mature upstream code
+  = optional reference mirror/snapshot only
 ```
 
-`upstream/hermes` is reference-only. It must never auto-merge into ZN.
+Reference upstream must never auto-merge into ZN.
 
-### 3.2 Current subsystem assessment
+### 3.2 Blueprint-reset history
 
-| Subsystem | Current reality | Target classification |
+At the blueprint reset, important active paths were still structurally inherited: provider construction could build `run_agent.AIAgent`, terminal/web crossed into inherited `tools.*`, desktop main/preload delegated to the inherited app, renderer mounted `ContribController`, and packaged runtime installed the inherited repository-root distribution.
+
+Those facts motivated the ownership migration. They are historical context, not the current active-path status.
+
+### 3.3 Current checkpoint — 2026-08-22
+
+The active product boundary has moved substantially:
+
+| Subsystem | Current active reality | Classification |
 | --- | --- | --- |
-| Resident kernel | Large ZN-native implementation under `agent/kernel/`; persistent life, nervous system, Will, world/vision sensing, investigation, transfer and reconsolidation exist | Keep and evolve; migrate namespace later if useful |
-| Resident process | ZN-owned socket service, endpoint, autostart and runtime identity exist | Keep |
-| Model bridge | `provider_bridge.py` still loads `hermes_cli.config`, `hermes_cli.runtime_provider`; `worker.py` can instantiate legacy `run_agent.AIAgent` | Transitional; replace with ZN resource adapters |
-| Terminal/body | Most body actions are native, but terminal delegates to inherited `tools.terminal_tool` | Transitional; extract terminal mechanism |
-| World/web sense | World logic is ZN-native, but search delegates to inherited `tools.web_tools` | Transitional; extract web-search resource |
-| Visual sense | ZN-owned resident-side logic; Pillow screen capture is direct | Keep/evolve |
-| Desktop renderer | ZN entry ultimately renders inherited `ContribController`; old UI tree remains the actual application | Wrong product boundary; replace |
-| Electron main | `zn-main.ts` configures ZN additions and then imports inherited `electron/main.ts` | Wrong product boundary; replace |
-| Preload | `zn-preload.ts` imports inherited preload and adds `window.znDesktop` | Wrong product boundary; replace |
-| Desktop package metadata | `apps/desktop/package.json` still declares Hermes name/product/repository and default build metadata | Wrong product boundary; replace |
-| ZN builder config | ZN-specific builder file exists, but still packages the inherited desktop bundle and registers both `zn` and `hermes` protocols | Transitional; rebuild around independent desktop |
-| Runtime staging | Portable Python logic exists, but staging installs the root project whose distribution is still `hermes-agent` and explicitly verifies `hermes_cli/main.py` | Wrong product boundary; replace |
-| Release/update protocol | ZN-owned stable-channel parser/updater/publisher logic exists | Concept is valid; reattach to independent desktop/runtime |
-| Release package CI | Multi-OS packaging is currently failing, and making the inherited package green is not the primary objective until product boundaries are corrected | Pause as product gate; resume after migration |
+| Resident kernel | ZN-native organism under `agent/kernel/` with persistent life, Situation/Thought/Will, nervous memory, investigation, action, learning and sensing | Keep/evolve |
+| Python resident distribution | independent `runtime/python` `znagent` distribution, installed package `zn_agent`, `zn-resident` entrypoint | M1 active packaged path complete |
+| Runtime construction | ZN config + ZN cognitive resources; no production `LegacyAIAgentWorkerFactory` / `run_agent.AIAgent` | Owned |
+| Terminal/body | local process + PTY path is ZN-owned; completion-race cleanup covered | Owned for active local path |
+| World/web sense | ZN-owned Tavily/Exa/Firecrawl resource layer + URL safety | Owned for active web path |
+| Channels | resident-owned channel lifecycle; Telegram first transport; inbound media supported; outbound local-file policy exists | Owned framework, media egress transport still partial |
+| Electron main | independent `zn-main.ts` owns window, runtime activation, resident/update IPC, single instance and protocol | M4 complete |
+| Preload | independent `zn-preload.ts` exposes only intentional ZN bridge | M4 complete |
+| Protocol | ZN-owned `zn://` parser/routing in active app | M4 complete |
+| Renderer | independent React `ZnWorkbench`; no active `ContribController` shell | M5 foundation active |
+| Workbench ↔ resident | task submission, status/context and activity result presentation work | M6 partial |
+| Desktop package metadata | `apps/desktop/package.json` still identifies inherited Hermes product/repository and contains inherited package/dependency debt | Must replace before formal release |
+| ZN builder override | mostly ZN-branded, but still registers both `zn` and `hermes` | Transitional; formal builder must become `zn` only |
+| Formal installers | not yet rebuilt/clean-machine verified around the now-independent active runtime + desktop | M7/M8 pending |
 
-### 3.3 Important correction to previous development direction
-
-The previous release work treated “built from the ZN repository” as sufficient ownership. That standard is too weak.
-
-A package is not truly ZN-owned merely because GitHub Actions runs in the ZN repository. If the packaged Python distribution, Electron main process, preload bridge and renderer root are still the inherited product, then the installer is still structurally the old product with ZN additions.
-
-Therefore:
-
-**Do not continue polishing the current inherited release package as if it were the final ZN packaging architecture.**
-
-Parts of the work remain useful — portable Python, versioned runtime directories, runtime manifest, resident handoff, stable update protocol, artifact hashing — but they must be reconnected to a genuinely ZN-owned application boundary.
+Important distinction: inactive inherited source can remain as a reference quarry during migration. **Active product control-plane independence does not mean the repository has already been cosmetically purged of all inherited files.**
 
 ---
 
@@ -244,11 +240,13 @@ The target system has four product-owned layers:
        └──────────────────┘            └──────────────────┘
 ```
 
+Communication channels connect at the resident I/O boundary and feed the same resident event loop.
+
 The Desktop can disappear and the Resident remains valid.
 
 Models can disappear and the Resident remains valid.
 
-Individual tools/providers can be replaced without changing ZN's identity.
+Individual providers, senses, tools and channels can be replaced without changing ZN's identity.
 
 ---
 
@@ -270,10 +268,11 @@ ZN
 ├── Investigation
 ├── Action
 ├── Learning / reconsolidation
+├── Communication organs
 └── External cognitive resources
 ```
 
-Implementation may be modular, but do not turn every concern into its own planner/manager agent.
+Implementation may be modular. Do not turn every concern into its own planner/manager agent.
 
 ### 5.2 Resident closed loop
 
@@ -331,26 +330,24 @@ exact unknown/gap
 → bounded request
 → selected external cognitive resource
 → CognitiveIncrement
-→ ZN evaluates against current Situation / evidence
+→ ZN evaluates against current Situation/evidence
 → integrate, reject, probe further or act
 ```
 
-The final provider layer must not require constructing a complete legacy LLM-centric agent to obtain one bounded cognitive increment.
+### 5.4 Zero-model operation remains meaningful
 
-### 5.4 Native behavior remains valuable without models
-
-Zero-model operation must continue to support:
+Without external models ZN must continue to support:
 
 - life pulses;
-- persistent identity and state;
+- persistent identity/state;
 - body sensing;
 - filesystem/process/Git observation;
 - native investigation;
 - memory recall;
 - Will/attention evolution;
-- world/visual sensing when those resources are locally available;
+- world/visual sensing when locally available;
 - deterministic/local capabilities;
-- explicit “external cognition unavailable” outcomes when needed.
+- explicit “external cognition unavailable” outcomes when genuinely needed.
 
 ---
 
@@ -367,11 +364,11 @@ Thought
 → next Thought
 ```
 
-Failed movement returns as evidence. It is not silently treated as success and should not automatically produce an infinite retry loop.
+Failed movement returns as evidence. It is not silently treated as success and should not produce an uncontrolled retry loop.
 
 ### 6.1 ZN-owned adapter rule
 
-The final resident may call interfaces such as:
+The final resident may expose interfaces conceptually like:
 
 ```text
 zn.body.files
@@ -382,51 +379,43 @@ zn.senses.visual
 zn.senses.browser
 ```
 
-Those interfaces may contain adapted mature implementation, but ZN code must not permanently cross the product boundary to invoke inherited product-level modules such as `tools.terminal_tool` or `tools.web_tools`.
+Adapted mature implementation may live behind them. Active ZN code must not cross back into inherited product-level control planes to obtain the capability.
 
 ### 6.2 Terminal
 
-The mature terminal implementation is valuable because process management, PTY behavior, background jobs and platform differences are difficult.
+Mature process/PTY/platform handling is valuable and should be source-extracted, not discarded.
 
-Migration principle:
+The active local terminal path is now ZN-owned, including foreground/background processes, interactive PTY sessions, stdin/resize, platform cleanup and completed-session reclamation.
 
-```text
-study existing terminal stack
-→ identify execution/session primitives ZN actually needs
-→ port those primitives into a ZN terminal body adapter
-→ remove chat-agent-specific/global-Hermes assumptions
-→ test Windows/macOS/Linux behavior
-```
-
-Do not reimplement shell execution from zero just to avoid shared ancestry.
+Optional Docker/SSH/cloud backends should be extracted only when ZN has a concrete body use; do not restore inherited gateway/session ownership to obtain them.
 
 ### 6.3 Web/world sensing
 
-`NativeWorldSense` owns what ZN follows, sampling rhythm, durable observations and change interpretation at the sensor level.
+`NativeWorldSense` owns what ZN follows, sampling rhythm, durable observations and interpretation of change.
 
-The web provider itself is replaceable transport. Final code should look conceptually like:
+The web provider is replaceable transport:
 
 ```text
 WorldSense
-→ SearchResource interface
-→ concrete web/search provider
+→ ZN WebResource interface
+→ concrete search/extract provider
 → structured observation
 → nervous system
 ```
 
-It should not be “WorldSense calls Hermes web tool.”
+The active path is already ZN-owned. Additional providers remain demand-driven.
 
 ### 6.4 Vision
 
 Visual sensing remains resident-owned. Raw pixels should not become long-lived memory by default. Compact structural evidence can persist and influence attention.
 
-Screen capture failure, missing permission or headless execution is a sensory failure, not a resident-death condition.
+Screen-capture failure, missing permission or headless execution is a sensory failure, not a resident-death condition.
 
 ---
 
 ## 7. Nervous system, memory, Will and learning
 
-`PersistentNervousSystem` and the related reconsolidation/transfer machinery are the lived-memory substrate. It is not a transcript database.
+`PersistentNervousSystem` and related reconsolidation/transfer machinery are the lived-memory substrate, not a transcript database.
 
 ```text
 experience
@@ -457,85 +446,105 @@ Learning is consolidation, not one-skill-per-success.
 
 Executable capability and learned competence are separate concepts.
 
-Will must not degrade into an ever-growing task/planner list. It should remain a compact, durable mechanism for what matters now and what should continue receiving attention.
+Will must not become an ever-growing planner/task database. It remains a compact durable mechanism for what matters now and what should continue receiving attention.
 
 ---
 
 ## 8. External cognitive resources and integrations
 
-### 8.1 Target provider interface
+### 8.1 Provider boundary
 
-ZN needs a native resource boundary that can support multiple external brains without making any one SDK or legacy agent the owner.
-
-Conceptually:
+ZN owns a resource boundary that can support multiple external brains without making any one SDK or agent the owner:
 
 ```text
 CognitionRequest
     ↓
 CognitiveResourceRouter
     ↓
-CognitiveProvider
-    ├── OpenAI
+CognitiveResource
+    ├── OpenAI-compatible providers
     ├── Anthropic
-    ├── Google
-    ├── OpenRouter
+    ├── Gemini
     ├── local model
     └── future resources
     ↓
 CognitiveIncrement
 ```
 
-Providers should expose capabilities, availability, cost/latency/reliability metadata and a bounded invoke path.
+Providers expose bounded invocation plus capability/availability/cost/latency/reliability information where useful.
 
-### 8.2 Provider migration strategy
+### 8.2 Current provider ownership
 
-Do not throw away mature provider work.
+The active runtime has removed `LegacyAIAgentWorkerFactory` and no longer constructs `run_agent.AIAgent`. OpenAI-compatible, Anthropic and Gemini families are available through ZN-owned resource adapters.
 
-For each provider/integration:
+Further extraction should preserve the same rule:
 
-1. identify the minimal mature mechanisms worth keeping;
-2. extract them from agent-level orchestration;
-3. move them behind a ZN provider/resource interface;
-4. replace Hermes home/config/identity assumptions;
-5. keep credentials in ZN-owned configuration/storage;
-6. test the resource directly;
-7. only then remove the inherited path.
+1. identify the concrete mature mechanism needed;
+2. isolate it from inherited orchestration;
+3. adapt it to the ZN resource contract;
+4. use ZN configuration/credentials;
+5. test it directly;
+6. switch the active caller;
+7. keep the resident as evaluator/decision maker.
 
-The target removes `LegacyAIAgentWorkerFactory` from production runtime. A temporary adapter may remain during migration, but no new ZN feature should deepen that dependency.
+### 8.3 Communication channels
 
-### 8.3 Messaging, browser and other mature systems
+Telegram, Discord, Slack, WhatsApp, Signal and future systems are communication organs, not new agent identities.
 
-Telegram, WhatsApp/other messaging, browser drivers, provider adapters and similar mature mechanisms can be adopted selectively later.
+Target invariant:
 
-They must become **ZN integrations**, not a reason to resurrect the old product control plane.
+```text
+platform SDK/webhook/socket
+→ ZN ChannelAdapter
+→ normalized ChannelEvent
+→ durable resident ingress
+→ SAME resident Situation/Thought/action loop
+→ durable outcome
+→ ZN ChannelMessage/Delivery
+→ selected platform adapter
+```
+
+The channel framework and Telegram first transport are active. Additional channels should reuse that contract rather than resurrecting the inherited gateway.
+
+### 8.4 Outbound local media
+
+An arbitrary local path is not permission to upload a file.
+
+Before any channel adapter sends a local file:
+
+```text
+resident nominates artifact/path
+→ OutboundMediaPathPolicy
+→ resolve real file + authorized ZN root
+→ reject traversal/symlink escape/non-file/empty/oversize as applicable
+→ only then platform media transport
+```
+
+The generic authorization policy exists. Telegram outbound media transport remains to be wired through it.
 
 ---
 
-## 9. ZN Desktop: independent product, ChatGPT-style workbench
+## 9. ZN Desktop: independent content-first workbench
 
 ### 9.1 UI ownership rule
 
-ZN will not ship the Hermes UI with a ZN theme/layout.
+ZN will not ship the inherited UI under a ZN theme/layout.
 
-The final renderer must have its own application root, information architecture and interaction model.
+The active ZN renderer no longer mounts `ContribController`. Inherited UI source remains reference material while the ZN workbench is completed.
 
-The current `ContribController`-based renderer is transitional and must be replaced.
-
-The target experience is inspired by the clarity of the ChatGPT desktop/web workbench model:
+The product hierarchy is inspired by the clarity of modern conversation/workbench interfaces:
 
 - conversation/work is the primary surface;
 - navigation/history is calm and predictable;
 - advanced tools appear contextually instead of dominating the screen;
-- artifacts/results can expand beside the conversation when useful;
+- artifacts/results can expand beside work when useful;
 - there is one clear composer/input area;
 - visual hierarchy is minimal and content-first;
 - the product does not open as an IDE with multiple permanent technical panes.
 
-This is interaction inspiration, not a copy of OpenAI branding, proprietary assets or exact styling.
+This is interaction inspiration, not a copy of another product's branding/assets/exact styling.
 
-### 9.2 Default desktop information architecture
-
-Target default desktop:
+### 9.2 Default information architecture
 
 ```text
 ┌────────────────────────────────────────────────────────────────────┐
@@ -554,204 +563,135 @@ Target default desktop:
 └──────────────────┴─────────────────────────────────────────────────┘
 ```
 
-The exact pixels may evolve. The hierarchy should not.
+Exact pixels may evolve. The hierarchy should not.
 
-### 9.3 Main surfaces
+### 9.3 Product surfaces
 
-The initial ZN desktop should own these product surfaces:
+1. **Home / new work** — entry composer, recent work, relevant resident availability.
+2. **Conversation / work thread** — user ↔ ZN interaction, ongoing state, compact body/resource activity, contextual artifacts.
+3. **Artifact/context panel** — optional files, rendered artifacts, diffs, structured results and resident detail.
+4. **Workspaces/projects** — local folder/project association; files/terminal remain contextual tools.
+5. **Resident view** — lightweight observability into the same subject, not a second agent manager.
+6. **Settings** — models/providers, credentials, resident/autostart, appearance, updates and integration toggles.
 
-1. **Home / new work**
-   - clear entry composer;
-   - recent work;
-   - resident availability/status only when relevant.
+### 9.4 Current M5/M6 foundation
 
-2. **Conversation / work thread**
-   - user ↔ ZN interaction;
-   - streaming/ongoing state;
-   - model/resource use can be visible without pretending the model is ZN;
-   - tool/body actions can be shown in compact activity blocks;
-   - generated artifacts can open beside the thread.
+The active `ZnWorkbench` already provides:
 
-3. **Artifact/context panel**
-   - optional, not permanent;
-   - files, rendered artifacts, diffs, structured results, resident details;
-   - opening it must not replace the primary thread unexpectedly.
+- independent React renderer root;
+- New work, Recent/Search and Workspaces placeholder;
+- central thread and composer;
+- resident task submission/status/context;
+- compact activity result rendering;
+- settings and update controls;
+- bounded browser-side convenience cache;
+- safe/inert deep-link notice.
 
-4. **Workspaces/projects**
-   - local folder/project association;
-   - clear active workspace;
-   - files/terminal become contextual work tools rather than permanent default panes.
+Still required before calling M5/M6 complete:
 
-5. **Resident view**
-   - lightweight inspection of current state, activity, world focuses and runtime health;
-   - this is observability into ZN, not a second “agent manager.”
+- resident-backed durable work/thread identity/history;
+- real workspace/folder association;
+- contextual artifacts/files/diffs;
+- provider/credential editor using ZN config and secure storage;
+- terminal/browser surfaces only when invoked;
+- richer progress/activity streaming;
+- final visual assets, accessibility and keyboard behavior.
 
-6. **Settings**
-   - models/providers;
-   - credentials;
-   - resident/autostart;
-   - appearance;
-   - updates;
-   - integration toggles as they are added.
+### 9.5 Terminal/files/tools UX
 
-### 9.4 Terminal/files/tools UX
-
-Terminal, files and review are useful, but ZN is not primarily an IDE.
+ZN is not primarily an IDE.
 
 Default behavior:
 
-- files open as contextual browser/artifact views;
+- files open contextually;
 - terminal opens as an explicit contextual panel/drawer/work surface;
 - diffs/review appear when work produces them;
 - hidden tools do not occupy permanent screen real estate;
-- advanced users may later pin or arrange work surfaces, but that is not the first-run layout.
-
-### 9.5 UI implementation rule
-
-The new UI may reuse generic third-party libraries already present when appropriate, for example React, TanStack Query, assistant-ui, Radix-style primitives or other non-Hermes dependencies.
-
-Inherited Hermes UI components are reference material. If a primitive is genuinely excellent, its implementation pattern can be adopted into a ZN-owned component. The final app root must not import the old product shell.
-
-### 9.6 Target renderer tree
-
-A possible target structure:
-
-```text
-apps/desktop/src/
-├── main.tsx
-├── app/
-│   ├── app.tsx
-│   ├── router.tsx
-│   └── providers.tsx
-├── workbench/
-│   ├── shell.tsx
-│   ├── sidebar.tsx
-│   ├── topbar.tsx
-│   ├── thread.tsx
-│   ├── composer.tsx
-│   ├── activity.tsx
-│   └── context-panel.tsx
-├── resident/
-│   ├── client.ts
-│   ├── state.ts
-│   └── views/
-├── artifacts/
-├── workspaces/
-├── settings/
-├── components/
-├── state/
-└── styles/
-```
-
-Names can change. Ownership cannot.
+- advanced users may later pin/arrange surfaces, but that is not the first-run layout.
 
 ---
 
 ## 10. ZN Electron process architecture
 
-The final desktop main process must start from ZN code directly.
-
-Incorrect transitional shape:
-
-```text
-zn-main
-→ configure some ZN state
-→ import inherited main.ts
-→ inherited product creates windows/backend/protocols
-→ add ZN IPC afterward
-```
-
-Target shape:
+The active desktop main process now starts from ZN code directly:
 
 ```text
 ZN Electron main
-→ establish ZN single-instance/protocol
+→ establish ZN single-instance + zn:// handling
 → locate/materialize packaged ZN runtime
 → connect/start resident
 → register ZN IPC
-→ create ZN windows
+→ create ZN window
 → load ZN renderer
 → manage ZN updates
 ```
 
+The previous transitional pattern `zn-main → inherited main.ts` has been removed from the active path.
+
 ### 10.1 ZN preload
 
-The final preload exposes only intentional ZN APIs.
+The active preload exposes only intentional ZN APIs through `window.znDesktop` and does not import inherited preload code.
 
-Conceptually:
-
-```ts
-window.znDesktop = {
-  resident: ...,
-  files: ...,
-  system: ...,
-  workspaces: ...,
-  updates: ...,
-  shell: ...
-}
-```
-
-Do not import an inherited preload and then layer ZN onto it.
+The bridge can grow only where the ZN workbench has a concrete need, conceptually including resident, files, system, workspaces, updates and shell operations.
 
 ### 10.2 Protocol
 
-Final product protocol:
+Formal product protocol:
 
 ```text
 zn://
 ```
 
-No Hermes protocol registration in a formal ZN installer.
+The active Electron app parses/routes `zn://`. Formal installer/builder metadata must register **only** `zn://`; any remaining `hermes` scheme in packaging metadata is migration debt.
 
 ### 10.3 Backend relationship
 
-Electron is not required to start a separate inherited dashboard/backend process merely to make the ZN UI function.
+Electron does not need a hidden inherited dashboard/backend product to make ZN function.
 
-If a mature backend capability is adopted, extract the capability or expose it through a ZN-owned local service boundary. Do not keep a hidden old product server as the actual desktop backend.
+Mature backend capabilities may be extracted or exposed behind a ZN-owned local service. The old product server must not become the real desktop backend.
 
 ---
 
 ## 11. ZN-owned Python/runtime package
 
-### 11.1 Final distribution identity
+### 11.1 Active distribution identity
 
-The final Python project must be ZN-owned. The distribution/module naming may be finalized during migration, but the intended direction is:
+The active packaged resident distribution is:
 
 ```text
-Python distribution: zn-agent
-Python package:      zn_agent  (or another explicitly chosen ZN namespace)
+Python distribution: znagent
+Python package:      zn_agent
 resident entrypoint: zn-resident
-optional CLI:        zn
 ```
 
-Do not ship a formal ZN runtime whose installed distribution metadata is `hermes-agent`.
+`runtime/python/pyproject.toml` is the active packaged-runtime project. The repository-root inherited distribution metadata is not used as the packaged resident and remains migration/reference debt.
 
-### 11.2 Final runtime content
+A future root topology cleanup may consolidate distribution metadata, but it must not regress runtime ownership or trigger a mass rename before higher-value product seams are finished.
 
-The packaged resident runtime contains only what ZN actually needs:
+### 11.2 Runtime content
+
+The packaged resident runtime contains only what ZN needs:
 
 ```text
 portable CPython
 + ZN resident/core package
-+ ZN provider/integration adapters selected for desktop
++ selected ZN provider/integration adapters
 + exact runtime dependencies
 + required runtime data
 + runtime.json
 ```
 
-It must not require `hermes_cli/main.py` as a validity condition.
+It must not require `hermes_cli/main.py` as a validity condition. Current staging explicitly rejects `hermes_cli` in the packaged backend root.
 
 ### 11.3 Versioned runtime directories
 
-Keep the useful versioned-runtime concept:
+Keep the versioned-runtime model:
 
 ```text
 <ZN_HOME>/runtime/<runtime_id>/
 ```
 
-Runtime N and N+1 can coexist while the resident safely transitions.
-
-Persistent identity/state lives outside those immutable runtime directories.
+Runtime N and N+1 may coexist while the resident transitions safely. Persistent identity/state lives outside immutable runtime directories.
 
 ---
 
@@ -759,15 +699,15 @@ Persistent identity/state lives outside those immutable runtime directories.
 
 ZN owns its persistent home.
 
-Default direction:
+Current/default direction:
 
 ```text
 Windows: %LOCALAPPDATA%/znagent
-macOS:   ~/Library/Application Support/ZN   (final OS-native path to be chosen deliberately)
+macOS:   OS-native ZN application support path when finalized
 Linux:   ~/.local/share/znagent or ~/.znagent during migration
 ```
 
-A migration may preserve current `~/.znagent` semantics initially, but formal platform paths should eventually be explicit and tested.
+Migration may preserve current `~/.znagent` semantics initially. Formal platform paths should eventually be explicit and tested.
 
 Persistent categories should be separated:
 
@@ -777,13 +717,14 @@ ZN_HOME/
 ├── memory / nervous data
 ├── work / artifacts
 ├── config
-├── credentials metadata / secure-store references
+├── credential metadata / secure-store references
+├── channels/
 ├── runtime/
 ├── logs/
 └── updates/
 ```
 
-Model credentials and user secrets must use appropriate secure storage where available rather than leaking into logs/state snapshots.
+Model credentials and user secrets must use appropriate secure storage where available and must not leak into logs/state snapshots.
 
 No final ZN path should depend on `HERMES_HOME`.
 
@@ -798,20 +739,18 @@ Resident service = life/process continuity
 Electron = face/client
 ```
 
-Electron reconnects to an existing resident endpoint or starts the resident if needed. Closing the desktop disconnects the UI; it does not inherently stop resident life.
+Electron reconnects to an existing resident endpoint or starts the resident if needed. Closing the desktop disconnects the UI; it does not define resident identity.
 
-Existing ZN work worth retaining:
+Retain/complete:
 
-- local reconnectable endpoint;
-- process-level `runtime_id` and `python` reporting;
+- reconnectable local endpoint;
+- process-level `runtime_id` and Python identity;
 - versioned runtime materialization;
 - OS-login autostart;
 - same ZN home across runtime upgrades;
 - conservative N → N+1 handoff.
 
 ### 13.1 Safe N → N+1 handoff
-
-Target policy remains:
 
 ```text
 Desktop N+1 starts
@@ -862,18 +801,24 @@ A clean machine must not need:
 - developer GitHub credentials;
 - access to the private source repository.
 
-### 14.2 Builder identity
+### 14.2 Builder/package identity
 
 Formal package metadata must be consistently ZN-owned:
 
 ```text
 productName: ZN
-appId:       ai.zn.desktop (unless deliberately changed)
+appId:       ai.zn.desktop  # unless deliberately changed
 protocol:    zn
 artifact:    ZN-<version>-<os>-<arch>...
 ```
 
 `apps/desktop/package.json` itself must become ZN-owned; a separate builder override is not enough.
+
+Current release debt is explicit:
+
+- `apps/desktop/package.json` still contains inherited Hermes identity and inherited package/dependency history;
+- `apps/desktop/electron-builder.zn.yml` still contains an inherited `hermes` protocol scheme alongside `zn`;
+- neither fact is acceptable for a formal ZN installer.
 
 ### 14.3 Public update channel
 
@@ -896,7 +841,7 @@ The ZN-defined provider-neutral stable channel remains the target:
 }
 ```
 
-The client must not know or care which ZN-controlled object-storage/CDN provider serves it.
+Client behavior must not depend on which ZN-controlled object-storage/CDN provider serves it.
 
 Release order:
 
@@ -909,16 +854,16 @@ build verified self-contained ZN installers
 
 `stable.json` is the mutable pointer. Versioned binaries are immutable.
 
-### 14.4 Integrity and signing
+### 14.4 Integrity/signing
 
-Current hash verification is useful but is not independent signing.
+Hash verification is useful but is not independent signing.
 
-Final release hardening should include:
+Final hardening should include:
 
 - artifact size verification;
 - SHA-256 verification;
 - platform code signing where operationally available;
-- notarization on macOS when configured;
+- macOS notarization when configured;
 - later signed release metadata if a durable public-key scheme is introduced.
 
 Do not call hashes “signature verification.”
@@ -927,19 +872,21 @@ Do not call hashes “signature verification.”
 
 ## 15. Safety without turning ZN into a policy-agent framework
 
-Safety belongs in concrete body/resource boundaries and product UX, not in a giant prompt constitution that replaces the organism loop.
+Safety belongs in concrete body/resource/channel boundaries and product UX, not in a giant prompt constitution that replaces the organism loop.
 
-Examples of correct engineering boundaries:
+Examples:
 
 - explicit destructive filesystem operations;
-- clear credential handling;
+- credential handling boundaries;
 - scoped browser/network permissions;
-- platform permission surfaces for screen/microphone/camera;
+- platform screen/mic/camera permission surfaces;
+- outbound local-file authorization before channel upload;
+- URL/network target safety where transport reaches arbitrary URLs;
 - update integrity checks;
 - bounded resource/time usage;
 - reversible operations and visible failures where practical.
 
-The current development priority remains building the resident organism and owned product architecture. Do not derail the project into a large governance/policy subsystem before the core product exists.
+The development priority remains the resident organism and owned product architecture. Do not derail the project into a large governance subsystem before the core product works.
 
 ---
 
@@ -958,41 +905,43 @@ Protect:
 - body result → next cognition feedback;
 - nervous consolidation/reconsolidation;
 - reality-gated transfer;
-- world/vision adaptive attention rhythm;
-- external cognition remaining bounded.
+- world/vision adaptive attention;
+- external cognition remaining bounded;
+- PTY/process lifecycle correctness;
+- channel ingress/delivery idempotency and restart behavior.
 
 ### 16.2 Ownership-boundary tests
 
-Add tests that explicitly prevent regression into the old product architecture.
-
-Final active paths should be checked for forbidden product dependencies, for example:
+The active path must be guarded against regression:
 
 ```text
-ZN runtime package must not import hermes_cli
-ZN runtime package must not import run_agent
+agent/kernel must not import hermes_cli
+agent/kernel must not import run_agent
+ZN runtime distribution must identify as ZN and boot zn_agent
+packaged runtime must reject inherited CLI content
 ZN desktop main must not import inherited main.ts
 ZN preload must not import inherited preload.ts
-ZN renderer root must not render/import inherited ContribController
+ZN renderer root must not import/render ContribController
 formal builder must not register hermes://
 formal package metadata must not identify product as Hermes
 ```
 
-During migration these tests can be introduced milestone-by-milestone as each boundary is cut.
+The first seven are already protected on the active implementation path except that formal builder/package identity is still a pending M7 gate.
 
-### 16.3 Desktop tests
+### 16.3 Desktop behavior tests
 
-Build new ZN tests around user behavior, not old UI snapshots:
+Build tests around ZN behavior, not inherited UI snapshots:
 
-- first launch;
-- reconnect to existing resident;
+- first launch/reconnect;
 - new work/thread;
-- send/receive resident task interaction;
+- send/receive resident work;
 - model unavailable state;
-- contextual tool/activity rendering;
-- artifact panel open/close;
+- contextual activity rendering;
+- artifact panel behavior;
 - workspace association;
 - settings/provider configuration;
-- app close leaves resident alive;
+- `zn://` handling;
+- app close/resident continuity;
 - update ready/apply flows.
 
 ### 16.4 Release tests
@@ -1001,256 +950,227 @@ Formal release gates eventually include:
 
 - package metadata is ZN-only;
 - installer contains ZN runtime manifest;
-- bundled Python imports only required ZN runtime entrypoints;
+- bundled Python imports only intended ZN runtime entrypoints;
 - clean-machine launch;
 - no source checkout/system Python dependency;
 - N → N+1 busy/idle handoff;
 - autostart after login;
-- public update channel reachability.
+- public update-channel reachability.
 
 ---
 
 ## 17. Target repository topology
 
-The exact migration can be incremental, but the final active product should resemble this ownership shape:
+Final active product should resemble:
 
 ```text
 znagent/
 ├── ZN.md
-├── pyproject.toml                # ZN distribution
-├── zn_agent/                     # final ZN Python product namespace
-│   ├── core/                     # resident/life/situation/thought/will
-│   ├── cognition/                # bounded external cognition abstractions
-│   ├── memory/                   # nervous system / learning / reconsolidation
-│   ├── body/                     # files/process/terminal/browser actions
-│   ├── senses/                   # host/world/visual/browser sensing
-│   ├── integrations/             # provider/messaging/etc adapters
-│   ├── runtime/                  # resident server, service, autostart
+├── pyproject.toml                # eventual ZN root distribution/topology
+├── zn_agent/                     # eventual physical ZN Python namespace
+│   ├── core/
+│   ├── cognition/
+│   ├── memory/
+│   ├── body/
+│   ├── senses/
+│   ├── integrations/
+│   ├── runtime/
 │   └── config/
 ├── apps/
-│   └── desktop/                  # independent ZN Electron application
+│   └── desktop/
 │       ├── electron/
 │       ├── src/
 │       ├── assets/
 │       ├── scripts/
 │       └── package.json
+├── runtime/python/               # current independent runtime packaging seam; may evolve
 ├── tests/
 ├── docs/
 └── .github/workflows/
 ```
 
-The existing `agent/kernel/` implementation does not need to be mechanically moved immediately. Namespace migration is lower priority than removing product-level dependencies. Do not perform a mass rename before the ownership seams are actually fixed.
+The existing `agent/kernel/` ZN implementation does not need to be mechanically moved immediately. Current `runtime/python` already packages it under installed `zn_agent.core` ownership. Namespace/topology cleanup is lower priority than product completeness and formal package ownership.
 
-Reference Hermes source should ultimately live outside the active ZN product tree, preferably on `upstream/hermes` (plus retained license/provenance), rather than being imported by production ZN code.
+Reference Hermes source should ultimately live outside the active product tree, preferably `upstream/hermes` plus retained license/provenance, and never be a production import.
 
 ---
 
 ## 18. Full migration and product landing plan
 
-This plan intentionally runs beyond the next few commits. It is the route to a complete independently maintainable ZN product.
+This is the route to a complete independently maintainable ZN product.
 
 ### M0 — Blueprint reset and freeze wrong-direction expansion
 
-Status: **current milestone**
+Status: **COMPLETE**.
 
-Goals:
+Established this blueprint, ownership rules, source-extraction policy and the rule that inherited package polish cannot define ZN architecture.
 
-- establish this document as the forward contract;
-- record that current desktop/release ownership is transitional/incorrect;
-- stop deepening imports from inherited product control planes;
-- do not spend multi-OS CI budget repeatedly polishing the wrong package shape.
+### M1 — Independently packageable ZN Python resident runtime
 
-Exit condition:
+Status: **COMPLETE for the active packaged resident path**.
 
-- ZN.md contains the complete ownership/UI/runtime/release target and migration order.
+Delivered:
 
-### M1 — Establish an independently packageable ZN Python runtime
+- independent `runtime/python` distribution metadata;
+- `zn_agent` installed package boundary;
+- `zn-resident` entrypoint;
+- ZN config/resource runtime construction;
+- zero-model resident boot;
+- packaged-runtime staging/verification without inherited CLI;
+- isolated CI install/smoke.
 
-Goals:
+Remaining later topology cleanup (root distribution identity/physical namespace location) does not invalidate the active packaged-runtime ownership seam.
 
-- create/finalize ZN-owned Python distribution metadata;
-- package resident/core code without requiring `hermes_cli.main`;
-- create native ZN config loading;
-- create native provider/resource interfaces;
-- keep zero-model resident boot working;
-- stage portable runtime from only ZN-owned package content.
+### M2 — ZN-native bounded provider cognition
 
-Migration detail:
+Status: **COMPLETE for active main provider families; selective extraction continues**.
 
-1. isolate the resident package boundary;
-2. port configuration fields ZN actually needs;
-3. replace default `hermes_cli.config` loading;
-4. replace provider resolver dependency with a ZN resource registry;
-5. add a `zn-resident` entrypoint;
-6. update runtime smoke to import ZN entrypoints only.
+Production resident cognition no longer constructs `run_agent.AIAgent`. OpenAI-compatible, Anthropic and Gemini resource paths are ZN-owned. Additional provider-specific mechanisms remain demand-driven.
 
-Exit condition:
+### M3 — ZN-owned body/sense infrastructure
 
-```text
-portable Python
-→ install ZN distribution
-→ start zn-resident
-→ zero-model pulse succeeds
-```
+Status: **COMPLETE for active local terminal + web paths**.
 
-with no `hermes_cli`/`run_agent` requirement.
+Local process/PTTY and active web search/extract paths are ZN-owned. Optional terminal backends, browser automation and extra web providers are future concrete capability work, not blockers to ownership.
 
-### M2 — Extract mature provider cognition into ZN resource adapters
+### M4 — Independent Electron main + preload foundation
 
-Goals:
+Status: **COMPLETE**.
 
-- replace `LegacyAIAgentWorkerFactory` in production;
-- support at least the first real provider path through ZN-owned adapters;
-- preserve bounded cognition semantics;
-- port additional providers selectively.
+Delivered:
 
-Exit condition:
+- independent ZN main process;
+- independent ZN preload;
+- ZN BrowserWindow lifecycle;
+- ZN resident/update IPC registration;
+- ZN single-instance handling;
+- ZN `zn://` deep-link parsing/routing;
+- independent active renderer document/bundle boundary;
+- ownership regression tests.
 
-- a resident impasse can call an external model through a ZN-native provider adapter without constructing the legacy AIAgent.
+Exit condition is satisfied: active Electron app launches the ZN renderer and connects to resident without importing inherited main/preload.
 
-### M3 — Extract body/sense infrastructure used by the resident
+### M5 — Content-first ZN workbench
 
-Goals:
+Status: **IN PROGRESS; independent foundation active**.
 
-- port terminal execution/session primitives needed by `NativeBody`;
-- port web-search transport needed by `NativeWorldSense`;
-- keep direct file/process/Git and visual paths intact;
-- remove production imports from inherited `tools.*` for these paths.
+Already delivered:
 
-Exit condition:
+- independent React renderer root;
+- left navigation/recent/search/new work;
+- central thread/composer;
+- workspace placeholder;
+- resident context/health;
+- settings/update surface;
+- compact resident activity rendering;
+- ZN-owned styles/shell.
 
-- resident native body/world loop runs from ZN-owned modules only.
+Remaining before M5 completion:
 
-### M4 — Build independent Electron main + preload foundation
+- real workspace/project association;
+- final information/visual polish;
+- provider/credential settings wired to ZN config/secure storage;
+- contextual artifacts/files/diffs;
+- accessibility/keyboard behavior.
 
-Goals:
+### M6 — End-to-end resident work + artifacts
 
-- replace `zn-main → inherited main` boot pattern;
-- create ZN BrowserWindow lifecycle;
-- create ZN single-instance/protocol handling;
-- create ZN preload bridge;
-- connect resident RPC directly;
-- keep updater/runtime handoff modules that are genuinely ZN-owned.
+Status: **PARTIAL / IN PROGRESS**.
 
-Exit condition:
+Already connected:
 
-- an Electron app can launch a minimal ZN renderer and connect to resident without importing inherited main/preload.
+- renderer → ZN preload → resident task submission;
+- resident status/self inspection;
+- result/activity presentation;
+- update controls.
 
-### M5 — Build the new ChatGPT-style ZN workbench UI
+Still required:
 
-Goals:
+- resident-backed durable work/thread identity/history;
+- richer ongoing progress/state delivery;
+- artifact production/presentation;
+- workspace/project continuity;
+- contextual terminal/browser invocation surfaces.
 
-- independent renderer root;
-- left navigation/history/workspaces;
-- central work/thread surface;
-- stable composer;
-- compact body/resource activity presentation;
-- optional context/artifact panel;
-- settings/provider UI;
-- resident status/inspection surface;
-- ZN visual identity/assets.
+### M7 — Formal packaging around the owned product
 
-Do not recreate every inherited desktop feature before first usable ZN UI. Build the product hierarchy first, then add capabilities according to actual ZN needs.
+Status: **NOT COMPLETE; next release-ownership milestone after M5/M6 core loop**.
 
-Exit condition:
-
-- normal ZN use no longer renders `ContribController` or inherited app shell.
-
-### M6 — Connect workbench to resident and artifacts
-
-Goals:
-
-- thread/task submission over ZN IPC/RPC;
-- resident progress/state updates;
-- bounded model-resource activity visibility;
-- files/artifacts/diffs as contextual work products;
-- workspace/project association;
-- terminal/browser surfaces only when invoked.
-
-Exit condition:
-
-- a user can do real work end-to-end through the new ZN UI.
-
-### M7 — Rebuild formal packaging around the owned product
-
-Goals:
+Required:
 
 - make `apps/desktop/package.json` entirely ZN-owned;
-- builder uses only `zn://`;
-- bundle independent Electron main/preload/renderer;
-- bundle independently packageable ZN Python runtime;
+- eliminate inherited product/repository/build identity;
+- formal builder registers only `zn://`;
+- bundle only the independent ZN main/preload/renderer;
+- bundle the independently packageable `zn_agent` runtime;
 - preserve versioned runtime + manifest;
-- remove Hermes validation from staging/verification.
+- keep runtime verification ZN-only.
 
-Only here does multi-OS installer polishing become a primary release task again.
+Only after this should multi-OS installer polishing become a primary release task again.
 
-Exit condition:
+### M8 — Clean-machine and continuity validation
 
-- Windows/macOS/Linux artifacts contain only the intended ZN active product paths.
+Status: **NOT STARTED as a formal release gate**.
 
-### M8 — Real clean-machine and continuity validation
-
-Validate on actual artifacts:
+Validate actual artifacts:
 
 1. clean install without Hermes/source/system Python;
 2. first resident boot;
-3. close/reopen desktop while resident continues;
+3. close/reopen desktop while resident continuity remains valid;
 4. OS-login autostart;
 5. N → N+1 while resident busy — no interruption;
 6. N → N+1 while idle — clean handoff;
 7. same ZN identity/state after upgrade;
-8. update channel asset reachability without private source credentials.
-
-Exit condition:
-
-- complete installer lifecycle is proven on all supported OS targets.
+8. public update asset reachability without private source credentials.
 
 ### M9 — Product completeness and hardening
 
-After the owned end-to-end product works:
+Status: **LATER**.
+
+After owned end-to-end product works:
 
 - provider/account setup polish;
 - browser integration;
-- selected messaging integrations;
+- more messaging integrations;
 - voice if desired;
 - richer artifacts/workspaces;
-- resource usage/performance work;
-- secure secret storage review;
+- performance/resource work;
+- secure secret-storage review;
 - signing/notarization/release hardening;
-- accessibility and keyboard behavior;
+- accessibility;
 - crash recovery/diagnostics;
-- migration of useful mature features only where they improve ZN.
-
-Avoid importing whole inherited subsystems just to check feature boxes.
+- selective mature features only where they improve ZN.
 
 ### M10 — Repository migration and formal `main` promotion
+
+Status: **LATER; `main` remains untouched**.
 
 Prerequisites:
 
 - owned runtime;
-- owned desktop UI/main/preload;
-- owned release artifacts;
+- owned desktop main/preload/renderer;
+- owned package/release artifacts;
 - clean-machine verification;
 - reasonable CI coverage;
-- applicable license/provenance preserved.
+- applicable provenance/license preserved.
 
 Then:
 
 1. preserve reference Hermes state in `upstream/hermes` or equivalent archival reference;
 2. remove inactive inherited product code from the ZN product branch when no longer needed;
-3. update README/contribution docs to ZN;
-4. intentionally promote verified ZN product to `main`;
+3. update remaining repository documentation/branding to ZN;
+4. intentionally promote the verified ZN product to `main`;
 5. keep `dev/zn-agent` as the development branch.
 
-Do not perform this migration early merely for cosmetic cleanliness.
+Do not perform M10 early merely for cosmetic cleanliness.
 
 ---
 
 ## 19. Product completion criteria
 
-ZN is not “done” merely because the kernel tests pass or an installer exists.
+ZN is not “done” merely because kernel tests pass or an installer exists.
 
-A credible first complete product release should satisfy all of these:
+A credible first complete product release should satisfy:
 
 ### Identity/life
 
@@ -1263,13 +1183,13 @@ A credible first complete product release should satisfy all of these:
 - native investigation/body actions work;
 - external models are bounded replaceable resources;
 - at least one production provider path is ZN-native;
-- model output is integrated/evaluated by ZN rather than treated as automatic truth/action.
+- model output is evaluated/integrated by ZN rather than treated as automatic truth/action.
 
 ### Body/senses
 
-- files/process/Git/terminal paths are ZN-owned;
+- files/process/Git/terminal active paths are ZN-owned;
 - world sensing is ZN-owned;
-- visual sensing failure does not kill resident;
+- visual failure does not kill resident;
 - body results feed back into Situation/Thought.
 
 ### Memory/learning
@@ -1279,44 +1199,52 @@ A credible first complete product release should satisfy all of these:
 - transfer requires current evidence;
 - learning does not create a permanent skill for every success.
 
+### Channels
+
+- channel transports feed the same resident identity/event loop;
+- durable ingress/delivery survives restart/replay;
+- local-file media egress is authorized before upload.
+
 ### Desktop
 
 - independent ZN main/preload/renderer;
-- ChatGPT-style workbench hierarchy;
-- conversation/work is primary;
-- files/terminal/artifacts are contextual;
-- settings/provider management is usable;
-- resident remains alive when UI closes.
+- content-first workbench hierarchy;
+- conversation/work primary;
+- files/terminal/artifacts contextual;
+- settings/provider management usable;
+- desktop lifetime does not define resident identity.
 
 ### Packaging/update
 
-- installer is ZN-only product identity;
+- installer has ZN-only product identity;
 - clean machine needs no Hermes/source/system Python;
 - versioned runtime is self-contained;
 - autostart works;
 - safe runtime handoff works;
 - stable update channel works;
-- public update assets do not require source-repo credentials.
+- public update assets need no source-repo credentials.
 
 ### Repository ownership
 
-- final active product has no runtime dependency on Hermes product modules;
+- final active product has no runtime dependency on inherited product modules;
 - provenance/license retained;
-- `main` represents ZN, not the inherited snapshot.
+- `main` represents ZN after intentional M10 promotion.
 
 ---
 
 ## 20. CI and cost control
 
-Normal development CI should stay cheap.
+Normal development CI stays cheap.
 
-Default dev checks:
+Current/default dev checks:
 
-- locked Python environment for active ZN runtime;
+- locked repository test environment;
+- isolated install of active ZN runtime distribution;
 - zero-model resident smoke;
 - focused kernel tests;
-- TypeScript typecheck/lint for active ZN desktop;
-- focused desktop/runtime contract tests.
+- TypeScript typecheck for active desktop;
+- independent ZN bundle smoke;
+- ownership/runtime/update contract tests.
 
 Expensive checks:
 
@@ -1325,9 +1253,7 @@ Expensive checks:
 - signing/notarization;
 - large E2E matrices.
 
-Those should run only when the milestone needs them, on explicit workflow dispatch, release candidates/tags or carefully chosen paths.
-
-The current release workflow temporarily running multi-OS packaging on every `dev/zn-agent` push is not the desired long-term cost model. Once implementation resumes, move expensive package validation behind an explicit/release-relevant trigger while the ownership migration is underway.
+These run only when a release milestone needs them, through explicit workflow dispatch, release candidates/tags or deliberately chosen paths.
 
 ---
 
@@ -1336,50 +1262,52 @@ The current release workflow temporarily running multi-OS packaging on every `de
 1. Do not make an external model the owner of the main loop.
 2. Do not feed all memory to a model on every interaction.
 3. Do not create a new skill for every successful experience.
-4. Do not treat tools/files/processes as cognitive personalities.
+4. Do not treat tools/files/processes/channels as cognitive personalities.
 5. Do not make old schemas automatically true; current reality can correct them.
 6. Do not turn Will into an ever-growing planner/task database.
 7. Do not make idle reflection a hidden self-prompt token loop.
 8. Do not equate model success with ZN accepting/completing a task.
 9. Do not make Electron lifetime equal resident lifetime.
-10. Do not interrupt active resident work just to activate a new runtime.
+10. Do not interrupt active resident work merely to activate a new runtime.
 11. Do not allow cross-context association to become action without present evidence.
 12. Do not create another hidden private-repository bootstrap dependency.
-13. Do not package the Hermes Python distribution and call it the ZN runtime.
-14. Do not launch the Hermes Electron main process from a ZN wrapper as the final desktop.
-15. Do not import the Hermes preload from the ZN preload as the final bridge.
-16. Do not render the Hermes `ContribController`/shell as the final ZN UI.
+13. Do not package the inherited Python distribution and call it the ZN runtime.
+14. Do not launch inherited Electron main from a ZN wrapper as the final desktop.
+15. Do not import inherited preload from ZN preload.
+16. Do not render inherited `ContribController`/shell as the active ZN UI.
 17. Do not register `hermes://` in a formal ZN installer.
 18. Do not preserve Hermes package/app metadata in formal ZN artifacts.
-19. Do not deepen new ZN dependencies on `hermes_cli`, `run_agent` or inherited `tools.*` while those seams are scheduled for extraction.
-20. Do not rewrite mature mechanisms merely for cosmetic originality; extract and own the useful engineering.
+19. Do not deepen new ZN dependencies on `hermes_cli`, `run_agent`, inherited `tools.*` or old gateway control planes.
+20. Do not rewrite mature mechanisms merely for cosmetic originality; extract and own useful engineering.
 21. Do not automatically merge a reference Hermes branch into ZN.
 22. Do not publish `stable.json` before immutable assets exist.
-23. Do not turn this organism-building phase primarily into policy/governance infrastructure.
-24. Do not modify `main` until M10 prerequisites are deliberately met.
-25. Do not let code invent a new product direction that is absent from this blueprint.
+23. Do not turn organism-building primarily into policy/governance infrastructure.
+24. Do not modify `main` before M10 prerequisites are deliberately met.
+25. Do not let code invent a new product direction absent from this blueprint.
+26. Do not interpret an arbitrary local filesystem path as authorization for channel upload.
+27. Do not treat a separate builder override as sufficient formal product ownership while `package.json` still identifies the inherited product.
 
 ---
 
 ## 22. Immediate next development target
 
-After this blueprint commit, the next engineering target is **not** “make the current inherited multi-OS package green.”
+The ownership migration has moved beyond the old M1/M4 blockers. The immediate target is now:
 
-The next target is M1:
-
-**establish an independently packageable ZN Python runtime boundary, while preserving the existing resident organism behavior.**
+**finish the M5/M6 owned workbench loop around real resident work, then close formal desktop package identity before M7 packaging.**
 
 Concrete order:
 
-1. stop expensive multi-OS package runs from firing on every ordinary development push;
-2. define the ZN Python distribution/package boundary and native config entrypoint;
-3. make resident zero-model boot independent of `hermes_cli`;
-4. introduce the ZN cognitive-resource interface;
-5. keep the legacy provider worker only as an explicitly temporary adapter until M2;
-6. change packaged-runtime smoke to validate only ZN entrypoints;
-7. only then continue extracting provider/terminal/web mechanisms.
+1. make work/thread continuity resident-backed instead of relying on renderer cache as authoritative history;
+2. add real workspace/folder association;
+3. add contextual artifact/file/diff presentation and invoked terminal/browser surfaces;
+4. connect provider/credential settings to ZN-owned config and appropriate secure storage;
+5. wire Telegram/channel outbound attachments only through `OutboundMediaPathPolicy` when an explicit resident artifact/message egress flow exists;
+6. make `apps/desktop/package.json` fully ZN-owned and remove inherited product/repository/build identity;
+7. make the formal builder register only `zn://`;
+8. rebuild formal self-contained installers around the independent ZN desktop + `zn_agent` runtime;
+9. only then spend multi-OS/clean-machine CI budget on M8 continuity validation.
 
-Desktop work follows M4/M5 after the runtime ownership seam is real. UI implementation must target the independent ChatGPT-style ZN workbench described above, not another layout on the inherited renderer.
+Do not regress by reintroducing inherited main/preload/renderer/runtime control planes to accelerate these steps.
 
 ---
 
@@ -1387,7 +1315,7 @@ Desktop work follows M4/M5 after the runtime ownership seam is real. UI implemen
 
 Use this as the canonical restart prompt:
 
-> Continue `9529360-cpu/znagent` on `dev/zn-agent`. Read current repository code first, then read `ZN.md` completely before changing code. `ZN.md` is intentionally ahead of implementation and defines the target product. ZN is the only product/subject. Hermes is source reference only: borrow mature mechanisms selectively, move them under ZN ownership, and do not use the Hermes UI, Electron main/preload, Python distribution, runtime, release channel or product shell as ZN's permanent control plane. The current resident/kernel work is valuable, but provider/terminal/web seams are still transitional; the current desktop and packaged release boundary are explicitly not final. The UI target is an independent content-first ChatGPT-style workbench: calm left navigation/history/workspaces, central conversation/work surface and contextual artifacts/tools rather than the inherited IDE-like shell. Follow the milestone order in section 18. Immediate target is M1, an independently packageable ZN Python resident runtime. Preserve native zero-model behavior, organism-first architecture and CI cost discipline. Do not modify `main` before M10.
+> Continue `9529360-cpu/znagent` on `dev/zn-agent`. Read the current repository code first, then read `ZN.md`, `docs/ZN-IMPLEMENTATION-STATUS.md`, and `docs/ZN-SOURCE-EXTRACTION.md` completely before changing code. ZN is the only product/subject. Hermes is source reference only: inspect mature mechanisms, extract/adapt them behind ZN-owned interfaces/config/lifecycle/tests, then switch the active caller; never make Hermes the runtime, UI, desktop control plane, gateway brain or release dependency. The active packaged resident is already the independent `runtime/python` `znagent` distribution booting `zn_agent.resident`; production runtime construction no longer uses `run_agent.AIAgent`. Active local terminal/PTTY and web paths are ZN-owned. The independent Electron main, preload and `zn://` protocol are implemented, and the active React `ZnWorkbench` no longer renders inherited `ContribController`. Current priority is to finish M5/M6: resident-backed work continuity, real workspaces, contextual artifacts/tools and provider/settings integration. Then close M7 package identity debt: `apps/desktop/package.json` must become ZN-owned and the formal builder must register only `zn://` before formal installer/clean-machine work. Preserve zero-model organism behavior, CI cost discipline and `main` untouched until M10.
 
 ---
 
