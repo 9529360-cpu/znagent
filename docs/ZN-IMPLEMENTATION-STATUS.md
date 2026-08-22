@@ -18,9 +18,9 @@ Windows x64      NSIS / MSI
 macOS   arm64    DMG / ZIP
 ```
 
-M8 now has two deliberately scoped Linux proofs. First, a Linux amd64 `.deb` was built on one Ubuntu runner, transferred as the only artifact to a second fresh Ubuntu 24.04 runner with no repository checkout, installed through `apt`, and the installed embedded resident booted zero-model from `/opt/ZN`. Second, a fresh installed deb created a ZN-owned systemd user login entry, started the packaged resident, stopped it cleanly, and started the same resident again through `default.target` activation.
+M8 has two deliberately scoped installed-Linux proofs plus source-level N → N+1 continuity regressions. The installed proofs cover fresh `.deb` installation and systemd user login/start-stop-start continuity. The N → N+1 regressions now prove that versioned runtimes materialize side-by-side under the same ZN home, queued/claimed resident work keeps a runtime mismatch pending instead of idle, and an idle resident can gracefully retire N and start N+1 against the same durable self/work store.
 
-This is not complete M8/release validation. N → N+1 continuity, Windows/macOS clean-install coverage, signing/notarization and any additional release architectures remain separate gates.
+This is not complete M8/release validation. A full desktop/application updater handoff gate, Windows/macOS clean-install/login coverage, signing/notarization and any additional release architectures remain separate gates.
 
 ### Linux M8 clean-install evidence
 
@@ -171,7 +171,58 @@ The temporary autostart workflow was removed after successful evidence in:
 441f7a7e516118a2eac05668207dc8d8265cb610  test: retire Linux autostart smoke [skip ci]
 ```
 
-This proves the current Linux installed OS-login/start-stop-start continuity slice. It does not prove N → N+1 runtime handoff, Windows/macOS login behavior, equivalent clean installation on those platforms, signing/notarization or a final release matrix.
+This proves the current Linux installed OS-login/start-stop-start continuity slice. It does not prove the complete N → N+1 desktop/application handoff, Windows/macOS login behavior, equivalent clean installation on those platforms, signing/notarization or a final release matrix.
+
+### M8 N → N+1 continuity regression evidence
+
+Verified source:
+
+```text
+eb1d1874f1d24dae9ceb74635886615368166ce1  fix: defer runtime handoff for queued resident work
+1efa019222d215e077af1fae92b9cb564c4f89d0  test: cover resident runtime handoff state in CI
+f0a829b618d931f6f5e40bf314fda592783db6c9  test: prove packaged runtimes coexist across upgrades
+91a6b500274e0cc0f64be54839e51f5c377a1c16  test: prove idle resident runtime continuity
+b79c94c67f5ef19af8c0a8e4ba0d9e9877a400f3  test: align runtime continuity with work snapshot contract
+```
+
+Normal CI for the final source state:
+
+```text
+ZN Kernel / Python      success
+Electron / TypeScript  success
+run                     32596442626
+```
+
+The active desktop call chain is now explicitly exercised around the runtime-state boundary. Resident `status()` already reports durable SQLite-backed `queue_depth`; `describeZnResidentRuntime` treats a nonzero durable queue as busy before considering transient working/situation state. Claimed/processing work remains covered by `working_state.current_event_id`. A runtime mismatch therefore remains `pending` + `busy` while queued or claimed resident work exists, and the existing IPC handoff path returns before `ZnResidentProcess.restart()`.
+
+The packaged-runtime regression proves:
+
+```text
+ZN_HOME/runtime/runtime-n
+ZN_HOME/runtime/runtime-n-plus-1
+```
+
+can coexist. Materializing/selecting N+1 changes the desired `ZN_RUNTIME_ID` / `ZN_RESIDENT_PYTHON` without deleting or overwriting N, while `ZN_AGENT_HOME` remains the same.
+
+The kernel suite also now launches two real resident subprocesses in sequence against one ZN home. It requires:
+
+```text
+N endpoint runtime_id == runtime-n
+→ create durable work/thread marker
+→ graceful shutdown RPC
+→ N process exits 0
+→ resident endpoint removed
+→ durable resident lease removed
+→ start a new process with runtime_id == runtime-n-plus-1
+→ N+1 endpoint reports runtime-n-plus-1
+→ resident instance_id changes (new body/process)
+→ living self born_at/name persist
+→ pulse history remains monotonic
+→ durable work/thread metadata persists
+→ final graceful shutdown retires endpoint
+```
+
+This proves the core idle runtime/body/process continuity contract at the resident boundary and closes the earlier false-idle bug for queued work. It is still not the final installed desktop/updater gate: the full Electron updater → desired runtime → future autostart → deferred busy handoff / idle restart path has not yet been exercised as one installed application scenario.
 
 ### macOS M7 evidence
 
@@ -307,9 +358,9 @@ M5/M6 currently has:
 - resident-owned provider/settings editing with secure credential references and hot cognition reconfiguration;
 - durable active work-run identity plus resident-derived ongoing progress while work continues without the desktop.
 
-M7 artifact/package shape is verified on Linux x86_64, Windows x64 and macOS arm64. M8 now has both a Linux amd64 deb fresh-install proof and an installed systemd user autostart/start-stop-login-target-restart proof on a fresh Ubuntu runner without source checkout.
+M7 artifact/package shape is verified on Linux x86_64, Windows x64 and macOS arm64. M8 has Linux amd64 deb fresh-install and installed systemd user autostart proofs, plus source-level busy/idle N → N+1 continuity regressions against the active runtime/resident boundaries.
 
-This still does **not** make the release ready. M8 continuity remains partial: N → N+1 application/runtime handoff and equivalent intended-platform clean-install/login coverage remain unverified; signing/notarization remains separate operational release hardening.
+This still does **not** make the release ready. M8 continuity remains partial: the full installed desktop/application updater handoff and equivalent intended-platform clean-install/login coverage remain unverified; signing/notarization remains separate operational release hardening.
 
 ## M5/M6 product loop
 
@@ -327,7 +378,7 @@ Telegram outbound media remains intentionally pending. `OutboundMediaPathPolicy`
 
 Status: **ZN-native resident organism active**.
 
-Persistent life, Situation/Thought/Will, nervous memory, native investigation/action/learning, sensing and bounded external cognition remain resident-owned. Zero-model operation is a hard contract. The resident service now treats service-manager SIGTERM as a graceful stop request and unwinds through the same endpoint/organ/life/lease/store cleanup path used by normal service exit.
+Persistent life, Situation/Thought/Will, nervous memory, native investigation/action/learning, sensing and bounded external cognition remain resident-owned. Zero-model operation is a hard contract. The resident service treats service-manager SIGTERM and explicit shutdown as graceful stop paths and unwinds through endpoint/organ/life/lease/store cleanup. A real N → N+1 subprocess regression now also proves that a new resident body/process can resume the same durable living self and work history from one ZN home after the prior process retires cleanly.
 
 ### Work/thread/workspace/artifacts
 
@@ -353,7 +404,7 @@ Status: **resident-owned channel framework and Telegram text/inbound media activ
 
 Status: **M1 complete for the active packaged resident path**.
 
-The independent `runtime/python` `znagent` distribution boots through `zn_agent.resident` / `zn-resident`, rejects inherited `hermes_cli`, has real extraction/boot evidence inside Linux/Windows/macOS artifacts, and now has fresh-runner installed Linux package resident-boot plus login-autostart continuity proof.
+The independent `runtime/python` `znagent` distribution boots through `zn_agent.resident` / `zn-resident`, rejects inherited `hermes_cli`, has real extraction/boot evidence inside Linux/Windows/macOS artifacts, and has fresh-runner installed Linux package resident-boot plus login-autostart continuity proof. Versioned runtime materialization is now also regression-protected so N and N+1 can coexist under the same ZN home without overwriting the active runtime.
 
 ### Desktop/UI ownership
 
@@ -369,7 +420,7 @@ ZN Electron main
 
 ### Packaging/release ownership
 
-Status: **M7 artifact ownership verified for current Linux x86_64, Windows x64 and macOS arm64 targets; M8 has Linux amd64 deb clean-install and installed autostart continuity proofs**.
+Status: **M7 artifact ownership verified for current Linux x86_64, Windows x64 and macOS arm64 targets; M8 has installed-Linux proofs plus source-level N → N+1 continuity regressions**.
 
 Verified:
 
@@ -380,11 +431,14 @@ Verified:
 - Windows NSIS/MSI package contents + PE identity + resident boot;
 - macOS arm64 DMG/ZIP package contents + Info.plist identity + `zn://` + resident boot;
 - fresh Ubuntu 24.04 `.deb` installation from an artifact-only handoff, installed `/opt/ZN` product identity, system desktop integration and zero-model embedded resident boot;
-- fresh installed Linux systemd user autostart using packaged `zn_agent.core` modules, graceful service stop/lease cleanup and resident return after `default.target` activation.
+- fresh installed Linux systemd user autostart using packaged `zn_agent.core` modules, graceful service stop/lease cleanup and resident return after `default.target` activation;
+- side-by-side N/N+1 runtime materialization under one ZN home;
+- queued/claimed resident work keeps a mismatched desired runtime pending/busy;
+- idle resident shutdown/start across N → N+1 preserves endpoint/lease cleanup, living-self identity fields and durable work history.
 
 Still pending:
 
-- N → N+1 update/runtime handoff and resident continuity;
+- full installed Electron updater/application N → N+1 handoff evidence, including future autostart target and deferred busy handoff as one scenario;
 - Windows/macOS clean-install and login-autostart coverage for the intended release matrix;
 - signing/notarization when operationally configured;
 - any additional architecture coverage required by the eventual release matrix (for example macOS x64/universal);
@@ -417,6 +471,9 @@ real packaged zn-runtime boots zero-model after Linux/Windows/macOS artifact pac
 fresh-runner Linux deb installation preserves ZN identity and boots its installed embedded resident zero-model
 SIGTERM stops a real resident subprocess with endpoint and durable lease retired before exit
 fresh-installed Linux systemd user autostart starts packaged zn_agent, stops cleanly, and returns through default.target
+queued resident work prevents false-idle runtime handoff
+N and N+1 packaged runtimes materialize side-by-side under the same ZN home
+idle N → N+1 resident restart preserves living-self birth identity and durable work history
 ```
 
 ## Milestone status snapshot
@@ -430,17 +487,17 @@ M4  independent Electron main + preload + zn://            COMPLETE
 M5  independent content-first ZN workbench                 IN PROGRESS; core owned surfaces active
 M6  resident work/artifact/workspace end-to-end loop       PARTIAL; durable active work/progress active
 M7  formal packaging around owned product                  ARTIFACT SHAPE VERIFIED on Linux x86_64 / Windows x64 / macOS arm64
-M8  clean-machine/continuity multi-OS validation           IN PROGRESS; Linux deb fresh-install + installed autostart continuity verified
+M8  clean-machine/continuity multi-OS validation           IN PROGRESS; installed-Linux + source N→N+1 continuity evidence
 M9  product completeness/hardening                         LATER
 M10 repository migration / formal main promotion           LATER; main untouched
 ```
 
 ## Immediate next development sequence
 
-1. do not repeat M7, the Linux deb clean-install gate or the proven Linux autostart gate merely to recreate evidence;
-2. trace the active ZN-owned update/runtime-selection/resident call chain and define the smallest truthful N → N+1 continuity gate from current code;
-3. validate the busy case first: materializing/selecting N+1 must not interrupt active resident work;
-4. validate the idle case separately: graceful shutdown, endpoint retirement, N+1 start and runtime-identity verification must preserve the same ZN home/identity/state;
+1. do not repeat M7, the Linux deb clean-install gate, the proven Linux autostart gate, or the new source-level N/N+1 continuity regressions merely to recreate evidence;
+2. close the remaining desktop/application N → N+1 gate through the active Electron call chain: updater/materialized desired runtime → future autostart N+1 → busy defer with N endpoint/work untouched → idle graceful restart → endpoint/runtime identity N+1;
+3. keep busy authority resident-owned (`queue_depth` / durable working state), never renderer/localStorage or fixed timing;
+4. verify the installed/application scenario still uses the same ZN home and preserves living-self/work state; only then treat the N → N+1 M8 slice as complete;
 5. extend clean-install/login coverage to Windows/macOS only when it adds release evidence rather than duplicating package-shape proof;
 6. keep signing/notarization explicit and operational—never infer it from unsigned package success;
 7. in parallel product work, establish browser interaction only through a clean resident-owned body/sense seam and define explicit resident egress nomination before Telegram outbound attachments.
