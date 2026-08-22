@@ -276,7 +276,8 @@ export async function startZnResidentOnDesktopReady(): Promise<void> {
     try {
       await ensureZnResidentAutostart()
     } catch (error) {
-      console.error('[zn-resident] failed to install login autostart', error)
+      console.error('[zn-resident] failed to install login autostart; runtime handoff deferred', error)
+      return
     }
     beginRuntimeHandoff(residentProcess, status)
   } catch (error) {
