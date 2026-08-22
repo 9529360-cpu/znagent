@@ -165,7 +165,7 @@ class TelegramNetworkTests(unittest.TestCase):
             tnet.resolve_proxy_url(
                 environ={
                     "HTTPS_PROXY": "http://proxy:8080",
-                    "NO_PROXY": "api.telegram.org,149.154.160.0/20",
+                    "NO_PROXY": "149.154.160.0/20",
                 },
                 target_hosts=["api.telegram.org", "149.154.167.220"],
             )
