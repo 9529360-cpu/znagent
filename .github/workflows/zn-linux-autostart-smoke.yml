@@ -1,0 +1,195 @@
+name: ZN Linux Autostart Smoke
+
+on:
+  push:
+    branches:
+      - dev/zn-agent
+    paths:
+      - .github/workflows/zn-linux-autostart-smoke.yml
+      - apps/desktop/electron/zn-resident-autostart.ts
+      - apps/desktop/electron/zn-resident-process.ts
+      - apps/desktop/electron/zn-packaged-runtime.ts
+      - apps/desktop/scripts/stage-zn-runtime.mjs
+      - agent/kernel/resident_autostart.py
+      - agent/kernel/resident_server.py
+      - runtime/python/**
+
+permissions:
+  contents: read
+  statuses: write
+
+env:
+  CI: 'true'
+  NODE_OPTIONS: --max-old-space-size=4096
+  ZN_RELEASE_VERSION: '0.17.0'
+
+concurrency:
+  group: zn-linux-autostart-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-deb:
+    name: Build ZN deb
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+          cache: npm
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked workspace dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Stage self-contained ZN runtime
+        env:
+          ZN_RELEASE_COMMIT: ${{ github.sha }}
+        run: node apps/desktop/scripts/stage-zn-runtime.mjs
+
+      - name: Build independent ZN desktop
+        run: npm run build --workspace apps/desktop
+
+      - name: Build ZN deb
+        run: npm run builder --workspace apps/desktop -- --config electron-builder.zn.yml --linux deb --publish never
+
+      - name: Capture deb artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          release="$GITHUB_WORKSPACE/apps/desktop/release"
+          count="$(find "$release" -maxdepth 1 -type f -name 'ZN-*.deb' | wc -l | tr -d ' ')"
+          [[ "$count" == '1' ]] || { echo "expected one deb, found $count"; exit 1; }
+          deb="$(find "$release" -maxdepth 1 -type f -name 'ZN-*.deb' -print -quit)"
+          mkdir -p "$GITHUB_WORKSPACE/.ci/autostart-artifact"
+          cp "$deb" "$GITHUB_WORKSPACE/.ci/autostart-artifact/"
+          sha256sum "$deb"
+          dpkg-deb -f "$deb" Package Version Architecture
+
+      - name: Upload deb for fresh runner
+        uses: actions/upload-artifact@v4
+        with:
+          name: zn-linux-autostart-deb-${{ github.sha }}
+          path: .ci/autostart-artifact/*.deb
+          if-no-files-found: error
+          retention-days: 1
+
+  autostart:
+    name: Fresh install + systemd user autostart
+    needs: build-deb
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download only built deb
+        uses: actions/download-artifact@v4
+        with:
+          name: zn-linux-autostart-deb-${{ github.sha }}
+          path: artifact
+
+      - name: Install deb on fresh runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          deb="$(find artifact -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          [[ -n "$deb" ]] || { echo 'downloaded deb missing'; exit 1; }
+          sudo apt-get update
+          sudo apt-get install -y "./$deb"
+          [[ "$(dpkg-query -W -f='${Status}' zn-desktop)" == 'install ok installed' ]]
+          dpkg -L zn-desktop > installed-files.txt
+
+      - name: Start isolated user systemd manager
+        shell: bash
+        run: |
+          set -euo pipefail
+          uid="$(id -u)"
+          runtime_dir="/run/user/$uid"
+          sudo loginctl enable-linger "$USER"
+          sudo systemctl start "user@$uid.service"
+          [[ -S "$runtime_dir/bus" ]] || { echo "user bus missing at $runtime_dir/bus"; sudo systemctl status "user@$uid.service" --no-pager || true; exit 1; }
+          echo "XDG_RUNTIME_DIR=$runtime_dir" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=$runtime_dir/bus" >> "$GITHUB_ENV"
+
+      - name: Install ZN login unit from embedded runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime_manifest="$(grep '/resources/zn-runtime/runtime.json$' installed-files.txt | head -n 1)"
+          [[ -f "$runtime_manifest" ]] || { echo 'installed runtime manifest missing'; exit 1; }
+          embedded_python="$(python3 - "$runtime_manifest" <<'PY'
+          import json
+          import pathlib
+          import sys
+          manifest_path = pathlib.Path(sys.argv[1])
+          manifest = json.loads(manifest_path.read_text())
+          print((manifest_path.parent / manifest['python']).resolve())
+          PY
+          )"
+          zn_home="$HOME/.local/share/zn-autostart-smoke"
+          echo "EMBEDDED_PYTHON=$embedded_python" >> "$GITHUB_ENV"
+          echo "ZN_AUTOSTART_HOME=$zn_home" >> "$GITHUB_ENV"
+          "$embedded_python" -I -m zn_agent.core.resident_autostart install --home "$zn_home"
+
+      - name: Verify installed login entry and live resident
+        shell: bash
+        run: |
+          set -euo pipefail
+          unit="$HOME/.config/systemd/user/zn-resident.service"
+          [[ -f "$unit" ]] || { echo 'ZN systemd user unit missing'; exit 1; }
+          grep -F "ExecStart=\"$EMBEDDED_PYTHON\" \"-m\" \"zn_agent.core.resident_server\" \"--home\" \"$ZN_AUTOSTART_HOME\"" "$unit"
+          grep -F 'WantedBy=default.target' "$unit"
+          if grep -q 'agent.kernel.resident_server' "$unit"; then echo 'source namespace leaked into installed login unit'; cat "$unit"; exit 1; fi
+          if grep -q '/home/runner/work/znagent' "$unit"; then echo 'source checkout path leaked into installed login unit'; cat "$unit"; exit 1; fi
+          [[ "$(systemctl --user is-enabled zn-resident.service)" == 'enabled' ]]
+          for attempt in $(seq 1 30); do
+            if systemctl --user is-active --quiet zn-resident.service && "$EMBEDDED_PYTHON" -I -m zn_agent.core.resident_autostart status --home "$ZN_AUTOSTART_HOME" | tee resident-status.txt | grep -q 'running; autostart: installed'; then
+              break
+            fi
+            sleep 0.5
+          done
+          systemctl --user is-active zn-resident.service
+          grep -q 'running; autostart: installed' resident-status.txt
+          systemctl --user show zn-resident.service -p ExecStart -p FragmentPath -p ActiveState --no-pager
+
+      - name: Re-activate login target and prove resident returns
+        shell: bash
+        run: |
+          set -euo pipefail
+          systemctl --user stop zn-resident.service
+          [[ "$(systemctl --user is-active zn-resident.service)" == 'inactive' ]]
+          systemctl --user restart default.target
+          for attempt in $(seq 1 30); do
+            if systemctl --user is-active --quiet zn-resident.service && "$EMBEDDED_PYTHON" -I -m zn_agent.core.resident_autostart status --home "$ZN_AUTOSTART_HOME" | tee login-target-status.txt | grep -q 'running; autostart: installed'; then
+              break
+            fi
+            sleep 0.5
+          done
+          systemctl --user is-active zn-resident.service
+          grep -q 'running; autostart: installed' login-target-status.txt
+          "$EMBEDDED_PYTHON" -I -m zn_agent.core.resident_autostart uninstall
+
+      - name: Publish Linux autostart status
+        if: ${{ always() }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const result = '${{ job.status }}'
+            const state = result === 'success' ? 'success' : result === 'failure' ? 'failure' : 'error'
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state,
+              context: 'ZN Linux Autostart Smoke',
+              description: `fresh deb + user login target resident: ${result}`.slice(0, 140),
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            })
