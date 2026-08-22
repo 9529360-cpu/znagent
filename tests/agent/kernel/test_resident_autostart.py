@@ -26,7 +26,7 @@ class ResidentAutostartTests(unittest.TestCase):
             argv = _resident_argv(home, python)
 
             self.assertEqual(argv[0], str(python.resolve()))
-            self.assertEqual(argv[1:4], ["-m", "agent.kernel.resident_server", "--home"])
+            self.assertEqual(argv[1:4], ["-m", "zn_agent.core.resident_server", "--home"])
             self.assertEqual(argv[4], str(home.resolve()))
 
     def test_resident_server_home_option_pins_process_home(self):
@@ -75,7 +75,8 @@ class ResidentAutostartTests(unittest.TestCase):
             self.assertIn("StartLimitBurst=5", unit)
             self.assertIn(str(python.resolve()), unit)
             self.assertIn(str(home.resolve()), unit)
-            self.assertIn("agent.kernel.resident_server", unit)
+            self.assertIn("zn_agent.core.resident_server", unit)
+            self.assertNotIn("agent.kernel.resident_server", unit)
 
     def test_macos_launch_agent_is_login_loaded_and_restarts_only_after_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -89,6 +90,10 @@ class ResidentAutostartTests(unittest.TestCase):
             self.assertEqual(round_trip["KeepAlive"], {"SuccessfulExit": False})
             self.assertEqual(round_trip["ThrottleInterval"], 5)
             self.assertEqual(round_trip["ProgramArguments"][0], str(python.resolve()))
+            self.assertEqual(
+                round_trip["ProgramArguments"][1:3],
+                ["-m", "zn_agent.core.resident_server"],
+            )
             self.assertEqual(round_trip["ProgramArguments"][-1], str(home.resolve()))
 
     def test_windows_task_is_current_user_login_with_bounded_restart(self):
@@ -116,7 +121,8 @@ class ResidentAutostartTests(unittest.TestCase):
             self.assertEqual(run_level, "LeastPrivilege")
             self.assertEqual(restart_count, "5")
             self.assertEqual(command, str(python.resolve()))
-            self.assertIn("agent.kernel.resident_server", arguments or "")
+            self.assertIn("zn_agent.core.resident_server", arguments or "")
+            self.assertNotIn("agent.kernel.resident_server", arguments or "")
             self.assertIn("--home", arguments or "")
             self.assertIn(str(home.resolve()), arguments or "")
 

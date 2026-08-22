@@ -33,7 +33,7 @@ export async function ensureZnResidentAutostart(): Promise<void> {
 
   const args = [
     '-m',
-    'agent.kernel.resident_autostart',
+    'zn_agent.core.resident_autostart',
     'install',
     '--home',
     znHomeFromEndpoint(launch.endpointPath)
