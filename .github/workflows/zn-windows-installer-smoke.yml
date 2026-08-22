@@ -127,8 +127,45 @@ jobs:
             Write-Host "  runtime backend: $($manifest.backend_root)"
           }
 
-      - name: Boot resident from both extracted installers
-        run: node apps/desktop/scripts/verify-zn-packaged-runtime.mjs .ci/zn-windows-installers "$env:ZN_RELEASE_VERSION" "$env:GITHUB_SHA"
+      - name: Compare NSIS and MSI Python payloads
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:GITHUB_WORKSPACE '.ci\zn-windows-installers'
+          $nsisRuntime = (Get-ChildItem -Path (Join-Path $root 'nsis-payload') -Recurse -File -Filter 'runtime.json' | Where-Object { $_.FullName -match '[\\/]zn-runtime[\\/]runtime\.json$' }).Directory.FullName
+          $msiRuntime = (Get-ChildItem -Path (Join-Path $root 'msi-payload') -Recurse -File -Filter 'runtime.json' | Where-Object { $_.FullName -match '[\\/]zn-runtime[\\/]runtime\.json$' }).Directory.FullName
+          $nsisManifest = Get-Content -Raw (Join-Path $nsisRuntime 'runtime.json') | ConvertFrom-Json
+          $msiManifest = Get-Content -Raw (Join-Path $msiRuntime 'runtime.json') | ConvertFrom-Json
+          $nsisPython = Join-Path $nsisRuntime ($nsisManifest.python -replace '/python.exe$','')
+          $msiPython = Join-Path $msiRuntime ($msiManifest.python -replace '/python.exe$','')
+
+          foreach ($pair in @(@('NSIS',$nsisPython), @('MSI',$msiPython))) {
+            $label = $pair[0]
+            $python = $pair[1]
+            $files = @(Get-ChildItem -LiteralPath $python -Recurse -File)
+            $bytes = ($files | Measure-Object -Property Length -Sum).Sum
+            Write-Host "$label Python: $python"
+            Write-Host "  files=$($files.Count) bytes=$bytes"
+            foreach ($relative in @('python.exe','python311.zip','Lib\encodings\__init__.py','Lib\importlib\__init__.py','DLLs\_sqlite3.pyd')) {
+              $candidate = Join-Path $python $relative
+              Write-Host "  $relative exists=$(Test-Path -LiteralPath $candidate)"
+            }
+          }
+
+          $nsisFiles = @(Get-ChildItem -LiteralPath $nsisPython -Recurse -File | ForEach-Object { $_.FullName.Substring($nsisPython.Length).TrimStart('\') })
+          $msiFiles = @(Get-ChildItem -LiteralPath $msiPython -Recurse -File | ForEach-Object { $_.FullName.Substring($msiPython.Length).TrimStart('\') })
+          $missingFromMsi = @(Compare-Object -ReferenceObject $nsisFiles -DifferenceObject $msiFiles -PassThru | Where-Object SideIndicator -eq '<=')
+          $extraInMsi = @(Compare-Object -ReferenceObject $nsisFiles -DifferenceObject $msiFiles -PassThru | Where-Object SideIndicator -eq '=>')
+          Write-Host "Missing from MSI: $($missingFromMsi.Count)"
+          $missingFromMsi | Select-Object -First 120 | ForEach-Object { Write-Host "  MISSING $_" }
+          Write-Host "Extra in MSI: $($extraInMsi.Count)"
+          $extraInMsi | Select-Object -First 40 | ForEach-Object { Write-Host "  EXTRA $_" }
+
+      - name: Boot resident from extracted NSIS
+        run: node apps/desktop/scripts/verify-zn-packaged-runtime.mjs .ci/zn-windows-installers/nsis-payload "$env:ZN_RELEASE_VERSION" "$env:GITHUB_SHA"
+
+      - name: Boot resident from extracted MSI
+        run: node apps/desktop/scripts/verify-zn-packaged-runtime.mjs .ci/zn-windows-installers/msi-payload "$env:ZN_RELEASE_VERSION" "$env:GITHUB_SHA"
 
       - name: Publish Windows installer smoke status
         if: ${{ always() }}
