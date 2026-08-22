@@ -9,13 +9,34 @@ platform; resident cognition and continuity remain in the kernel.
 """
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, Protocol, TYPE_CHECKING
 
 from .models import utc_now
 
 if TYPE_CHECKING:
     from .resident import ZNResidentRuntime
+
+
+@dataclass(frozen=True, slots=True)
+class ChannelAttachment:
+    """One normalized file/media percept arriving through any channel.
+
+    ``local_path`` points only to a ZN-owned cached copy created by the adapter;
+    platform download URLs and credentials are deliberately not exposed to the
+    resident. ``error`` preserves per-attachment failure evidence without
+    dropping the surrounding message event.
+    """
+
+    attachment_id: str
+    kind: str
+    file_name: str | None = None
+    mime_type: str | None = None
+    size_bytes: int | None = None
+    local_path: str | None = None
+    remote_id: str | None = None
+    error: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +47,7 @@ class ChannelEvent:
     text: str
     message_id: str | None = None
     thread_id: str | None = None
+    attachments: tuple[ChannelAttachment, ...] = ()
     event_id: str = field(default_factory=lambda: f"channel-{uuid.uuid4().hex[:12]}")
     metadata: dict[str, Any] = field(default_factory=dict)
     received_at: str = field(default_factory=utc_now)
@@ -38,6 +60,7 @@ class ChannelMessage:
     text: str
     thread_id: str | None = None
     reply_to_message_id: str | None = None
+    attachments: tuple[ChannelAttachment, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -88,6 +111,7 @@ class ResidentChannelService:
                     "message_id": event.message_id,
                     "thread_id": event.thread_id,
                     "channel_event_id": event.event_id,
+                    "attachments": [asdict(item) for item in event.attachments],
                     "channel_metadata": dict(event.metadata),
                 },
             )
