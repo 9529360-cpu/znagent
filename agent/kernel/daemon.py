@@ -8,6 +8,7 @@ from dataclasses import asdict
 from typing import Any, TextIO
 
 from .provider_bridge import build_resident_runtime_from_existing_stack
+from .provider_settings import ProviderSettingsService
 from .service import ResidentService
 from .work import ResidentWorkLedger
 
@@ -28,10 +29,12 @@ class ResidentRpcServer:
         input_stream: TextIO | None = None,
         output_stream: TextIO | None = None,
         life_interval: float = 2.0,
+        provider_settings: ProviderSettingsService | None = None,
     ):
         self.resident = resident or build_resident_runtime_from_existing_stack()
         self.service = ResidentService(self.resident)
         self.work = ResidentWorkLedger(self.resident)
+        self.provider_settings = provider_settings or ProviderSettingsService(self.resident)
         self.input = input_stream or sys.stdin
         self.output = output_stream or sys.stdout
         self.life_interval = max(0.25, float(life_interval))
@@ -91,6 +94,10 @@ class ResidentRpcServer:
             result = self.resident.status()
         elif method == "self":
             result = self.resident.life.snapshot_dict()
+        elif method == "provider_settings":
+            result = self.provider_settings.snapshot()
+        elif method == "provider_settings_update":
+            result = self.provider_settings.update(params)
         elif method == "work_list":
             result = [
                 self._work_snapshot(snapshot, artifact_limit=1)

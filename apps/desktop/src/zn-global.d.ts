@@ -48,6 +48,8 @@ declare global {
         stop: () => Promise<unknown>
         status: () => Promise<unknown>
         self: () => Promise<unknown>
+        providerSettings: () => Promise<unknown>
+        providerSettingsUpdate: (payload: Record<string, unknown>) => Promise<unknown>
         workList: (payload?: Record<string, unknown>) => Promise<unknown>
         workCreate: (payload?: Record<string, unknown>) => Promise<unknown>
         workGet: (payload: Record<string, unknown>) => Promise<unknown>

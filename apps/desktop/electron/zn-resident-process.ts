@@ -12,6 +12,8 @@ export type ZnResidentRequest = {
     | 'ping'
     | 'status'
     | 'self'
+    | 'provider_settings'
+    | 'provider_settings_update'
     | 'work_list'
     | 'work_create'
     | 'work_get'

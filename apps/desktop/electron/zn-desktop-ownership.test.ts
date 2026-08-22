@@ -36,11 +36,14 @@ test('ZN preload exposes only the ZN bridge and does not import inherited preloa
 
   assert.match(source, /exposeInMainWorld\(['"]znDesktop['"]/)
   assert.match(source, /zn:deep-link/)
+  assert.match(source, /zn:resident:provider-settings/)
+  assert.match(source, /zn:resident:provider-settings-update/)
   assert.match(source, /zn:resident:work-list/)
   assert.match(source, /zn:resident:work-submit/)
   assert.match(source, /zn:workspaces:attach/)
   assert.match(source, /zn:workspaces:detach/)
   assert.doesNotMatch(source, /workspace_path/)
+  assert.doesNotMatch(source, /safeStorage|keytar|keyring/i)
   assert.doesNotMatch(source, /import ['"]\.\/preload['"]/) 
   assert.doesNotMatch(source, /hermesDesktop|hermes:/)
 })
@@ -131,6 +134,28 @@ test('terminal context appears only as resident artifact evidence, not a permane
   assert.match(workbench, /return ['"]Terminal['"]/)
   assert.doesNotMatch(workbench, /@xterm|new Terminal\s*\(/)
   assert.doesNotMatch(client, /terminal\.execute|terminal\.start|terminal\.open/i)
+})
+
+test('provider settings stay resident-owned and renderer never receives a stored secret', () => {
+  const ipc = read('electron/zn-resident-ipc.ts')
+  const preload = read('electron/zn-preload.ts')
+  const workbench = read('src/zn/workbench.tsx')
+  const client = read('src/zn/resident-client.ts')
+  const state = read('src/zn/state.ts')
+
+  assert.match(ipc, /provider_settings/)
+  assert.match(ipc, /provider_settings_update/)
+  assert.match(preload, /providerSettingsUpdate/)
+  assert.match(client, /loadZnProviderSettings/)
+  assert.match(client, /updateZnProviderSettings/)
+  assert.match(workbench, /Models & providers/)
+  assert.match(workbench, /type="password"/)
+  assert.match(workbench, /Save provider/)
+  assert.match(workbench, /secure credential boundary/)
+  assert.doesNotMatch(ipc, /safeStorage|keytar|keyring/i)
+  assert.doesNotMatch(preload, /safeStorage|keytar|keyring/i)
+  assert.doesNotMatch(client, /localStorage|sessionStorage/)
+  assert.doesNotMatch(state, /apiKey|api_key|credential_ref/)
 })
 
 test('Electron bundler emits only ZN control-plane and renderer entries', () => {

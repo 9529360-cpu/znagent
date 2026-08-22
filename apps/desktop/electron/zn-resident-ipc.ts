@@ -118,6 +118,22 @@ export function registerZnResidentIpc(): void {
     return withDesktopRuntime(await residentProcess.request('status'), residentProcess)
   })
   ipcMain.handle('zn:resident:self', async () => getZnResidentProcess().request('self'))
+  ipcMain.handle('zn:resident:provider-settings', async () => {
+    return getZnResidentProcess().request('provider_settings')
+  })
+  ipcMain.handle('zn:resident:provider-settings-update', async (_event, payload) => {
+    const provider = String(payload?.provider || '').trim()
+    const model = String(payload?.model || '').trim()
+    if (!provider) throw new Error('provider is required')
+    if (!model) throw new Error('model is required')
+    return getZnResidentProcess().request('provider_settings_update', {
+      provider,
+      model,
+      base_url: String(payload?.baseUrl || payload?.base_url || '').trim(),
+      ...(payload?.apiKey ? { api_key: String(payload.apiKey) } : {}),
+      clear_credential: payload?.clearCredential === true
+    })
+  })
   ipcMain.handle('zn:resident:work-list', async (_event, payload) => {
     return getZnResidentProcess().request('work_list', {
       limit: Number(payload?.limit || 24),

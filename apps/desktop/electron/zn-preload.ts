@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('znDesktop', {
     stop: () => ipcRenderer.invoke('zn:resident:stop'),
     status: () => ipcRenderer.invoke('zn:resident:status'),
     self: () => ipcRenderer.invoke('zn:resident:self'),
+    providerSettings: () => ipcRenderer.invoke('zn:resident:provider-settings'),
+    providerSettingsUpdate: payload => ipcRenderer.invoke('zn:resident:provider-settings-update', payload || {}),
     workList: payload => ipcRenderer.invoke('zn:resident:work-list', payload || {}),
     workCreate: payload => ipcRenderer.invoke('zn:resident:work-create', payload || {}),
     workGet: payload => ipcRenderer.invoke('zn:resident:work-get', payload || {}),

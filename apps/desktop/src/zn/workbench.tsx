@@ -6,9 +6,12 @@ import {
   checkZnUpdate,
   createZnWorkThread,
   detachZnWorkspace,
+  loadZnProviderSettings,
   loadZnResidentSnapshot,
   loadZnWorkThreads,
   submitZnWork,
+  updateZnProviderSettings,
+  type ZnProviderSettings,
   type ZnResidentSnapshot
 } from './resident-client'
 import {
@@ -42,6 +45,18 @@ function artifactKindLabel(kind: string): string {
   return 'Artifact'
 }
 
+function credentialLabel(settings: ZnProviderSettings | null): string {
+  if (!settings) return 'Credential status unavailable'
+  const { credential } = settings
+  if (credential.source === 'secure_store') return 'Credential stored in the resident secure store'
+  if (credential.source === 'environment') {
+    return `Credential supplied by ${credential.environmentName || 'provider environment'}`
+  }
+  if (credential.source === 'config') return 'Legacy plaintext credential exists in config; replace it to migrate securely'
+  if (credential.source === 'secure_store_unavailable') return 'Credential reference exists, but this OS secure store is unavailable'
+  return 'No credential configured; local providers or provider environment variables can still work'
+}
+
 export function ZnWorkbench() {
   const [threads, setThreads] = useState<ZnThread[]>(() => {
     const cached = loadZnThreadCache()
@@ -59,6 +74,13 @@ export function ZnWorkbench() {
   const [residentSnapshot, setResidentSnapshot] = useState<ZnResidentSnapshot | null>(null)
   const [residentError, setResidentError] = useState<string | null>(null)
   const [deepLinkNotice, setDeepLinkNotice] = useState<ZnDesktopDeepLink | null>(null)
+  const [providerSettings, setProviderSettings] = useState<ZnProviderSettings | null>(null)
+  const [providerName, setProviderName] = useState('auto')
+  const [providerModel, setProviderModel] = useState('')
+  const [providerBaseUrl, setProviderBaseUrl] = useState('')
+  const [providerApiKey, setProviderApiKey] = useState('')
+  const [providerBusy, setProviderBusy] = useState(false)
+  const [providerNotice, setProviderNotice] = useState<string | null>(null)
   const [updateStatus, setUpdateStatus] = useState<ZnDesktopUpdateStatus | null>(null)
   const [updateBusy, setUpdateBusy] = useState(false)
 
@@ -118,11 +140,35 @@ export function ZnWorkbench() {
     }
   }, [])
 
+  const applyProviderSettings = useCallback((settings: ZnProviderSettings) => {
+    setProviderSettings(settings)
+    setProviderName(settings.provider || 'auto')
+    setProviderModel(settings.model)
+    setProviderBaseUrl(settings.baseUrl)
+    setProviderApiKey('')
+  }, [])
+
+  const refreshProviderSettings = useCallback(async () => {
+    setProviderBusy(true)
+    try {
+      applyProviderSettings(await loadZnProviderSettings())
+      setProviderNotice(null)
+    } catch (error) {
+      setProviderNotice(error instanceof Error ? error.message : String(error))
+    } finally {
+      setProviderBusy(false)
+    }
+  }, [applyProviderSettings])
+
   useEffect(() => {
     void refreshResident()
     const timer = window.setInterval(() => void refreshResident(), 12_000)
     return () => window.clearInterval(timer)
   }, [refreshResident])
+
+  useEffect(() => {
+    if (view === 'settings') void refreshProviderSettings()
+  }, [refreshProviderSettings, view])
 
   useEffect(() => {
     return window.znDesktop?.shell?.onDeepLink(link => {
@@ -218,6 +264,45 @@ export function ZnWorkbench() {
     },
     [activeThread, busy, draft, replaceThread]
   )
+
+  const saveProvider = useCallback(async (event: FormEvent) => {
+    event.preventDefault()
+    setProviderBusy(true)
+    try {
+      const settings = await updateZnProviderSettings({
+        provider: providerName,
+        model: providerModel,
+        baseUrl: providerBaseUrl,
+        ...(providerApiKey.trim() ? { apiKey: providerApiKey } : {})
+      })
+      applyProviderSettings(settings)
+      setProviderNotice('Provider settings applied to the current resident.')
+      setResidentHealth('live')
+    } catch (error) {
+      setProviderNotice(error instanceof Error ? error.message : String(error))
+    } finally {
+      setProviderBusy(false)
+    }
+  }, [applyProviderSettings, providerApiKey, providerBaseUrl, providerModel, providerName])
+
+  const clearProviderCredential = useCallback(async () => {
+    if (!providerSettings?.editable) return
+    setProviderBusy(true)
+    try {
+      const settings = await updateZnProviderSettings({
+        provider: providerName,
+        model: providerModel,
+        baseUrl: providerBaseUrl,
+        clearCredential: true
+      })
+      applyProviderSettings(settings)
+      setProviderNotice('Stored provider credential cleared.')
+    } catch (error) {
+      setProviderNotice(error instanceof Error ? error.message : String(error))
+    } finally {
+      setProviderBusy(false)
+    }
+  }, [applyProviderSettings, providerBaseUrl, providerModel, providerName, providerSettings?.editable])
 
   const checkUpdates = useCallback(async () => {
     setUpdateBusy(true)
@@ -348,7 +433,7 @@ export function ZnWorkbench() {
               <span className="zn-eyebrow">ZN desktop</span>
               <h1>Settings</h1>
               <p>
-                Product settings belong to ZN. Provider credential editing will connect to the ZN config boundary rather than an inherited desktop backend.
+                Product settings belong to the resident. Provider secrets are stored through ZN's secure credential boundary and are never returned to this renderer.
               </p>
             </div>
             <div className="zn-settings-grid">
@@ -363,9 +448,83 @@ export function ZnWorkbench() {
               <section className="zn-card">
                 <h2>Models & providers</h2>
                 <p className="zn-muted">
-                  External models remain bounded cognitive resources. Editable provider and credential controls will use the ZN-owned configuration store.
+                  External models are replaceable cognitive resources. Saving here hot-applies the resource plan without replacing ZN's identity, memory or life loop.
                 </p>
-                <div className="zn-setting-state">Provider editor not connected yet</div>
+                {providerSettings && !providerSettings.editable ? (
+                  <>
+                    <div className="zn-setting-state">
+                      Advanced {providerSettings.mode} configuration is active
+                      {providerSettings.routeCount ? ` · ${providerSettings.routeCount} routes` : ''}.
+                    </div>
+                    <p className="zn-muted zn-small">
+                      The simple editor will not overwrite advanced resident route configuration.
+                    </p>
+                  </>
+                ) : (
+                  <form onSubmit={saveProvider}>
+                    <div className="zn-context-title">Provider</div>
+                    <input
+                      className="zn-search"
+                      aria-label="Model provider"
+                      value={providerName}
+                      disabled={providerBusy}
+                      onChange={event => setProviderName(event.target.value)}
+                      placeholder="openai, anthropic, gemini, ollama…"
+                    />
+                    <div className="zn-context-title zn-context-title-spaced">Model</div>
+                    <input
+                      className="zn-search"
+                      aria-label="Provider model"
+                      value={providerModel}
+                      disabled={providerBusy}
+                      onChange={event => setProviderModel(event.target.value)}
+                      placeholder="Model ID"
+                    />
+                    <div className="zn-context-title zn-context-title-spaced">Base URL</div>
+                    <input
+                      className="zn-search"
+                      aria-label="Provider base URL"
+                      value={providerBaseUrl}
+                      disabled={providerBusy}
+                      onChange={event => setProviderBaseUrl(event.target.value)}
+                      placeholder="Optional custom endpoint"
+                    />
+                    <div className="zn-context-title zn-context-title-spaced">Credential</div>
+                    <input
+                      className="zn-search"
+                      aria-label="Provider API key"
+                      type="password"
+                      autoComplete="new-password"
+                      value={providerApiKey}
+                      disabled={providerBusy}
+                      onChange={event => setProviderApiKey(event.target.value)}
+                      placeholder={providerSettings?.credential.configured ? 'Leave blank to keep current credential' : 'Optional for local/env-configured providers'}
+                    />
+                    <p className="zn-muted zn-small">{credentialLabel(providerSettings)}</p>
+                    {providerSettings ? (
+                      <p className="zn-muted zn-small">
+                        Secure store: {providerSettings.credential.secureStore.available ? 'available' : 'unavailable'} · {providerSettings.credential.secureStore.backend}
+                      </p>
+                    ) : null}
+                    {providerSettings?.configurationError ? (
+                      <div className="zn-error-text">{providerSettings.configurationError}</div>
+                    ) : null}
+                    {providerNotice ? <div className="zn-setting-state">{providerNotice}</div> : null}
+                    <div className="zn-inline-actions" style={{ marginTop: 12 }}>
+                      <button className="zn-primary" type="submit" disabled={providerBusy || !providerName.trim() || !providerModel.trim()}>
+                        {providerBusy ? 'Applying…' : 'Save provider'}
+                      </button>
+                      {providerSettings?.credential.configured ? (
+                        <button type="button" disabled={providerBusy} onClick={() => void clearProviderCredential()}>
+                          Clear credential
+                        </button>
+                      ) : null}
+                      <button type="button" disabled={providerBusy} onClick={() => void refreshProviderSettings()}>
+                        Refresh
+                      </button>
+                    </div>
+                  </form>
+                )}
               </section>
               <section className="zn-card">
                 <h2>Updates</h2>

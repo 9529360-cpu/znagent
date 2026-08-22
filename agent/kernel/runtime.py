@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import uuid
 
 from .critic import Critic, DefaultCritic
@@ -31,17 +32,45 @@ class ZNKernelRuntime:
         critic: Critic | None = None,
         identity: AgentIdentity | None = None,
         max_attempts: int = 2,
+        resource_status: dict | None = None,
     ):
         if max_attempts < 1:
             raise ValueError("max_attempts must be >= 1")
         self.store = store
         self.identity = store.get_or_create_identity(identity)
         self.self_model = SelfModel(store)
+        self._resource_lock = threading.RLock()
         self.router = ModelRouter(routes, self.self_model)
         self.worker_factory = worker_factory
+        self.resource_status = dict(resource_status or {})
         self.critic = critic or DefaultCritic()
         self.evolution = EvolutionEngine(store, self.self_model)
         self.max_attempts = max_attempts
+
+    def reconfigure_resources(
+        self,
+        *,
+        routes: list[ModelRoute],
+        worker_factory: WorkerFactory,
+        max_attempts: int | None = None,
+        resource_status: dict | None = None,
+    ) -> None:
+        """Replace external cognition resources without replacing the resident.
+
+        An in-flight goal snapshots the previous router/factory before it starts.
+        Later goals see the new resource plan. Identity, store, SelfModel, lived
+        memory and the resident life loop remain untouched.
+        """
+
+        if not routes:
+            raise ValueError("at least one model route is required")
+        with self._resource_lock:
+            self.router = ModelRouter(routes, self.self_model)
+            self.worker_factory = worker_factory
+            if max_attempts is not None:
+                self.max_attempts = max(1, int(max_attempts))
+            if resource_status is not None:
+                self.resource_status = dict(resource_status)
 
     def run_goal(
         self,
@@ -54,6 +83,11 @@ class ZNKernelRuntime:
     ) -> KernelRunResult:
         if not task or not task.strip():
             raise ValueError("task must not be empty")
+
+        with self._resource_lock:
+            router = self.router
+            worker_factory = self.worker_factory
+            configured_attempts = self.max_attempts
 
         goal = Goal(
             goal_id=f"goal-{uuid.uuid4().hex[:12]}",
@@ -71,13 +105,13 @@ class ZNKernelRuntime:
         last_result = None
         last_assessment = None
 
-        attempt_limit = self.max_attempts
+        attempt_limit = configured_attempts
         if max_attempts_override is not None:
-            attempt_limit = max(1, min(self.max_attempts, int(max_attempts_override)))
+            attempt_limit = max(1, min(configured_attempts, int(max_attempts_override)))
 
         for attempt in range(1, attempt_limit + 1):
             try:
-                route = self.router.select(goal, excluded=excluded)
+                route = router.select(goal, excluded=excluded)
             except NoRouteAvailable:
                 break
 
@@ -90,7 +124,7 @@ class ZNKernelRuntime:
             kernel_context = self._build_worker_context(
                 goal, route, attempt, previous_failures
             )
-            worker = self.worker_factory.create(route)
+            worker = worker_factory.create(route)
             result = worker.run(goal, kernel_context)
             assessment = self.critic.assess(goal, result)
             last_result = result

@@ -17,6 +17,38 @@ export type ZnWorkSubmitResult = {
   run: unknown
 }
 
+export type ZnProviderCredentialStatus = {
+  configured: boolean
+  source: 'none' | 'secure_store' | 'secure_store_unavailable' | 'environment' | 'config' | string
+  environmentName?: string
+  secureStore: {
+    available: boolean
+    backend: string
+    error?: string
+  }
+}
+
+export type ZnProviderSettings = {
+  mode: string
+  editable: boolean
+  provider: string
+  model: string
+  baseUrl: string
+  credential: ZnProviderCredentialStatus
+  cognitionAvailable: boolean
+  configurationError?: string
+  activeRoutes: Array<{ id: string; provider: string; model: string }>
+  routeCount?: number
+}
+
+export type ZnProviderSettingsUpdate = {
+  provider: string
+  model: string
+  baseUrl?: string
+  apiKey?: string
+  clearCredential?: boolean
+}
+
 function desktop() {
   const bridge = window.znDesktop
   if (!bridge?.resident) throw new Error('ZN desktop resident bridge is unavailable')
@@ -121,6 +153,49 @@ function normalizeThread(value: unknown): ZnThread {
   }
 }
 
+function normalizeProviderSettings(value: unknown): ZnProviderSettings {
+  const item = record(value)
+  if (!item) throw new Error('Resident returned invalid provider settings')
+  const credential = record(item.credential) || {}
+  const secureStore = record(credential.secure_store || credential.secureStore) || {}
+  const rawRoutes = Array.isArray(item.active_routes || item.activeRoutes)
+    ? (item.active_routes || item.activeRoutes) as unknown[]
+    : []
+  const activeRoutes = rawRoutes.flatMap(value => {
+    const route = record(value)
+    if (!route) return []
+    return [{
+      id: String(route.id || ''),
+      provider: String(route.provider || ''),
+      model: String(route.model || '')
+    }]
+  })
+  const environmentName = String(credential.environment_name || credential.environmentName || '').trim()
+  const secureError = String(secureStore.error || '').trim()
+  const configurationError = String(item.configuration_error || item.configurationError || '').trim()
+  return {
+    mode: String(item.mode || 'default'),
+    editable: item.editable !== false,
+    provider: String(item.provider || 'auto'),
+    model: String(item.model || ''),
+    baseUrl: String(item.base_url || item.baseUrl || ''),
+    credential: {
+      configured: credential.configured === true,
+      source: String(credential.source || 'none'),
+      ...(environmentName ? { environmentName } : {}),
+      secureStore: {
+        available: secureStore.available === true,
+        backend: String(secureStore.backend || 'unavailable'),
+        ...(secureError ? { error: secureError } : {})
+      }
+    },
+    cognitionAvailable: item.cognition_available === true || item.cognitionAvailable === true,
+    ...(configurationError ? { configurationError } : {}),
+    activeRoutes,
+    ...(typeof item.route_count === 'number' ? { routeCount: item.route_count } : {})
+  }
+}
+
 export async function loadZnResidentSnapshot(): Promise<ZnResidentSnapshot> {
   const resident = desktop().resident
   let initial: unknown
@@ -135,6 +210,26 @@ export async function loadZnResidentSnapshot(): Promise<ZnResidentSnapshot> {
     resident.self().catch(() => null)
   ])
   return { status, self }
+}
+
+export async function loadZnProviderSettings(): Promise<ZnProviderSettings> {
+  return normalizeProviderSettings(await desktop().resident.providerSettings())
+}
+
+export async function updateZnProviderSettings(
+  update: ZnProviderSettingsUpdate
+): Promise<ZnProviderSettings> {
+  const provider = update.provider.trim()
+  const model = update.model.trim()
+  if (!provider) throw new Error('Provider is required')
+  if (!model) throw new Error('Model is required')
+  return normalizeProviderSettings(await desktop().resident.providerSettingsUpdate({
+    provider,
+    model,
+    baseUrl: update.baseUrl?.trim() || '',
+    ...(update.apiKey?.trim() ? { apiKey: update.apiKey.trim() } : {}),
+    clearCredential: update.clearCredential === true
+  }))
 }
 
 export async function loadZnWorkThreads(): Promise<ZnThread[]> {
