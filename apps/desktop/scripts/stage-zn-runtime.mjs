@@ -33,7 +33,7 @@ function capture(command, args, options = {}) {
 function findPortablePython(installDir) {
   const roots = fs
     .readdirSync(installDir, { withFileTypes: true })
-    .filter(entry => entry.isDirectory())
+    .filter(entry => entry.isDirectory() && !entry.isSymbolicLink())
     .map(entry => path.join(installDir, entry.name))
   const candidates = []
   for (const root of roots) {
@@ -47,6 +47,34 @@ function findPortablePython(installDir) {
   const found = candidates.find(candidate => fs.existsSync(candidate) && fs.statSync(candidate).isFile())
   if (!found) throw new Error(`Could not locate portable Python under ${installDir}`)
   return found
+}
+
+function removeWindowsPythonAliases(installDir, pythonPath) {
+  if (process.platform !== 'win32') return
+
+  const concreteRoot = path.dirname(pythonPath)
+  const concreteReal = fs.realpathSync(concreteRoot).toLowerCase()
+  for (const entry of fs.readdirSync(installDir, { withFileTypes: true })) {
+    if (!entry.isSymbolicLink()) continue
+    const candidate = path.join(installDir, entry.name)
+    let resolved
+    try {
+      resolved = fs.realpathSync(candidate).toLowerCase()
+    } catch {
+      continue
+    }
+    if (resolved !== concreteReal) continue
+    fs.unlinkSync(candidate)
+    console.log(`[zn-runtime] removed portable Python alias ${candidate}`)
+  }
+
+  const remainingAliases = fs
+    .readdirSync(installDir, { withFileTypes: true })
+    .filter(entry => entry.isSymbolicLink())
+    .map(entry => entry.name)
+  if (remainingAliases.length > 0) {
+    throw new Error(`ZN packaged Python contains unsupported top-level aliases: ${remainingAliases.join(', ')}`)
+  }
 }
 
 function portableRelative(root, target) {
@@ -67,6 +95,7 @@ fs.mkdirSync(pythonInstallDir, { recursive: true })
 console.log('[zn-runtime] installing portable CPython 3.11')
 run('uv', ['python', 'install', '3.11', '--install-dir', pythonInstallDir, '--no-bin'])
 const pythonPath = findPortablePython(pythonInstallDir)
+removeWindowsPythonAliases(pythonInstallDir, pythonPath)
 const stagedPythonInstallArgs = ['--python', pythonPath, '--break-system-packages']
 
 console.log('[zn-runtime] installing ZN-owned Python distribution')
