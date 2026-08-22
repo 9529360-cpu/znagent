@@ -149,7 +149,14 @@ class ResidentChannelSocketServiceTests(unittest.TestCase):
 
             self.assertTrue(adapter.delivered.wait(2.0))
             self.assertEqual(adapter.sent[0].text, "resident channel reply")
-            delivered_route = service.channels.ledger.route_for_event(route.event_id)
+
+            delivered_route = None
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                delivered_route = service.channels.ledger.route_for_event(route.event_id)
+                if delivered_route is not None and delivered_route.status == "delivered":
+                    break
+                time.sleep(0.01)
             self.assertIsNotNone(delivered_route)
             assert delivered_route is not None
             self.assertEqual(delivered_route.status, "delivered")
