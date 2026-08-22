@@ -53,6 +53,8 @@ declare global {
         workList: (payload?: Record<string, unknown>) => Promise<unknown>
         workCreate: (payload?: Record<string, unknown>) => Promise<unknown>
         workGet: (payload: Record<string, unknown>) => Promise<unknown>
+        workStart: (payload: Record<string, unknown>) => Promise<unknown>
+        workProgress: (payload: Record<string, unknown>) => Promise<unknown>
         workSubmit: (payload: Record<string, unknown>) => Promise<unknown>
         pulses: (limit?: number) => Promise<unknown>
         situations: (limit?: number) => Promise<unknown>

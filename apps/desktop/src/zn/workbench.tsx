@@ -8,11 +8,13 @@ import {
   detachZnWorkspace,
   loadZnProviderSettings,
   loadZnResidentSnapshot,
+  loadZnWorkProgress,
   loadZnWorkThreads,
-  submitZnWork,
+  startZnWork,
   updateZnProviderSettings,
   type ZnProviderSettings,
-  type ZnResidentSnapshot
+  type ZnResidentSnapshot,
+  type ZnWorkProgress
 } from './resident-client'
 import {
   addZnThreadMessage,
@@ -57,6 +59,10 @@ function credentialLabel(settings: ZnProviderSettings | null): string {
   return 'No credential configured; local providers or provider environment variables can still work'
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => window.setTimeout(resolve, ms))
+}
+
 export function ZnWorkbench() {
   const [threads, setThreads] = useState<ZnThread[]>(() => {
     const cached = loadZnThreadCache()
@@ -68,6 +74,7 @@ export function ZnWorkbench() {
   const [query, setQuery] = useState('')
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
+  const [workProgress, setWorkProgress] = useState<ZnWorkProgress | null>(null)
   const [workspaceBusy, setWorkspaceBusy] = useState(false)
   const [contextOpen, setContextOpen] = useState(true)
   const [residentHealth, setResidentHealth] = useState<ResidentHealth>('connecting')
@@ -193,7 +200,7 @@ export function ZnWorkbench() {
   }, [replaceThread])
 
   const attachWorkspace = useCallback(async () => {
-    if (!activeThread || workspaceBusy) return
+    if (!activeThread || workspaceBusy || busy) return
     const threadId = activeThread.id
     setWorkspaceBusy(true)
     try {
@@ -206,10 +213,10 @@ export function ZnWorkbench() {
     } finally {
       setWorkspaceBusy(false)
     }
-  }, [activeThread, replaceThread, workspaceBusy])
+  }, [activeThread, busy, replaceThread, workspaceBusy])
 
   const detachWorkspace = useCallback(async () => {
-    if (!activeThread?.workspace || workspaceBusy) return
+    if (!activeThread?.workspace || workspaceBusy || busy) return
     const threadId = activeThread.id
     setWorkspaceBusy(true)
     try {
@@ -221,7 +228,7 @@ export function ZnWorkbench() {
     } finally {
       setWorkspaceBusy(false)
     }
-  }, [activeThread, replaceThread, workspaceBusy])
+  }, [activeThread, busy, replaceThread, workspaceBusy])
 
   const submit = useCallback(
     async (event: FormEvent) => {
@@ -230,6 +237,7 @@ export function ZnWorkbench() {
       if (!task || busy || !activeThread) return
 
       const threadId = activeThread.id
+      let residentAccepted = false
       setDraft('')
       setBusy(true)
       setThreads(current =>
@@ -239,25 +247,58 @@ export function ZnWorkbench() {
       )
 
       try {
-        const result = await submitZnWork(threadId, task)
-        replaceThread(result.thread)
-        if (result.thread.artifacts.length > 0) {
-          setSelectedArtifactId(result.thread.artifacts[0].id)
-          setContextOpen(true)
-        }
+        const started = await startZnWork(threadId, task)
+        residentAccepted = true
+        replaceThread(started.thread)
+        setWorkProgress(started.progress)
         setResidentError(null)
         setResidentHealth('live')
+
+        let current = started.progress
+        let finalThread = started.progress.finalized ? started.thread : undefined
+        while (!current.terminal) {
+          await sleep(700)
+          const update = await loadZnWorkProgress(threadId, current.eventId)
+          current = update.progress
+          setWorkProgress(current)
+          if (update.thread) finalThread = update.thread
+        }
+
+        if (!current.finalized) {
+          throw new Error(current.error || 'Resident work ended without a durable work outcome')
+        }
+        if (!finalThread) {
+          const update = await loadZnWorkProgress(threadId, current.eventId)
+          finalThread = update.thread
+        }
+        if (finalThread) {
+          replaceThread(finalThread)
+          if (finalThread.artifacts.length > 0) {
+            setSelectedArtifactId(finalThread.artifacts[0].id)
+            setContextOpen(true)
+          }
+        }
+        setWorkProgress(null)
         void loadZnResidentSnapshot().then(setResidentSnapshot).catch(() => undefined)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        setThreads(current =>
-          current.map(thread =>
-            thread.id === threadId
-              ? addZnThreadMessage(thread, 'zn', message, { failed: true })
-              : thread
+        if (!residentAccepted) {
+          setThreads(current =>
+            current.map(thread =>
+              thread.id === threadId
+                ? addZnThreadMessage(thread, 'zn', message, { failed: true })
+                : thread
+            )
           )
+        } else {
+          setWorkProgress(null)
+        }
+        setResidentError(
+          residentAccepted
+            ? `${message} The resident may continue this durable work while the desktop reconnects.`
+            : message
         )
-        setResidentError(message)
+        setResidentHealth(residentAccepted ? 'connecting' : 'offline')
       } finally {
         setBusy(false)
       }
@@ -331,6 +372,8 @@ export function ZnWorkbench() {
     }
   }, [])
 
+  const showClearCredential = providerSettings?.credential.source === 'secure_store' || providerSettings?.credential.source === 'config'
+
   return (
     <div className={`zn-app${contextOpen ? '' : ' context-closed'}`}>
       <aside className="zn-sidebar">
@@ -386,11 +429,11 @@ export function ZnWorkbench() {
             </div>
           </div>
           <div className="zn-workspace-actions">
-            <button type="button" disabled={workspaceBusy || !activeThread} onClick={() => void attachWorkspace()}>
+            <button type="button" disabled={workspaceBusy || busy || !activeThread} onClick={() => void attachWorkspace()}>
               {workspaceBusy ? 'Working…' : activeWorkspace ? 'Change folder' : 'Attach folder'}
             </button>
             {activeWorkspace ? (
-              <button type="button" disabled={workspaceBusy} onClick={() => void detachWorkspace()}>
+              <button type="button" disabled={workspaceBusy || busy} onClick={() => void detachWorkspace()}>
                 Detach
               </button>
             ) : null}
@@ -463,65 +506,21 @@ export function ZnWorkbench() {
                 ) : (
                   <form onSubmit={saveProvider}>
                     <div className="zn-context-title">Provider</div>
-                    <input
-                      className="zn-search"
-                      aria-label="Model provider"
-                      value={providerName}
-                      disabled={providerBusy}
-                      onChange={event => setProviderName(event.target.value)}
-                      placeholder="openai, anthropic, gemini, ollama…"
-                    />
+                    <input className="zn-search" aria-label="Model provider" value={providerName} disabled={providerBusy} onChange={event => setProviderName(event.target.value)} placeholder="openai, anthropic, gemini, ollama…" />
                     <div className="zn-context-title zn-context-title-spaced">Model</div>
-                    <input
-                      className="zn-search"
-                      aria-label="Provider model"
-                      value={providerModel}
-                      disabled={providerBusy}
-                      onChange={event => setProviderModel(event.target.value)}
-                      placeholder="Model ID"
-                    />
+                    <input className="zn-search" aria-label="Provider model" value={providerModel} disabled={providerBusy} onChange={event => setProviderModel(event.target.value)} placeholder="Model ID" />
                     <div className="zn-context-title zn-context-title-spaced">Base URL</div>
-                    <input
-                      className="zn-search"
-                      aria-label="Provider base URL"
-                      value={providerBaseUrl}
-                      disabled={providerBusy}
-                      onChange={event => setProviderBaseUrl(event.target.value)}
-                      placeholder="Optional custom endpoint"
-                    />
+                    <input className="zn-search" aria-label="Provider base URL" value={providerBaseUrl} disabled={providerBusy} onChange={event => setProviderBaseUrl(event.target.value)} placeholder="Optional custom endpoint" />
                     <div className="zn-context-title zn-context-title-spaced">Credential</div>
-                    <input
-                      className="zn-search"
-                      aria-label="Provider API key"
-                      type="password"
-                      autoComplete="new-password"
-                      value={providerApiKey}
-                      disabled={providerBusy}
-                      onChange={event => setProviderApiKey(event.target.value)}
-                      placeholder={providerSettings?.credential.configured ? 'Leave blank to keep current credential' : 'Optional for local/env-configured providers'}
-                    />
+                    <input className="zn-search" aria-label="Provider API key" type="password" autoComplete="new-password" value={providerApiKey} disabled={providerBusy} onChange={event => setProviderApiKey(event.target.value)} placeholder={providerSettings?.credential.configured ? 'Leave blank to keep current credential' : 'Optional for local/env-configured providers'} />
                     <p className="zn-muted zn-small">{credentialLabel(providerSettings)}</p>
-                    {providerSettings ? (
-                      <p className="zn-muted zn-small">
-                        Secure store: {providerSettings.credential.secureStore.available ? 'available' : 'unavailable'} · {providerSettings.credential.secureStore.backend}
-                      </p>
-                    ) : null}
-                    {providerSettings?.configurationError ? (
-                      <div className="zn-error-text">{providerSettings.configurationError}</div>
-                    ) : null}
+                    {providerSettings ? <p className="zn-muted zn-small">Secure store: {providerSettings.credential.secureStore.available ? 'available' : 'unavailable'} · {providerSettings.credential.secureStore.backend}</p> : null}
+                    {providerSettings?.configurationError ? <div className="zn-error-text">{providerSettings.configurationError}</div> : null}
                     {providerNotice ? <div className="zn-setting-state">{providerNotice}</div> : null}
                     <div className="zn-inline-actions" style={{ marginTop: 12 }}>
-                      <button className="zn-primary" type="submit" disabled={providerBusy || !providerName.trim() || !providerModel.trim()}>
-                        {providerBusy ? 'Applying…' : 'Save provider'}
-                      </button>
-                      {providerSettings?.credential.configured ? (
-                        <button type="button" disabled={providerBusy} onClick={() => void clearProviderCredential()}>
-                          Clear credential
-                        </button>
-                      ) : null}
-                      <button type="button" disabled={providerBusy} onClick={() => void refreshProviderSettings()}>
-                        Refresh
-                      </button>
+                      <button className="zn-primary" type="submit" disabled={providerBusy || !providerName.trim() || !providerModel.trim()}>{providerBusy ? 'Applying…' : 'Save provider'}</button>
+                      {showClearCredential ? <button type="button" disabled={providerBusy} onClick={() => void clearProviderCredential()}>Clear credential</button> : null}
+                      <button type="button" disabled={providerBusy} onClick={() => void refreshProviderSettings()}>Refresh</button>
                     </div>
                   </form>
                 )}
@@ -530,19 +529,8 @@ export function ZnWorkbench() {
                 <h2>Updates</h2>
                 <p className="zn-muted">Check the ZN stable channel without source-repository credentials.</p>
                 <div className="zn-inline-actions">
-                  <button type="button" disabled={updateBusy} onClick={() => void checkUpdates()}>
-                    {updateBusy ? 'Checking…' : 'Check for updates'}
-                  </button>
-                  {updateStatus?.updateAvailable ? (
-                    <button
-                      className="zn-primary"
-                      type="button"
-                      disabled={updateBusy}
-                      onClick={() => void applyUpdate()}
-                    >
-                      Apply {updateStatus.availableVersion || 'update'}
-                    </button>
-                  ) : null}
+                  <button type="button" disabled={updateBusy} onClick={() => void checkUpdates()}>{updateBusy ? 'Checking…' : 'Check for updates'}</button>
+                  {updateStatus?.updateAvailable ? <button className="zn-primary" type="button" disabled={updateBusy} onClick={() => void applyUpdate()}>Apply {updateStatus.availableVersion || 'update'}</button> : null}
                 </div>
                 {updateStatus ? <pre className="zn-compact-pre">{renderUnknown(updateStatus)}</pre> : null}
               </section>
@@ -551,60 +539,60 @@ export function ZnWorkbench() {
         ) : (
           <>
             <main className="zn-thread-surface">
-              {deepLinkNotice ? (
-                <div className="zn-notice">
-                  <strong>Deep link received.</strong> Nothing was executed automatically.
-                  <button type="button" onClick={() => setDeepLinkNotice(null)}>Dismiss</button>
-                </div>
-              ) : null}
+              {deepLinkNotice ? <div className="zn-notice"><strong>Deep link received.</strong> Nothing was executed automatically.<button type="button" onClick={() => setDeepLinkNotice(null)}>Dismiss</button></div> : null}
 
               {activeThread && activeThread.messages.length > 0 ? (
                 <div className="zn-messages">
                   {activeThread.messages.map(message => (
                     <article className={`zn-message ${message.role}`} key={message.id}>
-                      <div className="zn-message-label">
-                        {message.role === 'user' ? 'You' : message.role === 'zn' ? 'ZN' : 'Activity'}
-                      </div>
+                      <div className="zn-message-label">{message.role === 'user' ? 'You' : message.role === 'zn' ? 'ZN' : 'Activity'}</div>
                       <div className="zn-message-body">{message.text}</div>
-                      {message.detail ? (
-                        <pre className="zn-activity-detail">{renderUnknown(message.detail)}</pre>
-                      ) : null}
+                      {message.detail ? <pre className="zn-activity-detail">{renderUnknown(message.detail)}</pre> : null}
                     </article>
                   ))}
+                  {workProgress && workProgress.threadId === activeThread.id && !workProgress.finalized ? (
+                    <article className="zn-message activity" aria-live="polite">
+                      <div className="zn-message-label">Resident progress · {workProgress.status}</div>
+                      <div className="zn-message-body">{workProgress.stage} · {workProgress.nextAction || 'continuing work'}</div>
+                      {workProgress.thought ? (
+                        <div className="zn-muted zn-small">
+                          {workProgress.thought.action || workProgress.thought.focus}
+                          {workProgress.thought.reason ? ` — ${workProgress.thought.reason}` : ''}
+                        </div>
+                      ) : null}
+                      {workProgress.investigation ? (
+                        <div className="zn-muted zn-small">
+                          Investigation round {workProgress.investigation.rounds} · {workProgress.investigation.status}
+                          {workProgress.investigation.nextProbe ? ` · next: ${workProgress.investigation.nextProbe}` : ''}
+                        </div>
+                      ) : null}
+                      {workProgress.bodyActions.length > 0 ? (
+                        <div className="zn-activity-detail">
+                          {workProgress.bodyActions.map((action, index) => (
+                            <div key={`${action.at}-${action.kind}-${index}`}>
+                              {action.kind} · {action.success ? 'ok' : 'failed'}{action.summary ? ` · ${action.summary}` : ''}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </article>
+                  ) : null}
                 </div>
               ) : (
                 <div className="zn-empty-thread">
                   <span className="zn-eyebrow">Persistent resident</span>
                   <h1>What should ZN attend to?</h1>
-                  <p>
-                    Work enters the resident's own event loop. Attach a local folder when this work belongs to a project; files, diffs and invoked terminal output appear contextually only when the resident produces relevant work evidence.
-                  </p>
+                  <p>Work enters the resident's own event loop. The desktop can detach while durable work continues; files, diffs and invoked terminal output appear contextually when the resident produces relevant evidence.</p>
                 </div>
               )}
             </main>
 
             <form className="zn-composer-wrap" onSubmit={submit}>
               <div className="zn-composer">
-                <textarea
-                  aria-label="Message ZN"
-                  placeholder="Message ZN"
-                  rows={1}
-                  value={draft}
-                  onChange={event => setDraft(event.target.value)}
-                  onKeyDown={event => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
-                      event.preventDefault()
-                      event.currentTarget.form?.requestSubmit()
-                    }
-                  }}
-                />
-                <button className="zn-send" type="submit" disabled={busy || !draft.trim()}>
-                  {busy ? '…' : '↑'}
-                </button>
+                <textarea aria-label="Message ZN" placeholder="Message ZN" rows={1} value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} />
+                <button className="zn-send" type="submit" disabled={busy || !draft.trim()}>{busy ? '…' : '↑'}</button>
               </div>
-              <div className="zn-composer-caption">
-                {activeWorkspace ? `${activeWorkspace.name} · ` : ''}Enter to send · Shift+Enter for newline
-              </div>
+              <div className="zn-composer-caption">{activeWorkspace ? `${activeWorkspace.name} · ` : ''}{busy ? 'Resident work continues independently · ' : ''}Enter to send · Shift+Enter for newline</div>
             </form>
           </>
         )}
@@ -612,81 +600,26 @@ export function ZnWorkbench() {
 
       {contextOpen ? (
         <aside className="zn-context-panel">
-          <div className="zn-context-header">
-            <div>
-              <div className="zn-section-label">Context</div>
-              <strong>{selectedArtifact ? artifactKindLabel(selectedArtifact.kind) : 'Resident'}</strong>
-            </div>
-            <button type="button" aria-label="Close context panel" onClick={() => setContextOpen(false)}>×</button>
-          </div>
+          <div className="zn-context-header"><div><div className="zn-section-label">Context</div><strong>{selectedArtifact ? artifactKindLabel(selectedArtifact.kind) : 'Resident'}</strong></div><button type="button" aria-label="Close context panel" onClick={() => setContextOpen(false)}>×</button></div>
           <section className="zn-context-section">
             <div className="zn-context-title">Workspace</div>
             {activeWorkspace ? (
-              <>
-                <div className="zn-context-value">{activeWorkspace.name}</div>
-                <div className="zn-context-path" title={activeWorkspace.path}>{activeWorkspace.path}</div>
-                <div className="zn-inline-actions zn-context-actions">
-                  <button type="button" disabled={workspaceBusy} onClick={() => void attachWorkspace()}>Change</button>
-                  <button type="button" disabled={workspaceBusy} onClick={() => void detachWorkspace()}>Detach</button>
-                </div>
-              </>
+              <><div className="zn-context-value">{activeWorkspace.name}</div><div className="zn-context-path" title={activeWorkspace.path}>{activeWorkspace.path}</div><div className="zn-inline-actions zn-context-actions"><button type="button" disabled={workspaceBusy || busy} onClick={() => void attachWorkspace()}>Change</button><button type="button" disabled={workspaceBusy || busy} onClick={() => void detachWorkspace()}>Detach</button></div></>
             ) : (
-              <>
-                <p className="zn-muted zn-small">No local folder is attached to this work.</p>
-                <div className="zn-context-actions">
-                  <button type="button" disabled={workspaceBusy || !activeThread} onClick={() => void attachWorkspace()}>
-                    Attach folder
-                  </button>
-                </div>
-              </>
+              <><p className="zn-muted zn-small">No local folder is attached to this work.</p><div className="zn-context-actions"><button type="button" disabled={workspaceBusy || busy || !activeThread} onClick={() => void attachWorkspace()}>Attach folder</button></div></>
             )}
           </section>
-          <section className="zn-context-section">
-            <div className="zn-context-title">Runtime health</div>
-            <div className="zn-context-value">
-              <span className={`zn-health-dot ${residentHealth}`} />
-              {residentHealth}
-            </div>
-            {residentError ? <div className="zn-error-text">{residentError}</div> : null}
-          </section>
+          <section className="zn-context-section"><div className="zn-context-title">Runtime health</div><div className="zn-context-value"><span className={`zn-health-dot ${residentHealth}`} />{residentHealth}</div>{residentError ? <div className="zn-error-text">{residentError}</div> : null}</section>
           {activeArtifacts.length > 0 ? (
             <section className="zn-context-section zn-context-grow zn-artifact-section">
               <div className="zn-context-title">Artifacts</div>
               <div className="zn-artifact-list" aria-label="Work artifacts">
-                {activeArtifacts.map(artifact => (
-                  <button
-                    className={`zn-artifact-link${artifact.id === selectedArtifact?.id ? ' active' : ''}`}
-                    key={artifact.id}
-                    type="button"
-                    onClick={() => setSelectedArtifactId(artifact.id)}
-                  >
-                    <span className="zn-artifact-kind">{artifactKindLabel(artifact.kind)}</span>
-                    <span className="zn-artifact-name">{artifact.name}</span>
-                  </button>
-                ))}
+                {activeArtifacts.map(artifact => <button className={`zn-artifact-link${artifact.id === selectedArtifact?.id ? ' active' : ''}`} key={artifact.id} type="button" onClick={() => setSelectedArtifactId(artifact.id)}><span className="zn-artifact-kind">{artifactKindLabel(artifact.kind)}</span><span className="zn-artifact-name">{artifact.name}</span></button>)}
               </div>
-              {selectedArtifact ? (
-                <div className="zn-artifact-preview">
-                  <div className="zn-artifact-preview-head">
-                    <strong>{selectedArtifact.name}</strong>
-                    {selectedArtifact.path ? (
-                      <span title={selectedArtifact.path}>{selectedArtifact.path}</span>
-                    ) : null}
-                  </div>
-                  <pre>{selectedArtifact.content || 'No textual preview available.'}</pre>
-                  {selectedArtifact.metadata?.truncated ? (
-                    <div className="zn-artifact-note">Preview is bounded; content was truncated.</div>
-                  ) : null}
-                </div>
-              ) : null}
+              {selectedArtifact ? <div className="zn-artifact-preview"><div className="zn-artifact-preview-head"><strong>{selectedArtifact.name}</strong>{selectedArtifact.path ? <span title={selectedArtifact.path}>{selectedArtifact.path}</span> : null}</div><pre>{selectedArtifact.content || 'No textual preview available.'}</pre>{selectedArtifact.metadata?.truncated ? <div className="zn-artifact-note">Preview is bounded; content was truncated.</div> : null}</div> : null}
             </section>
           ) : (
-            <section className="zn-context-section zn-context-grow">
-              <div className="zn-context-title">Current resident state</div>
-              <pre>{residentSnapshot ? renderUnknown(residentSnapshot) : 'Waiting for resident…'}</pre>
-              <div className="zn-context-title zn-context-title-spaced">Artifacts</div>
-              <p className="zn-muted zn-small">Relevant files, diffs and invoked terminal output appear here after resident work produces them.</p>
-            </section>
+            <section className="zn-context-section zn-context-grow"><div className="zn-context-title">Current resident state</div><pre>{residentSnapshot ? renderUnknown(residentSnapshot) : 'Waiting for resident…'}</pre><div className="zn-context-title zn-context-title-spaced">Artifacts</div><p className="zn-muted zn-small">Relevant files, diffs and invoked terminal output appear here after resident work produces them.</p></section>
           )}
         </aside>
       ) : null}

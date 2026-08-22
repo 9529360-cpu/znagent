@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('znDesktop', {
     workList: payload => ipcRenderer.invoke('zn:resident:work-list', payload || {}),
     workCreate: payload => ipcRenderer.invoke('zn:resident:work-create', payload || {}),
     workGet: payload => ipcRenderer.invoke('zn:resident:work-get', payload || {}),
+    workStart: payload => ipcRenderer.invoke('zn:resident:work-start', payload || {}),
+    workProgress: payload => ipcRenderer.invoke('zn:resident:work-progress', payload || {}),
     workSubmit: payload => ipcRenderer.invoke('zn:resident:work-submit', payload || {}),
     pulses: limit => ipcRenderer.invoke('zn:resident:pulses', limit),
     situations: limit => ipcRenderer.invoke('zn:resident:situations', limit),

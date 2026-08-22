@@ -19,6 +19,8 @@ export type ZnResidentRequest = {
     | 'work_get'
     | 'work_attach_workspace'
     | 'work_detach_workspace'
+    | 'work_start'
+    | 'work_progress'
     | 'work_submit'
     | 'pulses'
     | 'situations'

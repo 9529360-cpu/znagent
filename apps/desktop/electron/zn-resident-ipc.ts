@@ -105,6 +105,20 @@ function history(
   return getZnResidentProcess().request(method, { limit: Number(limit || 20) })
 }
 
+function normalizedWorkPayload(payload: any): Record<string, unknown> {
+  const threadId = String(payload?.threadId || payload?.thread_id || '').trim()
+  const task = String(payload?.task || '').trim()
+  if (!threadId) throw new Error('threadId is required')
+  if (!task) throw new Error('task is required')
+  return {
+    thread_id: threadId,
+    task,
+    kind: payload?.kind || 'desktop_user_event',
+    priority: Number(payload?.priority || 0),
+    payload: payload?.payload && typeof payload.payload === 'object' ? payload.payload : {}
+  }
+}
+
 export function registerZnResidentIpc(): void {
   if (registered) return
   registered = true
@@ -155,18 +169,22 @@ export function registerZnResidentIpc(): void {
       message_limit: Number(payload?.messageLimit || payload?.message_limit || 120)
     })
   })
-  ipcMain.handle('zn:resident:work-submit', async (_event, payload) => {
+  ipcMain.handle('zn:resident:work-start', async (_event, payload) => {
+    return getZnResidentProcess().request('work_start', normalizedWorkPayload(payload))
+  })
+  ipcMain.handle('zn:resident:work-progress', async (_event, payload) => {
     const threadId = String(payload?.threadId || payload?.thread_id || '').trim()
-    const task = String(payload?.task || '').trim()
+    const eventId = String(payload?.eventId || payload?.event_id || '').trim()
     if (!threadId) throw new Error('threadId is required')
-    if (!task) throw new Error('task is required')
-    return getZnResidentProcess().request('work_submit', {
+    if (!eventId) throw new Error('eventId is required')
+    return getZnResidentProcess().request('work_progress', {
       thread_id: threadId,
-      task,
-      kind: payload?.kind || 'desktop_user_event',
-      priority: Number(payload?.priority || 0),
-      payload: payload?.payload && typeof payload.payload === 'object' ? payload.payload : {}
+      event_id: eventId,
+      message_limit: Number(payload?.messageLimit || payload?.message_limit || 120)
     })
+  })
+  ipcMain.handle('zn:resident:work-submit', async (_event, payload) => {
+    return getZnResidentProcess().request('work_submit', normalizedWorkPayload(payload))
   })
   ipcMain.handle('zn:resident:pulses', async (_event, limit) => history('pulses', limit))
   ipcMain.handle('zn:resident:situations', async (_event, limit) => history('situations', limit))
@@ -245,8 +263,6 @@ export function registerZnResidentIpc(): void {
   })
 
   app.on('before-quit', () => {
-    // The window is only ZN's face. Closing Electron detaches this client but
-    // deliberately leaves the resident service, heartbeat, Will, and senses alive.
     clearRuntimeHandoffTimer()
     resident?.disconnect()
     resident = null
@@ -258,19 +274,12 @@ export async function startZnResidentOnDesktopReady(): Promise<void> {
     const residentProcess = getZnResidentProcess()
     const status = await residentProcess.start()
     try {
-      // Install N+1 autostart before any live-process handoff. If the desktop
-      // closes or the handoff is deferred, the next login still boots the new
-      // packaged runtime rather than the previous interpreter.
       await ensureZnResidentAutostart()
     } catch (error) {
-      // The resident is already alive, so an unavailable OS service manager is
-      // a recoverable installation concern rather than a reason to take down UI.
       console.error('[zn-resident] failed to install login autostart', error)
     }
     beginRuntimeHandoff(residentProcess, status)
   } catch (error) {
-    // Desktop shell remains usable when the resident cannot boot. Renderer can
-    // surface the failure through zn:resident:start/status and offer repair.
     console.error('[zn-resident] failed to connect or start', error)
   }
 }

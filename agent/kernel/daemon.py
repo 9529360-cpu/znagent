@@ -163,6 +163,48 @@ class ResidentRpcServer:
                     ),
                 )
             )
+        elif method == "work_start":
+            thread_id = str(params.get("thread_id") or "").strip()
+            task = str(params.get("task") or "").strip()
+            if not thread_id:
+                raise ValueError("work_start requires thread_id")
+            if not task:
+                raise ValueError("work_start requires task")
+            payload = params.get("payload")
+            if payload is not None and not isinstance(payload, dict):
+                raise ValueError("work_start payload must be an object")
+            snapshot, event = self.work.start(
+                thread_id,
+                task,
+                kind=str(params.get("kind") or "desktop_user_event"),
+                priority=int(params.get("priority") or 0),
+                payload=payload,
+            )
+            progress = self.work.progress(thread_id, event.event_id)
+            if progress.get("finalized"):
+                snapshot = self.work.get_snapshot(thread_id)
+            result = {
+                "thread": self._work_snapshot(snapshot),
+                "progress": progress,
+            }
+        elif method == "work_progress":
+            thread_id = str(params.get("thread_id") or "").strip()
+            event_id = str(params.get("event_id") or "").strip()
+            if not thread_id:
+                raise ValueError("work_progress requires thread_id")
+            if not event_id:
+                raise ValueError("work_progress requires event_id")
+            progress = self.work.progress(thread_id, event_id)
+            result = {"progress": progress}
+            if progress.get("finalized"):
+                result["thread"] = self._work_snapshot(
+                    self.work.get_snapshot(
+                        thread_id,
+                        message_limit=max(
+                            1, min(500, int(params.get("message_limit") or 120))
+                        ),
+                    )
+                )
         elif method == "work_submit":
             thread_id = str(params.get("thread_id") or "").strip()
             task = str(params.get("task") or "").strip()
@@ -429,7 +471,6 @@ class ResidentRpcServer:
                     next_lease_heartbeat = now + self.service.heartbeat_interval
                 self.resident.live_once()
             except Exception:
-                # One failed thought/action cycle does not stop the resident.
                 continue
 
     def _world_loop(self) -> None:
@@ -441,8 +482,6 @@ class ResidentRpcServer:
             try:
                 world.maybe_observe()
             except Exception:
-                # A slow/broken web provider is a sensory failure, not a heart
-                # failure. Life continues independently on zn-life.
                 continue
 
     @staticmethod
