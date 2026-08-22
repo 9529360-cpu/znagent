@@ -77,6 +77,7 @@ class ResidentAutostartTests(unittest.TestCase):
             self.assertIn(str(home.resolve()), unit)
             self.assertIn("zn_agent.core.resident_server", unit)
             self.assertNotIn("agent.kernel.resident_server", unit)
+            self.assertNotIn("WorkingDirectory=", unit)
 
     def test_macos_launch_agent_is_login_loaded_and_restarts_only_after_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -95,6 +96,7 @@ class ResidentAutostartTests(unittest.TestCase):
                 ["-m", "zn_agent.core.resident_server"],
             )
             self.assertEqual(round_trip["ProgramArguments"][-1], str(home.resolve()))
+            self.assertNotIn("WorkingDirectory", round_trip)
 
     def test_windows_task_is_current_user_login_with_bounded_restart(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -116,6 +118,7 @@ class ResidentAutostartTests(unittest.TestCase):
             )
             command = root.findtext("t:Actions/t:Exec/t:Command", namespaces=ns)
             arguments = root.findtext("t:Actions/t:Exec/t:Arguments", namespaces=ns)
+            working_directory = root.findtext("t:Actions/t:Exec/t:WorkingDirectory", namespaces=ns)
 
             self.assertEqual(logon_user, "TEST\\resident-user")
             self.assertEqual(run_level, "LeastPrivilege")
@@ -125,6 +128,7 @@ class ResidentAutostartTests(unittest.TestCase):
             self.assertNotIn("agent.kernel.resident_server", arguments or "")
             self.assertIn("--home", arguments or "")
             self.assertIn(str(home.resolve()), arguments or "")
+            self.assertIsNone(working_directory)
 
 
 if __name__ == "__main__":

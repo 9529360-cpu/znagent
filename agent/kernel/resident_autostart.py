@@ -28,11 +28,6 @@ def _normalized_home(value: str | Path | None = None) -> Path:
     return home.resolve()
 
 
-def _runtime_workdir() -> Path:
-    # Source checkout: repository root. Installed package: site-packages root.
-    return Path(__file__).resolve().parents[2]
-
-
 def _resident_argv(home: Path, python_executable: str | Path | None = None) -> list[str]:
     python = Path(python_executable or sys.executable).expanduser().resolve()
     return [
@@ -52,7 +47,6 @@ def _systemd_quote(value: str | Path) -> str:
 def _linux_unit(home: Path, python_executable: str | Path | None = None) -> str:
     argv = _resident_argv(home, python_executable)
     command = " ".join(_systemd_quote(item) for item in argv)
-    workdir = _systemd_quote(_runtime_workdir())
     return (
         "[Unit]\n"
         "Description=ZN Resident\n"
@@ -60,7 +54,6 @@ def _linux_unit(home: Path, python_executable: str | Path | None = None) -> str:
         "StartLimitBurst=5\n\n"
         "[Service]\n"
         "Type=simple\n"
-        f"WorkingDirectory={workdir}\n"
         f"ExecStart={command}\n"
         "Restart=on-failure\n"
         "RestartSec=5\n"
@@ -77,7 +70,6 @@ def _launch_agent_payload(
     return {
         "Label": _MAC_LABEL,
         "ProgramArguments": _resident_argv(home, python_executable),
-        "WorkingDirectory": str(_runtime_workdir()),
         "RunAtLoad": True,
         "KeepAlive": {"SuccessfulExit": False},
         "ThrottleInterval": 5,
@@ -134,7 +126,6 @@ def _windows_task_xml(
     execute = ET.SubElement(actions, q("Exec"))
     ET.SubElement(execute, q("Command")).text = argv[0]
     ET.SubElement(execute, q("Arguments")).text = subprocess.list2cmdline(argv[1:])
-    ET.SubElement(execute, q("WorkingDirectory")).text = str(_runtime_workdir())
 
     return ET.tostring(task, encoding="utf-16", xml_declaration=True)
 
