@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=80", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "znagent"
+version = "0.1.0"
+description = "ZN resident runtime"
+requires-python = ">=3.11,<3.14"
+license = "MIT"
+dependencies = [
+  "httpx[socks]==0.28.1",
+  "openai==2.24.0",
+  "PyYAML==6.0.3",
+]
+
+[project.optional-dependencies]
+anthropic = ["anthropic==0.87.0"]
+exa = ["exa-py==2.10.2"]
+firecrawl = ["firecrawl-py==4.17.0"]
+
+[project.scripts]
+zn-resident = "zn_agent.resident:main"
+
+[tool.setuptools]
+packages = ["zn_agent", "zn_agent.core"]
+package-dir = {"zn_agent" = "zn_agent", "zn_agent.core" = "../../agent/kernel"}

@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-"""ZN runtime construction and temporary legacy compatibility seams.
+"""ZN-owned resident runtime construction.
 
-The public function names are retained while callers migrate, but the default
-resident path is now ZN-owned: ZN config + ZN route resolution + ZN cognitive
-resources. Legacy provider/AIAgent construction is used only when a caller
-explicitly injects a legacy resolver/builder/agent kwargs.
+Runtime ownership ends here: ZN config selects ZN cognitive resources and the
+resident is assembled without importing another product's CLI, provider
+resolver, agent object, or session lifecycle.
 """
 
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Iterable
 
 from .cognitive_factory import (
     ZNCognitiveResourceWorkerFactory,
@@ -20,10 +19,7 @@ from .home import get_zn_home
 from .models import ModelRoute
 from .runtime import ZNKernelRuntime
 from .store import KernelStore
-from .worker import LegacyAIAgentWorkerFactory, UnavailableModelWorkerFactory
-
-
-RuntimeResolver = Callable[..., dict[str, Any]]
+from .worker import UnavailableModelWorkerFactory
 
 
 _ROUTE_METADATA_KEYS = (
@@ -69,38 +65,7 @@ def route_from_spec(spec: dict[str, Any], index: int = 0) -> ModelRoute:
     )
 
 
-def resolve_model_routes(
-    specs: Iterable[dict[str, Any]],
-    *,
-    resolver: RuntimeResolver,
-) -> list[ModelRoute]:
-    """Temporary adapter for callers that explicitly request the old resolver."""
-    resolved_routes: list[ModelRoute] = []
-    for index, spec in enumerate(specs):
-        route = route_from_spec(spec, index)
-        runtime = resolver(
-            requested=route.provider,
-            target_model=route.model,
-            explicit_api_key=route.metadata.get("api_key"),
-            explicit_base_url=route.metadata.get("base_url"),
-        )
-        route.provider = str(runtime.get("provider") or route.provider)
-        route.model = str(runtime.get("model") or route.model)
-        for key in (
-            "api_key",
-            "base_url",
-            "api_mode",
-            "requested_provider",
-            "credential_pool",
-        ):
-            if runtime.get(key) is not None:
-                route.metadata[key] = runtime[key]
-        resolved_routes.append(route)
-    return resolved_routes
-
-
 def resolve_zn_routes(specs: Iterable[dict[str, Any]]) -> list[ModelRoute]:
-    """Resolve configured routes entirely inside ZN's cognitive resource layer."""
     return [
         resolve_zn_cognitive_route(route_from_spec(spec, index))
         for index, spec in enumerate(specs)
@@ -146,21 +111,12 @@ def _current_model_spec(config: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def build_runtime_from_existing_stack(
+def build_runtime(
     *,
     config: dict[str, Any] | None = None,
     store_path: str | Path | None = None,
-    agent_kwargs: dict[str, Any] | None = None,
-    agent_builder: Callable[..., Any] | None = None,
-    runtime_resolver: RuntimeResolver | None = None,
 ) -> ZNKernelRuntime:
-    """Build ZN runtime; legacy plumbing is now explicit opt-in only.
-
-    The compatibility name remains while call sites migrate. With no injected
-    legacy resolver/builder/agent kwargs this function loads ZN's own config,
-    resolves ZN-owned cognitive resources, and never imports hermes_cli or
-    constructs run_agent.AIAgent.
-    """
+    """Build the ZN kernel from only ZN-owned configuration and resources."""
     if config is None:
         config = load_zn_config()
 
@@ -176,21 +132,12 @@ def build_runtime_from_existing_stack(
         current = _current_model_spec(config)
         if current is None:
             model_available = False
-            route_specs = []
         else:
             route_specs = [current]
 
-    legacy_requested = (
-        runtime_resolver is not None
-        or agent_builder is not None
-        or agent_kwargs is not None
-    )
-
     if model_available:
-        if runtime_resolver is not None:
-            routes = resolve_model_routes(route_specs, resolver=runtime_resolver)
-        else:
-            routes = resolve_zn_routes(route_specs)
+        routes = resolve_zn_routes(route_specs)
+        factory = ZNCognitiveResourceWorkerFactory()
     else:
         routes = [
             ModelRoute(
@@ -204,22 +151,10 @@ def build_runtime_from_existing_stack(
                 metadata={"model_available": False},
             )
         ]
+        factory = UnavailableModelWorkerFactory()
 
     if store_path is None:
         store_path = get_zn_home() / "kernel" / "kernel.db"
-
-    if not model_available:
-        factory = UnavailableModelWorkerFactory()
-    elif legacy_requested:
-        worker_defaults = dict(agent_kwargs or {})
-        worker_defaults.setdefault("quiet_mode", True)
-        worker_defaults.setdefault("platform", "cli")
-        factory = LegacyAIAgentWorkerFactory(
-            agent_kwargs=worker_defaults,
-            agent_builder=agent_builder,
-        )
-    else:
-        factory = ZNCognitiveResourceWorkerFactory()
 
     return ZNKernelRuntime(
         store=KernelStore(store_path),
@@ -229,27 +164,17 @@ def build_runtime_from_existing_stack(
     )
 
 
-def build_resident_runtime_from_existing_stack(
+def build_resident_runtime(
     *,
     config: dict[str, Any] | None = None,
     store_path: str | Path | None = None,
-    agent_kwargs: dict[str, Any] | None = None,
-    agent_builder: Callable[..., Any] | None = None,
-    runtime_resolver: RuntimeResolver | None = None,
 ):
-    """Build the resident with ZN-owned resources by default."""
+    """Build the resident organism around the ZN-owned kernel."""
     from .budget import CognitiveBudgetManager
     from .world_closed_loop import WorldAwareTransferResidentRuntime
 
     effective_config = config if config is not None else load_zn_config()
-
-    kernel = build_runtime_from_existing_stack(
-        config=effective_config,
-        store_path=store_path,
-        agent_kwargs=agent_kwargs,
-        agent_builder=agent_builder,
-        runtime_resolver=runtime_resolver,
-    )
+    kernel = build_runtime(config=effective_config, store_path=store_path)
     resident_cfg = effective_config.get("zn_resident") or {}
     if not isinstance(resident_cfg, dict):
         raise ValueError("zn_resident config must be a mapping")
@@ -261,3 +186,10 @@ def build_resident_runtime_from_existing_stack(
         ),
     )
     return WorldAwareTransferResidentRuntime(kernel=kernel, budget=budget)
+
+
+# Transitional source-level aliases only. They preserve existing ZN callers
+# while naming migration happens, but no longer expose or construct a legacy
+# runtime path.
+build_runtime_from_existing_stack = build_runtime
+build_resident_runtime_from_existing_stack = build_resident_runtime

@@ -58,9 +58,11 @@ from .nervous_system import (
     PersistentNervousSystem,
 )
 from .provider_bridge import (
+    build_resident_runtime,
     build_resident_runtime_from_existing_stack,
+    build_runtime,
     build_runtime_from_existing_stack,
-    resolve_model_routes,
+    resolve_zn_routes,
     route_from_spec,
 )
 from .resident import ZNResidentRuntime
@@ -70,7 +72,7 @@ from .service import ResidentAlreadyRunning, ResidentService
 from .self_model import DomainReadiness, SelfModel, TaskReadiness
 from .store import KernelStore
 from .will import NativeWill, ResidentIntention
-from .worker import LegacyAIAgentWorkerFactory, Worker, WorkerFactory
+from .worker import Worker, WorkerFactory
 from .world_sense import NativeWorldSense, WorldFocus, WorldObservation
 
 __all__ = [
@@ -81,7 +83,9 @@ __all__ = [
     "BodyAction",
     "BodyActionResult",
     "BodyState",
+    "build_resident_runtime",
     "build_resident_runtime_from_existing_stack",
+    "build_runtime",
     "build_runtime_from_existing_stack",
     "CapabilityEstimate",
     "CapabilityRegistry",
@@ -111,7 +115,6 @@ __all__ = [
     "IntentionalResidentRuntime",
     "InvestigationResult",
     "InvestigationState",
-    "LegacyAIAgentWorkerFactory",
     "ImprovementProposal",
     "KernelRunResult",
     "KernelStore",
@@ -136,7 +139,7 @@ __all__ = [
     "ResidentIntention",
     "ResidentRunResult",
     "ResidentService",
-    "resolve_model_routes",
+    "resolve_zn_routes",
     "route_from_spec",
     "RuntimeMetrics",
     "SelfModel",
