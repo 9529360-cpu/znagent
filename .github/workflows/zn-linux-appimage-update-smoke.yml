@@ -1,0 +1,179 @@
+name: ZN Linux AppImage Update Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - dev/zn-agent
+    paths:
+      - .github/workflows/zn-linux-appimage-update-smoke.yml
+      - apps/desktop/scripts/zn-appimage-update-smoke.mjs
+      - apps/desktop/electron/zn-release-updater.ts
+      - apps/desktop/electron/zn-release-application-gate.ts
+      - apps/desktop/electron/zn-resident-update-readiness.ts
+      - apps/desktop/electron/zn-resident-ipc.ts
+      - apps/desktop/electron/zn-resident-process.ts
+      - apps/desktop/electron/zn-resident-autostart.ts
+      - apps/desktop/electron/zn-packaged-runtime.ts
+      - apps/desktop/electron/zn-main.ts
+      - apps/desktop/electron/zn-preload.ts
+      - apps/desktop/electron-builder.zn.yml
+      - apps/desktop/package.json
+      - apps/desktop/scripts/stage-zn-runtime.mjs
+      - agent/kernel/**
+      - runtime/python/**
+
+permissions:
+  contents: read
+  statuses: write
+
+env:
+  CI: 'true'
+  NODE_OPTIONS: --max-old-space-size=4096
+  ZN_SMOKE_N_VERSION: '0.17.0'
+  ZN_SMOKE_N_PLUS_1_VERSION: '0.17.1'
+  ZN_SMOKE_N_RUNTIME_ID: 'version-0.17.0'
+  ZN_SMOKE_N_PLUS_1_RUNTIME_ID: 'version-0.17.1'
+
+concurrency:
+  group: zn-linux-appimage-update-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  appimage-update:
+    name: Real AppImage N to N+1
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+          cache: npm
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked workspace dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install headless desktop dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y xvfb openssl
+
+      - name: Start isolated user systemd manager
+        shell: bash
+        run: |
+          set -euo pipefail
+          uid="$(id -u)"
+          runtime_dir="/run/user/$uid"
+          sudo loginctl enable-linger "$USER"
+          sudo systemctl start "user@$uid.service"
+          [[ -S "$runtime_dir/bus" ]] || {
+            echo "user bus missing at $runtime_dir/bus"
+            sudo systemctl status "user@$uid.service" --no-pager || true
+            exit 1
+          }
+          echo "XDG_RUNTIME_DIR=$runtime_dir" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=$runtime_dir/bus" >> "$GITHUB_ENV"
+
+      - name: Build real N AppImage
+        shell: bash
+        env:
+          ZN_RELEASE_VERSION: '0.17.0'
+          ZN_RELEASE_COMMIT: smoke-n
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require('node:fs')
+          const file = 'apps/desktop/package.json'
+          const pkg = JSON.parse(fs.readFileSync(file, 'utf8'))
+          pkg.version = process.env.ZN_RELEASE_VERSION
+          fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + '\n')
+          NODE
+          node apps/desktop/scripts/stage-zn-runtime.mjs
+          npm run build --workspace apps/desktop
+          rm -rf apps/desktop/release
+          npm run builder --workspace apps/desktop -- --config electron-builder.zn.yml --linux AppImage --publish never
+          mkdir -p .ci/appimage-update
+          count="$(find apps/desktop/release -maxdepth 1 -type f -name 'ZN-*.AppImage' | wc -l | tr -d ' ')"
+          [[ "$count" == '1' ]] || { echo "expected one N AppImage, found $count"; find apps/desktop/release -maxdepth 1 -type f -print; exit 1; }
+          cp "$(find apps/desktop/release -maxdepth 1 -type f -name 'ZN-*.AppImage' -print -quit)" .ci/appimage-update/ZN-N.AppImage
+          sha256sum .ci/appimage-update/ZN-N.AppImage
+
+      - name: Build real N+1 AppImage
+        shell: bash
+        env:
+          ZN_RELEASE_VERSION: '0.17.1'
+          ZN_RELEASE_COMMIT: smoke-n-plus-1
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require('node:fs')
+          const file = 'apps/desktop/package.json'
+          const pkg = JSON.parse(fs.readFileSync(file, 'utf8'))
+          pkg.version = process.env.ZN_RELEASE_VERSION
+          fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + '\n')
+          NODE
+          node apps/desktop/scripts/stage-zn-runtime.mjs
+          npm run build --workspace apps/desktop
+          rm -rf apps/desktop/release
+          npm run builder --workspace apps/desktop -- --config electron-builder.zn.yml --linux AppImage --publish never
+          count="$(find apps/desktop/release -maxdepth 1 -type f -name 'ZN-*.AppImage' | wc -l | tr -d ' ')"
+          [[ "$count" == '1' ]] || { echo "expected one N+1 AppImage, found $count"; find apps/desktop/release -maxdepth 1 -type f -print; exit 1; }
+          cp "$(find apps/desktop/release -maxdepth 1 -type f -name 'ZN-*.AppImage' -print -quit)" .ci/appimage-update/ZN-N-plus-1.AppImage
+          sha256sum .ci/appimage-update/ZN-N-plus-1.AppImage
+
+      - name: Run real installed AppImage updater continuity smoke
+        shell: bash
+        env:
+          ELECTRON_DISABLE_SANDBOX: '1'
+        run: |
+          set -euo pipefail
+          installed="$RUNNER_TEMP/zn-installed/ZN.AppImage"
+          zn_home="$RUNNER_TEMP/zn-m8-home"
+          mkdir -p "$(dirname "$installed")"
+          cp .ci/appimage-update/ZN-N.AppImage "$installed"
+          chmod +x "$installed" .ci/appimage-update/ZN-N-plus-1.AppImage
+          xvfb-run -a node apps/desktop/scripts/zn-appimage-update-smoke.mjs \
+            "$installed" \
+            "$GITHUB_WORKSPACE/.ci/appimage-update/ZN-N-plus-1.AppImage" \
+            "$zn_home" | tee .ci/appimage-update/proof.txt
+
+      - name: Upload proof on failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: zn-linux-appimage-update-smoke-${{ github.sha }}
+          path: |
+            .ci/appimage-update/proof.txt
+            .ci/appimage-update/*.AppImage
+          if-no-files-found: ignore
+          retention-days: 1
+
+      - name: Publish AppImage update smoke status
+        if: ${{ always() }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const result = '${{ job.status }}'
+            const state = result === 'success' ? 'success' : result === 'failure' ? 'failure' : 'error'
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state,
+              context: 'ZN Linux AppImage Update Smoke',
+              description: `real AppImage N -> N+1 resident continuity: ${result}`.slice(0, 140),
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            })
