@@ -13,7 +13,7 @@
 Latest source implementation baseline:
 
 ```text
-c0e8bb8563b323313304cc961ff07640d92d02cf
+8c626fd44e7e0270e65fe1b3db629efa9350facf
 ```
 
 Recent coherent source slices:
@@ -27,23 +27,46 @@ dd68e61c91e7aa222fba2f9b2c0516bbb2a190b8  feat: add resident-owned provider sett
 3a75a0da212a8fd8c362f4ac4c836dcba2a65731  fix: remove inherited identity from formal pack hooks
 92525d7c41c19a064a99e7b936b5bb2da80f9598  chore: synchronize ZN desktop package lock [skip ci]
 c0e8bb8563b323313304cc961ff07640d92d02cf  test: validate final ZN desktop package identity
+8c626fd44e7e0270e65fe1b3db629efa9350facf  test: finalize ZN package smoke validation
 ```
 
-Normal ZN CI for the current verified source HEAD:
+Final normal ZN CI for the verified source HEAD:
 
 ```text
 ZN Kernel / Python      success
 Electron / TypeScript  success
-Actions run             32586113616
+Actions run             32586385421
 ```
 
-The first package-identity CI attempt correctly failed because the root npm lock still described the desktop workspace as `hermes`. A one-shot GitHub runner executed npm's own `npm install --package-lock-only --ignore-scripts`; the resulting lock change only renamed the workspace package/link to `zn-desktop`. The temporary synchronization workflow was then deleted. The final source HEAD above passed normal CI.
+A deliberately scoped real-package validation also passed on the same executable/package source shape (with only the temporary smoke workflow present during that run):
 
-Documentation-only synchronization commits use `[skip ci]`.
+```text
+ZN Formal Package Smoke  success
+Linux unpacked package   success
+packaged resident boot   success (zero-model)
+Actions run              32586304510
+```
+
+That smoke used the same real chain as formal packaging for the relevant Linux shape:
+
+```text
+locked npm workspace
+→ stage-zn-runtime.mjs
+→ portable CPython + runtime/python znagent
+→ zero-model runtime staging verification
+→ ZN renderer/Electron build
+→ electron-builder.zn.yml --linux --dir
+→ packaged-runtime verification + zero-model boot
+→ package shape assertions
+```
+
+It verified an executable `ZN`, `resources/app.asar`, `resources/zn-runtime/runtime.json`, correct ZN runtime product/version/commit, absence of the inherited install-stamp resource and absence of packaged `hermes_cli`. The temporary smoke workflow was deleted immediately after success. It is not part of the current branch.
+
+The first package-identity CI attempt correctly failed because the root npm lock still described the desktop workspace as `hermes`. A one-shot GitHub runner executed npm's own `npm install --package-lock-only --ignore-scripts`; npm changed only the workspace package/link identity to `zn-desktop`. The temporary lock synchronization workflow was then deleted. Documentation-only synchronization commits use `[skip ci]`.
 
 ## Current development checkpoint
 
-The active product boundary is ZN-owned across resident runtime, provider cognition, local terminal/PTTY, web sensing, communication lifecycle, Electron main/preload/protocol, the React workbench, and now the formal desktop package/build identity path.
+The active product boundary is ZN-owned across resident runtime, provider cognition, local terminal/PTTY, web sensing, communication lifecycle, Electron main/preload/protocol, the React workbench and the formal desktop package/build identity path.
 
 M5/M6 now has:
 
@@ -53,48 +76,45 @@ M5/M6 now has:
 - resident-owned provider/settings editing with secure credential references and hot cognition reconfiguration;
 - durable active work-run identity plus resident-derived ongoing progress while work continues without the desktop.
 
-The M7 package-identity seam is now materially advanced:
+M7 is now materially advanced:
 
-- `apps/desktop/package.json` identifies the desktop product as `zn-desktop` / `ZN` and points at the ZN repository;
-- package-level builder metadata uses `ai.zn.desktop`, executable/product `ZN`, `ZN-*` artifacts and only the `zn` protocol;
+- `apps/desktop/package.json` identifies `zn-desktop` / `ZN` and the ZN repository;
+- default build metadata uses `ai.zn.desktop`, executable/product `ZN`, `ZN-*` artifacts and only `zn://`;
 - the normal builder command explicitly selects `electron-builder.zn.yml`;
-- the ZN builder override registers only `zn://` and explicitly includes the staged `build/zn-runtime` payload;
-- the obsolete inherited install-stamp/bootstrap resource is no longer part of the formal build path;
-- Windows `afterPack` PE stamping now writes ZN product/company identity instead of Hermes/Nous Research identity;
+- the formal ZN builder includes the staged self-contained `build/zn-runtime`;
+- inherited install-stamp/bootstrap resources are no longer part of the active formal packaging path;
+- Windows PE stamping writes ZN product/company identity;
 - Windows rollback preservation defaults to `ZN.exe`;
-- macOS notarization temporary key material uses a ZN-owned temporary filename prefix;
-- npm workspace lock metadata now agrees with the `zn-desktop` package identity;
-- formal package/build-hook identity is protected by regression tests.
+- macOS notarization temporary key material uses a ZN-owned prefix;
+- npm lock metadata agrees with the `zn-desktop` workspace identity;
+- formal package/build-hook identity is protected by regression tests;
+- a real Linux unpacked package has been built and its packaged resident has booted successfully with zero external models.
 
-This does **not** mean all M7/M8 release work is complete. Formal installers still need deliberate build/verification, and inactive inherited source/dependency/script debt remains outside the active product identity seam.
+This does **not** mean M7/M8 are complete. Multi-OS installers, clean-machine installation, autostart, N → N+1 continuity and release signing/notarization gates remain separate work.
 
 ## M5/M6 product loop
 
-### Resident-backed work/thread continuity
+### Resident-backed work and progress
 
-`ResidentWorkLedger` owns durable work threads/messages beside kernel state. Work enters the same `ZNResidentRuntime` event loop. Renderer localStorage is bounded convenience state only. Resident RPC owns work list/create/get/start/progress/submit.
+`ResidentWorkLedger` owns durable threads/messages beside kernel state. `work_runs` links accepted resident events to work threads/messages before completion. `work_start` returns after resident acceptance, so the life loop can continue when Electron disconnects. Completed work finalizes idempotently, including after resident reconstruction.
 
-### Durable active work and ongoing progress
-
-`work_runs` durably links accepted resident events to their work thread and originating message before completion. `work_start` returns after resident acceptance instead of making an Electron request own cognition lifetime. The resident can continue while the desktop is disconnected. Completed work finalizes idempotently into durable ZN/activity messages and artifacts, including after resident reconstruction.
-
-`work_progress` reports actual event/working state and can include current matching Thought, investigation progress and recent same-event Body evidence. The renderer samples that resident state; it does not manufacture progress or persist progress truth in browser storage.
+`work_progress` reports actual event/working state and can include matching Thought, investigation state and recent same-event Body actions. Renderer progress is resident-derived and is not persisted as localStorage authority.
 
 ### Workspace and contextual artifacts
 
-Each thread can persist one canonical resident `WorkspaceAssociation`. Electron uses an OS folder picker; resident re-verifies the directory. Canonical workspace/workdir context reaches native Git/body movement.
+Each thread can persist one canonical resident `WorkspaceAssociation`. Electron uses the OS folder picker; resident re-verifies the directory. Canonical workspace/workdir context reaches native Git/body movement.
 
-`WorkArtifact` records are resident-owned and bounded. Current contextual kinds include file, diff and terminal. File previews remain workspace-contained; terminal evidence comes only from actual same-event body/terminal actions. The workbench renders artifacts in the optional context panel rather than a permanent IDE file tree/terminal.
+`WorkArtifact` records are resident-owned and bounded. Current contextual kinds include file, diff and terminal. File previews remain workspace-contained; terminal evidence comes only from actual same-event body actions. The workbench renders artifacts contextually rather than as a permanent IDE shell.
 
 ### Resident-owned provider/credential settings
 
-Provider settings persist non-secret config through the resident. UI-entered secrets use resident credential references and OS keyring storage where available; raw secrets are never returned through settings RPC or written by the UI flow into YAML. The packaged runtime carries its secure-store dependency. Cognition resources hot-reconfigure without replacing resident identity/store/memory/life, and missing external credentials degrade to explicit unavailable cognition rather than resident death.
+Provider settings persist non-secret configuration through the resident. UI secrets use resident credential references and OS keyring storage where available; raw secrets are not returned through settings RPC. Cognitive resources can hot-reconfigure without replacing resident identity/store/memory/life. Missing external credentials degrade to cognition unavailable rather than resident death.
 
 ## Browser and outbound-media investigation result
 
-A browser contextual surface is **not** claimed yet. The mature inherited browser stack is tightly coupled to inherited configuration/plugin/session/provider ownership plus Node/Chromium/`agent-browser`; the independent ZN runtime currently has no clean resident-owned browser action seam. Mounting that old stack or relabeling web search as browser interaction would violate the architecture.
+A browser contextual surface is **not** claimed yet. The mature inherited browser implementation remains tightly coupled to inherited configuration/plugin/session/provider ownership plus Node/Chromium/`agent-browser`. The independent resident runtime currently has no clean ZN-owned browser action seam. Mounting that old stack or relabeling web-search results as browser interaction would violate the architecture.
 
-Telegram outbound media is also still intentionally pending. `OutboundMediaPathPolicy` already provides the local-file authorization boundary and Telegram `ChannelMessage` can carry attachments, but the resident outcome path does not yet have an explicit structured contract nominating an artifact/path for egress. The adapter must not guess local paths and silently turn them into upload authority.
+Telegram outbound media remains intentionally pending. `OutboundMediaPathPolicy` already provides local-file authorization and `ChannelMessage` can represent attachments, but the resident delivery path does not yet expose an explicit structured artifact/path nomination for egress. The adapter must not guess local paths and silently convert them into upload authority.
 
 ## Current subsystem ledger
 
@@ -102,25 +122,23 @@ Telegram outbound media is also still intentionally pending. `OutboundMediaPathP
 
 Status: **ZN-native resident organism active**.
 
-Persistent life, Situation/Thought/Will, nervous memory, native investigation/action/learning, sensing and bounded external cognition remain resident-owned. Zero-model boot/life is a hard behavior contract.
+Persistent life, Situation/Thought/Will, nervous memory, native investigation/action/learning, sensing and bounded external cognition remain resident-owned. Zero-model operation is a hard behavior contract.
 
-### Work/thread/workspace/artifact continuity
+### Work/thread/workspace/artifacts
 
-Status: **resident-backed durable work + active-run progress + workspace + contextual file/diff/terminal artifacts active; M6 still partial**.
+Status: **resident-backed durable work + active progress + workspace + contextual file/diff/terminal artifacts active; M6 still partial**.
 
-Remaining product work includes a real browser body/sense seam only when justified, broader artifact/history rendering where concrete outputs require it, and final accessibility/keyboard/visual polish.
+Remaining product work includes a real browser seam only when justified, broader artifact/history rendering where concrete outputs require it, and final accessibility/keyboard/visual polish.
 
-### External cognitive resources/settings
+### External cognition/settings
 
-Status: **ZN-native resource layer plus resident-owned default provider/credential editor active**.
+Status: **ZN-native resource layer plus resident-owned provider/credential editor active**.
 
-OpenAI-compatible, Anthropic and Gemini resources are ZN-owned. Advanced multi-route authoring remains intentionally outside the simple editor and is preserved rather than flattened.
+OpenAI-compatible, Anthropic and Gemini resources are ZN-owned. Advanced multi-route authoring remains intentionally outside the simple editor.
 
-### Local terminal / computer body
+### Local terminal/body
 
 Status: **ZN local terminal/PTTY active with contextual resident presentation**.
-
-Foreground/background execution, cwd continuity, cleanup, bounded output and interactive PTY lifecycle are ZN-owned. Workbench terminal presentation is evidence, not execution ownership.
 
 ### Web/world sense
 
@@ -128,13 +146,13 @@ Status: **ZN-owned search/extract providers and network safety active; browser a
 
 ### Communication channels
 
-Status: **resident-owned framework and Telegram text/inbound media active; outbound attachment transport pending explicit resident egress nomination**.
+Status: **resident-owned channel framework and Telegram text/inbound media active; outbound attachment transport pending explicit resident egress nomination**.
 
 ### Python/runtime package ownership
 
 Status: **M1 complete for the active packaged resident path**.
 
-The independent `runtime/python` `znagent` distribution boots through `zn_agent.resident` / `zn-resident`. Runtime staging/verification rejects inherited `hermes_cli` and formal release staging builds a self-contained `build/zn-runtime` from portable CPython plus this distribution.
+The independent `runtime/python` `znagent` distribution boots through `zn_agent.resident` / `zn-resident`. Runtime staging rejects inherited `hermes_cli`. The formal package smoke proved the staged runtime survives actual electron-builder packaging and still boots zero-model from inside the packaged application resource tree.
 
 ### Desktop/UI ownership
 
@@ -150,30 +168,32 @@ ZN Electron main
 
 ### Packaging/release ownership
 
-Status: **formal package identity seam verified; M7 overall still in progress**.
+Status: **formal package identity plus Linux unpacked package shape verified; M7 overall still in progress**.
 
-Completed/verified in source:
+Verified:
 
 - ZN package/repository/product/app/executable/artifact identity;
 - ZN-only formal protocol registration;
 - ZN-only active Windows PE identity stamping;
-- ZN-owned formal runtime resource path;
+- ZN-owned runtime resource path;
 - inherited install-stamp removed from active formal packaging;
 - npm lock synchronized to `zn-desktop`;
-- formal release workflow already stages self-contained `zn-runtime` before electron-builder.
+- formal release workflow stages self-contained `zn-runtime` before electron-builder;
+- real Linux unpacked formal package contains ZN executable/app.asar/self-contained runtime;
+- packaged resident runtime manifest and zero-model boot pass after packaging.
 
 Still pending:
 
-- deliberately build and inspect formal installer artifacts around this corrected shape;
-- verify installer contents/runtime manifest/entrypoints on actual artifacts;
-- clean-machine installation and continuity gates;
+- actual Linux installer-format artifacts (AppImage/deb/rpm) from the corrected package shape;
+- Windows/macOS installer artifact validation;
+- clean-machine install and resident continuity gates;
 - autostart and N → N+1 release validation;
-- signing/notarization only when configured as release hardening;
+- signing/notarization when operationally configured;
 - eventual cleanup of inactive inherited source/dependency/script debt without regressing active ownership.
 
 ## Ownership/behavior tests protecting the active path
 
-The suite now protects, among other behavior:
+The suite protects, among other behavior:
 
 ```text
 agent/kernel must not import hermes_cli or run_agent
@@ -193,6 +213,7 @@ formal builder registers only zn://
 formal builder includes build/zn-runtime and excludes inherited install-stamp
 formal Windows pack hooks stamp ZN identity
 formal active pack/sign hooks contain no Hermes/Nous product identity
+real packaged zn-runtime can boot zero-model after electron-builder packaging
 ```
 
 ## Milestone status snapshot
@@ -205,7 +226,7 @@ M3  ZN-owned terminal + web body/sense paths               COMPLETE for active l
 M4  independent Electron main + preload + zn://            COMPLETE
 M5  independent content-first ZN workbench                 IN PROGRESS; core owned surfaces active
 M6  resident work/artifact/workspace end-to-end loop       PARTIAL; durable active work/progress active
-M7  formal packaging around owned product                  IN PROGRESS; package identity seam verified
+M7  formal packaging around owned product                  IN PROGRESS; identity + Linux unpacked package verified
 M8  clean-machine/continuity multi-OS validation           NOT STARTED as release gate
 M9  product completeness/hardening                         LATER
 M10 repository migration / formal main promotion           LATER; main untouched
@@ -213,11 +234,11 @@ M10 repository migration / formal main promotion           LATER; main untouched
 
 ## Immediate next development sequence
 
-1. perform a deliberately scoped formal-package validation around the corrected ZN package identity and existing self-contained `zn-runtime` staging, without yet spending the full multi-OS/clean-machine matrix;
-2. fix any package-content/runtime-entrypoint debt exposed by that real artifact inspection;
-3. add a browser body/sense seam only if a clean ZN-owned implementation can be isolated from inherited browser/session ownership;
-4. define explicit resident artifact/message egress nomination before wiring Telegram outbound attachments through `OutboundMediaPathPolicy`;
+1. keep M7 scoped: validate actual installer-format artifacts from the corrected ZN package shape only when useful, without prematurely running the full M8 clean-machine matrix;
+2. fix package-content/runtime-entrypoint debt if real installer artifacts expose any;
+3. establish browser interaction only through a clean resident-owned body/sense seam;
+4. define explicit resident artifact/message egress nomination before Telegram outbound attachment transport;
 5. broaden artifact rendering/history only where concrete work output requires it;
-6. only after M7 artifacts are genuinely valid, spend M8 budget on clean-machine install, autostart, continuity and N → N+1 validation.
+6. after M7 artifacts are genuinely valid across intended platforms, spend M8 budget on clean-machine, autostart and N → N+1 continuity.
 
 The architecture driver remains the owned resident/workbench/product loop and independently bootable ZN package—not compatibility with inherited control planes.
