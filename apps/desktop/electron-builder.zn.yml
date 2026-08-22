@@ -70,6 +70,7 @@ linux:
   category: Utility
   maintainer: ZN Project
   synopsis: Resident AI workbench for ZN.
+  syncDesktopName: true
   target:
     - AppImage
     - deb

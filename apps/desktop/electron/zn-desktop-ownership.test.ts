@@ -193,6 +193,17 @@ test('Electron bundler emits only ZN control-plane and renderer entries', () => 
   assert.doesNotMatch(source, /legacy desktop shell|mature legacy|HERMES_DESKTOP_IS_PACKAGED/)
 })
 
+test('formal Linux desktop identity keeps launcher and running window aligned', () => {
+  const pkg = JSON.parse(read('package.json'))
+  const builder = read('electron-builder.zn.yml')
+
+  assert.equal(pkg.desktopName, 'ai.zn.desktop')
+  assert.equal(pkg.build?.appId, 'ai.zn.desktop')
+  assert.equal(pkg.build?.linux?.syncDesktopName, true)
+  assert.match(builder, /^appId:\s+ai\.zn\.desktop$/m)
+  assert.match(builder, /^\s+syncDesktopName:\s+true$/m)
+})
+
 test('ZN deep links reject inherited and web schemes and preserve inert navigation data', () => {
   assert.deepEqual(parseZnDeepLink('zn://work/thread-42?workspace=alpha&mode=inspect'), {
     url: 'zn://work/thread-42?workspace=alpha&mode=inspect',
