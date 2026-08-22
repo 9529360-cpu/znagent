@@ -69,7 +69,7 @@ jobs:
             cd "$EXTRACT"
             "$APPIMAGE" --appimage-extract >/dev/null
           )
-          DESKTOP="$EXTRACT/squashfs-root/ai.zn.desktop.desktop"
+          DESKTOP="$EXTRACT/squashfs-root/ai.zn.desktop"
           test -f "$DESKTOP"
           grep -Fx 'Name=ZN' "$DESKTOP"
           grep -Fx 'StartupWMClass=ai.zn.desktop' "$DESKTOP"
