@@ -27,7 +27,7 @@ afterEach(() => {
   delete process.env.ZN_RUNTIME_ID
 })
 
-test('update readiness defers when durable resident work remains queued', async () => {
+test('update readiness permits desktop replacement while durable resident work remains queued', async () => {
   mocks.resident.request.mockResolvedValue({
     queue_depth: 1,
     working_state: { current_event_id: null },
@@ -36,12 +36,13 @@ test('update readiness defers when durable resident work remains queued', async 
 
   const result = await checkZnResidentApplicationUpdateReadiness()
 
-  assert.equal(result.ready, false)
+  assert.equal(result.ready, true)
   assert.equal(result.reason, 'busy')
+  assert.match(result.message, /runtime handoff remains deferred/i)
   assert.deepEqual(mocks.resident.request.mock.calls[0], ['status', {}, 5_000])
 })
 
-test('update readiness permits application only when resident status is idle', async () => {
+test('update readiness permits application replacement when resident status is idle', async () => {
   mocks.resident.request.mockResolvedValue({
     queue_depth: 0,
     working_state: { current_event_id: null },
