@@ -4,6 +4,7 @@ import { execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import { promises as fsp } from 'node:fs'
+import http from 'node:http'
 import https from 'node:https'
 import net from 'node:net'
 import os from 'node:os'
@@ -91,6 +92,36 @@ async function residentRpc(endpoint, method, params = {}, timeoutMs = 5_000) {
   })
 }
 
+function readLocalJson(pathname, timeoutMs = 2_000) {
+  return new Promise((resolve, reject) => {
+    const request = http.get({
+      host: '127.0.0.1',
+      port: debugPort,
+      path: pathname,
+      agent: false,
+      headers: { connection: 'close' }
+    }, response => {
+      let data = ''
+      response.setEncoding('utf8')
+      response.on('data', chunk => { data += chunk })
+      response.on('end', () => {
+        const status = response.statusCode ?? 0
+        if (status < 200 || status >= 300) {
+          reject(new Error(`CDP HTTP ${status} for ${pathname}`))
+          return
+        }
+        try {
+          resolve(JSON.parse(data))
+        } catch (error) {
+          reject(error)
+        }
+      })
+    })
+    request.setTimeout(timeoutMs, () => request.destroy(new Error(`CDP HTTP timeout for ${pathname}`)))
+    request.on('error', reject)
+  })
+}
+
 class CdpSession {
   constructor(socket) {
     this.socket = socket
@@ -165,11 +196,15 @@ class CdpSession {
   }
 }
 
+let desktopExit = null
+
 async function connectDesktopCdp() {
   return await waitFor('real Electron renderer CDP target', async () => {
-    const response = await fetch(`http://127.0.0.1:${debugPort}/json/list`)
-    if (!response.ok) return null
-    const targets = await response.json()
+    if (desktopExit) {
+      throw new Error(`Electron exited before CDP became ready: code=${desktopExit.code} signal=${desktopExit.signal}`)
+    }
+    await readLocalJson('/json/version')
+    const targets = await readLocalJson('/json/list')
     const target = targets.find(item => item.type === 'page' && item.webSocketDebuggerUrl)
     if (!target) return null
     const cdp = await CdpSession.connect(target.webSocketDebuggerUrl)
@@ -296,13 +331,18 @@ try {
   desktop = spawn(installedPath, [
     `--remote-debugging-port=${debugPort}`,
     '--remote-debugging-address=127.0.0.1',
-    '--disable-gpu'
+    '--disable-gpu',
+    '--no-sandbox'
   ], {
     env: launchEnv,
     stdio: ['ignore', 'pipe', 'pipe']
   })
   desktop.stdout?.on('data', chunk => process.stdout.write(`[ZN N stdout] ${chunk}`))
   desktop.stderr?.on('data', chunk => process.stderr.write(`[ZN N stderr] ${chunk}`))
+  desktop.once('exit', (code, signal) => {
+    desktopExit = { code, signal }
+    console.error(`[ZN N exit] code=${code} signal=${signal}`)
+  })
 
   cdp = await connectDesktopCdp()
 
