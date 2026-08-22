@@ -1,0 +1,205 @@
+name: ZN Linux Clean Install Smoke
+
+on:
+  push:
+    branches:
+      - dev/zn-agent
+    paths:
+      - .github/workflows/zn-linux-clean-install-smoke.yml
+
+permissions:
+  contents: read
+  statuses: write
+
+env:
+  CI: 'true'
+  NODE_OPTIONS: --max-old-space-size=4096
+  ZN_RELEASE_VERSION: '0.17.0'
+
+concurrency:
+  group: zn-linux-clean-install-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-deb:
+    name: Build ZN deb
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+          cache: npm
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked workspace dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Stage self-contained ZN runtime
+        env:
+          ZN_RELEASE_COMMIT: ${{ github.sha }}
+        run: node apps/desktop/scripts/stage-zn-runtime.mjs
+
+      - name: Build independent ZN desktop
+        run: npm run build --workspace apps/desktop
+
+      - name: Build ZN deb
+        run: npm run builder --workspace apps/desktop -- --config electron-builder.zn.yml --linux deb --publish never
+
+      - name: Capture deb artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          release="$GITHUB_WORKSPACE/apps/desktop/release"
+          count="$(find "$release" -maxdepth 1 -type f -name 'ZN-*.deb' | wc -l | tr -d ' ')"
+          [[ "$count" == '1' ]] || { echo "expected one deb, found $count"; exit 1; }
+          deb="$(find "$release" -maxdepth 1 -type f -name 'ZN-*.deb' -print -quit)"
+          mkdir -p "$GITHUB_WORKSPACE/.ci/clean-install-artifact"
+          cp "$deb" "$GITHUB_WORKSPACE/.ci/clean-install-artifact/"
+          sha256sum "$deb"
+          ls -lh "$deb"
+          dpkg-deb -f "$deb" Package Version Architecture
+
+      - name: Upload deb for clean runner
+        uses: actions/upload-artifact@v4
+        with:
+          name: zn-linux-deb-${{ github.sha }}
+          path: .ci/clean-install-artifact/*.deb
+          if-no-files-found: error
+          retention-days: 1
+
+  clean-install:
+    name: Clean Ubuntu install + resident boot
+    needs: build-deb
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download only built deb
+        uses: actions/download-artifact@v4
+        with:
+          name: zn-linux-deb-${{ github.sha }}
+          path: artifact
+
+      - name: Install deb on fresh runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          count="$(find artifact -maxdepth 1 -type f -name '*.deb' | wc -l | tr -d ' ')"
+          [[ "$count" == '1' ]] || { echo "expected one downloaded deb, found $count"; exit 1; }
+          deb="$(find artifact -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          package="$(dpkg-deb -f "$deb" Package)"
+          echo "Installing package: $package"
+          sudo apt-get update
+          sudo apt-get install -y "./$deb"
+          status="$(dpkg-query -W -f='${Status}' "$package")"
+          [[ "$status" == 'install ok installed' ]] || { echo "unexpected dpkg status: $status"; exit 1; }
+          dpkg-query -W -f='${Package} ${Version} ${Architecture}\n' "$package"
+          dpkg -L "$package" > installed-files.txt
+
+      - name: Verify installed ZN product identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime_manifest="$(grep '/resources/zn-runtime/runtime.json$' installed-files.txt | head -n 1)"
+          [[ -n "$runtime_manifest" && -f "$runtime_manifest" ]] || { echo 'installed zn-runtime manifest missing'; exit 1; }
+          runtime_root="$(dirname "$runtime_manifest")"
+          resources_root="$(dirname "$runtime_root")"
+          app_root="$(dirname "$resources_root")"
+          [[ -x "$app_root/ZN" ]] || { echo "installed ZN executable missing: $app_root/ZN"; exit 1; }
+          [[ -f "$resources_root/app.asar" ]] || { echo "installed app.asar missing"; exit 1; }
+          [[ ! -e "$resources_root/install-stamp.json" ]] || { echo 'forbidden inherited install stamp present'; exit 1; }
+          [[ "$(find "$runtime_root" -type d -name hermes_cli | wc -l | tr -d ' ')" == '0' ]] || { echo 'forbidden hermes_cli present'; exit 1; }
+
+          desktop_count="$(grep -E '^/usr/share/applications/.*\.desktop$' installed-files.txt | wc -l | tr -d ' ')"
+          [[ "$desktop_count" == '1' ]] || { echo "expected one installed desktop entry, found $desktop_count"; cat installed-files.txt; exit 1; }
+          desktop="$(grep -E '^/usr/share/applications/.*\.desktop$' installed-files.txt | head -n 1)"
+          grep -Fx 'Name=ZN' "$desktop"
+          grep -Fx 'StartupWMClass=ai.zn.desktop' "$desktop"
+          grep -F 'x-scheme-handler/zn' "$desktop"
+          if grep -qi 'hermes' "$desktop"; then echo 'desktop entry contains inherited Hermes identity'; cat "$desktop"; exit 1; fi
+
+          python3 - "$runtime_manifest" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          manifest_path = pathlib.Path(sys.argv[1])
+          manifest = json.loads(manifest_path.read_text())
+          assert manifest['schema'] == 1
+          assert manifest['product'] == 'ZN'
+          assert manifest['platform'] == 'linux'
+          assert manifest['commit'] == '${{ github.sha }}'
+          root = manifest_path.parent
+          python = (root / manifest['python']).resolve()
+          backend = (root / manifest['backend_root']).resolve()
+          assert python.is_file()
+          assert (backend / 'zn_agent' / 'resident.py').is_file()
+          assert (backend / 'zn_agent' / 'core' / 'resident_server.py').is_file()
+          print(f'Installed app root: {root.parent.parent}')
+          print(f'Embedded Python: {python}')
+          print(f'Embedded backend: {backend}')
+          PY
+
+      - name: Boot installed embedded resident without external model
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime_manifest="$(grep '/resources/zn-runtime/runtime.json$' installed-files.txt | head -n 1)"
+          runtime_root="$(dirname "$runtime_manifest")"
+          embedded_python="$(python3 - "$runtime_manifest" <<'PY'
+          import json
+          import pathlib
+          import sys
+          manifest_path = pathlib.Path(sys.argv[1])
+          manifest = json.loads(manifest_path.read_text())
+          print((manifest_path.parent / manifest['python']).resolve())
+          PY
+          )"
+          home="$(mktemp -d)"
+          trap 'rm -rf "$home"' EXIT
+          ZN_AGENT_HOME="$home" ZN_RUNTIME_ID="$GITHUB_SHA" PYTHONUTF8=1 PYTHONUNBUFFERED=1 \
+            "$embedded_python" -I - <<'PY'
+          import os
+          from pathlib import Path
+          import zn_agent.resident
+          from zn_agent.core.provider_bridge import build_resident_runtime
+
+          home = Path(os.environ['ZN_AGENT_HOME'])
+          resident = build_resident_runtime(config={'model': {}}, store_path=home / 'kernel.db')
+          try:
+              pulse = resident.pulse()
+              state = resident.life.snapshot()
+              assert pulse.sequence >= 1
+              assert state.body is not None
+              assert state.external_brains == ()
+              print(f'clean installed resident pulse={pulse.sequence} mode={state.mode}')
+          finally:
+              resident.store.close()
+          PY
+
+      - name: Publish Linux clean-install status
+        if: ${{ always() }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const result = '${{ job.status }}'
+            const state = result === 'success' ? 'success' : result === 'failure' ? 'failure' : 'error'
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state,
+              context: 'ZN Linux Clean Install Smoke',
+              description: `fresh-runner deb install + embedded resident boot: ${result}`.slice(0, 140),
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            })
