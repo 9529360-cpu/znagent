@@ -237,6 +237,57 @@ class ResidentWorkLedgerTests(unittest.TestCase):
             )
             restored.store.close()
 
+    def test_terminal_action_produces_contextual_artifact_without_workspace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=root / "kernel.db",
+            )
+            ledger = ResidentWorkLedger(resident)
+            thread = ledger.create_thread(thread_id="work-terminal")
+            run = resident.submit("unknown task with no external brain")
+
+            command = resident.body.act(
+                "command",
+                event_id=run.event.event_id,
+                command="printf 'zn-terminal-surface\\n'",
+                workdir=str(root),
+            )
+            self.assertTrue(command.success)
+
+            artifacts = ledger._collect_artifacts(
+                thread,
+                run,
+                task="run a terminal command",
+                workspace=None,
+            )
+            terminal = next(item for item in artifacts if item.kind == "terminal")
+            self.assertIn("zn-terminal-surface", terminal.content)
+            self.assertIn("printf", terminal.content)
+            self.assertEqual(terminal.metadata["operation"], "command")
+            self.assertEqual(terminal.metadata["cwd"], str(root.resolve()))
+            self.assertEqual(terminal.metadata["exit_code"], 0)
+
+            server = ResidentRpcServer(
+                resident=resident,
+                input_stream=io.StringIO(),
+                output_stream=io.StringIO(),
+            )
+            rpc = server.handle(
+                {
+                    "id": "get-terminal",
+                    "method": "work_get",
+                    "params": {"thread_id": thread.thread_id},
+                }
+            )
+            self.assertTrue(rpc["ok"])
+            terminal_rpc = next(
+                item for item in rpc["result"]["artifacts"] if item["kind"] == "terminal"
+            )
+            self.assertIn("zn-terminal-surface", terminal_rpc["content"])
+            resident.store.close()
+
     def test_work_rpc_is_resident_backed_and_updates_workspace(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
