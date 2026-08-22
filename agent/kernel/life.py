@@ -7,6 +7,7 @@ import shutil
 import socket
 import sqlite3
 import time
+from contextlib import closing
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -442,7 +443,7 @@ class ZNLifeCore:
         return data
 
     def recent_pulses(self, limit: int = 20) -> list[LifePulse]:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             rows = conn.execute(
                 "SELECT data FROM life_pulses ORDER BY sequence DESC LIMIT ?",
                 (max(1, int(limit)),),
@@ -461,7 +462,7 @@ class ZNLifeCore:
         return pulses
 
     def recent_situations(self, limit: int = 20) -> list[SituationModel]:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             rows = conn.execute(
                 "SELECT data FROM life_situations ORDER BY sequence DESC LIMIT ?",
                 (max(1, int(limit)),),
@@ -469,7 +470,7 @@ class ZNLifeCore:
         return [self._situation_from_raw(json.loads(row["data"])) for row in rows]
 
     def recent_thoughts(self, limit: int = 20) -> list[ThoughtFrame]:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             rows = conn.execute(
                 "SELECT data FROM life_thoughts ORDER BY sequence DESC LIMIT ?",
                 (max(1, int(limit)),),
@@ -477,7 +478,7 @@ class ZNLifeCore:
         return [self._thought_from_raw(json.loads(row["data"])) for row in rows]
 
     def recent_impasses(self, limit: int = 20) -> list[ImpasseState]:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             rows = conn.execute(
                 "SELECT data FROM life_impasses ORDER BY updated_at DESC LIMIT ?",
                 (max(1, int(limit)),),
@@ -485,7 +486,7 @@ class ZNLifeCore:
         return [self._impasse_from_raw(json.loads(row["data"])) for row in rows]
 
     def recent_learning_candidates(self, limit: int = 20) -> list[LearningCandidate]:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             rows = conn.execute(
                 "SELECT data FROM life_learning_candidates ORDER BY created_at DESC LIMIT ?",
                 (max(1, int(limit)),),
@@ -493,7 +494,7 @@ class ZNLifeCore:
         return [self._learning_from_raw(json.loads(row["data"])) for row in rows]
 
     def _load_or_birth(self) -> LivingState:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             row = conn.execute("SELECT data FROM living_self WHERE id=1").fetchone()
         if row:
             raw = json.loads(row["data"])
@@ -581,7 +582,7 @@ class ZNLifeCore:
 
     def _save_state(self, state: LivingState) -> None:
         payload = asdict(state)
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO living_self(id,data,updated_at) VALUES(1,?,?)",
                 (
@@ -597,7 +598,7 @@ class ZNLifeCore:
 
     def _append_pulse(self, pulse: LifePulse) -> None:
         payload = asdict(pulse)
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO life_pulses(sequence,created_at,data) VALUES(?,?,?)",
                 (
@@ -614,7 +615,7 @@ class ZNLifeCore:
 
     def _append_situation(self, situation: SituationModel) -> None:
         payload = asdict(situation)
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO life_situations(sequence,created_at,data) "
                 "VALUES(?,?,?)",
@@ -632,7 +633,7 @@ class ZNLifeCore:
 
     def _append_thought(self, thought: ThoughtFrame) -> None:
         payload = asdict(thought)
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO life_thoughts(sequence,created_at,data) "
                 "VALUES(?,?,?)",
@@ -650,7 +651,7 @@ class ZNLifeCore:
 
     def _save_impasse(self, impasse: ImpasseState) -> None:
         payload = asdict(impasse)
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO life_impasses"
                 "(impasse_id,event_id,status,updated_at,data) VALUES(?,?,?,?,?)",
@@ -666,7 +667,7 @@ class ZNLifeCore:
 
     def _save_learning_candidate(self, candidate: LearningCandidate) -> None:
         payload = asdict(candidate)
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO life_learning_candidates"
                 "(candidate_id,source_impasse_id,created_at,status,data) "
@@ -682,7 +683,7 @@ class ZNLifeCore:
             conn.commit()
 
     def _init_schema(self) -> None:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS living_self(

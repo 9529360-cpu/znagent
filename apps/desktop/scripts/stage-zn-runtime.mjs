@@ -74,8 +74,8 @@ run('uv', ['pip', 'install', ...stagedPythonInstallArgs, runtimeProject])
 
 // Ask the staged interpreter where zn_agent was actually installed instead of
 // assuming a platform-specific site-packages layout. uv's portable Windows
-// CPython reports its runtime root through site.getsitepackages(), while the
-// installed package lives under Lib/site-packages.
+// CPython's generic site-package discovery can report the runtime root, while
+// the installed package itself lives under Lib/site-packages.
 const backendRoot = capture(pythonPath, [
   '-c',
   [
