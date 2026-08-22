@@ -19,8 +19,6 @@ beforeBuild: scripts/before-build.mjs
 beforePack: scripts/before-pack.mjs
 afterPack: scripts/after-pack.mjs
 extraResources:
-  - from: build/install-stamp.json
-    to: install-stamp.json
   - from: build/zn-runtime
     to: zn-runtime
   - from: assets/icon.ico

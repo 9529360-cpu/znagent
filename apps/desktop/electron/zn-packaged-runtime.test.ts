@@ -105,7 +105,7 @@ test('ZN home resolution honors explicit home before platform defaults', () => {
   assert.equal(resolveZnHome({}, 'linux', '/tmp/user'), path.join('/tmp/user', '.znagent'))
 })
 
-test('formal desktop package metadata and builder register only ZN identity', () => {
+test('formal desktop package, hooks and builder expose only ZN product identity', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(desktopRoot, 'package.json'), 'utf8'))
   const build = packageJson.build
   const schemes = (build.protocols || []).flatMap((item: { schemes?: string[] }) => item.schemes || [])
@@ -119,7 +119,9 @@ test('formal desktop package metadata and builder register only ZN identity', ()
   assert.equal(build.executableName, 'ZN')
   assert.deepEqual(schemes, ['zn'])
   assert.match(build.artifactName, /^ZN-/)
-  assert.ok(resources.includes('build/zn-runtime'))
+  assert.deepEqual(resources.includes('build/zn-runtime'), true)
+  assert.deepEqual(resources.includes('build/install-stamp.json'), false)
+  assert.doesNotMatch(packageJson.scripts?.build || '', /write-build-stamp/)
   assert.match(packageJson.scripts?.builder || '', /--config electron-builder\.zn\.yml/)
 
   const publicIdentity = JSON.stringify({
@@ -137,5 +139,15 @@ test('formal desktop package metadata and builder register only ZN identity', ()
   assert.match(builder, /^productName: ZN$/m)
   assert.match(builder, /^\s+- zn$/m)
   assert.match(builder, /from: build\/zn-runtime/)
-  assert.doesNotMatch(builder, /hermes/i)
+  assert.doesNotMatch(builder, /install-stamp|hermes/i)
+
+  const activeHooks = [
+    'scripts/before-build.mjs',
+    'scripts/before-pack.mjs',
+    'scripts/after-pack.mjs',
+    'scripts/set-exe-identity.mjs'
+  ].map(relative => fs.readFileSync(path.join(desktopRoot, relative), 'utf8')).join('\n')
+  assert.match(activeHooks, /ProductName: 'ZN'/)
+  assert.match(activeHooks, /CompanyName: 'ZN Project'/)
+  assert.doesNotMatch(activeHooks, /Hermes|Nous Research|install\.ps1|hermes_cli/)
 })

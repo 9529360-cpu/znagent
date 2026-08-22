@@ -1,10 +1,9 @@
 /**
- * Desktop bundles ship precompiled renderer assets. Returning false here tells
- * electron-builder to skip the node_modules collector/install step, which
- * avoids workspace dependency graph explosions and keeps packaging
- * deterministic across environments. The Hermes Agent Python payload is no
- * longer bundled; the Electron app fetches it at first launch via
- * `install.ps1`'s stage protocol (Windows). See `electron/main.ts`.
+ * ZN desktop ships precompiled renderer/control-plane assets and a separately
+ * staged self-contained `zn-runtime`. Returning false keeps electron-builder
+ * from re-running a node_modules install/collector inside the packaging hook;
+ * the runtime payload is produced by the ZN runtime staging path and included
+ * explicitly through `extraResources`.
  */
 export default async function beforeBuild() {
   return false
