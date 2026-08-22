@@ -120,6 +120,19 @@ test('artifact context remains resident-backed and contextual rather than a perm
   assert.doesNotMatch(workbench, /file tree|treeview|react-arborist/i)
 })
 
+test('terminal context appears only as resident artifact evidence, not a permanent IDE terminal', () => {
+  const workbench = read('src/zn/workbench.tsx')
+  const client = read('src/zn/resident-client.ts')
+  const state = read('src/zn/state.ts')
+
+  assert.match(state, /['"]terminal['"]/)
+  assert.match(client, /value === ['"]terminal['"]/)
+  assert.match(workbench, /kind === ['"]terminal['"]/) 
+  assert.match(workbench, /return ['"]Terminal['"]/)
+  assert.doesNotMatch(workbench, /@xterm|new Terminal\s*\(/)
+  assert.doesNotMatch(client, /terminal\.execute|terminal\.start|terminal\.open/i)
+})
+
 test('Electron bundler emits only ZN control-plane and renderer entries', () => {
   const source = read('scripts/bundle-electron-main.mjs')
 
