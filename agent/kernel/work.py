@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .models import ResidentRunResult, utc_now
+from .models import AgentEvent, EventStatus, ResidentRunResult, utc_now
 from .path_context import resolved_within
 
 
@@ -36,6 +36,13 @@ _TERMINAL_ACTION_KINDS = {
 
 def _id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:16]}"
+
+
+def _event_message_id(event_id: str, role: str) -> str:
+    digest = hashlib.sha256(
+        f"{event_id}\x00{role}".encode("utf-8", errors="replace")
+    ).hexdigest()[:20]
+    return f"msg-{digest}"
 
 
 def _artifact_id(event_id: str, kind: str, key: str) -> str:
@@ -98,14 +105,25 @@ class WorkArtifact:
     created_at: str = field(default_factory=utc_now)
 
 
+@dataclass(slots=True)
+class WorkRun:
+    event_id: str
+    thread_id: str
+    message_id: str
+    task: str
+    ledger_state: str = "active"
+    created_at: str = field(default_factory=utc_now)
+    updated_at: str = field(default_factory=utc_now)
+    finalized_at: str | None = None
+
+
 class ResidentWorkLedger:
     """Resident-owned durable work/thread history for desktop and future faces.
 
-    Work history and contextual artifacts are durable interaction state, not
-    lived-memory facts and not a separate agent. User work still enters the same
-    ``ZNResidentRuntime`` event loop; this ledger owns thread/message continuity,
-    the durable local workspace, and bounded presentation records derived from
-    ZN Body observations for that work.
+    Work history, active-run linkage and contextual artifacts are durable
+    interaction state, not lived-memory facts and not a separate agent. User work
+    enters the same ``ZNResidentRuntime`` event loop. The resident can therefore
+    continue a started work item while every desktop window is disconnected.
     """
 
     def __init__(self, resident):
@@ -161,6 +179,21 @@ class ResidentWorkLedger:
                     ON work_artifacts(thread_id, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_work_artifacts_event
                     ON work_artifacts(event_id, created_at DESC);
+                CREATE TABLE IF NOT EXISTS work_runs(
+                    event_id TEXT PRIMARY KEY,
+                    thread_id TEXT NOT NULL,
+                    message_id TEXT NOT NULL,
+                    task TEXT NOT NULL,
+                    ledger_state TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    finalized_at TEXT,
+                    FOREIGN KEY(thread_id) REFERENCES work_threads(thread_id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_work_runs_thread
+                    ON work_runs(thread_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_work_runs_active
+                    ON work_runs(ledger_state, updated_at DESC);
                 """
             )
 
@@ -219,6 +252,19 @@ class ResidentWorkLedger:
             content=str(row["content"]),
             metadata=metadata,
             created_at=str(row["created_at"]),
+        )
+
+    @staticmethod
+    def _run_from_row(row: sqlite3.Row) -> WorkRun:
+        return WorkRun(
+            event_id=str(row["event_id"]),
+            thread_id=str(row["thread_id"]),
+            message_id=str(row["message_id"]),
+            task=str(row["task"]),
+            ledger_state=str(row["ledger_state"]),
+            created_at=str(row["created_at"]),
+            updated_at=str(row["updated_at"]),
+            finalized_at=str(row["finalized_at"]) if row["finalized_at"] else None,
         )
 
     def create_thread(
@@ -315,6 +361,16 @@ class ResidentWorkLedger:
         *,
         message_limit: int = 120,
     ) -> tuple[WorkThread, list[WorkMessage]]:
+        normalized_id = self._normalize_thread_id(thread_id)
+        self._finalize_completed_runs(thread_id=normalized_id)
+        return self._snapshot_without_finalize(normalized_id, message_limit=message_limit)
+
+    def _snapshot_without_finalize(
+        self,
+        thread_id: str,
+        *,
+        message_limit: int = 120,
+    ) -> tuple[WorkThread, list[WorkMessage]]:
         thread = self.get_thread(thread_id)
         if thread is None:
             raise ValueError(f"unknown work thread: {thread_id}")
@@ -326,8 +382,9 @@ class ResidentWorkLedger:
         thread_limit: int = 24,
         message_limit: int = 120,
     ) -> list[tuple[WorkThread, list[WorkMessage]]]:
+        self._finalize_completed_runs()
         return [
-            (thread, self.list_messages(thread.thread_id, limit=message_limit))
+            self._snapshot_without_finalize(thread.thread_id, message_limit=message_limit)
             for thread in self.list_threads(limit=thread_limit)
         ]
 
@@ -346,6 +403,18 @@ class ResidentWorkLedger:
             attached_at=attached_at,
         )
 
+    @staticmethod
+    def _workspace_from_event(event: AgentEvent) -> WorkspaceAssociation | None:
+        path = str(event.payload.get("workspace_path") or "").strip()
+        if not path:
+            return None
+        name = str(event.payload.get("workspace_name") or "").strip()
+        return WorkspaceAssociation(
+            path=path,
+            name=name or Path(path).name or path,
+            attached_at=event.created_at,
+        )
+
     def attach_workspace(
         self,
         thread_id: str,
@@ -353,9 +422,6 @@ class ResidentWorkLedger:
         *,
         name: str | None = None,
     ) -> WorkThread:
-        # A fresh desktop may display its first empty work before any message has
-        # caused that thread to enter the resident ledger. Attaching a folder is
-        # itself enough to make that work durable.
         thread = self.get_thread(thread_id) or self.create_thread(thread_id=thread_id)
         raw_path = str(workspace_path or "").strip()
         if not raw_path:
@@ -390,7 +456,7 @@ class ResidentWorkLedger:
         self._save_thread(thread)
         return thread
 
-    def submit(
+    def start(
         self,
         thread_id: str,
         task: str,
@@ -398,12 +464,21 @@ class ResidentWorkLedger:
         kind: str = "desktop_user_event",
         priority: int = 0,
         payload: dict[str, Any] | None = None,
-    ) -> tuple[tuple[WorkThread, list[WorkMessage]], ResidentRunResult]:
+    ) -> tuple[tuple[WorkThread, list[WorkMessage]], AgentEvent]:
         normalized_task = str(task or "").strip()
         if not normalized_task:
-            raise ValueError("work submit requires task")
+            raise ValueError("work start requires task")
 
         thread = self.create_thread(thread_id=thread_id)
+        self._finalize_completed_runs(thread_id=thread.thread_id)
+        active = self._active_run_for_thread(thread.thread_id)
+        if active is not None:
+            event = self.resident.store.get_event(active.event_id)
+            if event is None or event.status not in {EventStatus.COMPLETED, EventStatus.FAILED}:
+                raise ValueError("work thread already has an active resident event")
+            raise RuntimeError("work thread has a terminal event without a durable finalized outcome")
+
+        thread = self.get_thread(thread.thread_id) or thread
         if not self.list_messages(thread.thread_id, limit=1) and thread.title == "New work":
             thread.title = title_for_work_task(normalized_task)
             thread.updated_at = utc_now()
@@ -422,18 +497,24 @@ class ResidentWorkLedger:
         event_payload["work_message_id"] = user_message.message_id
         workspace = self.workspace_for(thread)
         if workspace is not None:
-            # The durable work association, not transient renderer state, anchors
-            # repository investigation and local command execution for this thread.
             event_payload["workspace_path"] = workspace.path
             event_payload["workdir"] = workspace.path
             event_payload["workspace_name"] = workspace.name
 
         try:
-            run = self.resident.submit(
+            event = self.resident.enqueue(
                 normalized_task,
                 kind=str(kind or "desktop_user_event").strip() or "desktop_user_event",
                 priority=int(priority),
                 payload=event_payload,
+            )
+            self._save_run(
+                WorkRun(
+                    event_id=event.event_id,
+                    thread_id=thread.thread_id,
+                    message_id=user_message.message_id,
+                    task=normalized_task,
+                )
             )
         except Exception as exc:
             self._append(
@@ -448,58 +529,285 @@ class ResidentWorkLedger:
             )
             raise
 
-        response_text = str(run.response or "").strip() or str(run.reason or "").strip()
-        if not response_text:
-            response_text = "Completed." if run.success else "The resident could not complete this event."
-        self._append(
-            thread,
-            WorkMessage(
-                message_id=_id("msg"),
-                thread_id=thread.thread_id,
-                role="zn",
-                text=response_text,
-                detail={} if run.success else {"failed": True},
-            ),
-        )
+        return self._snapshot_without_finalize(thread.thread_id), event
 
-        new_artifacts = self._collect_artifacts(
-            thread,
-            run,
-            task=normalized_task,
-            workspace=workspace,
+    def submit(
+        self,
+        thread_id: str,
+        task: str,
+        *,
+        kind: str = "desktop_user_event",
+        priority: int = 0,
+        payload: dict[str, Any] | None = None,
+    ) -> tuple[tuple[WorkThread, list[WorkMessage]], ResidentRunResult]:
+        _, event = self.start(
+            thread_id,
+            task,
+            kind=kind,
+            priority=priority,
+            payload=payload,
         )
-        activity: dict[str, Any] = {
-            "event_id": run.event.event_id,
-            "execution_path": run.execution_path.value,
-            "model_invocations": run.model_invocations,
+        while True:
+            completed = self.resident.result_for(event.event_id)
+            if completed is not None:
+                run = completed
+                break
+
+            result = self.resident.live_once()
+            if result is not None and result.event.event_id == event.event_id:
+                run = result
+                break
+
+            completed = self.resident.result_for(event.event_id)
+            if completed is not None:
+                run = completed
+                break
+
+            persisted = self.resident.store.get_event(event.event_id)
+            if persisted is not None and persisted.status in {
+                EventStatus.COMPLETED,
+                EventStatus.FAILED,
+            }:
+                raise RuntimeError(
+                    "resident event reached a terminal state without a durable outcome"
+                )
+
+        self._finalize_run(event.event_id, run=run)
+        return self.get_snapshot(thread_id), run
+
+    def progress(self, thread_id: str, event_id: str) -> dict[str, Any]:
+        normalized_thread = self._normalize_thread_id(thread_id)
+        normalized_event = str(event_id or "").strip()
+        if not normalized_event:
+            raise ValueError("work progress requires event_id")
+        work_run = self.get_run(normalized_event)
+        if work_run is None or work_run.thread_id != normalized_thread:
+            raise ValueError("unknown work event for thread")
+
+        completed = self.resident.result_for(normalized_event)
+        if completed is not None and work_run.ledger_state != "finalized":
+            self._finalize_run(normalized_event, run=completed)
+            work_run = self.get_run(normalized_event) or work_run
+
+        event = self.resident.store.get_event(normalized_event)
+        if event is None:
+            raise ValueError("resident work event is unavailable")
+        terminal = event.status in {EventStatus.COMPLETED, EventStatus.FAILED}
+        finalized = work_run.ledger_state == "finalized"
+        working = self.resident.store.get_working_state()
+        active = working.current_event_id == normalized_event and not terminal
+        if terminal:
+            stage = "complete" if event.status == EventStatus.COMPLETED else "failed"
+            next_action = "complete"
+        elif active:
+            stage = str(working.stage or "processing")
+            next_action = str(working.next_action or "continue resident work")
+        elif event.status == EventStatus.PENDING:
+            stage = "queued"
+            next_action = "await resident attention"
+        else:
+            stage = "processing"
+            next_action = "continue resident work"
+
+        thought_data: dict[str, Any] | None = None
+        try:
+            thought = self.resident.life.snapshot().current_thought
+        except Exception:
+            thought = None
+        if thought is not None and thought.action_target == normalized_event:
+            thought_data = {
+                "at": thought.at,
+                "focus": thought.focus,
+                "action": thought.chosen_action,
+                "action_kind": thought.action_kind,
+                "reason": str(thought.reason or "")[:600],
+                "confidence": thought.confidence,
+            }
+
+        investigation_data: dict[str, Any] | None = None
+        try:
+            investigations = self.resident.investigator.recent(16)
+        except Exception:
+            investigations = []
+        for investigation in investigations:
+            if investigation.event_id != normalized_event:
+                continue
+            investigation_data = {
+                "rounds": investigation.rounds,
+                "status": investigation.status,
+                "unresolved": str(investigation.unresolved or "")[:500],
+                "next_probe": str(investigation.next_probe or "")[:500],
+                "evidence_count": len(investigation.evidence),
+            }
+            break
+
+        body_actions: list[dict[str, Any]] = []
+        body = getattr(self.resident, "body", None)
+        if body is not None:
+            try:
+                matches = [
+                    item
+                    for item in reversed(body.recent_actions(120))
+                    if item.event_id == normalized_event
+                ][-6:]
+            except Exception:
+                matches = []
+            for action in matches:
+                summary = str(action.output or action.error or "").strip()
+                summary = " ".join(summary.split())[:320]
+                body_actions.append(
+                    {
+                        "kind": action.kind,
+                        "success": action.success,
+                        "at": action.completed_at,
+                        "summary": summary,
+                    }
+                )
+
+        result: dict[str, Any] = {
+            "event_id": normalized_event,
+            "thread_id": normalized_thread,
+            "status": event.status.value,
+            "stage": stage,
+            "next_action": next_action,
+            "terminal": terminal,
+            "finalized": finalized,
+            "updated_at": event.updated_at,
+            "thought": thought_data,
+            "investigation": investigation_data,
+            "body_actions": body_actions,
         }
-        if workspace is not None:
-            activity["workspace"] = workspace.to_dict()
-        if new_artifacts:
-            activity["artifacts"] = [
-                {
-                    "id": artifact.artifact_id,
-                    "kind": artifact.kind,
-                    "name": artifact.name,
-                    "path": artifact.path,
-                }
-                for artifact in new_artifacts
-            ]
-        if run.capability_name:
-            activity["capability_name"] = run.capability_name
-        if run.reason:
-            activity["reason"] = run.reason
-        self._append(
-            thread,
-            WorkMessage(
-                message_id=_id("msg"),
-                thread_id=thread.thread_id,
-                role="activity",
-                text="Resident activity",
-                detail=activity,
-            ),
-        )
-        return self.get_snapshot(thread.thread_id), run
+        if terminal and not finalized:
+            result["error"] = "resident event is terminal but no durable work outcome is available"
+        return result
+
+    def get_run(self, event_id: str) -> WorkRun | None:
+        normalized = str(event_id or "").strip()
+        if not normalized:
+            return None
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM work_runs WHERE event_id=?", (normalized,)
+            ).fetchone()
+        return self._run_from_row(row) if row else None
+
+    def _active_run_for_thread(self, thread_id: str) -> WorkRun | None:
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM work_runs WHERE thread_id=? AND ledger_state='active' "
+                "ORDER BY created_at DESC LIMIT 1",
+                (thread_id,),
+            ).fetchone()
+        return self._run_from_row(row) if row else None
+
+    def _save_run(self, run: WorkRun) -> None:
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO work_runs(
+                    event_id,thread_id,message_id,task,ledger_state,created_at,updated_at,finalized_at
+                ) VALUES(?,?,?,?,?,?,?,?)
+                ON CONFLICT(event_id) DO UPDATE SET
+                    ledger_state=excluded.ledger_state,
+                    updated_at=excluded.updated_at,
+                    finalized_at=excluded.finalized_at
+                """,
+                (
+                    run.event_id,
+                    run.thread_id,
+                    run.message_id,
+                    run.task,
+                    run.ledger_state,
+                    run.created_at,
+                    run.updated_at,
+                    run.finalized_at,
+                ),
+            )
+
+    def _finalize_completed_runs(self, *, thread_id: str | None = None) -> None:
+        sql = "SELECT * FROM work_runs WHERE ledger_state='active'"
+        params: list[Any] = []
+        if thread_id is not None:
+            sql += " AND thread_id=?"
+            params.append(thread_id)
+        sql += " ORDER BY created_at ASC LIMIT 64"
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        for row in rows:
+            run = self._run_from_row(row)
+            completed = self.resident.result_for(run.event_id)
+            if completed is not None:
+                self._finalize_run(run.event_id, run=completed)
+
+    def _finalize_run(self, event_id: str, *, run: ResidentRunResult) -> None:
+        with self._lock:
+            work_run = self.get_run(event_id)
+            if work_run is None:
+                raise ValueError(f"unknown work run: {event_id}")
+            if work_run.ledger_state == "finalized":
+                return
+            thread = self.get_thread(work_run.thread_id)
+            if thread is None:
+                raise ValueError(f"unknown work thread: {work_run.thread_id}")
+
+            response_text = str(run.response or "").strip() or str(run.reason or "").strip()
+            if not response_text:
+                response_text = "Completed." if run.success else "The resident could not complete this event."
+            self._append(
+                thread,
+                WorkMessage(
+                    message_id=_event_message_id(event_id, "zn"),
+                    thread_id=thread.thread_id,
+                    role="zn",
+                    text=response_text,
+                    detail={} if run.success else {"failed": True},
+                ),
+            )
+
+            workspace = self._workspace_from_event(run.event)
+            new_artifacts = self._collect_artifacts(
+                thread,
+                run,
+                task=work_run.task,
+                workspace=workspace,
+            )
+            activity: dict[str, Any] = {
+                "event_id": run.event.event_id,
+                "execution_path": run.execution_path.value,
+                "model_invocations": run.model_invocations,
+            }
+            if workspace is not None:
+                activity["workspace"] = workspace.to_dict()
+            if new_artifacts:
+                activity["artifacts"] = [
+                    {
+                        "id": artifact.artifact_id,
+                        "kind": artifact.kind,
+                        "name": artifact.name,
+                        "path": artifact.path,
+                    }
+                    for artifact in new_artifacts
+                ]
+            if run.capability_name:
+                activity["capability_name"] = run.capability_name
+            if run.reason:
+                activity["reason"] = run.reason
+            self._append(
+                thread,
+                WorkMessage(
+                    message_id=_event_message_id(event_id, "activity"),
+                    thread_id=thread.thread_id,
+                    role="activity",
+                    text="Resident activity",
+                    detail=activity,
+                ),
+            )
+
+            now = utc_now()
+            work_run.ledger_state = "finalized"
+            work_run.updated_at = now
+            work_run.finalized_at = now
+            self._save_run(work_run)
 
     def _collect_artifacts(
         self,
@@ -807,7 +1115,7 @@ class ResidentWorkLedger:
         with self._lock, self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO work_messages(
+                INSERT OR IGNORE INTO work_messages(
                     message_id,thread_id,role,text,detail_json,created_at
                 ) VALUES(?,?,?,?,?,?)
                 """,
