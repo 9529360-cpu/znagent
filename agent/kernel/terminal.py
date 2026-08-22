@@ -3,13 +3,13 @@ from __future__ import annotations
 """ZN-owned local terminal body.
 
 This module is a source-level extraction of the mature local execution ideas in
-``tools/environments/base.py``, ``tools/environments/local.py`` and
-``tools/terminal_tool.py``.  ZN keeps the hard-won mechanics -- safe working
-directories, cross-platform shell selection, process-group cleanup, bounded
-output, background sessions and child-environment isolation -- without keeping
-the old product's gateway/session/approval/config control plane.
+``tools/environments/base.py``, ``tools/environments/local.py`` and the mature
+PTY bridges. ZN keeps the hard-won mechanics -- safe working directories,
+cross-platform shell selection, process-group cleanup, bounded output,
+background sessions, interactive PTY I/O and child-environment isolation --
+without keeping the old product's gateway/session/approval/config control plane.
 
-Container, SSH and cloud backends are deliberately not imported here.  They can
+Container, SSH and cloud backends are deliberately not imported here. They can
 be extracted behind this ZN-owned interface when ZN has a concrete consumer.
 """
 
@@ -24,17 +24,14 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping
+from typing import Any, Callable, Mapping
+
+from .pty import ZNPty, spawn_zn_pty
 
 
 _IS_WINDOWS = os.name == "nt"
 _COMPATIBLE_POSIX_SHELLS = frozenset({"bash", "zsh", "sh", "dash", "ksh", "mksh"})
 
-# These are credentials owned by ZN/provider/channel configuration and should
-# not leak into arbitrary body subprocesses merely because the resident process
-# has them.  Explicit ``env=`` values on a TerminalRequest are applied after the
-# inherited environment is scrubbed, so a deliberate body action can still pass
-# a credential to a command when that is actually the requested operation.
 _ZN_INHERITED_SECRET_KEYS = frozenset(
     {
         "OPENAI_API_KEY",
@@ -68,10 +65,6 @@ _ZN_INHERITED_SECRET_KEYS = frozenset(
         "ZN_UPDATE_S3_SECRET_ACCESS_KEY",
     }
 )
-
-# Runtime markers from the resident's own packaged Python must not make a child
-# command accidentally treat the resident environment as the user's project
-# environment.  This mirrors a mature failure class from the reference terminal.
 _ZN_RUNTIME_MARKERS = frozenset({"PYTHONHOME", "VIRTUAL_ENV", "CONDA_PREFIX"})
 
 
@@ -85,6 +78,8 @@ class TerminalRequest:
     pty: bool = False
     env: dict[str, str] = field(default_factory=dict)
     max_output_chars: int = 50_000
+    cols: int = 80
+    rows: int = 24
 
 
 @dataclass(slots=True)
@@ -115,29 +110,43 @@ class _BackgroundProcess:
     started_at: float = field(default_factory=time.monotonic)
 
 
-class ZNLocalTerminal:
-    """Local shell execution owned by the resident body.
+@dataclass(slots=True)
+class _PtySession:
+    handle: str
+    context_id: str
+    command: str
+    pty: ZNPty
+    marker: str
+    started_cwd: str
+    max_output_chars: int
+    output: bytearray = field(default_factory=bytearray)
+    truncated: bool = False
+    started_at: float = field(default_factory=time.monotonic)
 
-    Every command gets a fresh shell process.  The logical ZN context retains
-    only its observed current working directory; environment mutations are not
-    silently process-global.  This makes the body deterministic across multiple
-    concurrent resident tasks while still preserving the useful ``cd`` behavior
-    users expect from a terminal session.
+
+PtyFactory = Callable[..., ZNPty]
+
+
+class ZNLocalTerminal:
+    """Local shell/PTY execution owned by the resident body.
+
+    Non-interactive commands get a fresh shell process. Interactive commands get
+    a PTY session with the same context/cwd semantics and can receive stdin and
+    resize events through their session id. Environment mutations are never
+    silently promoted to the resident process.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, pty_factory: PtyFactory = spawn_zn_pty) -> None:
         self._lock = threading.RLock()
         self._cwd_by_context: dict[str, str] = {}
         self._background: dict[str, _BackgroundProcess] = {}
+        self._pty_sessions: dict[str, _PtySession] = {}
+        self._pty_factory = pty_factory
 
     def execute(self, request: TerminalRequest) -> TerminalResult:
         command = str(request.command or "").strip()
         if not command:
             raise ValueError("terminal command must not be empty")
-        if request.pty:
-            raise NotImplementedError(
-                "ZN local PTY extraction is not connected yet; use non-PTY execution"
-            )
 
         context_id = str(request.context_id or "zn-resident").strip() or "zn-resident"
         cwd = self._resolve_request_cwd(context_id, request.workdir)
@@ -146,6 +155,17 @@ class ZNLocalTerminal:
         env = self._child_env(request.env)
         shell = self._find_shell()
         args = self._shell_args(shell, script)
+
+        if request.pty:
+            return self._execute_pty(
+                request=request,
+                command=command,
+                context_id=context_id,
+                cwd=cwd,
+                marker=marker,
+                args=args,
+                env=env,
+            )
 
         if request.background:
             return self._start_background(
@@ -191,7 +211,13 @@ class ZNLocalTerminal:
         )
 
     def poll(self, session_id: str) -> TerminalResult:
-        item = self._background_item(session_id)
+        key = str(session_id or "").strip()
+        with self._lock:
+            pty_item = self._pty_sessions.get(key)
+        if pty_item is not None:
+            return self._poll_pty(pty_item)
+
+        item = self._background_item(key)
         code = item.process.poll()
         output = _read_text_best_effort(item.output_path)
         clean_output, observed_cwd = self._extract_cwd(output, item.marker)
@@ -225,8 +251,44 @@ class ZNLocalTerminal:
             error=None if code == 0 else f"command exited with code {code}",
         )
 
+    def write_stdin(self, session_id: str, data: str | bytes) -> TerminalResult:
+        item = self._pty_item(session_id)
+        payload = data if isinstance(data, bytes) else str(data).encode("utf-8")
+        item.pty.write(payload)
+        self._drain_pty(item, timeout=0.01)
+        rendered, truncated, observed_cwd = self._pty_output(item)
+        return TerminalResult(
+            status="running" if item.pty.is_alive() else "completed",
+            command=item.command,
+            success=True,
+            output=rendered,
+            exit_code=item.pty.exit_code() if not item.pty.is_alive() else None,
+            cwd=observed_cwd or item.started_cwd,
+            pid=item.pty.pid,
+            session_id=item.handle,
+            truncated=truncated,
+        )
+
+    def resize(self, session_id: str, *, cols: int, rows: int) -> TerminalResult:
+        item = self._pty_item(session_id)
+        item.pty.resize(int(cols), int(rows))
+        return TerminalResult(
+            status="running" if item.pty.is_alive() else "completed",
+            command=item.command,
+            success=True,
+            cwd=item.started_cwd,
+            pid=item.pty.pid,
+            session_id=item.handle,
+        )
+
     def stop(self, session_id: str) -> TerminalResult:
-        item = self._background_item(session_id)
+        key = str(session_id or "").strip()
+        with self._lock:
+            pty_item = self._pty_sessions.get(key)
+        if pty_item is not None:
+            return self._stop_pty(pty_item)
+
+        item = self._background_item(key)
         if item.process.poll() is None:
             self._terminate_tree(item.process)
         output = _read_text_best_effort(item.output_path)
@@ -252,6 +314,196 @@ class ZNLocalTerminal:
     def context_cwd(self, context_id: str) -> str | None:
         with self._lock:
             return self._cwd_by_context.get(str(context_id or "zn-resident"))
+
+    def _execute_pty(
+        self,
+        *,
+        request: TerminalRequest,
+        command: str,
+        context_id: str,
+        cwd: str,
+        marker: str,
+        args: list[str],
+        env: dict[str, str],
+    ) -> TerminalResult:
+        pty = self._pty_factory(
+            args,
+            cwd=cwd,
+            env=env,
+            cols=int(request.cols),
+            rows=int(request.rows),
+        )
+        handle = f"pty-{uuid.uuid4().hex[:12]}"
+        item = _PtySession(
+            handle=handle,
+            context_id=context_id,
+            command=command,
+            pty=pty,
+            marker=marker,
+            started_cwd=cwd,
+            max_output_chars=max(128, int(request.max_output_chars)),
+        )
+        if request.background:
+            with self._lock:
+                self._pty_sessions[handle] = item
+            self._drain_pty(item, timeout=0.01)
+            return TerminalResult(
+                status="running",
+                command=command,
+                success=True,
+                cwd=cwd,
+                pid=pty.pid,
+                session_id=handle,
+            )
+
+        deadline = time.monotonic() + max(0.05, float(request.timeout))
+        timed_out = False
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            data = pty.read(timeout=min(0.1, remaining))
+            if data is None:
+                break
+            if data:
+                self._append_pty_output(item, data)
+                continue
+            if not pty.is_alive():
+                break
+
+        if timed_out and pty.is_alive():
+            pty.close()
+        else:
+            self._drain_pty(item, timeout=0.0)
+        code = pty.exit_code()
+        rendered, truncated, observed_cwd = self._pty_output(item)
+        if observed_cwd:
+            self._remember_cwd(context_id, observed_cwd)
+        if pty.is_alive():
+            pty.close()
+        else:
+            pty.close()
+        success = not timed_out and (code == 0 or code is None)
+        return TerminalResult(
+            status="timeout" if timed_out else "completed",
+            command=command,
+            success=success,
+            output=rendered,
+            exit_code=code,
+            cwd=observed_cwd or cwd,
+            pid=pty.pid,
+            session_id=handle,
+            truncated=truncated,
+            timed_out=timed_out,
+            error=(
+                f"command timed out after {float(request.timeout):g}s"
+                if timed_out
+                else None if success else f"command exited with code {code}"
+            ),
+        )
+
+    def _poll_pty(self, item: _PtySession) -> TerminalResult:
+        self._drain_pty(item, timeout=0.01)
+        alive = item.pty.is_alive()
+        rendered, truncated, observed_cwd = self._pty_output(item)
+        if alive:
+            return TerminalResult(
+                status="running",
+                command=item.command,
+                success=True,
+                output=rendered,
+                cwd=observed_cwd or item.started_cwd,
+                pid=item.pty.pid,
+                session_id=item.handle,
+                truncated=truncated,
+            )
+
+        code = item.pty.exit_code()
+        if observed_cwd:
+            self._remember_cwd(item.context_id, observed_cwd)
+        self._forget_pty(item.handle)
+        success = code == 0 or code is None
+        return TerminalResult(
+            status="completed",
+            command=item.command,
+            success=success,
+            output=rendered,
+            exit_code=code,
+            cwd=observed_cwd or item.started_cwd,
+            pid=item.pty.pid,
+            session_id=item.handle,
+            truncated=truncated,
+            error=None if success else f"command exited with code {code}",
+        )
+
+    def _stop_pty(self, item: _PtySession) -> TerminalResult:
+        self._drain_pty(item, timeout=0.01)
+        item.pty.close()
+        code = item.pty.exit_code()
+        rendered, truncated, observed_cwd = self._pty_output(item)
+        if observed_cwd:
+            self._remember_cwd(item.context_id, observed_cwd)
+        with self._lock:
+            self._pty_sessions.pop(item.handle, None)
+        return TerminalResult(
+            status="stopped",
+            command=item.command,
+            success=False,
+            output=rendered,
+            exit_code=code,
+            cwd=observed_cwd or item.started_cwd,
+            pid=item.pty.pid,
+            session_id=item.handle,
+            truncated=truncated,
+            error="interactive command stopped",
+        )
+
+    def _pty_item(self, session_id: str) -> _PtySession:
+        key = str(session_id or "").strip()
+        with self._lock:
+            item = self._pty_sessions.get(key)
+        if item is None:
+            raise KeyError(f"unknown ZN interactive terminal session: {key or '<empty>'}")
+        return item
+
+    def _drain_pty(self, item: _PtySession, *, timeout: float) -> None:
+        first = True
+        while True:
+            data = item.pty.read(timeout=timeout if first else 0.0)
+            first = False
+            if data is None or data == b"":
+                return
+            self._append_pty_output(item, data)
+
+    @staticmethod
+    def _append_pty_output(item: _PtySession, data: bytes) -> None:
+        item.output.extend(data)
+        max_bytes = max(4096, item.max_output_chars * 4)
+        if len(item.output) <= max_bytes:
+            return
+        payload = max_bytes - 128
+        head = max(0, int(payload * 0.35))
+        tail = max(0, payload - head)
+        compact = (
+            bytes(item.output[:head])
+            + b"\n... [ZN PTY stream buffer truncated] ...\n"
+            + bytes(item.output[-tail:])
+        )
+        item.output = bytearray(compact)
+        item.truncated = True
+
+    def _pty_output(self, item: _PtySession) -> tuple[str, bool, str | None]:
+        text = bytes(item.output).decode("utf-8", errors="replace")
+        clean_output, observed_cwd = self._extract_cwd(text, item.marker)
+        rendered, bounded = _bounded_output(clean_output, item.max_output_chars)
+        return rendered, item.truncated or bounded, observed_cwd
+
+    def _forget_pty(self, handle: str) -> None:
+        with self._lock:
+            item = self._pty_sessions.pop(handle, None)
+        if item is not None:
+            item.pty.close()
 
     def _start_background(
         self,
@@ -330,9 +582,6 @@ class ZNLocalTerminal:
 
     @staticmethod
     def _wrap_command(command: str, marker: str) -> str:
-        # EXIT trap preserves the cwd marker even when the user command calls
-        # ``exit``.  The trap captures the command's status first and exits with
-        # that exact status, so observation does not turn a failure into success.
         marker_literal = marker.replace("'", "")
         return (
             "trap '__zn_status=$?; printf \"\\n"
@@ -362,8 +611,6 @@ class ZNLocalTerminal:
                 env.pop(key, None)
         for key in _ZN_RUNTIME_MARKERS:
             env.pop(key, None)
-        # A packaged resident may have injected its own import root.  A shell
-        # command running a user's Python project must not inherit that path.
         env.pop("PYTHONPATH", None)
         env.setdefault("PYTHONUTF8", "1")
         if _IS_WINDOWS:
@@ -384,11 +631,7 @@ class ZNLocalTerminal:
                 and os.access(configured, os.X_OK)
             ):
                 return configured
-            return (
-                shutil.which("bash")
-                or shutil.which("sh")
-                or "/bin/sh"
-            )
+            return shutil.which("bash") or shutil.which("sh") or "/bin/sh"
 
         candidates = [str(os.environ.get("ZN_GIT_BASH_PATH") or "").strip()]
         which = shutil.which("bash")
