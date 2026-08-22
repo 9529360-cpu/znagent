@@ -16,9 +16,10 @@ export async function checkZnResidentApplicationUpdateReadiness(): Promise<ZnRes
 
     if (relation.busy) {
       return {
-        ready: false,
+        ready: true,
         reason: 'busy',
-        message: 'ZN is still working; update application is deferred until resident-owned work is idle.'
+        message:
+          'ZN is still working; the desktop application can update while resident runtime handoff remains deferred until resident-owned work is idle.'
       }
     }
 
