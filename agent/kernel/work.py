@@ -18,6 +18,20 @@ _WORK_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _RESERVED_METADATA_KEYS = {"workspace"}
 _ARTIFACT_CONTENT_LIMIT = 60_000
 _MAX_ARTIFACTS_PER_THREAD = 96
+_TERMINAL_ACTION_KINDS = {
+    "command",
+    "terminal",
+    "shell",
+    "terminal_poll",
+    "command_poll",
+    "terminal_stop",
+    "command_stop",
+    "terminal_input",
+    "terminal_write",
+    "command_input",
+    "terminal_resize",
+    "command_resize",
+}
 
 
 def _id(prefix: str) -> str:
@@ -495,8 +509,6 @@ class ResidentWorkLedger:
         task: str,
         workspace: WorkspaceAssociation | None,
     ) -> list[WorkArtifact]:
-        if workspace is None:
-            return []
         body = getattr(self.resident, "body", None)
         if body is None:
             return []
@@ -507,6 +519,16 @@ class ResidentWorkLedger:
             for item in reversed(body.recent_actions(160))
             if item.event_id == run.event.event_id
         ]
+        for artifact in self._collect_terminal_artifacts(
+            thread,
+            run.event.event_id,
+            event_actions,
+        ):
+            created[artifact.artifact_id] = artifact
+
+        if workspace is None:
+            return list(created.values())
+
         for action in event_actions:
             if not action.success or action.kind not in {
                 "read_text",
@@ -571,6 +593,58 @@ class ResidentWorkLedger:
             ):
                 created[artifact.artifact_id] = artifact
         return list(created.values())
+
+    def _collect_terminal_artifacts(
+        self,
+        thread: WorkThread,
+        event_id: str,
+        event_actions: list[Any],
+    ) -> list[WorkArtifact]:
+        created: list[WorkArtifact] = []
+        for action in event_actions:
+            if action.kind not in _TERMINAL_ACTION_KINDS:
+                continue
+            data = action.data if isinstance(action.data, dict) else {}
+            command = str(data.get("command") or "").strip()
+            status = str(data.get("status") or ("completed" if action.success else "failed")).strip()
+            error = str(action.error or data.get("error") or "").strip()
+            parts: list[str] = []
+            if command:
+                parts.append(f"$ {command}")
+            if action.output:
+                parts.append(action.output.rstrip())
+            if error and error not in action.output:
+                parts.append(f"[error] {error}")
+            if not parts:
+                parts.append(f"[{status or 'terminal'}]")
+            content = "\n".join(parts)
+            name_command = command if command else action.kind.replace("_", " ")
+            name = f"Terminal · {name_command[:72]}"
+            artifact = WorkArtifact(
+                artifact_id=_artifact_id(event_id, "terminal", action.action_id),
+                thread_id=thread.thread_id,
+                event_id=event_id,
+                kind="terminal",
+                name=name,
+                content=content[:_ARTIFACT_CONTENT_LIMIT],
+                metadata={
+                    "operation": action.kind,
+                    "status": status,
+                    "success": bool(action.success),
+                    "command": command,
+                    "cwd": data.get("cwd"),
+                    "exit_code": data.get("exit_code"),
+                    "pid": data.get("pid"),
+                    "session_id": data.get("session_id"),
+                    "timed_out": bool(data.get("timed_out", False)),
+                    "truncated": bool(data.get("truncated", False))
+                    or len(content) > _ARTIFACT_CONTENT_LIMIT,
+                    "source_action_id": action.action_id,
+                },
+            )
+            self._save_artifact(artifact)
+            created.append(artifact)
+        return created
 
     @staticmethod
     def _workspace_context_relevant(task: str, event_actions: list[Any]) -> bool:
