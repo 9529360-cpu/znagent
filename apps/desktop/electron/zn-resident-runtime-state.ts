@@ -25,6 +25,9 @@ function residentBusy(status: unknown): boolean {
   const root = asRecord(status)
   if (!root) return false
 
+  const queueDepth = Number(root.queue_depth ?? 0)
+  if (Number.isFinite(queueDepth) && queueDepth > 0) return true
+
   const working = asRecord(root.working_state)
   if (normalize(working?.current_event_id)) return true
 
