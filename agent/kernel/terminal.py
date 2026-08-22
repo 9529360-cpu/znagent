@@ -253,16 +253,27 @@ class ZNLocalTerminal:
 
     def write_stdin(self, session_id: str, data: str | bytes) -> TerminalResult:
         item = self._pty_item(session_id)
+        if not item.pty.is_alive():
+            return self._poll_pty(item)
+
         payload = data if isinstance(data, bytes) else str(data).encode("utf-8")
-        item.pty.write(payload)
+        try:
+            item.pty.write(payload)
+        except Exception:
+            if not item.pty.is_alive():
+                return self._poll_pty(item)
+            raise
+
         self._drain_pty(item, timeout=0.01)
+        if not item.pty.is_alive():
+            return self._poll_pty(item)
+
         rendered, truncated, observed_cwd = self._pty_output(item)
         return TerminalResult(
-            status="running" if item.pty.is_alive() else "completed",
+            status="running",
             command=item.command,
             success=True,
             output=rendered,
-            exit_code=item.pty.exit_code() if not item.pty.is_alive() else None,
             cwd=observed_cwd or item.started_cwd,
             pid=item.pty.pid,
             session_id=item.handle,
@@ -271,9 +282,21 @@ class ZNLocalTerminal:
 
     def resize(self, session_id: str, *, cols: int, rows: int) -> TerminalResult:
         item = self._pty_item(session_id)
-        item.pty.resize(int(cols), int(rows))
+        if not item.pty.is_alive():
+            return self._poll_pty(item)
+
+        try:
+            item.pty.resize(int(cols), int(rows))
+        except Exception:
+            if not item.pty.is_alive():
+                return self._poll_pty(item)
+            raise
+
+        if not item.pty.is_alive():
+            return self._poll_pty(item)
+
         return TerminalResult(
-            status="running" if item.pty.is_alive() else "completed",
+            status="running",
             command=item.command,
             success=True,
             cwd=item.started_cwd,
