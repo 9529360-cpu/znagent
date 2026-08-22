@@ -89,11 +89,23 @@ class _ReplayAdapter:
         self.sent = []
         self.closed = False
         self.delivered = threading.Event()
+        self.offset = 0
+        self.restored = []
+
+    def checkpoint(self):
+        return {"offset": self.offset}
+
+    def restore_checkpoint(self, checkpoint):
+        self.restored.append(dict(checkpoint))
+        self.offset = max(self.offset, int(checkpoint.get("offset") or 0))
 
     def poll(self, *, timeout=0.0):
         if not self.polled:
             self.polled = True
-            return [_FlakyAdapter.event()] if self.replay else []
+            if self.replay:
+                self.offset = max(self.offset, 43)
+                return [_FlakyAdapter.event()]
+            return []
         time.sleep(min(0.01, timeout))
         return []
 
@@ -137,7 +149,7 @@ class ResidentChannelSupervisorTests(unittest.TestCase):
             self.assertTrue(adapter.closed)
             self.assertFalse(state["running"])
 
-    def test_restart_delivers_existing_outcome_and_deduplicates_replayed_percept(self):
+    def test_restart_restores_checkpoint_delivers_outcome_and_deduplicates_replay(self):
         with tempfile.TemporaryDirectory() as tmp:
             store_path = Path(tmp) / "kernel.db"
             resident = _Resident(store_path, auto_complete=False)
@@ -155,6 +167,13 @@ class ResidentChannelSupervisorTests(unittest.TestCase):
                 time.sleep(0.01)
             self.assertEqual(len(resident.calls), 1)
             event_id = resident.calls[0][2]
+            deadline = time.monotonic() + 1.0
+            while first_supervisor.ledger.load_checkpoint("telegram") != {"offset": 43} and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertEqual(
+                first_supervisor.ledger.load_checkpoint("telegram"),
+                {"offset": 43},
+            )
             first_supervisor.stop()
             self.assertEqual(first.sent, [])
 
@@ -175,6 +194,7 @@ class ResidentChannelSupervisorTests(unittest.TestCase):
             time.sleep(0.05)
             second_supervisor.stop()
 
+            self.assertEqual(second.restored[0], {"offset": 43})
             self.assertEqual(len(resident.calls), 1)
             self.assertEqual(second.sent[0].text, "completed after restart")
             route = second_supervisor.ledger.route_for_event(event_id)
@@ -204,7 +224,7 @@ class ResidentChannelSupervisorTests(unittest.TestCase):
         )
 
         with patch(
-            "agent.kernel.telegram_channel.TelegramBotApiChannel.from_zn_config"
+            "agent.kernel.telegram_resident_channel.ResidentTelegramBotApiChannel.from_zn_config"
         ) as build:
             marker = _FlakyAdapter()
             build.return_value = marker
