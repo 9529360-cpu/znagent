@@ -43,7 +43,7 @@ function role(value: unknown): ZnThreadRole {
 }
 
 function artifactKind(value: unknown): ZnArtifactKind {
-  return value === 'file' || value === 'diff' ? value : 'other'
+  return value === 'file' || value === 'diff' || value === 'terminal' ? value : 'other'
 }
 
 function normalizeMessage(value: unknown): ZnThreadMessage | null {
