@@ -75,22 +75,24 @@ jobs:
           mountpoint="$extract/dmg-mount"
           mkdir -p "$dmg_payload" "$zip_payload" "$mountpoint"
 
-          mapfile -t dmgs < <(find "$release" -maxdepth 1 -type f -name 'ZN-*.dmg' -print)
-          mapfile -t zips < <(find "$release" -maxdepth 1 -type f -name 'ZN-*.zip' -print)
-          if [[ ${#dmgs[@]} -ne 1 ]]; then echo "expected one DMG, found ${#dmgs[@]}"; exit 1; fi
-          if [[ ${#zips[@]} -ne 1 ]]; then echo "expected one ZIP, found ${#zips[@]}"; exit 1; fi
+          dmg_count="$(find "$release" -maxdepth 1 -type f -name 'ZN-*.dmg' | wc -l | tr -d ' ')"
+          zip_count="$(find "$release" -maxdepth 1 -type f -name 'ZN-*.zip' | wc -l | tr -d ' ')"
+          if [[ "$dmg_count" != '1' ]]; then echo "expected one DMG, found $dmg_count"; exit 1; fi
+          if [[ "$zip_count" != '1' ]]; then echo "expected one ZIP, found $zip_count"; exit 1; fi
+          dmg="$(find "$release" -maxdepth 1 -type f -name 'ZN-*.dmg' -print -quit)"
+          zip="$(find "$release" -maxdepth 1 -type f -name 'ZN-*.zip' -print -quit)"
 
-          hdiutil attach "${dmgs[0]}" -nobrowse -readonly -mountpoint "$mountpoint"
+          hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mountpoint"
           trap 'hdiutil detach "$mountpoint" >/dev/null 2>&1 || true' EXIT
           ditto "$mountpoint/ZN.app" "$dmg_payload/ZN.app"
           hdiutil detach "$mountpoint"
           trap - EXIT
 
-          ditto -x -k "${zips[0]}" "$zip_payload"
+          ditto -x -k "$zip" "$zip_payload"
 
-          echo "DMG: ${dmgs[0]} $(du -h "${dmgs[0]}" | awk '{print $1}')"
-          echo "ZIP: ${zips[0]} $(du -h "${zips[0]}" | awk '{print $1}')"
-          shasum -a 256 "${dmgs[0]}" "${zips[0]}"
+          echo "DMG: $dmg $(du -h "$dmg" | awk '{print $1}')"
+          echo "ZIP: $zip $(du -h "$zip" | awk '{print $1}')"
+          shasum -a 256 "$dmg" "$zip"
 
       - name: Verify macOS installer payloads
         shell: bash
