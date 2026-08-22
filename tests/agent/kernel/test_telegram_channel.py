@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from agent.kernel.channel import ChannelMessage
 from agent.kernel.telegram_channel import (
@@ -64,7 +65,11 @@ class TelegramChannelTests(unittest.TestCase):
                                     "message_thread_id": 7,
                                     "text": "hello ZN",
                                     "from": {"id": 12},
-                                    "chat": {"id": -100, "type": "supergroup", "title": "room"},
+                                    "chat": {
+                                        "id": -100,
+                                        "type": "supergroup",
+                                        "title": "room",
+                                    },
                                 },
                             }
                         ],
@@ -86,7 +91,6 @@ class TelegramChannelTests(unittest.TestCase):
         adapter = TelegramBotApiChannel("token", client=client)
         self.assertFalse(adapter.inbound_authorized)
         self.assertEqual(adapter.poll(), [])
-        # Denied updates are still consumed so they cannot starve long polling.
         self.assertEqual(adapter.offset, 2)
 
     def test_allowed_chat_ids_filter_without_starting_another_agent(self):
@@ -96,8 +100,16 @@ class TelegramChannelTests(unittest.TestCase):
                     {
                         "ok": True,
                         "result": [
-                            _message_update(update_id=1, chat_id=4, text="ignored"),
-                            _message_update(update_id=2, chat_id=5, text="accepted"),
+                            _message_update(
+                                update_id=1,
+                                chat_id=4,
+                                text="ignored",
+                            ),
+                            _message_update(
+                                update_id=2,
+                                chat_id=5,
+                                text="accepted",
+                            ),
                         ],
                     }
                 )
@@ -165,6 +177,36 @@ class TelegramChannelTests(unittest.TestCase):
         )
         self.assertTrue(open_adapter.allow_all)
         self.assertTrue(open_adapter.inbound_authorized)
+
+    @patch("agent.kernel.telegram_channel.build_telegram_http_client")
+    def test_from_zn_config_routes_network_options_into_zn_transport(self, build_client):
+        built = _Client([])
+        build_client.return_value = built
+        adapter = TelegramBotApiChannel.from_zn_config(
+            {
+                "channels": {
+                    "telegram": {
+                        "allow_all": True,
+                        "network": {
+                            "fallback_ips": ["149.154.167.220"],
+                            "discover_fallback_ips": True,
+                            "proxy_url": "http://proxy.example:8080",
+                        },
+                    }
+                }
+            },
+            environ={"TELEGRAM_BOT_TOKEN": "env-token"},
+        )
+
+        self.assertIs(adapter._client, built)
+        build_client.assert_called_once_with(
+            base_url="https://api.telegram.org",
+            fallback_ips=("149.154.167.220",),
+            discover=True,
+            proxy_url="http://proxy.example:8080",
+            environ={"TELEGRAM_BOT_TOKEN": "env-token"},
+            timeout=35.0,
+        )
 
 
 if __name__ == "__main__":
