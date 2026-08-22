@@ -138,7 +138,7 @@ class FirecrawlWebResource:
                 results.append(
                     WebDocument(
                         url=url,
-                        metadata={"sourceURL": url},
+                        metadata={"sourceURL": url, "requestedURL": url},
                         error="Blocked: URL targets a private, internal, unresolved, or unsafe network address",
                     )
                 )
@@ -153,7 +153,7 @@ class FirecrawlWebResource:
                 results.append(
                     WebDocument(
                         url=url,
-                        metadata={"sourceURL": url},
+                        metadata={"sourceURL": url, "requestedURL": url},
                         error=f"Firecrawl scrape failed: {exc}",
                     )
                 )
@@ -169,7 +169,7 @@ class FirecrawlWebResource:
                     WebDocument(
                         url=final_url,
                         title=title,
-                        metadata={"sourceURL": final_url},
+                        metadata={"sourceURL": final_url, "requestedURL": url},
                         error="Blocked: redirected URL targets a private, internal, unresolved, or unsafe network address",
                     )
                 )
@@ -179,7 +179,8 @@ class FirecrawlWebResource:
             html = payload.get("html")
             content = str(markdown or html or "")
             normalized_metadata = dict(metadata)
-            normalized_metadata.setdefault("sourceURL", final_url)
+            normalized_metadata["sourceURL"] = final_url
+            normalized_metadata["requestedURL"] = url
             if title:
                 normalized_metadata.setdefault("title", title)
             results.append(
