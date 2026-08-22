@@ -6,24 +6,22 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from agent.kernel.life import ZNLifeCore
 from agent.kernel.provider_bridge import build_resident_runtime
 
 
 class LifeConnectionLifecycleTests(unittest.TestCase):
     def test_life_sqlite_connections_are_closed_after_pulse(self) -> None:
-        real_connect = sqlite3.connect
+        real_connect = ZNLifeCore._connect
         opened: list[sqlite3.Connection] = []
 
-        def tracking_connect(*args, **kwargs):
-            conn = real_connect(*args, **kwargs)
+        def tracking_connect(life: ZNLifeCore) -> sqlite3.Connection:
+            conn = real_connect(life)
             opened.append(conn)
             return conn
 
         with tempfile.TemporaryDirectory() as tmp:
-            with patch(
-                "agent.kernel.life.sqlite3.connect",
-                side_effect=tracking_connect,
-            ):
+            with patch.object(ZNLifeCore, "_connect", tracking_connect):
                 resident = build_resident_runtime(
                     config={"model": {}},
                     store_path=Path(tmp) / "kernel.db",
