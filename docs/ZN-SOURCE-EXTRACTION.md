@@ -67,7 +67,7 @@ Status: **resident-owned channel lifecycle active; Telegram text/inbound media a
 
 ## 4. Independent desktop/product work
 
-Status: **M4 complete; M5/M6 materially advanced; M7 artifact evidence exists on Linux x86_64, Windows x64 and macOS arm64; M8 now has a Linux amd64 deb fresh-install proof**.
+Status: **M4 complete; M5/M6 materially advanced; M7 artifact evidence exists on Linux x86_64, Windows x64 and macOS arm64; M8 now has Linux amd64 deb fresh-install and installed autostart continuity proofs**.
 
 Active desktop remains:
 
@@ -84,7 +84,7 @@ Work identity/history, canonical workspace association and active `WorkRun` link
 
 ## 5. Python/runtime packaging ownership
 
-Status: **M1 active packaged resident path is ZN-owned; real Linux/Windows/macOS package artifacts and one fresh Linux installation preserve that ownership**.
+Status: **M1 active packaged resident path is ZN-owned; real Linux/Windows/macOS package artifacts and fresh Linux install/autostart evidence preserve that ownership**.
 
 The independent `runtime/python` distribution is `znagent`, with `zn_agent` installed package and `zn-resident` / `zn_agent.resident` entrypoints. Runtime staging/verification rejects `hermes_cli`.
 
@@ -186,11 +186,47 @@ external_brains == ()
 
 The temporary clean-install workflow was removed after evidence in `1e5b2490a75eacfa5ec2c2e3240e6f9b1d015a05`.
 
-This proves one real M8 clean-install slice. It does not prove OS-login launch, GUI session behavior, N → N+1 continuity, Windows/macOS clean installation, or signing/notarization.
+### 5.5 Linux installed autostart continuity evidence
+
+Source:
+
+```text
+6cc8becea3d97eea09c0887cd5c70612fc9ee573  fix: gracefully stop resident on SIGTERM
+```
+
+Validation:
+
+```text
+ZN Kernel / Python        success
+Electron / TypeScript    success
+normal CI run             32593886005
+ZN Linux Autostart Smoke success
+autostart run             32593886026
+```
+
+The fresh-runner gate installed the formal deb under `/opt/ZN`, then used only its embedded Python/installed package to create and exercise the systemd user login entry:
+
+```text
+zn_agent.core.resident_autostart install
+→ enabled zn-resident.service / WantedBy=default.target
+→ ExecStart uses embedded /opt/ZN Python + zn_agent.core.resident_server
+→ resident active + packaged RPC status running
+→ systemctl --user stop zn-resident.service
+→ graceful SIGTERM cleanup retires endpoint and durable lease
+→ systemctl --user restart default.target
+→ packaged resident active/running again
+→ uninstall autostart
+```
+
+The login entry had no source-checkout path, inherited `agent.kernel` runtime command or `WorkingDirectory` dependency. The source regression separately launches a real resident subprocess and proves SIGTERM exits `0` only after endpoint and SQLite resident lease are removed.
+
+The exercise closed source/runtime-boundary defects in packaged module naming, startup cwd dependence and SIGTERM cleanup rather than introducing compatibility wrappers. The temporary autostart workflow was retired after successful evidence in `441f7a7e516118a2eac05668207dc8d8265cb610`.
+
+This proves the currently scoped Linux installed autostart/start-stop-login-target continuity. N → N+1 runtime handoff and other intended-platform installation/login evidence remain separate M8 gates.
 
 ## 6. Formal desktop package identity
 
-Status: **active formal product/build identity transferred to ZN; current intended OS-family artifact payloads verified; Linux deb also survives fresh system installation**.
+Status: **active formal product/build identity transferred to ZN; current intended OS-family artifact payloads verified; Linux deb also survives fresh system installation and installed user-login continuity**.
 
 Implemented/verified:
 
@@ -201,17 +237,17 @@ Implemented/verified:
 - Linux AppImage/deb/rpm extracted payloads preserve ZN app/runtime identity and zero-model resident boot;
 - Windows NSIS/MSI extracted payloads preserve ZN PE identity and zero-model resident boot;
 - macOS arm64 DMG/ZIP extracted payloads preserve ZN bundle/protocol identity and zero-model resident boot;
-- a fresh Ubuntu 24.04 runner can install the formal Linux deb and boot the installed embedded resident without source tree or external model.
+- a fresh Ubuntu 24.04 runner can install the formal Linux deb and boot the installed embedded resident without source tree or external model;
+- the fresh installed Linux resident can be registered under the user login target, stopped cleanly with lease retirement and started again by `default.target` activation.
 
-Important boundary: M7 artifact content/runtime identity is closed for the currently exercised targets, and E10/M8 has started. Clean-machine/continuity is still partial.
+Important boundary: M7 artifact content/runtime identity is closed for the currently exercised targets, and E10/M8 is in progress. Clean-machine/continuity is still partial because runtime upgrade handoff and equivalent intended-platform release evidence remain open.
 
 ## 7. Remaining inherited/release debt
 
 Still pending:
 
-- OS-login autostart validation;
 - N → N+1 application/runtime/resident handoff;
-- Windows/macOS clean-install coverage for intended release targets;
+- Windows/macOS clean-install/login coverage for intended release targets;
 - signing/notarization when release credentials/process are operationally configured;
 - any additional architecture coverage required by the eventual release matrix;
 - inactive inherited Electron/renderer/gateway/browser/source and dependency/script debt not on the active ZN control path;
@@ -232,17 +268,17 @@ E6  switch resident production callers to ZN-owned modules    DONE for cognition
 E7  build independent ZN Electron main/preload/UI foundation  DONE
 E8  remove active old-product control-plane imports           DONE for active resident + desktop
 E9  package independently bootable ZN product                 ARTIFACT SHAPE VERIFIED on Linux x86_64 / Windows x64 / macOS arm64
-E10 verify clean-machine install/upgrade/multi-OS release      IN PROGRESS; Linux amd64 deb fresh-install resident boot verified
+E10 verify clean-machine install/upgrade/multi-OS release      IN PROGRESS; Linux deb fresh-install + installed autostart continuity verified
 ```
 
 ## 9. Immediate code target
 
 Priority order:
 
-1. do not rebuild already-proven installer/artifact gates merely to recreate evidence;
-2. trace the active ZN-owned startup/autostart/update call chain before selecting the next M8 test;
-3. validate OS-login autostart and N → N+1 application/runtime/resident continuity as separate gates, repairing lifecycle/ownership defects at source boundaries;
-4. add Windows/macOS clean-install coverage only where it provides genuinely new release evidence;
+1. do not rebuild already-proven installer/autostart gates merely to recreate evidence;
+2. trace the active ZN-owned update/runtime-selection/resident call chain before changing handoff behavior;
+3. validate N → N+1 as two separate gates: busy resident must not be interrupted; idle resident must gracefully retire, start N+1 and preserve the same ZN home/identity/state;
+4. add Windows/macOS clean-install/login coverage only where it provides genuinely new release evidence;
 5. keep signing/notarization explicit and operational—never infer it from unsigned artifact success;
 6. establish browser interaction only through a clean resident-owned body/sense seam;
 7. define explicit resident artifact/message egress nomination before Telegram outbound attachment transport.
@@ -264,6 +300,7 @@ The current ownership/extraction boundary requires ZN to be able to:
 - install/start the independent `zn_agent` runtime;
 - package formal desktop product identity without inherited Hermes product/protocol/PE/bootstrap identity;
 - preserve an independently bootable zero-model `zn_agent` resident inside real Linux/Windows/macOS artifact payloads;
-- preserve ZN identity and embedded resident boot after a real fresh Linux deb installation.
+- preserve ZN identity and embedded resident boot after a real fresh Linux deb installation;
+- register/start/stop/restart the fresh installed Linux resident through a ZN-owned systemd user login entry without source checkout or stale resident lease.
 
-The active source satisfies those structural boundaries for implemented slices. The next release-development work remains M8 continuity/autostart/upgrade validation; browser/egress work and later signing/repository migration remain explicit separate debt.
+The active source satisfies those structural boundaries for implemented slices. The next release-development work is N → N+1 continuity/upgrade validation; browser/egress work and later signing/repository migration remain explicit separate debt.
