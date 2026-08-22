@@ -5,7 +5,7 @@ from __future__ import annotations
 The resident's existing ``events`` / ``event_outcomes`` tables remain the source
 of truth for cognition. This ledger stores only communication routing facts:
 which external percept produced a resident event, where its outcome should be
-sent, and whether that delivery has completed.
+sent, whether delivery completed, and the adapter's last safe poll checkpoint.
 """
 
 import json
@@ -144,6 +144,37 @@ class ChannelDeliveryLedger:
         route.updated_at = utc_now()
         self._save(route)
 
+    def load_checkpoint(self, channel: str) -> dict[str, Any] | None:
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT data FROM channel_poll_checkpoints WHERE channel=?",
+                (str(channel or "").strip().lower(),),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(row["data"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def save_checkpoint(self, channel: str, checkpoint: dict[str, Any]) -> None:
+        name = str(channel or "").strip().lower()
+        if not name:
+            raise ValueError("channel checkpoint requires channel name")
+        payload = dict(checkpoint or {})
+        with closing(self._connect()) as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO channel_poll_checkpoints(channel,updated_at,data) "
+                "VALUES(?,?,?)",
+                (
+                    name,
+                    utc_now(),
+                    json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                ),
+            )
+            conn.commit()
+
     def counts(self, channel: str) -> dict[str, int]:
         with closing(self._connect()) as conn:
             rows = conn.execute(
@@ -192,6 +223,11 @@ class ChannelDeliveryLedger:
                 );
                 CREATE INDEX IF NOT EXISTS idx_channel_delivery_pending
                     ON channel_delivery_routes(channel,status,updated_at);
+                CREATE TABLE IF NOT EXISTS channel_poll_checkpoints(
+                    channel TEXT PRIMARY KEY,
+                    updated_at TEXT NOT NULL,
+                    data TEXT NOT NULL
+                );
                 """
             )
             conn.commit()
