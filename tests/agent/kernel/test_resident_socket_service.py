@@ -39,6 +39,48 @@ class ResidentSocketServiceTests(unittest.TestCase):
                 raise AssertionError("resident endpoint closed without a response")
             return json.loads(raw.decode("utf-8"))
 
+    @staticmethod
+    def _wait_for_endpoint(
+        endpoint_path: Path,
+        child: subprocess.Popen,
+        *,
+        timeout: float = 10.0,
+    ) -> dict:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if endpoint_path.is_file():
+                try:
+                    return json.loads(endpoint_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                    pass
+            if child.poll() is not None:
+                error_text = child.stderr.read() if child.stderr else ""
+                raise AssertionError(
+                    f"resident exited before publishing endpoint: {error_text}"
+                )
+            time.sleep(0.05)
+        raise AssertionError("resident endpoint was not published")
+
+    @staticmethod
+    def _spawn_resident(home: Path, runtime_id: str) -> subprocess.Popen:
+        repo_root = Path(__file__).resolve().parents[3]
+        env = os.environ.copy()
+        env["ZN_RUNTIME_ID"] = runtime_id
+        return subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "agent.kernel.resident_server",
+                "--home",
+                str(home),
+            ],
+            cwd=repo_root,
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
     def test_client_disconnect_does_not_end_resident_and_next_client_reconnects(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -109,6 +151,87 @@ class ResidentSocketServiceTests(unittest.TestCase):
             self.assertFalse(thread.is_alive())
             self.assertFalse(endpoint_path.exists())
 
+    def test_idle_runtime_upgrade_keeps_same_home_self_and_work_history(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "zn-home"
+            endpoint_path = home / "kernel" / "resident-endpoint.json"
+            store_path = home / "kernel" / "kernel.db"
+            first = self._spawn_resident(home, "runtime-n")
+            second: subprocess.Popen | None = None
+            try:
+                first_endpoint = self._wait_for_endpoint(endpoint_path, first)
+                self.assertEqual(first_endpoint["runtime_id"], "runtime-n")
+                self.assertEqual(Path(first_endpoint["python"]).resolve(), Path(sys.executable).resolve())
+
+                first_self = self._request(first_endpoint, "self")
+                self.assertTrue(first_self["ok"])
+                created = self._request(
+                    first_endpoint,
+                    "work_create",
+                    {
+                        "thread_id": "upgrade-continuity",
+                        "title": "Runtime continuity marker",
+                        "metadata": {"proof": "same-home"},
+                    },
+                )
+                self.assertTrue(created["ok"])
+                self.assertTrue(store_path.is_file())
+
+                shutdown = self._request(first_endpoint, "shutdown")
+                self.assertTrue(shutdown["ok"])
+                self.assertEqual(first.wait(timeout=8.0), 0)
+                self.assertFalse(endpoint_path.exists())
+                with sqlite3.connect(store_path) as connection:
+                    self.assertIsNone(
+                        connection.execute(
+                            "SELECT instance_id, pid FROM resident_lease WHERE id=1"
+                        ).fetchone()
+                    )
+
+                second = self._spawn_resident(home, "runtime-n-plus-1")
+                second_endpoint = self._wait_for_endpoint(endpoint_path, second)
+                self.assertEqual(second_endpoint["runtime_id"], "runtime-n-plus-1")
+                self.assertNotEqual(first_endpoint["instance_id"], second_endpoint["instance_id"])
+
+                second_self = self._request(second_endpoint, "self")
+                self.assertTrue(second_self["ok"])
+                self.assertEqual(
+                    second_self["result"]["born_at"],
+                    first_self["result"]["born_at"],
+                )
+                self.assertEqual(
+                    second_self["result"]["name"],
+                    first_self["result"]["name"],
+                )
+                self.assertGreaterEqual(
+                    int(second_self["result"]["pulse_count"]),
+                    int(first_self["result"]["pulse_count"]),
+                )
+
+                work = self._request(
+                    second_endpoint,
+                    "work_get",
+                    {"thread_id": "upgrade-continuity"},
+                )
+                self.assertTrue(work["ok"])
+                self.assertEqual(work["result"]["thread_id"], "upgrade-continuity")
+                self.assertEqual(work["result"]["title"], "Runtime continuity marker")
+                self.assertEqual(work["result"]["metadata"]["proof"], "same-home")
+
+                final_shutdown = self._request(second_endpoint, "shutdown")
+                self.assertTrue(final_shutdown["ok"])
+                self.assertEqual(second.wait(timeout=8.0), 0)
+                self.assertFalse(endpoint_path.exists())
+            finally:
+                for child in (first, second):
+                    if child is None:
+                        continue
+                    if child.poll() is None:
+                        child.kill()
+                        child.wait(timeout=5.0)
+                    if child.stderr is not None:
+                        child.stderr.close()
+
     def test_dead_same_host_lease_is_reclaimed_without_waiting_for_timeout(self):
         with tempfile.TemporaryDirectory() as tmp:
             resident = build_resident_runtime_from_existing_stack(
@@ -157,17 +280,8 @@ class ResidentSocketServiceTests(unittest.TestCase):
                 text=True,
             )
             try:
-                deadline = time.monotonic() + 10.0
-                while time.monotonic() < deadline:
-                    if endpoint_path.is_file():
-                        break
-                    if child.poll() is not None:
-                        error_text = child.stderr.read() if child.stderr else ""
-                        self.fail(
-                            f"resident exited before publishing endpoint: {error_text}"
-                        )
-                    time.sleep(0.05)
-                self.assertTrue(endpoint_path.is_file(), "resident endpoint was not published")
+                endpoint = self._wait_for_endpoint(endpoint_path, child)
+                self.assertEqual(int(endpoint["pid"]), child.pid)
 
                 with sqlite3.connect(store_path) as connection:
                     lease = connection.execute(
