@@ -36,6 +36,11 @@ declare global {
     params: Record<string, string>
   }
 
+  type ZnDesktopWorkspaceAttachResult = {
+    cancelled: boolean
+    thread?: unknown
+  }
+
   interface Window {
     znDesktop?: {
       resident: {
@@ -60,6 +65,10 @@ declare global {
         submit: (payload: Record<string, unknown>) => Promise<unknown>
         remember: (payload: Record<string, unknown>) => Promise<unknown>
         forget: (key: string) => Promise<unknown>
+      }
+      workspaces: {
+        attach: (threadId: string) => Promise<ZnDesktopWorkspaceAttachResult>
+        detach: (threadId: string) => Promise<unknown>
       }
       updates: {
         check: () => Promise<ZnDesktopUpdateStatus>

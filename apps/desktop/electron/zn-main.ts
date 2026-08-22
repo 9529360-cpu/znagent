@@ -7,6 +7,7 @@ import { configureZnPackagedRuntime } from './zn-packaged-runtime'
 import { parseZnDeepLink, type ZnDeepLink, znDeepLinksFromArgv } from './zn-protocol'
 import { registerZnReleaseUpdaterIpc } from './zn-release-updater'
 import { registerZnResidentIpc, startZnResidentOnDesktopReady } from './zn-resident-ipc'
+import { registerZnWorkspaceIpc } from './zn-workspace-ipc'
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url))
 const preloadPath = path.join(moduleDir, 'electron-preload.js')
@@ -133,6 +134,7 @@ async function bootstrapZnDesktop(): Promise<void> {
   }
 
   registerZnResidentIpc()
+  registerZnWorkspaceIpc()
   registerZnReleaseUpdaterIpc()
 
   await app.whenReady()

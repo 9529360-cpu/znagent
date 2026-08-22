@@ -20,6 +20,7 @@ test('ZN Electron main owns window and protocol lifecycle without inherited desk
   assert.match(source, /new BrowserWindow\(/)
   assert.match(source, /zn-shell\.html/)
   assert.match(source, /registerZnResidentIpc\(\)/)
+  assert.match(source, /registerZnWorkspaceIpc\(\)/)
   assert.match(source, /requestSingleInstanceLock\(\)/)
   assert.match(source, /setAsDefaultProtocolClient\(['"]zn['"]\)/)
   assert.match(source, /contextIsolation:\s*true/)
@@ -37,8 +38,24 @@ test('ZN preload exposes only the ZN bridge and does not import inherited preloa
   assert.match(source, /zn:deep-link/)
   assert.match(source, /zn:resident:work-list/)
   assert.match(source, /zn:resident:work-submit/)
+  assert.match(source, /zn:workspaces:attach/)
+  assert.match(source, /zn:workspaces:detach/)
+  assert.doesNotMatch(source, /workspace_path/)
   assert.doesNotMatch(source, /import ['"]\.\/preload['"]/) 
   assert.doesNotMatch(source, /hermesDesktop|hermes:/)
+})
+
+test('workspace attachment uses an OS folder picker before resident association', () => {
+  const source = read('electron/zn-workspace-ipc.ts')
+
+  assert.match(source, /showOpenDialog/)
+  assert.match(source, /openDirectory/)
+  assert.match(source, /fs\.realpath/)
+  assert.match(source, /fs\.stat/)
+  assert.match(source, /stat\.isDirectory\(\)/)
+  assert.match(source, /work_attach_workspace/)
+  assert.match(source, /work_detach_workspace/)
+  assert.doesNotMatch(source, /hermes/i)
 })
 
 test('active ZN renderer root is content-first and independent of inherited shell', () => {
@@ -55,8 +72,12 @@ test('active ZN renderer root is content-first and independent of inherited shel
   assert.match(workbench, /loadZnWorkThreads/)
   assert.match(workbench, /createZnWorkThread/)
   assert.match(workbench, /submitZnWork/)
+  assert.match(workbench, /attachZnWorkspace/)
+  assert.match(workbench, /detachZnWorkspace/)
+  assert.match(workbench, /Attach folder/)
   assert.match(residentClient, /resident\.workList/)
   assert.match(residentClient, /resident\.workSubmit/)
+  assert.match(residentClient, /bridge\.workspaces\.attach/)
   assert.match(html, /zn-shell-renderer\.css/)
   assert.match(html, /zn-shell-renderer\.js/)
 

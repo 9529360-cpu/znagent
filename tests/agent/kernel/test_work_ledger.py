@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -57,11 +58,96 @@ class ResidentWorkLedgerTests(unittest.TestCase):
             )
             restored.store.close()
 
-    def test_work_rpc_is_resident_backed(self):
+    def test_workspace_association_persists_and_anchors_native_git_work(self):
         with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / "project"
+            workspace.mkdir()
+            subprocess.run(
+                ["git", "init", str(workspace)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(workspace), "symbolic-ref", "HEAD", "refs/heads/zn-workspace"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            store_path = root / "kernel.db"
             resident = build_resident_runtime_from_existing_stack(
                 config={"model": {}},
-                store_path=Path(tmp) / "kernel.db",
+                store_path=store_path,
+            )
+            ledger = ResidentWorkLedger(resident)
+            thread = ledger.create_thread(thread_id="work-workspace")
+            attached = ledger.attach_workspace(thread.thread_id, workspace, name="Project")
+            association = ledger.workspace_for(attached)
+
+            self.assertIsNotNone(association)
+            assert association is not None
+            self.assertEqual(association.path, str(workspace.resolve()))
+            self.assertEqual(association.name, "Project")
+
+            snapshot, run = ledger.submit(
+                thread.thread_id,
+                "what is current git branch?",
+            )
+            self.assertTrue(run.success)
+            self.assertEqual(run.response, "zn-workspace")
+            self.assertEqual(run.event.payload["workspace_path"], str(workspace.resolve()))
+            self.assertEqual(run.event.payload["workdir"], str(workspace.resolve()))
+            saved_thread, messages = snapshot
+            self.assertEqual(saved_thread.metadata["workspace"]["path"], str(workspace.resolve()))
+            self.assertEqual(messages[-1].detail["workspace"]["name"], "Project")
+            resident.store.close()
+
+            restored = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=store_path,
+            )
+            restored_ledger = ResidentWorkLedger(restored)
+            restored_thread, _ = restored_ledger.get_snapshot("work-workspace")
+            restored_workspace = restored_ledger.workspace_for(restored_thread)
+            self.assertIsNotNone(restored_workspace)
+            assert restored_workspace is not None
+            self.assertEqual(restored_workspace.path, str(workspace.resolve()))
+            restored.store.close()
+
+    def test_workspace_is_reserved_metadata_and_requires_a_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=root / "kernel.db",
+            )
+            ledger = ResidentWorkLedger(resident)
+            thread = ledger.create_thread(
+                thread_id="work-reserved",
+                metadata={
+                    "workspace": {"path": str(root), "name": "forged"},
+                    "tag": "keep",
+                },
+            )
+            self.assertNotIn("workspace", thread.metadata)
+            self.assertEqual(thread.metadata["tag"], "keep")
+
+            file_path = root / "not-a-folder.txt"
+            file_path.write_text("x", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "not a directory"):
+                ledger.attach_workspace(thread.thread_id, file_path)
+            resident.store.close()
+
+    def test_work_rpc_is_resident_backed_and_updates_workspace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=root / "kernel.db",
             )
             server = ResidentRpcServer(
                 resident=resident,
@@ -80,6 +166,23 @@ class ResidentWorkLedgerTests(unittest.TestCase):
             self.assertEqual(created["result"]["id"], "work-rpc")
             self.assertEqual(created["result"]["messages"], [])
 
+            attached = server.handle(
+                {
+                    "id": "attach",
+                    "method": "work_attach_workspace",
+                    "params": {
+                        "thread_id": "work-rpc",
+                        "workspace_path": str(workspace),
+                        "workspace_name": "Workspace",
+                    },
+                }
+            )
+            self.assertTrue(attached["ok"])
+            self.assertEqual(
+                attached["result"]["metadata"]["workspace"]["path"],
+                str(workspace.resolve()),
+            )
+
             submitted = server.handle(
                 {
                     "id": "submit",
@@ -96,7 +199,21 @@ class ResidentWorkLedgerTests(unittest.TestCase):
                 [message["role"] for message in submitted["result"]["thread"]["messages"]],
                 ["user", "zn", "activity"],
             )
+            self.assertEqual(
+                submitted["result"]["thread"]["messages"][-1]["detail"]["workspace"]["path"],
+                str(workspace.resolve()),
+            )
             self.assertFalse(submitted["result"]["run"]["success"])
+
+            detached = server.handle(
+                {
+                    "id": "detach",
+                    "method": "work_detach_workspace",
+                    "params": {"thread_id": "work-rpc"},
+                }
+            )
+            self.assertTrue(detached["ok"])
+            self.assertNotIn("workspace", detached["result"]["metadata"])
 
             listed = server.handle(
                 {"id": "list", "method": "work_list", "params": {"limit": 24}}

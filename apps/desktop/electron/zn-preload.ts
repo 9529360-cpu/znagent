@@ -24,6 +24,10 @@ contextBridge.exposeInMainWorld('znDesktop', {
     remember: payload => ipcRenderer.invoke('zn:resident:remember', payload),
     forget: key => ipcRenderer.invoke('zn:resident:forget', key)
   },
+  workspaces: {
+    attach: threadId => ipcRenderer.invoke('zn:workspaces:attach', { threadId }),
+    detach: threadId => ipcRenderer.invoke('zn:workspaces:detach', { threadId })
+  },
   updates: {
     check: () => ipcRenderer.invoke('zn:updates:check'),
     apply: () => ipcRenderer.invoke('zn:updates:apply')

@@ -13,6 +13,7 @@ from .models import ResidentRunResult, utc_now
 
 
 _WORK_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_RESERVED_METADATA_KEYS = {"workspace"}
 
 
 def _id(prefix: str) -> str:
@@ -24,6 +25,20 @@ def title_for_work_task(task: str) -> str:
     if not normalized:
         return "New work"
     return normalized if len(normalized) <= 48 else f"{normalized[:47].rstrip()}…"
+
+
+@dataclass(slots=True)
+class WorkspaceAssociation:
+    path: str
+    name: str
+    attached_at: str = field(default_factory=utc_now)
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "path": self.path,
+            "name": self.name,
+            "attached_at": self.attached_at,
+        }
 
 
 @dataclass(slots=True)
@@ -50,7 +65,8 @@ class ResidentWorkLedger:
 
     Work history is durable interaction state, not lived-memory facts and not a
     separate agent. User work still enters the same ``ZNResidentRuntime`` event
-    loop; this ledger only owns thread/message continuity around those events.
+    loop; this ledger owns thread/message continuity and the durable local
+    workspace associated with that work.
     """
 
     def __init__(self, resident):
@@ -103,23 +119,34 @@ class ResidentWorkLedger:
         return candidate
 
     @staticmethod
+    def _public_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
+        values = dict(metadata or {})
+        for key in _RESERVED_METADATA_KEYS:
+            values.pop(key, None)
+        return values
+
+    @staticmethod
     def _thread_from_row(row: sqlite3.Row) -> WorkThread:
+        raw_metadata = json.loads(row["metadata_json"] or "{}")
+        metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
         return WorkThread(
             thread_id=str(row["thread_id"]),
             title=str(row["title"]),
-            metadata=json.loads(row["metadata_json"] or "{}"),
+            metadata=metadata,
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
         )
 
     @staticmethod
     def _message_from_row(row: sqlite3.Row) -> WorkMessage:
+        raw_detail = json.loads(row["detail_json"] or "{}")
+        detail = raw_detail if isinstance(raw_detail, dict) else {}
         return WorkMessage(
             message_id=str(row["message_id"]),
             thread_id=str(row["thread_id"]),
             role=str(row["role"]),
             text=str(row["text"]),
-            detail=json.loads(row["detail_json"] or "{}"),
+            detail=detail,
             created_at=str(row["created_at"]),
         )
 
@@ -139,7 +166,7 @@ class ResidentWorkLedger:
         thread = WorkThread(
             thread_id=normalized_id,
             title=normalized_title[:120],
-            metadata=dict(metadata or {}),
+            metadata=self._public_metadata(metadata),
             created_at=now,
             updated_at=now,
         )
@@ -222,6 +249,65 @@ class ResidentWorkLedger:
             for thread in self.list_threads(limit=thread_limit)
         ]
 
+    def workspace_for(self, thread: WorkThread) -> WorkspaceAssociation | None:
+        raw = thread.metadata.get("workspace")
+        if not isinstance(raw, dict):
+            return None
+        path = str(raw.get("path") or "").strip()
+        if not path:
+            return None
+        name = " ".join(str(raw.get("name") or "").strip().split())
+        attached_at = str(raw.get("attached_at") or "").strip() or thread.updated_at
+        return WorkspaceAssociation(
+            path=path,
+            name=name or Path(path).name or path,
+            attached_at=attached_at,
+        )
+
+    def attach_workspace(
+        self,
+        thread_id: str,
+        workspace_path: str | Path,
+        *,
+        name: str | None = None,
+    ) -> WorkThread:
+        # A fresh desktop may display its first empty work before any message has
+        # caused that thread to enter the resident ledger. Attaching a folder is
+        # itself enough to make that work durable.
+        thread = self.get_thread(thread_id) or self.create_thread(thread_id=thread_id)
+        raw_path = str(workspace_path or "").strip()
+        if not raw_path:
+            raise ValueError("workspace path must not be empty")
+        try:
+            resolved = Path(raw_path).expanduser().resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise ValueError(f"workspace path is unavailable: {raw_path}") from exc
+        if not resolved.is_dir():
+            raise ValueError(f"workspace path is not a directory: {resolved}")
+
+        normalized_name = " ".join(str(name or "").strip().split())
+        workspace = WorkspaceAssociation(
+            path=str(resolved),
+            name=(normalized_name or resolved.name or str(resolved))[:120],
+        )
+        metadata = dict(thread.metadata)
+        metadata["workspace"] = workspace.to_dict()
+        thread.metadata = metadata
+        thread.updated_at = workspace.attached_at
+        self._save_thread(thread)
+        return thread
+
+    def detach_workspace(self, thread_id: str) -> WorkThread:
+        thread = self.get_thread(thread_id)
+        if thread is None:
+            raise ValueError(f"unknown work thread: {thread_id}")
+        metadata = dict(thread.metadata)
+        metadata.pop("workspace", None)
+        thread.metadata = metadata
+        thread.updated_at = utc_now()
+        self._save_thread(thread)
+        return thread
+
     def submit(
         self,
         thread_id: str,
@@ -252,6 +338,13 @@ class ResidentWorkLedger:
         event_payload = dict(payload or {})
         event_payload["work_thread_id"] = thread.thread_id
         event_payload["work_message_id"] = user_message.message_id
+        workspace = self.workspace_for(thread)
+        if workspace is not None:
+            # The durable work association, not transient renderer state, anchors
+            # repository investigation and local command execution for this thread.
+            event_payload["workspace_path"] = workspace.path
+            event_payload["workdir"] = workspace.path
+            event_payload["workspace_name"] = workspace.name
 
         try:
             run = self.resident.submit(
@@ -292,6 +385,8 @@ class ResidentWorkLedger:
             "execution_path": run.execution_path.value,
             "model_invocations": run.model_invocations,
         }
+        if workspace is not None:
+            activity["workspace"] = workspace.to_dict()
         if run.capability_name:
             activity["capability_name"] = run.capability_name
         if run.reason:

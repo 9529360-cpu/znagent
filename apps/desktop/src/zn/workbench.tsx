@@ -2,8 +2,10 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 
 import {
   applyZnUpdate,
+  attachZnWorkspace,
   checkZnUpdate,
   createZnWorkThread,
+  detachZnWorkspace,
   loadZnResidentSnapshot,
   loadZnWorkThreads,
   submitZnWork,
@@ -43,6 +45,7 @@ export function ZnWorkbench() {
   const [query, setQuery] = useState('')
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
+  const [workspaceBusy, setWorkspaceBusy] = useState(false)
   const [contextOpen, setContextOpen] = useState(true)
   const [residentHealth, setResidentHealth] = useState<ResidentHealth>('connecting')
   const [residentSnapshot, setResidentSnapshot] = useState<ZnResidentSnapshot | null>(null)
@@ -55,6 +58,7 @@ export function ZnWorkbench() {
     () => threads.find(thread => thread.id === activeThreadId) || threads[0] || null,
     [activeThreadId, threads]
   )
+  const activeWorkspace = activeThread?.workspace || null
   const recentThreads = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     return [...threads]
@@ -63,6 +67,14 @@ export function ZnWorkbench() {
   }, [query, threads])
 
   useEffect(() => saveZnThreadCache(threads), [threads])
+
+  const replaceThread = useCallback((updated: ZnThread) => {
+    setThreads(current =>
+      current
+        .map(thread => (thread.id === updated.id ? updated : thread))
+        .sort((left, right) => right.updatedAt - left.updatedAt)
+    )
+  }, [])
 
   const refreshResident = useCallback(async () => {
     setResidentHealth(previous => (previous === 'live' ? previous : 'connecting'))
@@ -105,14 +117,43 @@ export function ZnWorkbench() {
     setView('work')
     setDraft('')
     void createZnWorkThread(thread)
-      .then(saved => {
-        setThreads(current => current.map(item => (item.id === saved.id ? saved : item)))
-      })
+      .then(saved => replaceThread(saved))
       .catch(error => {
         setResidentError(error instanceof Error ? error.message : String(error))
         setResidentHealth('offline')
       })
-  }, [])
+  }, [replaceThread])
+
+  const attachWorkspace = useCallback(async () => {
+    if (!activeThread || workspaceBusy) return
+    const threadId = activeThread.id
+    setWorkspaceBusy(true)
+    try {
+      const updated = await attachZnWorkspace(threadId)
+      if (updated) replaceThread(updated)
+      setResidentError(null)
+      setResidentHealth('live')
+    } catch (error) {
+      setResidentError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setWorkspaceBusy(false)
+    }
+  }, [activeThread, replaceThread, workspaceBusy])
+
+  const detachWorkspace = useCallback(async () => {
+    if (!activeThread?.workspace || workspaceBusy) return
+    const threadId = activeThread.id
+    setWorkspaceBusy(true)
+    try {
+      replaceThread(await detachZnWorkspace(threadId))
+      setResidentError(null)
+      setResidentHealth('live')
+    } catch (error) {
+      setResidentError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setWorkspaceBusy(false)
+    }
+  }, [activeThread, replaceThread, workspaceBusy])
 
   const submit = useCallback(
     async (event: FormEvent) => {
@@ -131,11 +172,7 @@ export function ZnWorkbench() {
 
       try {
         const result = await submitZnWork(threadId, task)
-        setThreads(current =>
-          current
-            .map(thread => (thread.id === threadId ? result.thread : thread))
-            .sort((left, right) => right.updatedAt - left.updatedAt)
-        )
+        replaceThread(result.thread)
         setResidentError(null)
         setResidentHealth('live')
         void loadZnResidentSnapshot().then(setResidentSnapshot).catch(() => undefined)
@@ -153,7 +190,7 @@ export function ZnWorkbench() {
         setBusy(false)
       }
     },
-    [activeThread, busy, draft]
+    [activeThread, busy, draft, replaceThread]
   )
 
   const checkUpdates = useCallback(async () => {
@@ -227,10 +264,25 @@ export function ZnWorkbench() {
           <div className="zn-section-label zn-section-spaced">Workspaces</div>
           <div className="zn-workspace-card">
             <span className="zn-workspace-dot" />
-            <div>
-              <div>Local work</div>
-              <div className="zn-muted zn-small">No folder attached</div>
+            <div className="zn-workspace-copy">
+              <div>{activeWorkspace?.name || 'Local work'}</div>
+              <div
+                className="zn-muted zn-small zn-workspace-path"
+                title={activeWorkspace?.path}
+              >
+                {activeWorkspace?.path || 'No folder attached'}
+              </div>
             </div>
+          </div>
+          <div className="zn-workspace-actions">
+            <button type="button" disabled={workspaceBusy || !activeThread} onClick={() => void attachWorkspace()}>
+              {workspaceBusy ? 'Working…' : activeWorkspace ? 'Change folder' : 'Attach folder'}
+            </button>
+            {activeWorkspace ? (
+              <button type="button" disabled={workspaceBusy} onClick={() => void detachWorkspace()}>
+                Detach
+              </button>
+            ) : null}
           </div>
         </nav>
 
@@ -254,7 +306,9 @@ export function ZnWorkbench() {
             <div className="zn-topbar-title">
               {view === 'settings' ? 'Settings' : activeThread?.title || 'New work'}
             </div>
-            <div className="zn-muted zn-small">Local work</div>
+            <div className="zn-muted zn-small">
+              {view === 'settings' ? 'ZN desktop' : activeWorkspace?.name || 'Local work'}
+            </div>
           </div>
           <button className="zn-resident-pill" type="button" onClick={() => void refreshResident()}>
             <span className={`zn-health-dot ${residentHealth}`} />
@@ -338,7 +392,7 @@ export function ZnWorkbench() {
                   <span className="zn-eyebrow">Persistent resident</span>
                   <h1>What should ZN attend to?</h1>
                   <p>
-                    Work enters the resident's own event loop. Models may assist when needed, but they do not own this thread or ZN's continuity.
+                    Work enters the resident's own event loop. Attach a local folder when this work belongs to a project; ZN will use that durable workspace as its local context.
                   </p>
                 </div>
               )}
@@ -363,7 +417,9 @@ export function ZnWorkbench() {
                   {busy ? '…' : '↑'}
                 </button>
               </div>
-              <div className="zn-composer-caption">Enter to send · Shift+Enter for newline</div>
+              <div className="zn-composer-caption">
+                {activeWorkspace ? `${activeWorkspace.name} · ` : ''}Enter to send · Shift+Enter for newline
+              </div>
             </form>
           </>
         )}
@@ -378,6 +434,28 @@ export function ZnWorkbench() {
             </div>
             <button type="button" aria-label="Close context panel" onClick={() => setContextOpen(false)}>×</button>
           </div>
+          <section className="zn-context-section">
+            <div className="zn-context-title">Workspace</div>
+            {activeWorkspace ? (
+              <>
+                <div className="zn-context-value">{activeWorkspace.name}</div>
+                <div className="zn-context-path" title={activeWorkspace.path}>{activeWorkspace.path}</div>
+                <div className="zn-inline-actions zn-context-actions">
+                  <button type="button" disabled={workspaceBusy} onClick={() => void attachWorkspace()}>Change</button>
+                  <button type="button" disabled={workspaceBusy} onClick={() => void detachWorkspace()}>Detach</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="zn-muted zn-small">No local folder is attached to this work.</p>
+                <div className="zn-context-actions">
+                  <button type="button" disabled={workspaceBusy || !activeThread} onClick={() => void attachWorkspace()}>
+                    Attach folder
+                  </button>
+                </div>
+              </>
+            )}
+          </section>
           <section className="zn-context-section">
             <div className="zn-context-title">Runtime health</div>
             <div className="zn-context-value">

@@ -1,4 +1,4 @@
-import type { ZnThread, ZnThreadMessage, ZnThreadRole } from './state'
+import type { ZnThread, ZnThreadMessage, ZnThreadRole, ZnWorkspace } from './state'
 
 export type ZnResidentSnapshot = {
   status: unknown
@@ -51,6 +51,21 @@ function normalizeMessage(value: unknown): ZnThreadMessage | null {
   }
 }
 
+function normalizeWorkspace(value: unknown): ZnWorkspace | undefined {
+  const metadata = record(value)
+  const raw = record(metadata?.workspace)
+  if (!raw) return undefined
+  const path = String(raw.path || '').trim()
+  if (!path) return undefined
+  const name = String(raw.name || '').trim() || path
+  const attachedAt = raw.attached_at || raw.attachedAt
+  return {
+    path,
+    name,
+    ...(attachedAt ? { attachedAt: timestamp(attachedAt) } : {})
+  }
+}
+
 function normalizeThread(value: unknown): ZnThread {
   const item = record(value)
   if (!item) throw new Error('Resident returned an invalid work thread')
@@ -60,12 +75,14 @@ function normalizeThread(value: unknown): ZnThread {
   const messages = rawMessages
     .map(normalizeMessage)
     .filter((message): message is ZnThreadMessage => Boolean(message))
+  const workspace = normalizeWorkspace(item.metadata)
   return {
     id,
     title: String(item.title || 'New work'),
     createdAt: timestamp(item.created_at || item.createdAt),
     updatedAt: timestamp(item.updated_at || item.updatedAt),
-    messages
+    messages,
+    ...(workspace ? { workspace } : {})
   }
 }
 
@@ -114,6 +131,21 @@ export async function submitZnWork(threadId: string, task: string): Promise<ZnWo
     thread: normalizeThread(result.thread),
     run: result.run
   }
+}
+
+export async function attachZnWorkspace(threadId: string): Promise<ZnThread | null> {
+  const bridge = desktop()
+  if (!bridge.workspaces) throw new Error('ZN desktop workspace bridge is unavailable')
+  const result = record(await bridge.workspaces.attach(threadId))
+  if (!result) throw new Error('Desktop returned an invalid workspace result')
+  if (result.cancelled === true) return null
+  return normalizeThread(result.thread)
+}
+
+export async function detachZnWorkspace(threadId: string): Promise<ZnThread> {
+  const bridge = desktop()
+  if (!bridge.workspaces) throw new Error('ZN desktop workspace bridge is unavailable')
+  return normalizeThread(await bridge.workspaces.detach(threadId))
 }
 
 export async function checkZnUpdate(): Promise<ZnDesktopUpdateStatus> {

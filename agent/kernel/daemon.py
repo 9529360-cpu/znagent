@@ -123,6 +123,39 @@ class ResidentRpcServer:
                     ),
                 )
             )
+        elif method == "work_attach_workspace":
+            thread_id = str(params.get("thread_id") or "").strip()
+            workspace_path = str(params.get("workspace_path") or "").strip()
+            if not thread_id:
+                raise ValueError("work_attach_workspace requires thread_id")
+            if not workspace_path:
+                raise ValueError("work_attach_workspace requires workspace_path")
+            thread = self.work.attach_workspace(
+                thread_id,
+                workspace_path,
+                name=str(params.get("workspace_name") or "").strip() or None,
+            )
+            result = self._work_snapshot(
+                self.work.get_snapshot(
+                    thread.thread_id,
+                    message_limit=max(
+                        1, min(500, int(params.get("message_limit") or 120))
+                    ),
+                )
+            )
+        elif method == "work_detach_workspace":
+            thread_id = str(params.get("thread_id") or "").strip()
+            if not thread_id:
+                raise ValueError("work_detach_workspace requires thread_id")
+            thread = self.work.detach_workspace(thread_id)
+            result = self._work_snapshot(
+                self.work.get_snapshot(
+                    thread.thread_id,
+                    message_limit=max(
+                        1, min(500, int(params.get("message_limit") or 120))
+                    ),
+                )
+            )
         elif method == "work_submit":
             thread_id = str(params.get("thread_id") or "").strip()
             task = str(params.get("task") or "").strip()

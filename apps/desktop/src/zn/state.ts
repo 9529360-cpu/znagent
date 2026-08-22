@@ -8,12 +8,19 @@ export type ZnThreadMessage = {
   detail?: Record<string, unknown>
 }
 
+export type ZnWorkspace = {
+  path: string
+  name: string
+  attachedAt?: number
+}
+
 export type ZnThread = {
   id: string
   title: string
   createdAt: number
   updatedAt: number
   messages: ZnThreadMessage[]
+  workspace?: ZnWorkspace
 }
 
 const STORAGE_KEY = 'zn.desktop.thread-cache.v1'
