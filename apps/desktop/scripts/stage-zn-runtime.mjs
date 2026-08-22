@@ -72,9 +72,19 @@ const stagedPythonInstallArgs = ['--python', pythonPath, '--break-system-package
 console.log('[zn-runtime] installing ZN-owned Python distribution')
 run('uv', ['pip', 'install', ...stagedPythonInstallArgs, runtimeProject])
 
+// Ask the staged interpreter where zn_agent was actually installed instead of
+// assuming a platform-specific site-packages layout. uv's portable Windows
+// CPython reports its runtime root through site.getsitepackages(), while the
+// installed package lives under Lib/site-packages.
 const backendRoot = capture(pythonPath, [
   '-c',
-  'import site; paths = site.getsitepackages(); print(paths[0])'
+  [
+    'import importlib.util',
+    'from pathlib import Path',
+    "spec = importlib.util.find_spec('zn_agent')",
+    "assert spec is not None and spec.origin is not None, 'installed zn_agent package not found'",
+    'print(Path(spec.origin).resolve().parent.parent)'
+  ].join('; ')
 ])
 const residentEntry = path.join(backendRoot, 'zn_agent', 'resident.py')
 const residentCore = path.join(backendRoot, 'zn_agent', 'core', 'resident_server.py')
