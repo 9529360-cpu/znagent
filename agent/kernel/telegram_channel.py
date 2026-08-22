@@ -2,23 +2,28 @@ from __future__ import annotations
 
 """ZN-owned Telegram Bot API channel.
 
-This is source extraction from the mature Telegram implementation in
-``plugins/platforms/telegram`` and ``gateway/platforms/base.py``. The current
-slice keeps transport behaviors that matter to a resident channel -- UTF-16
-message limits, thread/reply routing, long-poll offsets, update normalization,
-credential redaction, explicit inbound authorization, and ZN-owned network
-fallback/proxy handling -- while leaving old gateway/AIAgent/session ownership
-behind.
-
-Media, rich Markdown and webhook mode can be extracted in later slices behind
-the same ChannelAdapter contract.
+This is source extraction from the mature Telegram implementation. The current
+slice keeps UTF-16 message limits, thread/reply routing, long-poll offsets,
+explicit inbound authorization, ZN-owned network fallback/proxy handling, and
+bounded inbound attachment caching while leaving old gateway/AIAgent/session
+ownership behind.
 """
 
+import mimetypes
 import os
+import re
+import uuid
+from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from .channel import ChannelDelivery, ChannelEvent, ChannelMessage
+from .channel import ChannelAttachment, ChannelDelivery, ChannelEvent, ChannelMessage
+from .home import get_zn_home
 from .telegram_network import build_telegram_http_client, parse_fallback_ip_env
+
+
+DEFAULT_TELEGRAM_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024
+LOCAL_TELEGRAM_ATTACHMENT_MAX_BYTES = 2 * 1024 * 1024 * 1024
+_DEFAULT_TELEGRAM_BASE_URL = "https://api.telegram.org"
 
 
 class TelegramChannelError(RuntimeError):
@@ -26,7 +31,6 @@ class TelegramChannelError(RuntimeError):
 
 
 def utf16_len(value: str) -> int:
-    """Telegram measures the 4096 text limit in UTF-16 code units."""
     return len(str(value or "").encode("utf-16-le")) // 2
 
 
@@ -45,7 +49,6 @@ def _prefix_within_utf16_limit(value: str, limit: int) -> str:
 
 
 def split_utf16_message(value: str, limit: int = 4096) -> list[str]:
-    """Split text on readable boundaries without violating Telegram's limit."""
     text = str(value or "")
     if not text:
         return [""]
@@ -94,6 +97,20 @@ def _configured_fallback_ips(raw: Any) -> list[str]:
     )
 
 
+def _safe_filename(value: str | None, *, fallback: str) -> str:
+    raw = Path(str(value or "")).name.strip() or fallback
+    raw = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", raw).strip(" .")
+    return (raw or fallback)[:180]
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None
+
+
 class TelegramBotApiChannel:
     name = "telegram"
     MAX_MESSAGE_LENGTH = 4096
@@ -102,7 +119,7 @@ class TelegramBotApiChannel:
         self,
         token: str,
         *,
-        base_url: str = "https://api.telegram.org",
+        base_url: str = _DEFAULT_TELEGRAM_BASE_URL,
         allowed_chat_ids: Iterable[str | int] | None = None,
         allow_all: bool = False,
         client: Any | None = None,
@@ -111,11 +128,13 @@ class TelegramBotApiChannel:
         discover_fallback_ips: bool = False,
         proxy_url: str | None = None,
         environ: Mapping[str, str] | None = None,
+        attachment_root: str | Path | None = None,
+        max_attachment_bytes: int | None = None,
     ):
         self.token = str(token or "").strip()
         if not self.token:
             raise ValueError("Telegram bot token must not be empty")
-        self.base_url = str(base_url or "https://api.telegram.org").rstrip("/")
+        self.base_url = str(base_url or _DEFAULT_TELEGRAM_BASE_URL).rstrip("/")
         self.allowed_chat_ids = (
             {str(item) for item in allowed_chat_ids}
             if allowed_chat_ids is not None
@@ -126,6 +145,19 @@ class TelegramBotApiChannel:
         self.fallback_ips = tuple(str(item) for item in fallback_ips)
         self.discover_fallback_ips = bool(discover_fallback_ips)
         self.proxy_url = str(proxy_url or "").strip() or None
+        self.attachment_root = Path(
+            attachment_root
+            if attachment_root is not None
+            else get_zn_home() / "channels" / "telegram" / "attachments"
+        ).expanduser()
+        if max_attachment_bytes is None:
+            self.max_attachment_bytes = (
+                DEFAULT_TELEGRAM_ATTACHMENT_MAX_BYTES
+                if self.base_url == _DEFAULT_TELEGRAM_BASE_URL
+                else LOCAL_TELEGRAM_ATTACHMENT_MAX_BYTES
+            )
+        else:
+            self.max_attachment_bytes = max(1, int(max_attachment_bytes))
         self._client = client or build_telegram_http_client(
             base_url=self.base_url,
             fallback_ips=self.fallback_ips,
@@ -177,10 +209,12 @@ class TelegramBotApiChannel:
             or env.get("TELEGRAM_PROXY")
             or ""
         ).strip() or None
+        attachment_root = telegram.get("attachment_root")
+        max_attachment_bytes = telegram.get("max_attachment_bytes")
 
         return cls(
             token,
-            base_url=str(telegram.get("base_url") or "https://api.telegram.org"),
+            base_url=str(telegram.get("base_url") or _DEFAULT_TELEGRAM_BASE_URL),
             allowed_chat_ids=allowed if isinstance(allowed, list) else None,
             allow_all=bool(telegram.get("allow_all", False)),
             client=client,
@@ -189,6 +223,12 @@ class TelegramBotApiChannel:
             discover_fallback_ips=discover,
             proxy_url=proxy_url,
             environ=env,
+            attachment_root=(str(attachment_root) if attachment_root else None),
+            max_attachment_bytes=(
+                int(max_attachment_bytes)
+                if max_attachment_bytes is not None
+                else None
+            ),
         )
 
     @property
@@ -244,6 +284,8 @@ class TelegramBotApiChannel:
         chat_id = str(message.conversation_id or "").strip()
         if not chat_id:
             raise ValueError("Telegram conversation_id must not be empty")
+        if message.attachments:
+            raise NotImplementedError("Telegram outbound attachment delivery is not extracted yet")
 
         chunks = split_utf16_message(message.text, self.MAX_MESSAGE_LENGTH)
         sent_ids: list[str] = []
@@ -305,7 +347,10 @@ class TelegramBotApiChannel:
 
         sender = message.get("from") or message.get("sender_chat") or {}
         sender_id = str(sender.get("id") or chat_id) if isinstance(sender, dict) else chat_id
+        attachments = self._attachments_from_message(message)
         text = str(message.get("text") or message.get("caption") or "").strip()
+        if not text and attachments:
+            text = self._attachment_event_text(attachments)
         if not text:
             return None
 
@@ -315,17 +360,8 @@ class TelegramBotApiChannel:
             "chat_type": chat.get("type"),
             "chat_title": chat.get("title") or chat.get("username") or "",
         }
-        for media_key in (
-            "photo",
-            "document",
-            "audio",
-            "voice",
-            "video",
-            "video_note",
-            "sticker",
-        ):
-            if message.get(media_key) is not None:
-                metadata.setdefault("media_types", []).append(media_key)
+        if attachments:
+            metadata["media_types"] = list(dict.fromkeys(item.kind for item in attachments))
         reply = message.get("reply_to_message")
         if isinstance(reply, dict) and reply.get("message_id") is not None:
             metadata["reply_to_message_id"] = str(reply["message_id"])
@@ -342,8 +378,209 @@ class TelegramBotApiChannel:
                 else None
             ),
             thread_id=str(thread_id) if thread_id is not None else None,
+            attachments=attachments,
             metadata=metadata,
         )
+
+    def _attachments_from_message(
+        self,
+        message: Mapping[str, Any],
+    ) -> tuple[ChannelAttachment, ...]:
+        specs: list[tuple[str, Mapping[str, Any], str | None, str | None]] = []
+        photos = message.get("photo")
+        if isinstance(photos, list):
+            candidates = [item for item in photos if isinstance(item, Mapping)]
+            if candidates:
+                photo = max(
+                    candidates,
+                    key=lambda item: (
+                        _int_or_none(item.get("file_size")) or 0,
+                        (_int_or_none(item.get("width")) or 0)
+                        * (_int_or_none(item.get("height")) or 0),
+                    ),
+                )
+                unique = str(photo.get("file_unique_id") or uuid.uuid4().hex[:12])
+                specs.append(("image", photo, f"photo-{unique}.jpg", "image/jpeg"))
+
+        for key, kind in (
+            ("document", "document"),
+            ("audio", "audio"),
+            ("voice", "voice"),
+            ("video", "video"),
+            ("video_note", "video"),
+            ("animation", "animation"),
+            ("sticker", "sticker"),
+        ):
+            raw = message.get(key)
+            if not isinstance(raw, Mapping):
+                continue
+            file_name = str(raw.get("file_name") or "").strip() or None
+            mime_type = str(raw.get("mime_type") or "").strip() or None
+            specs.append((kind, raw, file_name, mime_type))
+
+        return tuple(
+            self._download_attachment(kind, raw, file_name=file_name, mime_type=mime_type)
+            for kind, raw, file_name, mime_type in specs
+        )
+
+    def _download_attachment(
+        self,
+        kind: str,
+        raw: Mapping[str, Any],
+        *,
+        file_name: str | None,
+        mime_type: str | None,
+    ) -> ChannelAttachment:
+        remote_id = str(raw.get("file_id") or "").strip()
+        unique_id = str(raw.get("file_unique_id") or uuid.uuid4().hex[:12]).strip()
+        attachment_id = f"telegram-{unique_id[:80]}"
+        declared_size = _int_or_none(raw.get("file_size"))
+        metadata = {
+            key: raw[key]
+            for key in ("width", "height", "duration", "performer", "title")
+            if raw.get(key) is not None
+        }
+        if not remote_id:
+            return ChannelAttachment(
+                attachment_id=attachment_id,
+                kind=kind,
+                file_name=file_name,
+                mime_type=mime_type,
+                size_bytes=declared_size,
+                error="Telegram attachment has no file_id",
+                metadata=metadata,
+            )
+        if declared_size is not None and declared_size > self.max_attachment_bytes:
+            return ChannelAttachment(
+                attachment_id=attachment_id,
+                kind=kind,
+                file_name=file_name,
+                mime_type=mime_type,
+                size_bytes=declared_size,
+                remote_id=remote_id,
+                error=(
+                    f"Telegram attachment exceeds ZN limit: {declared_size} > "
+                    f"{self.max_attachment_bytes} bytes"
+                ),
+                metadata=metadata,
+            )
+
+        try:
+            file_response = self._api("getFile", {"file_id": remote_id})
+            file_info = file_response.get("result") or {}
+            if not isinstance(file_info, Mapping):
+                raise TelegramChannelError("Telegram getFile returned invalid result")
+            file_path = str(file_info.get("file_path") or "").strip()
+            if not file_path:
+                raise TelegramChannelError("Telegram getFile returned no file_path")
+            resolved_size = _int_or_none(file_info.get("file_size")) or declared_size
+            if resolved_size is not None and resolved_size > self.max_attachment_bytes:
+                raise TelegramChannelError(
+                    f"attachment exceeds ZN limit: {resolved_size} > "
+                    f"{self.max_attachment_bytes} bytes"
+                )
+            local_path, actual_size = self._download_file_bytes(
+                attachment_id,
+                file_path,
+                file_name=file_name,
+                mime_type=mime_type,
+            )
+            return ChannelAttachment(
+                attachment_id=attachment_id,
+                kind=kind,
+                file_name=Path(local_path).name,
+                mime_type=mime_type,
+                size_bytes=actual_size,
+                local_path=local_path,
+                remote_id=remote_id,
+                metadata=metadata,
+            )
+        except Exception as exc:
+            return ChannelAttachment(
+                attachment_id=attachment_id,
+                kind=kind,
+                file_name=file_name,
+                mime_type=mime_type,
+                size_bytes=declared_size,
+                remote_id=remote_id,
+                error=_safe_error(exc, self.token),
+                metadata=metadata,
+            )
+
+    def _download_file_bytes(
+        self,
+        attachment_id: str,
+        remote_path: str,
+        *,
+        file_name: str | None,
+        mime_type: str | None,
+    ) -> tuple[str, int]:
+        fallback_ext = Path(remote_path).suffix
+        if not fallback_ext and mime_type:
+            fallback_ext = mimetypes.guess_extension(mime_type) or ""
+        fallback_name = f"attachment{fallback_ext or '.bin'}"
+        safe_name = _safe_filename(file_name, fallback=fallback_name)
+        local_name = _safe_filename(
+            f"{attachment_id}-{safe_name}",
+            fallback=f"{attachment_id}.bin",
+        )
+        self.attachment_root.mkdir(parents=True, exist_ok=True)
+        final_path = self.attachment_root / local_name
+        temporary = final_path.with_name(f".{final_path.name}.{uuid.uuid4().hex}.part")
+        url = f"{self.base_url}/file/bot{self.token}/{remote_path.lstrip('/')}"
+        total = 0
+        try:
+            with self._client.stream(
+                "GET",
+                url,
+                timeout=self.request_timeout,
+            ) as response:
+                status = int(getattr(response, "status_code", 0) or 0)
+                if status < 200 or status >= 300:
+                    detail = str(getattr(response, "text", "") or "").strip()
+                    raise TelegramChannelError(
+                        f"Telegram file download failed: {detail or f'HTTP {status}'}"
+                    )
+                content_length = _int_or_none(
+                    getattr(response, "headers", {}).get("content-length")
+                )
+                if content_length is not None and content_length > self.max_attachment_bytes:
+                    raise TelegramChannelError(
+                        f"attachment exceeds ZN limit: {content_length} > "
+                        f"{self.max_attachment_bytes} bytes"
+                    )
+                with temporary.open("wb") as handle:
+                    for chunk in response.iter_bytes():
+                        if not chunk:
+                            continue
+                        total += len(chunk)
+                        if total > self.max_attachment_bytes:
+                            raise TelegramChannelError(
+                                f"attachment exceeds ZN limit while downloading: {total} > "
+                                f"{self.max_attachment_bytes} bytes"
+                            )
+                        handle.write(chunk)
+            os.replace(temporary, final_path)
+            return str(final_path.resolve()), total
+        except Exception:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+
+    @staticmethod
+    def _attachment_event_text(attachments: tuple[ChannelAttachment, ...]) -> str:
+        descriptions: list[str] = []
+        for item in attachments:
+            label = item.file_name or item.kind
+            if item.error:
+                descriptions.append(f"{item.kind} {label} (unavailable: {item.error})")
+            elif item.local_path:
+                descriptions.append(f"{item.kind} {label} ({item.local_path})")
+            else:
+                descriptions.append(f"{item.kind} {label}")
+        return "Received channel attachment(s): " + "; ".join(descriptions)
 
     def _api(
         self,
