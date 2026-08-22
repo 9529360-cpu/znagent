@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import tempfile
 import threading
 import time
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -14,12 +16,25 @@ from agent.kernel.channel_runtime import (
 
 
 class _Resident:
-    def __init__(self):
+    def __init__(self, store_path: Path, *, auto_complete: bool = True):
+        self.store = SimpleNamespace(path=store_path)
         self.calls = []
+        self.outcomes = {}
+        self.auto_complete = auto_complete
 
-    def submit(self, task, **kwargs):
-        self.calls.append((task, kwargs))
-        return SimpleNamespace(success=True, response="reply", reason="")
+    def enqueue(self, task, **kwargs):
+        event_id = f"evt-test-{len(self.calls) + 1}"
+        self.calls.append((task, kwargs, event_id))
+        if self.auto_complete:
+            self.outcomes[event_id] = SimpleNamespace(
+                success=True,
+                response="reply",
+                reason="",
+            )
+        return SimpleNamespace(event_id=event_id)
+
+    def result_for(self, event_id):
+        return self.outcomes.get(event_id)
 
 
 class _FlakyAdapter:
@@ -31,20 +46,23 @@ class _FlakyAdapter:
         self.closed = False
         self.delivered = threading.Event()
 
+    @staticmethod
+    def event():
+        return ChannelEvent(
+            channel="telegram",
+            conversation_id="c",
+            sender_id="u",
+            text="hello",
+            message_id="m",
+            metadata={"update_id": 42, "update_type": "message"},
+        )
+
     def poll(self, *, timeout=0.0):
         self.polls += 1
         if self.polls == 1:
             raise RuntimeError("temporary network failure")
         if self.polls == 2:
-            return [
-                ChannelEvent(
-                    channel="telegram",
-                    conversation_id="c",
-                    sender_id="u",
-                    text="hello",
-                    message_id="m",
-                )
-            ]
+            return [self.event()]
         time.sleep(min(0.01, timeout))
         return []
 
@@ -62,36 +80,119 @@ class _FlakyAdapter:
         self.closed = True
 
 
-class ResidentChannelSupervisorTests(unittest.TestCase):
-    def test_failure_isolated_then_same_resident_recovers(self):
-        resident = _Resident()
-        adapter = _FlakyAdapter()
-        supervisor = ResidentChannelSupervisor(
-            resident,
-            [adapter],
-            poll_timeout=0.01,
-            min_backoff=0.01,
-            max_backoff=0.02,
+class _ReplayAdapter:
+    name = "telegram"
+
+    def __init__(self, *, replay: bool):
+        self.replay = replay
+        self.polled = False
+        self.sent = []
+        self.closed = False
+        self.delivered = threading.Event()
+
+    def poll(self, *, timeout=0.0):
+        if not self.polled:
+            self.polled = True
+            return [_FlakyAdapter.event()] if self.replay else []
+        time.sleep(min(0.01, timeout))
+        return []
+
+    def send(self, message):
+        self.sent.append(message)
+        self.delivered.set()
+        return ChannelDelivery(
+            True,
+            "telegram",
+            message.conversation_id,
+            ("out-restart",),
         )
 
-        supervisor.start()
-        self.assertTrue(adapter.delivered.wait(1.0))
-        supervisor.stop()
+    def close(self):
+        self.closed = True
 
-        self.assertEqual([call[0] for call in resident.calls], ["hello"])
-        self.assertEqual(adapter.sent[0].text, "reply")
-        state = supervisor.status()[0]
-        self.assertGreaterEqual(state["total_failures"], 1)
-        self.assertGreaterEqual(state["deliveries"], 1)
-        self.assertTrue(adapter.closed)
-        self.assertFalse(state["running"])
+
+class ResidentChannelSupervisorTests(unittest.TestCase):
+    def test_failure_isolated_then_same_resident_recovers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = _Resident(Path(tmp) / "kernel.db")
+            adapter = _FlakyAdapter()
+            supervisor = ResidentChannelSupervisor(
+                resident,
+                [adapter],
+                poll_timeout=0.01,
+                min_backoff=0.01,
+                max_backoff=0.02,
+            )
+
+            supervisor.start()
+            self.assertTrue(adapter.delivered.wait(1.0))
+            supervisor.stop()
+
+            self.assertEqual([call[0] for call in resident.calls], ["hello"])
+            self.assertEqual(adapter.sent[0].text, "reply")
+            state = supervisor.status()[0]
+            self.assertGreaterEqual(state["total_failures"], 1)
+            self.assertEqual(state["enqueued"], 1)
+            self.assertGreaterEqual(state["deliveries"], 1)
+            self.assertTrue(adapter.closed)
+            self.assertFalse(state["running"])
+
+    def test_restart_delivers_existing_outcome_and_deduplicates_replayed_percept(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "kernel.db"
+            resident = _Resident(store_path, auto_complete=False)
+            first = _ReplayAdapter(replay=True)
+            first_supervisor = ResidentChannelSupervisor(
+                resident,
+                [first],
+                poll_timeout=0.01,
+                min_backoff=0.01,
+            )
+            first_supervisor.start()
+
+            deadline = time.monotonic() + 1.0
+            while len(resident.calls) < 1 and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertEqual(len(resident.calls), 1)
+            event_id = resident.calls[0][2]
+            first_supervisor.stop()
+            self.assertEqual(first.sent, [])
+
+            resident.outcomes[event_id] = SimpleNamespace(
+                success=True,
+                response="completed after restart",
+                reason="",
+            )
+            second = _ReplayAdapter(replay=True)
+            second_supervisor = ResidentChannelSupervisor(
+                resident,
+                [second],
+                poll_timeout=0.01,
+                min_backoff=0.01,
+            )
+            second_supervisor.start()
+            self.assertTrue(second.delivered.wait(1.0))
+            time.sleep(0.05)
+            second_supervisor.stop()
+
+            self.assertEqual(len(resident.calls), 1)
+            self.assertEqual(second.sent[0].text, "completed after restart")
+            route = second_supervisor.ledger.route_for_event(event_id)
+            self.assertIsNotNone(route)
+            self.assertEqual(route.status, "delivered")
+            self.assertGreaterEqual(
+                second_supervisor.status()[0]["duplicate_percepts"],
+                1,
+            )
 
     def test_duplicate_adapter_name_is_rejected(self):
-        with self.assertRaises(ValueError):
-            ResidentChannelSupervisor(
-                _Resident(),
-                [_FlakyAdapter(), _FlakyAdapter()],
-            )
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = _Resident(Path(tmp) / "kernel.db")
+            with self.assertRaises(ValueError):
+                ResidentChannelSupervisor(
+                    resident,
+                    [_FlakyAdapter(), _FlakyAdapter()],
+                )
 
     def test_channel_requires_explicit_enable(self):
         self.assertEqual(
