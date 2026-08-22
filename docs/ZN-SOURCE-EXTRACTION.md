@@ -59,7 +59,7 @@ Status: **ZN-native web search/extract active; browser interaction not yet owned
 
 Tavily/failover, Exa, Firecrawl and URL/network safety remain ZN-owned.
 
-The mature inherited browser implementation was re-inspected before starting new browser work. Its useful mechanisms remain entangled with inherited config/plugin/session/provider ownership plus Node/Chromium/`agent-browser` lifecycle. The independent ZN resident distribution does not currently carry a clean resident browser-action seam. Therefore no browser facade was added and web-search evidence was not mislabeled as browser interaction.
+The mature inherited browser implementation remains entangled with inherited config/plugin/session/provider ownership plus Node/Chromium/`agent-browser` lifecycle. The independent resident distribution does not currently carry a clean resident browser-action seam. Therefore no browser facade is claimed and web-search evidence is not mislabeled as browser interaction.
 
 Future browser work must first establish a real ZN-owned body/sense contract and packageable lifecycle, then expose contextual browser evidence only after actual invocation.
 
@@ -67,13 +67,13 @@ Future browser work must first establish a real ZN-owned body/sense contract and
 
 Status: **resident-owned channel lifecycle active; Telegram text/inbound media active; outbound media still partial**.
 
-`OutboundMediaPathPolicy` already provides ZN local-file authorization. Telegram `ChannelMessage` can represent attachments, but current resident delivery construction only emits response text and does not yet provide a structured resident-owned artifact/path nomination for egress.
+`OutboundMediaPathPolicy` already provides ZN local-file authorization. Telegram `ChannelMessage` can represent attachments, but current resident delivery construction does not yet provide structured resident-owned artifact/path nomination for egress.
 
 Do not let the adapter infer upload authority from arbitrary text or local paths. Define explicit resident artifact/message egress nomination first, then route it through `OutboundMediaPathPolicy` and finally the Telegram media transport.
 
 ## 4. Independent desktop/product work
 
-Status: **M4 complete; M5/M6 materially advanced; M7 Linux formal package identity, real installer payloads and desktop integration verified**.
+Status: **M4 complete; M5/M6 materially advanced; M7 Linux + Windows real installer evidence verified**.
 
 Active desktop remains:
 
@@ -102,64 +102,17 @@ Default provider/model/base URL and credential replacement/clear are resident RP
 
 ## 5. Python/runtime packaging ownership
 
-Status: **M1 active packaged resident path is ZN-owned and has survived real electron-builder packaging plus extraction from actual Linux installer formats**.
+Status: **M1 active packaged resident path is ZN-owned and has survived real Linux and Windows installer packaging**.
 
 The independent `runtime/python` distribution is `znagent`, with `zn_agent` installed package and `zn-resident` / `zn_agent.resident` entrypoints. Runtime staging/verification rejects `hermes_cli`.
 
-The formal release chain stages `build/zn-runtime` before electron-builder by using portable CPython plus the independent ZN runtime distribution and a zero-model verification step. The formal desktop package explicitly includes that runtime payload.
+The formal release chain stages `build/zn-runtime` before electron-builder using portable CPython plus the independent ZN runtime distribution and a zero-model verification step. The formal desktop package explicitly includes that runtime payload.
 
-The earlier deliberately scoped Linux unpacked package smoke exercised:
+### 5.1 Linux artifact evidence
 
-```text
-npm ci --ignore-scripts
-→ stage-zn-runtime.mjs
-→ portable Python + znagent
-→ ZN build
-→ electron-builder.zn.yml --linux --dir
-→ locate packaged resources/zn-runtime
-→ verify runtime manifest and ZN entrypoints
-→ run packaged Python zero-model resident smoke
-```
+Source commit `6219eaa61f6c444feb96864e149f886752b00ffe` built and extracted real AppImage/deb/rpm artifacts, then booted the resident zero-model from every extracted runtime. Run `32586833761` succeeded.
 
-Result:
-
-```text
-ZN Formal Package Smoke  success
-Actions run              32586304510
-```
-
-That verified executable `ZN`, `resources/app.asar`, `resources/zn-runtime/runtime.json`, valid resident/core entrypoints, zero-model boot, no inherited `install-stamp.json` and no packaged `hermes_cli` in the unpacked app. The smoke workflow was temporary and was removed after verification.
-
-A second deliberately scoped validation built and inspected the actual Linux installer formats from source commit:
-
-```text
-6219eaa61f6c444feb96864e149f886752b00ffe
-```
-
-Real chain:
-
-```text
-npm ci --ignore-scripts
-→ stage-zn-runtime.mjs
-→ portable Python + znagent
-→ ZN build
-→ electron-builder.zn.yml --linux AppImage deb rpm
-→ AppImage --appimage-extract
-→ dpkg-deb -x
-→ rpm2cpio | cpio
-→ verify app.asar + zn-runtime + ZN executable and reject inherited payloads
-→ run verify-zn-packaged-runtime.mjs across all extracted installer trees
-→ zero-model resident boot from every extracted installer runtime
-```
-
-Result:
-
-```text
-ZN Linux Installer Smoke  success
-Actions run                32586833761
-```
-
-Verified artifact evidence:
+Verified Linux artifacts:
 
 ```text
 ZN-0.17.0-linux-x86_64.AppImage  179M  e4b1548f630fcb376e22257c3e6cc3c22589dee55746d6f1951605cc2a906120
@@ -167,87 +120,92 @@ ZN-0.17.0-linux-amd64.deb         143M  3555059b606cf679b277e4f4452212c5ddaba703
 ZN-0.17.0-linux-x86_64.rpm        117M  34bd11a006937d1746b2e487f742edc8cb6d9ec3da75da3d5475757db37c9d03
 ```
 
-The packaged resident booted from the AppImage SquashFS payload, deb `/opt/ZN/resources/zn-runtime`, and rpm `/opt/ZN/resources/zn-runtime`. The temporary installer-smoke workflow was deleted immediately after success in `b138d917a131c61977bf6a226f97d5c54a071ec9`.
+A later corrected AppImage desktop integration build at `46685b66ff1381cb0b41b1e0564cc62ca5e34467` proved generated `.desktop` filename/`StartupWMClass`/`Name=ZN`/`zn://` association while retaining the same independently bootable resident. Run `32587988440` succeeded.
 
-A later corrected AppImage desktop integration build at source commit:
+### 5.2 Windows artifact evidence
+
+Source commit:
 
 ```text
-46685b66ff1381cb0b41b1e0564cc62ca5e34467
+2e3cdb0ac893feca86325e19a058c455c906bfd7
 ```
 
-proved that package metadata changes did not regress runtime ownership. The extracted AppImage still booted the embedded resident zero-model in run `32587988440`.
+Scoped real Windows validation:
+
+```text
+ZN Kernel / Python          success
+Electron / TypeScript      success
+ZN Windows Installer Smoke success
+Actions run                 32590239803
+```
+
+Real chain:
+
+```text
+npm ci --ignore-scripts
+→ stage-zn-runtime.mjs
+→ portable Windows CPython + znagent
+→ zero-model runtime staging verification
+→ ZN build
+→ electron-builder.zn.yml --win nsis msi
+→ extract NSIS app payload with 7z
+→ administratively extract MSI with synchronous msiexec
+→ verify ZN.exe + app.asar + zn-runtime and reject hermes_cli
+→ read actual PE ProductName/FileDescription/CompanyName
+→ run verify-zn-packaged-runtime.mjs for both payloads
+→ zero-model resident boot from both installer runtimes
+```
+
+Verified Windows artifacts:
+
+```text
+ZN-0.17.0-win-x64.exe  138.9 MB  d7716714599b87c125ab4ad5095fd3fb34bf2860e0fbdeebdece7b5316d05192
+ZN-0.17.0-win-x64.msi  151.8 MB  bd4dc2cd6bee636fdb94941b02776e196c2c0808d0b13717ab6576ce4f32c01f
+```
+
+Both payloads reported:
+
+```text
+ProductName     ZN
+FileDescription ZN
+CompanyName     ZN Project
+backend_root    .../Lib/site-packages
+```
+
+Both embedded residents booted zero-model successfully.
+
+The real Windows artifact exercise exposed and closed three source-level defects rather than adding compatibility wrappers:
+
+1. `uv` portable Windows CPython could leave a top-level alias/symlink unsuitable for installer materialization; runtime staging removes the matching alias and rejects remaining top-level aliases.
+2. generic `site.getsitepackages()` assumptions did not identify the installed package root reliably for the portable Windows interpreter; staging derives `backend_root` from `importlib.util.find_spec('zn_agent')` and verifies the required resident entries there.
+3. short-lived SQLite connections in `ZNLifeCore` were not all deterministically closed; life-state database operations now use `contextlib.closing`, with regression coverage proving pulse/snapshot connections are closed.
+
+The one-purpose Windows installer workflow was deleted after successful evidence in `36feb0092126e47929d7239f8518a2ad68908454` so ordinary dev pushes do not keep paying Windows installer CI cost.
 
 ## 6. Formal desktop package identity
 
-Status: **active formal product/build identity transferred to ZN; Linux unpacked, AppImage/deb/rpm payloads and launcher/window association verified; full intended-platform M7 validation still pending**.
-
-Verified package-identity source baseline:
-
-```text
-c0e8bb8563b323313304cc961ff07640d92d02cf
-```
-
-Linux installer-validation source verification:
-
-```text
-6219eaa61f6c444feb96864e149f886752b00ffe
-ZN Kernel / Python        success
-Electron / TypeScript    success
-ZN Linux Installer Smoke success
-normal CI run             32586833739
-installer smoke run       32586833761
-```
-
-Linux desktop-integration source verification:
-
-```text
-46685b66ff1381cb0b41b1e0564cc62ca5e34467
-ZN Kernel / Python          success
-Electron / TypeScript      success
-ZN Linux Desktop Identity  success
-normal CI run               32587988437
-desktop identity smoke run  32587988440
-```
-
-Final source cleanup after removing only the temporary smoke workflow:
-
-```text
-d18123f764d9b5d53c799d96d600ba7348545ac4
-ZN Kernel / Python      success
-Electron / TypeScript  success
-Actions run             32588099638
-```
+Status: **active formal product/build identity transferred to ZN; Linux and Windows intended artifact payloads verified; macOS artifact validation pending**.
 
 Implemented/verified:
 
 - `apps/desktop/package.json` package/product/repository identity is ZN-owned (`zn-desktop`, `ZN`, ZN repository);
 - default build metadata uses `ai.zn.desktop`, `ZN` executable/product and `ZN-*` artifacts;
-- top-level `desktopName` is explicitly `ai.zn.desktop`;
-- `linux.syncDesktopName` is enabled for the current electron-builder v26 line;
-- generated AppImage desktop entry filename is `ai.zn.desktop`;
-- generated desktop entry contains `Name=ZN`, `StartupWMClass=ai.zn.desktop`, and only the `zn` scheme MIME handler;
-- package-level protocols contain only `zn`;
-- builder command explicitly selects `electron-builder.zn.yml`;
-- `electron-builder.zn.yml` registers only `zn://` and includes `build/zn-runtime`;
+- package-level and builder protocols contain only `zn`;
+- `electron-builder.zn.yml` includes `build/zn-runtime`;
 - inherited install-stamp/bootstrap resource is removed from the active formal packaging path;
-- Windows `afterPack`/`rcedit` stamps ZN product/company identity;
-- rollback preservation defaults to `ZN.exe`;
-- active macOS notarization temporary key paths use a ZN prefix;
-- root npm lock workspace identity is synchronized to `zn-desktop` using npm's own lock generator;
-- formal package/build-hook and Linux launcher/window identity are protected by regression tests;
-- Linux unpacked formal package shape and packaged runtime boot are verified against real electron-builder output;
-- Linux AppImage, deb and rpm artifacts have each been extracted and shown to preserve the ZN executable/app.asar/self-contained runtime shape;
-- the self-contained resident booted zero-model from the runtime embedded in every tested Linux installer format and the corrected AppImage.
+- Windows `afterPack` stamping writes ZN product/company identity;
+- Windows NSIS and MSI extracted payloads preserve that identity and boot the embedded resident;
+- Linux AppImage/deb/rpm extracted payloads preserve the ZN-owned app/runtime shape;
+- Linux desktop launcher/window association is explicitly aligned to `ai.zn.desktop`;
+- macOS builder metadata already targets `ZN.app`, `ai.zn.desktop`, DMG/ZIP and a ZN-owned notarization temp prefix, but the real DMG/ZIP payload evidence remains to be completed.
 
-The initial desktop-identity smoke correctly exposed that synchronizing the `.desktop` filename alone did not set the desired `StartupWMClass`. The product config was fixed at the actual source boundary with explicit `linux.desktop.entry.StartupWMClass: ai.zn.desktop`; the repeated real AppImage smoke then passed. This is now closed Linux M7 integration evidence rather than pending debt.
-
-Important boundary: this closes the active **Linux product/build/runtime/desktop-integration evidence** at the current artifact level. It does not purge every inherited source/dependency name from the repository and does not yet prove Windows/macOS installer or M8 continuity gates.
+Important boundary: this closes active Linux and Windows **artifact content/runtime identity evidence**. It does not yet prove macOS artifacts or any M8 clean-machine/continuity gate, and it does not purge inactive inherited source/dependency names from the repository.
 
 ## 7. Remaining inherited/release debt
 
 Still pending:
 
-- intended Windows/macOS installer artifact validation from the corrected package shape;
+- real macOS DMG/ZIP artifact validation from the corrected package shape;
 - clean-machine installation and resident continuity validation;
 - OS-login autostart and N → N+1 upgrade validation;
 - signing/notarization as configured release hardening;
@@ -268,7 +226,7 @@ E5  extract communication framework + first channel           DONE for Telegram 
 E6  switch resident production callers to ZN-owned modules    DONE for cognition/terminal/web/channel lifecycle
 E7  build independent ZN Electron main/preload/UI foundation  DONE
 E8  remove active old-product control-plane imports           DONE for active resident + desktop
-E9  package independently bootable ZN product                 IN PROGRESS; Linux identity + unpacked + AppImage/deb/rpm runtime + desktop integration verified
+E9  package independently bootable ZN product                 IN PROGRESS; Linux + Windows real installer payloads verified
 E10 verify clean-machine install/upgrade/multi-OS release      NOT STARTED as product gate
 ```
 
@@ -276,12 +234,12 @@ E10 verify clean-machine install/upgrade/multi-OS release      NOT STARTED as pr
 
 Priority order:
 
-1. keep M7 scoped and validate intended Windows/macOS installer artifacts from the corrected ZN package shape when they provide enough additional evidence to justify the CI cost; do not prematurely launch the full M8 clean-machine matrix;
-2. fix any active package-content/runtime-entrypoint/platform-integration debt exposed by those real artifacts;
-3. establish browser interaction only through a clean resident-owned body/sense seam, not inherited browser/session ownership;
-4. define explicit resident artifact/message egress nomination before Telegram outbound attachment transport;
-5. broaden artifact rendering/history only when concrete product output needs it;
-6. after intended-platform M7 artifacts are genuinely valid, spend M8 CI budget on clean-machine, autostart and upgrade continuity.
+1. validate real macOS DMG/ZIP artifacts from the corrected ZN package shape, scoped to package content/identity/runtime boot rather than full M8 clean-machine validation;
+2. fix any active package-content/runtime-entrypoint/macOS integration debt exposed by those artifacts at the source boundary;
+3. once intended Linux + Windows + macOS M7 artifacts are genuinely valid, stop installer-format churn and move deliberate release-validation budget to M8 clean-machine, autostart and N → N+1 continuity;
+4. establish browser interaction only through a clean resident-owned body/sense seam, not inherited browser/session ownership;
+5. define explicit resident artifact/message egress nomination before Telegram outbound attachment transport;
+6. broaden artifact rendering/history only when concrete product output needs it.
 
 ## 10. Completion test
 
@@ -299,8 +257,6 @@ The current ownership/extraction boundary requires ZN to be able to:
 - launch independent Electron main/preload/renderer and `zn://`;
 - install/start the independent `zn_agent` runtime;
 - package formal desktop product identity without inherited Hermes product/protocol/PE/bootstrap identity;
-- preserve an independently bootable zero-model `zn_agent` resident inside a real packaged desktop application;
-- preserve and boot that same ZN-owned resident runtime after extraction from real AppImage, deb and rpm artifacts;
-- produce a Linux desktop launcher whose filename, `StartupWMClass`, product name and `zn://` handler align with ZN rather than inherited product identity.
+- preserve an independently bootable zero-model `zn_agent` resident inside real Linux AppImage/deb/rpm and Windows NSIS/MSI installer payloads.
 
-The active source now satisfies those structural boundaries for implemented slices. Remaining work is intended Windows/macOS installer validation, missing product capabilities that justify clean ZN-owned seams, and later clean-machine/repository migration.
+The active source satisfies those structural boundaries for implemented slices. Remaining M7 work is real macOS artifact evidence; remaining product work includes clean browser/egress seams only when justified; M8 and later release/repository migration remain deliberately separate.
