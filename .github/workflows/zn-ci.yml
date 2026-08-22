@@ -139,7 +139,7 @@ jobs:
           load: true
           tags: znagent-ci:dev
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=min
 
       - name: Boot ZN inside container without a model
         run: |
