@@ -141,9 +141,10 @@ def _proxy_bypassed(
     ]
     if not normalized_targets:
         return False
-    return all(
-        any(_no_proxy_entry_matches(entry, target, port) for entry in entries)
+    return any(
+        _no_proxy_entry_matches(entry, target, port)
         for target in normalized_targets
+        for entry in entries
     )
 
 
