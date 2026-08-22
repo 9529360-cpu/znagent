@@ -206,11 +206,11 @@ The active product boundary has moved substantially:
 | Electron main | independent `zn-main.ts` owns window, runtime activation, resident/update IPC, single instance and protocol | M4 complete |
 | Preload | independent `zn-preload.ts` exposes only intentional ZN bridge | M4 complete |
 | Protocol | ZN-owned `zn://` parser/routing in active app | M4 complete |
-| Renderer | independent React `ZnWorkbench`; no active `ContribController` shell | M5 foundation active |
-| Workbench ↔ resident | task submission, status/context and activity result presentation work | M6 partial |
-| Desktop package metadata | `apps/desktop/package.json` still identifies inherited Hermes product/repository and contains inherited package/dependency debt | Must replace before formal release |
-| ZN builder override | mostly ZN-branded, but still registers both `zn` and `hermes` | Transitional; formal builder must become `zn` only |
-| Formal installers | not yet rebuilt/clean-machine verified around the now-independent active runtime + desktop | M7/M8 pending |
+| Renderer | independent React `ZnWorkbench`; no active `ContribController` shell | M5 owned foundation active |
+| Workbench ↔ resident | resident-backed durable work/thread history, workspace association, contextual file/diff/terminal artifacts, provider/settings editing and active work progress are implemented | M5/M6 materially advanced; M6 still partial |
+| Desktop package metadata | `apps/desktop/package.json` identifies `zn-desktop` / `ZN` and the ZN repository | Formal identity owned |
+| Formal builder | ZN builder registers only `zn://`, includes the independent runtime and excludes inherited install/bootstrap resources | Formal identity owned |
+| Formal installers | Linux x86_64, Windows x64 and macOS arm64 artifact shape/runtime identity verified; Linux amd64 deb also verified on a fresh Ubuntu installation | M7 artifact shape verified; M8 in progress |
 
 Important distinction: inactive inherited source can remain as a reference quarry during migration. **Active product control-plane independence does not mean the repository has already been cosmetically purged of all inherited files.**
 
@@ -576,25 +576,24 @@ Exact pixels may evolve. The hierarchy should not.
 
 ### 9.4 Current M5/M6 foundation
 
-The active `ZnWorkbench` already provides:
+The active `ZnWorkbench` / resident loop already provides:
 
 - independent React renderer root;
-- New work, Recent/Search and Workspaces placeholder;
+- New work, Recent/Search and resident-backed work/thread continuity;
+- real resident-backed workspace/folder association;
 - central thread and composer;
-- resident task submission/status/context;
-- compact activity result rendering;
+- resident task submission/status/context and durable active `WorkRun` progress;
+- contextual resident-backed file/diff/terminal artifact presentation;
+- resident-owned provider settings and secure credential-reference editing with hot cognition reconfiguration;
 - settings and update controls;
-- bounded browser-side convenience cache;
+- bounded browser-side convenience cache that is not authoritative history;
 - safe/inert deep-link notice.
 
 Still required before calling M5/M6 complete:
 
-- resident-backed durable work/thread identity/history;
-- real workspace/folder association;
-- contextual artifacts/files/diffs;
-- provider/credential editor using ZN config and secure storage;
-- terminal/browser surfaces only when invoked;
-- richer progress/activity streaming;
+- browser interaction only after a clean ZN-owned resident body/sense seam exists;
+- richer ongoing progress/activity presentation where product value justifies it;
+- broader artifact rendering only for concrete produced outputs;
 - final visual assets, accessibility and keyboard behavior.
 
 ### 9.5 Terminal/files/tools UX
@@ -642,7 +641,7 @@ Formal product protocol:
 zn://
 ```
 
-The active Electron app parses/routes `zn://`. Formal installer/builder metadata must register **only** `zn://`; any remaining `hermes` scheme in packaging metadata is migration debt.
+The active Electron app parses/routes `zn://`. Formal installer/builder metadata registers only `zn://`; inherited `hermes` protocol registration has been removed from the formal ZN package path.
 
 ### 10.3 Backend relationship
 
@@ -812,13 +811,15 @@ protocol:    zn
 artifact:    ZN-<version>-<os>-<arch>...
 ```
 
-`apps/desktop/package.json` itself must become ZN-owned; a separate builder override is not enough.
+`apps/desktop/package.json` itself is now ZN-owned; the formal builder also registers only `zn://`.
 
-Current release debt is explicit:
+Current release evidence/debt is explicit:
 
-- `apps/desktop/package.json` still contains inherited Hermes identity and inherited package/dependency history;
-- `apps/desktop/electron-builder.zn.yml` still contains an inherited `hermes` protocol scheme alongside `zn`;
-- neither fact is acceptable for a formal ZN installer.
+- formal package/repository/product/app/executable/artifact identity is ZN-owned;
+- formal package and builder protocol registration is `zn` only;
+- real Linux AppImage/deb/rpm, Windows NSIS/MSI and macOS arm64 DMG/ZIP payloads preserve ZN identity and an independently bootable embedded resident;
+- Linux amd64 deb has additionally survived a fresh Ubuntu installation with embedded zero-model resident boot;
+- OS-login autostart continuity, N → N+1 handoff, equivalent intended-platform clean installs and signing/notarization remain separate M8/release gates.
 
 ### 14.3 Public update channel
 
@@ -926,7 +927,7 @@ formal builder must not register hermes://
 formal package metadata must not identify product as Hermes
 ```
 
-The first seven are already protected on the active implementation path except that formal builder/package identity is still a pending M7 gate.
+These active/formal ownership boundaries are now protected on the implemented package path. M8 continuity evidence remains a separate release gate and must not be inferred from package-shape tests.
 
 ### 16.3 Desktop behavior tests
 
@@ -1052,26 +1053,25 @@ Exit condition is satisfied: active Electron app launches the ZN renderer and co
 
 ### M5 — Content-first ZN workbench
 
-Status: **IN PROGRESS; independent foundation active**.
+Status: **IN PROGRESS; core owned surfaces materially advanced**.
 
 Already delivered:
 
 - independent React renderer root;
-- left navigation/recent/search/new work;
-- central thread/composer;
-- workspace placeholder;
-- resident context/health;
+- resident-backed work/thread history;
+- real workspace/folder association;
+- central thread/composer and resident progress/status;
+- contextual file/diff/terminal artifacts;
+- resident-owned provider/credential settings integration;
 - settings/update surface;
-- compact resident activity rendering;
 - ZN-owned styles/shell.
 
 Remaining before M5 completion:
 
-- real workspace/project association;
 - final information/visual polish;
-- provider/credential settings wired to ZN config/secure storage;
-- contextual artifacts/files/diffs;
-- accessibility/keyboard behavior.
+- accessibility/keyboard behavior;
+- broader contextual artifact/tool presentation only where concrete product output needs it;
+- browser surface only after a clean resident-owned browser body/sense seam exists.
 
 ### M6 — End-to-end resident work + artifacts
 
@@ -1080,48 +1080,55 @@ Status: **PARTIAL / IN PROGRESS**.
 Already connected:
 
 - renderer → ZN preload → resident task submission;
-- resident status/self inspection;
-- result/activity presentation;
-- update controls.
+- durable resident work/thread identity/history;
+- resident-backed workspace association;
+- durable active `WorkRun` identity and resident-derived ongoing progress;
+- contextual file/diff/terminal artifact presentation;
+- provider/settings editing and hot cognition reconfiguration;
+- resident status/self inspection and update controls.
 
 Still required:
 
-- resident-backed durable work/thread identity/history;
-- richer ongoing progress/state delivery;
-- artifact production/presentation;
-- workspace/project continuity;
-- contextual terminal/browser invocation surfaces.
+- richer ongoing progress/activity delivery where needed;
+- broader artifact production/presentation for concrete outputs;
+- contextual browser invocation after a ZN-owned browser seam exists;
+- final product polish around the owned work loop.
 
 ### M7 — Formal packaging around the owned product
 
-Status: **NOT COMPLETE; next release-ownership milestone after M5/M6 core loop**.
+Status: **ARTIFACT SHAPE VERIFIED for the currently exercised Linux x86_64, Windows x64 and macOS arm64 targets**.
 
-Required:
+Delivered/verified:
 
-- make `apps/desktop/package.json` entirely ZN-owned;
-- eliminate inherited product/repository/build identity;
+- `apps/desktop/package.json` is ZN-owned;
 - formal builder registers only `zn://`;
-- bundle only the independent ZN main/preload/renderer;
-- bundle the independently packageable `zn_agent` runtime;
-- preserve versioned runtime + manifest;
-- keep runtime verification ZN-only.
+- formal packages use ZN product/app/executable/artifact identity;
+- package includes the independent ZN main/preload/renderer and self-contained `zn_agent` runtime;
+- versioned runtime manifest and ZN-only runtime verification are preserved;
+- real Linux AppImage/deb/rpm, Windows NSIS/MSI and macOS arm64 DMG/ZIP payloads preserve ZN identity and zero-model resident boot.
 
-Only after this should multi-OS installer polishing become a primary release task again.
+This closes current artifact-shape ownership evidence, not full release readiness. Clean-machine/continuity, additional intended architectures and signing/notarization remain later gates.
 
 ### M8 — Clean-machine and continuity validation
 
-Status: **NOT STARTED as a formal release gate**.
+Status: **IN PROGRESS; Linux amd64 deb fresh-install resident boot verified**.
 
-Validate actual artifacts:
+Already verified:
 
-1. clean install without Hermes/source/system Python;
-2. first resident boot;
-3. close/reopen desktop while resident continuity remains valid;
-4. OS-login autostart;
-5. N → N+1 while resident busy — no interruption;
-6. N → N+1 while idle — clean handoff;
-7. same ZN identity/state after upgrade;
-8. public update asset reachability without private source credentials.
+1. a Linux amd64 deb can cross an artifact-only handoff to a fresh Ubuntu 24.04 runner with no repository checkout;
+2. that package installs under `/opt/ZN` with ZN desktop/protocol identity;
+3. its embedded portable Python / `zn_agent` runtime boots the resident zero-model without source/system Python.
+
+Still validate as separate gates:
+
+1. OS-login autostart and graceful service stop/restart continuity;
+2. close/reopen desktop while resident continuity remains valid where not already behavior-covered;
+3. N → N+1 while resident busy — no interruption;
+4. N → N+1 while idle — clean handoff;
+5. same ZN identity/state after upgrade;
+6. Windows/macOS clean installation for the intended release matrix;
+7. public update asset reachability without private source credentials;
+8. signing/notarization when operationally configured.
 
 ### M9 — Product completeness and hardening
 
@@ -1291,21 +1298,20 @@ These run only when a release milestone needs them, through explicit workflow di
 
 ## 22. Immediate next development target
 
-The ownership migration has moved beyond the old M1/M4 blockers. The immediate target is now:
+The ownership migration has closed the current M7 artifact-shape exercise and entered M8 continuity validation. The immediate target is now:
 
-**finish the M5/M6 owned workbench loop around real resident work, then close formal desktop package identity before M7 packaging.**
+**prove OS-login resident continuity on an actually installed ZN package, then validate N → N+1 application/runtime/resident handoff as a separate gate.**
 
 Concrete order:
 
-1. make work/thread continuity resident-backed instead of relying on renderer cache as authoritative history;
-2. add real workspace/folder association;
-3. add contextual artifact/file/diff presentation and invoked terminal/browser surfaces;
-4. connect provider/credential settings to ZN-owned config and appropriate secure storage;
-5. wire Telegram/channel outbound attachments only through `OutboundMediaPathPolicy` when an explicit resident artifact/message egress flow exists;
-6. make `apps/desktop/package.json` fully ZN-owned and remove inherited product/repository/build identity;
-7. make the formal builder register only `zn://`;
-8. rebuild formal self-contained installers around the independent ZN desktop + `zn_agent` runtime;
-9. only then spend multi-OS/clean-machine CI budget on M8 continuity validation.
+1. do not rebuild already-proven installer/artifact gates merely to recreate evidence;
+2. finish the Linux installed autostart gate by repairing resident/service lifecycle defects at their source boundary, including graceful stop and lease release;
+3. after autostart is proven, validate N → N+1 busy and idle handoff without interrupting active work or changing ZN identity/state;
+4. add Windows/macOS clean-install coverage only where it provides genuinely new release evidence;
+5. keep signing/notarization explicit and operational—never infer it from unsigned artifact success;
+6. establish browser interaction only through a clean resident-owned body/sense seam;
+7. define explicit resident artifact/message egress nomination before Telegram outbound attachment transport;
+8. continue M5/M6 polish only around concrete product outputs without regressing the content-first workbench.
 
 Do not regress by reintroducing inherited main/preload/renderer/runtime control planes to accelerate these steps.
 
@@ -1315,7 +1321,7 @@ Do not regress by reintroducing inherited main/preload/renderer/runtime control 
 
 Use this as the canonical restart prompt:
 
-> Continue `9529360-cpu/znagent` on `dev/zn-agent`. Read the current repository code first, then read `ZN.md`, `docs/ZN-IMPLEMENTATION-STATUS.md`, and `docs/ZN-SOURCE-EXTRACTION.md` completely before changing code. ZN is the only product/subject. Hermes is source reference only: inspect mature mechanisms, extract/adapt them behind ZN-owned interfaces/config/lifecycle/tests, then switch the active caller; never make Hermes the runtime, UI, desktop control plane, gateway brain or release dependency. The active packaged resident is already the independent `runtime/python` `znagent` distribution booting `zn_agent.resident`; production runtime construction no longer uses `run_agent.AIAgent`. Active local terminal/PTTY and web paths are ZN-owned. The independent Electron main, preload and `zn://` protocol are implemented, and the active React `ZnWorkbench` no longer renders inherited `ContribController`. Current priority is to finish M5/M6: resident-backed work continuity, real workspaces, contextual artifacts/tools and provider/settings integration. Then close M7 package identity debt: `apps/desktop/package.json` must become ZN-owned and the formal builder must register only `zn://` before formal installer/clean-machine work. Preserve zero-model organism behavior, CI cost discipline and `main` untouched until M10.
+> Continue `9529360-cpu/znagent` on `dev/zn-agent`. Read the current repository code first, then read `ZN.md`, `docs/ZN-IMPLEMENTATION-STATUS.md`, and `docs/ZN-SOURCE-EXTRACTION.md` completely before changing code. ZN is the only product/subject. Hermes is source reference only: inspect mature mechanisms, extract/adapt them behind ZN-owned interfaces/config/lifecycle/tests, then switch the active caller; never make Hermes the runtime, UI, desktop control plane, gateway brain or release dependency. The active packaged resident is the independent `runtime/python` `znagent` distribution booting `zn_agent.resident`; production runtime construction no longer uses `run_agent.AIAgent`. Active local terminal/PTTY and web paths are ZN-owned. The independent Electron main, preload, React workbench and `zn://` protocol are active; resident-backed work/thread/workspace/artifact/progress and provider/settings ownership are materially implemented. Formal package identity is ZN-owned, formal builder protocol is `zn` only, and real Linux/Windows/macOS artifacts preserve the self-contained ZN runtime. M8 has started: Linux amd64 deb fresh installation and embedded zero-model resident boot are proven. Current priority is to finish installed OS-login autostart by fixing graceful resident stop/lease-release lifecycle at source, then validate N → N+1 busy/idle runtime continuity as a separate gate. Preserve zero-model organism behavior, CI cost discipline and `main` untouched until M10.
 
 ---
 
