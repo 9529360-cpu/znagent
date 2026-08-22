@@ -29,6 +29,13 @@ declare global {
     error?: string
   }
 
+  type ZnDesktopDeepLink = {
+    url: string
+    route: string
+    path: string
+    params: Record<string, string>
+  }
+
   interface Window {
     znDesktop?: {
       resident: {
@@ -53,6 +60,9 @@ declare global {
       updates: {
         check: () => Promise<ZnDesktopUpdateStatus>
         apply: () => Promise<ZnDesktopUpdateApplyResult>
+      }
+      shell: {
+        onDeepLink: (callback: (link: ZnDesktopDeepLink) => void) => () => void
       }
     }
   }

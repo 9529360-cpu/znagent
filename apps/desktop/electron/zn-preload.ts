@@ -23,5 +23,12 @@ contextBridge.exposeInMainWorld('znDesktop', {
   updates: {
     check: () => ipcRenderer.invoke('zn:updates:check'),
     apply: () => ipcRenderer.invoke('zn:updates:apply')
+  },
+  shell: {
+    onDeepLink: callback => {
+      const listener = (_event, payload) => callback(payload)
+      ipcRenderer.on('zn:deep-link', listener)
+      return () => ipcRenderer.removeListener('zn:deep-link', listener)
+    }
   }
 })

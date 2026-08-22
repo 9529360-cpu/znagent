@@ -5,8 +5,18 @@ type ZnResidentBridge = {
   submit: (payload: Record<string, unknown>) => Promise<unknown>
 }
 
+type ZnDeepLink = {
+  url: string
+  route: string
+  path: string
+  params: Record<string, string>
+}
+
 type ZnDesktopBridge = {
   resident: ZnResidentBridge
+  shell?: {
+    onDeepLink: (callback: (link: ZnDeepLink) => void) => () => void
+  }
 }
 
 const bridge = (window as Window & { znDesktop?: ZnDesktopBridge }).znDesktop
@@ -96,6 +106,12 @@ form?.addEventListener('submit', event => {
 
 refreshButton?.addEventListener('click', () => {
   void refreshResident()
+})
+
+bridge?.shell?.onDeepLink(link => {
+  if (!taskResult) return
+  taskResult.classList.remove('error-text')
+  taskResult.textContent = `Deep link received. No action was executed automatically.\n\n${renderValue(link)}`
 })
 
 void refreshResident()
