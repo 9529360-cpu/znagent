@@ -16,6 +16,7 @@ from typing import Any, Iterable, Mapping
 from .channel import ChannelAdapter, ChannelEvent, ChannelMessage
 from .channel_delivery import ChannelDeliveryLedger
 from .config import load_zn_config
+from .event_ingress import enqueue_event_once, stable_external_event_id
 from .models import utc_now
 
 
@@ -38,10 +39,10 @@ class ChannelLoopState:
 class ResidentChannelSupervisor:
     """Run each channel independently while preserving one resident identity.
 
-    Inbound adapters only enqueue. The resident's own life loop decides when and
-    how to process those events. Completed outcomes are read back from the same
-    durable store and routed out through the adapter, so UI disconnects or
-    channel reconnects do not become alternate cognition owners.
+    Inbound adapters only enqueue durable percepts. The resident's own life loop
+    decides when and how to process those events. Completed outcomes are read
+    from the same durable store and routed outward, so UI disconnects or channel
+    reconnects do not become alternate cognition owners.
     """
 
     def __init__(
@@ -96,9 +97,6 @@ class ResidentChannelSupervisor:
 
     def stop(self) -> None:
         self._stop.set()
-        # Closing transports first wakes blocking long-polls. No channel thread
-        # can be stuck inside resident cognition because cognition is never run
-        # from these threads.
         for adapter in self._adapters.values():
             try:
                 adapter.close()
@@ -137,9 +135,9 @@ class ResidentChannelSupervisor:
                     events = adapter.poll(timeout=self.poll_timeout)
                     enqueued, duplicates = self._ingest_events(events)
                     # Persist transport cursor only after every percept returned by
-                    # this poll has reached the durable routing ledger. A crash
-                    # before this point may replay an update, which the ledger
-                    # deduplicates; a crash after it cannot skip an unqueued event.
+                    # this poll has a durable route. A crash before here replays
+                    # the update; deterministic event ids make that replay
+                    # idempotent even if the event reached the queue first.
                     self._save_adapter_checkpoint(name, adapter)
                     delivered_after = self._deliver_ready(name, adapter)
                     delivered = delivered_before + delivered_after
@@ -167,8 +165,6 @@ class ResidentChannelSupervisor:
                     state.pending_deliveries = self.ledger.counts(name).get("pending", 0)
                 backoff = self.min_backoff
 
-                # A healthy long-poll blocks. Protect the resident from a
-                # misconfigured adapter that returns immediately with no work.
                 elapsed = time.monotonic() - started
                 if not events and not delivered and elapsed < 0.05:
                     self._stop.wait(0.05 - elapsed)
@@ -181,30 +177,37 @@ class ResidentChannelSupervisor:
         duplicates = 0
         for event in events:
             source_key = self.ledger.source_key(event)
-            if self.ledger.route_for_source(source_key) is not None:
+            existing_route = self.ledger.route_for_source(source_key)
+            if existing_route is not None:
                 duplicates += 1
                 continue
-            resident_event = self.resident.enqueue(
-                event.text,
+
+            payload = {
+                "channel": event.channel,
+                "conversation_id": event.conversation_id,
+                "sender_id": event.sender_id,
+                "message_id": event.message_id,
+                "thread_id": event.thread_id,
+                "channel_event_id": event.event_id,
+                "channel_source_key": source_key,
+                "attachments": [asdict(item) for item in event.attachments],
+                "channel_metadata": dict(event.metadata),
+            }
+            event_id = stable_external_event_id("channel", source_key)
+            ingress = enqueue_event_once(
+                self.resident,
+                event_id=event_id,
+                task=event.text,
                 kind="channel_message",
-                payload={
-                    "channel": event.channel,
-                    "conversation_id": event.conversation_id,
-                    "sender_id": event.sender_id,
-                    "message_id": event.message_id,
-                    "thread_id": event.thread_id,
-                    "channel_event_id": event.event_id,
-                    "channel_source_key": source_key,
-                    "attachments": [asdict(item) for item in event.attachments],
-                    "channel_metadata": dict(event.metadata),
-                },
+                payload=payload,
             )
-            remembered = self.ledger.remember(event, resident_event.event_id)
-            if remembered.event_id == resident_event.event_id:
+            remembered = self.ledger.remember(event, ingress.event.event_id)
+            if ingress.created and remembered.event_id == ingress.event.event_id:
                 enqueued += 1
             else:
-                # Only a concurrent/crash-window duplicate can reach this path;
-                # keep routing to the already durable source record.
+                # Recovery case: the same deterministic resident event already
+                # existed (for example a crash after enqueue but before route
+                # insert), or another worker already recorded the source route.
                 duplicates += 1
         return enqueued, duplicates
 
