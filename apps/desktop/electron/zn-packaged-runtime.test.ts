@@ -145,9 +145,10 @@ test('formal desktop package, hooks and builder expose only ZN product identity'
     'scripts/before-build.mjs',
     'scripts/before-pack.mjs',
     'scripts/after-pack.mjs',
-    'scripts/set-exe-identity.mjs'
+    'scripts/set-exe-identity.mjs',
+    'scripts/notarize.mjs'
   ].map(relative => fs.readFileSync(path.join(desktopRoot, relative), 'utf8')).join('\n')
   assert.match(activeHooks, /ProductName: 'ZN'/)
   assert.match(activeHooks, /CompanyName: 'ZN Project'/)
-  assert.doesNotMatch(activeHooks, /Hermes|Nous Research|install\.ps1|hermes_cli/)
+  assert.doesNotMatch(activeHooks, /Hermes|Nous Research|install\.ps1|hermes_cli|hermes-notary/i)
 })
