@@ -256,11 +256,13 @@ class FailoverWebResource:
             used_providers.append(resource.name)
             by_url: dict[str, WebDocument] = {}
             for document in documents:
-                url = str(document.url or "").strip()
-                if url and url in errors:
-                    existing = by_url.get(url)
+                requested_url = str(
+                    document.metadata.get("requestedURL") or document.url or ""
+                ).strip()
+                if requested_url and requested_url in errors:
+                    existing = by_url.get(requested_url)
                     if existing is None or (existing.error and not document.error):
-                        by_url[url] = document
+                        by_url[requested_url] = document
 
             next_pending: list[str] = []
             for url in requested:
