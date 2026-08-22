@@ -92,6 +92,12 @@ async function residentRpc(endpoint, method, params = {}, timeoutMs = 5_000) {
   })
 }
 
+function residentIsBusy(status) {
+  return Number(status?.queue_depth || 0) > 0 ||
+    Boolean(status?.working_state?.current_event_id) ||
+    Boolean(status?.self?.current_situation?.active_event_id)
+}
+
 function readLocalJson(pathname, timeoutMs = 2_000) {
   return new Promise((resolve, reject) => {
     const request = http.get({
@@ -288,16 +294,6 @@ async function startUpdateServer(updateSha, updateSize) {
   return { server, tlsDir, channelUrl: `${baseUrl}/stable.json` }
 }
 
-async function waitForIdle(cdp) {
-  return await waitFor('resident readiness to become idle', async () => {
-    const status = await cdp.evaluate('window.znDesktop.resident.status()')
-    const queueDepth = Number(status?.queue_depth || 0)
-    const currentEvent = status?.working_state?.current_event_id
-    const activeEvent = status?.self?.current_situation?.active_event_id
-    return queueDepth === 0 && !currentEvent && !activeEvent ? status : null
-  }, 120_000, 500)
-}
-
 let desktop = null
 let cdp = null
 let updateServer = null
@@ -382,8 +378,9 @@ try {
   }, 120_000, 500)
   assert.equal(prepared.downloadState, 'ready')
 
+  const beforeStat = await fsp.stat(installedPath)
   const busyProbe = await cdp.evaluate(`(async () => {
-    for (let index = 0; index < 6; index += 1) {
+    for (let index = 0; index < 12; index += 1) {
       await window.znDesktop.resident.workStart({
         threadId: 'm8-busy-' + index,
         task: 'Process M8 resident continuity marker ' + index + ' without external cognition.'
@@ -399,36 +396,43 @@ try {
   })()`, 45_000)
   assert.ok(Number(busyProbe?.queueDepth || 0) > 0, 'busy probe must create durable resident work')
   assert.equal(busyProbe?.activeRuntimeId, oldRuntimeId)
-  assert.equal(busyProbe?.apply?.ok, false)
-  assert.equal(busyProbe?.apply?.error, 'resident-busy')
+  assert.equal(busyProbe?.apply?.ok, true, busyProbe?.apply?.message || 'busy desktop update must begin')
 
-  await sleep(750)
-  assert.equal(await sha256(installedPath), oldSha, 'BUSY application gate must not replace the running AppImage')
-  const busyEndpoint = await readEndpoint()
-  assert.equal(busyEndpoint.instance_id, initialEndpoint.instance_id, 'BUSY gate must not retire the N resident')
-  assert.equal(busyEndpoint.runtime_id, oldRuntimeId)
-  assert.equal(await cdp.evaluate('document.title'), 'ZN', 'BUSY gate must keep the N Electron renderer alive')
-
-  await waitForIdle(cdp)
-  const beforeHandoffSelf = await cdp.evaluate('window.znDesktop.resident.self()')
-  const beforeHandoffPulseCount = Number(beforeHandoffSelf?.pulse_count || initialPulseCount)
-  const beforeStat = await fsp.stat(installedPath)
-
-  const idleApply = await cdp.evaluate('window.znDesktop.updates.apply()', 45_000)
-  assert.equal(idleApply?.ok, true, idleApply?.message || 'IDLE application handoff must start')
-
-  await waitFor('AppImage atomic replacement', async () => {
+  await waitFor('AppImage replacement while N resident remains alive', async () => {
     const current = await fsp.stat(installedPath)
-    return current.ino !== beforeStat.ino ? current : null
+    if (current.ino === beforeStat.ino) return null
+    if (await sha256(installedPath) !== updateSha) return null
+    const endpoint = await readEndpoint()
+    if (endpoint.instance_id !== initialEndpoint.instance_id || endpoint.runtime_id !== oldRuntimeId) return null
+    await residentRpc(endpoint, 'ping')
+    return endpoint
   }, 45_000, 250)
-  assert.equal(await sha256(installedPath), updateSha, 'installed AppImage must become the exact N+1 artifact')
 
-  finalEndpoint = await waitFor('N+1 resident after real Electron relaunch', async () => {
+  const deferredBusyState = await waitFor('N+1 desktop to prepare future runtime while N remains busy', async () => {
+    const endpoint = await readEndpoint()
+    if (endpoint.instance_id !== initialEndpoint.instance_id || endpoint.runtime_id !== oldRuntimeId) return null
+    const status = await residentRpc(endpoint, 'status')
+    if (!residentIsBusy(status)) return null
+    const runtimeDirs = await fsp.readdir(path.join(znHome, 'runtime'))
+    if (!runtimeDirs.includes(oldRuntimeId) || !runtimeDirs.includes(newRuntimeId)) return null
+    const unit = await fsp.readFile(unitPath, 'utf8')
+    if (!unit.includes(newRuntimeId) || unit.includes(initialEndpoint.python)) return null
+    return { endpoint, status, unit }
+  }, 45_000, 250)
+
+  assert.equal(deferredBusyState.endpoint.instance_id, initialEndpoint.instance_id)
+  assert.equal(deferredBusyState.endpoint.runtime_id, oldRuntimeId)
+  assert.ok(residentIsBusy(deferredBusyState.status), 'N resident must still own active work after N+1 app launch')
+
+  const beforeHandoffSelf = await residentRpc(deferredBusyState.endpoint, 'self')
+  const beforeHandoffPulseCount = Number(beforeHandoffSelf?.pulse_count || initialPulseCount)
+
+  finalEndpoint = await waitFor('automatic N+1 resident handoff after work becomes idle', async () => {
     const endpoint = await readEndpoint()
     if (endpoint.runtime_id !== newRuntimeId || endpoint.instance_id === initialEndpoint.instance_id) return null
     await residentRpc(endpoint, 'ping')
     return endpoint
-  }, 90_000, 300)
+  }, 120_000, 300)
 
   const finalSelf = await residentRpc(finalEndpoint, 'self')
   const finalWork = await residentRpc(finalEndpoint, 'work_get', { thread_id: markerThread })
@@ -464,7 +468,7 @@ try {
     same_home: znHome,
     self_born_at: finalSelf?.born_at,
     work_thread: finalWork?.id,
-    busy_gate: 'resident-busy',
+    busy_gate: 'desktop-updated-resident-deferred',
     final_queue_depth: finalStatus?.queue_depth,
     appimage_sha256: updateSha
   }, null, 2))
