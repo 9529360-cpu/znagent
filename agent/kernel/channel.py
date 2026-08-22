@@ -47,10 +47,12 @@ class ChannelEvent:
     text: str
     message_id: str | None = None
     thread_id: str | None = None
-    attachments: tuple[ChannelAttachment, ...] = ()
     event_id: str = field(default_factory=lambda: f"channel-{uuid.uuid4().hex[:12]}")
     metadata: dict[str, Any] = field(default_factory=dict)
     received_at: str = field(default_factory=utc_now)
+    # Appended rather than inserted so the original positional constructor
+    # signature stays compatible during source migration.
+    attachments: tuple[ChannelAttachment, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,8 +62,9 @@ class ChannelMessage:
     text: str
     thread_id: str | None = None
     reply_to_message_id: str | None = None
-    attachments: tuple[ChannelAttachment, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Same compatibility rule as ChannelEvent: append new fields.
+    attachments: tuple[ChannelAttachment, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
