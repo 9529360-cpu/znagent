@@ -4,13 +4,13 @@
 >
 > This document is the implementation contract for adopting mature capability code from the inherited/reference tree. It exists to prevent a recurring failure mode: packaging or calling an old product subsystem wholesale when ZN only needs the engineering mechanisms inside it.
 >
-> Current checkpoint: 2026-08-22. The active development branch is `dev/zn-agent`.
+> Current checkpoint: 2026-08-22. Active development branch: `dev/zn-agent`.
 
 ## 1. Non-negotiable rule
 
 ZN does **source-level extraction**, not product-level embedding.
 
-The reference tree is a library of solved engineering problems. When a mature implementation exists, the default is to study it, copy/adapt the useful mechanism into a ZN-owned namespace, remove old product assumptions, and maintain the resulting code as ZN.
+The reference tree is a library of solved engineering problems. When a mature implementation exists, the default is to study it, copy/adapt the coherent useful mechanism into a ZN-owned namespace or boundary, remove inherited product assumptions, and maintain the resulting code as ZN.
 
 Correct:
 
@@ -18,62 +18,61 @@ Correct:
 mature reference source
 → identify mechanism + edge cases + tests
 → extract the smallest coherent implementation slice
-→ move/adapt into ZN namespace
-→ replace old config/state/session ownership with ZN ownership
-→ preserve relevant provenance/license
+→ move/adapt behind ZN-owned interfaces/config/state/lifecycle
+→ preserve applicable provenance/license
 → add ZN behavior tests
-→ switch ZN caller to the extracted module
-→ delete the compatibility import when no longer needed
+→ switch the active ZN caller
+→ remove compatibility imports when no longer needed
 ```
 
 Incorrect:
 
 ```text
-need model access → instantiate the old full agent
-need terminal → call the old product tool forever
-need web search → keep old tool/config/plugin control plane
-need Telegram/Discord/WhatsApp → run the old gateway as ZN's communications brain
+need model access → instantiate the inherited full agent
+need terminal → call the inherited product tool forever
+need web search → keep inherited tool/config/plugin control plane
+need messaging → run the inherited gateway as ZN's communications brain
 need desktop → start inherited Electron main/preload/renderer behind a ZN wrapper
-need release → package the old Python product under a ZN installer
+need release → package the inherited Python product under a ZN installer
 ```
 
-Packaging is downstream validation. It is not the architecture and must not hide product-level dependencies.
+Packaging is downstream validation. It is not architecture and must not hide old product dependencies.
 
 ## 2. Extraction standard
 
 A capability is considered ZN-owned only when all of the following are true:
 
-1. The production import begins in a ZN-owned boundary.
-2. Its public interface is defined by ZN.
-3. ZN configuration and credential resolution own runtime choices.
+1. Production entry begins at a ZN-owned boundary.
+2. Its public contract is defined by ZN.
+3. ZN configuration/credentials own runtime choices.
 4. ZN state/session/identity objects own continuity.
-5. The extracted code can be tested without starting the old CLI/agent/gateway/desktop.
-6. The capability can be packaged without requiring old product entrypoints.
-7. Old source may remain beside it as reference, but the active ZN call path does not cross back into the old product control plane.
+5. It can be tested without starting inherited CLI/agent/gateway/desktop control planes.
+6. It can be packaged without inherited product entrypoints.
+7. Reference source may remain beside it during migration, but the active caller does not cross back into the old product control plane.
 
-Copying mature implementation is allowed and often preferred. Cosmetic rewrites are not a goal. The extraction must remove product coupling, not historical ancestry.
+Copying mature implementation is allowed and often preferable. Cosmetic rewrites are not a goal. Ownership transfer is.
 
-The current physical source layout under `agent/kernel/` is allowed during migration. `runtime/python/pyproject.toml` maps that ZN-owned kernel source into the installed `zn_agent.core` namespace. `ZN.md` deliberately places ownership-seam removal ahead of a mass namespace rename.
+The current physical source layout under `agent/kernel/` remains acceptable during migration. `runtime/python/pyproject.toml` installs this ZN-owned kernel under `zn_agent.core`. Namespace/topology cleanup remains lower priority than product completeness and release ownership.
 
 ## 3. Current extraction checkpoint
 
-The main resident/runtime seams that originally crossed into the inherited product are cut. Workbench development is now primarily ZN-native product work rather than inherited-source extraction.
+The original resident/runtime/desktop control-plane seams have been cut. Current M5/M6 work is primarily native ZN product development rather than Hermes extraction.
 
 ### 3.1 External cognitive/model resources
 
 Status: **ZN-native production path active**.
 
-Implemented ZN-owned mechanisms include:
+Implemented:
 
-- `agent/kernel/cognitive_resource.py` — bounded `CognitiveResource` / `CognitiveIncrement`, OpenAI-compatible transport and provider routing;
+- `agent/kernel/cognitive_resource.py` — bounded `CognitiveResource` / `CognitiveIncrement` and OpenAI-compatible transport/routing;
 - `agent/kernel/anthropic_resource.py` — native Anthropic Messages behavior;
 - `agent/kernel/gemini_resource.py` — native Gemini `generateContent` behavior;
-- `agent/kernel/cognitive_factory.py` — provider/resource selection;
-- `agent/kernel/provider_bridge.py` — resident construction from ZN configuration/resources;
-- `agent/kernel/config.py` — ZN-owned configuration loading;
-- `agent/kernel/worker.py` — generic worker contract plus zero-model unavailability behavior.
+- `agent/kernel/cognitive_factory.py` — ZN resource selection;
+- `agent/kernel/provider_bridge.py` — resident construction from ZN config/resources;
+- `agent/kernel/config.py` — ZN-owned configuration;
+- `agent/kernel/worker.py` — generic worker contract and explicit zero-model unavailability.
 
-The production kernel no longer constructs `run_agent.AIAgent`. Remaining cognition extraction is demand-driven and must not recreate a prompt-owning full-agent loop inside the resource layer.
+The production kernel no longer constructs `run_agent.AIAgent`. Remaining provider-specific extraction is demand-driven and must not reconstruct a prompt-owning full-agent loop inside the resource layer.
 
 ### 3.2 Local terminal / computer body
 
@@ -81,19 +80,19 @@ Status: **ZN-native local terminal and PTY path active**.
 
 Implemented in `agent/kernel/terminal.py` and `agent/kernel/pty.py`:
 
-- cwd resolution/continuity;
-- POSIX shell and Windows Git Bash discovery;
-- foreground/background execution;
-- timeout and process-tree/process-group cleanup;
+- cwd continuity;
+- POSIX shell / Windows Git Bash discovery;
+- foreground/background local execution;
+- timeout/process-tree cleanup;
 - bounded output;
-- inherited runtime/credential environment isolation;
-- POSIX `ptyprocess` and Windows `pywinpty`/ConPTY bridges;
-- interactive session start/poll/stop/stdin/resize;
-- completed-session reclamation and exit/cwd evidence preservation.
+- inherited credential/runtime-environment isolation;
+- POSIX `ptyprocess` and Windows ConPTY bridges;
+- interactive start/poll/stop/stdin/resize;
+- completed-session reclamation and final exit/output/cwd evidence preservation.
 
-The real POSIX PTY smoke explicitly consumes a final result returned by `write_stdin()` when the child exits during that observation boundary. This preserves immediate completed-session reclamation rather than weakening the lifecycle to accommodate a stale extra poll.
+The real POSIX PTY smoke consumes a final result returned directly by `write_stdin()` when the child exits during that operation. Production cleanup remains immediate; the test no longer assumes a stale follow-up poll is valid.
 
-Optional Docker/SSH/cloud backends remain demand-driven. Do not restore the old gateway/session control plane to obtain them.
+Optional Docker/SSH/cloud backends remain demand-driven. Do not restore inherited gateway/session ownership to obtain them.
 
 ### 3.3 Web search / world sense
 
@@ -101,102 +100,125 @@ Status: **ZN-native production path active**.
 
 Implemented:
 
-- `agent/kernel/web_resource.py` — ZN-owned web resource contract, Tavily and failover;
-- `agent/kernel/exa_web_resource.py` — Exa search/extract;
-- `agent/kernel/firecrawl_web_resource.py` — Firecrawl search/scrape;
-- `agent/kernel/url_safety.py` — HTTP(S)-only and private/metadata/network target protections;
-- `NativeWorldSense._search()` routes through the ZN web resource layer.
+- ZN web resource boundary and Tavily/failover;
+- Exa search/extract;
+- Firecrawl search/scrape;
+- URL/network target safety;
+- `NativeWorldSense` routes through this ZN layer.
 
-Browser automation/rendering remains a separate body/sense requirement, not a search-provider shortcut.
+Browser automation/rendering remains a separate body/sense requirement, not a shortcut through search-provider code.
 
 ### 3.4 Communication channels
 
-Status: **resident-owned channel lifecycle active; Telegram is the first extracted transport**.
+Status: **resident-owned lifecycle active; Telegram first transport**.
 
-Core ZN contracts and lifecycle:
+Core ZN contracts/lifecycle include:
 
-- `agent/kernel/channel.py`;
-- `agent/kernel/event_ingress.py`;
-- `agent/kernel/channel_runtime.py`;
-- `agent/kernel/channel_delivery.py`;
-- `agent/kernel/telegram_resident_channel.py`;
-- `agent/kernel/telegram_channel.py`;
-- `agent/kernel/telegram_network.py`;
-- `agent/kernel/outbound_media.py`.
+- normalized channel contracts;
+- deterministic durable ingress;
+- resident-owned channel supervisor;
+- durable delivery/retry state;
+- Telegram polling/checkpoint/network transport;
+- bounded inbound media;
+- `OutboundMediaPathPolicy` for local-file egress authorization.
 
-Current invariant:
+Invariant:
 
 ```text
-Telegram / future Discord / future Slack / ...
-→ ChannelEvent
+platform transport
+→ normalized ChannelEvent
 → deterministic durable resident ingress
 → SAME ZN resident life loop
 → durable outcome
-→ channel delivery ledger
-→ selected platform adapter
+→ delivery ledger
+→ selected transport
 ```
 
-Outbound local-file security is separated from transport. Telegram outbound media transport still must consume `OutboundMediaPathPolicy` before upload and should only be wired when the resident has an explicit artifact/message egress path.
+Telegram outbound media still must pass through `OutboundMediaPathPolicy` when a concrete resident artifact/message egress flow exists.
 
 ## 4. Independent desktop extraction and current native product work
 
-Status: **M4 ownership seam complete; M5 workbench materially advanced; resident-backed work and workspace continuity active**.
+Status: **M4 ownership complete; M5 materially advanced; M6 partial with resident work/workspace/file-diff context active**.
 
-The active ZN desktop does not route through inherited Electron main, preload or `ContribController`.
+The active desktop no longer routes through inherited Electron main, preload or `ContribController`.
 
-Current ZN-owned desktop control plane:
+Current ZN-owned control plane includes:
 
 - `apps/desktop/electron/zn-main.ts` — BrowserWindow, single-instance lifecycle, packaged runtime activation, resident/update/workspace IPC, navigation and `zn://` ownership;
-- `apps/desktop/electron/zn-preload.ts` — intentional `window.znDesktop` bridge only;
-- `apps/desktop/electron/zn-protocol.ts` — ZN-only deep-link parsing;
-- `apps/desktop/electron/zn-workspace-ipc.ts` — OS-native local folder selection/canonicalization for work association;
-- `apps/desktop/electron/zn-shell.html` — minimal CSP-bound renderer document;
-- `apps/desktop/src/zn/main.tsx` — independent React renderer root;
+- `apps/desktop/electron/zn-preload.ts` — intentional ZN bridge only;
+- `apps/desktop/electron/zn-protocol.ts` — ZN deep-link parser;
+- `apps/desktop/electron/zn-workspace-ipc.ts` — native folder selection/canonicalization;
+- `apps/desktop/src/zn/main.tsx` — independent React root;
 - `apps/desktop/src/zn/workbench.tsx` — content-first workbench;
-- `apps/desktop/src/zn/state.ts` — bounded browser convenience cache only;
-- `apps/desktop/src/zn/resident-client.ts` — direct ZN resident/update/workspace client;
+- `apps/desktop/src/zn/state.ts` — bounded non-authoritative browser convenience state;
+- `apps/desktop/src/zn/resident-client.ts` — resident/workspace/update client;
 - `apps/desktop/scripts/bundle-electron-main.mjs` — ZN-only active bundle entries.
 
-The latest verified M5/M6 state is:
+Latest verified M5/M6 flow:
 
 ```text
 ZnWorkbench
 → ZN preload / IPC
 → resident work RPC
 → ResidentWorkLedger
-→ durable thread + canonical workspace association
-→ same ZNResidentRuntime submit/event loop
-→ workspace_path / workdir into native investigation/body context
-→ durable response/activity
-→ resident snapshot back to workbench
+→ durable thread + canonical workspace
+→ SAME ZNResidentRuntime event loop
+→ NativeInvestigator / NativeBody
+→ bounded WorkArtifact file/diff context
+→ durable resident work snapshot
+→ contextual workbench panel
 ```
 
-Workspace association is native ZN product implementation, not an extraction from Hermes. It matters to the extraction ledger because it prevents an inherited project/session model or renderer-local folder state from becoming the owner of project continuity.
+### 4.1 Resident-backed work/workspace ownership
 
-The normal attach boundary is intentionally narrow:
+Work/thread identity and message history are resident-owned. Browser `localStorage` is only a bounded fallback/cache.
+
+Workspace association is native ZN product state, not an inherited project/session model:
 
 ```text
 renderer supplies threadId only
 → Electron OS-native openDirectory picker
 → Electron realpath + directory check
-→ resident work_attach_workspace
+→ resident work_attach_workspace RPC
 → resident realpath + directory check
-→ durable resident work metadata
+→ durable workspace metadata
+→ workspace_path / workdir in later work events
 ```
 
-Generic work metadata cannot forge the reserved workspace field. The durable resident association is then propagated into event `workspace_path`/`workdir`, so the existing ZN-native Git/body mechanisms operate against the associated folder.
+Generic work metadata cannot forge the reserved workspace field. Native Git/command/body context consumes the durable association.
 
-Verified source HEAD:
+Relative native file movements with workspace/workdir context are also anchored through a ZN-owned path-context helper, while absolute-path behavior remains explicit. Automatic artifact preview verifies realpath containment and rejects symlink escape from the workspace.
+
+### 4.2 Contextual file/diff artifacts
+
+File/diff presentation is native ZN product work, not an extraction of the inherited desktop file/session model.
+
+Implemented:
+
+- durable resident-owned `WorkArtifact` records keyed to thread/event;
+- artifacts persist in resident work SQLite with bounded retention;
+- file artifacts derive from successful ZN Body file observations/writes inside the attached workspace;
+- writes are re-observed through ZN Body before preview is recorded;
+- dirty-workspace context can produce a small set of changed-file previews and a bounded current Git diff;
+- the diff is labeled as current workspace state after the event, avoiding false attribution of preexisting changes;
+- renderer receives artifact content only through resident work snapshots and does not read the host filesystem directly;
+- artifacts appear in the optional right context panel; no permanent file tree or IDE shell was added;
+- RPC/browser hydration is explicitly bounded: recent work list carries only the newest artifact per thread, active snapshots carry at most eight, browser cache remains bounded/non-authoritative.
+
+Current artifact support is intentionally partial. General rendered documents, binary previews, every clean native-investigation preview and richer historical artifact browsing remain future product work.
+
+Verified source baseline:
 
 ```text
-d66d2b5d95b82bd7ba7fd9a7fcee3f7223a5d7a9
+1ac78c06bf28da299094318921e0ff5fcf256887
 ```
 
 Key source commits:
 
 ```text
-8ccbb324c875af506ef45cb3ab21d864504e9064  feat: attach durable workspaces to resident work
-d66d2b5d95b82bd7ba7fd9a7fcee3f7223a5d7a9  test: honor PTY completion from stdin write
+5be1916970b6b339e85efcaf1a9aa0893af93842  feat: present resident work artifacts contextually
+8cea9fdd552bc414c0af61ce7fda59fc756d3d44  test: isolate resident artifact assertions
+1ac78c06bf28da299094318921e0ff5fcf256887  perf: bound resident artifact snapshots
 ```
 
 CI:
@@ -204,16 +226,16 @@ CI:
 ```text
 ZN Kernel / Python      success
 Electron / TypeScript  success
-Actions run             32574451330
+Actions run             32575297967
 ```
 
-Remaining workbench/product work includes:
+Remaining workbench/product work:
 
-- contextual artifacts/files/diffs;
-- invoked terminal/browser surfaces;
+- terminal/browser surfaces only when explicitly invoked;
+- broader artifact types/history where concrete output requires them;
 - provider/credential editor connected to ZN config/secure storage;
-- richer resident activity/progress streaming;
-- final product assets/visual polish/accessibility.
+- richer ongoing activity/progress streaming;
+- final accessibility/keyboard/visual polish.
 
 ## 5. Python/runtime packaging extraction
 
@@ -221,44 +243,42 @@ Status: **M1 active packaged resident path is ZN-owned**.
 
 Implemented:
 
-- `runtime/python/pyproject.toml` — independent `znagent` distribution and `zn-resident` entrypoint;
-- `runtime/python/zn_agent/resident.py` — ZN resident package entrypoint;
-- `apps/desktop/scripts/stage-zn-runtime.mjs` — installs `runtime/python`, validates ZN runtime content and rejects `hermes_cli`;
-- `apps/desktop/electron/zn-packaged-runtime.ts` — validates/materializes versioned ZN runtime payloads;
-- `apps/desktop/electron/zn-resident-process.ts` — launches `python -m zn_agent.resident`.
+- independent `runtime/python` `znagent` distribution;
+- `zn-resident` / `zn_agent.resident` entrypoint;
+- runtime staging installs the ZN project and rejects `hermes_cli`;
+- packaged-runtime materialization/verification is ZN-owned;
+- Electron launches `python -m zn_agent.resident`.
 
-Repository-root inherited source/metadata remains source quarry. It is not the active packaged resident distribution.
+Repository-root inherited metadata/source remains reference quarry, not the packaged resident.
 
 ## 6. What remains inherited and why it is still debt
 
-The active resident runtime and active desktop control plane are independent, but the repository is not yet a fully migrated ZN product.
+Known product/release debt includes:
 
-Known remaining product/release debt includes:
+- root inherited/reference distribution metadata/source;
+- `apps/desktop/package.json` still identifies Hermes product/repository/build history and retains inherited dependency/script debt;
+- package-level default builder metadata remains inherited;
+- `apps/desktop/electron-builder.zn.yml` still registers both `zn` and `hermes`;
+- inactive inherited Electron/renderer/gateway/source trees remain reference material;
+- formal clean installers have not yet been rebuilt and clean-machine verified around only the independent ZN desktop + runtime.
 
-- root repository distribution metadata/reference source remains inherited;
-- `apps/desktop/package.json` still identifies the package/product/repository as Hermes and contains inherited scripts/dependencies;
-- the package-level default Electron builder metadata still identifies Hermes;
-- `apps/desktop/electron-builder.zn.yml` is ZN-branded but still registers both `zn` and `hermes` schemes;
-- inactive inherited Electron/renderer/gateway/source trees remain as reference material;
-- formal self-contained installer/clean-machine validation has not yet been rebuilt around the independent ZN desktop + runtime boundary.
-
-These are migration/release debts, not permission to route active ZN code back through the inherited product.
+These are migration debts, not permission to route active ZN paths back through inherited control planes.
 
 ## 7. What not to extract
 
 Do not blindly migrate:
 
-- old product branding and paths;
-- old CLI UX merely because a capability is configured there;
-- old full-agent orchestration/prompt ownership;
-- old desktop shell/UI;
-- old gateway identity/session model when ZN resident already owns identity/continuity;
-- vendor/subscription code that ZN does not use;
-- every optional backend at once;
+- inherited branding/paths;
+- old CLI UX merely because configuration exists there;
+- inherited full-agent orchestration/prompt ownership;
+- inherited desktop shell/UI;
+- inherited gateway/session identity model;
+- vendor/subscription features without a concrete ZN requirement;
+- all optional backends at once;
 - compatibility shims whose only consumer is the old product;
-- tests that only freeze old naming/snapshots rather than useful behavior.
+- snapshot/name tests that preserve old product identity rather than useful behavior.
 
-The reference implementation is a quarry, not a dependency graph that must be preserved.
+The reference implementation is a quarry, not a dependency graph to preserve.
 
 ## 8. Extraction ledger
 
@@ -272,42 +292,43 @@ E5  extract communication framework + first channel           DONE for Telegram 
 E6  switch resident production callers to ZN-owned modules    DONE for cognition/terminal/web/channel lifecycle
 E7  build independent ZN Electron main/preload/UI foundation  DONE
 E8  remove active old-product control-plane imports           DONE for active resident + desktop; packaging metadata debt remains
-E9  package independently bootable ZN product                 NEXT release-ownership milestone after M5/M6 product loop
+E9  package independently bootable ZN product                 NEXT release-ownership milestone after M5/M6 core loop
 E10 verify clean-machine install/upgrade/multi-OS release      NOT STARTED as product gate
 ```
 
-“DONE” means the active ZN path no longer needs the old product control plane for that slice; it does not mean every optional reference feature was copied.
+“DONE” means the active ZN path no longer needs the inherited control plane for that capability. It does not mean every optional reference feature was copied.
 
 ## 9. Immediate code target
 
-The next work should continue from the owned runtime, desktop and resident-backed work/workspace foundations rather than adding compatibility wrappers.
+Continue from the owned runtime/desktop and resident-backed work/workspace/artifact foundations.
 
 Priority order:
 
-1. add contextual artifact/file/diff production and presentation to resident-backed work;
-2. add terminal/browser surfaces only when explicitly invoked by work;
-3. connect provider/settings editing to the ZN-owned configuration/credential boundary;
-4. wire outbound channel attachments only through `OutboundMediaPathPolicy` when the resident has a concrete artifact/message egress path;
-5. remove remaining package/release identity debt: make `apps/desktop/package.json` ZN-owned and ensure the formal builder registers only `zn://`;
-6. rebuild formal self-contained packaging around the independent ZN desktop + `zn_agent` runtime;
-7. only after that spend multi-OS CI/release budget on clean-machine, autostart and N → N+1 continuity validation.
+1. add contextual terminal/browser surfaces only when explicitly invoked by work rather than permanent IDE panes;
+2. broaden artifact rendering/history only where concrete work output requires it;
+3. connect provider/settings editing to the ZN-owned config/credential boundary;
+4. wire outbound channel attachments only through `OutboundMediaPathPolicy` when a concrete resident artifact/message egress path exists;
+5. make `apps/desktop/package.json` fully ZN-owned and ensure formal builder registers only `zn://`;
+6. rebuild formal self-contained packaging around independent ZN desktop + `zn_agent` runtime;
+7. only then spend multi-OS CI/release budget on clean-machine, autostart and N → N+1 continuity validation.
 
-Do not make installer polish the architecture driver before the remaining product loop and ownership metadata are corrected.
+Do not let installer polish become the architecture driver before the remaining product loop and package identity are corrected.
 
 ## 10. Completion test
 
-The source-extraction phase is structurally complete for the active runtime/desktop slices when ZN can, from its own interfaces/state and active product control plane:
+The source-extraction phase is structurally complete for the active slices when ZN can, through its own interfaces/state/control plane:
 
-- consult a real external model without constructing the inherited full agent;
-- execute local terminal/PTY work and observe the result;
-- search/extract web evidence and feed it into `NativeWorldSense`;
-- receive and deliver through at least one external communication channel;
-- authorize local-file media egress through a ZN-owned policy before transport;
+- consult external cognition without constructing inherited full agent;
+- execute local terminal/PTTY work;
+- search/extract web evidence;
+- receive/deliver through a resident-owned external channel;
+- authorize local-file media egress through ZN policy;
 - launch its own Electron main/preload/renderer and `zn://` protocol;
 - install/start its own `zn_agent` resident distribution;
-- preserve desktop work/thread continuity in resident-owned state rather than inherited/session/browser authority;
-- preserve real local workspace association in resident-owned work state and propagate it into native Git/body context;
+- preserve desktop work/thread continuity in resident state;
+- preserve real workspace association in resident work state and propagate it into native Git/body context;
+- persist/present bounded contextual workspace file/diff artifacts without giving the renderer filesystem ownership;
 
-without importing the old product CLI/agent/gateway/desktop as the control plane.
+without importing inherited CLI/agent/gateway/desktop as the active product control plane.
 
-The current code has reached that structural ownership boundary for the active runtime/desktop slices. Remaining work is product completeness plus release/repository migration: artifacts/contextual tools/settings, outbound-media transport wiring, package/release identity, clean formal installers, then supported-OS continuity validation.
+The current code has reached that structural ownership boundary for the active runtime/desktop slices. Remaining work is product completeness plus release/repository migration: invoked contextual tools, provider settings, broader artifacts where needed, outbound-media transport, package/release identity, clean formal installers and supported-OS continuity validation.
