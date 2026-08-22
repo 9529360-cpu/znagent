@@ -2,9 +2,12 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { test } from 'vitest'
 
 import { configureZnPackagedRuntime, resolveRuntime, resolveZnHome } from './zn-packaged-runtime'
+
+const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 function mkTmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'zn-packaged-runtime-test-'))
@@ -100,4 +103,39 @@ test('ZN home resolution honors explicit home before platform defaults', () => {
   const explicit = path.resolve('/tmp/zn-explicit-home')
   assert.equal(resolveZnHome({ ZN_AGENT_HOME: explicit }, 'linux', '/tmp/user'), explicit)
   assert.equal(resolveZnHome({}, 'linux', '/tmp/user'), path.join('/tmp/user', '.znagent'))
+})
+
+test('formal desktop package metadata and builder register only ZN identity', () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(desktopRoot, 'package.json'), 'utf8'))
+  const build = packageJson.build
+  const schemes = (build.protocols || []).flatMap((item: { schemes?: string[] }) => item.schemes || [])
+  const resources = (build.extraResources || []).map((item: { from?: string }) => item.from)
+
+  assert.equal(packageJson.name, 'zn-desktop')
+  assert.equal(packageJson.productName, 'ZN')
+  assert.equal(packageJson.repository?.url, 'git+https://github.com/9529360-cpu/znagent.git')
+  assert.equal(build.appId, 'ai.zn.desktop')
+  assert.equal(build.productName, 'ZN')
+  assert.equal(build.executableName, 'ZN')
+  assert.deepEqual(schemes, ['zn'])
+  assert.match(build.artifactName, /^ZN-/)
+  assert.ok(resources.includes('build/zn-runtime'))
+  assert.match(packageJson.scripts?.builder || '', /--config electron-builder\.zn\.yml/)
+
+  const publicIdentity = JSON.stringify({
+    name: packageJson.name,
+    productName: packageJson.productName,
+    description: packageJson.description,
+    author: packageJson.author,
+    repository: packageJson.repository,
+    build
+  })
+  assert.doesNotMatch(publicIdentity, /hermes|nousresearch/i)
+
+  const builder = fs.readFileSync(path.join(desktopRoot, 'electron-builder.zn.yml'), 'utf8')
+  assert.match(builder, /^appId: ai\.zn\.desktop$/m)
+  assert.match(builder, /^productName: ZN$/m)
+  assert.match(builder, /^\s+- zn$/m)
+  assert.match(builder, /from: build\/zn-runtime/)
+  assert.doesNotMatch(builder, /hermes/i)
 })

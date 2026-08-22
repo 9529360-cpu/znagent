@@ -6,7 +6,6 @@ protocols:
   - name: ZN Protocol
     schemes:
       - zn
-      - hermes
 artifactName: ZN-${version}-${os}-${arch}.${ext}
 icon: assets/icon
 directories:
