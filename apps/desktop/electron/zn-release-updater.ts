@@ -10,6 +10,7 @@ import { promisify } from 'node:util'
 
 import { app, ipcMain } from 'electron'
 
+import { applyZnReleaseInstallerWithResidentGate } from './zn-release-application-gate'
 import {
   parseZnReleaseChannel,
   znUpdatePlatform,
@@ -506,13 +507,16 @@ export async function applyZnReleaseUpdate(): Promise<ZnReleaseApplyResult> {
     }
 
     const installer = await ensurePrepared(resolved, true)
-    if (process.platform === 'win32') await handoffWindows(installer)
-    else if (process.platform === 'darwin') await handoffMac(installer)
-    else if (process.platform === 'linux') await handoffLinux(installer)
+    let handoff: (() => Promise<void>) | null = null
+    if (process.platform === 'win32') handoff = () => handoffWindows(installer)
+    else if (process.platform === 'darwin') handoff = () => handoffMac(installer)
+    else if (process.platform === 'linux') handoff = () => handoffLinux(installer)
     else return { ok: false, error: 'unsupported-platform', message: process.platform }
 
-    setTimeout(() => app.quit(), 100)
-    return { ok: true, message: `installing ZN ${resolved.release.version}` }
+    return await applyZnReleaseInstallerWithResidentGate({
+      version: resolved.release.version,
+      handoff
+    })
   } catch (error) {
     return {
       ok: false,
