@@ -6,6 +6,8 @@ on:
       - dev/zn-agent
     paths:
       - .github/workflows/zn-windows-installer-smoke.yml
+      - agent/kernel/life.py
+      - tests/agent/kernel/test_life_connection_lifecycle.py
       - apps/desktop/scripts/stage-zn-runtime.mjs
       - apps/desktop/scripts/stage-zn-runtime.test.mjs
       - apps/desktop/electron-builder.zn.yml
