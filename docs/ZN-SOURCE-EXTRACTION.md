@@ -76,7 +76,7 @@ The production kernel no longer constructs `run_agent.AIAgent`. Remaining provid
 
 ### 3.2 Local terminal / computer body
 
-Status: **ZN-native local terminal and PTY path active**.
+Status: **ZN-native local terminal and PTY path active; resident work now has contextual terminal evidence**.
 
 Implemented in `agent/kernel/terminal.py` and `agent/kernel/pty.py`:
 
@@ -92,6 +92,8 @@ Implemented in `agent/kernel/terminal.py` and `agent/kernel/pty.py`:
 
 The real POSIX PTY smoke consumes a final result returned directly by `write_stdin()` when the child exits during that operation. Production cleanup remains immediate; the test no longer assumes a stale follow-up poll is valid.
 
+`ResidentWorkLedger` now turns actual same-event terminal/body action records into bounded `WorkArtifact(kind="terminal")` presentation evidence. This does not create a second terminal owner: command/PTTY execution remains in ZN Body. Electron/React receives only resident-backed evidence after terminal invocation, and the active renderer does not instantiate xterm or expose a direct terminal executor for this slice.
+
 Optional Docker/SSH/cloud backends remain demand-driven. Do not restore inherited gateway/session ownership to obtain them.
 
 ### 3.3 Web search / world sense
@@ -106,7 +108,7 @@ Implemented:
 - URL/network target safety;
 - `NativeWorldSense` routes through this ZN layer.
 
-Browser automation/rendering remains a separate body/sense requirement, not a shortcut through search-provider code.
+Browser automation/rendering remains a separate body/sense requirement, not a shortcut through search-provider code. No browser contextual surface should be invented until a real resident browser interaction seam exists.
 
 ### 3.4 Communication channels
 
@@ -138,7 +140,7 @@ Telegram outbound media still must pass through `OutboundMediaPathPolicy` when a
 
 ## 4. Independent desktop extraction and current native product work
 
-Status: **M4 ownership complete; M5 materially advanced; M6 partial with resident work/workspace/file-diff context active**.
+Status: **M4 ownership complete; M5 materially advanced; M6 partial with resident work/workspace/file-diff/terminal context active**.
 
 The active desktop no longer routes through inherited Electron main, preload or `ContribController`.
 
@@ -149,7 +151,7 @@ Current ZN-owned control plane includes:
 - `apps/desktop/electron/zn-protocol.ts` — ZN deep-link parser;
 - `apps/desktop/electron/zn-workspace-ipc.ts` — native folder selection/canonicalization;
 - `apps/desktop/src/zn/main.tsx` — independent React root;
-- `apps/desktop/src/zn/workbench.tsx` — content-first workbench;
+- `apps/desktop/src/zn/workbench.tsx` — content-first workbench and optional artifact/tool context panel;
 - `apps/desktop/src/zn/state.ts` — bounded non-authoritative browser convenience state;
 - `apps/desktop/src/zn/resident-client.ts` — resident/workspace/update client;
 - `apps/desktop/scripts/bundle-electron-main.mjs` — ZN-only active bundle entries.
@@ -164,7 +166,7 @@ ZnWorkbench
 → durable thread + canonical workspace
 → SAME ZNResidentRuntime event loop
 → NativeInvestigator / NativeBody
-→ bounded WorkArtifact file/diff context
+→ bounded WorkArtifact file/diff/terminal context
 → durable resident work snapshot
 → contextual workbench panel
 ```
@@ -187,7 +189,7 @@ renderer supplies threadId only
 
 Generic work metadata cannot forge the reserved workspace field. Native Git/command/body context consumes the durable association.
 
-Relative native file movements with workspace/workdir context are also anchored through a ZN-owned path-context helper, while absolute-path behavior remains explicit. Automatic artifact preview verifies realpath containment and rejects symlink escape from the workspace.
+Relative native file movements with workspace/workdir context are anchored through a ZN-owned path-context helper, while absolute-path behavior remains explicit. Automatic artifact preview verifies realpath containment and rejects symlink escape from the workspace.
 
 ### 4.2 Contextual file/diff artifacts
 
@@ -205,20 +207,39 @@ Implemented:
 - artifacts appear in the optional right context panel; no permanent file tree or IDE shell was added;
 - RPC/browser hydration is explicitly bounded: recent work list carries only the newest artifact per thread, active snapshots carry at most eight, browser cache remains bounded/non-authoritative.
 
-Current artifact support is intentionally partial. General rendered documents, binary previews, every clean native-investigation preview and richer historical artifact browsing remain future product work.
+### 4.3 Contextual terminal surface
+
+Terminal presentation is also native ZN product work around the already extracted body, not a copy of an inherited terminal/session UI.
+
+Implemented and CI-verified:
+
+- actual same-event command/shell/PTTY action evidence is selected from `NativeBody.recent_actions()`;
+- each relevant action can persist a bounded `WorkArtifact(kind="terminal")` with command/output/error/status/cwd/exit/pid/session metadata;
+- terminal artifacts work even when no workspace is attached because actual terminal invocation is the contextual trigger;
+- presentation helper commands issued later for workspace diff collection are not included in the terminal action snapshot, so they are not misrepresented as user-work terminal activity;
+- resident work RPC carries terminal artifacts through the same bounded artifact hydration path;
+- renderer recognizes and labels terminal artifacts inside the existing optional context panel;
+- no permanent terminal pane, xterm root or renderer-owned terminal execution control plane was introduced.
+
+This is evidence/presentation after invocation, not a complete interactive PTY surface. A future interactive control surface should be added only for a concrete work need and must preserve `NativeBody` / `ZNLocalTerminal` ownership.
+
+Current artifact support remains intentionally partial. General rendered documents, binary previews, browser interaction artifacts, every clean native-investigation preview and richer historical artifact browsing remain future product work.
 
 Verified source baseline:
 
 ```text
-1ac78c06bf28da299094318921e0ff5fcf256887
+f8679e0487df68623bf08fc6941fd848169b3044
 ```
 
 Key source commits:
 
 ```text
-5be1916970b6b339e85efcaf1a9aa0893af93842  feat: present resident work artifacts contextually
-8cea9fdd552bc414c0af61ce7fda59fc756d3d44  test: isolate resident artifact assertions
-1ac78c06bf28da299094318921e0ff5fcf256887  perf: bound resident artifact snapshots
+9015246f0c2b28858a848bcc88241af9bbc25c91  feat: persist contextual terminal artifacts
+e9a31f854866633ec338871fdf73f6899b60dc1d  test: cover contextual terminal artifacts
+6b444302975e65dae2d5402c3ba7ba802adcf2ec  feat: type contextual terminal artifacts
+30dfeb91ce252e277c3a30a4bbdb56cda0efb905  feat: hydrate terminal artifact kind
+3fe4e5558c98fb9ef5d8b978b27b89785cae7411  feat: label invoked terminal context
+f8679e0487df68623bf08fc6941fd848169b3044  test: keep terminal surface contextual
 ```
 
 CI:
@@ -226,12 +247,12 @@ CI:
 ```text
 ZN Kernel / Python      success
 Electron / TypeScript  success
-Actions run             32575297967
+Actions run             32582229428
 ```
 
 Remaining workbench/product work:
 
-- terminal/browser surfaces only when explicitly invoked;
+- contextual browser surface only when a real browser interaction body/sense seam exists;
 - broader artifact types/history where concrete output requires them;
 - provider/credential editor connected to ZN config/secure storage;
 - richer ongoing activity/progress streaming;
@@ -304,9 +325,9 @@ Continue from the owned runtime/desktop and resident-backed work/workspace/artif
 
 Priority order:
 
-1. add contextual terminal/browser surfaces only when explicitly invoked by work rather than permanent IDE panes;
-2. broaden artifact rendering/history only where concrete work output requires it;
-3. connect provider/settings editing to the ZN-owned config/credential boundary;
+1. add a contextual browser surface only when a real resident browser body/sense interaction seam exists; do not relabel web-search output as browser control;
+2. if that browser seam is not yet concrete, connect provider/settings editing to the ZN-owned config/credential boundary rather than inventing a browser facade;
+3. broaden artifact rendering/history only where concrete work output requires it;
 4. wire outbound channel attachments only through `OutboundMediaPathPolicy` when a concrete resident artifact/message egress path exists;
 5. make `apps/desktop/package.json` fully ZN-owned and ensure formal builder registers only `zn://`;
 6. rebuild formal self-contained packaging around independent ZN desktop + `zn_agent` runtime;
@@ -328,7 +349,8 @@ The source-extraction phase is structurally complete for the active slices when 
 - preserve desktop work/thread continuity in resident state;
 - preserve real workspace association in resident work state and propagate it into native Git/body context;
 - persist/present bounded contextual workspace file/diff artifacts without giving the renderer filesystem ownership;
+- persist/present bounded terminal evidence only after actual resident/body terminal invocation, without making renderer the terminal owner;
 
 without importing inherited CLI/agent/gateway/desktop as the active product control plane.
 
-The current code has reached that structural ownership boundary for the active runtime/desktop slices. Remaining work is product completeness plus release/repository migration: invoked contextual tools, provider settings, broader artifacts where needed, outbound-media transport, package/release identity, clean formal installers and supported-OS continuity validation.
+The current code has reached that structural ownership boundary for the active runtime/desktop slices. Remaining work is product completeness plus release/repository migration: real browser interaction/context when justified, provider settings, broader artifacts where needed, outbound-media transport, package/release identity, clean formal installers and supported-OS continuity validation.
