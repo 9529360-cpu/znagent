@@ -84,6 +84,7 @@ class ResidentChannelSupervisor:
                 return
             self._stop.clear()
             for name, adapter in self._adapters.items():
+                self._restore_adapter_checkpoint(name, adapter)
                 thread = threading.Thread(
                     target=self._run_channel,
                     args=(name, adapter),
@@ -135,6 +136,11 @@ class ResidentChannelSupervisor:
                     delivered_before = self._deliver_ready(name, adapter)
                     events = adapter.poll(timeout=self.poll_timeout)
                     enqueued, duplicates = self._ingest_events(events)
+                    # Persist transport cursor only after every percept returned by
+                    # this poll has reached the durable routing ledger. A crash
+                    # before this point may replay an update, which the ledger
+                    # deduplicates; a crash after it cannot skip an unqueued event.
+                    self._save_adapter_checkpoint(name, adapter)
                     delivered_after = self._deliver_ready(name, adapter)
                     delivered = delivered_before + delivered_after
                 except Exception as exc:
@@ -212,8 +218,6 @@ class ResidentChannelSupervisor:
             if not response and self.reply_failures and not result.success:
                 response = str(result.reason or "ZN could not complete this request.").strip()
             if not response:
-                # A terminal resident outcome with intentionally no outward text
-                # is still complete; do not spin on it forever after restart.
                 self.ledger.mark_delivered(route.event_id)
                 continue
             try:
@@ -234,6 +238,25 @@ class ResidentChannelSupervisor:
             self.ledger.mark_delivered(route.event_id)
             delivered += 1
         return delivered
+
+    def _restore_adapter_checkpoint(self, name: str, adapter: ChannelAdapter) -> None:
+        restore = getattr(adapter, "restore_checkpoint", None)
+        if not callable(restore):
+            return
+        checkpoint = self.ledger.load_checkpoint(name)
+        if checkpoint is not None:
+            restore(checkpoint)
+
+    def _save_adapter_checkpoint(self, name: str, adapter: ChannelAdapter) -> None:
+        snapshot = getattr(adapter, "checkpoint", None)
+        if not callable(snapshot):
+            return
+        checkpoint = snapshot()
+        if not isinstance(checkpoint, Mapping):
+            raise TypeError(f"channel {name} checkpoint must be a mapping")
+        payload = dict(checkpoint)
+        if self.ledger.load_checkpoint(name) != payload:
+            self.ledger.save_checkpoint(name, payload)
 
 
 def _truthy(value: Any) -> bool:
@@ -267,10 +290,10 @@ def build_zn_channel_adapters(
     if telegram and not isinstance(telegram, Mapping):
         raise ValueError("ZN channels.telegram config must be a mapping")
     if isinstance(telegram, Mapping) and _truthy(telegram.get("enabled", False)):
-        from .telegram_channel import TelegramBotApiChannel
+        from .telegram_resident_channel import ResidentTelegramBotApiChannel
 
         adapters.append(
-            TelegramBotApiChannel.from_zn_config(
+            ResidentTelegramBotApiChannel.from_zn_config(
                 cfg,
                 environ=env,
             )
