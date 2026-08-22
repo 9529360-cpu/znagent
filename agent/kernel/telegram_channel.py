@@ -6,19 +6,19 @@ This is source extraction from the mature Telegram implementation in
 ``plugins/platforms/telegram`` and ``gateway/platforms/base.py``. The current
 slice keeps transport behaviors that matter to a resident channel -- UTF-16
 message limits, thread/reply routing, long-poll offsets, update normalization,
-credential redaction and explicit inbound authorization -- while leaving old
-gateway/AIAgent/session ownership behind.
+credential redaction, explicit inbound authorization, and ZN-owned network
+fallback/proxy handling -- while leaving old gateway/AIAgent/session ownership
+behind.
 
-Media, rich Markdown, proxy/fallback-IP transport and webhook mode can be
-extracted in later slices behind the same ChannelAdapter contract.
+Media, rich Markdown and webhook mode can be extracted in later slices behind
+the same ChannelAdapter contract.
 """
 
 import os
 from typing import Any, Iterable, Mapping
 
-import httpx
-
 from .channel import ChannelDelivery, ChannelEvent, ChannelMessage
+from .telegram_network import build_telegram_http_client, parse_fallback_ip_env
 
 
 class TelegramChannelError(RuntimeError):
@@ -82,6 +82,18 @@ def _safe_error(error: object, token: str) -> str:
     return text[:1500]
 
 
+def _configured_fallback_ips(raw: Any) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return parse_fallback_ip_env(raw)
+    if isinstance(raw, Iterable) and not isinstance(raw, (bytes, bytearray, Mapping)):
+        return parse_fallback_ip_env(",".join(str(item) for item in raw))
+    raise ValueError(
+        "ZN channels.telegram.network.fallback_ips must be a list or comma-separated string"
+    )
+
+
 class TelegramBotApiChannel:
     name = "telegram"
     MAX_MESSAGE_LENGTH = 4096
@@ -95,6 +107,10 @@ class TelegramBotApiChannel:
         allow_all: bool = False,
         client: Any | None = None,
         request_timeout: float = 35.0,
+        fallback_ips: Iterable[str] = (),
+        discover_fallback_ips: bool = False,
+        proxy_url: str | None = None,
+        environ: Mapping[str, str] | None = None,
     ):
         self.token = str(token or "").strip()
         if not self.token:
@@ -107,7 +123,17 @@ class TelegramBotApiChannel:
         )
         self.allow_all = bool(allow_all)
         self.request_timeout = max(1.0, float(request_timeout))
-        self._client = client or httpx.Client()
+        self.fallback_ips = tuple(str(item) for item in fallback_ips)
+        self.discover_fallback_ips = bool(discover_fallback_ips)
+        self.proxy_url = str(proxy_url or "").strip() or None
+        self._client = client or build_telegram_http_client(
+            base_url=self.base_url,
+            fallback_ips=self.fallback_ips,
+            discover=self.discover_fallback_ips,
+            proxy_url=self.proxy_url,
+            environ=environ,
+            timeout=self.request_timeout,
+        )
         self._owns_client = client is None
         self._offset = 0
 
@@ -126,10 +152,32 @@ class TelegramBotApiChannel:
         telegram = channels.get("telegram") or {}
         if not isinstance(telegram, Mapping):
             raise ValueError("ZN channels.telegram config must be a mapping")
+        network = telegram.get("network") or {}
+        if not isinstance(network, Mapping):
+            raise ValueError("ZN channels.telegram.network config must be a mapping")
+
         token = str(telegram.get("token") or env.get("TELEGRAM_BOT_TOKEN") or "").strip()
         allowed = telegram.get("allowed_chat_ids")
         if isinstance(allowed, (str, int)):
             allowed = [allowed]
+        fallback_ips = _configured_fallback_ips(
+            network.get("fallback_ips", telegram.get("fallback_ips"))
+        )
+        discover = bool(
+            network.get(
+                "discover_fallback_ips",
+                telegram.get("discover_fallback_ips", False),
+            )
+        )
+        proxy_url = str(
+            network.get("proxy_url")
+            or network.get("proxy")
+            or telegram.get("proxy_url")
+            or telegram.get("proxy")
+            or env.get("TELEGRAM_PROXY")
+            or ""
+        ).strip() or None
+
         return cls(
             token,
             base_url=str(telegram.get("base_url") or "https://api.telegram.org"),
@@ -137,6 +185,10 @@ class TelegramBotApiChannel:
             allow_all=bool(telegram.get("allow_all", False)),
             client=client,
             request_timeout=float(telegram.get("request_timeout") or 35.0),
+            fallback_ips=fallback_ips,
+            discover_fallback_ips=discover,
+            proxy_url=proxy_url,
+            environ=env,
         )
 
     @property
@@ -160,7 +212,11 @@ class TelegramBotApiChannel:
         }
         if self._offset > 0:
             payload["offset"] = self._offset
-        raw = self._api("getUpdates", payload, timeout=max(self.request_timeout, poll_timeout + 10))
+        raw = self._api(
+            "getUpdates",
+            payload,
+            timeout=max(self.request_timeout, poll_timeout + 10),
+        )
         updates = raw.get("result") or []
         if not isinstance(updates, list):
             raise TelegramChannelError("Telegram getUpdates returned invalid result")
@@ -179,8 +235,6 @@ class TelegramBotApiChannel:
             if event is not None:
                 events.append(event)
         if max_update_id >= 0:
-            # Advance past denied/unsupported messages as well. Otherwise one
-            # unauthorized update would be replayed forever and starve the bot.
             self._offset = max(self._offset, max_update_id + 1)
         return events
 
@@ -200,7 +254,11 @@ class TelegramBotApiChannel:
                 "link_preview_options": {"is_disabled": True},
             }
             if message.thread_id:
-                payload["message_thread_id"] = int(message.thread_id) if str(message.thread_id).isdigit() else message.thread_id
+                payload["message_thread_id"] = (
+                    int(message.thread_id)
+                    if str(message.thread_id).isdigit()
+                    else message.thread_id
+                )
             if index == 0 and message.reply_to_message_id:
                 reply_id: Any = message.reply_to_message_id
                 if str(reply_id).isdigit():
@@ -241,10 +299,6 @@ class TelegramBotApiChannel:
         if not isinstance(chat, dict) or chat.get("id") is None:
             return None
         chat_id = str(chat["id"])
-
-        # Mature gateways have explicit authorization/pairing because a bot
-        # token alone is not consent to let arbitrary Telegram users submit work
-        # to the resident. ZN keeps that boundary but owns the policy/config.
         if not self.allow_all:
             if self.allowed_chat_ids is None or chat_id not in self.allowed_chat_ids:
                 return None
@@ -261,7 +315,15 @@ class TelegramBotApiChannel:
             "chat_type": chat.get("type"),
             "chat_title": chat.get("title") or chat.get("username") or "",
         }
-        for media_key in ("photo", "document", "audio", "voice", "video", "video_note", "sticker"):
+        for media_key in (
+            "photo",
+            "document",
+            "audio",
+            "voice",
+            "video",
+            "video_note",
+            "sticker",
+        ):
             if message.get(media_key) is not None:
                 metadata.setdefault("media_types", []).append(media_key)
         reply = message.get("reply_to_message")
@@ -312,7 +374,11 @@ class TelegramBotApiChannel:
         if not isinstance(data, dict):
             raise TelegramChannelError(f"Telegram {method} returned invalid response")
         if status < 200 or status >= 300 or data.get("ok") is not True:
-            detail = data.get("description") or getattr(response, "text", "") or f"HTTP {status}"
+            detail = (
+                data.get("description")
+                or getattr(response, "text", "")
+                or f"HTTP {status}"
+            )
             raise TelegramChannelError(
                 f"Telegram {method} failed: {_safe_error(detail, self.token)}"
             )
