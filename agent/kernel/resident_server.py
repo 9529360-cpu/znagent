@@ -9,6 +9,7 @@ import threading
 from pathlib import Path
 from typing import Any, Mapping
 
+from .channel_runtime import ResidentChannelSupervisor, build_zn_channel_adapters
 from .models import utc_now
 from .visual_sense import NativeVisualSense, VisualCaptureFn
 
@@ -85,13 +86,14 @@ class _ResidentTcpHandler(socketserver.StreamRequestHandler):
 class ResidentSocketService:
     """Reconnectable local transport for a resident that outlives its UI.
 
-    The resident runtime owns the lease, heartbeat, state, and endpoint. Desktop
-    windows are clients. Closing a client connection therefore does not end the
-    resident; another Electron process can later reconnect to the same subject.
+    The resident runtime owns the lease, heartbeat, state, endpoint and enabled
+    communication organs. Desktop windows are clients. Closing a client
+    connection therefore does not end the resident; another Electron process can
+    later reconnect to the same subject.
 
-    The same service process also owns ZN's low-level visual sampling rhythm.
-    Screen fingerprints therefore continue to enter resident memory while no
-    Electron window or UI client is connected.
+    The same service process owns ZN's low-level visual sampling and channel
+    lifecycles. Screen fingerprints and authorized channel events therefore keep
+    entering the same resident while no Electron window is connected.
     """
 
     def __init__(
@@ -103,6 +105,8 @@ class ResidentSocketService:
         endpoint_path: str | Path | None = None,
         visual_capture_fn: VisualCaptureFn | None = None,
         visual_interval: float = 5.0,
+        channel_adapters=(),
+        channel_poll_timeout: float = 10.0,
     ):
         self.rpc = rpc
         self.host = str(host or "127.0.0.1")
@@ -117,8 +121,14 @@ class ResidentSocketService:
             capture_fn=visual_capture_fn,
             interval_seconds=visual_interval,
         )
-        # Expose the organ on the subject while this persistent service owns its
-        # sampling lifecycle. This is resident state, not an Electron adapter.
+        self.channels = ResidentChannelSupervisor(
+            self.rpc.resident,
+            tuple(channel_adapters or ()),
+            poll_timeout=channel_poll_timeout,
+        )
+        # Expose the visual organ on the subject while this persistent service
+        # owns its lifecycle. Communication organs are owned by the same service
+        # supervisor rather than by an Electron window or another agent.
         self.rpc.resident.vision = self.visual
         self._server: _ResidentTcpServer | None = None
         self._visual_stop = threading.Event()
@@ -130,6 +140,7 @@ class ResidentSocketService:
             self.rpc.resident.live_once()
             self.rpc._start_life_loop()
             self._start_visual_loop()
+            self.channels.start()
             with _ResidentTcpServer(
                 (self.host, self.port),
                 _ResidentTcpHandler,
@@ -142,6 +153,7 @@ class ResidentSocketService:
         finally:
             self._server = None
             self._remove_owned_endpoint()
+            self.channels.stop()
             self._stop_visual_loop()
             self.rpc._stop_life_loop()
             self.rpc.service.release()
@@ -193,6 +205,7 @@ class ResidentSocketService:
             "started_at": utc_now(),
             "runtime_id": _process_runtime_id(),
             "python": sys.executable,
+            "channels": list(self.channels.channels),
         }
         temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
         temporary.write_text(
@@ -246,6 +259,7 @@ def main(argv: list[str] | None = None) -> int:
         ResidentRpcServer(),
         host=host,
         port=port,
+        channel_adapters=build_zn_channel_adapters(),
     ).serve_forever()
 
 
