@@ -289,11 +289,12 @@ async function startUpdateServer(updateSha, updateSize) {
 }
 
 async function waitForIdle(cdp) {
-  return await waitFor('resident queue to become idle', async () => {
+  return await waitFor('resident readiness to become idle', async () => {
     const status = await cdp.evaluate('window.znDesktop.resident.status()')
     const queueDepth = Number(status?.queue_depth || 0)
     const currentEvent = status?.working_state?.current_event_id
-    return queueDepth === 0 && !currentEvent ? status : null
+    const activeEvent = status?.self?.current_situation?.active_event_id
+    return queueDepth === 0 && !currentEvent && !activeEvent ? status : null
   }, 120_000, 500)
 }
 
