@@ -13,6 +13,8 @@ export type ZnResidentRuntimeRelation = {
   busy: boolean
 }
 
+export type ZnResidentRuntimeHandoffDecision = 'none' | 'defer' | 'restart'
+
 function asRecord(value: unknown): UnknownRecord | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as UnknownRecord) : null
 }
@@ -73,4 +75,12 @@ export function describeZnResidentRuntime(
     activePython,
     busy
   }
+}
+
+export function decideZnResidentRuntimeHandoff(
+  relation: ZnResidentRuntimeRelation
+): ZnResidentRuntimeHandoffDecision {
+  if (relation.state === 'unmanaged' || relation.state === 'current') return 'none'
+  if (relation.busy) return 'defer'
+  return 'restart'
 }
