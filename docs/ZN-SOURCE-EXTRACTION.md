@@ -59,7 +59,7 @@ Status: **ZN-native web search/extract active; browser interaction not yet owned
 
 Tavily/failover, Exa, Firecrawl and URL/network safety remain ZN-owned.
 
-The mature inherited browser implementation was re-inspected before starting new browser work. Its useful mechanisms are currently entangled with inherited config/plugin/session/provider ownership plus Node/Chromium/`agent-browser` lifecycle. The independent ZN resident distribution does not currently carry a clean resident browser-action seam. Therefore no browser facade was added and web-search evidence was not mislabeled as browser interaction.
+The mature inherited browser implementation was re-inspected before starting new browser work. Its useful mechanisms remain entangled with inherited config/plugin/session/provider ownership plus Node/Chromium/`agent-browser` lifecycle. The independent ZN resident distribution does not currently carry a clean resident browser-action seam. Therefore no browser facade was added and web-search evidence was not mislabeled as browser interaction.
 
 Future browser work must first establish a real ZN-owned body/sense contract and packageable lifecycle, then expose contextual browser evidence only after actual invocation.
 
@@ -73,7 +73,7 @@ Do not let the adapter infer upload authority from arbitrary text or local paths
 
 ## 4. Independent desktop/product work
 
-Status: **M4 complete; M5/M6 materially advanced; M7 formal package identity seam verified**.
+Status: **M4 complete; M5/M6 materially advanced; M7 formal package identity plus Linux unpacked package shape verified**.
 
 Active desktop remains:
 
@@ -102,28 +102,61 @@ Default provider/model/base URL and credential replacement/clear are resident RP
 
 ## 5. Python/runtime packaging ownership
 
-Status: **M1 active packaged resident path is ZN-owned**.
+Status: **M1 active packaged resident path is ZN-owned and has now survived real electron-builder packaging on Linux**.
 
 The independent `runtime/python` distribution is `znagent`, with `zn_agent` installed package and `zn-resident` / `zn_agent.resident` entrypoints. Runtime staging/verification rejects `hermes_cli`.
 
-The formal release workflow already stages `build/zn-runtime` before electron-builder by using portable CPython plus the independent ZN runtime distribution, then running a zero-model smoke/verification step. The formal desktop package now explicitly includes that runtime payload.
+The formal release chain stages `build/zn-runtime` before electron-builder by using portable CPython plus the independent ZN runtime distribution and a zero-model verification step. The formal desktop package explicitly includes that runtime payload.
+
+A deliberately scoped Linux unpacked package smoke then exercised the real path:
+
+```text
+npm ci --ignore-scripts
+→ stage-zn-runtime.mjs
+→ portable Python + znagent
+→ ZN build
+→ electron-builder.zn.yml --linux --dir
+→ locate packaged resources/zn-runtime
+→ verify runtime manifest and ZN entrypoints
+→ run packaged Python zero-model resident smoke
+```
+
+Result:
+
+```text
+ZN Formal Package Smoke  success
+Actions run              32586304510
+```
+
+Verified in the unpacked app:
+
+- executable name `ZN`;
+- `resources/app.asar` present;
+- `resources/zn-runtime/runtime.json` present with product/version/commit identity;
+- packaged `zn_agent` resident/core entrypoints valid;
+- packaged resident boots zero-model after packaging;
+- inherited `install-stamp.json` absent;
+- packaged `hermes_cli` absent.
+
+The smoke workflow was temporary and was removed after verification.
 
 ## 6. Formal desktop package identity
 
-Status: **active formal product/build identity transferred to ZN; full M7 artifact validation still pending**.
+Status: **active formal product/build identity transferred to ZN; actual Linux unpacked package verified; full multi-platform M7 artifact validation still pending**.
 
-Verified source baseline:
+Verified package-identity source baseline:
 
 ```text
 c0e8bb8563b323313304cc961ff07640d92d02cf
 ```
 
-Normal CI:
+Final branch source verification after the temporary smoke workflow was removed:
 
 ```text
+8c626fd44e7e0270e65fe1b3db629efa9350facf
 ZN Kernel / Python      success
 Electron / TypeScript  success
-Actions run             32586113616
+Actions run             32586385421
 ```
 
 Implemented/verified:
@@ -134,23 +167,23 @@ Implemented/verified:
 - builder command explicitly selects `electron-builder.zn.yml`;
 - `electron-builder.zn.yml` registers only `zn://` and includes `build/zn-runtime`;
 - inherited install-stamp/bootstrap resource is removed from the active formal packaging path;
-- Windows `afterPack`/`rcedit` stamps ZN product/company identity rather than Hermes/Nous Research;
+- Windows `afterPack`/`rcedit` stamps ZN product/company identity;
 - rollback preservation defaults to `ZN.exe`;
 - active macOS notarization temporary key paths use a ZN prefix;
 - root npm lock workspace identity is synchronized to `zn-desktop` using npm's own lock generator;
-- formal package/build-hook identity is protected by regression tests.
+- formal package/build-hook identity is protected by regression tests;
+- Linux unpacked formal package shape and packaged runtime boot are verified against real electron-builder output.
 
-The first normal CI attempt after renaming the package correctly failed because `package-lock.json` still contained the old workspace package/link name. A temporary one-shot workflow ran `npm install --package-lock-only --ignore-scripts`; npm changed only the desktop workspace name/link. That workflow was immediately removed. The final source SHA above then passed both normal CI jobs.
+The first normal CI attempt after renaming the package correctly failed because `package-lock.json` still contained the old workspace package/link name. A temporary one-shot workflow ran `npm install --package-lock-only --ignore-scripts`; npm changed only the desktop workspace name/link. That workflow was immediately removed. The corrected source then passed normal CI.
 
-Important boundary: this closes the active **product/build identity seam**, not every inherited source/dependency name in the repository. Inactive inherited UI/source/dependencies remain migration quarry/debt until their concrete consumers are removed. Do not spend time on cosmetic purge if it does not affect the active formal artifact.
+Important boundary: this closes the active **product/build identity seam** and verifies one real packaged application shape. It does not purge every inherited source/dependency name from the repository and does not yet prove every installer/OS continuity gate.
 
 ## 7. Remaining inherited/release debt
 
 Still pending:
 
-- deliberate build and inspection of actual formal installer artifacts around the corrected package shape;
-- actual installer-content/runtime-manifest verification on produced artifacts;
-- clean-machine installation and continuity validation;
+- actual installer-format artifact validation (Linux AppImage/deb/rpm and intended Windows/macOS artifacts) from the corrected package shape;
+- clean-machine installation and resident continuity validation;
 - OS-login autostart and N → N+1 upgrade validation;
 - signing/notarization as configured release hardening;
 - inactive inherited Electron/renderer/gateway/browser/source and dependency/script debt that is not on the active ZN control path;
@@ -170,7 +203,7 @@ E5  extract communication framework + first channel           DONE for Telegram 
 E6  switch resident production callers to ZN-owned modules    DONE for cognition/terminal/web/channel lifecycle
 E7  build independent ZN Electron main/preload/UI foundation  DONE
 E8  remove active old-product control-plane imports           DONE for active resident + desktop
-E9  package independently bootable ZN product                 IN PROGRESS; package identity/runtime staging seam verified, real artifacts pending
+E9  package independently bootable ZN product                 IN PROGRESS; identity + Linux unpacked package/runtime boot verified
 E10 verify clean-machine install/upgrade/multi-OS release      NOT STARTED as product gate
 ```
 
@@ -178,12 +211,12 @@ E10 verify clean-machine install/upgrade/multi-OS release      NOT STARTED as pr
 
 Priority order:
 
-1. perform a deliberately scoped real formal-package build/inspection using the corrected ZN package identity and existing self-contained `zn-runtime` staging, without launching the full M8 multi-OS/clean-machine matrix;
-2. fix any active package-content/runtime-entrypoint debt that real artifact inspection exposes;
+1. keep M7 scoped and validate installer-format artifacts from the corrected ZN package shape only when they provide new evidence; do not prematurely launch the full M8 clean-machine matrix;
+2. fix any active package-content/runtime-entrypoint debt exposed by real installer artifacts;
 3. establish browser interaction only through a clean resident-owned body/sense seam, not inherited browser/session ownership;
 4. define explicit resident artifact/message egress nomination before Telegram outbound attachment transport;
 5. broaden artifact rendering/history only when concrete product output needs it;
-6. after actual M7 artifacts are valid, spend M8 CI budget on clean-machine, autostart and upgrade continuity.
+6. after intended-platform M7 artifacts are genuinely valid, spend M8 CI budget on clean-machine, autostart and upgrade continuity.
 
 ## 10. Completion test
 
@@ -200,6 +233,7 @@ The current ownership/extraction boundary requires ZN to be able to:
 - receive/deliver through resident-owned channel lifecycle and authorize future local-file egress through ZN policy;
 - launch independent Electron main/preload/renderer and `zn://`;
 - install/start the independent `zn_agent` runtime;
-- package formal desktop product identity without inherited Hermes product/protocol/PE/bootstrap identity.
+- package formal desktop product identity without inherited Hermes product/protocol/PE/bootstrap identity;
+- preserve an independently bootable zero-model `zn_agent` resident inside a real packaged desktop application.
 
-The active source now satisfies those structural boundaries for implemented slices. Remaining work is real artifact validation, missing product capabilities that justify clean ZN-owned seams, and later release/clean-machine/repository migration.
+The active source now satisfies those structural boundaries for implemented slices. Remaining work is installer-format/platform validation, missing product capabilities that justify clean ZN-owned seams, and later clean-machine/repository migration.
