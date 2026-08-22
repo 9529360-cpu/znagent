@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: write
+  statuses: write
 
 jobs:
   apply-fix:
@@ -37,15 +38,15 @@ jobs:
               'import sqlite3\nimport time\nfrom contextlib import closing\n',
               1,
           )
-          context_needle = 'with self._connect() as conn:'
-          count = text.count(context_needle)
-          if count != 13:
-              raise SystemExit(f'unexpected life sqlite context count: {count}')
-          text = text.replace(
-              context_needle,
-              'with closing(self._connect()) as conn:',
+          life.write_text(
+              text.replace(
+                  'with self._connect() as conn:',
+                  'with closing(self._connect()) as conn:',
+              ),
+              encoding='utf-8',
           )
-          life.write_text(text, encoding='utf-8')
+          if text.count('with self._connect() as conn:') != 13:
+              raise SystemExit('unexpected life sqlite context count')
 
           stage = Path('apps/desktop/scripts/stage-zn-runtime.mjs')
           stage_text = stage.read_text(encoding='utf-8')
@@ -88,3 +89,20 @@ jobs:
           git add agent/kernel/life.py apps/desktop/scripts/stage-zn-runtime.mjs tests/agent/kernel/test_life_connection_lifecycle.py
           git commit -m 'fix: close resident life sqlite connections'
           git push origin HEAD:dev/zn-agent
+
+      - name: Publish lifecycle-fix status
+        if: ${{ always() }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const result = '${{ job.status }}'
+            const state = result === 'success' ? 'success' : result === 'failure' ? 'failure' : 'error'
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state,
+              context: 'ZN Life SQLite Fix',
+              description: `deterministic life DB close: ${result}`.slice(0, 140),
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            })
