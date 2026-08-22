@@ -4,79 +4,14 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ZN</title>
-    <style>
-      :root {
-        color-scheme: dark;
-        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        background: #0f1115;
-        color: #f3f5f7;
-      }
-      * { box-sizing: border-box; }
-      body { margin: 0; min-width: 320px; min-height: 100vh; background: #0f1115; }
-      button, textarea { font: inherit; }
-      button { cursor: pointer; }
-      .shell { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; }
-      .topbar { height: 52px; display: flex; align-items: center; justify-content: space-between; padding: 0 18px; border-bottom: 1px solid #252932; }
-      .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: .02em; }
-      .mark { width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; background: #f3f5f7; color: #111318; font-size: 12px; font-weight: 800; }
-      .status { display: inline-flex; align-items: center; gap: 7px; color: #aab1bd; font-size: 12px; }
-      .dot { width: 7px; height: 7px; border-radius: 999px; background: #6b7280; }
-      .dot.live { background: #76d39b; }
-      .dot.error { background: #ef7f7f; }
-      main { width: min(920px, calc(100% - 36px)); margin: 0 auto; padding: 48px 0 72px; }
-      h1 { margin: 0 0 10px; font-size: clamp(30px, 4vw, 48px); line-height: 1.05; font-weight: 650; letter-spacing: -.035em; }
-      .lede { margin: 0 0 36px; color: #9ca4b0; max-width: 640px; line-height: 1.55; }
-      .grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(280px, .9fr); gap: 16px; }
-      .panel { border: 1px solid #252932; border-radius: 16px; background: #15181e; padding: 18px; }
-      .panel h2 { margin: 0 0 12px; font-size: 13px; color: #cbd0d8; font-weight: 600; }
-      textarea { width: 100%; min-height: 170px; resize: vertical; border-radius: 12px; border: 1px solid #303641; background: #0f1217; color: #f4f6f8; padding: 14px; outline: none; line-height: 1.5; }
-      textarea:focus { border-color: #6b7280; }
-      .actions { display: flex; gap: 10px; margin-top: 12px; }
-      button { border: 1px solid #303641; border-radius: 10px; background: #20242c; color: #e9edf2; padding: 9px 13px; }
-      button.primary { background: #f1f3f5; color: #101217; border-color: #f1f3f5; font-weight: 650; }
-      button:disabled { opacity: .45; cursor: default; }
-      pre { margin: 0; min-height: 170px; max-height: 360px; overflow: auto; white-space: pre-wrap; word-break: break-word; color: #b9c0ca; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-      .error-text { color: #f3a0a0; }
-      @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } main { padding-top: 34px; } }
-    </style>
+    <link rel="stylesheet" href="./zn-shell-renderer.css" />
   </head>
   <body>
-    <div class="shell">
-      <header class="topbar">
-        <div class="brand"><span class="mark">ZN</span><span>Resident</span></div>
-        <div class="status"><span id="status-dot" class="dot"></span><span id="status-label">connecting</span></div>
-      </header>
-      <main>
-        <h1>The resident is the product.</h1>
-        <p class="lede">
-          This desktop is a face of the persistent ZN resident. Closing the window does not recreate its identity or hand control to another agent loop.
-        </p>
-        <div class="grid">
-          <section class="panel">
-            <h2>Give the resident an event</h2>
-            <form id="task-form">
-              <textarea id="task-input" placeholder="What should ZN attend to?" spellcheck="true"></textarea>
-              <div class="actions">
-                <button id="submit-button" class="primary" type="submit">Submit</button>
-                <button id="refresh-button" type="button">Refresh state</button>
-              </div>
-            </form>
-          </section>
-          <section class="panel">
-            <h2>Resident state</h2>
-            <pre id="resident-state">Connecting to resident…</pre>
-          </section>
-        </div>
-        <section class="panel" style="margin-top: 16px">
-          <h2>Latest outcome</h2>
-          <pre id="task-result">No event submitted from this window yet.</pre>
-        </section>
-      </main>
-    </div>
+    <div id="root"></div>
     <script src="./zn-shell-renderer.js" defer></script>
   </body>
 </html>

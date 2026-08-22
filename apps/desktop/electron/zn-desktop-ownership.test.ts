@@ -39,22 +39,45 @@ test('ZN preload exposes only the ZN bridge and does not import inherited preloa
   assert.doesNotMatch(source, /hermesDesktop|hermes:/)
 })
 
-test('active ZN shell does not mount inherited renderer control plane', () => {
+test('active ZN renderer root is content-first and independent of inherited shell', () => {
+  const main = read('src/zn/main.tsx')
+  const workbench = read('src/zn/workbench.tsx')
+  const residentClient = read('src/zn/resident-client.ts')
   const html = read('electron/zn-shell.html')
-  const renderer = read('electron/zn-shell-renderer.ts')
 
+  assert.match(main, /ZnWorkbench/)
+  assert.match(workbench, /New work/)
+  assert.match(workbench, /Workspaces/)
+  assert.match(workbench, /Settings/)
+  assert.match(workbench, /Message ZN/)
+  assert.match(workbench, /Resident activity/)
+  assert.match(html, /zn-shell-renderer\.css/)
   assert.match(html, /zn-shell-renderer\.js/)
-  assert.match(renderer, /znDesktop/)
-  assert.doesNotMatch(renderer, /hermesDesktop|ContribController|gateway/i)
+
+  for (const source of [main, workbench, residentClient]) {
+    assert.doesNotMatch(source, /ContribController|hermesDesktop|@hermes|src\/main/i)
+  }
+  assert.doesNotMatch(workbench, /gateway/i)
   assert.doesNotMatch(html, /hermes/i)
 })
 
-test('Electron bundler emits only ZN control-plane entries', () => {
+test('workbench browser cache is bounded convenience state, not resident identity', () => {
+  const source = read('src/zn/state.ts')
+
+  assert.match(source, /MAX_THREADS = 24/)
+  assert.match(source, /MAX_MESSAGES_PER_THREAD = 120/)
+  assert.match(source, /Resident identity\/memory must never/)
+  assert.doesNotMatch(source, /nervous|kernel\.db|structured memory/i)
+})
+
+test('Electron bundler emits only ZN control-plane and renderer entries', () => {
   const source = read('scripts/bundle-electron-main.mjs')
 
   assert.match(source, /electron\/zn-main\.ts/)
   assert.match(source, /electron\/zn-preload\.ts/)
-  assert.match(source, /electron\/zn-shell-renderer\.ts/)
+  assert.match(source, /src\/zn\/main\.tsx/)
+  assert.match(source, /zn-shell-renderer\.css/)
+  assert.doesNotMatch(source, /electron\/zn-shell-renderer\.ts/)
   assert.doesNotMatch(source, /legacy desktop shell|mature legacy|HERMES_DESKTOP_IS_PACKAGED/)
 })
 

@@ -1,14 +1,15 @@
 #!/usr/bin/env node
-// Build the independent ZN Electron control plane. None of these entries import
-// the inherited Hermes main/preload or renderer root.
+// Build the independent ZN Electron control plane and active renderer. None of
+// these entries import the inherited Hermes main/preload or renderer root.
 //
 // Output:
 //   dist/electron-main.mjs       ZN-owned Electron main process
 //   dist/electron-preload.js     ZN-owned sandboxed preload bridge
-//   dist/zn-shell-renderer.js    minimal ZN resident face
-//   dist/zn-shell.html           minimal ZN resident document
+//   dist/zn-shell-renderer.js    ZN workbench renderer
+//   dist/zn-shell-renderer.css   ZN workbench styles
+//   dist/zn-shell.html           ZN renderer document
 import { build } from 'esbuild'
-import { copyFileSync, mkdirSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -21,8 +22,9 @@ const mainEntry = resolve(root, 'electron/zn-main.ts')
 const mainOut = resolve(distDir, 'electron-main.mjs')
 const preloadEntry = resolve(root, 'electron/zn-preload.ts')
 const preloadOut = resolve(distDir, 'electron-preload.js')
-const shellRendererEntry = resolve(root, 'electron/zn-shell-renderer.ts')
+const shellRendererEntry = resolve(root, 'src/zn/main.tsx')
 const shellRendererOut = resolve(distDir, 'zn-shell-renderer.js')
+const shellRendererCssOut = resolve(distDir, 'zn-shell-renderer.css')
 const shellHtml = resolve(root, 'electron/zn-shell.html')
 const shellHtmlOut = resolve(distDir, 'zn-shell.html')
 
@@ -70,10 +72,17 @@ await build({
   bundle: true,
   platform: 'browser',
   format: 'iife',
+  jsx: 'automatic',
   target: 'chrome132',
   outfile: shellRendererOut,
   logLevel: 'info'
 })
+
+if (!existsSync(shellRendererCssOut)) {
+  throw new Error(`ZN renderer build did not emit stylesheet: ${shellRendererCssOut}`)
+}
+
 copyFileSync(shellHtml, shellHtmlOut)
 console.log(`bundled ${shellRendererOut}`)
+console.log(`bundled ${shellRendererCssOut}`)
 console.log(`copied ${shellHtmlOut}`)
