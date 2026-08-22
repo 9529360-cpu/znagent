@@ -1,0 +1,100 @@
+name: ZN Linux Desktop Identity Smoke
+
+on:
+  push:
+    branches:
+      - dev/zn-agent
+    paths:
+      - .github/workflows/zn-linux-desktop-smoke.yml
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: zn-linux-desktop-identity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop-identity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CI: 'true'
+      NODE_OPTIONS: --max-old-space-size=4096
+      ZN_RELEASE_VERSION: '0.17.0'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+          cache: npm
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked workspace dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Stage self-contained ZN runtime
+        env:
+          ZN_RELEASE_COMMIT: ${{ github.sha }}
+        run: node apps/desktop/scripts/stage-zn-runtime.mjs
+
+      - name: Build independent ZN desktop
+        run: npm run build --workspace apps/desktop
+
+      - name: Build AppImage
+        run: npm run builder --workspace apps/desktop -- --config electron-builder.zn.yml --linux AppImage --publish never
+
+      - name: Verify desktop identity from real AppImage
+        shell: bash
+        run: |
+          set -euo pipefail
+          RELEASE="$GITHUB_WORKSPACE/apps/desktop/release"
+          EXTRACT="$GITHUB_WORKSPACE/.ci/zn-linux-desktop"
+          mkdir -p "$EXTRACT"
+          mapfile -t APPIMAGES < <(find "$RELEASE" -maxdepth 1 -type f -name '*.AppImage' -print)
+          test "${#APPIMAGES[@]}" -eq 1
+          APPIMAGE="${APPIMAGES[0]}"
+          chmod +x "$APPIMAGE"
+          (
+            cd "$EXTRACT"
+            "$APPIMAGE" --appimage-extract >/dev/null
+          )
+          DESKTOP="$EXTRACT/squashfs-root/ai.zn.desktop.desktop"
+          test -f "$DESKTOP"
+          grep -Fx 'Name=ZN' "$DESKTOP"
+          grep -Fx 'StartupWMClass=ai.zn.desktop' "$DESKTOP"
+          test -x "$EXTRACT/squashfs-root/ZN"
+          test -f "$EXTRACT/squashfs-root/resources/app.asar"
+          test -f "$EXTRACT/squashfs-root/resources/zn-runtime/runtime.json"
+          printf '%s\n' 'Verified desktop entry:'
+          cat "$DESKTOP"
+
+      - name: Boot packaged resident from extracted AppImage
+        run: node apps/desktop/scripts/verify-zn-packaged-runtime.mjs .ci/zn-linux-desktop "$ZN_RELEASE_VERSION" "$GITHUB_SHA"
+
+      - name: Publish Linux desktop identity status
+        if: ${{ always() }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const result = '${{ job.status }}'
+            const state = result === 'success' ? 'success' : result === 'failure' ? 'failure' : 'error'
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state,
+              context: 'ZN Linux Desktop Identity',
+              description: `AppImage launcher/WM_CLASS identity: ${result}`.slice(0, 140),
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            })
