@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import socketserver
 import sys
 import threading
@@ -37,6 +38,10 @@ def _process_runtime_id(
         if manifest.get("product") == "ZN" and runtime_id:
             return runtime_id
     return None
+
+
+class _ResidentTerminationRequested(BaseException):
+    """Internal control flow for an OS-requested graceful resident stop."""
 
 
 class _ResidentTcpServer(socketserver.ThreadingTCPServer):
@@ -135,8 +140,8 @@ class ResidentSocketService:
         self._visual_thread: threading.Thread | None = None
 
     def serve_forever(self) -> int:
-        self.rpc.service.acquire()
         try:
+            self.rpc.service.acquire()
             self.rpc.resident.live_once()
             self.rpc._start_life_loop()
             self._start_visual_loop()
@@ -227,6 +232,40 @@ class ResidentSocketService:
             return
 
 
+def _serve_with_sigterm_cleanup(service: ResidentSocketService) -> int:
+    """Convert service-manager SIGTERM into the resident's normal cleanup path.
+
+    Python's default SIGTERM action exits immediately, bypassing the service
+    ``finally`` block and leaving the durable resident lease behind.  The first
+    SIGTERM instead becomes internal control flow that unwinds ``serve_forever``.
+    Further SIGTERMs during cleanup are ignored so endpoint retirement, organ
+    shutdown and lease release cannot be interrupted halfway through.
+    """
+
+    sigterm = getattr(signal, "SIGTERM", None)
+    if sigterm is None or threading.current_thread() is not threading.main_thread():
+        return service.serve_forever()
+
+    previous_handler = signal.getsignal(sigterm)
+    termination_requested = False
+
+    def request_termination(signum, frame) -> None:  # noqa: ARG001
+        nonlocal termination_requested
+        if termination_requested:
+            return
+        termination_requested = True
+        raise _ResidentTerminationRequested(signum)
+
+    signal.signal(sigterm, request_termination)
+    try:
+        try:
+            return service.serve_forever()
+        except _ResidentTerminationRequested:
+            return 0
+    finally:
+        signal.signal(sigterm, previous_handler)
+
+
 def main(argv: list[str] | None = None) -> int:
     # Import lazily so daemon.py remains the transport-agnostic JSON-RPC face
     # and this module can be launched directly as the long-lived local service.
@@ -255,12 +294,13 @@ def main(argv: list[str] | None = None) -> int:
             port = max(0, int(os.getenv("ZN_RESIDENT_PORT") or "0"))
         except ValueError:
             port = 0
-    return ResidentSocketService(
+    service = ResidentSocketService(
         ResidentRpcServer(),
         host=host,
         port=port,
         channel_adapters=build_zn_channel_adapters(),
-    ).serve_forever()
+    )
+    return _serve_with_sigterm_cleanup(service)
 
 
 if __name__ == "__main__":

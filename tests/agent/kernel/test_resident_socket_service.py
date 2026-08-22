@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
 import socket
+import sqlite3
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -129,6 +134,68 @@ class ResidentSocketServiceTests(unittest.TestCase):
             self.assertEqual(lease["instance_id"], "replacement-resident")
             service.release()
             resident.store.close()
+
+    @unittest.skipIf(os.name == "nt", "POSIX SIGTERM lifecycle contract")
+    def test_sigterm_releases_lease_and_endpoint_before_process_exit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "zn-home"
+            endpoint_path = home / "kernel" / "resident-endpoint.json"
+            store_path = home / "kernel" / "kernel.db"
+            repo_root = Path(__file__).resolve().parents[3]
+            child = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "agent.kernel.resident_server",
+                    "--home",
+                    str(home),
+                ],
+                cwd=repo_root,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            try:
+                deadline = time.monotonic() + 10.0
+                while time.monotonic() < deadline:
+                    if endpoint_path.is_file():
+                        break
+                    if child.poll() is not None:
+                        error_text = child.stderr.read() if child.stderr else ""
+                        self.fail(
+                            f"resident exited before publishing endpoint: {error_text}"
+                        )
+                    time.sleep(0.05)
+                self.assertTrue(endpoint_path.is_file(), "resident endpoint was not published")
+
+                with sqlite3.connect(store_path) as connection:
+                    lease = connection.execute(
+                        "SELECT instance_id, pid FROM resident_lease WHERE id=1"
+                    ).fetchone()
+                self.assertIsNotNone(lease)
+                self.assertEqual(int(lease[1]), child.pid)
+
+                os.kill(child.pid, signal.SIGTERM)
+                try:
+                    returncode = child.wait(timeout=8.0)
+                except subprocess.TimeoutExpired:
+                    self.fail("resident did not exit after SIGTERM")
+
+                error_text = child.stderr.read() if child.stderr else ""
+                self.assertEqual(returncode, 0, error_text)
+                self.assertFalse(endpoint_path.exists())
+                with sqlite3.connect(store_path) as connection:
+                    remaining = connection.execute(
+                        "SELECT instance_id, pid FROM resident_lease WHERE id=1"
+                    ).fetchone()
+                self.assertIsNone(remaining)
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait(timeout=5.0)
+                if child.stderr is not None:
+                    child.stderr.close()
 
 
 if __name__ == "__main__":
