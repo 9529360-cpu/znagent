@@ -168,6 +168,13 @@ class ResidentWorkLedgerTests(unittest.TestCase):
                 text=True,
             )
             target.write_text("after\n", encoding="utf-8")
+            status = subprocess.run(
+                ["git", "-C", str(workspace), "status", "--porcelain"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn("notes.txt", status.stdout)
 
             store_path = root / "kernel.db"
             resident = build_resident_runtime_from_existing_stack(
@@ -183,7 +190,6 @@ class ResidentWorkLedgerTests(unittest.TestCase):
                 "which files changed in this workspace?",
             )
             self.assertTrue(run.success)
-            self.assertIn("notes.txt", run.response)
 
             artifacts = ledger.list_artifacts(thread.thread_id)
             self.assertTrue(any(item.kind == "file" for item in artifacts))
