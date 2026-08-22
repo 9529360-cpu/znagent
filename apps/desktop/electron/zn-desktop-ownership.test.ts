@@ -35,6 +35,8 @@ test('ZN preload exposes only the ZN bridge and does not import inherited preloa
 
   assert.match(source, /exposeInMainWorld\(['"]znDesktop['"]/)
   assert.match(source, /zn:deep-link/)
+  assert.match(source, /zn:resident:work-list/)
+  assert.match(source, /zn:resident:work-submit/)
   assert.doesNotMatch(source, /import ['"]\.\/preload['"]/) 
   assert.doesNotMatch(source, /hermesDesktop|hermes:/)
 })
@@ -50,7 +52,11 @@ test('active ZN renderer root is content-first and independent of inherited shel
   assert.match(workbench, /Workspaces/)
   assert.match(workbench, /Settings/)
   assert.match(workbench, /Message ZN/)
-  assert.match(workbench, /Resident activity/)
+  assert.match(workbench, /loadZnWorkThreads/)
+  assert.match(workbench, /createZnWorkThread/)
+  assert.match(workbench, /submitZnWork/)
+  assert.match(residentClient, /resident\.workList/)
+  assert.match(residentClient, /resident\.workSubmit/)
   assert.match(html, /zn-shell-renderer\.css/)
   assert.match(html, /zn-shell-renderer\.js/)
 
@@ -61,13 +67,16 @@ test('active ZN renderer root is content-first and independent of inherited shel
   assert.doesNotMatch(html, /hermes/i)
 })
 
-test('workbench browser cache is bounded convenience state, not resident identity', () => {
-  const source = read('src/zn/state.ts')
+test('workbench browser cache is bounded fallback state, not resident authority', () => {
+  const state = read('src/zn/state.ts')
+  const workbench = read('src/zn/workbench.tsx')
 
-  assert.match(source, /MAX_THREADS = 24/)
-  assert.match(source, /MAX_MESSAGES_PER_THREAD = 120/)
-  assert.match(source, /Resident identity\/memory must never/)
-  assert.doesNotMatch(source, /nervous|kernel\.db|structured memory/i)
+  assert.match(state, /MAX_THREADS = 24/)
+  assert.match(state, /MAX_MESSAGES_PER_THREAD = 120/)
+  assert.match(state, /Resident identity\/memory must never/)
+  assert.match(workbench, /const authoritative = residentThreads\.length > 0/)
+  assert.match(workbench, /setThreads\(authoritative\)/)
+  assert.doesNotMatch(state, /nervous|kernel\.db|structured memory/i)
 })
 
 test('Electron bundler emits only ZN control-plane and renderer entries', () => {

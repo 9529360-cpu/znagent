@@ -3,8 +3,10 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import {
   applyZnUpdate,
   checkZnUpdate,
+  createZnWorkThread,
   loadZnResidentSnapshot,
-  submitZnTask,
+  loadZnWorkThreads,
+  submitZnWork,
   type ZnResidentSnapshot
 } from './resident-client'
 import {
@@ -18,12 +20,6 @@ import {
 type ResidentHealth = 'connecting' | 'live' | 'offline'
 type MainView = 'work' | 'settings'
 
-type NormalizedRun = {
-  text: string
-  activity: Record<string, unknown>
-  failed: boolean
-}
-
 function renderUnknown(value: unknown): string {
   if (typeof value === 'string') return value
   try {
@@ -31,26 +27,6 @@ function renderUnknown(value: unknown): string {
   } catch {
     return String(value)
   }
-}
-
-function normalizeRun(value: unknown): NormalizedRun {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return { text: renderUnknown(value), activity: {}, failed: false }
-  }
-
-  const record = value as Record<string, unknown>
-  const text = String(
-    record.response ||
-      record.content ||
-      record.error ||
-      record.reason ||
-      (record.success === false ? 'The resident could not complete this event.' : 'Completed.')
-  )
-  const activity: Record<string, unknown> = {}
-  for (const key of ['execution_path', 'model_invocations', 'capability_name', 'reason', 'event_id']) {
-    if (record[key] !== undefined && record[key] !== null && record[key] !== '') activity[key] = record[key]
-  }
-  return { text, activity, failed: record.success === false }
 }
 
 function timeLabel(value: number): string {
@@ -91,8 +67,16 @@ export function ZnWorkbench() {
   const refreshResident = useCallback(async () => {
     setResidentHealth(previous => (previous === 'live' ? previous : 'connecting'))
     try {
-      const snapshot = await loadZnResidentSnapshot()
+      const [snapshot, residentThreads] = await Promise.all([
+        loadZnResidentSnapshot(),
+        loadZnWorkThreads()
+      ])
+      const authoritative = residentThreads.length > 0 ? residentThreads : [newZnThread()]
       setResidentSnapshot(snapshot)
+      setThreads(authoritative)
+      setActiveThreadId(current =>
+        authoritative.some(thread => thread.id === current) ? current : authoritative[0]?.id || ''
+      )
       setResidentError(null)
       setResidentHealth('live')
     } catch (error) {
@@ -120,6 +104,14 @@ export function ZnWorkbench() {
     setActiveThreadId(thread.id)
     setView('work')
     setDraft('')
+    void createZnWorkThread(thread)
+      .then(saved => {
+        setThreads(current => current.map(item => (item.id === saved.id ? saved : item)))
+      })
+      .catch(error => {
+        setResidentError(error instanceof Error ? error.message : String(error))
+        setResidentHealth('offline')
+      })
   }, [])
 
   const submit = useCallback(
@@ -138,24 +130,15 @@ export function ZnWorkbench() {
       )
 
       try {
-        const raw = await submitZnTask(task)
-        const run = normalizeRun(raw)
+        const result = await submitZnWork(threadId, task)
         setThreads(current =>
-          current.map(thread => {
-            if (thread.id !== threadId) return thread
-            let next = addZnThreadMessage(
-              thread,
-              'zn',
-              run.text,
-              run.failed ? { failed: true } : undefined
-            )
-            if (Object.keys(run.activity).length > 0) {
-              next = addZnThreadMessage(next, 'activity', 'Resident activity', run.activity)
-            }
-            return next
-          })
+          current
+            .map(thread => (thread.id === threadId ? result.thread : thread))
+            .sort((left, right) => right.updatedAt - left.updatedAt)
         )
-        void refreshResident()
+        setResidentError(null)
+        setResidentHealth('live')
+        void loadZnResidentSnapshot().then(setResidentSnapshot).catch(() => undefined)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         setThreads(current =>
@@ -165,11 +148,12 @@ export function ZnWorkbench() {
               : thread
           )
         )
+        setResidentError(message)
       } finally {
         setBusy(false)
       }
     },
-    [activeThread, busy, draft, refreshResident]
+    [activeThread, busy, draft]
   )
 
   const checkUpdates = useCallback(async () => {

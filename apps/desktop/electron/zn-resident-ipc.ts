@@ -118,6 +118,40 @@ export function registerZnResidentIpc(): void {
     return withDesktopRuntime(await residentProcess.request('status'), residentProcess)
   })
   ipcMain.handle('zn:resident:self', async () => getZnResidentProcess().request('self'))
+  ipcMain.handle('zn:resident:work-list', async (_event, payload) => {
+    return getZnResidentProcess().request('work_list', {
+      limit: Number(payload?.limit || 24),
+      message_limit: Number(payload?.messageLimit || payload?.message_limit || 120)
+    })
+  })
+  ipcMain.handle('zn:resident:work-create', async (_event, payload) => {
+    return getZnResidentProcess().request('work_create', {
+      thread_id: String(payload?.threadId || payload?.thread_id || ''),
+      title: String(payload?.title || 'New work'),
+      metadata: payload?.metadata && typeof payload.metadata === 'object' ? payload.metadata : {}
+    })
+  })
+  ipcMain.handle('zn:resident:work-get', async (_event, payload) => {
+    const threadId = String(payload?.threadId || payload?.thread_id || '').trim()
+    if (!threadId) throw new Error('threadId is required')
+    return getZnResidentProcess().request('work_get', {
+      thread_id: threadId,
+      message_limit: Number(payload?.messageLimit || payload?.message_limit || 120)
+    })
+  })
+  ipcMain.handle('zn:resident:work-submit', async (_event, payload) => {
+    const threadId = String(payload?.threadId || payload?.thread_id || '').trim()
+    const task = String(payload?.task || '').trim()
+    if (!threadId) throw new Error('threadId is required')
+    if (!task) throw new Error('task is required')
+    return getZnResidentProcess().request('work_submit', {
+      thread_id: threadId,
+      task,
+      kind: payload?.kind || 'desktop_user_event',
+      priority: Number(payload?.priority || 0),
+      payload: payload?.payload && typeof payload.payload === 'object' ? payload.payload : {}
+    })
+  })
   ipcMain.handle('zn:resident:pulses', async (_event, limit) => history('pulses', limit))
   ipcMain.handle('zn:resident:situations', async (_event, limit) => history('situations', limit))
   ipcMain.handle('zn:resident:thoughts', async (_event, limit) => history('thoughts', limit))

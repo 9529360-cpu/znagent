@@ -9,6 +9,7 @@ from typing import Any, TextIO
 
 from .provider_bridge import build_resident_runtime_from_existing_stack
 from .service import ResidentService
+from .work import ResidentWorkLedger
 
 
 class ResidentRpcServer:
@@ -30,6 +31,7 @@ class ResidentRpcServer:
     ):
         self.resident = resident or build_resident_runtime_from_existing_stack()
         self.service = ResidentService(self.resident)
+        self.work = ResidentWorkLedger(self.resident)
         self.input = input_stream or sys.stdin
         self.output = output_stream or sys.stdout
         self.life_interval = max(0.25, float(life_interval))
@@ -89,6 +91,59 @@ class ResidentRpcServer:
             result = self.resident.status()
         elif method == "self":
             result = self.resident.life.snapshot_dict()
+        elif method == "work_list":
+            result = [
+                self._work_snapshot(snapshot)
+                for snapshot in self.work.list_snapshots(
+                    thread_limit=max(1, min(100, int(params.get("limit") or 24))),
+                    message_limit=max(
+                        1, min(500, int(params.get("message_limit") or 120))
+                    ),
+                )
+            ]
+        elif method == "work_create":
+            metadata = params.get("metadata")
+            if metadata is not None and not isinstance(metadata, dict):
+                raise ValueError("work_create metadata must be an object")
+            thread = self.work.create_thread(
+                thread_id=str(params.get("thread_id") or "").strip() or None,
+                title=str(params.get("title") or "New work"),
+                metadata=metadata,
+            )
+            result = self._work_snapshot((thread, []))
+        elif method == "work_get":
+            thread_id = str(params.get("thread_id") or "").strip()
+            if not thread_id:
+                raise ValueError("work_get requires thread_id")
+            result = self._work_snapshot(
+                self.work.get_snapshot(
+                    thread_id,
+                    message_limit=max(
+                        1, min(500, int(params.get("message_limit") or 120))
+                    ),
+                )
+            )
+        elif method == "work_submit":
+            thread_id = str(params.get("thread_id") or "").strip()
+            task = str(params.get("task") or "").strip()
+            if not thread_id:
+                raise ValueError("work_submit requires thread_id")
+            if not task:
+                raise ValueError("work_submit requires task")
+            payload = params.get("payload")
+            if payload is not None and not isinstance(payload, dict):
+                raise ValueError("work_submit payload must be an object")
+            snapshot, run = self.work.submit(
+                thread_id,
+                task,
+                kind=str(params.get("kind") or "desktop_user_event"),
+                priority=int(params.get("priority") or 0),
+                payload=payload,
+            )
+            result = {
+                "thread": self._work_snapshot(snapshot),
+                "run": self._run_result(run),
+            }
         elif method == "pulses":
             limit = self._limit(params)
             result = [
@@ -250,6 +305,27 @@ class ResidentRpcServer:
     @staticmethod
     def _limit(params: dict[str, Any]) -> int:
         return max(1, min(200, int(params.get("limit") or 20)))
+
+    @staticmethod
+    def _work_snapshot(snapshot) -> dict[str, Any]:
+        thread, messages = snapshot
+        return {
+            "id": thread.thread_id,
+            "title": thread.title,
+            "metadata": thread.metadata,
+            "created_at": thread.created_at,
+            "updated_at": thread.updated_at,
+            "messages": [
+                {
+                    "id": message.message_id,
+                    "role": message.role,
+                    "text": message.text,
+                    "detail": message.detail,
+                    "created_at": message.created_at,
+                }
+                for message in messages
+            ],
+        }
 
     def _start_life_loop(self) -> None:
         self._life_stop.clear()
