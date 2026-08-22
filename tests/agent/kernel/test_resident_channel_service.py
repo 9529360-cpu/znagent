@@ -35,6 +35,7 @@ class _ResidentChannelAdapter:
                     sender_id="person-1",
                     text="resident channel work",
                     message_id="incoming-1",
+                    metadata={"update_id": 17},
                 )
             ]
         self._closed_event.wait(min(max(0.0, float(timeout)), 0.05))
@@ -87,16 +88,23 @@ class ResidentChannelSocketServiceTests(unittest.TestCase):
                 store_path=root / "kernel.db",
             )
             calls = []
+            outcome = SimpleNamespace(
+                success=True,
+                response="resident channel reply",
+                reason="",
+            )
 
-            def submit(task, **kwargs):
+            def enqueue(task, **kwargs):
                 calls.append((task, kwargs))
-                return SimpleNamespace(
-                    success=True,
-                    response="resident channel reply",
-                    reason="",
-                )
+                return SimpleNamespace(event_id="evt-channel-service-test")
 
-            resident.submit = submit
+            def result_for(event_id):
+                if event_id == "evt-channel-service-test":
+                    return outcome
+                return None
+
+            resident.enqueue = enqueue
+            resident.result_for = result_for
             adapter = _ResidentChannelAdapter()
             rpc = ResidentRpcServer(resident=resident, life_interval=0.1)
             service = ResidentSocketService(
@@ -129,7 +137,14 @@ class ResidentChannelSocketServiceTests(unittest.TestCase):
                 calls[0][1]["payload"]["channel"],
                 "test-channel",
             )
+            self.assertEqual(
+                calls[0][1]["payload"]["channel_source_key"],
+                "test-channel:update:17",
+            )
             self.assertEqual(adapter.sent[0].text, "resident channel reply")
+            route = service.channels.ledger.route_for_event("evt-channel-service-test")
+            self.assertIsNotNone(route)
+            self.assertEqual(route.status, "delivered")
 
             shutdown = self._request(endpoint, "shutdown")
             self.assertTrue(shutdown["ok"])
