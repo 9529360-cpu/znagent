@@ -72,6 +72,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git add -N tests/agent/kernel/test_life_connection_lifecycle.py
           git diff --check
           test "$(git diff --name-only | wc -l)" -eq 3
           git diff --name-only | grep -Fx 'agent/kernel/life.py'
