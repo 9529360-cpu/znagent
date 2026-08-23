@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import shlex
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .git_semantics import current_git_path_staged_goal
+from .git_semantics import current_git_path_staged_goal, git_stage_command
 from .models import AgentEvent, utc_now
 from .path_context import resolve_context_path
 
@@ -225,7 +224,6 @@ def _derive_resident_git_stage_choice_set(
 
     root = str(goal["root"])
     relative = str(goal["relative_path"])
-    quoted = shlex.quote(relative)
     shared_reason = (
         "current Investigation observed one non-conflicted file inside the current Git "
         "root and a typed git_path_staged goal; both bounded Git mechanisms can update "
@@ -233,10 +231,10 @@ def _derive_resident_git_stage_choice_set(
     )
 
     choices: list[NativeActionIntent] = []
-    for variant, command in (
-        ("git_add", f"git add -- {quoted}"),
-        ("git_update_index", f"git update-index --add -- {quoted}"),
-    ):
+    for variant in ("git_add", "git_update_index"):
+        command = git_stage_command(variant, relative)
+        if command is None:
+            return ()
         expected = {
             "kind": "git_path_staged",
             "root": root,
