@@ -27,7 +27,7 @@ concurrency:
 jobs:
   migrate-python-namespace:
     name: One-shot ZN Python namespace migration
-    if: ${{ github.event_name == 'push' }}
+    if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
