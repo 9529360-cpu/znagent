@@ -12,8 +12,11 @@ becomes a fast path.
 """
 
 import os
+import shlex
+import subprocess
+import sys
 from dataclasses import asdict
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
 from .action import (
@@ -31,6 +34,7 @@ from .procedural_influence import (
     ProceduralActionInfluence,
     select_procedurally_influenced_intent,
 )
+from .result_semantics import normalize_action_result
 from .world_closed_loop import WorldAwareTransferResidentRuntime
 
 
@@ -43,6 +47,9 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
     _REPO_TEXT_BASELINE_KEY = "native_repo_text_baseline"
     _RECOVERABLE_CHOICE_SOURCES = frozenset({"structured_choice", "resident_choice"})
     _MAX_PROCEDURAL_REVOKED = 8
+    _TARGETED_TEST_KIND = "python_unittest"
+    _TARGETED_TEST_DEFAULT_TIMEOUT = 120.0
+    _TARGETED_TEST_MAX_TIMEOUT = 300.0
 
     def _deliberation_step(
         self,
@@ -298,6 +305,244 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
             "relative_path": relative,
         }
 
+    @staticmethod
+    def _literal_repo_relative_path(value: Any) -> str | None:
+        text = str(value or "").strip().replace("\\", "/")
+        if not text:
+            return None
+        path = PurePosixPath(text)
+        parts = path.parts
+        if (
+            path.is_absolute()
+            or not parts
+            or path.as_posix() in {"", ".", "/"}
+            or any(part == ".." for part in parts)
+            or ":" in parts[0]
+        ):
+            return None
+        return path.as_posix()
+
+    @staticmethod
+    def _targeted_test_requested(event) -> bool:
+        expected = event.payload.get("expected_outcome")
+        return isinstance(expected, dict) and expected.get("targeted_test") is not None
+
+    def _repo_targeted_test_spec(
+        self,
+        event,
+        scope: dict[str, str],
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        expected = event.payload.get("expected_outcome")
+        if not isinstance(expected, dict):
+            return None, None
+        raw = expected.get("targeted_test")
+        if raw is None:
+            return None, None
+        if not isinstance(raw, dict):
+            return None, "targeted_test must be a structured python_unittest identity"
+
+        allowed = {"kind", "path", "for_path", "timeout", "workdir"}
+        unknown = sorted(str(key) for key in raw if key not in allowed)
+        if unknown:
+            return None, (
+                "targeted_test contains unsupported authority fields: "
+                + ", ".join(unknown)
+            )
+        kind = str(raw.get("kind") or "").strip().lower()
+        if kind != self._TARGETED_TEST_KIND:
+            return None, "targeted_test kind must be python_unittest"
+
+        for_relative = self._literal_repo_relative_path(raw.get("for_path"))
+        if not for_relative or for_relative != scope["relative_path"]:
+            return None, "targeted_test for_path must exactly match the mutation target"
+
+        test_relative = self._literal_repo_relative_path(raw.get("path"))
+        if not test_relative:
+            return None, "targeted_test path must be one literal repository-relative path"
+        test_path = PurePosixPath(test_relative)
+        if (
+            not test_path.parts
+            or test_path.parts[0] != "tests"
+            or not test_path.name.startswith("test_")
+            or test_path.suffix != ".py"
+        ):
+            return None, "targeted_test path must name one tests/**/test_*.py file"
+        if test_relative == scope["relative_path"]:
+            return None, "targeted_test file must be distinct from the mutation target"
+
+        try:
+            root = Path(scope["root"]).expanduser().resolve(strict=True)
+            lexical = Path(os.path.abspath(str(root / Path(test_relative))))
+            resolved = lexical.resolve(strict=True)
+            if resolved != lexical:
+                return None, "targeted_test path aliases through a symlink"
+            resolved.relative_to(root)
+            if not resolved.is_file():
+                return None, "targeted_test path is not a regular file"
+        except (OSError, RuntimeError, ValueError):
+            return None, "targeted_test path does not resolve to a current repository file"
+
+        raw_workdir = raw.get("workdir")
+        if raw_workdir is not None and str(raw_workdir).strip():
+            try:
+                requested = Path(str(raw_workdir)).expanduser()
+                candidate = requested if requested.is_absolute() else root / requested
+                resolved_workdir = candidate.resolve(strict=True)
+            except (OSError, RuntimeError, ValueError):
+                return None, "targeted_test workdir does not resolve to the current Git root"
+            if resolved_workdir != root:
+                return None, "targeted_test workdir must resolve exactly to the current Git root"
+
+        raw_timeout = raw.get("timeout", self._TARGETED_TEST_DEFAULT_TIMEOUT)
+        if isinstance(raw_timeout, bool):
+            return None, "targeted_test timeout must be numeric"
+        try:
+            timeout = float(raw_timeout)
+        except (TypeError, ValueError):
+            return None, "targeted_test timeout must be numeric"
+        if not 0.05 <= timeout <= self._TARGETED_TEST_MAX_TIMEOUT:
+            return None, "targeted_test timeout is outside the bounded verification range"
+
+        return {
+            "kind": self._TARGETED_TEST_KIND,
+            "root": str(root),
+            "head": scope["head"],
+            "relative_path": test_relative,
+            "for_relative_path": for_relative,
+            "timeout": timeout,
+        }, None
+
+    def _observe_targeted_test_snapshot(
+        self,
+        event,
+        spec: dict[str, Any],
+    ) -> tuple[dict[str, Any], list[str]]:
+        observed = self.body.act(
+            "git_diff",
+            event_id=event.event_id,
+            path=str(spec.get("root") or ""),
+            relative_path=str(spec.get("relative_path") or ""),
+        )
+        data = observed.data if isinstance(observed.data, dict) else {}
+        worktree = data.get("worktree") if isinstance(data.get("worktree"), dict) else {}
+        staged = data.get("staged") if isinstance(data.get("staged"), dict) else {}
+        problems: list[str] = []
+        if not observed.success:
+            problems.append(observed.error or "targeted test Git evidence could not be observed")
+        if observed.success and str(data.get("root") or "").strip() != str(spec.get("root") or ""):
+            problems.append("targeted test repository root changed")
+        if observed.success and str(data.get("head") or "").strip() != str(spec.get("head") or ""):
+            problems.append("targeted test repository HEAD changed")
+        if observed.success and str(data.get("scope_relative_path") or "") != str(
+            spec.get("relative_path") or ""
+        ):
+            problems.append("targeted test evidence resolved a different path")
+        if observed.success and data.get("scope_tracked") is not True:
+            problems.append("targeted test file is not tracked")
+        if observed.success and bool(data.get("truncated")):
+            problems.append("targeted test Git evidence is truncated")
+        if observed.success and list(worktree.get("paths") or ()):
+            problems.append("targeted test file has unstaged changes")
+        if observed.success and list(staged.get("paths") or ()):
+            problems.append("targeted test file has staged changes")
+        if observed.success and list(data.get("untracked_paths") or ()):
+            problems.append("targeted test file became untracked")
+
+        snapshot = {
+            "kind": self._TARGETED_TEST_KIND,
+            "root": str(spec.get("root") or ""),
+            "head": str(spec.get("head") or ""),
+            "relative_path": str(spec.get("relative_path") or ""),
+            "for_relative_path": str(spec.get("for_relative_path") or ""),
+            "timeout": float(spec.get("timeout") or self._TARGETED_TEST_DEFAULT_TIMEOUT),
+            "state_sha256": str(data.get("state_sha256") or ""),
+            "worktree_patch_sha256": str(worktree.get("patch_sha256") or ""),
+            "staged_patch_sha256": str(staged.get("patch_sha256") or ""),
+            "source_action_id": observed.action_id,
+        }
+        if observed.success and not all(
+            snapshot[key]
+            for key in (
+                "state_sha256",
+                "worktree_patch_sha256",
+                "staged_patch_sha256",
+            )
+        ):
+            problems.append("targeted test evidence is missing deterministic fingerprints")
+        return snapshot, problems
+
+    @staticmethod
+    def _targeted_test_snapshot_matches(
+        expected: dict[str, Any],
+        observed: dict[str, Any],
+    ) -> bool:
+        keys = (
+            "kind",
+            "root",
+            "head",
+            "relative_path",
+            "for_relative_path",
+            "timeout",
+            "state_sha256",
+            "worktree_patch_sha256",
+            "staged_patch_sha256",
+        )
+        return all(expected.get(key) == observed.get(key) for key in keys)
+
+    @staticmethod
+    def _targeted_unittest_command(spec: dict[str, Any]) -> str:
+        relative = PurePosixPath(str(spec.get("relative_path") or ""))
+        args = [
+            sys.executable,
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            relative.parent.as_posix(),
+            "-p",
+            relative.name,
+        ]
+        return subprocess.list2cmdline(args) if os.name == "nt" else shlex.join(args)
+
+    def _fail_repo_text_precondition(
+        self,
+        event,
+        state,
+        intent: NativeActionIntent,
+        problems: Iterable[str],
+        *,
+        thought=None,
+    ) -> bool:
+        failure = "repository mutation precondition failed: " + "; ".join(
+            str(item) for item in problems if str(item)
+        )
+        state.data["local_failure"] = failure
+        self._record_failed_action(
+            event,
+            state,
+            intent,
+            source="precondition",
+            failure=failure,
+        )
+        if isinstance(state.data.get(self._PROCEDURAL_INFLUENCE_KEY), dict):
+            self._revoke_active_procedural_influence(
+                state,
+                reason="repository_precondition",
+            )
+        state.stage = "native_investigation"
+        state.next_action = "refresh repository evidence before another mutation"
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        if thought is not None:
+            if failure not in thought.unknown:
+                thought.unknown = (*thought.unknown, failure)
+            thought.reason = (
+                f"{thought.reason}; current repository evidence no longer proves a safe "
+                "baseline for the selected file mutation"
+            )
+            self._persist_enriched_thought(thought)
+        return False
+
     def _prepare_repo_text_baseline(
         self,
         event,
@@ -309,6 +554,16 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
         scope = self._repo_text_scope(event, intent)
         if scope is None:
             state.data.pop(self._REPO_TEXT_BASELINE_KEY, None)
+            if self._targeted_test_requested(event):
+                return self._fail_repo_text_precondition(
+                    event,
+                    state,
+                    intent,
+                    [
+                        "targeted test verification requires the current tracked exact-replacement contract"
+                    ],
+                    thought=thought,
+                )
             return True
 
         observed = self.body.act(
@@ -343,7 +598,7 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
             isinstance(baseline, dict)
             and str(baseline.get("intent_id") or "") == intent.intent_id
         )
-        current_snapshot = {
+        current_snapshot: dict[str, Any] = {
             "intent_id": intent.intent_id,
             "root": scope["root"],
             "head": scope["head"],
@@ -363,6 +618,19 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
         ):
             problems.append("target-scoped Git baseline is missing deterministic fingerprints")
 
+        targeted_snapshot: dict[str, Any] | None = None
+        if not problems:
+            targeted_spec, targeted_error = self._repo_targeted_test_spec(event, scope)
+            if targeted_error:
+                problems.append(targeted_error)
+            elif targeted_spec is not None:
+                targeted_snapshot, targeted_problems = self._observe_targeted_test_snapshot(
+                    event,
+                    targeted_spec,
+                )
+                problems.extend(targeted_problems)
+        current_snapshot["targeted_test"] = targeted_snapshot
+
         if same_intent and not problems:
             for key in (
                 "root",
@@ -372,38 +640,27 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
                 "worktree_patch_sha256",
                 "staged_patch_sha256",
             ):
-                if str(baseline.get(key) or "") != current_snapshot[key]:
+                if str(baseline.get(key) or "") != str(current_snapshot[key]):
                     problems.append("repository baseline became stale before mutation")
                     break
+            prior_targeted = baseline.get("targeted_test")
+            if targeted_snapshot is None:
+                if prior_targeted is not None:
+                    problems.append("targeted test baseline became stale before mutation")
+            elif not isinstance(prior_targeted, dict) or not self._targeted_test_snapshot_matches(
+                prior_targeted,
+                targeted_snapshot,
+            ):
+                problems.append("targeted test baseline became stale before mutation")
 
         if problems:
-            failure = "repository mutation precondition failed: " + "; ".join(problems)
-            state.data["local_failure"] = failure
-            self._record_failed_action(
+            return self._fail_repo_text_precondition(
                 event,
                 state,
                 intent,
-                source="precondition",
-                failure=failure,
+                problems,
+                thought=thought,
             )
-            if isinstance(state.data.get(self._PROCEDURAL_INFLUENCE_KEY), dict):
-                self._revoke_active_procedural_influence(
-                    state,
-                    reason="repository_precondition",
-                )
-            state.stage = "native_investigation"
-            state.next_action = "refresh repository evidence before another mutation"
-            self._sync_execution_context(event, state)
-            self.store.save_working_state(state)
-            if thought is not None:
-                if failure not in thought.unknown:
-                    thought.unknown = (*thought.unknown, failure)
-                thought.reason = (
-                    f"{thought.reason}; current repository evidence no longer proves a safe "
-                    "baseline for the selected file mutation"
-                )
-                self._persist_enriched_thought(thought)
-            return False
 
         if not same_intent:
             state.data[self._REPO_TEXT_BASELINE_KEY] = current_snapshot
@@ -512,18 +769,14 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
             )
         return contract
 
-    def _verify_repo_backed_text_replacement(
+    def _observe_repo_backed_text_replacement(
         self,
         event,
-        state,
-        intent: NativeActionIntent,
-        contract: dict[str, Any],
         baseline: dict[str, Any],
         *,
-        thought=None,
+        path: str,
+        expected: str,
     ):
-        path = str(contract.get("path") or "")
-        expected = str(contract.get("expected_text") or "")
         text_observation = self.body.act(
             "read_text",
             event_id=event.event_id,
@@ -592,42 +845,23 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
             )
         )
         repo_delta["verified"] = repo_verified
-        verified = bool(text_verified and repo_verified)
-        verification_result = {
-            "verified": verified,
-            "kind": "text_equals",
-            "path": path,
-            "expected_chars": len(expected),
-            "observed_chars": (
-                int(text_observation.data.get("chars") or len(text_observation.output))
-                if text_observation.success
-                else None
-            ),
-            "observation": asdict(text_observation),
-            "repo_delta": repo_delta,
-            "repo_observation_action_id": diff_observation.action_id,
-        }
-        state.data["native_verification_result"] = verification_result
-        self._record_verified_experience(
-            event,
-            state,
-            intent,
-            verification_result=verification_result,
+        return (
+            text_observation,
+            diff_observation,
+            text_verified,
+            repo_verified,
+            repo_delta,
         )
-        self._sync_execution_context(event, state)
 
-        if verified:
-            return self._complete_successful_body_action(
-                event,
-                state,
-                intent,
-                response=path,
-                reason=(
-                    "ZN completed the tracked text replacement only after fresh text "
-                    "observation and a target-scoped Git delta both matched the persisted baseline"
-                ),
-            )
-
+    @staticmethod
+    def _repo_text_verification_problems(
+        text_observation,
+        diff_observation,
+        *,
+        text_verified: bool,
+        repo_verified: bool,
+        repo_delta: dict[str, Any],
+    ) -> list[str]:
         problems: list[str] = []
         if not text_observation.success:
             problems.append(
@@ -659,6 +893,238 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
                 "target-scoped repository delta contradicted baseline: "
                 + ", ".join(failed_checks)
             )
+        return problems
+
+    def _verify_repo_backed_text_replacement(
+        self,
+        event,
+        state,
+        intent: NativeActionIntent,
+        contract: dict[str, Any],
+        baseline: dict[str, Any],
+        *,
+        thought=None,
+    ):
+        path = str(contract.get("path") or "")
+        expected = str(contract.get("expected_text") or "")
+        (
+            text_observation,
+            diff_observation,
+            text_verified,
+            repo_verified,
+            repo_delta,
+        ) = self._observe_repo_backed_text_replacement(
+            event,
+            baseline,
+            path=path,
+            expected=expected,
+        )
+
+        problems = self._repo_text_verification_problems(
+            text_observation,
+            diff_observation,
+            text_verified=text_verified,
+            repo_verified=repo_verified,
+            repo_delta=repo_delta,
+        )
+        targeted_requested = self._targeted_test_requested(event)
+        targeted_baseline = baseline.get("targeted_test")
+        targeted_result: dict[str, Any] | None = None
+        final_text_observation = text_observation
+        final_diff_observation = diff_observation
+        final_text_verified = text_verified
+        final_repo_verified = repo_verified
+        final_repo_delta = repo_delta
+
+        if targeted_requested:
+            if not isinstance(targeted_baseline, dict):
+                problems.append("targeted test baseline is missing from durable mutation state")
+            elif not problems:
+                targeted_pre, targeted_pre_problems = self._observe_targeted_test_snapshot(
+                    event,
+                    targeted_baseline,
+                )
+                if not targeted_pre_problems and not self._targeted_test_snapshot_matches(
+                    targeted_baseline,
+                    targeted_pre,
+                ):
+                    targeted_pre_problems.append(
+                        "targeted test file evidence became stale before execution"
+                    )
+                problems.extend(targeted_pre_problems)
+                targeted_result = {
+                    "kind": self._TARGETED_TEST_KIND,
+                    "relative_path": str(targeted_baseline.get("relative_path") or ""),
+                    "for_relative_path": str(
+                        targeted_baseline.get("for_relative_path") or ""
+                    ),
+                    "precondition_action_id": targeted_pre.get("source_action_id"),
+                    "execution_action_id": None,
+                    "postcondition_action_id": None,
+                    "observed_exit_code": None,
+                    "timed_out": False,
+                    "result_features": None,
+                    "verified": False,
+                }
+
+                if not problems:
+                    command = self._targeted_unittest_command(targeted_baseline)
+                    test_observation = self.body.act(
+                        "command",
+                        event_id=event.event_id,
+                        command=command,
+                        workdir=str(targeted_baseline.get("root") or ""),
+                        timeout=float(
+                            targeted_baseline.get("timeout")
+                            or self._TARGETED_TEST_DEFAULT_TIMEOUT
+                        ),
+                        max_output_chars=50_000,
+                    )
+                    result_features = normalize_action_result(
+                        asdict(test_observation),
+                        command=command,
+                    )
+                    exit_code = test_observation.data.get("exit_code")
+                    timed_out = bool(test_observation.data.get("timed_out", False))
+                    test_verified = bool(
+                        test_observation.success
+                        and not timed_out
+                        and exit_code == 0
+                        and not bool(result_features.get("masked_success"))
+                        and not result_features.get("failure_class")
+                    )
+                    targeted_result.update(
+                        {
+                            "execution_action_id": test_observation.action_id,
+                            "observed_exit_code": exit_code,
+                            "timed_out": timed_out,
+                            "result_features": result_features,
+                            "verified": test_verified,
+                        }
+                    )
+                    if not test_verified:
+                        if timed_out:
+                            problems.append("targeted unittest timed out")
+                        elif exit_code != 0:
+                            problems.append(
+                                f"targeted unittest exited with code {exit_code}"
+                            )
+                        elif result_features.get("masked_success"):
+                            problems.append("targeted unittest shell status was masked")
+                        elif result_features.get("failure_class"):
+                            problems.append(
+                                "targeted unittest emitted deterministic failure evidence: "
+                                + str(result_features.get("failure_class"))
+                            )
+                        else:
+                            problems.append("targeted unittest did not complete successfully")
+
+                    if test_verified:
+                        (
+                            final_text_observation,
+                            final_diff_observation,
+                            final_text_verified,
+                            final_repo_verified,
+                            final_repo_delta,
+                        ) = self._observe_repo_backed_text_replacement(
+                            event,
+                            baseline,
+                            path=path,
+                            expected=expected,
+                        )
+                        problems.extend(
+                            self._repo_text_verification_problems(
+                                final_text_observation,
+                                final_diff_observation,
+                                text_verified=final_text_verified,
+                                repo_verified=final_repo_verified,
+                                repo_delta=final_repo_delta,
+                            )
+                        )
+                        targeted_post, targeted_post_problems = (
+                            self._observe_targeted_test_snapshot(
+                                event,
+                                targeted_baseline,
+                            )
+                        )
+                        if (
+                            not targeted_post_problems
+                            and not self._targeted_test_snapshot_matches(
+                                targeted_baseline,
+                                targeted_post,
+                            )
+                        ):
+                            targeted_post_problems.append(
+                                "targeted test file evidence changed during execution"
+                            )
+                        problems.extend(targeted_post_problems)
+                        targeted_result["postcondition_action_id"] = targeted_post.get(
+                            "source_action_id"
+                        )
+                        targeted_result["verified"] = bool(
+                            targeted_result["verified"]
+                            and final_text_verified
+                            and final_repo_verified
+                            and not targeted_post_problems
+                        )
+        elif isinstance(targeted_baseline, dict):
+            problems.append("unexpected targeted test baseline without a current typed request")
+
+        verified = bool(
+            final_text_verified
+            and final_repo_verified
+            and not problems
+            and (
+                not targeted_requested
+                or bool(targeted_result and targeted_result.get("verified"))
+            )
+        )
+        verification_result = {
+            "verified": verified,
+            "kind": "text_equals",
+            "path": path,
+            "expected_chars": len(expected),
+            "observed_chars": (
+                int(
+                    final_text_observation.data.get("chars")
+                    or len(final_text_observation.output)
+                )
+                if final_text_observation.success
+                else None
+            ),
+            "observation": asdict(final_text_observation),
+            "repo_delta": final_repo_delta,
+            "repo_observation_action_id": final_diff_observation.action_id,
+            "targeted_test": targeted_result,
+        }
+        state.data["native_verification_result"] = verification_result
+        self._record_verified_experience(
+            event,
+            state,
+            intent,
+            verification_result=verification_result,
+        )
+        self._sync_execution_context(event, state)
+
+        if verified:
+            reason = (
+                "ZN completed the tracked text replacement only after fresh text, a "
+                "target-scoped Git delta, a resident-derived targeted unittest, and a "
+                "post-test current-reality recheck all matched durable evidence"
+                if targeted_requested
+                else (
+                    "ZN completed the tracked text replacement only after fresh text "
+                    "observation and a target-scoped Git delta both matched the persisted baseline"
+                )
+            )
+            return self._complete_successful_body_action(
+                event,
+                state,
+                intent,
+                response=path,
+                reason=reason,
+            )
+
         failure = "postcondition verification failed for tracked text replacement: " + "; ".join(
             problems or ["current reality did not prove the requested mutation"]
         )
