@@ -930,6 +930,24 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
                 self.store.save_working_state(state)
                 return None
 
+            failure = (
+                "borrowed cognition did not change current reality enough to justify "
+                "repeating the previously failed body action"
+            )
+            state.data["local_failure"] = failure
+            state.stage = "failed"
+            state.next_action = None
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return ResidentRunResult(
+                event=event,
+                execution_path=ExecutionPath.MODEL,
+                success=False,
+                response=increment.content,
+                model_invocations=invocations,
+                reason=failure,
+            )
+
         state.stage = "complete"
         state.next_action = None
         self._sync_execution_context(event, state)
