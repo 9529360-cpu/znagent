@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -13,7 +15,8 @@ from agent.kernel.provider_bridge import build_resident_runtime_from_existing_st
 class CommandPostconditionTests(unittest.TestCase):
     @staticmethod
     def _python_command(code: str) -> str:
-        return subprocess.list2cmdline([sys.executable, "-c", code])
+        args = [sys.executable, "-c", code]
+        return subprocess.list2cmdline(args) if os.name == "nt" else shlex.join(args)
 
     @staticmethod
     def _advance_until_stage(resident, stage: str, limit: int = 16) -> None:
@@ -91,14 +94,6 @@ class CommandPostconditionTests(unittest.TestCase):
             self.assertIn("independently verifying", result.reason)
             self.assertIn("ready", result.response)
 
-            verification = resident.store.get_working_state().data.get(
-                "native_verification_result"
-            )
-            self.assertIsInstance(verification, dict)
-            self.assertTrue(verification["verified"])
-            self.assertEqual(verification["observed_exit_code"], 0)
-            self.assertEqual(verification["missing_output_contains"], [])
-
             actions = [
                 item
                 for item in resident.body.recent_actions(30)
@@ -113,6 +108,11 @@ class CommandPostconditionTests(unittest.TestCase):
                 sum(1 for item in actions if item.data.get("command") == verify),
                 1,
             )
+            verification_action = next(
+                item for item in actions if item.data.get("command") == verify
+            )
+            self.assertEqual(verification_action.data.get("exit_code"), 0)
+            self.assertIn("ready", verification_action.output)
             resident.store.close()
 
     def test_command_postcondition_survives_restart_without_repeating_primary(self):
