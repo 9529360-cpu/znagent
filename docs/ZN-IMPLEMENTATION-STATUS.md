@@ -32,6 +32,7 @@ The resident owns persistent Self/life, Situation/Thought/Will, nervous memory/r
 The execution/learning spine now has real CI verification for:
 
 - structured read-only Git repository sense;
+- bounded structured read-only Git diff sense consumed by current Investigation without generic shell authority;
 - exact text and explicit command postcondition verification;
 - compact durable execution context;
 - evidence-bound failed-action anti-replay;
@@ -66,6 +67,7 @@ verified lived experience
 → already-satisfied Git goal terminal resolution    VERIFIED
 → Git-specific reality-gated learned choice bias    VERIFIED FIRST GIT SLICE
 → shared formation/diagnostic semantic contract     VERIFIED FIRST GIT SLICE
+→ structured Git diff current-reality sensing       VERIFIED READ-ONLY SLICE
 → broader resident-owned engineering competence
 → familiar low-latency execution
 → prediction-error interrupt / relearning
@@ -87,6 +89,12 @@ Representative source:
 Final first-slice CI: code/test SHA `47ccd5601462641c50c16ec76f2a05085a33f9f3`, run `32612456040`, Python and Electron success.
 
 `NativeBody.git_state` returns structured root, branch, HEAD, upstream/ahead/behind, dirty state and bounded staged/unstaged/untracked/conflicted path evidence. The sense itself remains read-only; the newer bounded staging mutation contract is documented separately in 2.12 and does not make general Git mutation complete.
+
+A later read-only engineering-sense slice is verified by code/test SHA `c29cae2c9c10e94ec7dc75bccd16df40b7db7a17`, run `32657175399`, with both Python and Electron success. `NativeBody.git_diff` now observes one current repository through fixed internal Git argv rather than a caller-supplied shell command. It returns root/HEAD identity, bounded worktree and staged patches, structured worktree/staged/untracked paths, per-patch hashes and one bounded observed diff-state fingerprint. Untracked file contents are not implicitly read into the patch contract.
+
+The active `EmbodiedInvestigator` consumes this sense only after current `git_state` evidence has already established a dirty repository and the current event carries explicit diff/mutation semantics through task wording or structured mutation/postcondition payload. It records structured `git_diff` facts and evidence without selecting or performing any mutation. A zero-model integration test proves the event observes `git_state` before `git_diff` and emits no generic Body `command` for this sensing path.
+
+One real intermediate regression is preserved as evidence: code/test SHA `bbffd538d0e3499b35eedd46c03686050285c9af`, run `32656924494`, had Electron success and one Python failure. The first trigger admitted broad words such as `debug`, `test`, `build` and `code`, causing a generic project-state investigation in an ambient dirty repository to acquire an unnecessary extra diff probe. The fix at `c29cae2...` narrowed the trigger to explicit diff/change/mutation semantics and retained the existing investigation-round invariant unchanged rather than weakening the old test.
 
 ### 2.2 Reality-based postcondition verification
 
@@ -172,7 +180,7 @@ Source/test commits:
 
 For an already-formed bounded choice set, current evidence may block earlier A and let deliberation continue to the first later unblocked B. No alternative or args are inferred from memory, free text, model output or failed-action history. Single explicit actions do not enter this path; all blocked choices fail closed.
 
-This same recovery mechanism now has an end-to-end Git proof: a synthetic Body failure on current porcelain staging A leaves the repository unchanged, evidence-bound anti-replay blocks A, resident action formation re-creates the same semantic choices, plumbing B remains admissible, real Body execution stages the path, and a fresh Git observation verifies the final index state.
+This same recovery mechanism now has an end-to-end Git proof: a synthetic Body failure on current porcelain staging A leaves the repository unchanged, evidence-bound anti-replay blocks A, resident action formation re-creates the same semantic choices, plumbing B remains admissible, B stages the file, and a fresh Git observation verifies the final index state.
 
 ### 2.10 Resident-owned exact-text structured-choice formation and learning
 
@@ -435,6 +443,7 @@ This is not yet autonomous artifact selection; Thought/Will/Investigation does n
 - multi-pulse native Investigation with retained hypotheses/evidence/facts;
 - native Action intents and Body action results;
 - structured read-only Git repository sense;
+- bounded structured read-only Git diff sense with current Investigation consumption;
 - exact text and explicit independent command postcondition verification;
 - narrow resident-derived exact append postcondition from complete current file observation;
 - compact bounded current-event execution context;
@@ -471,7 +480,8 @@ This is not yet autonomous artifact selection; Thought/Will/Investigation does n
 - resident-owned reliable general high-level postcondition derivation beyond current narrow typed proofs;
 - multi-step execution with genuinely different tactics over long horizons without a model-owned planner;
 - durable completed-task verification/audit beyond current bounded learning evidence;
-- practical broader Git mutation + diff/test/reality verification;
+- baseline-aware bounded Git mutation → diff/test/current-reality verification loop;
+- Workbench diff artifact migration from its existing presentation command path onto the structured `git_diff` Body sense;
 - Git commit/push/reset/checkout/branch mutation authority;
 - GitHub repository/PR/CI resident-owned sense;
 - clean browser Body/Senses seam;
@@ -487,7 +497,7 @@ This is not yet autonomous artifact selection; Thought/Will/Investigation does n
 
 ### Resident work loop
 
-`ResidentWorkLedger` owns durable threads/messages, workspace association, active-work linkage/progress and bounded contextual file/diff/terminal artifacts beside kernel state. Renderer/localStorage is not authority.
+`ResidentWorkLedger` owns durable threads/messages, workspace association, active-work linkage/progress and bounded contextual file/diff/terminal artifacts beside kernel state. Renderer/localStorage is not authority. Its existing diff presentation path still uses bounded generic command execution; migrating that presentation consumer onto the new structured `git_diff` sense remains explicitly incomplete and must not be confused with the now-verified Investigation consumer.
 
 Status: **M6 PARTIAL; core execution mainline active**.
 
@@ -499,7 +509,7 @@ Status: **M2 complete for active main provider families**.
 
 ### Local Body
 
-Filesystem/process/terminal/PTTY paths are ZN-owned. Verification, failed-action anti-replay and L1/L2/L3 learning evidence are active. Resident cognition can form two proven bounded tactic families: exact-text append/replace and single-path Git staging via porcelain/plumbing mechanisms. Git staging uses one canonical current renderer, can terminal-resolve an already-satisfied current goal, can consume the first Git-specific reality-gated learned choice bias, exposes aligned read-only applicability evidence, and still requires a fresh structured Git verifier. General tactic formation and mature engineering procedural competence remain incomplete.
+Filesystem/process/terminal/PTTY paths are ZN-owned. Verification, failed-action anti-replay and L1/L2/L3 learning evidence are active. Resident cognition can form two proven bounded tactic families: exact-text append/replace and single-path Git staging via porcelain/plumbing mechanisms. Git staging uses one canonical current renderer, can terminal-resolve an already-satisfied current goal, can consume the first Git-specific reality-gated learned choice bias, exposes aligned read-only applicability evidence, and still requires a fresh structured Git verifier. The Body now also exposes a bounded structured read-only `git_diff` sense used by Investigation; this does not itself authorize any mutation. General tactic formation and mature engineering procedural competence remain incomplete.
 
 ### Web/world / visual sense
 
@@ -519,7 +529,7 @@ Status: **COMPLETE for active packaged resident path**.
 
 The independent `runtime/python` distribution is `znagent`, installed package `zn_agent`, entrypoint `zn-resident`. Packaged runtime rejects inherited `hermes_cli` and boots zero-model. `runtime/python/pyproject.toml` maps `zn_agent.core` directly to `../../agent/kernel`, so current kernel code is the packaged runtime source rather than a second copy.
 
-Run `32654830857` installed the isolated runtime distribution, booted it without a model, compiled the resident kernel and ran full kernel unittest discovery successfully.
+Run `32657175399` installed the isolated runtime distribution, booted it without a model, compiled the resident kernel and ran full kernel unittest discovery successfully.
 
 ### M7 formal artifact ownership
 
@@ -567,13 +577,15 @@ M10 repository migration / formal main promotion           LATER; main untouched
 
 1. keep `VerifiedExperience`, transparent candidate evidence and current independent Investigation facts as procedural-learning truth; current reality always outranks familiarity;
 2. preserve the now-shared Git staging renderer/current applicability contracts, already-satisfied terminal resolution, current-goal/root/target/variant proof, current-only choice bias, fresh `git_state` verification, anti-replay and event-local revocation as hard invariants;
-3. extend practical engineering competence toward one bounded Git mutation → diff/test/current-reality verification loop only where effect and verifier semantics are explicit; do not infer arbitrary shell-command equivalence from text;
-4. add negative tests before every authority expansion: stale/missing evidence, ambiguous identity/equivalence, cross-target reuse, unsafe side effects and contradiction must fail closed;
-5. keep generic command positive authority prohibited unless a future semantic family independently proves current authority and verification;
-6. add GitHub repo/PR/CI resident-owned sense when it has a concrete current-world consumer; do not make GitHub another cognitive agent;
-7. establish browser/visual/mouse/keyboard Body/Senses before claiming learned computer-use competence;
-8. add growth benchmarks proving familiar tasks reduce external cognition dependence without lowering verification quality;
-9. keep M8 updater/multi-OS/signing work explicit as bounded release debt until that lane is deliberately activated.
+3. reuse the verified structured `git_diff` sense to build one baseline-aware bounded mutation → diff/test/current-reality verification loop only where effect and verifier semantics are explicit; do not infer arbitrary shell-command equivalence from text;
+4. keep diff sensing itself read-only and evidence-driven: a merely Git-related or generic debug/test/build task must not acquire extra probes unless current dirty Git reality plus explicit mutation/diff semantics justify them;
+5. add negative tests before every authority expansion: stale/missing evidence, ambiguous identity/equivalence, cross-target reuse, unsafe side effects and contradiction must fail closed;
+6. keep generic command positive authority prohibited unless a future semantic family independently proves current authority and verification;
+7. migrate the existing Workbench diff presentation path onto the shared structured diff sense when doing so preserves artifact behavior; presentation must not become a second Git semantics implementation;
+8. add GitHub repo/PR/CI resident-owned sense when it has a concrete current-world consumer; do not make GitHub another cognitive agent;
+9. establish browser/visual/mouse/keyboard Body/Senses before claiming learned computer-use competence;
+10. add growth benchmarks proving familiar tasks reduce external cognition dependence without lowering verification quality;
+11. keep M8 updater/multi-OS/signing work explicit as bounded release debt until that lane is deliberately activated.
 
 The architecture driver remains:
 
