@@ -153,9 +153,9 @@ def evaluate_candidate_applicability(
     """Compare one candidate with current context and independently observed facts.
 
     Task/request structure can disqualify a candidate, but it cannot by itself
-    prove applicability.  ``supported`` requires at least one stable candidate
-    anchor to have been independently observed in current Investigation facts.
-    Missing real-world evidence therefore fails closed as ``untested``.
+    prove applicability. ``supported`` requires a stable candidate anchor to be
+    independently observed and every compared contract field to be tested.
+    Missing current evidence therefore fails closed as ``untested``.
     """
 
     matched: list[str] = []
@@ -277,7 +277,7 @@ def evaluate_candidate_applicability(
 
     if mismatched:
         status = "mismatch"
-    elif reality_matched:
+    elif reality_matched and not untested:
         status = "supported"
     else:
         status = "untested"
