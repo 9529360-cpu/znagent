@@ -164,6 +164,40 @@ def current_expected_outcome(
     }
 
 
+def current_procedural_applicability_domains(
+    event: AgentEvent,
+    intent: NativeActionIntent,
+    *,
+    expected_outcome: Mapping[str, Any] | None,
+    current_domains: Iterable[str],
+) -> tuple[str, ...]:
+    """Return the current domain contract used to compare one current intent.
+
+    Most action families keep the SelfModel/current-caller domain view. The
+    bounded Git staging family is narrower: L1 causal evidence is recorded from
+    the event's explicit ``required_capabilities`` contract, so a currently
+    re-proven resident Git choice must compare against that same representation.
+    This prevents harmless parent-domain expansion from changing causal identity
+    while keeping the exception tied to exact current Git semantics.
+    """
+
+    domains = tuple(str(item) for item in current_domains if str(item).strip())
+    expected = expected_outcome if isinstance(expected_outcome, Mapping) else {}
+    if (
+        intent.kind == "command"
+        and intent.source == "resident_choice"
+        and _normalized_expected_kind(expected.get("kind")) == "git_path_staged"
+        and bool(expected.get("current_goal_proven"))
+    ):
+        raw = event.payload.get("required_capabilities") or ("general",)
+        if isinstance(raw, str):
+            value = raw.strip()
+            return (value,) if value else ("general",)
+        values = tuple(str(item) for item in raw if str(item).strip())
+        return values or ("general",)
+    return domains
+
+
 def _observed_path_fingerprints(facts: Mapping[str, Any]) -> set[str]:
     raw = facts.get("paths")
     if not isinstance(raw, list):
