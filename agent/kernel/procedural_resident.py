@@ -3,17 +3,21 @@ from __future__ import annotations
 """Bounded L3 influence and resident-owned recovery over native choices.
 
 This layer sits inside the active world-aware resident hierarchy. Ordinary
-single-action deliberation is unchanged. When the current event explicitly
-contains a bounded ``native_action_options`` choice set, current Investigation
-evidence may rule out an earlier option and the resident can continue with the
-first later option not contradicted under that same reality. Procedural evidence
-may additionally reorder eligible choices, but it never supplies Body arguments,
-bypasses anti-replay, skips verification, or becomes a fast path.
+single-action deliberation is unchanged. Choice recovery can consume either an
+explicit current ``native_action_options`` contract or a resident-formed choice
+whose equivalence is proven from a typed task postcondition plus current
+Investigation evidence. Procedural evidence may reorder eligible choices, but it
+never supplies Body arguments, bypasses anti-replay, skips verification, or
+becomes a fast path.
 """
 
 from typing import Any, Iterable
 
-from .action import NativeActionIntent, derive_native_action_intents
+from .action import (
+    NativeActionIntent,
+    current_text_equals_postcondition,
+    derive_native_action_intents,
+)
 from .procedural_influence import (
     ProceduralActionInfluence,
     select_procedurally_influenced_intent,
@@ -27,6 +31,7 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
     _PROCEDURAL_INFLUENCE_KEY = "procedural_action_influence"
     _PROCEDURAL_REVOKED_KEY = "procedural_revoked_tendencies"
     _NATIVE_CHOICE_RECOVERY_KEY = "native_choice_recovery"
+    _RECOVERABLE_CHOICE_SOURCES = frozenset({"structured_choice", "resident_choice"})
     _MAX_PROCEDURAL_REVOKED = 8
 
     def _deliberation_step(
@@ -139,22 +144,23 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
         *,
         thought=None,
     ) -> bool:
-        """Advance to a later explicit choice only after current evidence blocks one.
+        """Advance to a later proven choice after current evidence blocks one.
 
-        ``native_action_options`` is an explicit alternatives contract. This
-        method does not infer alternatives from task text, memories, model text,
-        or failed action arguments. It merely consumes the bounded choices that
-        current ZN action formation already produced. The first unblocked choice
-        keeps historical priority; recovery happens only after at least one
-        earlier structured choice is contradicted under the current evidence
-        fingerprint.
+        The bounded choice must already exist in current ZN action formation.
+        Explicit event choices are accepted as their own structured contract;
+        resident choices are accepted only because ``action.py`` formed them
+        from typed goal semantics plus current Investigation evidence. This
+        method never infers alternatives from task text, memories, model text or
+        failed action arguments.
         """
 
         current = tuple(intents)
         if len(current) < 2:
             return False
-        if any(intent.source != "structured_choice" for intent in current):
+        sources = {str(intent.source or "") for intent in current}
+        if len(sources) != 1 or not sources.issubset(self._RECOVERABLE_CHOICE_SOURCES):
             return False
+        choice_source = next(iter(sources))
 
         blocked_count = 0
         for index, intent in enumerate(current):
@@ -170,6 +176,7 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
                 "choice_count": len(current),
                 "blocked_prior_choices": blocked_count,
                 "action_kind": intent.kind,
+                "choice_source": choice_source,
                 "evidence_version": self._evidence_fingerprint(event.event_id)[:16],
             }
             self.store.save_working_state(state)
@@ -178,19 +185,42 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
                 if action not in thought.possible_actions:
                     thought.possible_actions = (*thought.possible_actions, action)
                 known = (
-                    f"current evidence blocked {blocked_count} earlier structured native "
+                    f"current evidence blocked {blocked_count} earlier {choice_source} "
                     f"choice(s); choice {index + 1} remains admissible"
                 )
                 if known not in thought.known:
                     thought.known = (*thought.known, known)
                 thought.reason = (
                     f"{thought.reason}; current Investigation evidence ruled out earlier "
-                    "explicit alternatives, so native deliberation selected the first "
+                    "bounded alternatives, so native deliberation selected the first "
                     "remaining structured choice"
                 )
                 self._persist_enriched_thought(thought)
             return True
         return False
+
+    def _verification_contract(self, event, intent):
+        """Accept the exact-text goal contract used by resident choice formation."""
+
+        explicit = event.payload.get("expected_outcome")
+        if isinstance(explicit, dict) and str(
+            explicit.get("kind") or ""
+        ).strip().lower() == "text_equals":
+            goal = current_text_equals_postcondition(event)
+            if goal is None:
+                return {
+                    "kind": "unsupported",
+                    "requested_kind": "text_equals",
+                    "error": "text_equals postcondition requires path and expected_text",
+                    "intent_id": intent.intent_id,
+                    "action_signature": self._intent_signature(intent),
+                }
+            return {
+                **goal,
+                "intent_id": intent.intent_id,
+                "action_signature": self._intent_signature(intent),
+            }
+        return super()._verification_contract(event, intent)
 
     def _native_action_step(
         self,
@@ -252,9 +282,12 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
                 selected_index = -1
                 blocked = 0
             action_kind = str(recovery.get("action_kind") or "unknown").strip() or "unknown"
+            choice_source = str(
+                recovery.get("choice_source") or "structured_choice"
+            ).strip() or "structured_choice"
             if selected_index >= 0 and blocked > 0:
                 known = (
-                    f"native choice recovery selected structured choice {selected_index + 1} "
+                    f"native choice recovery selected {choice_source} choice {selected_index + 1} "
                     f"({action_kind}) after current evidence blocked {blocked} earlier choice(s)"
                 )
                 if known not in thought.known:
