@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from agent.kernel.action import NativeActionIntent
+from agent.kernel.cognition import CognitiveIncrement
 from agent.kernel.embodied_resident import EmbodiedResidentRuntime
 from agent.kernel.models import AgentEvent, WorkingState
 from agent.kernel.provider_bridge import build_resident_runtime
@@ -206,6 +207,54 @@ class FailedActionEvidenceGuardTests(unittest.TestCase):
             self.assertEqual(len(records), 1)
             self.assertEqual(records[0]["source"], "legacy")
             self.assertEqual(records[0]["evidence_fingerprint"], "migration-reality")
+            resident.store.close()
+
+    def test_external_cognition_cannot_complete_same_blocked_action(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = self._resident(tmp)
+            event = self._event()
+            action = self._intent("blocked")
+            increment = CognitiveIncrement.create(
+                event_id=event.event_id,
+                impasse_id=None,
+                source="external:test",
+                question="what should change?",
+                content="try the same movement again",
+                quality=0.8,
+                confidence=0.8,
+            )
+            state = WorkingState(
+                current_event_id=event.event_id,
+                stage="cognition_integration",
+                data={
+                    "cognitive_increment": increment.to_dict(),
+                    "external_cognition_result": {"model_invocations": 1},
+                    "cognition_integration": {"accepted": True},
+                },
+            )
+            with patch.object(
+                EmbodiedResidentRuntime,
+                "_evidence_fingerprint",
+                return_value="same-reality",
+            ):
+                resident._record_failed_action(
+                    event, state, action, source="body", failure="movement failed"
+                )
+                with patch(
+                    "agent.kernel.embodied_resident.derive_native_action_intent",
+                    return_value=action,
+                ):
+                    result = resident._cognition_integration_step(
+                        event,
+                        state,
+                        readiness=None,
+                    )
+
+            self.assertIsNotNone(result)
+            self.assertFalse(result.success)
+            self.assertEqual(state.stage, "failed")
+            self.assertIn("did not change current reality", result.reason)
+            self.assertIn("did not change current reality", state.data["local_failure"])
             resident.store.close()
 
     def test_evidence_fingerprint_ignores_observation_clock_noise(self):
