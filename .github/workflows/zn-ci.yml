@@ -95,6 +95,8 @@ jobs:
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          find tests/zn_agent/core runtime/python/zn_agent/core -type d -name __pycache__ -prune -exec rm -rf {} +
+          find tests/zn_agent/core runtime/python/zn_agent/core -type f -name '*.pyc' -delete
           git add -A -- .agent/migrate_python_namespace.py tests/agent/kernel tests/zn_agent/core runtime/python/zn_agent/core
           git diff --cached --check
           test -z "$(git diff --cached --name-only | grep -E '(^|/)(__pycache__|build|znagent\.egg-info|\.ci)(/|$)|\.pyc$|\.db$' || true)"
