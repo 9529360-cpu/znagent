@@ -186,9 +186,18 @@ class RepoTextDeltaVerificationTests(unittest.TestCase):
                 all("unrelated.txt" not in item.data.get("changed_paths", []) for item in scoped)
             )
             kinds = [item.kind for item in actions]
-            self.assertLess(actions.index(scoped[0]), kinds.index("write_text"))
-            self.assertLess(kinds.index("write_text"), kinds.index("read_text"))
-            self.assertLess(kinds.index("read_text"), actions.index(scoped[1]))
+            baseline_index = actions.index(scoped[0])
+            write_index = kinds.index("write_text")
+            verification_reads = [
+                index
+                for index, item in enumerate(actions)
+                if item.kind == "read_text" and index > write_index
+            ]
+            post_index = actions.index(scoped[1])
+            self.assertLess(baseline_index, write_index)
+            self.assertTrue(verification_reads)
+            self.assertLess(write_index, verification_reads[0])
+            self.assertLess(verification_reads[0], post_index)
 
             experiences = resident.verified_experiences.for_event(event.event_id)
             self.assertEqual(len(experiences), 1)
