@@ -191,7 +191,7 @@ At the blueprint reset, important active paths were still structurally inherited
 
 Those facts motivated the ownership migration. They are historical context, not the current active-path status.
 
-### 3.3 Current checkpoint — 2026-08-22
+### 3.3 Current checkpoint — 2026-08-23
 
 The active product boundary has moved substantially:
 
@@ -202,7 +202,7 @@ The active product boundary has moved substantially:
 | Runtime construction | ZN config + ZN cognitive resources; no production `LegacyAIAgentWorkerFactory` / `run_agent.AIAgent` | Owned |
 | Terminal/body | local process + PTY path is ZN-owned; completion-race cleanup covered | Owned for active local path |
 | World/web sense | ZN-owned Tavily/Exa/Firecrawl resource layer + URL safety | Owned for active web path |
-| Channels | resident-owned channel lifecycle; Telegram first transport; inbound media supported; outbound local-file policy exists | Owned framework, media egress transport still partial |
+| Channels | resident-owned channel lifecycle; Telegram first transport; inbound media plus bounded authorized outbound document delivery are supported | Owned framework, richer media selection/transports still partial |
 | Electron main | independent `zn-main.ts` owns window, runtime activation, resident/update IPC, single instance and protocol | M4 complete |
 | Preload | independent `zn-preload.ts` exposes only intentional ZN bridge | M4 complete |
 | Protocol | ZN-owned `zn://` parser/routing in active app | M4 complete |
@@ -520,7 +520,7 @@ resident nominates artifact/path
 → only then platform media transport
 ```
 
-The generic authorization policy exists. Telegram outbound media transport remains to be wired through it.
+The generic authorization policy is active, and the first resident-owned outbound slice durably nominates a bounded local artifact for a pending channel message before Telegram transports it with `sendDocument`. Response text, inbound attachments and arbitrary local paths do not become upload authority. Autonomous artifact selection and photo/audio/video-specific transports remain future work.
 
 ---
 
@@ -819,7 +819,7 @@ Current release evidence/debt is explicit:
 - formal package and builder protocol registration is `zn` only;
 - real Linux AppImage/deb/rpm, Windows NSIS/MSI and macOS arm64 DMG/ZIP payloads preserve ZN identity and an independently bootable embedded resident;
 - Linux amd64 deb has survived a fresh Ubuntu installation with embedded zero-model resident boot and a fresh installed systemd user autostart/start-stop-login-target restart cycle using packaged `zn_agent.core` modules;
-- N → N+1 handoff, equivalent intended-platform clean install/login evidence and signing/notarization remain separate M8/release gates.
+- installed application N → N+1 updater continuity, equivalent intended-platform clean install/login evidence and signing/notarization remain separate M8/release gates.
 
 ### 14.3 Public update channel
 
@@ -1298,23 +1298,40 @@ These run only when a release milestone needs them, through explicit workflow di
 
 ## 22. Immediate next development target
 
-The ownership migration has closed the current M7 artifact-shape exercise and Linux installed-autostart slice of M8. The immediate target is now:
+The ownership migration and first release-shape work are sufficiently advanced that the core development lane is resident competence. M8 updater/continuity work remains an explicit bounded release debt and must not be reported complete, but it is not the current default lane.
 
-**validate N → N+1 application/runtime/resident continuity without interrupting active work or changing ZN identity/state.**
+The immediate target is now:
+
+**turn the newly verified resident-owned Git staging tactic family into reality-gated reusable competence, then extend the same organism-owned execution/verification discipline toward practical engineering work without introducing a model-owned planner.**
+
+Current proven starting point:
+
+```text
+current typed single-path Git staging goal
++ current structured Git/path evidence
+→ resident forms two bounded tactics:
+   A = git add -- <current repo-relative path>
+   B = git update-index --add -- <current repo-relative path>
+→ failed A remains blocked under unchanged evidence
+→ B can recover
+→ fresh git_state independently proves the target is exclusively staged
+→ verified L1/L2 evidence can distinguish the two tactic variants
+```
 
 Concrete order:
 
-1. do not rebuild already-proven installer/clean-install/autostart gates merely to recreate evidence;
-2. trace the active ZN-owned update/runtime-selection/resident call chain and its current busy/idle evidence before changing behavior;
-3. validate the busy case first: materializing/selecting N+1 must not interrupt an active resident or active `WorkRun`;
-4. validate the idle case separately: point future autostart to N+1, gracefully shut down the old resident, wait for endpoint retirement, start N+1 using the same ZN home, and verify active runtime identity plus persistent ZN identity/state;
-5. add Windows/macOS clean-install/login coverage only where it provides genuinely new release evidence;
-6. keep signing/notarization explicit and operational—never infer it from unsigned artifact success;
-7. establish browser interaction only through a clean resident-owned body/sense seam;
-8. define explicit resident artifact/message egress nomination before Telegram outbound attachment transport;
-9. continue M5/M6 polish only around concrete product outputs without regressing the content-first workbench.
+1. preserve the strict current-world authority boundary: one existing regular file inside the observed repository root, no conflict, no symlink/path-identity ambiguity, and no mutation choice when evidence is missing or the goal is already satisfied;
+2. add a Git-specific L3 applicability gate only when current structured Git facts can prove the same target/root/goal context; learned state may bias only between currently re-formed resident choices and must never replay a learned command/path;
+3. keep fresh post-action `git_state` verification mandatory and let contradiction/failure revoke the current route and return to Investigation;
+4. fix the already-satisfied `git_path_staged` completion gap so current evidence can resolve the goal without unnecessary mutation or model fallback;
+5. extend engineering competence toward bounded mutation → diff/test/current-reality verification loops only where effect and verifier semantics are explicit; do not infer arbitrary shell-command equivalence from text;
+6. add negative tests before every authority expansion: stale/missing evidence, ambiguous equivalence, unsafe side effects, cross-target reuse and contradictions must fail closed;
+7. keep external models as bounded cognition for novelty; they may suggest tactics but cannot own the resident choice set or become the hidden executor of learned competence;
+8. establish browser interaction only through a clean resident-owned body/sense seam before claiming learned computer-use competence;
+9. add growth benchmarks showing familiar verified work reduces external cognition dependence without lowering verification quality;
+10. keep installed AppImage N → N+1 continuity, Windows/macOS clean-install/login continuity and signing/notarization explicit as M8/release-lane debt until that lane is deliberately activated.
 
-Do not regress by reintroducing inherited main/preload/renderer/runtime control planes to accelerate these steps.
+Do not regress by reintroducing inherited main/preload/renderer/runtime control planes, by adding a planner tree to Will, or by letting procedural memory supply raw side-effect arguments.
 
 ---
 
@@ -1322,7 +1339,7 @@ Do not regress by reintroducing inherited main/preload/renderer/runtime control 
 
 Use this as the canonical restart prompt:
 
-> Continue `9529360-cpu/znagent` on `dev/zn-agent`. Read the current repository code first, then read `ZN.md`, `docs/ZN-IMPLEMENTATION-STATUS.md`, and `docs/ZN-SOURCE-EXTRACTION.md` completely before changing code. ZN is the only product/subject. Hermes is source reference only: inspect mature mechanisms, extract/adapt them behind ZN-owned interfaces/config/lifecycle/tests, then switch the active caller; never make Hermes the runtime, UI, desktop control plane, gateway brain or release dependency. The active packaged resident is the independent `runtime/python` `znagent` distribution booting `zn_agent.resident`; production runtime construction no longer uses `run_agent.AIAgent`. Active local terminal/PTTY and web paths are ZN-owned. The independent Electron main, preload, React workbench and `zn://` protocol are active; resident-backed work/thread/workspace/artifact/progress and provider/settings ownership are materially implemented. Formal package identity is ZN-owned, formal builder protocol is `zn` only, and real Linux/Windows/macOS artifacts preserve the self-contained ZN runtime. M8 has Linux amd64 deb fresh-install and installed systemd user autostart/start-stop-login-target continuity proofs; graceful SIGTERM now retires the endpoint and durable lease before resident exit. Current priority is to trace and validate N → N+1 busy/idle runtime continuity without interrupting active work or changing ZN identity/state. Preserve zero-model organism behavior, CI cost discipline and `main` untouched until M10.
+> Continue `9529360-cpu/znagent` on `dev/zn-agent`. Read the current repository code and Git/CI state first, then read `ZN.md`, `AGENTS.md`, `docs/ZN-IMPLEMENTATION-STATUS.md`, `docs/ZN-SOURCE-EXTRACTION.md`, `docs/ZN-SELF-MAINTENANCE.md` and `.agent/HANDOFF.md` before changing code. ZN is the only product/subject. Hermes is source reference only: inspect mature mechanisms, extract/adapt them behind ZN-owned interfaces/config/lifecycle/tests, then switch the active caller; never make Hermes the runtime, UI, desktop control plane, gateway brain or release dependency. The packaged resident is the independent `runtime/python` `znagent` distribution booting `zn_agent.resident`; production runtime construction no longer uses `run_agent.AIAgent`. Active local terminal/PTTY and web paths are ZN-owned. The independent Electron main, preload, React workbench and `zn://` protocol are active. Resident learning now has independently verified L1 experience, L2 candidate tendencies, reality-gated L3 influence for the first safe write slice, and two resident-owned semantic tactic families: exact-text append/replace and bounded single-path Git staging (`git add` vs `git update-index`) with fresh structured Git verification. Current priority is to make the Git tactic family reality-gated reusable competence without learned raw-command replay, fix already-satisfied Git goal resolution, and then expand toward bounded mutation/diff/test/reality engineering loops. M8 installed updater continuity remains unverified release debt. Preserve zero-model organism behavior, CI cost discipline and `main` untouched until M10.
 
 ---
 
@@ -1520,20 +1537,31 @@ The optimization target is not “minimize model calls at all costs.” The targ
 
 ### 25.8 Immediate architectural consequence
 
-Before extending stronger alternative-action recovery as an isolated tactic mechanism, the project must first define the smallest coherent resident-owned path from verified experience to reusable competence.
-
-Alternative-action recovery then becomes an early consumer of the learning architecture:
+The project has now proved the smallest coherent resident-owned path from independently verified action outcome to reusable candidate competence, and has two semantic resident-owned tactic families rather than only caller-provided alternatives:
 
 ```text
-movement A fails
-→ Investigation establishes why / what changed
-→ genuinely different movement B succeeds
-→ B's expected outcome is independently verified
-→ the full Situation / action / outcome relationship becomes lived learning evidence
-→ later similar evidence can activate B more readily
-→ repeated verified use can proceduralize the tendency
+current Situation / typed goal
+→ current Investigation evidence
+→ resident forms bounded semantically equivalent tactics
+→ Body executes one tactic
+→ independent current-world verification
+→ privacy-safe VerifiedExperience
+→ repeated compatible evidence
+→ candidate procedural tendency
 ```
 
-This prevents the execution spine from drifting into an unnamed planner while keeping complex-task recovery as an important product goal.
+For the exact-text family, a reality-gated L3 slice can already bias current safe replacement choices. For the Git staging family, L1/L2 evidence is now recorded but positive L3 authority remains deliberately disabled until Git-specific current-reality applicability can prove the same root/target/goal and the resident has re-formed the current choices.
+
+The next architectural step is therefore not a planner tree or learned raw command replay. It is:
+
+```text
+repeated verified Git tactic evidence
+→ current structured Git/path evidence proves applicability
+→ procedural tendency may bias only between current resident-formed Git tactics
+→ fresh git_state still verifies the result
+→ prediction error / body failure revokes the route and returns to Investigation
+```
+
+After that boundary is proven, engineering competence should grow through similarly bounded mutation → diff/test/current-reality loops whose effects and verifiers are explicit. Novel or ambiguous engineering work may still borrow external cognition, but models must not become the owner of the learned execution path.
 
 The target product remains one resident subject that gets more capable by living and doing—not a shell that merely gets better at asking external models what to do.
