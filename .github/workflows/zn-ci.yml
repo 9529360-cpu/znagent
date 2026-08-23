@@ -141,6 +141,7 @@ jobs:
           set -euo pipefail
           find runtime/python tests/zn_agent -type d -name __pycache__ -prune -exec rm -rf {} +
           find runtime/python tests/zn_agent -type f -name '*.pyc' -delete
+          rm -rf runtime/python/build runtime/python/*.egg-info
           rm -f .npmrc
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
