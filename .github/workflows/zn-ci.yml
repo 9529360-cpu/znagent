@@ -86,9 +86,11 @@ jobs:
         run: |
           set -euo pipefail
           npm pkg set 'devDependencies.electron-builder-squirrel-windows=26.15.3' --workspace apps/desktop
+          printf 'legacy-peer-deps=true\n' > .npmrc
           rm -f package-lock.json
           npm install --package-lock-only --ignore-scripts
           npm ci --ignore-scripts
+          npm ls --all --legacy-peer-deps=false
           node -e "const p=require('./package-lock.json'); if (JSON.stringify(p).includes('@hermes/')) process.exit(1)"
 
       - name: Verify isolated ZN Python runtime and full core suite
