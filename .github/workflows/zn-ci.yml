@@ -88,15 +88,16 @@ jobs:
           resident.store.close()
           PY
           .ci/migration-venv/bin/python -m compileall -q runtime/python/zn_agent/core
-          .ci/migration-venv/bin/python -m unittest discover -s tests/zn_agent/core -p 'test_*.py' -v
+          PYTHONPATH="$GITHUB_WORKSPACE/runtime/python" .ci/migration-venv/bin/python -m unittest discover -s tests/zn_agent/core -p 'test_*.py' -v
 
-      - name: Commit only after verification
+      - name: Commit only verified source migration
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
+          git add -A -- .agent/migrate_python_namespace.py tests/agent/kernel tests/zn_agent/core runtime/python/zn_agent/core
           git diff --cached --check
+          test -z "$(git diff --cached --name-only | grep -E '(^|/)(__pycache__|build|znagent\.egg-info|\.ci)(/|$)|\.pyc$|\.db$' || true)"
           git commit -m 'refactor: move ZN core tests to zn_agent namespace'
           git fetch origin dev/zn-agent
           test "$(git rev-parse HEAD^)" = "$(git rev-parse origin/dev/zn-agent)"
@@ -123,12 +124,7 @@ jobs:
         with:
           version: '0.11.6'
           enable-cache: true
-          cache-dependency-glob: |
-            uv.lock
-            runtime/python/pyproject.toml
-
-      - name: Install locked repository test dependencies
-        run: uv sync --frozen --extra dev
+          cache-dependency-glob: runtime/python/pyproject.toml
 
       - name: Install isolated ZN runtime distribution
         run: |
@@ -158,11 +154,11 @@ jobs:
           resident.store.close()
           PY
 
-      - name: Compile resident kernel
-        run: uv run python -m compileall -q agent/kernel
+      - name: Compile resident core
+        run: .ci/runtime-venv/bin/python -m compileall -q runtime/python/zn_agent/core
 
-      - name: Run ZN kernel tests
-        run: uv run python -m unittest discover -s tests/agent/kernel -p 'test_*.py' -v
+      - name: Run ZN core tests against working tree
+        run: PYTHONPATH="$GITHUB_WORKSPACE/runtime/python" .ci/runtime-venv/bin/python -m unittest discover -s tests/zn_agent/core -p 'test_*.py' -v
 
   desktop:
     name: Electron / TypeScript
