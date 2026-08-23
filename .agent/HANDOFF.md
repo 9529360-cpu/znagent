@@ -15,60 +15,40 @@ durable ZN Self
 
 核心原则：
 
-> **Models may help ZN learn. Mature capability must belong to ZN.**
+> **ZN uses models. Models do not own ZN.**
 
-本阶段已经完成并由真实 CI 验证第一片 **resident-owned bounded structured-choice formation + learning consumer loop**。
+本阶段完成的是第一类 exact-text resident choice 的 ownership / safety 加固：ZN 在一个严格可证明的 append 场景中，不再要求 caller 预先提供最终 `text_equals.expected_text`，而是可以从当前完整文件观察 + 当前 append 内容推导 transient exact postcondition，并继续通过独立 Body read 验证结果。
 
-ZN 现在不是只会消费 caller 提供的 `native_action_options`。在一个非常窄且可证明的 exact-text 场景中，当前 Investigation 观察到完整文件状态，并且 typed `text_equals` task postcondition 能证明“append 当前增量”和“直接 replace 到最终文本”达到同一目标时，resident 自己可以形成两个 bounded current choices。
+同时修复了 procedural learning 中 append / replace 可能被同一 `write_text` 形状混合的安全缺口：L1/L2/L3 现在保留 privacy-safe `action_variant = append | replace` 边界，历史无 variant 的真实聚合候选在 L3 fail closed 为 `untested`。
 
-这个 slice 仍然不是 general planner、自由文本 tactic inference、stored-action replay、mature skill 或 broad autonomous alternative generation。
-
-下一真实目标：在不扩大未经证明 authority 的前提下，找到第二类由当前 Will/Investigation 能**语义证明为同一目标 alternatives** 的 resident-owned choice contract；优先考虑对长期 engineering competence 真有价值、且有独立 verification 的不同 tactic class。
+这仍然不是第二个 genuinely different tactic class，也不是 general planner 或 general postcondition synthesizer。
 
 ## 当前分支 / HEAD / CI
 
 - 固定开发分支：`dev/zn-agent`
-- `main`：未修改；M10 仍未满足
-- 本阶段开始恢复时 HEAD：`a54fc1f000cb7eb8e167b07d1262ab3133413611`
-- 本阶段最终 code/test SHA：`920bd70814e44d9b62b6ba5159e264ab442470a3`
-- code/test CI：run `32647895984`
+- `main`：未修改；M10 未满足
+- 本阶段恢复时 dev HEAD：`299380171b3dc419b269b07934cb37828d70f95f`
+- 本阶段最终 code/test SHA：`04e95009a9b2277704d57bc3dd141748a91df772`
+- code/test CI：run `32648983622`
   - `ZN Kernel / Python = success`
+  - locked repository deps = success
   - isolated `runtime/python` install = success
   - zero-model isolated runtime boot = success
   - `agent/kernel` compile = success
   - full kernel unittest discovery = success
   - `Electron / TypeScript = success`
-  - desktop typecheck/bundle/ownership/update/handoff/release verifier tests = success
+  - desktop typecheck/bundle/ownership/update/handoff tests = success
+  - release-channel/runtime staging/packaged-artifact verifier tests = success
   - `Container / Runtime Smoke = skipped`（normal push workflow contract）
   - `Publish commit statuses = success`
-- implementation-status latest docs commit：`50ebda8d51681a8e0503baddafc4aaddb34edd08` (`[skip ci]`)
-- previous HANDOFF docs commit：`38f706fd4257ca879e04eefe09a4ab293f02eead` (`[skip ci]`)
-- 本 HANDOFF 也是 docs-only `[skip ci]`；提交后它会成为新的 branch HEAD，下一维护者必须重新读取真实 branch ref，不能把 `920bd708...`、`50ebda8...` 或本段文字当作未来 HEAD 的替代品
+- implementation-status docs commit：`edfabf0d0233c1f5275ff385213e1dc0bf5fd078` (`[skip ci]`)
+- 本 HANDOFF commit 也是 docs-only `[skip ci]`；提交后它会成为新的 dev HEAD。下一维护者必须重新读取真实 branch ref，不能把上述 SHA 当未来 HEAD 的替代品。
 
-### M8 / AppImage 真实终态
-
-旧 run `32645354818` 已从之前的长期 in-progress 变为终态：
-
-```text
-Real AppImage N to N+1 job                            cancelled
-Build real N AppImage                                 success
-Build real N+1 AppImage                               success
-Run real installed AppImage updater continuity smoke cancelled
-Capture smoke diagnostics                             success
-Upload smoke proof and diagnostics                    success
-Publish AppImage update smoke status                  success
-```
-
-因此：
-
-- 两个真实 AppImage build 有成功证据；
-- installed N → N+1 updater continuity **没有成功证据**；
-- 该 lane 仍是 M8 release debt，后续应读取 diagnostics 再判断取消/卡住根因；
-- 不得把 `32645354818` 写成 continuity success。
+中间 run `32648935424`（SHA `2e334322...`）因后续连续 push 被 workflow concurrency 取消，不是最终验证结果；最终 code/test run `32648983622` 已双绿。
 
 ## 本阶段恢复的真实现场
 
-重新读取并核对：
+开始前重新读取并核对：
 
 1. `ZN.md`
 2. `AGENTS.md`
@@ -78,162 +58,164 @@ Publish AppImage update smoke status                  success
 6. `.agent/HANDOFF.md`
 7. `docs/ZN-MEMORY-LEARNING.md`
 8. `docs/ZN-NEXT-PHASE.md`
-9. `dev/zn-agent` HEAD / main diff / open PR / recent commits / CI
-10. action formation → Investigation → procedural applicability/influence → Body → verification → VerifiedExperience → candidate tendency 的真实调用链
+9. `dev/zn-agent` HEAD / open PR / recent commits / CI / main relation
+10. `Will → IntentionFormation → Investigation → Action → Body → verification → VerifiedExperience → L2/L3` 真实调用链
 
 恢复时确认：
 
+- dev HEAD = `299380171b3dc419b269b07934cb37828d70f95f`；
 - open PR = 0；
-- `main` 保持 initial baseline，没有被本阶段修改；
-- 前一 code/test run `32645416634` 仍 Python/Electron 双绿；
-- 当时 AppImage run `32645354818` 仍卡住，结束前重新检查后已得到上述 cancelled 终态。
+- previous code/test SHA `920bd708...` 的 run `32647895984` Python/Electron 双绿；
+- `main` 仍是 initial baseline `61dd880aa4bbbdb359ca544b752afc2c22845ce9`；
+- M8 AppImage run `32645354818` 仍是 installed continuity smoke cancelled，不得写成 success。
 
-## 当前真实 action / learning call chain
+## 本阶段真实调用链与实现
 
-### Action formation
+### 1. Resident derives one narrow exact postcondition
+
+`agent/kernel/action.py`
+
+`NativeActionIntent` 现在可以携带 `expected_outcome`。这是 current-event working cognition，不是 procedural memory。
+
+`current_text_equals_postcondition(event, intent, facts)` 的当前语义：
 
 ```text
-derive_native_action_intents(event, facts)
+if explicit event expected_outcome exists:
+    explicit contract remains authoritative
+else if current intent == write_text append:
+    require concrete non-empty append content
+    require matching complete, untruncated file preview
+    if path fact exists, require existing file target
+    derive expected_text = observed_current_text + current_append_content
+else:
+    no derived exact postcondition
 ```
 
-当前语义：
-
-1. valid `body_action` / `native_action` → one exclusive `structured_event` action；
-2. explicit bounded `native_action_options` → ordered `structured_choice` set；
-3. otherwise 先形成历史 heuristic default；
-4. 只有 exact-text proof contract 满足时，default append 可以扩成两个 `resident_choice`；
-5. 其他情况保持历史 single-action behavior。
-
-### Resident exact-text choice proof
-
-必须同时满足：
+只有上述证明成立时，原 first-slice exact-text choice 可以由当前 ZN 自己形成：
 
 ```text
-current default action == write_text append
-expected_outcome.kind == text_equals
-expected_outcome.path 与 current action target 一致
-append content 非空
-Investigation 有同一 target 的完整 file preview
-preview.truncated == false
-observed_current_text + append_content == expected_text
-path fact（若存在）确认 target 是 existing file
+A = append current delta
+B = replace with derived exact final text
 ```
 
-满足后形成：
+两者仍使用当前 event/path/content，不从 memory 取 raw args。
+
+### 2. Verification ownership remains with current reality
+
+`agent/kernel/procedural_resident.py`
+
+当 caller 没有显式 `expected_outcome` 时，active runtime 可以读取当前 intent 携带的 resident-derived exact-text contract；它会先验证 contract target 与当前 write target 一致，再进入既有 `native_verification`。
+
+真正完成仍是：
 
 ```text
-A = current append movement
-B = write_text(append=false, content=expected_text)
-```
-
-两者 `source == resident_choice`。
-
-关键边界：
-
-- B 的 path/content 来自**当前 task contract**，不是 learned memory；
-- 无 preview、preview truncated、文本不匹配、target 不匹配或 path incompatible → 不形成第二 choice；
-- free-text clauses、model text、procedural memory、failed-action args 都不能生成 choice；
-- explicit single body/native action 保持 exclusive。
-
-### Recovery / anti-replay
-
-`ProcedurallyInfluencedResidentRuntime._recover_from_blocked_structured_choices()` 现在接受同源的：
-
-```text
-structured_choice
-resident_choice
-```
-
-至少两个 choices 才可恢复。earlier choice 必须由当前 evidence-bound anti-replay 真实挡住，才选第一个 later unblocked choice。若第一项仍 admissible，历史 priority 不变；若全被挡住则 fail closed。
-
-Recovery metadata 增加 `choice_source`，仍只保存 bounded index/count/action/evidence 信息。
-
-### Verification
-
-本 slice 的 typed task contract：
-
-```text
-expected_outcome = {
-  kind: text_equals,
-  path: ...,
-  expected_text: ...
-}
-```
-
-active runtime 将其转换为 existing text verification contract。Selected exact replacement 仍必须：
-
-```text
-Body write
-→ native_verification
+Body movement
 → independent Body read_text
-→ exact comparison
-→ only then complete / create positive VerifiedExperience
+→ exact text comparison
+→ only then complete / positive learning
 ```
 
-Body success 本身不能证明任务完成。
+Body success 不是 final proof。
 
-### L1 / L2 / L3
+显式 task-level `expected_outcome` 始终优先，不会被 resident-derived contract 覆盖。
+
+### 3. Fail-closed boundary
+
+不会推导 final state / 不会扩大 choice authority 的情况包括：
+
+- missing preview；
+- truncated preview；
+- empty append content；
+- incompatible/missing observed file target；
+- explicit unsupported/malformed expected outcome；
+- free-text tactic speculation；
+- procedural memory/model output 试图提供 raw path/content/args。
+
+### 4. Append / replace learning separation
+
+`agent/kernel/verified_experience.py`
+
+privacy-safe exact-text expected summary 新增：
 
 ```text
-verified selected movement
-→ VerifiedExperience (L1)
-→ candidate_tendencies() (L2)
-→ current-reality applicability (L3)
-→ optional procedural bias among current choices
+action_variant = append | replace
 ```
 
-`procedural_applicability.current_expected_outcome()` 现在能把 explicit typed `text_equals` 规范化为当前 applicability contract。
+不会存 raw path/content。
 
-Learned candidate 仍不能提供 raw path/content/command/args。
+L1 `group_key` 加入 variant。
 
-## 本阶段完成的端到端证明
+`agent/kernel/procedural_tendency.py`
 
-新增 integration regression：
+L2 compatibility 也加入 variant，并暴露 bounded applicability metadata：
 
 ```text
-tests/agent/kernel/test_resident_structured_choice_learning.py
+stable_action_variant
+action_variant_variants
 ```
 
-场景：
+`agent/kernel/procedural_applicability.py`
 
-1. 当前文件是 `prefix`；
-2. resident 当前任务要求 append `suffix`，typed goal 是最终 `prefix + suffix`；
-3. Investigation 完整观察当前文件，因此 resident 形成 `[append A, exact-replace B]`；
-4. test environment 让 append route 抛出 Body failure；
-5. same-evidence anti-replay 阻止 A；
-6. native choice recovery 选择 resident-formed B；
-7. B 使用 current task path/content 执行；
-8. independent `read_text` 验证最终文本；
-9. 产生一条 positive `VerifiedExperience`；
-10. 三个 distinct events 后，形成 supported `write_text/text_equals` candidate；
-11. later comparable reality 重新从 current file/task 形成 `[A, B]`；
-12. L3 candidate 可以 bias 当前 B；
-13. B 仍只使用 later event 当前 path/content，并再次独立 verify；
-14. candidate serialization 不含 raw target path 或训练时文件内容。
+freshly aggregated write candidate 必须与当前 intent variant 匹配：
 
-这证明的是：
+- replace candidate + current append → `mismatch`；
+- append candidate + current replace → `mismatch`；
+- retained legacy L1 records without variant → new aggregation has marker but no stable variant → L3 `untested`；
+- 旧手工 unit fixture 若完全没有新 metadata marker，保留原 fixture scope，不把它当真实新聚合 evidence。
 
-> resident 自己形成 bounded alternatives → 现实失败 → resident 自己恢复 → 独立验证 → 学习 → later current choice 被学习偏置
+当前 positive L3 influence gate 仍只允许 exact non-append replacement；本阶段没有扩大 append/command authority。
 
-不是：
+## 新增测试
 
-> memory 重放一个存储好的动作。
+### `tests/agent/kernel/test_resident_derived_postcondition.py`
 
-## 修改文件
+覆盖：
+
+1. no caller expected_outcome + full preview → resident derives exact final state and forms 2 `resident_choice`；
+2. missing preview → one historical append intent, no invented postcondition；
+3. truncated preview → one historical append intent, no invented postcondition；
+4. active resident end-to-end：
+
+```text
+current file = prefix-
+caller requests append suffix
+caller does NOT provide expected_outcome
+→ Investigation reads full file
+→ resident derives prefix-suffix
+→ Body append
+→ independent read_text verifies prefix-suffix
+→ ExecutionPath.BODY success
+→ 0 model calls
+→ one verified L1 episode marked action_variant=append
+```
+
+L1 safe expected summary 不含 raw target path。
+
+### `tests/agent/kernel/test_procedural_action_variant.py`
+
+覆盖：
+
+- append / replace evidence 即使故意共享 legacy group_key 也会形成两个 L2 candidates；
+- cross-variant applicability = mismatch；
+- legacy no-variant write evidence = untested。
+
+## 本阶段修改文件
 
 Code:
 
 ```text
 agent/kernel/action.py
-agent/kernel/procedural_applicability.py
 agent/kernel/procedural_resident.py
+agent/kernel/verified_experience.py
+agent/kernel/procedural_tendency.py
+agent/kernel/procedural_applicability.py
 ```
 
 Tests:
 
 ```text
-tests/agent/kernel/test_native_action_alternatives_contract.py
-tests/agent/kernel/test_resident_structured_choice_learning.py
+tests/agent/kernel/test_resident_derived_postcondition.py
+tests/agent/kernel/test_procedural_action_variant.py
 ```
 
 Docs:
@@ -245,38 +227,28 @@ docs/ZN-IMPLEMENTATION-STATUS.md
 
 没有修改：
 
-- `ZN.md`：架构方向没有改变；
-- `docs/ZN-SOURCE-EXTRACTION.md`：本阶段没有 Hermes extraction state 变化；
-- `docs/ZN-SELF-MAINTENANCE.md`：self-maintenance architecture 没变；
+- `ZN.md`：架构方向未变化；
+- `docs/ZN-SOURCE-EXTRACTION.md`：没有 Hermes extraction state 变化；
+- `docs/ZN-SELF-MAINTENANCE.md`：没有 self-maintenance architecture 变化；
 - `main`。
 
 ## 关键 commits
 
 ```text
-1cb9d6f3d716fadb9f4c1379c955d2284d901b0f  feat: form resident exact-text action choices
-2da38f014f73f9f51224f5784fbc1e8853587a24  feat: align procedural applicability with exact-text goals
-0d566d04f55dff7d9e967c49bf901c0d90dfce60  feat: recover resident-formed exact-text choices
-5f10a4f5d60fb9c801ce53d400cba13ca1addee8  test: cover resident exact-text choice formation
-920bd70814e44d9b62b6ba5159e264ab442470a3  test: prove resident choice learning loop
-1fe89bde2fa16b39d0feb574399600fa288ef9ac  docs: record resident-owned choice learning slice [skip ci]
-38f706fd4257ca879e04eefe09a4ab293f02eead  docs: hand off resident choice learning state [skip ci]
-50ebda8d51681a8e0503baddafc4aaddb34edd08  docs: record cancelled AppImage continuity result [skip ci]
+1ca91c1c9937aad42e323b4dbcfbf8ee5d903922  feat: let resident carry derived action postconditions
+dbb14b8291a7caab49f38069427e5a00c30e9099  feat: verify resident-derived text goals
+275eebcc92f027d73572f09142d8393b381945ef  fix: separate text action variants in learning
+32a147a4237540cb290cfa2a350f38add0236940  fix: preserve action variant in procedural tendency
+a609f200f6e1380f2777febd4a271a03a1b33ec7  fix: gate procedural influence by write variant
+2e33432204c39fe5486856381decc21f52a78e90  test: prove resident-derived append postconditions
+91d94c1a6969b157e5749628eae7d63c2996c889  test: preserve legacy candidate fixtures while old records fail closed
+04e95009a9b2277704d57bc3dd141748a91df772  test: enforce procedural write variants
+edfabf0d0233c1f5275ff385213e1dc0bf5fd078  docs: record resident-derived postcondition slice [skip ci]
 ```
 
-## 测试 / CI
+## 真实测试 / CI
 
-本地可执行环境没有完整 private-repo checkout，因此没有把本地 synthetic check 冒充 repository integration test。
-
-实际执行过一个最小 isolated pure action-formation check，验证：
-
-- exact matching full preview → 两个 `resident_choice`；
-- missing preview → single historical action；
-- truncated preview → single historical action；
-- mismatched preview → single historical action。
-
-结果：PASS。
-
-权威集成验证是 GitHub Actions run `32647895984`：
+权威最终 CI：run `32648983622`, code/test SHA `04e95009a9b2277704d57bc3dd141748a91df772`。
 
 ```text
 ZN Kernel / Python          success
@@ -285,58 +257,55 @@ Container / Runtime Smoke  skipped
 Publish commit statuses    success
 ```
 
-Python job 中完整 kernel unittest discovery 已包含新增 resident learning integration test。
+Python job `97217531258`：isolated runtime install、zero-model boot、compile、full kernel unittest discovery 全部 success。
 
-## 当前没有实现、不得误报
+Electron job `97217531266`：dependency install、typecheck、bundle、ownership/update/handoff/release verifier tests 全部 success。
 
-仍 PARTIAL / MISSING：
+本环境没有完整 private-repo checkout，因此没有把 synthetic local checks 冒充 repository integration。真实集成结果以上述 GitHub Actions 为准。
 
-- broad resident-owned generation of structured action alternatives from Will/Investigation；
+## 当前仍未完成 / 不得误报
+
+- 第二个 genuinely different resident-owned semantic choice contract；
+- broader Will/Investigation-driven alternative formation beyond exact-text file writing；
 - commands / Git / browser / arbitrary side-effect tactic formation；
+- general reliable high-level postcondition derivation；
 - learned multi-step tactic trees；
 - model-free general planner；
-- broad candidate influence over command / arbitrary side effects；
+- broad candidate influence over commands/arbitrary side effects；
 - raw action replay from procedural memory；
-- mature resident-owned procedural skills；
-- procedural fast path；
-- broader prediction-error de-proceduralization；
-- resident-owned reliable high-level postcondition derivation；
-- learned engineering competence；
-- learned computer-use competence；
-- growth benchmarks proving lower model dependence without lower verification quality；
+- mature procedural skills / fast path；
 - practical Git mutation + diff/test/reality verification；
 - GitHub repo/PR/CI resident-owned sense；
-- browser Body/Sense seam；
-- autonomous outbound artifact nomination from current Thought/Will/Investigation；
-- Telegram photo/audio/video-specific outbound transports；
-- successful real installed AppImage N → N+1 updater continuity；
-- SM1+ self-maintenance implementation。
+- learned engineering competence；
+- browser Body/Senses seam and learned computer-use competence；
+- growth benchmarks proving lower model dependence without lower verification quality；
+- autonomous outbound artifact nomination；
+- Telegram media-specific outbound transports；
+- successful installed AppImage N → N+1 continuity；
+- SM1+ self-maintenance。
 
 ## 风险 / 阻塞
 
-### Core learning lane
+Core lane 当前无已知 CI blocker。
 
-当前无已知 CI blocker。
+主要设计风险仍是过早泛化 semantic choice formation：不能把 task 中两个动词、model 的建议、memory 中熟悉 route 或 command 字符串解析，当成“两个动作一定实现同一个目标”的证明。
 
-主要设计风险是过早泛化 choice formation：不能因为 task 中有多个动词、memory 中有熟悉 tactic、或 model 建议了多个动作，就宣称这些动作是同一 goal 的 alternatives。下一 slice 必须继续使用可验证 semantic contract。
+本阶段额外封住一个风险：append 与 replace 虽然都叫 `write_text`，但因副作用语义不同，procedural evidence 不能再默认互通。
 
-### M8 updater lane
+M8 updater debt 未变化：run `32645354818` 的 real installed AppImage updater continuity smoke cancelled；两版 AppImage build success，但 continuity 没有 success 证据。后续切回 M8 时先读 diagnostics/logs，不要降低 integrity gates。
 
-Run `32645354818` 的 installed updater continuity smoke 已 cancelled。两版 AppImage build success，诊断有上传。下一次切回 M8 时，应先读取 diagnostics artifact / step logs，确定为何 continuity step 被 cancelled/卡住，而不是盲目重复 run 或降低 integrity gates。
-
-## 下一步
+## 下一真实目标
 
 Fresh restore 后：
 
-1. 重新读取本 HANDOFF 与真实 branch HEAD；
-2. 确认 docs-only HEAD 与 code/test SHA `920bd708...` 的关系；
-3. 重新确认最新 CI / concurrent commits；
-4. 从 `NativeWill` / `NativeIntentionFormation` / Investigation facts 追一个**第二类有语义证明的 choice formation contract**；
-5. 优先寻找 genuinely different tactics，而不是同一种 file write 的形式变化；
-6. 在扩大 authority 前先写 negative/fail-closed tests；
-7. 保持 current args ownership、anti-replay、L3 gates、independent verification 和 privacy-safe learning；
-8. 完成 code → tests → CI → docs → HANDOFF 后再推进下一 slice。
+1. 重新读取所有必读文档和真实 dev HEAD/CI/diff；
+2. 继续从 `NativeWill` / `NativeIntentionFormation` / Investigation facts 找**第二个 genuinely different tactic class**；
+3. 优先选择有独立 current-world verifier、且能证明两个 tactics 目标等价的工程能力契约；
+4. command/Git 是有价值方向，但不能靠解析 shell 文本猜 mutation/result；
+5. authority 扩大前先补 negative tests：missing/stale evidence、ambiguous equivalence、unsafe side effect、contradiction 必须 fail closed；
+6. 保持 current args ownership、action-variant boundary、anti-replay、L3 gates、independent verification、privacy-safe learning；
+7. 完成 code → tests → real CI → docs → HANDOFF 后，再称该 slice 完成。
 
-不要为了“更像 agent”添加 planner tree。判断标准仍然是：
+不要为了看起来更“agentic”添加 planner tree。判断标准仍然是：
 
-> **这样是否让持续存在的 ZN Self 更能基于现实形成、验证并内化自己的能力。**
+> **这样是否让持续存在的 ZN Self 更能基于当前现实形成、验证并内化自己的能力。**
