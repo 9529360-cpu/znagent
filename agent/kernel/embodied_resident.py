@@ -170,7 +170,7 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         state.data["native_action_result"] = asdict(result)
 
         if result.success:
-            verification = self._verification_contract(intent)
+            verification = self._verification_contract(event, intent)
             if verification is not None:
                 # A successful movement is evidence, not proof that the user's
                 # requested state now exists. Persist the postcondition and let
@@ -237,65 +237,161 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
 
         intent = NativeActionIntent.from_dict(raw_intent)
         kind = str(raw_contract.get("kind") or "")
-        if kind != "text_equals":
-            state.stage = "native_deliberation"
-            state.next_action = "resolve unsupported postcondition verification"
-            self.store.save_working_state(state)
-            return None
+        verified = False
+        response = ""
+        failure = ""
+        verification_result: dict[str, Any]
 
-        path = str(raw_contract.get("path") or "")
-        expected = str(raw_contract.get("expected_text") or "")
-        observed = self.body.act(
-            "read_text",
-            event_id=event.event_id,
-            path=path,
-            max_chars=max(1, len(expected) + 1),
-        )
-        verified = bool(
-            observed.success
-            and not bool(observed.data.get("truncated"))
-            and observed.output == expected
-        )
-        state.data["native_verification_result"] = {
-            "verified": verified,
-            "kind": kind,
-            "path": path,
-            "expected_chars": len(expected),
-            "observed_chars": (
-                int(observed.data.get("chars") or len(observed.output))
-                if observed.success
-                else None
-            ),
-            "observation": asdict(observed),
-        }
+        if kind == "text_equals":
+            path = str(raw_contract.get("path") or "")
+            expected = str(raw_contract.get("expected_text") or "")
+            observed = self.body.act(
+                "read_text",
+                event_id=event.event_id,
+                path=path,
+                max_chars=max(1, len(expected) + 1),
+            )
+            verified = bool(
+                observed.success
+                and not bool(observed.data.get("truncated"))
+                and observed.output == expected
+            )
+            verification_result = {
+                "verified": verified,
+                "kind": kind,
+                "path": path,
+                "expected_chars": len(expected),
+                "observed_chars": (
+                    int(observed.data.get("chars") or len(observed.output))
+                    if observed.success
+                    else None
+                ),
+                "observation": asdict(observed),
+            }
+            response = path
+            if observed.success:
+                failure = (
+                    f"postcondition verification failed for {path}: requested text state "
+                    "does not match current reality"
+                )
+            else:
+                failure = (
+                    f"postcondition verification failed for {path}: "
+                    f"{observed.error or 'current text state could not be observed'}"
+                )
+
+        elif kind == "command":
+            command = str(raw_contract.get("command") or "").strip()
+            workdir = str(raw_contract.get("workdir") or "").strip() or None
+            expected_exit_code = int(raw_contract.get("expected_exit_code", 0))
+            expected_output = [
+                str(item)
+                for item in raw_contract.get("output_contains") or ()
+                if str(item)
+            ]
+            observed = self.body.act(
+                "command",
+                event_id=event.event_id,
+                command=command,
+                **({"workdir": workdir} if workdir else {}),
+                timeout=max(0.05, float(raw_contract.get("timeout", 60.0))),
+                max_output_chars=max(
+                    128,
+                    int(raw_contract.get("max_output_chars", 50_000)),
+                ),
+            )
+            exit_code = observed.data.get("exit_code")
+            timed_out = bool(observed.data.get("timed_out", False))
+            missing_output = [
+                fragment
+                for fragment in expected_output
+                if fragment not in observed.output
+            ]
+            verified = bool(
+                not timed_out
+                and exit_code == expected_exit_code
+                and not missing_output
+            )
+            verification_result = {
+                "verified": verified,
+                "kind": kind,
+                "command": command,
+                "workdir": workdir,
+                "expected_exit_code": expected_exit_code,
+                "observed_exit_code": exit_code,
+                "expected_output_contains": expected_output,
+                "missing_output_contains": missing_output,
+                "observation": asdict(observed),
+            }
+            response = observed.output.strip() or (
+                f"verified postcondition command with exit code {exit_code}"
+            )
+            problems: list[str] = []
+            if timed_out:
+                problems.append("verification command timed out")
+            if exit_code != expected_exit_code:
+                problems.append(
+                    f"expected exit code {expected_exit_code}, observed {exit_code}"
+                )
+            if missing_output:
+                problems.append(
+                    "missing expected output fragment(s): "
+                    + ", ".join(repr(item) for item in missing_output)
+                )
+            failure = (
+                "postcondition command verification failed: "
+                + ("; ".join(problems) or "current reality did not satisfy the check")
+            )
+
+        else:
+            requested = str(raw_contract.get("requested_kind") or kind or "<empty>")
+            failure = str(
+                raw_contract.get("error")
+                or f"unsupported postcondition verification kind: {requested}"
+            )
+            verification_result = {
+                "verified": False,
+                "kind": kind or "unsupported",
+                "requested_kind": requested,
+                "error": failure,
+            }
+
+        state.data["native_verification_result"] = verification_result
 
         if verified:
             return self._complete_successful_body_action(
                 event,
                 state,
                 intent,
-                response=path,
+                response=response,
                 reason=(
                     "ZN completed the task only after independently verifying the "
-                    "requested text postcondition through its body"
+                    "requested postcondition through its body"
                 ),
             )
 
+        return self._fail_postcondition_verification(
+            event,
+            state,
+            intent,
+            failure=failure,
+            thought=thought,
+        )
+
+    def _fail_postcondition_verification(
+        self,
+        event: AgentEvent,
+        state: WorkingState,
+        intent: NativeActionIntent,
+        *,
+        failure: str,
+        thought=None,
+    ) -> None:
         self.kernel.self_model.observe_native_outcome(
             event.task,
             self._required_capabilities(event),
             success=False,
         )
-        if observed.success:
-            failure = (
-                f"postcondition verification failed for {path}: requested text state "
-                "does not match current reality"
-            )
-        else:
-            failure = (
-                f"postcondition verification failed for {path}: "
-                f"{observed.error or 'current text state could not be observed'}"
-            )
         state.data["local_failure"] = failure
         state.data["native_action_failure_signature"] = self._intent_signature(intent)
         state.stage = "native_investigation"
@@ -341,10 +437,96 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         )
 
     @staticmethod
-    def _verification_contract(intent: NativeActionIntent) -> dict[str, Any] | None:
-        # Start with explicit replace/create text mutations where the requested
-        # final state can be re-observed exactly. Append and generic command
-        # semantics need richer postcondition contracts and remain future slices.
+    def _verification_contract(
+        event: AgentEvent,
+        intent: NativeActionIntent,
+    ) -> dict[str, Any] | None:
+        explicit = event.payload.get("expected_outcome")
+        if explicit is not None:
+            if not isinstance(explicit, dict):
+                return {
+                    "kind": "unsupported",
+                    "requested_kind": type(explicit).__name__,
+                    "error": "expected_outcome must be a structured object",
+                    "intent_id": intent.intent_id,
+                    "action_signature": EmbodiedResidentRuntime._intent_signature(intent),
+                }
+
+            requested_kind = str(explicit.get("kind") or "").strip().lower()
+            if requested_kind in {"command", "command_check", "command_succeeds"}:
+                command = str(explicit.get("command") or "").strip()
+                if not command:
+                    return {
+                        "kind": "unsupported",
+                        "requested_kind": requested_kind or "command",
+                        "error": "command postcondition requires a verification command",
+                        "intent_id": intent.intent_id,
+                        "action_signature": EmbodiedResidentRuntime._intent_signature(intent),
+                    }
+                try:
+                    expected_exit_code = int(explicit.get("exit_code", 0))
+                    timeout = max(0.05, float(explicit.get("timeout", 60.0)))
+                    max_output_chars = max(
+                        128,
+                        int(explicit.get("max_output_chars", 50_000)),
+                    )
+                except (TypeError, ValueError):
+                    return {
+                        "kind": "unsupported",
+                        "requested_kind": requested_kind,
+                        "error": "command postcondition has invalid numeric limits",
+                        "intent_id": intent.intent_id,
+                        "action_signature": EmbodiedResidentRuntime._intent_signature(intent),
+                    }
+                raw_output = explicit.get("output_contains")
+                if raw_output is None:
+                    output_contains: list[str] = []
+                elif isinstance(raw_output, str):
+                    output_contains = [raw_output]
+                elif isinstance(raw_output, (list, tuple)):
+                    output_contains = [str(item) for item in raw_output if str(item)]
+                else:
+                    return {
+                        "kind": "unsupported",
+                        "requested_kind": requested_kind,
+                        "error": (
+                            "command postcondition output_contains must be a string or list"
+                        ),
+                        "intent_id": intent.intent_id,
+                        "action_signature": EmbodiedResidentRuntime._intent_signature(intent),
+                    }
+                workdir = (
+                    str(explicit.get("workdir") or intent.args.get("workdir") or "").strip()
+                    or None
+                )
+                return {
+                    "kind": "command",
+                    "command": command,
+                    "workdir": workdir,
+                    "expected_exit_code": expected_exit_code,
+                    "output_contains": output_contains,
+                    "timeout": timeout,
+                    "max_output_chars": max_output_chars,
+                    "intent_id": intent.intent_id,
+                    "action_signature": EmbodiedResidentRuntime._intent_signature(intent),
+                }
+
+            return {
+                "kind": "unsupported",
+                "requested_kind": requested_kind or "<empty>",
+                "error": (
+                    "unsupported expected_outcome kind: "
+                    f"{requested_kind or '<empty>'}"
+                ),
+                "intent_id": intent.intent_id,
+                "action_signature": EmbodiedResidentRuntime._intent_signature(intent),
+            }
+
+        # Replace/create text mutations have a naturally observable exact
+        # postcondition, so they get verification without requiring callers to
+        # describe a second probe. Append and generic commands require an
+        # explicit task-level expected_outcome before action success can be
+        # distinguished from goal completion.
         if intent.kind != "write_text" or bool(intent.args.get("append", False)):
             return None
         path = str(intent.args.get("path") or "").strip()
