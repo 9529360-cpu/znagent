@@ -28,6 +28,7 @@ class EmbodiedInvestigator(NativeInvestigator):
 
     _PROBE_LABELS = {
         **NativeInvestigator._PROBE_LABELS,
+        "git_diff": "inspect current git diff",
         "vision": "sample current resident vision state",
     }
 
@@ -325,6 +326,50 @@ class EmbodiedInvestigator(NativeInvestigator):
                 "activated consolidated pattern rather than assuming it is correct",
             )
 
+    def _choose_next_probe(
+        self,
+        event: AgentEvent,
+        readiness: TaskReadiness,
+        *,
+        facts: dict[str, Any],
+        performed: set[str],
+        learning_evidence: list[dict[str, Any]],
+    ) -> str | None:
+        """Add diff observation only after current Git reality makes it useful."""
+
+        git = facts.get("git") if isinstance(facts.get("git"), dict) else {}
+        if (
+            "git" in performed
+            and "git_diff" not in performed
+            and git.get("available") is not False
+            and bool(git.get("dirty"))
+            and self._git_diff_relevant(event)
+        ):
+            return "git_diff"
+        return super()._choose_next_probe(
+            event,
+            readiness,
+            facts=facts,
+            performed=performed,
+            learning_evidence=learning_evidence,
+        )
+
+    @staticmethod
+    def _git_diff_relevant(event: AgentEvent) -> bool:
+        payload = event.payload or {}
+        if any(key in payload for key in ("content", "text", "command", "expected_outcome")):
+            return True
+        text = event.task.lower()
+        return any(
+            token in text
+            for token in (
+                "diff", "patch", "change", "changed", "modify", "edit", "write",
+                "create", "replace", "append", "fix", "code", "debug", "test", "build",
+                "差异", "补丁", "变更", "修改", "编辑", "写", "创建", "替换", "追加",
+                "修复", "代码", "调试", "测试", "构建",
+            )
+        )
+
     def _run_probe(
         self,
         key: str,
@@ -518,6 +563,36 @@ class EmbodiedInvestigator(NativeInvestigator):
                 "git: "
                 f"root={git_fact.get('root')}; branch={git_fact.get('branch')}; "
                 f"dirty={git_fact.get('dirty')}; changed_files={git_fact.get('changed_files')}"
+            ]
+
+        if key == "git_diff":
+            git = facts.get("git") if isinstance(facts.get("git"), dict) else {}
+            root = str(git.get("root") or "").strip()
+            if not root:
+                facts["git_diff"] = {"available": False}
+                return ["git diff probe has no current repository root"]
+            result = body.act(
+                "git_diff",
+                event_id=event.event_id,
+                path=root,
+            )
+            if not result.success:
+                facts["git_diff"] = {
+                    "available": False,
+                    "root": root,
+                    "error": result.error,
+                }
+                return [f"git diff probe failed: {result.error or 'unknown error'}"]
+            diff_fact = dict(result.data)
+            diff_fact["available"] = True
+            facts["git_diff"] = diff_fact
+            return [
+                "git diff: "
+                f"root={diff_fact.get('root')}; changed_files={diff_fact.get('changed_files')}; "
+                f"worktree={len((diff_fact.get('worktree') or {}).get('paths') or ())}; "
+                f"staged={len((diff_fact.get('staged') or {}).get('paths') or ())}; "
+                f"untracked={len(diff_fact.get('untracked_paths') or ())}; "
+                f"truncated={diff_fact.get('truncated')}"
             ]
 
         if key == "processes":
