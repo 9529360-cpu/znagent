@@ -2,6 +2,8 @@
 
 > Active development branch: `dev/zn-agent`
 >
+> Canonical release/source branch: `main` once the M10 promotion decision below is executed.
+>
 > This file is the current architecture contract. Real code and Git state determine what exists; tests/CI determine what has been verified; `.agent/HANDOFF.md` records the current work site.
 
 ## 0. Development contract
@@ -61,7 +63,7 @@ Disconnecting every external model must not erase ZN identity/state or prevent n
 
 The active development tree is ZN-only. Historical/reference product source is not kept inside the active tree and is not a runtime, build, test, packaging, release or maintenance dependency.
 
-Reference mechanisms may be studied from Git history or an external/upstream repository. Reuse is allowed only when the mechanism is understood, adapted behind ZN-owned interfaces/config/state/lifecycle, covered by ZN tests and free of reference-product control-plane assumptions.
+Reference mechanisms may be studied from Git history or a dedicated reference branch/external upstream. Reuse is allowed only when the mechanism is understood, adapted behind ZN-owned interfaces/config/state/lifecycle, covered by ZN tests and free of reference-product control-plane assumptions.
 
 Never restore a historical product tree merely because a test, import or build step breaks. Decide whether the capability belongs to ZN. If it does, implement or adapt it as ZN-owned code; otherwise remove the obsolete caller or contract.
 
@@ -252,7 +254,7 @@ Tests retained in the active tree must describe ZN behavior or guard ZN ownershi
 
 M8 release continuity debt remains separate and must not be falsely reported complete. Installed N→N+1 continuity, intended-platform clean-install/login evidence and signing/notarization remain explicit until verified.
 
-M10 is the eventual intentional promotion of verified ZN to `main`. The active-tree source cleanup by itself does not authorize modifying `main`.
+M10 is the intentional promotion of verified ZN to `main`. Active-tree source cleanup by itself does not authorize modifying `main`.
 
 M10 requires all of the following at promotion time:
 
@@ -267,21 +269,40 @@ M10 requires all of the following at promotion time:
 
 Promotion must be deliberate and traceable. Do not force-push or rewrite history to achieve it.
 
+### 11.1 2026-08-24 canonical-branch promotion decision
+
+For the purpose of making ZN the canonical source on `main`—not for declaring M8 or formal release readiness complete—the M10 risk review is approved once the exact promotion commit has a fresh full CI pass.
+
+Current review:
+
+- resident/runtime ownership is ZN-owned and zero-model boot is CI-verified;
+- desktop main/preload/renderer, protocol and packaged runtime ownership are ZN-owned and CI-verified;
+- build/package/release automation is ZN-owned;
+- the active tracked tree has a CI-enforced source boundary; preserved legal attribution in `LICENSE` is the only text-scan exception;
+- historical source is preserved outside the active tree in a dedicated reference branch and is not an active dependency;
+- production npm dependencies are gated against high-severity advisories in CI;
+- two known high-severity findings in the development/tooling dependency set remain debt and must be traced, but they are not accepted as production/runtime dependencies;
+- M8 remains **PARTIAL**: intended-platform continuity, real secure signing/notarization evidence and real-version rollback evidence remain open;
+- those M8 gaps are accepted only for canonical branch promotion, not for claiming formal release completion;
+- the user has explicitly authorized promotion after the source boundary is clean.
+
+Therefore the final M10 gate is: fresh full CI on the exact documentation/decision commit, followed by a non-forced fast-forward of `main`. After promotion, the same source-boundary, production dependency, Python and desktop CI gates must remain active on `main`.
+
 ## 12. Current priority
 
-The repository-boundary evacuation is complete on `dev/zn-agent`. The primary engineering lane returns to ZN's resident competence and release-continuity work:
+The repository-boundary evacuation is complete. After M10 canonical-branch promotion, engineering priority remains:
 
 ```text
 keep ZN-only ownership guards green
+→ trace and remove remaining development/tooling security debt
 → advance resident-owned engineering competence
 → strengthen browser/computer Body/Senses only behind ZN ownership
 → close M8 N→N+1 and intended-platform continuity gaps
 → maintain self-maintenance/release automation
-→ evaluate M10 only from current evidence
 ```
 
 Do not expand product behavior by restoring old control planes or generic agent-framework ownership.
 
 ## 13. Provenance
 
-Historical upstream provenance and license obligations are retained through repository history and applicable license records. Provenance is legal/historical information only; it must not become a runtime, build, test, release or maintenance dependency.
+Historical upstream provenance and license obligations are retained through repository history, the dedicated reference branch and applicable license records. Provenance is legal/historical information only; it must not become a runtime, build, test, release or maintenance dependency.
