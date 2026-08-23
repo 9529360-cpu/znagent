@@ -357,16 +357,16 @@ class EmbodiedInvestigator(NativeInvestigator):
     @staticmethod
     def _git_diff_relevant(event: AgentEvent) -> bool:
         payload = event.payload or {}
-        if any(key in payload for key in ("content", "text", "command", "expected_outcome")):
+        if any(key in payload for key in ("content", "text", "expected_outcome")):
             return True
         text = event.task.lower()
         return any(
             token in text
             for token in (
                 "diff", "patch", "change", "changed", "modify", "edit", "write",
-                "create", "replace", "append", "fix", "code", "debug", "test", "build",
+                "create", "replace", "append", "fix",
                 "差异", "补丁", "变更", "修改", "编辑", "写", "创建", "替换", "追加",
-                "修复", "代码", "调试", "测试", "构建",
+                "修复",
             )
         )
 
