@@ -16,7 +16,7 @@ Development branch: `dev/zn-agent`. Canonical source branch: `main`.
 
 ## 1. Current checkpoint — 2026-08-24
 
-The active repository is physically ZN-only and M10 canonical source promotion has been executed by non-forced fast-forward.
+The active repository is physically ZN-only. M10 canonical source promotion is complete.
 
 Current topology:
 
@@ -122,14 +122,14 @@ Status: **COMPLETE**.
 
 The historical source quarry is preserved outside the active tree in a dedicated reference branch at the old baseline. It is not an active runtime/build/test/package/release dependency.
 
-Fresh exact-head pre-promotion evidence:
+Key evidence:
 
 ```text
-32671245421   ZN Source Boundary success
-               ZN Kernel / Python success
-               Electron / TypeScript success
-               Container / Runtime Smoke success
+32671245421   exact reviewed PR CI success
+32671435423   canonical main push CI success
 ```
+
+On the canonical push run, Source Boundary, Python and Electron were successful. Container smoke is intentionally skipped on push by workflow design; it was successful on the exact reviewed PR commit before promotion.
 
 ## 10. Dependency security state
 
@@ -141,7 +141,7 @@ CI includes:
 npm audit --omit=dev --audit-level=high
 ```
 
-That production-dependency gate passed on current promotion evidence. Therefore the two known high findings are currently bounded to development/tooling dependencies, not accepted production/runtime dependencies.
+The production-dependency gate passes. Therefore the two known high findings are currently bounded to development/tooling dependencies, not accepted production/runtime dependencies.
 
 The exact development dependency chain remains to be traced and fixed where a safe stable update exists. Do not use blind forced audit fixes.
 
@@ -151,11 +151,11 @@ Architecture is defined in `ZN-SELF-MAINTENANCE.md`. ZN does not yet autonomousl
 
 High-risk identity/memory/credential/updater/rollback/signing/self-approval changes remain human-approved by default.
 
-## 12. M10 status — CANONICAL PROMOTION EXECUTED
+## 12. M10 status — COMPLETE FOR CANONICAL SOURCE PROMOTION
 
-The 2026-08-24 M10 review in `ZN.md` passed for canonical source-branch promotion.
+The 2026-08-24 M10 review in `ZN.md` passed and the canonical source promotion was executed.
 
-Verified/reviewed before the ref move:
+Verified/reviewed:
 
 - ZN-owned resident/runtime and persistent-state boundary;
 - ZN-owned desktop and product identity;
@@ -166,10 +166,11 @@ Verified/reviewed before the ref move:
 - production npm high-severity audit gate passes;
 - unresolved M8 gaps explicitly remain **PARTIAL** and are accepted for canonical branch promotion only, not formal release-complete claims;
 - user explicitly authorized promotion after cleanup;
-- exact promotion commit `c158517225ff7b8cf0a952a0ae1dd6ebcf9c2c5d` passed full PR CI run `32671245421`;
-- `main` was then moved to that commit with `force=false` and no history rewrite.
+- exact reviewed commit `c158517225ff7b8cf0a952a0ae1dd6ebcf9c2c5d` passed full PR CI run `32671245421`;
+- `main` was non-forced fast-forwarded to that reviewed commit with no history rewrite;
+- canonical `main` push CI run `32671435423` then passed for the promotion-record state.
 
-This document update exists to record that completed ref transition and to trigger a real canonical `main` push CI. Promotion is operationally closed only after that canonical CI is green and `dev/zn-agent` is synchronized to the same final documentation commit.
+Future documentation-only synchronization commits do not reopen M10. Their exact current CI state must still be checked from GitHub before reporting them green.
 
 ## 13. Current known debts
 
@@ -183,13 +184,12 @@ This document update exists to record that completed ref transition and to trigg
 ## 14. Next real targets
 
 ```text
-1. verify canonical main push CI for the promotion-record commit
-2. fast-forward dev/zn-agent to the same final canonical documentation SHA
-3. close verification-only PR #5 without merge
-4. trace/fix development-tooling npm advisory paths
-5. resume resident-owned engineering competence
-6. close remaining M8 continuity/signing/rollback evidence
-7. advance SM1+ behind existing safety boundaries
+1. keep main and dev/zn-agent synchronized after final documentation closeout
+2. retire verification-only PR #5 without merge
+3. trace/fix development-tooling npm advisory paths
+4. resume resident-owned engineering competence
+5. close remaining M8 continuity/signing/rollback evidence
+6. advance SM1+ behind existing safety boundaries
 ```
 
 Any later status change must be reflected here only after real code/Git/CI evidence exists.
