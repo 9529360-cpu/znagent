@@ -14,6 +14,10 @@ class CognitiveSituation(SituationModel):
     working_event_id: str | None = None
     working_stage: str = "idle"
     working_next_action: str | None = None
+    task_goal: str | None = None
+    task_current_gap: str | None = None
+    task_expected_outcome_kind: str | None = None
+    task_verification_history_count: int = 0
     investigation_id: str | None = None
     investigation_round: int = 0
     investigation_evidence_count: int = 0
@@ -118,6 +122,12 @@ class EmbodiedLifeCore(ZNLifeCore):
                 neural_summaries = ()
                 nervous_tone = None
 
+        raw_execution = working.data.get("execution_context")
+        execution = raw_execution if isinstance(raw_execution, dict) else {}
+        raw_expected = execution.get("expected_outcome")
+        expected = raw_expected if isinstance(raw_expected, dict) else {}
+        raw_history = execution.get("verification_history")
+        verification_history = raw_history if isinstance(raw_history, list) else []
         raw_intent = working.data.get("native_action_intent")
         action_intent = raw_intent if isinstance(raw_intent, dict) else {}
         raw_result = working.data.get("native_action_result")
@@ -138,6 +148,16 @@ class EmbodiedLifeCore(ZNLifeCore):
             working_event_id=working.current_event_id,
             working_stage=str(working.stage or "idle"),
             working_next_action=working.next_action,
+            task_goal=(str(execution.get("goal")) if execution.get("goal") else None),
+            task_current_gap=(
+                str(execution.get("current_gap"))
+                if execution.get("current_gap")
+                else None
+            ),
+            task_expected_outcome_kind=(
+                str(expected.get("kind")) if expected.get("kind") else None
+            ),
+            task_verification_history_count=len(verification_history),
             investigation_id=(
                 investigation.investigation_id if investigation is not None else None
             ),
@@ -312,6 +332,27 @@ class EmbodiedLifeCore(ZNLifeCore):
         if stage_known not in thought.known:
             thought.known = (*thought.known, stage_known)
 
+        if situation.task_goal:
+            goal_known = f"my active task goal remains: {situation.task_goal[:700]}"
+            if goal_known not in thought.known:
+                thought.known = (*thought.known, goal_known)
+        if situation.task_current_gap and situation.task_current_gap not in thought.unknown:
+            thought.unknown = (*thought.unknown, situation.task_current_gap)
+        if situation.task_expected_outcome_kind:
+            expected_known = (
+                "my current completion criterion requires independent "
+                f"{situation.task_expected_outcome_kind} verification"
+            )
+            if expected_known not in thought.known:
+                thought.known = (*thought.known, expected_known)
+        if situation.task_verification_history_count:
+            history_known = (
+                f"this task retains {situation.task_verification_history_count} prior "
+                "verification result(s) as bounded execution history"
+            )
+            if history_known not in thought.known:
+                thought.known = (*thought.known, history_known)
+
         if situation.investigation_id:
             investigation_known = (
                 f"investigation {situation.investigation_id} has completed "
@@ -442,6 +483,10 @@ class EmbodiedLifeCore(ZNLifeCore):
         data.setdefault("working_event_id", None)
         data.setdefault("working_stage", "idle")
         data.setdefault("working_next_action", None)
+        data.setdefault("task_goal", None)
+        data.setdefault("task_current_gap", None)
+        data.setdefault("task_expected_outcome_kind", None)
+        data.setdefault("task_verification_history_count", 0)
         data.setdefault("investigation_id", None)
         data.setdefault("investigation_round", 0)
         data.setdefault("investigation_evidence_count", 0)
