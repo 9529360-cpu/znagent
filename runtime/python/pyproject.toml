@@ -25,6 +25,6 @@ firecrawl = ["firecrawl-py==4.17.0"]
 [project.scripts]
 zn-resident = "zn_agent.resident:main"
 
-[tool.setuptools]
-packages = ["zn_agent", "zn_agent.core"]
-package-dir = {"zn_agent" = "zn_agent", "zn_agent.core" = "../../agent/kernel"}
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["zn_agent", "zn_agent.*"]
