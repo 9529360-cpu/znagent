@@ -248,8 +248,8 @@ class ResidentWorkLedger:
             event_id=str(row["event_id"]),
             kind=str(row["kind"]),
             name=str(row["name"]),
-            path=str(row["path"]) if row["path"] is not None else None,
             content=str(row["content"]),
+            path=str(row["path"]) if row["path"] is not None else None,
             metadata=metadata,
             created_at=str(row["created_at"]),
         )
@@ -565,7 +565,8 @@ class ResidentWorkLedger:
 
             persisted = self.resident.store.get_event(event.event_id)
             if persisted is not None and persisted.status in {
-                EventStatus.COMPLETED, EventStatus.FAILED
+                EventStatus.COMPLETED,
+                EventStatus.FAILED,
             }:
                 raise RuntimeError(
                     "resident event reached a terminal state without a durable outcome"
