@@ -45,6 +45,7 @@ current Situation / stable evidence
 - implementation-status：`8650489035f04b775a6bf508ee7a8cf415840429`
 - external learning/source research：`6196e114f590475da8494aee994e737d19896c92`
 - memory/learning research integration：`0f08f5de3d59cd426ba8dfb6744155f18635dcc6`
+- Hermes learning/procedural source quarry：`fe40ecc0377d67871e4be4cfc579f3b8b73395aa`
 - 本 HANDOFF 为 docs-only `[skip ci]`；下一维护者必须重新读取远程最终 HEAD。
 - `main` 未修改。
 
@@ -57,28 +58,25 @@ current Situation / stable evidence
 - `docs/ZN-IMPLEMENTATION-STATUS.md`
 - `docs/ZN-SOURCE-EXTRACTION.md`
 - `docs/ZN-SELF-MAINTENANCE.md`
-- `docs/ZN-MEMORY-LEARNING.md`
 - `.agent/HANDOFF.md`
 - `dev/zn-agent` HEAD / diff / open PR / CI
-- `agent/kernel/memory.py`
-- `agent/kernel/nervous_system.py`
-- `agent/kernel/reconsolidation.py`
-- `agent/kernel/capabilities.py`
-- `agent/kernel/capability_loader.py`
-- `agent/kernel/evolution.py`
-- `agent/kernel/models.py`
-- `agent/kernel/life.py`
-- `agent/kernel/resident.py`
-- `agent/kernel/embodied_resident.py`
-- current Investigation → Action → Body → Verification → completion/failure call chain
+- 当前 Investigation → Action → Body → Verification call chain
+- `main` inherited Hermes snapshot identity
 
-本轮研究开始前远程 HEAD：
+本轮开始前远程 `dev/zn-agent` HEAD：
 
 ```text
-71766731b2432d570d399dad1d1b3a05892f6df7
+bbf3f04d67fe8bbdb6c0f9d97e4f95479b43cd19
 ```
 
-开始时 compare 确认 branch 与该 HEAD identical。Open PR：无。
+compare 确认 branch 与该 HEAD identical；Open PR：无。
+
+`main` compare 确认仍 exactly：
+
+```text
+61dd880aa4bbbdb359ca544b752afc2c22845ce9
+Initial commit: Hermes Agent source code
+```
 
 当前执行环境无 private-repo checkout，因此不宣称本地 tests。真实 code CI 以 GitHub 为准。
 
@@ -137,108 +135,244 @@ shell exit 0 without task-level postcondition
 
 External cognition success 也能 stage 此 candidate。因此它可以作为 context，但不能直接当 mature skill 或 L1 verified experience。
 
-## 本阶段外部研究：已拖回仓库
-
-新建：
+## 外部研究已经拖回仓库
 
 ```text
 docs/ZN-LEARNING-SOURCE-RESEARCH.md
 6196e114f590475da8494aee994e737d19896c92
 ```
 
-并把结论集成进：
+并集成：
 
 ```text
 docs/ZN-MEMORY-LEARNING.md
 0f08f5de3d59cd426ba8dfb6744155f18635dcc6
 ```
 
-### 选中的成熟思想 / 组件方向
-
-```text
-Complementary Learning Systems / fast-slow learning
-→ ADOPT DESIGN PRINCIPLE
-→ fast verified episodes + slower consolidation/competence
-
-Experience Replay
-→ ADOPT MECHANISM
-→ bounded representative verified replay; resident-native first
-
-DAgger / imitation learning
-→ PROTOTYPE
-→ model/human as teacher, ZN as student; reality verification is final label
-
-River / ADWIN
-→ PROTOTYPE
-→ lightweight online adaptation + stale-skill/drift detection
-
-Avalanche / Mammoth
-→ RESEARCH HARNESS
-→ continual-learning baselines/forgetting metrics; not production runtime
-
-EWC / DER / SI / GEM / Progress & Compress
-→ LATER ALGORITHM OPTIONS
-→ only when actual local neural skill models and forgetting exist
-
-Voyager
-→ SOURCE QUARRY
-→ borrow reusable-skill/environment-feedback ideas; reject GPT-owned control loop
-
-DreamerV3 / world-model RL
-→ LATER RESEARCH
-→ prediction-backed bounded skill domains; do not replace Situation/Thought/Will
-
-Nested Learning
-→ RESEARCH LENS
-→ multiple update time-scales
-
-BrowserGym
-→ FUTURE DEV BENCHMARK
-→ reproducible browser learning/training/evaluation
-
-OSWorld V2
-→ FUTURE DEV BENCHMARK
-→ long-horizon desktop/computer-use evaluation
-```
+选中的外部方向：fast/slow learning、bounded replay、DAgger teacher/student、River/ADWIN drift、Avalanche/Mammoth research baselines、later world-model research、BrowserGym/OSWorld benchmark。
 
 No external framework has been added to the ZN runtime.
 
-## Proposed learning ownership stack
+## 本阶段 Hermes learning/procedural source quarry
+
+已更新：
 
 ```text
-Body/Senses current reality
-→ Situation / Investigation
-→ action + expected outcome
-→ independent verification
-→ VerifiedExperience                    fast
-→ bounded replay
-→ PersistentNervousSystem / schema
-→ CandidateProcedure                    slower
-→ reality-gated repeated practice
-→ maturity / reliability / drift
-→ resident-owned procedural capability
-→ familiar fast path
-→ prediction + reality check
-→ reinforce OR inhibit/relearn
+docs/ZN-SOURCE-EXTRACTION.md
+fe40ecc0377d67871e4be4cfc579f3b8b73395aa
 ```
 
-External cognition remains outside as teacher/adviser:
+新增 extraction ledger：
 
 ```text
-novel/uncertain gap
-→ model/human suggestion
-→ ZN evaluates/acts
-→ reality verification
-→ only verified experience changes competence
+E11 mine inherited learning/procedural mechanisms
+→ SOURCE AUDIT COMPLETE
+→ bounded extraction candidates identified
 ```
 
-## L1 implementation decision after research
+### H-L1 — terminal failure/result semantics
 
-Do **not** install Avalanche/Mammoth/PyTorch/River/etc. merely to start learning.
+Sources：
 
-First implementation remains resident-native `VerifiedExperience` with bounded storage and deterministic retention.
+```text
+tools/terminal_hints.py
+agent/tool_result_classification.py
+```
 
-Initial record should include, privacy-safe where possible:
+优先级：**NEAR-TERM / HIGH VALUE**。
+
+可抽：
+
+- bounded deterministic output-pattern failure classification；
+- common Git/Python/environment recovery hints；
+- exit 126/124/137 semantics；
+- merge conflict / command-not-found / module-not-found / already-exists / rate-limit / permission-denied features；
+- masked-success detection：`cmd | tail` / `cmd || echo` 虽 exit=0，但输出已证明真正命令失败；
+- no-effect vs side-effecting operation classification；
+- file mutation “result landed” checks。
+
+重要事实：Hermes `terminal_hints.py` 注释说明这些模式来自约 250k terminal-result production window，其中约 14k failed calls 被覆盖，平均 retry chain 约多 1.4 tool turns。
+
+这些可以成为 ZN 的 pre-existing engineering prior，减少模型老师成本；但 hint 仍只是 prior，当前现实验证才是事实。
+
+### H-L2 — repeated/no-progress guardrails
+
+Source：
+
+```text
+agent/tool_guardrails.py
+```
+
+优先级：**SELECTIVE EXTRACTION**。
+
+可抽：canonical action signatures、exact failure counts、same-tool failure counts、no-progress detection、poller exemptions、runaway caps、identical-result stubs。
+
+不要导入 inherited controller。ZN 已有更强的 evidence-bound blocked-action rule，只可把这些用作 evidence/features。
+
+### H-L3 — skill telemetry + lifecycle
+
+Sources：
+
+```text
+tools/skill_usage.py
+agent/curator.py
+```
+
+优先级：**L2-L5 / VERY HIGH VALUE**。
+
+成熟机制：
+
+- authored procedure content 与 operational telemetry 分离；
+- atomic/cross-process-safe usage sidecar；
+- use/view/patch/post-patch-reuse telemetry；
+- explicit management ownership/provenance；
+- pin/protected/upstream-owned boundaries；
+- deterministic active→stale→archived；
+- stale reactivation；
+- never-used grace period：absence of use != evidence of staleness；
+- durable scheduled-work reference protection；
+- autonomous archive recoverable，not hard delete；
+- optional LLM consolidation OFF by default while deterministic lifecycle remains model-free。
+
+ZN adaptation 必须用 verified support / contradiction / applicability / prediction reliability 驱动 skill maturity，而不是只按 use count/time。
+
+### H-L4 — mutation ledger / rollback
+
+Sources：
+
+```text
+tools/skill_ledger.py
+agent/curator_backup.py
+tools/skill_provenance.py
+```
+
+优先级：**VERY HIGH VALUE for promoted capabilities**。
+
+可抽：
+
+- actor/write-origin provenance；
+- append-only JSONL mutation ledger；
+- content-addressed SHA-256 before/after blobs，deduplicated；
+- path containment validation；
+- restore blobs pre-check；
+- fail-closed pre-rollback safety capture；
+- rollback itself reversible；
+- whole-run snapshots；
+- dependent scheduled references included in consistency rollback。
+
+这应接到 ZN 已有 `PromotedCapabilityLoader` + self-maintenance approval，不允许 generated code 直接变 live skill。
+
+### H-L5 — skill-manager safety mechanics
+
+Source：
+
+```text
+tools/skill_manager_tool.py
+```
+
+可抽安全机制：path/symlink/junction delete defense、never delete root、pin/protected/upstream-owner boundaries、read-before-write、ownership-unverifiable fail closed。
+
+明确拒绝：
+
+```text
+LLM writes SKILL.md
+→ call this procedural learning
+```
+
+### H-L6 — learning observability
+
+Sources：
+
+```text
+agent/learning_graph.py
+agent/learning_mutations.py
+agent/insights.py
+```
+
+Future only：可以给用户展示 “ZN 学会了什么”、skill-memory relations、usage/state、archive/restore、model/tool/skill cost metrics；不是 L1 critical path。
+
+### H-L7 — conventional memory machinery
+
+Sources：
+
+```text
+agent/memory_manager.py
+agent/memory_provider.py
+plugins/memory/query_rewrite.py
+plugins/memory/*
+```
+
+只当 support-memory quarry。可借 lifecycle/failure isolation/async sync/prefetch/session hooks/trivial-query gates/strict rewrite validation/stream scrubber。
+
+不能让：
+
+```text
+retrieve text → inject LLM → model owns memory/action
+```
+
+替代 ZN nervous/procedural memory。
+
+### H-L8 — browser substrate
+
+Sources：
+
+```text
+tools/browser_supervisor.py
+selected tools/browser_tool.py mechanisms
+```
+
+Later：persistent CDP supervision、frame/OOPIF/dialog/console state、accessibility-tree/ref interaction、bounded snapshots、credential-scrubbed subprocess env、platform launch robustness。
+
+必须 behind future ZN-owned browser Body/Sense seam；不得恢复 Hermes browser orchestration。
+
+## 本阶段检查的 inherited test evidence
+
+不是只看注释，已检查：
+
+```text
+tests/tools/test_skill_usage.py
+tests/agent/test_curator.py
+tests/tools/test_skill_ledger.py
+tests/agent/test_tool_result_classification.py
+```
+
+重要边界测试包括：
+
+- concurrent telemetry update 不丢计数；
+- lifecycle event 只在真实 transition 后发出；
+- post-patch reuse；
+- corrupted telemetry recovery；
+- bundled/hub/external ownership separation；
+- pinned/protected capability survival；
+- cron/durable-reference protection；
+- unrelated stale capability still ages out；
+- ledger content dedupe；
+- rollback path escape rejection；
+- missing blob abort before mutation；
+- pre-rollback safety capture fail closed；
+- delete/write-file exact recovery。
+
+这些 edge cases 可以直接变成未来 ZN tests 的来源。
+
+## L1 implementation decision after both surveys
+
+Do **not** install Avalanche/Mammoth/PyTorch/River/etc. merely to start learning。
+
+Do **not** import Hermes Curator/MemoryManager/SkillManager as control plane。
+
+第一 implementation 仍是 resident-native `VerifiedExperience`。
+
+但是 L1 现在应该优先 source-extract/adapt **非常窄的 deterministic Hermes outcome/failure semantics**：
+
+```text
+Body result
+→ normalized result/effect features
+→ masked-success / known-failure evidence where applicable
+→ independent postcondition observation
+→ VerifiedExperience
+```
+
+初始 record：
 
 - experience ID；
 - event/provenance ID；
@@ -247,42 +381,22 @@ Initial record should include, privacy-safe where possible:
 - domains / task-gap class；
 - action signature + kind；
 - expected-outcome summary；
-- verification summary；
-- verdict (`verified` / `contradicted`; uncertainty later when supported)；
+- normalized result/failure features；
+- independent verification summary；
+- verdict (`verified` / `contradicted`)；
 - timestamps/provenance；
-- safe grouping features。
+- privacy-safe grouping features。
 
-Do not store unnecessary model transcript, credentials, private content, full command/content payloads.
+禁止持久化 unnecessary model transcript、credentials、private content、full command/content payloads。
 
-`native_action_failure_records` remains execution anti-replay state. L1 may distill evidence from it but must not silently repurpose it as long-term memory.
-
-### First bounded replay/retention policy
-
-Start inspectable:
-
-```text
-per context/skill family:
-  keep recent contradictions
-  keep representative verified successes
-  keep limited rare/novel cases
-
-global hard bound
-+ deterministic pruning
-+ provenance preserved
-```
-
-Later compare on the same real stream:
-
-1. resident-native transparent reliability aggregation；
-2. River/ADWIN online adaptation/drift；
-3. DAgger-style local student in a bounded benchmark environment；
-4. only if measurable neural forgetting exists: replay/EWC/DER/etc. research baselines。
+`native_action_failure_records` 仍是 execution anti-replay state，不能偷偷变成长期 learning store。
 
 ## 当前没有实现、不得误报
 
 仍 PARTIAL / MISSING：
 
 - first-class causal `VerifiedExperience`；
+- extracted ZN-owned Hermes failure/result feature helper；
 - replay store/retention implementation；
 - repeated verified experience → `CandidateProcedure`；
 - maturity/reliability/inhibition state；
@@ -295,7 +409,7 @@ Later compare on the same real stream:
 - engineering learned skill；
 - retention/forgetting/model-removal benchmarks。
 
-Do not call current `NeuralTrace`, schema, or old `LearningCandidate` complete procedural memory.
+Documenting the Hermes quarry is not extraction and is not runtime completion。
 
 ## 真实 CI 基线
 
@@ -313,14 +427,15 @@ Electron / TypeScript  success
 run                     32635668910
 ```
 
-本轮新增只有 `[skip ci]` research/docs，没有 runtime/test code 变更，因此没有新增 code CI，也不宣称有。
+本轮只有 `[skip ci]` docs/source-audit updates，没有 runtime/test code 变更，因此没有新增 code CI，也不宣称有。
 
 ## 下一真实目标
 
 Fresh-restore 后实现 L1：
 
 ```text
-verified/contradicted native action outcome
+current ZN Body/verification
++ narrow extracted/adapted deterministic Hermes result semantics
 → privacy-safe VerifiedExperience
 → durable bounded store
 → restart-safe retrieval
@@ -328,19 +443,18 @@ verified/contradicted native action outcome
 → deterministic retention
 ```
 
-必须测试：
+第一 code slice 的优先顺序：
 
-- independent verification success 才能产生 positive learning evidence；
-- model text alone 不能产生 positive experience；
-- body/shell success alone 不能冒充 verified task outcome；
-- contradiction 也进入 learning evidence；
-- restart survives；
-- bounded retention；
-- secret/private payload 不被宽泛复制；
-- no planner/task manager；
-- no direct candidate-code promotion。
+1. 追 `BodyActionResult` / command verification 的当前真实数据结构；
+2. 设计 ZN-owned normalized action-result feature helper，不 import inherited `tools.*`；
+3. 只抽需要的 masked-success / known-failure semantics；
+4. 建 `VerifiedExperience` schema/store；
+5. 接 verified success + contradicted postcondition 两条路径；
+6. tests：model text/body return/exit0 alone 都不能冒充 positive learning；
+7. restart + bound + privacy tests；
+8. CI green 后再更新 implementation status / HANDOFF。
 
-L1 有真实数据后，再进入 L2 transparent resident-native aggregation，并与 River/ADWIN prototype 做测量比较。
+L1 有真实数据后，进入 L2 transparent aggregation，并从 Hermes skill lifecycle 中吸收 maturity/stale/inhibit/retire 边界；再与 River/ADWIN prototype 做测量比较。
 
 ## 风险 / 安全 / release boundary
 
@@ -349,23 +463,22 @@ L1 有真实数据后，再进入 L2 transparent resident-native aggregation，�
 - 不把 embedding retrieval 伪装成 procedural competence；
 - 不把 absolute mouse-coordinate replay 当 reflex；
 - high-risk identity/memory/credentials/updater/rollback/signing/self-maintenance permissions 不因熟练化而绕过人工批准；
-- 不引入重型 ML runtime dependency，除非实际 benchmark 证明价值并验证多平台 packaging；
+- 不引入重型 ML runtime dependency，除非 benchmark 证明价值并验证多平台 packaging；
+- 不把 Hermes source quarry 变成 active control plane；
 - `main` untouched；
 - M8/release debt 保留为 bounded lane。
 
 ## 文档状态
 
-本阶段新增/更新：
+本阶段更新：
 
-- `docs/ZN-LEARNING-SOURCE-RESEARCH.md`（new）；
-- `docs/ZN-MEMORY-LEARNING.md`；
+- `docs/ZN-SOURCE-EXTRACTION.md`；
 - `.agent/HANDOFF.md`。
 
-本阶段未改变：
+本阶段未改变 runtime implementation，因此没有更新：
 
-- `ZN.md` architecture direction（上一阶段已经先定义）；
-- `docs/ZN-IMPLEMENTATION-STATUS.md`：没有 runtime implementation 状态变化；
-- `docs/ZN-SOURCE-EXTRACTION.md`：Hermes extraction 状态未变化；
-- `docs/ZN-SELF-MAINTENANCE.md`：self-maintenance 架构未变化；
+- `docs/ZN-IMPLEMENTATION-STATUS.md`；
+- `ZN.md` architecture direction；
+- `docs/ZN-SELF-MAINTENANCE.md`；
 - `AGENTS.md`；
 - `main`。
