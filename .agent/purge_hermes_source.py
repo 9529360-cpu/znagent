@@ -19,6 +19,13 @@ def write(path: Path, text: str) -> None:
     path.write_text(text.rstrip() + "\n", encoding="utf-8")
 
 
+def replace_required(path: Path, old: str, new: str) -> None:
+    text = path.read_text(encoding="utf-8")
+    if old not in text:
+        raise RuntimeError(f"required migration text not found in {path.relative_to(ROOT)}")
+    path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
 def keep_only(directory: Path, allowed: set[str]) -> None:
     if not directory.exists():
         return
@@ -135,6 +142,132 @@ if patcher.exists():
         encoding="utf-8",
     )
 
+# The pre-evacuation desktop tests still read duplicated package.json build
+# metadata and packaging hooks that this migration deliberately removes. Rewrite
+# only those exact contracts so the verified post-purge tree tests the single
+# ZN builder config and proves the retired hook chain is physically absent.
+replace_required(
+    electron / "zn-desktop-ownership.test.ts",
+    """test('formal Linux desktop identity keeps launcher and running window aligned', () => {
+  const pkg = JSON.parse(read('package.json'))
+  const builder = read('electron-builder.zn.yml')
+
+  assert.equal(pkg.desktopName, 'ai.zn.desktop')
+  assert.equal(pkg.build?.appId, 'ai.zn.desktop')
+  assert.equal(pkg.build?.linux?.syncDesktopName, true)
+  assert.equal(pkg.build?.linux?.desktop?.entry?.StartupWMClass, 'ai.zn.desktop')
+  assert.match(builder, /^appId:\\s+ai\\.zn\\.desktop$/m)
+  assert.match(builder, /^\\s+syncDesktopName:\\s+true$/m)
+  assert.match(builder, /^\\s+StartupWMClass:\\s+ai\\.zn\\.desktop$/m)
+})""",
+    """test('formal Linux desktop identity is owned by the single ZN builder config', () => {
+  const pkg = JSON.parse(read('package.json'))
+  const builder = read('electron-builder.zn.yml')
+
+  assert.equal(pkg.desktopName, 'ai.zn.desktop')
+  assert.equal(pkg.build, undefined)
+  assert.match(pkg.scripts?.builder || '', /--config electron-builder\\.zn\\.yml/)
+  assert.match(builder, /^appId:\\s+ai\\.zn\\.desktop$/m)
+  assert.match(builder, /^\\s+syncDesktopName:\\s+true$/m)
+  assert.match(builder, /^\\s+StartupWMClass:\\s+ai\\.zn\\.desktop$/m)
+})""",
+)
+
+replace_required(
+    electron / "zn-packaged-runtime.test.ts",
+    """test('formal desktop package, hooks and builder expose only ZN product identity', () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(desktopRoot, 'package.json'), 'utf8'))
+  const build = packageJson.build
+  const schemes = (build.protocols || []).flatMap((item: { schemes?: string[] }) => item.schemes || [])
+  const resources = (build.extraResources || []).map((item: { from?: string }) => item.from)
+
+  assert.equal(packageJson.name, 'zn-desktop')
+  assert.equal(packageJson.productName, 'ZN')
+  assert.equal(packageJson.repository?.url, 'git+https://github.com/9529360-cpu/znagent.git')
+  assert.equal(build.appId, 'ai.zn.desktop')
+  assert.equal(build.productName, 'ZN')
+  assert.equal(build.executableName, 'ZN')
+  assert.deepEqual(schemes, ['zn'])
+  assert.match(build.artifactName, /^ZN-/)
+  assert.deepEqual(resources.includes('build/zn-runtime'), true)
+  assert.deepEqual(resources.includes('build/install-stamp.json'), false)
+  assert.doesNotMatch(packageJson.scripts?.build || '', /write-build-stamp/)
+  assert.match(packageJson.scripts?.builder || '', /--config electron-builder\\.zn\\.yml/)
+
+  const publicIdentity = JSON.stringify({
+    name: packageJson.name,
+    productName: packageJson.productName,
+    description: packageJson.description,
+    author: packageJson.author,
+    repository: packageJson.repository,
+    build
+  })
+  assert.doesNotMatch(publicIdentity, /hermes|nousresearch/i)
+
+  const builder = fs.readFileSync(path.join(desktopRoot, 'electron-builder.zn.yml'), 'utf8')
+  assert.match(builder, /^appId: ai\\.zn\\.desktop$/m)
+  assert.match(builder, /^productName: ZN$/m)
+  assert.match(builder, /^\\s+- zn$/m)
+  assert.match(builder, /from: build\\/zn-runtime/)
+  assert.doesNotMatch(builder, /install-stamp|hermes/i)
+
+  const activeHooks = [
+    'scripts/before-build.mjs',
+    'scripts/before-pack.mjs',
+    'scripts/after-pack.mjs',
+    'scripts/set-exe-identity.mjs',
+    'scripts/notarize.mjs'
+  ].map(relative => fs.readFileSync(path.join(desktopRoot, relative), 'utf8')).join('\\n')
+  assert.match(activeHooks, /ProductName: 'ZN'/)
+  assert.match(activeHooks, /CompanyName: 'ZN Project'/)
+  assert.doesNotMatch(activeHooks, /Hermes|Nous Research|install\\.ps1|hermes_cli|hermes-notary/i)
+})""",
+    """test('formal desktop package and builder expose only ZN product identity', () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(desktopRoot, 'package.json'), 'utf8'))
+  const builder = fs.readFileSync(path.join(desktopRoot, 'electron-builder.zn.yml'), 'utf8')
+
+  assert.equal(packageJson.name, 'zn-desktop')
+  assert.equal(packageJson.productName, 'ZN')
+  assert.equal(packageJson.repository?.url, 'git+https://github.com/9529360-cpu/znagent.git')
+  assert.equal(packageJson.build, undefined)
+  assert.doesNotMatch(packageJson.scripts?.build || '', /write-build-stamp/)
+  assert.match(packageJson.scripts?.builder || '', /--config electron-builder\\.zn\\.yml/)
+
+  assert.match(builder, /^appId: ai\\.zn\\.desktop$/m)
+  assert.match(builder, /^productName: ZN$/m)
+  assert.match(builder, /^executableName: ZN$/m)
+  assert.match(builder, /^artifactName: ZN-/m)
+  assert.match(builder, /^\\s+- zn$/m)
+  assert.match(builder, /from: build\\/zn-runtime/)
+  assert.match(builder, /^\\s+legalTrademarks: ZN$/m)
+  assert.doesNotMatch(builder, /install-stamp|hermes|beforePack|afterPack/i)
+
+  const publicIdentity = `${JSON.stringify({
+    name: packageJson.name,
+    productName: packageJson.productName,
+    description: packageJson.description,
+    author: packageJson.author,
+    repository: packageJson.repository
+  })}\\n${builder}`
+  assert.doesNotMatch(publicIdentity, /hermes|nousresearch/i)
+
+  for (const retiredHook of [
+    'scripts/before-pack.mjs',
+    'scripts/after-pack.mjs',
+    'scripts/set-exe-identity.mjs',
+    'scripts/stage-native-deps.mjs'
+  ]) {
+    assert.equal(fs.existsSync(path.join(desktopRoot, retiredHook)), false)
+  }
+
+  const activeHooks = [
+    'scripts/before-build.mjs',
+    'scripts/notarize.mjs'
+  ].map(relative => fs.readFileSync(path.join(desktopRoot, relative), 'utf8')).join('\\n')
+  assert.doesNotMatch(activeHooks, /Hermes|Nous Research|install\\.ps1|hermes_cli|hermes-notary/i)
+})""",
+)
+
 root_package = {
     "name": "znagent",
     "version": "0.17.0",
@@ -176,7 +309,7 @@ desktop_package = {
         "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
         "test": "vitest run --config vitest.config.ts",
         "prebuilder": "node scripts/patch-electron-builder-mac-binary.mjs",
-        "builder": "node scripts/run-electron-builder.mjs",
+        "builder": "node scripts/run-electron-builder.mjs --config electron-builder.zn.yml",
     },
     "dependencies": {
         "electron-updater": "6.8.9",
