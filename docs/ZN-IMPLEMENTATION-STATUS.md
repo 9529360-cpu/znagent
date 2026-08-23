@@ -14,7 +14,7 @@
 
 ## 1. Current development checkpoint — 2026-08-23
 
-The active development mainline is now:
+The active development mainline is:
 
 ```text
 durable ZN Self
@@ -24,11 +24,9 @@ durable ZN Self
 
 Pure UI/desktop polish is paused. M8/release remains a bounded continuity/release lane.
 
-The active product boundary is ZN-owned across resident runtime, cognition resources, local filesystem/process/terminal/PTTY body, web sensing, communication lifecycle, Electron main/preload/protocol/workbench, runtime distribution and formal desktop package identity.
+The resident already owns persistent Self/life, Situation/Thought/Will, nervous memory/reconsolidation, durable events/working state, multi-pulse Investigation, native Action/Body movement, bounded external cognition and zero-model continuity.
 
-The resident already has persistent Self/life, Situation/Thought/Will, nervous memory/reconsolidation, durable events/working state, multi-pulse Investigation, native Action/Body movement, bounded external cognition and zero-model continuity.
-
-The remaining gap is practical execution depth: the same resident must sustain unfamiliar multi-step work, recover from contradictions, broaden its Body/Senses, and verify the original goal from current reality rather than treating a successful model/tool/action call as completion.
+The remaining core gap is practical execution depth: the same resident must sustain unfamiliar multi-step work, choose genuinely different tactics when evidence contradicts a movement, broaden Body/Senses, and verify the original goal from current reality rather than treating a successful model/tool/action call as completion.
 
 ## 2. Verified core execution spine
 
@@ -50,18 +48,7 @@ Electron / TypeScript  success
 run                     32612456040
 ```
 
-The active embodied path observes Git through `NativeBody.git_state` and returns structured repository evidence:
-
-- repository root;
-- branch;
-- full/short HEAD;
-- detached state;
-- upstream;
-- ahead/behind;
-- dirty state;
-- unique changed paths;
-- staged / unstaged / untracked / conflicted paths and counts;
-- bounded porcelain status.
+The active embodied path observes Git through `NativeBody.git_state` and returns structured repository evidence including root, branch, HEAD, upstream/ahead/behind, dirty state, staged/unstaged/untracked/conflicted paths and bounded porcelain status.
 
 Embodied Investigation consumes this Body contract directly, including `changed_paths`.
 
@@ -115,15 +102,7 @@ run                     32621596489
 
 An event may declare a structured `expected_outcome` command check. The primary command returning successfully is action evidence only. The resident later runs an independent verification command through its own Body and compares observed exit code/output against the expected state.
 
-Verified behavior includes:
-
-- expected exit code;
-- optional required output fragments;
-- verification workdir/timeout/output bounds;
-- restart continuity between primary action and verification;
-- failed verification returns to native Investigation;
-- identical primary action is not blindly replayed;
-- verification contradiction enters the next `CognitiveSituation` / Thought immediately.
+Verified behavior includes expected exit code, optional required output fragments, workdir/timeout/output bounds, restart continuity, contradiction recovery to Investigation, and immediate verification evidence in Situation/Thought.
 
 Generic shell exit `0` still does **not** prove an arbitrary high-level goal.
 
@@ -145,7 +124,7 @@ Electron / TypeScript  success
 run                     32621878503
 ```
 
-Active `WorkingState` now keeps one bounded `execution_context` for the current event. It is deliberately **not** a planner tree or growing task database.
+Active `WorkingState` keeps one bounded `execution_context` for the current event. It is deliberately **not** a planner tree or growing task database.
 
 The compact context contains:
 
@@ -160,11 +139,45 @@ verification_history (bounded to 8)
 updated_at
 ```
 
-The context survives resident restart and enters `CognitiveSituation` / Thought, so the same Self explicitly retains the current goal, blocking gap and completion criterion across pulses.
+The context survives resident restart and enters `CognitiveSituation` / Thought. When a genuinely different action begins, the old active verification verdict is removed from the current slot and archived into bounded history.
 
-When a genuinely different action begins, the old active verification verdict is removed from the current slot and archived into bounded verification history. This prevents stale failure evidence from masquerading as current reality while preserving prior evidence for later reasoning.
+### 2.5 Evidence-bound failed-action history
 
-This closes the earlier active-work-state gap. It does **not** yet provide a first-class completed-task `VerificationReport`/audit object after WorkingState returns to idle.
+Final code/test state for this slice:
+
+```text
+227c26a3c47389a842967bee1efc7e28cba5b9a5  feat: bind failed actions to investigation evidence
+8bd88ac55d6c0bf6a26bd98c3294f6d15f420e81  fix: do not complete on blocked failed action
+82952bf07904bba11d60f4f39c0e2f4e52226125  test: reject cognitive false completion after failure
+2010ff8ab6d056cee11e6596dfc9e263cc2455b9  test: assert evidence ledger after text contradiction
+23ce3b42aad2d730afae4d60eb6af5d5b4bd1399  test: assert evidence ledger after command contradiction
+```
+
+Real CI for final code/test SHA `23ce3b42aad2d730afae4d60eb6af5d5b4bd1399`:
+
+```text
+ZN Kernel / Python      success
+Electron / TypeScript  success
+run                     32635668910
+```
+
+The final implementation lives inside the existing `EmbodiedResidentRuntime`; the active product constructor remains the existing `WorldAwareTransferResidentRuntime` chain. No extra planner/manager/final-runtime shim was retained.
+
+`WorkingState.data.native_action_failure_records` is now a bounded resident execution record rather than one last-failure slot. Current behavior:
+
+- each failed movement stores a SHA-256 action signature hash, action kind, evidence fingerprint, failure source/summary and timestamp;
+- records are bounded to 16 and same-action/same-evidence duplicates are coalesced;
+- the evidence fingerprint is derived from stable `Investigation.facts`, not round count or observation clocks;
+- volatile timestamp fields are excluded, so merely re-running a probe without new facts does not unlock the action;
+- A failing, then B failing, does not make A eligible again while reality evidence is unchanged;
+- substantively revised Investigation facts create a new evidence version and may requalify a prior movement;
+- records survive resident restart;
+- old persisted `native_action_failure_signature` state has a one-time read migration path, but new execution does not use that single slot as authority;
+- compact `execution_context.failed_actions` exposes total/current-evidence counts and bounded summaries without copying full commands/content;
+- external cognition text is not reality evidence and cannot by itself unlock a failed action;
+- if accepted external cognition still leads to the same movement contradicted by unchanged reality, the event now fails truthfully instead of falling through to a false `complete` result.
+
+This closes the A → B → A blind-replay gap and one false-completion path. It does **not** yet mean ZN can always generate a useful alternative tactic after a movement is blocked.
 
 ## 3. Current core capability boundary
 
@@ -176,12 +189,14 @@ This closes the earlier active-work-state gap. It does **not** yet provide a fir
 - nervous memory, schemas and reality-gated reconsolidation;
 - multi-pulse native Investigation with retained hypotheses/evidence/facts;
 - native Action intents and Body action results;
-- failed Body action evidence;
 - structured read-only Git repository sense;
 - exact text postcondition verification;
 - explicit independent command postcondition verification;
 - verification contradiction immediately affects Situation/Thought;
-- compact current-event execution context with goal/gap/expected outcome/current action/latest verification/bounded history;
+- compact current-event execution context with goal/gap/expected outcome/current action/latest verification/bounded verification history;
+- bounded failed-action ledger tied to stable Investigation evidence state;
+- A → B → A replay suppression under unchanged reality with retry eligibility after changed facts;
+- blocked post-cognition movement cannot falsely complete the task;
 - bounded external cognition returning as input to ZN rather than owning the resident loop;
 - ZN-owned local process/terminal/PTTY and web search/extract paths;
 - persistent work/thread/workspace/active-run state;
@@ -191,9 +206,8 @@ This closes the earlier active-work-state gap. It does **not** yet provide a fir
 
 - resident-owned derivation and maintenance of reliable high-level task postconditions;
 - multi-step execution that can choose genuinely different tactics over many actions without becoming a model-owned planner;
-- robust bounded failed-action history tied to evidence changes, so A → B → A retry loops cannot bypass a single last-failure guard;
+- stronger alternative-action recovery after evidence blocks a movement;
 - first-class durable completed-task verification/audit evidence;
-- broader failure recovery after verification contradiction;
 - safe Git mutation + diff/test/reality verification;
 - GitHub repository/PR/CI resident-owned read sense;
 - clean browser Body/Senses seam;
@@ -217,15 +231,13 @@ Status: **M2 complete for active main provider families**.
 
 ### Local Body
 
-ZN-owned filesystem/process/terminal/PTTY paths are active. Exact text and explicit command postcondition verification are CI-verified.
+ZN-owned filesystem/process/terminal/PTTY paths are active. Exact text and explicit command postcondition verification are CI-verified. Failed-action replay is now evidence-bound rather than controlled by one last signature.
 
 Status: **active; practical breadth and long-horizon composition remain incomplete**.
 
 ### Web/world sense
 
-ZN-owned search/extract providers and URL/network safety are active.
-
-Browser automation is not yet owned by a clean ZN resident seam.
+ZN-owned search/extract providers and URL/network safety are active. Browser automation is not yet owned by a clean ZN resident seam.
 
 ### Visual sense
 
@@ -237,9 +249,7 @@ Resident-owned channel lifecycle and Telegram text/inbound media are active. Out
 
 ### Desktop/UI
 
-Independent ZN Electron main, preload, renderer/workbench and `zn://` are active. M4 is complete and M5/M6 are materially advanced.
-
-Pure UI polish is paused during the core-first phase.
+Independent ZN Electron main, preload, renderer/workbench and `zn://` are active. M4 is complete and M5/M6 are materially advanced. Pure UI polish is paused during the core-first phase.
 
 ## 5. Runtime/package/release evidence
 
@@ -270,9 +280,7 @@ macOS source            518d233eafa39b2d12f2de5835a8c8c1ab7529ab
 macOS smoke run         32591343670
 ```
 
-Artifacts preserve ZN product/protocol/runtime identity and independently bootable zero-model `zn_agent` runtime.
-
-This does not imply signing/notarization or complete release readiness.
+Artifacts preserve ZN product/protocol/runtime identity and independently bootable zero-model `zn_agent` runtime. This does not imply signing/notarization or complete release readiness.
 
 ### M8 installed Linux + source continuity evidence
 
@@ -287,8 +295,6 @@ run                       32591603017
 fresh runner              Ubuntu 24.04.4 LTS
 ```
 
-The formal deb was handed artifact-only to a fresh runner, installed under `/opt/ZN`, preserved ZN desktop/protocol identity and booted its embedded zero-model resident without source checkout/system Python.
-
 Verified installed Linux autostart:
 
 ```text
@@ -297,8 +303,6 @@ normal CI run             32593886005
 ZN Linux Autostart Smoke  success
 run                       32593886026
 ```
-
-The installed packaged resident can install an enabled systemd user login entry, start, stop gracefully with endpoint/lease cleanup and return through `default.target`.
 
 Verified source-level N → N+1 continuity:
 
@@ -310,8 +314,6 @@ b79c94c67f5ef19af8c0a8e4ba0d9e9877a400f3  align continuity with work snapshot
 normal CI run                              32596442626
 ```
 
-N/N+1 can coexist under one ZN home; queued/claimed work blocks false-idle handoff; idle process replacement preserves living-self identity fields and durable work history.
-
 Still unverified as separate release gates:
 
 - full installed Electron/application updater N → N+1 scenario;
@@ -321,7 +323,7 @@ Still unverified as separate release gates:
 
 ## 6. Ownership/behavior contracts currently protected
 
-Among other regressions, current tests protect:
+Current regressions protect, among other things:
 
 ```text
 agent/kernel must not import hermes_cli or run_agent
@@ -330,16 +332,16 @@ packaged runtime rejects hermes_cli
 zero-model resident boot succeeds
 external model success returns as bounded cognition before resident acceptance
 resident event/investigation/action state survives restart
-failed body actions return as evidence instead of blind retry
 NativeBody Git sense returns structured repository state
-changed-path answers use active embodied Git evidence
 successful write movement does not imply task completion
-write postconditions survive restart and are independently re-observed
-contradicted write postconditions return to investigation
-explicit command expected_outcome is independently verified
-command verification survives restart without replaying primary command
-failed command verification becomes immediate Situation/Thought evidence
+write and command postconditions survive restart and are independently re-observed
+verification contradiction returns to Investigation and becomes immediate Thought evidence
 compact execution context survives restart and remains bounded
+failed-action records survive restart and remain bounded
+A -> B -> A is blocked under unchanged Investigation facts
+changed facts can requalify a prior action
+timestamp-only observation noise does not requalify a failed movement
+accepted external cognition cannot falsely complete the same still-blocked movement
 new action cycles archive old verification without current-state pollution
 provider secrets/settings remain resident-owned and sanitized
 work/thread/workspace/progress remain resident authority
@@ -348,7 +350,7 @@ formal package metadata/protocol identify ZN only
 real packaged runtime boots across exercised Linux/Windows/macOS artifacts
 fresh Linux install/autostart continuity works from packaged artifacts
 queued resident work prevents false-idle runtime handoff
-idle N → N+1 preserves living-self/work continuity
+idle N -> N+1 preserves living-self/work continuity
 ```
 
 ## 7. Milestone snapshot
@@ -370,12 +372,12 @@ M10 repository migration / formal main promotion           LATER; main untouched
 ## 8. Immediate next development sequence
 
 1. continue the resident execution spine; do not return to cosmetic UI;
-2. replace the single last-failed-action guard with bounded failure records tied to the evidence state, preventing A → B → A retry loops while still permitting a retry after genuinely new evidence;
-3. extend verification-failure recovery so new evidence can produce a genuinely different next action rather than only truthful failure;
+2. implement stronger alternative-action recovery: when current evidence blocks a failed movement, the resident should form or select a genuinely different concrete tactic instead of replaying it or falsely completing;
+3. keep tactic recovery bounded and resident-owned, using current Situation/Investigation evidence rather than introducing a planner/task tree;
 4. then build conservative practical Git mutation behind ZN Body with workspace/branch/diff/test/reality-verification boundaries;
 5. add GitHub repository/PR/CI read-only resident sense before any remote write capability;
 6. establish browser interaction only through a clean ZN-owned Body/Senses seam;
-7. drive breadth using real benchmark tasks such as:
+7. drive breadth using a real benchmark such as:
 
 ```text
 unfamiliar repo + failing CI
@@ -387,7 +389,7 @@ unfamiliar repo + failing CI
 → run tests
 → observe result
 → verify diff/repository state
-→ revise if contradicted
+→ revise tactic if contradicted
 → report concrete evidence
 ```
 
