@@ -1,4 +1,13 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+
+type ZnDesktopPayload = Record<string, unknown>
+
+type ZnDesktopDeepLink = {
+  url: string
+  route: string
+  path: string
+  params: Record<string, string>
+}
 
 contextBridge.exposeInMainWorld('znDesktop', {
   resident: {
@@ -7,38 +16,41 @@ contextBridge.exposeInMainWorld('znDesktop', {
     status: () => ipcRenderer.invoke('zn:resident:status'),
     self: () => ipcRenderer.invoke('zn:resident:self'),
     providerSettings: () => ipcRenderer.invoke('zn:resident:provider-settings'),
-    providerSettingsUpdate: payload => ipcRenderer.invoke('zn:resident:provider-settings-update', payload || {}),
-    workList: payload => ipcRenderer.invoke('zn:resident:work-list', payload || {}),
-    workCreate: payload => ipcRenderer.invoke('zn:resident:work-create', payload || {}),
-    workGet: payload => ipcRenderer.invoke('zn:resident:work-get', payload || {}),
-    workStart: payload => ipcRenderer.invoke('zn:resident:work-start', payload || {}),
-    workProgress: payload => ipcRenderer.invoke('zn:resident:work-progress', payload || {}),
-    workSubmit: payload => ipcRenderer.invoke('zn:resident:work-submit', payload || {}),
-    pulses: limit => ipcRenderer.invoke('zn:resident:pulses', limit),
-    situations: limit => ipcRenderer.invoke('zn:resident:situations', limit),
-    thoughts: limit => ipcRenderer.invoke('zn:resident:thoughts', limit),
-    impasses: limit => ipcRenderer.invoke('zn:resident:impasses', limit),
-    learning: limit => ipcRenderer.invoke('zn:resident:learning', limit),
-    neural: limit => ipcRenderer.invoke('zn:resident:neural', limit),
-    perceive: payload => ipcRenderer.invoke('zn:resident:perceive', payload),
-    worldFollow: payload => ipcRenderer.invoke('zn:resident:world-follow', payload),
-    worldFocuses: payload => ipcRenderer.invoke('zn:resident:world-focuses', payload || {}),
-    worldObserve: payload => ipcRenderer.invoke('zn:resident:world-observe', payload),
-    submit: payload => ipcRenderer.invoke('zn:resident:submit', payload),
-    remember: payload => ipcRenderer.invoke('zn:resident:remember', payload),
-    forget: key => ipcRenderer.invoke('zn:resident:forget', key)
+    providerSettingsUpdate: (payload?: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:provider-settings-update', payload || {}),
+    workList: (payload?: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:work-list', payload || {}),
+    workCreate: (payload?: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:work-create', payload || {}),
+    workGet: (payload?: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:work-get', payload || {}),
+    workStart: (payload?: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:work-start', payload || {}),
+    workProgress: (payload?: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:work-progress', payload || {}),
+    workSubmit: (payload?: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:work-submit', payload || {}),
+    pulses: (limit?: number) => ipcRenderer.invoke('zn:resident:pulses', limit),
+    situations: (limit?: number) => ipcRenderer.invoke('zn:resident:situations', limit),
+    thoughts: (limit?: number) => ipcRenderer.invoke('zn:resident:thoughts', limit),
+    impasses: (limit?: number) => ipcRenderer.invoke('zn:resident:impasses', limit),
+    learning: (limit?: number) => ipcRenderer.invoke('zn:resident:learning', limit),
+    neural: (limit?: number) => ipcRenderer.invoke('zn:resident:neural', limit),
+    perceive: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:perceive', payload),
+    worldFollow: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:world-follow', payload),
+    worldFocuses: (payload?: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:world-focuses', payload || {}),
+    worldObserve: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:world-observe', payload),
+    submit: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:submit', payload),
+    remember: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:remember', payload),
+    forget: (key: string) => ipcRenderer.invoke('zn:resident:forget', key)
   },
   workspaces: {
-    attach: threadId => ipcRenderer.invoke('zn:workspaces:attach', { threadId }),
-    detach: threadId => ipcRenderer.invoke('zn:workspaces:detach', { threadId })
+    attach: (threadId: string) => ipcRenderer.invoke('zn:workspaces:attach', { threadId }),
+    detach: (threadId: string) => ipcRenderer.invoke('zn:workspaces:detach', { threadId })
   },
   updates: {
     check: () => ipcRenderer.invoke('zn:updates:check'),
     apply: () => ipcRenderer.invoke('zn:updates:apply')
   },
   shell: {
-    onDeepLink: callback => {
-      const listener = (_event, payload) => callback(payload)
+    onDeepLink: (callback: (payload: ZnDesktopDeepLink) => void) => {
+      const listener = (_event: IpcRendererEvent, payload: ZnDesktopDeepLink) => callback(payload)
       ipcRenderer.on('zn:deep-link', listener)
       return () => ipcRenderer.removeListener('zn:deep-link', listener)
     }
