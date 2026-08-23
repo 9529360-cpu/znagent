@@ -4,7 +4,7 @@
 
 ## 当前目标
 
-开发主线已经从单纯“继续加深 execution tactics”进一步明确为：
+开发主线：
 
 ```text
 durable ZN Self
@@ -17,26 +17,21 @@ durable ZN Self
 
 > **Models may help ZN learn. Mature capability must belong to ZN.**
 
-ZN 不是 `LLM -> planner -> tools -> agent`。同一个 resident Self 必须持续拥有目标、调查、动作、反证、恢复、完成判断和学习。
+ZN 不是 `LLM -> planner -> tools -> agent`。外部模型可以作为 teacher/adviser，但不能长期拥有 ZN 的任务连续性、动作权、真值判断或已经学会的能力。
 
-长期目标不是让 ZN 更熟练地调用 GPT/Claude/Gemini，而是让反复经过现实验证的经验逐步变成 ZN 自己的程序性能力；熟悉、低风险的行为可以逐步形成更快的 perception-action pathway，但预测结果与现实不一致时必须打断自动化，返回 Thought / Investigation 并重新学习。
-
-当前下一真实实现目标：**L1/P0 verified experience record**。
-
-先建立最小 resident-owned learning unit：
+当前下一真实实现目标仍是：**L1/P0 verified experience record**。
 
 ```text
-current Situation / evidence
+current Situation / stable evidence
 + goal / current gap
 + concrete action
 + expected outcome
 + independently observed verification result
-+ success / contradiction
++ verified / contradicted verdict
+→ bounded resident-owned learning unit
 ```
 
-它必须 bounded、restart-safe、privacy-safe，且不能把 model text、action return value 或一次成功直接当成成熟 skill。
-
-此前的 **stronger alternative-action recovery** 不删除，但暂不作为孤立 tactic generator 继续实现。它将作为 learning architecture 的早期 consumer：A 失败、B 被现实独立验证成功后，这个 Situation/action/outcome 关系才成为可复用学习证据。
+此前的 stronger alternative-action recovery 不删除；它将作为 learning architecture 的早期 consumer，而不是孤立 tactic generator。
 
 纯 UI/desktop polish 继续暂停。M8/release 保留为 bounded lane。
 
@@ -44,179 +39,265 @@ current Situation / evidence
 
 - 分支：`dev/zn-agent`
 - 最新真实 code/test SHA：`23ce3b42aad2d730afae4d60eb6af5d5b4bd1399`
-- ZN architecture direction commit：`08f5bfba3ea7e4669170dd9008cefc6b3fe6573c`
-- memory/learning architecture commit：`5977465d9c7560828c14a22a2bc4f5844c7ed8f3`
-- next-phase alignment commit：`cfaa9fc738cd4cfbc65d02de336e256ce0647ee7`
-- implementation-status update：`8650489035f04b775a6bf508ee7a8cf415840429`
-- 本 HANDOFF 为 docs-only `[skip ci]`；下一维护者必须重新读取远程 `dev/zn-agent` 最终 HEAD。
+- architecture direction：`08f5bfba3ea7e4669170dd9008cefc6b3fe6573c`
+- memory/learning architecture：`5977465d9c7560828c14a22a2bc4f5844c7ed8f3`
+- next-phase alignment：`cfaa9fc738cd4cfbc65d02de336e256ce0647ee7`
+- implementation-status：`8650489035f04b775a6bf508ee7a8cf415840429`
+- external learning/source research：`6196e114f590475da8494aee994e737d19896c92`
+- memory/learning research integration：`0f08f5de3d59cd426ba8dfb6744155f18635dcc6`
+- 本 HANDOFF 为 docs-only `[skip ci]`；下一维护者必须重新读取远程最终 HEAD。
 - `main` 未修改。
 
 ## 本阶段恢复并核对的真实现场
 
-已重新读取并核对：
+已重新读取/检查：
 
 - `ZN.md`
 - `AGENTS.md`
 - `docs/ZN-IMPLEMENTATION-STATUS.md`
 - `docs/ZN-SOURCE-EXTRACTION.md`
 - `docs/ZN-SELF-MAINTENANCE.md`
-- `docs/ZN-NEXT-PHASE.md`
+- `docs/ZN-MEMORY-LEARNING.md`
 - `.agent/HANDOFF.md`
-- `dev/zn-agent` HEAD / net diff / open PR / recent commits / CI
-- 当前 memory/nervous-system 实现和测试
-- 当前 Investigation → Action → Body → Verification execution spine
+- `dev/zn-agent` HEAD / diff / open PR / CI
+- `agent/kernel/memory.py`
+- `agent/kernel/nervous_system.py`
+- `agent/kernel/reconsolidation.py`
+- `agent/kernel/capabilities.py`
+- `agent/kernel/capability_loader.py`
+- `agent/kernel/evolution.py`
+- `agent/kernel/models.py`
+- `agent/kernel/life.py`
+- `agent/kernel/resident.py`
+- `agent/kernel/embodied_resident.py`
+- current Investigation → Action → Body → Verification → completion/failure call chain
 
-本阶段开始时远程 `dev/zn-agent` HEAD 为：
-
-```text
-79d1fee68c702f8bbc923944a75b520dffe4439f
-```
-
-开始时 compare 确认 branch 与该 HEAD identical；Open PR 无。
-
-当前执行环境无可用本地 private-repo checkout，因此不宣称本地 test run；真实验证以 GitHub CI 为准。
-
-## 本阶段架构方向更新
-
-### `ZN.md`
-
-Commit：
+本轮研究开始前远程 HEAD：
 
 ```text
-08f5bfba3ea7e4669170dd9008cefc6b3fe6573c
+71766731b2432d570d399dad1d1b3a05892f6df7
 ```
 
-新增硬架构契约 `Resident competence, procedural memory and reflex learning`，明确：
+开始时 compare 确认 branch 与该 HEAD identical。Open PR：无。
 
-- model 可以帮助 ZN 学习，但成熟能力必须属于 ZN；
-- 断开全部 external models 不应让已经成熟的 resident skill 消失；
-- memory 不能仅等价为给 LLM 的 context/retrieval；
-- novel work 可以使用 Thought / Investigation / external cognition；
-- repeated verified experience 应能形成 procedural competence；
-- 一次成功不能直接创建永久 skill；
-- reflex 是 prediction-backed fast path，不是 prompt cache / raw shell replay / absolute mouse-coordinate script；
-- prediction error 必须 inhibit familiar path，并把控制权交回 Thought / Investigation；
-- learning 需要 reinforcement、contradiction weakening、context narrowing、de-proceduralization、relearning；
-- computer use 和 engineering ability 最终应能成为 resident-owned competence；
-- growth 要通过模型依赖下降、熟悉任务步数/延迟下降、restart/provider/model-removal continuity、prediction-error interruption 等实际指标证明。
+当前执行环境无 private-repo checkout，因此不宣称本地 tests。真实 code CI 以 GitHub 为准。
 
-### `docs/ZN-MEMORY-LEARNING.md`
+## 当前真实 learning attachment points
 
-Commit：
+### Verification 已经提供可信 learning label
+
+`EmbodiedResidentRuntime` 当前真实路径：
 
 ```text
-5977465d9c7560828c14a22a2bc4f5844c7ed8f3
+Situation / Investigation
+→ NativeActionIntent
+→ BodyActionResult
+→ expected postcondition when available
+→ later independent Body observation
+→ native_verification_result
+→ verified / contradicted
 ```
 
-新建专门 memory/learning contract，定义：
+这应成为 L1 positive/negative learning evidence 的事实来源。
 
-- working/current-event memory；
-- episodic/lived experience memory；
-- semantic/structured knowledge；
-- associative nervous memory；
-- procedural memory / learned competence；
-- perception-action familiarity / reflex；
-- skill maturity / inhibition / relearning；
-- computer-use competence；
-- engineering competence；
-- external cognition 的 teacher/adviser boundary；
-- real growth benchmarks。
-
-定义实现阶段：
+禁止把以下直接当 success learning label：
 
 ```text
-L0 architecture contract                         DEFINED
-L1 verified experience record                    NEXT
-L2 candidate procedural tendency                 PLANNED
-L3 reality-gated skill activation                PLANNED
-L4 procedural fast path                          PLANNED
-L5 inhibition / de-proceduralization / relearn   PLANNED
-L6 computer-use + engineering learning benchmark PLANNED
+model text
+body return success
+shell exit 0 without task-level postcondition
 ```
 
-L0 只是 architecture defined，不代表 runtime 已实现。
+### Nervous system 已经有 association + reconsolidation foundation
 
-### `docs/ZN-NEXT-PHASE.md`
+当前代码已经有：
 
-Commit：
+- persistent traces；
+- repeated-trace strengthening；
+- associative links/spreading activation；
+- consolidation/schema；
+- fading/pruning；
+- prediction/reality comparison；
+- support/refinement/contradiction；
+- prediction-error-driven reconsolidation。
+
+因此不要再引入一个 LLM-memory product 来拥有这部分。
+
+### Capability boundary 已经可承接未来 procedural competence
+
+`CallableCapability` 是 deterministic zero-token local capability，而且源码注释已明确 future learned procedures can be compiled into capabilities。
+
+`PromotedCapabilityLoader` 已经规定：candidate/self-generated code 不能直接进入 live promoted capabilities；必须先 tests / benchmarks / promotion / rollback。
+
+未来 procedural learning 应尽量复用这个 boundary，而不是再造第二套 executable-skill runtime。
+
+### 当前 `LearningCandidate` 不等于 verified procedural evidence
+
+`life.py` 的 `LearningCandidate` 目前只是 resolved impasse summary：task + resolution source/summary + required capabilities。
+
+External cognition success 也能 stage 此 candidate。因此它可以作为 context，但不能直接当 mature skill 或 L1 verified experience。
+
+## 本阶段外部研究：已拖回仓库
+
+新建：
 
 ```text
-cfaa9fc738cd4cfbc65d02de336e256ce0647ee7
+docs/ZN-LEARNING-SOURCE-RESEARCH.md
+6196e114f590475da8494aee994e737d19896c92
 ```
 
-Phase target 更新为：
+并把结论集成进：
 
 ```text
-durable ZN Self
-+ mature task-execution depth
-+ reality-based verification
-+ resident-owned learning / procedural competence
+docs/ZN-MEMORY-LEARNING.md
+0f08f5de3d59cd426ba8dfb6744155f18635dcc6
 ```
 
-新的实现顺序是：verified experience → candidate procedural tendency → alternative-action recovery as learning consumer → maturity/inhibition → engineering competence → computer-use competence → growth benchmarks。
-
-### `docs/ZN-IMPLEMENTATION-STATUS.md`
-
-Commit：
+### 选中的成熟思想 / 组件方向
 
 ```text
-8650489035f04b775a6bf508ee7a8cf415840429
+Complementary Learning Systems / fast-slow learning
+→ ADOPT DESIGN PRINCIPLE
+→ fast verified episodes + slower consolidation/competence
+
+Experience Replay
+→ ADOPT MECHANISM
+→ bounded representative verified replay; resident-native first
+
+DAgger / imitation learning
+→ PROTOTYPE
+→ model/human as teacher, ZN as student; reality verification is final label
+
+River / ADWIN
+→ PROTOTYPE
+→ lightweight online adaptation + stale-skill/drift detection
+
+Avalanche / Mammoth
+→ RESEARCH HARNESS
+→ continual-learning baselines/forgetting metrics; not production runtime
+
+EWC / DER / SI / GEM / Progress & Compress
+→ LATER ALGORITHM OPTIONS
+→ only when actual local neural skill models and forgetting exist
+
+Voyager
+→ SOURCE QUARRY
+→ borrow reusable-skill/environment-feedback ideas; reject GPT-owned control loop
+
+DreamerV3 / world-model RL
+→ LATER RESEARCH
+→ prediction-backed bounded skill domains; do not replace Situation/Thought/Will
+
+Nested Learning
+→ RESEARCH LENS
+→ multiple update time-scales
+
+BrowserGym
+→ FUTURE DEV BENCHMARK
+→ reproducible browser learning/training/evaluation
+
+OSWorld V2
+→ FUTURE DEV BENCHMARK
+→ long-horizon desktop/computer-use evaluation
 ```
 
-明确区分“已验证基础”和“未来目标”，没有把 procedural memory 写成 complete。
+No external framework has been added to the ZN runtime.
 
-## 当前真实 memory / learning 基础
-
-当前代码已经有的真实 foundation：
-
-### `StructuredMemory`
-
-- durable structured facts；
-- normalized key/alias recall；
-- 不是 transcript store。
-
-### `PersistentNervousSystem`
-
-当前代码/测试已经证明：
-
-- persistent `NeuralTrace`；
-- repeated experience 强化同一个 trace，而不是不断新增重复 memory；
-- co-active trace association；
-- cue-driven activation + associative spreading；
-- strength / salience / recency / repetition 对 activation 有作用；
-- persistent affective state；
-- local consolidation；
-- recurring structure 形成 schema；
-- weak isolated detail 可以 fade/prune；
-- nervous state / traces 跨 restart；
-- lived trace/schema 可进入 Situation/Thought；
-- private lived/schema detail 不会因为调用 external cognition 就自动 dump 给模型；
-- current reality 可以 gate transfer/reconsolidation。
-
-代表测试：
+## Proposed learning ownership stack
 
 ```text
-tests/agent/kernel/test_nervous_system.py
-tests/agent/kernel/test_neural_cognition_boundary.py
+Body/Senses current reality
+→ Situation / Investigation
+→ action + expected outcome
+→ independent verification
+→ VerifiedExperience                    fast
+→ bounded replay
+→ PersistentNervousSystem / schema
+→ CandidateProcedure                    slower
+→ reality-gated repeated practice
+→ maturity / reliability / drift
+→ resident-owned procedural capability
+→ familiar fast path
+→ prediction + reality check
+→ reinforce OR inhibit/relearn
 ```
 
-## 当前没有实现、不得误报的 learning 能力
+External cognition remains outside as teacher/adviser:
 
-以下仍然 **PARTIAL / MISSING**：
+```text
+novel/uncertain gap
+→ model/human suggestion
+→ ZN evaluates/acts
+→ reality verification
+→ only verified experience changes competence
+```
 
-- first-class causal episodic record：Situation → action → expected outcome → observed verification；
-- repeated verified experience → reusable candidate procedure 的 learning bridge；
-- explicit skill maturity/confidence/contradiction/inhibition state；
-- resident-owned mature skills that execute locally without model interpretation；
+## L1 implementation decision after research
+
+Do **not** install Avalanche/Mammoth/PyTorch/River/etc. merely to start learning.
+
+First implementation remains resident-native `VerifiedExperience` with bounded storage and deterministic retention.
+
+Initial record should include, privacy-safe where possible:
+
+- experience ID；
+- event/provenance ID；
+- source/teacher involvement (`native`, `external-cognition-assisted`, `human-assisted` etc.)；
+- Situation / Investigation evidence fingerprint；
+- domains / task-gap class；
+- action signature + kind；
+- expected-outcome summary；
+- verification summary；
+- verdict (`verified` / `contradicted`; uncertainty later when supported)；
+- timestamps/provenance；
+- safe grouping features。
+
+Do not store unnecessary model transcript, credentials, private content, full command/content payloads.
+
+`native_action_failure_records` remains execution anti-replay state. L1 may distill evidence from it but must not silently repurpose it as long-term memory.
+
+### First bounded replay/retention policy
+
+Start inspectable:
+
+```text
+per context/skill family:
+  keep recent contradictions
+  keep representative verified successes
+  keep limited rare/novel cases
+
+global hard bound
++ deterministic pruning
++ provenance preserved
+```
+
+Later compare on the same real stream:
+
+1. resident-native transparent reliability aggregation；
+2. River/ADWIN online adaptation/drift；
+3. DAgger-style local student in a bounded benchmark environment；
+4. only if measurable neural forgetting exists: replay/EWC/DER/etc. research baselines。
+
+## 当前没有实现、不得误报
+
+仍 PARTIAL / MISSING：
+
+- first-class causal `VerifiedExperience`；
+- replay store/retention implementation；
+- repeated verified experience → `CandidateProcedure`；
+- maturity/reliability/inhibition state；
+- resident-owned mature skill activation；
 - procedural fast path；
-- prediction-error-driven de-proceduralization / relearning；
-- learned computer-use competence；
-- learned engineering competence；
-- benchmarks proving familiar tasks become less model-dependent while verification quality remains intact。
+- drift-triggered de-proceduralization/relearning；
+- DAgger student training loop；
+- River/ADWIN prototype；
+- computer-use learned skill；
+- engineering learned skill；
+- retention/forgetting/model-removal benchmarks。
 
-不要把现在的 NeuralTrace/schema 直接称为完整 procedural memory。
+Do not call current `NeuralTrace`, schema, or old `LearningCandidate` complete procedural memory.
 
-## 现有执行 spine 的真实 CI 基线
+## 真实 CI 基线
 
 Final code/test SHA：
 
@@ -232,108 +313,59 @@ Electron / TypeScript  success
 run                     32635668910
 ```
 
-GitHub job 结论此前已核对：Kernel tests、isolated model-free boot、compile、Electron typecheck/bundle/tests 全部 success；push workflow 的 container job 按设计 skipped。
+本轮新增只有 `[skip ci]` research/docs，没有 runtime/test code 变更，因此没有新增 code CI，也不宣称有。
 
-本阶段没有修改 runtime/test code，只有 `[skip ci]` 文档变更，因此不生成/宣称新的 code CI。
+## 下一真实目标
 
-## 已真实 CI 验证的 execution foundations
-
-### Git sense + first post-action verification
+Fresh-restore 后实现 L1：
 
 ```text
-code/test SHA            47ccd5601462641c50c16ec76f2a05085a33f9f3
-ZN Kernel / Python       success
-Electron / TypeScript   success
-run                      32612456040
+verified/contradicted native action outcome
+→ privacy-safe VerifiedExperience
+→ durable bounded store
+→ restart-safe retrieval
+→ provenance / evidence fingerprint
+→ deterministic retention
 ```
 
-### Explicit command postconditions
+必须测试：
 
-```text
-code/test SHA            f280c8f68af69dfc2ac10b94d8d83726c10aa14e
-ZN Kernel / Python       success
-Electron / TypeScript   success
-run                      32621596489
-```
+- independent verification success 才能产生 positive learning evidence；
+- model text alone 不能产生 positive experience；
+- body/shell success alone 不能冒充 verified task outcome；
+- contradiction 也进入 learning evidence；
+- restart survives；
+- bounded retention；
+- secret/private payload 不被宽泛复制；
+- no planner/task manager；
+- no direct candidate-code promotion。
 
-### Compact task execution context
+L1 有真实数据后，再进入 L2 transparent resident-native aggregation，并与 River/ADWIN prototype 做测量比较。
 
-```text
-code/test SHA            aaa6fa55c5c4e1968006f618a37260cb4f41675a
-ZN Kernel / Python       success
-Electron / TypeScript   success
-run                      32621878503
-```
-
-### Evidence-bound failed-action history
-
-```text
-code/test SHA            23ce3b42aad2d730afae4d60eb6af5d5b4bd1399
-ZN Kernel / Python       success
-Electron / TypeScript   success
-run                      32635668910
-```
-
-Verified includes bounded failure records, A → B → A suppression under unchanged Investigation facts, changed-facts retry eligibility, restart continuity, and prevention of false completion after accepted cognition still proposes a currently blocked movement.
-
-## 当前下一真实实现目标：L1/P0 verified experience record
-
-开始实现前仍必须 fresh-restore repository state and active call chain。
-
-第一 slice 要把已经存在的 execution evidence 变成一个明确的 learning unit，而不是引入 planner/skills database：
-
-```text
-Situation / stable evidence
-→ goal / current gap
-→ concrete NativeActionIntent identity
-→ expected outcome
-→ Body action result
-→ independent verification observation
-→ verified / contradicted
-→ bounded resident-owned experience record
-```
-
-必须证明：
-
-- success learning evidence 来自 independent reality verification；
-- model text alone 不能生成“成功经验”；
-- shell exit 0 alone 不等于成功经验；
-- record 跨 resident restart；
-- record bounded；
-- 不把 full command/content/private secret 随意复制到 broad long-term memory；
-- contradiction 也被保留，不只存 success；
-- 现有 Situation/Investigation evidence identity 可以与经验关联；
-- 当前 architecture 不新增 planner/task manager。
-
-然后才进入 L2 candidate procedural tendency；再让 alternative-action recovery 成为它的一个真实消费者。
-
-## 风险与边界
+## 风险 / 安全 / release boundary
 
 - 不做 one-shot skill creation；
-- 不把模型生成 procedure 直接当 resident competence；
-- 不把 prompt cache / embedding retrieval 伪装成 procedural learning；
-- 不把 absolute mouse coordinate replay 当 reflex；
-- 熟练化仍必须保持 expected outcome + observation + verification；
-- prediction error 必须能打断 automatic path；
-- high-risk identity/memory/credential/updater/rollback/signing/self-maintenance permission 修改不因“熟练”而绕过人工审批；
-- 不泄露 secrets 到 memory/skill records；
-- 不修改 `main`。
+- 不把 teacher/model 当 truth owner；
+- 不把 embedding retrieval 伪装成 procedural competence；
+- 不把 absolute mouse-coordinate replay 当 reflex；
+- high-risk identity/memory/credentials/updater/rollback/signing/self-maintenance permissions 不因熟练化而绕过人工批准；
+- 不引入重型 ML runtime dependency，除非实际 benchmark 证明价值并验证多平台 packaging；
+- `main` untouched；
+- M8/release debt 保留为 bounded lane。
 
 ## 文档状态
 
-本阶段架构方向改变，因此已按规则先更新 `ZN.md`。
+本阶段新增/更新：
 
-已更新：
+- `docs/ZN-LEARNING-SOURCE-RESEARCH.md`（new）；
+- `docs/ZN-MEMORY-LEARNING.md`；
+- `.agent/HANDOFF.md`。
 
-- `ZN.md`
-- `docs/ZN-MEMORY-LEARNING.md`（new）
-- `docs/ZN-NEXT-PHASE.md`
-- `docs/ZN-IMPLEMENTATION-STATUS.md`
-- `.agent/HANDOFF.md`
+本阶段未改变：
 
-未修改：
-
-- `docs/ZN-SOURCE-EXTRACTION.md`：Hermes extraction state 未变化；
-- `docs/ZN-SELF-MAINTENANCE.md`：本阶段不是 self-maintenance architecture change；
-- `AGENTS.md`：维护规则未变化；
-- `main`：untouched。
+- `ZN.md` architecture direction（上一阶段已经先定义）；
+- `docs/ZN-IMPLEMENTATION-STATUS.md`：没有 runtime implementation 状态变化；
+- `docs/ZN-SOURCE-EXTRACTION.md`：Hermes extraction 状态未变化；
+- `docs/ZN-SELF-MAINTENANCE.md`：self-maintenance 架构未变化；
+- `AGENTS.md`；
+- `main`。
