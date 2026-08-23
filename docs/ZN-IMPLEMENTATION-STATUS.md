@@ -664,3 +664,68 @@ M10 repository migration / formal main promotion           LATER; main untouched
 The architecture driver remains:
 
 > **The same persistent ZN Self must be able to finish hard work, prove from current reality that it is finished, and gradually internalize repeatedly verified competence so models become advisers for novelty rather than permanent owners of ability.**
+
+## 7. Latest core checkpoint — resident-formed verifier identity (2026-08-23)
+
+This checkpoint supersedes earlier point-in-time statements in this file that say automatic targeted-test identity formation is still missing. Those older paragraphs are retained as historical stage descriptions; the current code/CI truth is below.
+
+Final code/test SHA: `20e7431e74f2c87f631564d7d8f1119057474dfc`.
+
+Final CI run: `32663996928`.
+
+```text
+ZN Kernel / Python          success  job 97254463582
+Electron / TypeScript      success  job 97254463704
+Container / Runtime Smoke  skipped on normal push
+Publish commit statuses    success
+```
+
+The isolated `runtime/python` distribution installed and booted without a model, `agent/kernel` compiled, and the complete kernel unittest discovery passed. The active runtime now constructs `RepositoryVerifyingResidentRuntime`, which extends the existing full procedural/world-aware resident chain rather than replacing it with another agent loop.
+
+The first resident-owned identity-formation contract is deliberately one repository-specific proof:
+
+```text
+tracked exact replacement target = agent/kernel/<module>.py
++ current same-root/same-HEAD clean tracked mirror
+    tests/agent/kernel/test_<module>.py
++ no physical/lexical path or symlink ambiguity
++ module-level AST direct import of agent.kernel.<module>
++ >=1 top-level discoverable unittest.TestCase.test_* method
++ current same-root/same-HEAD clean tracked .github/workflows/zn-ci.yml
++ exact kernel unittest suite present in an executable one-line run: field
+→ resident forms python_unittest identity itself
+→ existing bounded targeted-test verifier owns command rendering/execution
+→ target/test/CI reality is re-proved before execution and after movement
+→ existing durable in-flight marker still forbids blind restart replay
+```
+
+No task/model/procedural-memory test path or shell command is needed for this automatic slice. If the initial mirror/test/CI evidence is missing, dirty, stale, ambiguous or semantically insufficient, ZN does not guess another verifier and does not acquire command authority; the already-verified scoped repo-delta proof remains the strongest applicable verifier. Explicit caller-supplied typed `targeted_test` remains supported through the previous stricter contract and is not rewritten by automatic formation.
+
+Authority is intentionally narrower than file-name matching. Imports hidden inside functions, classes, branches, `try` blocks or dead code do not prove the relation. Comments/string mentions do not count. A directly importing file with no discoverable unittest case cannot grant execution authority, preventing a `0 tests / exit 0` result from masquerading as proof. CI prose that merely contains a command-looking string also does not grant authority; the command must be the current repository's actual executable `run:` step.
+
+Resident-formed identity becomes durable once persisted before movement. Restart cannot silently downgrade the same mutation back to repo-delta-only just because the original event did not contain a `targeted_test` field. Test or CI evidence that changes after movement blocks test execution and returns to Investigation. Test execution remains potentially side-effecting, so the existing durable `started` marker continues to mean fail-closed no-replay after interruption rather than presumed idempotence.
+
+A real intermediate regression is retained: SHA `f13707c70fe0f1e5f8792985d457293a476e2a61`, run `32663836403`, had Electron success and Python failure with 3 failures + 1 error. The resident-formed execution positive test, old explicit targeted-test suite, scoped repo-delta suite, isolated runtime boot and compile had already passed. The failures came from new recovery/authority fixtures using inline YAML `- run:` while production semantics intentionally recognize the current real workflow's separate `run:` field. The repair aligned fixtures with current repository reality and did **not** widen runtime command authority. Final run `32663996928` is green.
+
+Current transition:
+
+```text
+tracked exact replacement baseline → scoped delta          VERIFIED FIRST ENGINEERING MUTATION SLICE
+typed targeted test/current-world proof                    VERIFIED FIRST PYTHON UNITTEST SLICE
+resident-owned targeted-test identity formation            VERIFIED FIRST ZN KERNEL MIRROR SLICE
+broader repo-owned verifier mapping                        NEXT
+broader resident-owned engineering competence              PARTIAL
+```
+
+Current limitations remain explicit:
+
+- this is only the top-level ZN kernel mirror convention, not general repository test discovery;
+- direct import + discoverable `TestCase` proves a bounded current relation, not complete semantic coverage;
+- no resident-owned pytest/build/typecheck/lint verifier identity contract yet;
+- no broader append/untracked/staged/conflicted/rename/binary mutation proof;
+- no generic `mutation → diff → targeted test → current reality` engine;
+- arbitrary command equivalence and arbitrary side-effect tactic synthesis remain prohibited;
+- Git commit/push/reset/checkout/branch mutation, GitHub PR/CI sensing, browser/computer-use competence and SM1+ self-maintenance remain incomplete;
+- M8 installed AppImage N → N+1 continuity remains unverified and separate from the core lane.
+
+Next core target: keep every current gate unchanged and investigate the next **repository-owned structured verifier mapping** from explicit current configuration/manifest/CI ownership. A future expansion must prove why a verifier belongs to the current mutation before it can execute. If current repository evidence cannot prove a unique safe relation, do not force automatic selection; choose another engineering verifier consumer that current reality can rigorously establish.
