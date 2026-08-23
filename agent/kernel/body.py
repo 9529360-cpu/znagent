@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import platform
@@ -141,6 +142,8 @@ class NativeBody:
             return self._process_state(action, started)
         if kind in {"git_state", "git"}:
             return self._git_state(action, started)
+        if kind == "git_diff":
+            return self._git_diff(action, started)
         if kind in {"command", "terminal", "shell"}:
             return self._command(action, started)
         if kind in {"terminal_poll", "command_poll"}:
@@ -391,6 +394,153 @@ class NativeBody:
                 # need compact status evidence, but make structured paths the
                 # primary resident-owned repository contract.
                 "changes": changes,
+            },
+        )
+
+    def _git_diff(self, action: BodyAction, started: str) -> BodyActionResult:
+        """Observe bounded repository diffs without routing through a shell command."""
+
+        workspace = self._path_arg(action.args, default=os.getcwd())
+        limit = max(1, min(1000, int(action.args.get("limit", 200))))
+        timeout = max(1.0, float(action.args.get("timeout", 8.0)))
+        max_output_chars = max(
+            512,
+            min(200_000, int(action.args.get("max_output_chars", 50_000))),
+        )
+
+        def run(*parts: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                ["git", "-C", str(workspace), *parts],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+
+        def nul_paths(proc: subprocess.CompletedProcess[str]) -> list[str]:
+            if proc.returncode != 0:
+                return []
+            return [item for item in proc.stdout.split("\0") if item][:limit]
+
+        root_proc = run("rev-parse", "--show-toplevel")
+        if root_proc.returncode != 0:
+            return BodyActionResult(
+                action_id=action.action_id,
+                kind=action.kind,
+                success=False,
+                error=(root_proc.stderr or root_proc.stdout or "not a git workspace").strip(),
+                data={"workspace": str(workspace), "exit_code": root_proc.returncode},
+                event_id=action.event_id,
+                started_at=started,
+                completed_at=utc_now(),
+            )
+
+        worktree_patch_proc = run("diff", "--no-ext-diff", "--no-color", "--", ".")
+        staged_patch_proc = run(
+            "diff", "--cached", "--no-ext-diff", "--no-color", "--", "."
+        )
+        worktree_paths_proc = run(
+            "diff", "--name-only", "-z", "--diff-filter=ACDMRTUXB", "--", "."
+        )
+        staged_paths_proc = run(
+            "diff", "--cached", "--name-only", "-z", "--diff-filter=ACDMRTUXB", "--", "."
+        )
+        untracked_proc = run("ls-files", "--others", "--exclude-standard", "-z")
+        for proc in (
+            worktree_patch_proc,
+            staged_patch_proc,
+            worktree_paths_proc,
+            staged_paths_proc,
+            untracked_proc,
+        ):
+            if proc.returncode != 0:
+                return BodyActionResult(
+                    action_id=action.action_id,
+                    kind=action.kind,
+                    success=False,
+                    error=(proc.stderr or proc.stdout or "git diff observation failed").strip(),
+                    data={"workspace": str(workspace), "exit_code": proc.returncode},
+                    event_id=action.event_id,
+                    started_at=started,
+                    completed_at=utc_now(),
+                )
+
+        worktree_raw = worktree_patch_proc.stdout
+        staged_raw = staged_patch_proc.stdout
+        worktree_paths = nul_paths(worktree_paths_proc)
+        staged_paths = nul_paths(staged_paths_proc)
+        untracked_paths = nul_paths(untracked_proc)
+        changed_paths = list(
+            dict.fromkeys([*worktree_paths, *staged_paths, *untracked_paths])
+        )[:limit]
+
+        scope_limit = max(256, max_output_chars // 2)
+        worktree_patch = worktree_raw[:scope_limit]
+        staged_patch = staged_raw[:scope_limit]
+        worktree_truncated = len(worktree_raw) > len(worktree_patch)
+        staged_truncated = len(staged_raw) > len(staged_patch)
+
+        parts: list[str] = []
+        if worktree_patch.strip():
+            parts.append(f"## Working tree\n{worktree_patch.rstrip()}")
+        if staged_patch.strip():
+            parts.append(f"## Staged\n{staged_patch.rstrip()}")
+        if untracked_paths:
+            parts.append("## Untracked paths\n" + "\n".join(untracked_paths))
+        combined = "\n\n".join(parts)
+        output = combined[:max_output_chars]
+        output_truncated = len(combined) > len(output)
+
+        head_proc = run("rev-parse", "--verify", "HEAD")
+        head = head_proc.stdout.strip() if head_proc.returncode == 0 else None
+        state_fingerprint = hashlib.sha256(
+            json.dumps(
+                {
+                    "worktree": worktree_raw,
+                    "staged": staged_raw,
+                    "untracked": untracked_paths,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+
+        return self._ok(
+            action,
+            started,
+            output=output,
+            data={
+                "root": root_proc.stdout.strip(),
+                "head": head,
+                "head_short": head[:12] if head else None,
+                "dirty": bool(changed_paths),
+                "changed_files": len(changed_paths),
+                "changed_paths": changed_paths,
+                "worktree": {
+                    "paths": worktree_paths,
+                    "files": len(worktree_paths),
+                    "patch": worktree_patch,
+                    "patch_chars": len(worktree_raw),
+                    "patch_sha256": hashlib.sha256(
+                        worktree_raw.encode("utf-8")
+                    ).hexdigest(),
+                    "truncated": worktree_truncated,
+                },
+                "staged": {
+                    "paths": staged_paths,
+                    "files": len(staged_paths),
+                    "patch": staged_patch,
+                    "patch_chars": len(staged_raw),
+                    "patch_sha256": hashlib.sha256(
+                        staged_raw.encode("utf-8")
+                    ).hexdigest(),
+                    "truncated": staged_truncated,
+                },
+                "untracked_paths": untracked_paths,
+                "state_sha256": state_fingerprint,
+                "truncated": worktree_truncated or staged_truncated or output_truncated,
+                "max_output_chars": max_output_chars,
             },
         )
 
