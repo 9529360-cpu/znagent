@@ -19,6 +19,7 @@ from .repo_test_semantics import (
     canonical_kernel_unittest_identity,
     ci_source_runs_kernel_unittest_suite,
     test_source_directly_imports_target,
+    test_source_has_discoverable_unittest_case,
 )
 
 
@@ -67,9 +68,9 @@ class RepositoryVerifyingResidentRuntime(ProcedurallyInfluencedResidentRuntime):
         if identity is None:
             return None, None
 
-        root = self._resolved_repo_file(scope, identity["test_relative_path"])
+        test_file = self._resolved_repo_file(scope, identity["test_relative_path"])
         ci_file = self._resolved_repo_file(scope, identity["ci_relative_path"])
-        if root is None or ci_file is None:
+        if test_file is None or ci_file is None:
             return None, None
 
         test_text, _, test_problems = self._observe_resident_identity_file(
@@ -90,6 +91,8 @@ class RepositoryVerifyingResidentRuntime(ProcedurallyInfluencedResidentRuntime):
             test_text,
             identity["target_module"],
         ):
+            return None, None
+        if not test_source_has_discoverable_unittest_case(test_text):
             return None, None
         if not ci_source_runs_kernel_unittest_suite(ci_text):
             return None, None
@@ -237,13 +240,15 @@ class RepositoryVerifyingResidentRuntime(ProcedurallyInfluencedResidentRuntime):
         problems.extend(ci_problems)
 
         target_module = str(spec.get("target_module") or "")
-        if not test_problems and not test_source_directly_imports_target(
-            test_text,
-            target_module,
-        ):
-            problems.append(
-                "resident-formed targeted test no longer directly imports the mutation target"
-            )
+        if not test_problems:
+            if not test_source_directly_imports_target(test_text, target_module):
+                problems.append(
+                    "resident-formed targeted test no longer directly imports the mutation target"
+                )
+            elif not test_source_has_discoverable_unittest_case(test_text):
+                problems.append(
+                    "resident-formed targeted test no longer exposes a discoverable unittest case"
+                )
         if not ci_problems and not ci_source_runs_kernel_unittest_suite(ci_text):
             problems.append(
                 "resident-formed kernel CI contract no longer runs the bounded unittest suite"
