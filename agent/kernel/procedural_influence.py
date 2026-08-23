@@ -94,6 +94,24 @@ def _eligible_action_shape(
     return False
 
 
+def _git_event_domain_contract(event: AgentEvent) -> tuple[str, ...]:
+    """Return the same typed domain contract used when Git L1 evidence is stored.
+
+    SelfModel readiness intentionally expands hierarchical parent domains for
+    introspection. VerifiedExperience, however, records the event's explicit
+    required-capability contract. Git L3 must compare like with like instead of
+    treating a harmless parent-domain expansion (for example ``it`` beside
+    ``it/git``) as a causal-context mismatch.
+    """
+
+    raw = event.payload.get("required_capabilities") or ("general",)
+    if isinstance(raw, str):
+        value = raw.strip()
+        return (value,) if value else ("general",)
+    values = tuple(str(item) for item in raw if str(item).strip())
+    return values or ("general",)
+
+
 def strongest_supported_action_influence(
     event: AgentEvent,
     intent: NativeActionIntent,
@@ -119,6 +137,15 @@ def strongest_supported_action_influence(
     if expected is None:
         return None
 
+    applicability_domains = tuple(current_domains)
+    if (
+        intent.kind == "command"
+        and intent.source == "resident_choice"
+        and str(expected.get("kind") or "") == "git_path_staged"
+        and bool(expected.get("current_goal_proven"))
+    ):
+        applicability_domains = _git_event_domain_contract(event)
+
     qualifying: list[ProceduralActionInfluence] = []
     for candidate in candidates:
         if candidate.action_kind != intent.kind:
@@ -133,7 +160,7 @@ def strongest_supported_action_influence(
 
         evaluation = evaluate_candidate_applicability(
             candidate,
-            current_domains=current_domains,
+            current_domains=applicability_domains,
             action_kind=intent.kind,
             action_args=intent.args,
             expected_outcome=expected,
