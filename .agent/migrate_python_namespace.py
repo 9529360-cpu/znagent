@@ -28,6 +28,8 @@ def main() -> None:
         ("tests/agent/kernel", "tests/zn_agent/core"),
         ("agent/kernel", "runtime/python/zn_agent/core"),
         ("agent.kernel", "zn_agent.core"),
+        ("agent/__init__.py", "runtime/python/zn_agent/__init__.py"),
+        ("uv run python -m unittest discover", "python -m unittest discover"),
         (
             'REPO_ROOT / "agent" / "kernel"',
             'REPO_ROOT / "runtime" / "python" / "zn_agent" / "core"',
@@ -39,6 +41,20 @@ def main() -> None:
     )
     for path in sorted(NEW_TESTS.rglob("*.py")):
         replace_text(path, replacements)
+
+    # The broad dotted-namespace replacement above must not rewrite assertions
+    # that deliberately prove the old runtime command is absent.
+    autostart_test = NEW_TESTS / "test_resident_autostart.py"
+    text = autostart_test.read_text(encoding="utf-8")
+    text = text.replace(
+        'self.assertNotIn("zn_agent.core.resident_server", unit)',
+        'self.assertNotIn("agent.kernel.resident_server", unit)',
+    )
+    text = text.replace(
+        'self.assertNotIn("zn_agent.core.resident_server", arguments or "")',
+        'self.assertNotIn("agent.kernel.resident_server", arguments or "")',
+    )
+    autostart_test.write_text(text, encoding="utf-8")
 
     semantics = ROOT / "runtime" / "python" / "zn_agent" / "core" / "repo_test_semantics.py"
     text = semantics.read_text(encoding="utf-8")
