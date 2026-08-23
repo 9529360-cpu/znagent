@@ -85,20 +85,22 @@ jobs:
     name: Electron / TypeScript
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: write
     env:
       NODE_OPTIONS: --max-old-space-size=4096
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: '22.22.0'
           cache: npm
-      - name: Generate exact lock refresh for Electron patch
-        run: |
-          npm install --package-lock-only --ignore-scripts --save-dev electron@40.10.6 --workspace apps/desktop --audit=false
-          git diff -- package-lock.json apps/desktop/package.json
+      - name: Generate exact lock refresh for Electron security patch
+        run: npm install --package-lock-only --ignore-scripts --save-exact --save-dev electron@41.10.5 --workspace apps/desktop --audit=false
       - name: Install refreshed workspace dependencies
         run: npm ci --ignore-scripts
       - name: Reject high-severity npm advisories
@@ -111,6 +113,19 @@ jobs:
         run: npm run test --workspace apps/desktop -- electron/zn-desktop-ownership.test.ts electron/zn-packaged-runtime.test.ts electron/zn-release-channel.test.ts electron/zn-resident-runtime-state.test.ts electron/zn-resident-application-handoff.test.ts electron/zn-resident-update-readiness.test.ts electron/zn-release-application-gate.test.ts
       - name: Test release-channel, runtime staging and packaged-artifact verifiers
         run: node --test apps/desktop/scripts/prepare-zn-public-channel.test.mjs apps/desktop/scripts/stage-zn-runtime.test.mjs apps/desktop/scripts/verify-zn-packaged-runtime.test.mjs
+      - name: Commit verified lock refresh to development branch
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev/zn-agent' }}
+        run: |
+          git add package-lock.json
+          if git diff --cached --quiet; then
+            echo "package-lock.json already matches Electron 41.10.5"
+            exit 0
+          fi
+          test "$(git diff --cached --name-only)" = "package-lock.json"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "deps: refresh Electron security lock [skip ci]"
+          git push origin HEAD:dev/zn-agent
 
   container:
     name: Container / Runtime Smoke
