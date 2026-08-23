@@ -34,7 +34,7 @@ class NativeActionTests(unittest.TestCase):
                 return result
         raise AssertionError("resident did not reach a terminal result")
 
-    def test_native_evidence_becomes_body_intent_then_outcome(self):
+    def test_native_evidence_becomes_body_intent_then_verified_outcome(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             target = root / "notes" / "self.txt"
@@ -68,12 +68,30 @@ class NativeActionTests(unittest.TestCase):
             self.assertEqual(pulse.thought.action_kind, "body_action")
             self.assertEqual(pulse.thought.action_target, event.event_id)
 
+            # A successful write is not a terminal task result. It persists an
+            # explicit postcondition and waits for a later resident observation.
+            self.assertIsNone(resident.live_once())
+            verification_state = resident.store.get_working_state()
+            self.assertEqual(verification_state.stage, "native_verification")
+            self.assertEqual(
+                verification_state.data["native_verification"]["kind"],
+                "text_equals",
+            )
+            self.assertEqual(
+                target.read_text(encoding="utf-8"),
+                "ZN moved its own body",
+            )
+
+            verification_pulse = resident.pulse()
+            self.assertEqual(verification_pulse.thought.action_kind, "verify_action")
+            self.assertEqual(verification_pulse.thought.action_target, event.event_id)
+
             result = resident.live_once()
             self.assertIsNotNone(result)
             self.assertTrue(result.success)
             self.assertEqual(result.execution_path, ExecutionPath.BODY)
             self.assertEqual(result.model_invocations, 0)
-            self.assertEqual(target.read_text(encoding="utf-8"), "ZN moved its own body")
+            self.assertIn("independently verifying", result.reason)
             self.assertEqual(resident.capabilities.names(), ())
 
             movements = [
@@ -83,7 +101,9 @@ class NativeActionTests(unittest.TestCase):
             ]
             self.assertIn("inspect_path", movements)
             self.assertIn("write_text", movements)
+            self.assertIn("read_text", movements)
             self.assertLess(movements.index("inspect_path"), movements.index("write_text"))
+            self.assertLess(movements.index("write_text"), movements.index("read_text"))
             resident.store.close()
 
     def test_already_satisfied_text_state_completes_from_evidence_without_write(self):
@@ -202,6 +222,8 @@ class NativeActionTests(unittest.TestCase):
             self.assertEqual(situation.native_action_intent_id, intent_id)
             self.assertEqual(pulse.thought.action_kind, "body_action")
 
+            self.assertIsNone(second.live_once())
+            self.assertEqual(second.store.get_working_state().stage, "native_verification")
             result = second.live_once()
             self.assertIsNotNone(result)
             self.assertEqual(result.event.event_id, event.event_id)
@@ -210,6 +232,99 @@ class NativeActionTests(unittest.TestCase):
             self.assertEqual(target.read_text(encoding="utf-8"), "resume body action")
             self.assertEqual(result.model_invocations, 0)
             second.store.close()
+
+    def test_postcondition_verification_survives_restart_without_repeating_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "kernel.db"
+            target = root / "resume" / "verify.txt"
+
+            first = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=db,
+            )
+            event = first.enqueue(
+                f"ensure {target} contains the requested content",
+                payload={
+                    "path": str(target),
+                    "content": "verify after restart",
+                    "model_policy": "never",
+                },
+            )
+            self._advance_until_stage(first, "native_action")
+            self.assertIsNone(first.live_once())
+            before = first.store.get_working_state()
+            self.assertEqual(before.stage, "native_verification")
+            self.assertEqual(target.read_text(encoding="utf-8"), "verify after restart")
+            first.store.close()
+
+            second = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=db,
+            )
+            restored = second.store.get_working_state()
+            self.assertEqual(restored.current_event_id, event.event_id)
+            self.assertEqual(restored.stage, "native_verification")
+            pulse = second.pulse()
+            self.assertEqual(pulse.thought.action_kind, "verify_action")
+            self.assertEqual(pulse.thought.action_target, event.event_id)
+
+            result = second.live_once()
+            self.assertIsNotNone(result)
+            self.assertTrue(result.success)
+            self.assertEqual(result.event.event_id, event.event_id)
+            self.assertIn("independently verifying", result.reason)
+
+            movements = [
+                item.kind
+                for item in second.body.recent_actions(30)
+                if item.event_id == event.event_id
+            ]
+            self.assertEqual(movements.count("write_text"), 1)
+            self.assertGreaterEqual(movements.count("read_text"), 1)
+            second.store.close()
+
+    def test_contradicted_postcondition_returns_to_investigation_without_blind_rewrite(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "contradicted.txt"
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=root / "kernel.db",
+            )
+            event = resident.enqueue(
+                f"ensure {target} contains the requested content",
+                payload={
+                    "path": str(target),
+                    "content": "intended state",
+                    "model_policy": "never",
+                },
+            )
+            self._advance_until_stage(resident, "native_action")
+            self.assertIsNone(resident.live_once())
+            self.assertEqual(resident.store.get_working_state().stage, "native_verification")
+
+            # Reality changes between movement and verification. The successful
+            # write call therefore cannot be treated as proof of task completion.
+            target.write_text("contradicted by current reality", encoding="utf-8")
+            self.assertIsNone(resident.live_once())
+            state = resident.store.get_working_state()
+            self.assertEqual(state.stage, "native_investigation")
+            self.assertIn("postcondition verification failed", state.data["local_failure"])
+            self.assertTrue(state.data.get("native_action_failure_signature"))
+            self.assertFalse(state.data["native_verification_result"]["verified"])
+
+            terminal = self._run_to_terminal(resident)
+            self.assertFalse(terminal.success)
+            self.assertEqual(target.read_text(encoding="utf-8"), "contradicted by current reality")
+            movements = [
+                item.kind
+                for item in resident.body.recent_actions(40)
+                if item.event_id == event.event_id
+            ]
+            self.assertEqual(movements.count("write_text"), 1)
+            self.assertGreaterEqual(movements.count("read_text"), 1)
+            resident.store.close()
 
     def test_failed_body_action_becomes_next_thought_evidence_not_a_retry_loop(self):
         with tempfile.TemporaryDirectory() as tmp:
