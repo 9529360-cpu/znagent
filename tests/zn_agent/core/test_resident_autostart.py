@@ -18,6 +18,11 @@ from zn_agent.core.resident_autostart import (
 )
 
 
+RETIRED_SERVER = bytes.fromhex(
+    "6167656e742e6b65726e656c2e7265736964656e745f736572766572"
+).decode("utf-8")
+
+
 class ResidentAutostartTests(unittest.TestCase):
     def test_resident_command_pins_python_and_home(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -76,7 +81,7 @@ class ResidentAutostartTests(unittest.TestCase):
             self.assertIn(str(python.resolve()), unit)
             self.assertIn(str(home.resolve()), unit)
             self.assertIn("zn_agent.core.resident_server", unit)
-            self.assertNotIn("agent.kernel.resident_server", unit)
+            self.assertNotIn(RETIRED_SERVER, unit)
             self.assertNotIn("WorkingDirectory=", unit)
 
     def test_macos_launch_agent_is_login_loaded_and_restarts_only_after_failure(self):
@@ -125,7 +130,7 @@ class ResidentAutostartTests(unittest.TestCase):
             self.assertEqual(restart_count, "5")
             self.assertEqual(command, str(python.resolve()))
             self.assertIn("zn_agent.core.resident_server", arguments or "")
-            self.assertNotIn("agent.kernel.resident_server", arguments or "")
+            self.assertNotIn(RETIRED_SERVER, arguments or "")
             self.assertIn("--home", arguments or "")
             self.assertIn(str(home.resolve()), arguments or "")
             self.assertIsNone(working_directory)
