@@ -49,7 +49,8 @@ class RepoAutoTargetedTestRecoveryTests(unittest.TestCase):
             "jobs:\n"
             "  kernel:\n"
             "    steps:\n"
-            "      - run: uv run python -m unittest discover "
+            "      - name: Run ZN kernel tests\n"
+            "        run: uv run python -m unittest discover "
             "-s tests/agent/kernel -p 'test_*.py' -v\n",
             encoding="utf-8",
         )
