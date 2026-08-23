@@ -994,30 +994,73 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
                         self.store.save_working_state(state)
 
                         command = self._targeted_unittest_command(targeted_baseline)
-                        test_observation = self.body.act(
-                            "command",
-                            event_id=event.event_id,
-                            command=command,
-                            workdir=str(targeted_baseline.get("root") or ""),
-                            timeout=float(
+                        command_env: dict[str, str] = {}
+                        source_root_relative = self._literal_repo_relative_path(
+                            targeted_baseline.get("python_source_root_relative")
+                        )
+                        if source_root_relative:
+                            try:
+                                repo_root = Path(
+                                    str(targeted_baseline.get("root") or "")
+                                ).expanduser().resolve(strict=True)
+                                lexical_source_root = Path(
+                                    os.path.abspath(
+                                        str(repo_root / Path(source_root_relative))
+                                    )
+                                )
+                                source_root = lexical_source_root.resolve(strict=True)
+                                source_root.relative_to(repo_root)
+                                if (
+                                    source_root != lexical_source_root
+                                    or not source_root.is_dir()
+                                ):
+                                    raise ValueError(
+                                        "targeted unittest source root is not one regular repository directory"
+                                    )
+                            except (OSError, RuntimeError, ValueError):
+                                problems.append(
+                                    "targeted unittest working-tree source root no longer resolves safely"
+                                )
+                            else:
+                                command_env["PYTHONPATH"] = str(source_root)
+
+                        if problems:
+                            test_observation = None
+                        else:
+                            test_observation = self.body.act(
+                                "command",
+                                event_id=event.event_id,
+                                command=command,
+                                workdir=str(targeted_baseline.get("root") or ""),
+                                env=command_env,
+                                timeout=float(
                                 targeted_baseline.get("timeout")
                                 or self._TARGETED_TEST_DEFAULT_TIMEOUT
-                            ),
-                            max_output_chars=50_000,
-                        )
-                        result_features = normalize_action_result(
-                            asdict(test_observation),
-                            command=command,
-                        )
-                        exit_code = test_observation.data.get("exit_code")
-                        timed_out = bool(test_observation.data.get("timed_out", False))
-                        test_verified = bool(
-                            test_observation.success
-                            and not timed_out
-                            and exit_code == 0
-                            and not bool(result_features.get("masked_success"))
-                            and not result_features.get("failure_class")
-                        )
+                                ),
+                                max_output_chars=50_000,
+                            )
+                        if test_observation is None:
+                            result_features = {
+                                "masked_success": False,
+                                "failure_class": "working_tree_source_unavailable",
+                            }
+                            exit_code = None
+                            timed_out = False
+                            test_verified = False
+                        else:
+                            result_features = normalize_action_result(
+                                asdict(test_observation),
+                                command=command,
+                            )
+                            exit_code = test_observation.data.get("exit_code")
+                            timed_out = bool(test_observation.data.get("timed_out", False))
+                            test_verified = bool(
+                                test_observation.success
+                                and not timed_out
+                                and exit_code == 0
+                                and not bool(result_features.get("masked_success"))
+                                and not result_features.get("failure_class")
+                            )
                         state.data[self._TARGETED_TEST_EXECUTION_KEY] = {
                             "intent_id": intent.intent_id,
                             "kind": self._TARGETED_TEST_KIND,
@@ -1025,7 +1068,7 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
                                 targeted_baseline.get("state_sha256") or ""
                             ),
                             "status": "completed",
-                            "action_id": test_observation.action_id,
+                            "action_id": (test_observation.action_id if test_observation is not None else None),
                             "verified": test_verified,
                         }
                         self._sync_execution_context(event, state)
@@ -1035,7 +1078,7 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
                         self.store.save_working_state(state)
                         targeted_result.update(
                             {
-                                "execution_action_id": test_observation.action_id,
+                                "execution_action_id": (test_observation.action_id if test_observation is not None else None),
                                 "observed_exit_code": exit_code,
                                 "timed_out": timed_out,
                                 "result_features": result_features,

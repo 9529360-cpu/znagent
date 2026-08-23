@@ -6,8 +6,8 @@ This module deliberately does not inspect the filesystem or execute anything.
 It only answers whether already-observed current repository text proves the
 first narrow ZN engineering-test relation:
 
-``agent/kernel/<module>.py``
-    -> ``tests/agent/kernel/test_<module>.py``
+``runtime/python/zn_agent/core/<module>.py``
+    -> ``tests/zn_agent/core/test_<module>.py``
     -> current ZN CI still runs the kernel unittest discovery suite.
 
 The resident must separately prove root/HEAD/tracked/clean identity through its
@@ -20,19 +20,17 @@ from pathlib import PurePosixPath
 from typing import Any
 
 
-ZN_KERNEL_SOURCE_DIR = PurePosixPath("agent/kernel")
-ZN_KERNEL_TEST_DIR = PurePosixPath("tests/agent/kernel")
+ZN_KERNEL_SOURCE_DIR = PurePosixPath("runtime/python/zn_agent/core")
+ZN_KERNEL_TEST_DIR = PurePosixPath("tests/zn_agent/core")
 ZN_CI_WORKFLOW_PATH = ".github/workflows/zn-ci.yml"
 ZN_KERNEL_UNITTEST_KIND = "python_unittest"
 _ZN_KERNEL_UNITTEST_ARGV = (
-    "uv",
-    "run",
     "python",
     "-m",
     "unittest",
     "discover",
     "-s",
-    "tests/agent/kernel",
+    "tests/zn_agent/core",
     "-p",
     "test_*.py",
     "-v",
@@ -62,9 +60,9 @@ def canonical_kernel_unittest_identity(
     """Return the one canonical mirrored unittest identity for a kernel module."""
 
     target = _repo_relative_path(target_relative_path)
-    if target is None or len(target.parts) != 3:
+    if target is None or len(target.parts) != 5:
         return None
-    if PurePosixPath(*target.parts[:2]) != ZN_KERNEL_SOURCE_DIR:
+    if PurePosixPath(*target.parts[:4]) != ZN_KERNEL_SOURCE_DIR:
         return None
     if target.suffix != ".py" or target.name == "__init__.py":
         return None
@@ -76,7 +74,7 @@ def canonical_kernel_unittest_identity(
         "kind": ZN_KERNEL_UNITTEST_KIND,
         "target_relative_path": target.as_posix(),
         "test_relative_path": test.as_posix(),
-        "target_module": f"agent.kernel.{module_leaf}",
+        "target_module": f"zn_agent.core.{module_leaf}",
         "ci_relative_path": ZN_CI_WORKFLOW_PATH,
     }
 
