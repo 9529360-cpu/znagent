@@ -24,6 +24,9 @@ class CognitiveSituation(SituationModel):
     last_body_action_kind: str | None = None
     last_body_action_success: bool | None = None
     last_body_action_error: str | None = None
+    last_verification_kind: str | None = None
+    last_verification_verified: bool | None = None
+    last_verification_error: str | None = None
     cognitive_increment_id: str | None = None
     cognitive_increment_source: str | None = None
     cognitive_increment_question: str | None = None
@@ -119,8 +122,16 @@ class EmbodiedLifeCore(ZNLifeCore):
         action_intent = raw_intent if isinstance(raw_intent, dict) else {}
         raw_result = working.data.get("native_action_result")
         action_result = raw_result if isinstance(raw_result, dict) else {}
+        raw_verification = working.data.get("native_verification_result")
+        verification = raw_verification if isinstance(raw_verification, dict) else {}
         raw_increment = working.data.get("cognitive_increment")
         increment = raw_increment if isinstance(raw_increment, dict) else {}
+        local_failure = str(working.data.get("local_failure") or "").strip() or None
+        verification_failed = (
+            bool(verification)
+            and "verified" in verification
+            and not bool(verification.get("verified"))
+        )
         data = asdict(base)
         return CognitiveSituation(
             **data,
@@ -159,6 +170,15 @@ class EmbodiedLifeCore(ZNLifeCore):
             last_body_action_error=(
                 str(action_result.get("error")) if action_result.get("error") else None
             ),
+            last_verification_kind=(
+                str(verification.get("kind")) if verification.get("kind") else None
+            ),
+            last_verification_verified=(
+                bool(verification.get("verified"))
+                if "verified" in verification
+                else None
+            ),
+            last_verification_error=(local_failure if verification_failed else None),
             cognitive_increment_id=(
                 str(increment.get("increment_id"))
                 if increment.get("increment_id")
@@ -317,6 +337,25 @@ class EmbodiedLifeCore(ZNLifeCore):
             if body_known not in thought.known:
                 thought.known = (*thought.known, body_known)
 
+        if situation.last_verification_verified is not None:
+            verification_kind = situation.last_verification_kind or "postcondition"
+            if situation.last_verification_verified:
+                verification_known = (
+                    f"my last {verification_kind} verification matched current reality"
+                )
+            else:
+                verification_known = (
+                    f"my last {verification_kind} verification was contradicted by current reality"
+                )
+                verification_error = (
+                    situation.last_verification_error
+                    or "the previous postcondition was not verified"
+                )
+                if verification_error not in thought.unknown:
+                    thought.unknown = (*thought.unknown, verification_error)
+            if verification_known not in thought.known:
+                thought.known = (*thought.known, verification_known)
+
         if situation.cognitive_increment_id:
             increment_known = (
                 f"borrowed cognition {situation.cognitive_increment_id} returned from "
@@ -413,6 +452,9 @@ class EmbodiedLifeCore(ZNLifeCore):
         data.setdefault("last_body_action_kind", None)
         data.setdefault("last_body_action_success", None)
         data.setdefault("last_body_action_error", None)
+        data.setdefault("last_verification_kind", None)
+        data.setdefault("last_verification_verified", None)
+        data.setdefault("last_verification_error", None)
         data.setdefault("cognitive_increment_id", None)
         data.setdefault("cognitive_increment_source", None)
         data.setdefault("cognitive_increment_question", None)
