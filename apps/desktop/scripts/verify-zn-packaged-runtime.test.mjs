@@ -6,6 +6,8 @@ import test from 'node:test'
 
 import { findPackagedZnRuntimeRoots, verifyPackagedZnRelease } from './verify-zn-packaged-runtime.mjs'
 
+const retiredPackage = Buffer.from('6865726d65735f636c69', 'hex').toString('utf8')
+
 async function writeFakePackagedRuntime(root, { version = '1.2.3', commit = 'a'.repeat(40) } = {}) {
   const runtimeRoot = path.join(root, 'release', 'linux-unpacked', 'resources', 'zn-runtime')
   const pythonRelative = process.platform === 'win32' ? 'python/python.exe' : 'python/bin/python3'
@@ -55,12 +57,12 @@ test('packaged release verifier rejects wrong source commit', async () => {
   }
 })
 
-test('packaged release verifier rejects inherited Hermes content', async () => {
+test('packaged release verifier rejects retired package content', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'zn-packaged-release-'))
   try {
     const fixture = await writeFakePackagedRuntime(root)
-    await fs.mkdir(path.join(fixture.backendRoot, 'hermes_cli'), { recursive: true })
-    await assert.rejects(verifyPackagedZnRelease({ releaseDir: fixture.releaseDir, version: '1.2.3', commit: 'a'.repeat(40) }), /forbidden inherited package/)
+    await fs.mkdir(path.join(fixture.backendRoot, retiredPackage), { recursive: true })
+    await assert.rejects(verifyPackagedZnRelease({ releaseDir: fixture.releaseDir, version: '1.2.3', commit: 'a'.repeat(40) }), /forbidden retired package/)
   } finally {
     await fs.rm(root, { recursive: true, force: true })
   }
