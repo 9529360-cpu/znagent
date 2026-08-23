@@ -266,6 +266,23 @@ This closes a consumer-side prerequisite for future resident-owned choice format
 
 The validated SHA also included unrelated concurrent channel/Telegram branch changes that were already present when this slice was committed. CI validated the combined branch state; this section makes no new product-capability claim from those concurrent files.
 
+### 2.11 Resident-owned outbound channel media seam
+
+Final code/test SHA:
+
+```text
+018af2ec18abbac2a74e33f471101cb6a4308f36
+ZN Kernel / Python      success
+Electron / TypeScript  success
+run                     32645243684
+```
+
+`ResidentChannelSupervisor.nominate_outbound_media()` records a bounded, JSON-safe media nomination only for an existing pending resident `channel_message` route. The intent is stored in the channel delivery SQLite ledger and survives supervisor restart. Delivery consumes this structured state; it never scans response text or inbound attachments for upload paths.
+
+`TelegramBotApiChannel` authorizes every nominated file against explicit resolved ZN-owned roots at the adapter send boundary before any network request, then uploads authorized files as multipart `sendDocument`. The first slice preserves thread/reply routing, supports attachment-only delivery, sanitizes filenames, applies the existing transport size limit, and keeps bot tokens out of errors. An unauthorized nomination rejects the entire delivery before text or file transmission begins.
+
+This completes the durable nomination → authorization → first transport seam, not autonomous media judgment. No current Thought/Will/Investigation owner yet decides that a produced artifact should be nominated, and photo/audio/video-specific Telegram methods remain pending.
+
 ## 3. Verified memory / nervous-system foundations
 
 Current foundations include:
@@ -334,7 +351,8 @@ The project does **not** yet claim:
 - bounded external cognition returns as input to ZN rather than owning the resident loop;
 - ZN-owned local process/terminal/PTTY and web search/extract paths;
 - persistent work/thread/workspace/active-run state;
-- resident-owned provider/settings/channel lifecycle.
+- resident-owned provider/settings/channel lifecycle;
+- durable explicit outbound-media nomination plus policy-authorized Telegram document delivery.
 
 ### Still PARTIAL / MISSING
 
@@ -348,6 +366,8 @@ The project does **not** yet claim:
 - GitHub repository/PR/CI resident-owned sense;
 - clean browser Body/Senses seam;
 - mature visual + mouse/keyboard application control;
+- autonomous outbound artifact nomination from current Thought/Will/Investigation;
+- Telegram photo/audio/video-specific outbound transports;
 - learned computer-use and engineering competence;
 - complex-task/learning-growth benchmarks;
 - SM1+ self-maintenance implementation.
@@ -382,7 +402,9 @@ Resident-owned visual sensing foundations exist and are tested. Mature screen un
 
 ### Communication
 
-Resident-owned channel lifecycle and Telegram paths exist. This ledger does not infer new communication capabilities from the unrelated concurrent channel changes present on the final validation SHA; their implementation state must be established from their own code/tests/HANDOFF before making additional claims.
+Resident-owned channel lifecycle and Telegram text/inbound media are active. The first outbound-media slice is also active: a pending resident channel event may durably nominate a bounded local artifact, restart preserves that intent, and Telegram authorizes the resolved file through `OutboundMediaPathPolicy` before any network request. Authorized files are uploaded with `sendDocument`; attachment-only outcomes are supported, and response text or inbound attachments never become upload authority.
+
+This is not yet autonomous artifact selection. Current cognition does not independently decide when to nominate an artifact, and the first transport slice deliberately uses Telegram document delivery rather than selecting richer media-specific methods.
 
 ### Desktop/UI
 
@@ -431,6 +453,8 @@ Verified installed Linux autostart: run `32593886026`.
 
 Verified source-level N → N+1 continuity: normal CI run `32596442626`.
 
+Real AppImage successor run `32645354818` includes the outbound-media kernel code and completed both N and N+1 AppImage builds. At this documentation checkpoint its installed continuity step had exceeded the workflow's declared outer 15-minute command timeout without returning a final conclusion. It is therefore **not** recorded as success and remains an M8/updater-lane investigation item.
+
 Still separate release gates:
 
 - installed Electron/application updater N → N+1;
@@ -478,6 +502,10 @@ native_action_options preserves declared order while its first choice remains ad
 blocked earlier structured choices may be skipped only under the same current evidence-bound anti-replay contract
 structured-choice recovery never invents alternatives or action args from memory/failure history
 single explicit actions cannot use multi-choice recovery
+outbound channel media requires an explicit durable nomination on a pending resident route
+response text and inbound attachments never become outbound upload authority
+Telegram authorizes every nominated file before any delivery network request
+outbound paths outside explicit resolved ZN roots fail closed
 only supported/practiced non-inhibited reliable current-reality-supported low-risk write candidates can positively bias
 mismatch/untested/immature/inhibited/revoked/unsafe candidate routes have zero positive influence
 procedural influence never supplies action args

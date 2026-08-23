@@ -68,9 +68,11 @@ These are **sense/body source candidates only**. They must sit behind future `zn
 
 ### 3.4 Communication channels and outbound media finding
 
-Status: **resident-owned channel lifecycle active; Telegram text/inbound media active; outbound media still partial**.
+Status: **resident-owned channel lifecycle active; Telegram text/inbound media active; first outbound document slice active; autonomous media nomination still partial**.
 
-`OutboundMediaPathPolicy` provides ZN local-file authorization. Current resident delivery still lacks explicit structured resident-owned artifact/path nomination for egress; adapters must not infer upload authority from arbitrary text or local paths.
+ZN now has a separate `ChannelOutboundMedia` contract and a durable bounded nomination ledger tied to pending resident channel events. Restart restores nominations into resident-owned delivery, while the Telegram adapter resolves and authorizes every path through `OutboundMediaPathPolicy` before any network request and uploads authorized files with `sendDocument`. Arbitrary response text, inbound attachments, relative paths, traversal and files outside explicit ZN roots do not gain upload authority.
+
+The remaining gap is upstream cognition: ZN does not yet autonomously decide which produced artifact should be nominated, and richer platform-specific photo/audio/video transports have not been extracted. The durable nomination/authorization/transport seam is active; autonomous selection is not.
 
 ## 4. Independent desktop/product work
 
@@ -270,7 +272,7 @@ E1  establish ZN-native resource/channel/body interfaces      DONE
 E2  extract main external model transports/providers          DONE for active provider families
 E3  extract local terminal body/PTTY lifecycle                DONE
 E4  extract web search/extract providers + URL safety         DONE for active provider set
-E5  extract communication framework + first channel           DONE for Telegram text/inbound media; outbound media pending
+E5  extract communication framework + first channel           DONE for Telegram text/inbound media + first outbound document slice; autonomous nomination pending
 E6  switch resident production callers to ZN-owned modules    DONE for cognition/terminal/web/channel lifecycle
 E7  build independent ZN Electron main/preload/UI foundation  DONE
 E8  remove active old-product control-plane imports           DONE for active resident + desktop
