@@ -11,6 +11,7 @@ conflict.
 """
 
 import os
+import shlex
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,19 @@ _GIT_STAGE_VARIANTS = frozenset({"git_add", "git_update_index"})
 
 def git_stage_variants() -> frozenset[str]:
     return _GIT_STAGE_VARIANTS
+
+
+def git_stage_command(variant: str, relative_path: str) -> str | None:
+    """Render the exact bounded command owned by one current staging variant."""
+
+    normalized_variant = str(variant or "").strip().lower()
+    rel = normalized_git_path(relative_path)
+    if normalized_variant not in _GIT_STAGE_VARIANTS or not rel:
+        return None
+    quoted = shlex.quote(rel)
+    if normalized_variant == "git_add":
+        return f"git add -- {quoted}"
+    return f"git update-index --add -- {quoted}"
 
 
 def normalized_git_path(value: Any) -> str:
