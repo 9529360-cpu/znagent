@@ -14,7 +14,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from .action import NativeActionIntent
+from .action import NativeActionIntent, current_text_equals_postcondition
 from .models import AgentEvent
 from .procedural_tendency import CandidateProceduralTendency
 
@@ -63,6 +63,11 @@ def current_expected_outcome(
         if not isinstance(explicit, Mapping):
             return {"kind": "unsupported"}
         kind = _normalized_expected_kind(explicit.get("kind"))
+        if kind == "text_equals":
+            goal = current_text_equals_postcondition(event)
+            if goal is None:
+                return {"kind": "unsupported"}
+            return {"kind": "text_equals", "path": goal["path"]}
         if kind != "command":
             return {"kind": kind or "unsupported"}
         command = str(explicit.get("command") or "").strip()
