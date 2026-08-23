@@ -71,6 +71,11 @@ _FAILURE_SHAPES = re.compile(
     r"|BUILD FAILED|Build FAILED"
     r"|FAILED: "
     r"|(?m:^make(?:\[\d+\])?: \*\*\*)"
+    r"|command not found"
+    r"|(?:ModuleNotFoundError|ImportError): No module named"
+    r"|Permission denied|\bEACCES\b"
+    r"|(?m:^CONFLICT )|Automatic merge failed|needs merge"
+    r"|API rate limit|was submitted too quickly"
     r")"
 )
 
