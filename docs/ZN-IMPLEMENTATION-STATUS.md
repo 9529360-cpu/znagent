@@ -40,8 +40,9 @@ The execution/learning spine now has real CI verification for:
 - read-only L3 current-reality applicability (`supported | mismatch | untested`);
 - bounded L3 low-risk action influence over choices current ZN state already formed;
 - bounded recovery across explicit structured alternatives after current evidence blocks an earlier option;
-- the first **resident-owned bounded structured-choice formation** slice: for an append text movement, current Investigation may form a direct exact-state replacement alternative only when a typed `text_equals` task postcondition and a complete current file observation prove both movements reach the same final state;
-- learning across that resident-formed choice: a failed incumbent append can recover to the resident-formed exact replacement, independent verification can create L1 evidence, repeated verified replacement experience can mature into an L2 tendency, and later comparable current reality may let L3 bias the newly formed resident choice without supplying action arguments.
+- the first **resident-owned bounded structured-choice formation** slice: for an append text movement, current Investigation may form a direct exact-state replacement alternative when the exact final text is semantically proven from current state;
+- caller-free narrow exact-text postcondition derivation for append writes when Investigation has a complete current file observation;
+- learning across that resident-formed choice, with append and replace evidence kept as distinct privacy-safe action variants so procedural evidence cannot silently cross the movement boundary.
 
 The current transition is therefore:
 
@@ -53,6 +54,7 @@ verified lived experience
 → bounded reality-gated action influence            VERIFIED FIRST SLICE
 → consume bounded structured alternatives           VERIFIED
 → form a narrowly proven resident-owned choice      VERIFIED FIRST SLICE
+→ derive a narrow current postcondition              VERIFIED FIRST SLICE
 → learn from verified recovery                      VERIFIED FIRST SLICE
 → broader resident-owned tactic formation
 → mature procedural competence
@@ -60,7 +62,7 @@ verified lived experience
 → prediction-error interrupt / relearning
 ```
 
-The new choice-formation slice is deliberately narrow. It is not a general planner, free-text tactic inference, stored-action replay, mature skill system or broad autonomous alternative generator.
+The current choice/postcondition slice is deliberately narrow. It is not a general planner, free-text tactic inference, stored-action replay, mature skill system, broad autonomous alternative generator or general high-level postcondition synthesizer.
 
 ## 2. Verified core execution and learning spine
 
@@ -89,7 +91,7 @@ Representative source/test state:
 
 Exact non-append writes and explicit command postconditions are independently re-observed before completion. Verification survives restart; contradiction returns control to Investigation and records failure evidence. Command verification CI run `32621596489`: Python and Electron success.
 
-The current active runtime also accepts an explicit typed `text_equals` task postcondition for the resident-owned exact-text choice slice. This contract is independently checked after the selected write; the postcondition is not satisfied merely because Body returned success.
+The active runtime accepts explicit typed `text_equals` task postconditions and, in the narrow append slice described in 2.11, can also consume an exact-text postcondition derived by the resident from complete current file evidence. Neither path treats Body success as task proof; the final text is independently re-read.
 
 ### 2.3 Compact durable execution context
 
@@ -174,7 +176,7 @@ Source/test commits:
 920bd70814e44d9b62b6ba5159e264ab442470a3  test: prove resident choice learning loop
 ```
 
-The first resident-owned choice-forming contract is intentionally semantic and fail-closed:
+The first resident-owned choice-forming contract was introduced with an explicit exact-text task contract:
 
 ```text
 current task already implies append write authority
@@ -189,11 +191,11 @@ current task already implies append write authority
 Guarantees:
 
 - both choices come from current event state plus current Investigation evidence;
-- both are marked `resident_choice` and serve one explicitly typed final-state contract;
+- both are marked `resident_choice` and serve one exact final-state contract;
 - free-text clauses do not create alternatives;
 - a missing, truncated or mismatching file preview yields historical single-action behavior;
 - a missing/mismatched target or incompatible path fails closed;
-- the direct replacement content comes from the current exact-state task contract, never from learned procedure arguments;
+- the direct replacement content comes from current task/evidence, never from learned procedure arguments;
 - `body_action` / `native_action` remains exclusive and caller-provided `native_action_options` still keeps its explicit contract;
 - current declared/incumbent priority remains first until reality actually blocks it, unless a separately qualifying L3 tendency biases an already-formed alternative;
 - failed-action anti-replay can move from failed resident A to resident B under the same evidence contract;
@@ -219,7 +221,76 @@ resident forms [append A, exact-replace B]
 
 This is the first verified resident-owned bounded choice formation slice, not broad tactic synthesis. General resident-owned alternatives across commands, Git operations, browser actions or long-horizon goals remain incomplete.
 
-### 2.11 Resident-owned outbound channel media seam
+### 2.11 Resident-derived append postcondition and write-variant safety
+
+Final code/test SHA:
+
+```text
+04e95009a9b2277704d57bc3dd141748a91df772
+ZN Kernel / Python          success
+Electron / TypeScript      success
+Container / Runtime Smoke  skipped on normal push
+Publish commit statuses    success
+run                         32648983622
+```
+
+Representative commits:
+
+```text
+1ca91c1c9937aad42e323b4dbcfbf8ee5d903922  feat: let resident carry derived action postconditions
+dbb14b8291a7caab49f38069427e5a00c30e9099  feat: verify resident-derived text goals
+275eebcc92f027d73572f09142d8393b381945ef  fix: separate text action variants in learning
+32a147a4237540cb290cfa2a350f38add0236940  fix: preserve action variant in procedural tendency
+a609f200f6e1380f2777febd4a271a03a1b33ec7  fix: gate procedural influence by write variant
+2e33432204c39fe5486856381decc21f52a78e90  test: prove resident-derived append postconditions
+91d94c1a6969b157e5749628eae7d63c2996c889  test: preserve legacy candidate fixtures while old records fail closed
+04e95009a9b2277704d57bc3dd141748a91df772  test: enforce procedural write variants
+```
+
+The exact-text slice no longer requires the caller to supply the final `text_equals.expected_text` when the resident already has enough current evidence to compute it. The resident may derive one transient current-event postcondition only under this contract:
+
+```text
+current native movement == write_text append
++ append content is concrete and non-empty
++ Investigation has the complete, untruncated current file text
++ path evidence, when present, confirms an existing compatible file
+→ derived exact final text = observed_current_text + current_append_content
+→ NativeActionIntent carries that transient expected_outcome
+→ resident may form [append A, exact-replace B]
+```
+
+The contract is deliberately fail-closed:
+
+- missing file preview → no resident-derived exact final state;
+- truncated file preview → no resident-derived exact final state;
+- incompatible/missing observed file target → no derived alternative authority;
+- an explicit task-level `expected_outcome` remains authoritative and is never overridden by resident derivation;
+- derived postcondition state is current-event cognition, not learned procedure content;
+- selected movement still requires independent `read_text` verification after Body returns success.
+
+The learning boundary is also stricter. Exact-text L1 evidence now stores only a privacy-safe movement class, `action_variant = append | replace`. L1 grouping and L2 compatibility preserve that distinction. L3 checks the currently formed write variant before positive applicability: cross-variant evidence mismatches, and retained historical write evidence with no variant metadata becomes `untested` rather than silently gaining authority. Raw path/content remains excluded from learned procedure state.
+
+New regression coverage proves both sides:
+
+```text
+no caller expected_outcome
+→ current Investigation obtains complete file text
+→ resident derives exact final state
+→ append movement
+→ independent read verifies exact final text
+→ positive L1 episode marked append
+```
+
+and:
+
+```text
+append evidence != replace evidence at L2/L3
+legacy write evidence without variant → untested
+```
+
+This is an ownership and safety hardening of the first exact-text tactic family. It is **not** the second genuinely different resident-owned tactic class, and it does not make general high-level postcondition derivation complete.
+
+### 2.12 Resident-owned outbound channel media seam
 
 Code/test SHA `018af2ec18abbac2a74e33f471101cb6a4308f36`, run `32645243684`, Python and Electron success.
 
@@ -239,14 +310,15 @@ This is not yet autonomous artifact selection; Thought/Will/Investigation does n
 - native Action intents and Body action results;
 - structured read-only Git repository sense;
 - exact text and explicit independent command postcondition verification;
+- narrow resident-derived exact append postcondition from complete current file observation;
 - compact bounded current-event execution context;
 - evidence-bound failed-action ledger and A → B → A replay suppression under unchanged reality;
 - recovery across explicit or semantically proven resident-owned bounded choices after earlier choices are blocked;
 - the first resident-owned exact-text alternative formation contract;
 - blocked post-cognition movement cannot falsely complete;
 - bounded restart-safe privacy-safe L1 `VerifiedExperience`;
-- transparent L2 candidate tendencies;
-- L3 current-reality applicability;
+- transparent L2 candidate tendencies with append/replace write variants kept distinct;
+- L3 current-reality applicability with cross-variant write mismatch and legacy no-variant fail-closed behavior;
 - bounded L3 bias among current choices for verified low-risk exact writes;
 - verified learning from resident-formed recovery into later current-choice bias;
 - contradiction revokes active event-local procedural influence and returns to Investigation;
@@ -258,13 +330,14 @@ This is not yet autonomous artifact selection; Thought/Will/Investigation does n
 
 ### Still PARTIAL / MISSING
 
+- a second genuinely different resident-owned structured alternative contract beyond exact-text file writing;
 - broader resident-owned structured alternative formation from Will/Investigation beyond the exact-text proof slice;
 - learned formation/recovery of genuinely different tactics across commands, Git, browser or long-horizon work;
 - broad candidate influence over commands or arbitrary side effects;
 - procedural replay of raw commands/paths/content;
 - mature resident-owned skills and procedural fast paths;
 - autonomous de-proceduralization beyond candidate inhibition + event-local route revocation;
-- resident-owned reliable high-level postcondition derivation;
+- resident-owned reliable general high-level postcondition derivation beyond the narrow exact append proof;
 - multi-step execution with genuinely different tactics over long horizons without a model-owned planner;
 - durable completed-task verification/audit beyond current bounded learning evidence;
 - safe Git mutation + diff/test/reality verification;
@@ -294,7 +367,7 @@ Status: **M2 complete for active main provider families**.
 
 ### Local Body
 
-Filesystem/process/terminal/PTTY paths are ZN-owned. Verification, failed-action anti-replay and L1/L2/L3 learning evidence are active. Exact-text current-state semantics can now form one bounded resident-owned alternative pair and verified experience can later bias the current replacement choice. General tactic formation and mature procedural competence remain incomplete.
+Filesystem/process/terminal/PTTY paths are ZN-owned. Verification, failed-action anti-replay and L1/L2/L3 learning evidence are active. Exact-text current-state semantics can form one bounded resident-owned alternative pair. For append writes, complete current file evidence is now enough for the resident itself to derive the exact final-state verification contract; write learning keeps append and replace variants separate. General tactic formation and mature procedural competence remain incomplete.
 
 ### Web/world / visual sense
 
@@ -314,7 +387,7 @@ Status: **COMPLETE for active packaged resident path**.
 
 The independent `runtime/python` distribution is `znagent`, installed package `zn_agent`, entrypoint `zn-resident`. Packaged runtime rejects inherited `hermes_cli` and boots zero-model. `runtime/python/pyproject.toml` maps `zn_agent.core` directly to `../../agent/kernel`, so current kernel code is the packaged runtime source rather than a second copy.
 
-Run `32647895984` installed the isolated runtime distribution, booted it without a model, compiled the resident kernel and ran full kernel unittest discovery successfully.
+Run `32648983622` installed the isolated runtime distribution, booted it without a model, compiled the resident kernel and ran full kernel unittest discovery successfully.
 
 ### M7 formal artifact ownership
 
@@ -361,15 +434,16 @@ M10 repository migration / formal main promotion           LATER; main untouched
 ## 6. Immediate next development sequence
 
 1. keep `VerifiedExperience`, transparent candidate evidence and current independent Investigation facts as procedural-learning truth; current reality always outranks familiarity;
-2. broaden resident-owned bounded choice formation only where current Will/Investigation can prove candidates are genuine alternatives for one goal;
-3. prefer a second semantically provable, genuinely different tactic class rather than generalizing from free-text action clauses;
-4. do not let external model output or stored procedural memory own the choice set or supply raw action args;
-5. preserve current influence gates, evidence-bound anti-replay and mandatory independent verification;
-6. add negative tests before each authority expansion: missing evidence, stale evidence, ambiguous goal equivalence, unsafe side effect and contradiction must fail closed;
-7. use practical Git mutation + diff/test/reality verification and GitHub repo/PR/CI sense as the engineering-competence benchmark once the next choice contract is semantically defensible;
-8. establish browser/visual/mouse/keyboard Body/Senses before claiming learned computer-use competence;
-9. add growth benchmarks proving familiar tasks reduce external cognition dependence without lowering verification quality;
-10. keep M8 updater/multi-OS/signing work explicit as bounded release debt until a real continuity/security/data-integrity need makes it the active lane.
+2. keep resident-owned exact-text postcondition derivation restricted to semantic proofs from complete current evidence rather than turning it into free-text goal synthesis;
+3. find a **second semantically provable, genuinely different tactic class** from current Will/Investigation rather than another file-write representation;
+4. prefer contracts with an independent current-world verifier; command/Git engineering work is a useful target only when equivalence and side-effect boundaries can be proven without guessing from command text;
+5. do not let external model output or stored procedural memory own the choice set or supply raw action args;
+6. preserve current influence gates, action-variant separation, evidence-bound anti-replay and mandatory independent verification;
+7. add negative tests before each authority expansion: missing evidence, stale evidence, ambiguous goal equivalence, unsafe side effect and contradiction must fail closed;
+8. use practical Git mutation + diff/test/reality verification and GitHub repo/PR/CI sense as the engineering-competence benchmark once the next choice contract is semantically defensible;
+9. establish browser/visual/mouse/keyboard Body/Senses before claiming learned computer-use competence;
+10. add growth benchmarks proving familiar tasks reduce external cognition dependence without lowering verification quality;
+11. keep M8 updater/multi-OS/signing work explicit as bounded release debt until a real continuity/security/data-integrity need makes it the active lane.
 
 The architecture driver remains:
 
