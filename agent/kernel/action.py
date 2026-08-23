@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import shlex
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .git_semantics import current_git_path_staged_goal
 from .models import AgentEvent, utc_now
 from .path_context import resolve_context_path
 
@@ -127,19 +129,15 @@ def derive_native_action_intents(
     Ordinary task heuristics intentionally preserve the historical single-action
     behavior. Multiple actions are returned only when either:
 
-    - the current event carries an explicit ``native_action_options`` contract; or
+    - the current event carries an explicit ``native_action_options`` contract;
     - current Investigation evidence proves that two resident-formed text
-      movements reach the same exact ``text_equals`` postcondition.
+      movements reach the same exact ``text_equals`` postcondition; or
+    - a typed single-path Git staging goal plus current Git/path evidence proves
+      two bounded Git mechanisms reach the same independently observable index
+      state.
 
-    The second case is deliberately narrow. ZN must already have authority for a
-    concrete append mutation, the target must match the goal, and a complete
-    current file preview must prove the exact final text. The final-state contract
-    may be explicit current task data or may be derived by ZN itself from the
-    observed current text plus the current append content. Only then may ZN also
-    form a direct replacement movement for that same final state. Free-text
-    clauses, model output and procedural memory never create the choice or supply
-    its arguments.
-
+    Resident choices are deliberately narrow. Free-text clauses, model output
+    and procedural memory never create the choice or supply its arguments.
     A valid explicit ``body_action`` / ``native_action`` remains exclusive.
     """
 
@@ -183,6 +181,10 @@ def derive_native_action_intents(
         if options:
             return tuple(options)
 
+    git_choices = _derive_resident_git_stage_choice_set(event, observed=observed)
+    if git_choices:
+        return git_choices
+
     default = _derive_heuristic_native_action_intent(
         event,
         payload=payload,
@@ -208,6 +210,52 @@ def derive_native_action_intents(
         goal=goal,
     )
     return resident_choices or (default,)
+
+
+def _derive_resident_git_stage_choice_set(
+    event: AgentEvent,
+    *,
+    observed: dict[str, Any],
+) -> tuple[NativeActionIntent, ...]:
+    """Form two bounded Git staging tactics from one proven current goal."""
+
+    goal = current_git_path_staged_goal(event, facts=observed)
+    if goal is None or not bool(goal.get("stageable")) or bool(goal.get("satisfied")):
+        return ()
+
+    root = str(goal["root"])
+    relative = str(goal["relative_path"])
+    quoted = shlex.quote(relative)
+    shared_reason = (
+        "current Investigation observed one non-conflicted file inside the current Git "
+        "root and a typed git_path_staged goal; both bounded Git mechanisms can update "
+        "only that path and the resulting index state is independently observable"
+    )
+
+    choices: list[NativeActionIntent] = []
+    for variant, command in (
+        ("git_add", f"git add -- {quoted}"),
+        ("git_update_index", f"git update-index --add -- {quoted}"),
+    ):
+        expected = {
+            "kind": "git_path_staged",
+            "root": root,
+            "path": str(goal["path"]),
+            "relative_path": relative,
+            "action_variant": variant,
+        }
+        choices.append(
+            NativeActionIntent(
+                intent_id=f"act-{uuid.uuid4().hex[:12]}",
+                event_id=event.event_id,
+                kind="command",
+                args={"command": command, "workdir": root},
+                expected_outcome=expected,
+                reason=f"{shared_reason}; selected mechanism={variant}",
+                source="resident_choice",
+            )
+        )
+    return tuple(choices)
 
 
 def _derive_resident_text_choice_set(
