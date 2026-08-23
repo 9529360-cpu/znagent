@@ -37,6 +37,7 @@ The execution/learning spine now has real CI verification for:
 - Workbench diff artifacts consuming that same structured `git_diff` Body sense rather than re-running separate presentation shell commands;
 - exact text and explicit command postcondition verification;
 - first baseline-aware tracked exact-replacement proof: persist a target-scoped Git baseline before movement, then require fresh exact text plus a matching target-scoped repository delta before completion/positive learning;
+- first typed targeted-test verifier for that same tracked exact-replacement slice: a current event may name one bounded tracked `tests/**/test_*.py` identity tied to the exact mutation target, while ZN derives the canonical Python `unittest` command itself, re-proves test/root/HEAD cleanliness before execution, rechecks target/test reality afterward, and refuses restart replay after a durable in-flight marker;
 - compact durable execution context;
 - evidence-bound failed-action anti-replay;
 - bounded restart-safe privacy-safe `VerifiedExperience` L1 records grounded only in independent Body verification;
@@ -73,7 +74,8 @@ verified lived experience
 → structured Git diff current-reality sensing       VERIFIED READ-ONLY SLICE
 → shared resident/workbench diff presentation       VERIFIED READ-ONLY SLICE
 → tracked exact replacement baseline → scoped delta VERIFIED FIRST ENGINEERING MUTATION SLICE
-→ targeted test/current-world proof for bounded engineering mutations
+→ typed targeted test/current-world proof           VERIFIED FIRST PYTHON UNITTEST SLICE
+→ resident-owned targeted-test identity formation
 → broader resident-owned engineering competence
 → familiar low-latency execution
 → prediction-error interrupt / relearning
@@ -143,7 +145,36 @@ Unrelated dirty files are excluded by the target scope. A HEAD change after the 
 
 One real intermediate test run is preserved: SHA `fb05074cf4299fab05a523fb02242c1c68698e22`, run `32660232657`, had Electron success and Python failure with only two new-test failures. The implementation-specific negatives for HEAD drift, scoped-path isolation/escape and truncated precondition already passed. The two failures came from tests reading transient working-state slots after terminal completion; the terminal lifecycle had already moved/reset that current slot. Tests were corrected to assert durable Body action history, `ResidentRunResult` reason and privacy-safe `VerifiedExperience` instead of weakening implementation behavior. Final run `32660483679` is green.
 
-This is not yet the full `mutation → diff → targeted test → current-reality` engineering loop: automatic targeted-test selection/execution has not been connected, and broader mutation families remain outside the claim.
+The next bounded verification layer is now also real and CI-verified. Final code/test SHA `4a7e7311ecc1feaff97ea6b6bbe31ab94a9ab666`, run `32662600128`, has `ZN Kernel / Python = success` and `Electron / TypeScript = success`; normal-push Container smoke is skipped by contract. Python job `97250982542` compiled the kernel, booted the isolated zero-model runtime and passed full kernel unittest discovery. Electron job `97250982660` passed locked install, typecheck, bundle and desktop ownership/runtime/update/handoff/release verifiers.
+
+This first targeted-test contract remains deliberately narrower than automatic test selection:
+
+```text
+current tracked exact-replace baseline
++ typed targeted_test(kind=python_unittest,
+                      path=tests/**/test_*.py,
+                      for_path=<exact current mutation target>,
+                      optional workdir=<same Git root>,
+                      optional bounded timeout)
+→ reject unknown authority fields, including caller command strings
+→ prove test path resolves physically inside the same Git root
+→ prove test file is tracked, clean, untruncated and on the same HEAD
+→ persist target + test fingerprints before mutation
+→ exact replacement movement
+→ re-prove target text + target-scoped Git delta
+→ re-prove test file/root/HEAD immediately before execution
+→ persist targeted-test execution status=started
+→ ZN derives canonical sys.executable -m unittest discover command
+→ execute only at the proven Git root with bounded timeout/output
+→ persist completed verifier result before later checks
+→ fresh target text + target Git delta after test
+→ fresh test-file/root/HEAD snapshot after test
+→ only then complete / positive VerifiedExperience
+```
+
+The durable `started` marker is an anti-replay boundary for the potentially side-effecting verifier. If the resident is interrupted after that marker exists, a resumed verification pulse refuses to run the test again and returns to Investigation rather than assuming the prior process did or did not execute. Test failure, timeout, dirty/staged/untracked test evidence, wrong workdir, cross-target identity, caller-supplied `command`, stale test evidence, post-test target/test drift and other contradictions block completion and positive learning. Raw test path/command authority is not persisted into learned procedural evidence.
+
+This is **not** resident-owned automatic targeted-test discovery/selection yet. The current event still supplies a typed test identity; ZN independently validates that identity and owns command rendering/execution/verification. Broader test frameworks, build verification, mutation families and any general `mutation → diff → targeted test → current-reality` engineering loop remain outside the completed claim.
 
 ### 2.3 Compact durable execution context
 
@@ -483,6 +514,7 @@ This is not yet autonomous artifact selection; Thought/Will/Investigation does n
 - Workbench diff artifacts sourced from the same structured `git_diff` Body observation rather than a second presentation command path;
 - exact text and explicit independent command postcondition verification;
 - first tracked exact-replacement baseline/delta verification that persists/revalidates pre-mutation target state and requires fresh text plus scoped Git delta before success/positive learning;
+- first typed Python targeted-test verifier attached only to that tracked exact-replacement slice, with same-root/HEAD/clean-test proof, resident-rendered command, bounded timeout, post-test target/test recheck and durable no-replay interruption marker;
 - narrow resident-derived exact append postcondition from complete current file observation;
 - compact bounded current-event execution context;
 - evidence-bound failed-action ledger and A → B → A replay suppression under unchanged reality;
@@ -518,7 +550,8 @@ This is not yet autonomous artifact selection; Thought/Will/Investigation does n
 - resident-owned reliable general high-level postcondition derivation beyond current narrow typed proofs;
 - multi-step execution with genuinely different tactics over long horizons without a model-owned planner;
 - durable completed-task verification/audit beyond current bounded learning evidence;
-- automatic targeted-test/current-world verification connected after the now-verified tracked exact-replace baseline/delta slice;
+- automatic resident-owned targeted-test identity discovery/selection; current first slice validates a typed test identity but does not choose it;
+- targeted verification for frameworks/build systems beyond the first Python `unittest` file contract;
 - baseline/delta semantics for append, untracked, staged, conflicted, rename/binary and broader mutation families;
 - a general bounded mutation → diff → targeted test → current-reality engineering loop;
 - Git commit/push/reset/checkout/branch mutation authority;
@@ -548,7 +581,7 @@ Status: **M2 complete for active main provider families**.
 
 ### Local Body
 
-Filesystem/process/terminal/PTTY paths are ZN-owned. Verification, failed-action anti-replay and L1/L2/L3 learning evidence are active. Resident cognition can form two proven bounded tactic families: exact-text append/replace and single-path Git staging via porcelain/plumbing mechanisms. Git staging uses one canonical current renderer, can terminal-resolve an already-satisfied current goal, can consume the first Git-specific reality-gated learned choice bias, exposes aligned read-only applicability evidence, and still requires a fresh structured Git verifier. The Body now also exposes a bounded structured read-only `git_diff` sense shared by Investigation and Workbench artifact presentation and capable of one literal target scope; this does not itself authorize any mutation. A first tracked exact-replace mutation can persist/revalidate a scoped baseline and require fresh exact text plus a scoped repository delta before completion. General tactic formation and mature engineering procedural competence remain incomplete.
+Filesystem/process/terminal/PTTY paths are ZN-owned. Verification, failed-action anti-replay and L1/L2/L3 learning evidence are active. Resident cognition can form two proven bounded tactic families: exact-text append/replace and single-path Git staging via porcelain/plumbing mechanisms. Git staging uses one canonical current renderer, can terminal-resolve an already-satisfied current goal, can consume the first Git-specific reality-gated learned choice bias, exposes aligned read-only applicability evidence, and still requires a fresh structured Git verifier. The Body now also exposes a bounded structured read-only `git_diff` sense shared by Investigation and Workbench artifact presentation and capable of one literal target scope; this does not itself authorize any mutation. A first tracked exact-replace mutation can persist/revalidate a scoped baseline, require fresh exact text plus a scoped repository delta, and—when the current event supplies one bounded typed Python unittest identity tied to that target—require a resident-rendered targeted test plus post-test current-world rechecks before completion. Test execution is restart-safe by fail-closed no-replay marking, not by assuming tests are side-effect free. Automatic test identity formation and general tactic formation remain incomplete.
 
 ### Web/world / visual sense
 
@@ -568,7 +601,7 @@ Status: **COMPLETE for active packaged resident path**.
 
 The independent `runtime/python` distribution is `znagent`, installed package `zn_agent`, entrypoint `zn-resident`. Packaged runtime rejects inherited `hermes_cli` and boots zero-model. `runtime/python/pyproject.toml` maps `zn_agent.core` directly to `../../agent/kernel`, so current kernel code is the packaged runtime source rather than a second copy.
 
-Run `32660483679` installed the isolated runtime distribution, booted it without a model, compiled the resident kernel and ran full kernel unittest discovery successfully.
+Run `32662600128` installed the isolated runtime distribution, booted it without a model, compiled the resident kernel and ran full kernel unittest discovery successfully.
 
 ### M7 formal artifact ownership
 
@@ -616,16 +649,17 @@ M10 repository migration / formal main promotion           LATER; main untouched
 
 1. keep `VerifiedExperience`, transparent candidate evidence and current independent Investigation facts as procedural-learning truth; current reality always outranks familiarity;
 2. preserve the now-shared Git staging renderer/current applicability contracts, already-satisfied terminal resolution, current-goal/root/target/variant proof, current-only choice bias, fresh `git_state` verification, anti-replay and event-local revocation as hard invariants;
-3. preserve the verified tracked exact-replace baseline/delta slice as the first bounded engineering mutation contract: target-scoped baseline must precede movement, restart must revalidate it, and fresh text + scoped Git delta must agree before completion/learning;
-4. connect one explicit targeted-test/current-world verification contract to that already-bounded mutation only where the test/effect semantics are independently knowable; do not infer arbitrary shell-command equivalence from text;
-5. keep diff sensing itself read-only and evidence-driven: a merely Git-related or generic debug/test/build task must not acquire extra probes unless current dirty Git reality plus explicit mutation/diff semantics justify them;
-6. add negative tests before every authority expansion: stale/missing evidence, ambiguous identity/equivalence, cross-target reuse, unsafe side effects, truncation and contradiction must fail closed;
-7. keep generic command positive authority prohibited unless a future semantic family independently proves current authority and verification;
-8. do not generalize the new baseline/delta code into a generic mutation framework until another real mutation family demonstrates the repeated contract; append/untracked/staged/conflicted/rename/binary semantics remain explicit open work;
-9. add GitHub repo/PR/CI resident-owned sense when it has a concrete current-world consumer; do not make GitHub another cognitive agent;
-10. establish browser/visual/mouse/keyboard Body/Senses before claiming learned computer-use competence;
-11. add growth benchmarks proving familiar tasks reduce external cognition dependence without lowering verification quality;
-12. keep M8 updater/multi-OS/signing work explicit as bounded release debt until that lane is deliberately activated.
+3. preserve the verified tracked exact-replace baseline/delta + typed Python targeted-test slice as one bounded engineering mutation contract: target/test evidence must precede movement, restart must revalidate pre-mutation evidence, verifier execution must be no-replay after a durable in-flight marker, and fresh target/test reality must agree before completion/learning;
+4. investigate a resident-owned way to form or discover one targeted-test identity from current repository evidence/configuration without accepting raw shell commands or treating model text/procedural memory as authority;
+5. keep typed test identity, workdir, target/effect scope, clean tracked test state, same HEAD, bounded timeout and resident-rendered command as hard gates while that discovery work is explored;
+6. keep diff sensing itself read-only and evidence-driven: a merely Git-related or generic debug/test/build task must not acquire extra probes unless current dirty Git reality plus explicit mutation/diff semantics justify them;
+7. add negative tests before every authority expansion: stale/missing evidence, ambiguous identity/equivalence, cross-target reuse, unsafe side effects, truncation, interruption/replay and contradiction must fail closed;
+8. keep generic command positive authority prohibited unless a future semantic family independently proves current authority and verification;
+9. do not generalize the baseline/delta/test code into a generic mutation framework until another real mutation or verifier family demonstrates the repeated contract; append/untracked/staged/conflicted/rename/binary and non-unittest semantics remain explicit open work;
+10. add GitHub repo/PR/CI resident-owned sense when it has a concrete current-world consumer; do not make GitHub another cognitive agent;
+11. establish browser/visual/mouse/keyboard Body/Senses before claiming learned computer-use competence;
+12. add growth benchmarks proving familiar tasks reduce external cognition dependence without lowering verification quality;
+13. keep M8 updater/multi-OS/signing work explicit as bounded release debt until that lane is deliberately activated.
 
 The architecture driver remains:
 
