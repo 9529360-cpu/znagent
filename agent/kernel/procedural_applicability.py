@@ -47,6 +47,12 @@ def _normalized_expected_kind(value: Any) -> str | None:
     return kind
 
 
+def _current_action_variant(action_kind: str, args: Mapping[str, Any]) -> str | None:
+    if action_kind != "write_text":
+        return None
+    return "append" if bool(args.get("append", False)) else "replace"
+
+
 def current_expected_outcome(
     event: AgentEvent,
     intent: NativeActionIntent,
@@ -58,6 +64,7 @@ def current_expected_outcome(
     task values and therefore must never be persisted as procedural memory.
     """
 
+    variant = _current_action_variant(intent.kind, intent.args)
     explicit = event.payload.get("expected_outcome")
     if explicit is not None:
         if not isinstance(explicit, Mapping):
@@ -67,7 +74,11 @@ def current_expected_outcome(
             goal = current_text_equals_postcondition(event)
             if goal is None:
                 return {"kind": "unsupported"}
-            return {"kind": "text_equals", "path": goal["path"]}
+            return {
+                "kind": "text_equals",
+                "path": goal["path"],
+                "action_variant": variant,
+            }
         if kind != "command":
             return {"kind": kind or "unsupported"}
         command = str(explicit.get("command") or "").strip()
@@ -88,12 +99,28 @@ def current_expected_outcome(
             "expected_exit_code": expected_exit_code,
         }
 
+    raw_goal = intent.expected_outcome
+    if isinstance(raw_goal, Mapping) and _normalized_expected_kind(
+        raw_goal.get("kind")
+    ) == "text_equals":
+        path = str(raw_goal.get("path") or "").strip()
+        if path:
+            return {
+                "kind": "text_equals",
+                "path": path,
+                "action_variant": variant,
+            }
+
     if intent.kind != "write_text" or bool(intent.args.get("append", False)):
         return None
     path = str(intent.args.get("path") or "").strip()
     if not path:
         return None
-    return {"kind": "text_equals", "path": path}
+    return {
+        "kind": "text_equals",
+        "path": path,
+        "action_variant": "replace",
+    }
 
 
 def _observed_path_fingerprints(facts: Mapping[str, Any]) -> set[str]:
@@ -182,6 +209,18 @@ def evaluate_candidate_applicability(
         mismatched.append("action_kind")
     else:
         matched.append("action_kind")
+
+    if candidate.action_kind == "write_text":
+        current_variant = _current_action_variant(current_kind, args)
+        stable_variant = str(applicability.get("stable_action_variant") or "").strip()
+        if not stable_variant:
+            untested.append("action_variant")
+        elif current_variant != stable_variant:
+            mismatched.append("action_variant")
+        else:
+            matched.append("action_variant")
+    else:
+        current_variant = None
 
     candidate_domains = set(candidate.domain_fingerprints)
     current_domain_fingerprints = {
@@ -290,6 +329,7 @@ def evaluate_candidate_applicability(
     safe_context = {
         "domains": sorted(current_domain_fingerprints),
         "action_kind": current_kind or None,
+        "action_variant": current_variant,
         "expected_kind": current_expected_kind,
         "expected_exit_code": expected.get("expected_exit_code"),
         "target_fingerprint": current_target_fingerprint,
