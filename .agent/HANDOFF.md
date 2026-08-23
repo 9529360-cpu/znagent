@@ -19,37 +19,30 @@ durable ZN Self
 
 ZN 不是 `LLM -> planner -> tools -> agent`。外部模型可以作为 teacher/adviser，但不能长期拥有 ZN 的任务连续性、动作权、真值判断或已经学会的能力。
 
-当前下一真实实现目标仍是：**L1/P0 verified experience record**。
+L1/P0 的第一片 `VerifiedExperience` 已完成并经过真实主 CI。当前下一真实目标已经前移到：
 
 ```text
-current Situation / stable evidence
-+ goal / current gap
-+ concrete action
-+ expected outcome
-+ independently observed verification result
-+ verified / contradicted verdict
-→ bounded resident-owned learning unit
+repeated compatible VerifiedExperience
+→ bounded retrieval / aggregation
+→ candidate procedural tendency
+→ current-reality applicability
+→ support / contradiction / maturity / inhibition
 ```
 
-此前的 stronger alternative-action recovery 不删除；它将作为 learning architecture 的早期 consumer，而不是孤立 tactic generator。
+禁止 one-shot skill creation。stronger alternative-action recovery 保留为这条 learning path 的早期 consumer，而不是孤立 tactic generator。
 
-纯 UI/desktop polish 继续暂停。M8/release 保留为 bounded lane。
+纯 UI/desktop polish 继续暂停。M8/release 保留为 bounded parallel lane。
 
 ## 当前分支 / HEAD
 
 - 分支：`dev/zn-agent`
-- 最新真实 code/test SHA：`23ce3b42aad2d730afae4d60eb6af5d5b4bd1399`
-- architecture direction：`08f5bfba3ea7e4669170dd9008cefc6b3fe6573c`
-- memory/learning architecture：`5977465d9c7560828c14a22a2bc4f5844c7ed8f3`
-- next-phase alignment：`cfaa9fc738cd4cfbc65d02de336e256ce0647ee7`
-- implementation-status：`8650489035f04b775a6bf508ee7a8cf415840429`
-- external learning/source research：`6196e114f590475da8494aee994e737d19896c92`
-- memory/learning research integration：`0f08f5de3d59cd426ba8dfb6744155f18635dcc6`
-- Hermes learning/procedural source quarry：`fe40ecc0377d67871e4be4cfc579f3b8b73395aa`
-- 本 HANDOFF 为 docs-only `[skip ci]`；下一维护者必须重新读取远程最终 HEAD。
+- 最后一个真实 code/test SHA：`80292975264df35ff3a999ed32c7973cdd3514f5`
+- 该 code/test SHA 的真实 CI：run `32639405457`，`ZN Kernel / Python = success`，`Electron / TypeScript = success`
+- 本次状态文档同步父 HEAD：`564dbc0282186fb119ddba7db5362a12f9630990`
+- 本 HANDOFF 提交本身为 docs-only `[skip ci]`；它会成为新的远程 HEAD，因此下一维护者必须先读取远程 `dev/zn-agent` 精确 HEAD，不得把上面的父 SHA 当成最终 HEAD。
 - `main` 未修改。
 
-## 本阶段恢复并核对的真实现场
+## 本阶段已恢复并核对的真实现场
 
 已重新读取/检查：
 
@@ -59,426 +52,305 @@ current Situation / stable evidence
 - `docs/ZN-SOURCE-EXTRACTION.md`
 - `docs/ZN-SELF-MAINTENANCE.md`
 - `.agent/HANDOFF.md`
-- `dev/zn-agent` HEAD / diff / open PR / CI
-- 当前 Investigation → Action → Body → Verification call chain
-- `main` inherited Hermes snapshot identity
+- `dev/zn-agent` HEAD / recent commits / open PR / CI
+- 当前 provider bridge → world-aware transfer resident → embodied verification 调用链
+- packaged Python mapping：`runtime/python/pyproject.toml` 的 `zn_agent.core` 直接指向 `../../agent/kernel`
 
-本轮开始前远程 `dev/zn-agent` HEAD：
-
-```text
-bbf3f04d67fe8bbdb6c0f9d97e4f95479b43cd19
-```
-
-compare 确认 branch 与该 HEAD identical；Open PR：无。
-
-`main` compare 确认仍 exactly：
+本轮开始时真实远程 HEAD：
 
 ```text
-61dd880aa4bbbdb359ca544b752afc2c22845ce9
-Initial commit: Hermes Agent source code
+d9f51bd3aae4810af57f0fa9d134e82c2f89e03e
 ```
 
-当前执行环境无 private-repo checkout，因此不宣称本地 tests。真实 code CI 以 GitHub 为准。
+当时 open PR：无。
 
-## 当前真实 learning attachment points
+事实优先级继续保持：真实代码/Git → tests/CI → HANDOFF → 聊天。
 
-### Verification 已经提供可信 learning label
+## 本阶段完成：L1 first verified-experience slice
 
-`EmbodiedResidentRuntime` 当前真实路径：
+### 1. ZN-owned deterministic Body result semantics
+
+新增：
 
 ```text
-Situation / Investigation
-→ NativeActionIntent
-→ BodyActionResult
-→ expected postcondition when available
-→ later independent Body observation
-→ native_verification_result
-→ verified / contradicted
+agent/kernel/result_semantics.py
 ```
 
-这应成为 L1 positive/negative learning evidence 的事实来源。
-
-禁止把以下直接当 success learning label：
+关键提交：
 
 ```text
-model text
-body return success
-shell exit 0 without task-level postcondition
+ee287a41873eb9340406aa95a56961b42127296c  feat: add deterministic body result semantics
+20a3ffa9236e9de4279ef64e766d02f8cdce5988  fix: treat known swallowed failures as masked success
 ```
 
-### Nervous system 已经有 association + reconsolidation foundation
+实现边界：
 
-当前代码已经有：
+- 不 import Hermes `tools.*`；
+- 只 source-adapt 窄的 deterministic failure/result semantics；
+- 归一化输出只保留类别/计数/exit/timing/effect 等安全特征；
+- failure classes 包括 timeout / not-executable / killed / nonzero-exit / command-not-found / module-not-found / permission-denied / merge conflict / rate limit 等；
+- conservative masked-success detection 覆盖 `cmd | tail/head/...` 和 `cmd || echo/printf/true/:`；
+- read-only pipeline 头部有保守豁免，避免明显误报；
+- visible deterministic failure + shell-masked exit 0 不能 positive-verify。
 
-- persistent traces；
-- repeated-trace strengthening；
-- associative links/spreading activation；
-- consolidation/schema；
-- fading/pruning；
-- prediction/reality comparison；
-- support/refinement/contradiction；
-- prediction-error-driven reconsolidation。
+Hermes 的 recovery prose/hint text、tool controller、agent loop 都没有进入 ZN active runtime。
 
-因此不要再引入一个 LLM-memory product 来拥有这部分。
+### 2. First-class bounded `VerifiedExperience`
 
-### Capability boundary 已经可承接未来 procedural competence
-
-`CallableCapability` 是 deterministic zero-token local capability，而且源码注释已明确 future learned procedures can be compiled into capabilities。
-
-`PromotedCapabilityLoader` 已经规定：candidate/self-generated code 不能直接进入 live promoted capabilities；必须先 tests / benchmarks / promotion / rollback。
-
-未来 procedural learning 应尽量复用这个 boundary，而不是再造第二套 executable-skill runtime。
-
-### 当前 `LearningCandidate` 不等于 verified procedural evidence
-
-`life.py` 的 `LearningCandidate` 目前只是 resolved impasse summary：task + resolution source/summary + required capabilities。
-
-External cognition success 也能 stage 此 candidate。因此它可以作为 context，但不能直接当 mature skill 或 L1 verified experience。
-
-## 外部研究已经拖回仓库
+新增：
 
 ```text
-docs/ZN-LEARNING-SOURCE-RESEARCH.md
-6196e114f590475da8494aee994e737d19896c92
+agent/kernel/verified_experience.py
 ```
 
-并集成：
+关键提交：
 
 ```text
-docs/ZN-MEMORY-LEARNING.md
-0f08f5de3d59cd426ba8dfb6744155f18635dcc6
+1130148205471a14c964cc080ea481d6f72c3a93  feat: add bounded verified experience store
+474f636cd8dedeeb23c5997ad45e07a7d224136f  fix: fingerprint capability domains in learned episodes
 ```
 
-选中的外部方向：fast/slow learning、bounded replay、DAgger teacher/student、River/ADWIN drift、Avalanche/Mammoth research baselines、later world-model research、BrowserGym/OSWorld benchmark。
+当前 record 连接：
 
-No external framework has been added to the ZN runtime.
+```text
+stable Situation / Investigation evidence fingerprint
++ goal / gap fingerprints
++ action kind / action signature hash
++ privacy-safe expected outcome features
++ normalized primary Body result features
++ independent verification features
++ verified / contradicted verdict
++ source/provenance class
++ grouping key / timestamp
+```
 
-## 本阶段 Hermes learning/procedural source quarry
+硬边界：
+
+- 必须有真实独立 Body observation；
+- verification observation `action_id` 不能等于 primary Body action；
+- Body `success=True` 本身不能创建经验；
+- generic shell exit `0` 无 task-level postcondition 时不能创建经验；
+- model/report text 无独立 observation 时不能创建经验；
+- unsupported verification 不创建经验；
+- contradiction 会持久化为 negative experience，不会被丢掉；
+- masked-success verifier 即使旧逻辑声称 `verified=True`，builder 也会 defense-in-depth 改成 `contradicted`。
+
+隐私边界：
+
+- 不持久化 raw task/gap text；
+- 不持久化 raw primary/verification command；
+- 不持久化 raw path/workdir；
+- 不持久化 raw Body output / required output fragment；
+- 不持久化 caller-supplied capability label；
+- 对这些只保存稳定 fingerprint、count、category 等必要学习特征。
+
+Store：
+
+- 与 resident kernel 共用同一 SQLite 文件，但使用独立窄表 `verified_experiences`；
+- 默认硬上限 2048；
+- deterministic experience ID / dedupe；
+- restart-safe；
+- retention 先保留 recent contradictions，再保留 representative group，再用 recency 填充；
+- `native_action_failure_records` 继续只是 execution anti-replay state，不能与 learning store 混用。
+
+### 3. 接入真实 shared embodied verification owner
+
+修改：
+
+```text
+agent/kernel/embodied_resident.py
+```
+
+关键提交：
+
+```text
+b04a35356181abb86eb228cc7f963ebd01ca1653  feat: record independently verified resident experience
+```
+
+真实 ownership：
+
+```text
+provider bridge
+→ WorldAwareTransferResidentRuntime
+→ existing EmbodiedResidentRuntime
+→ _native_action_step
+→ durable native_verification
+→ _native_verification_step
+→ independent Body observation
+→ VerifiedExperienceStore
+```
+
+没有新增 planner/final-runtime shim。
+
+整文件 connector 更新后已做 compare：`embodied_resident.py` 相对基线只有 `+70 / -0`，没有误删原行为。
+
+Command verification 现在会把 shell-masked visible failure 当 contradiction，而不是只看 exit code。
+
+WorkingState 只留下安全的最新经验摘要：
+
+```text
+experience_id
+verdict
+group_key
+source
+```
+
+### 4. Tests
+
+新增：
+
+```text
+tests/agent/kernel/test_verified_experience.py
+```
+
+最终测试提交：
+
+```text
+80292975264df35ff3a999ed32c7973cdd3514f5  test: cover private capability labels in learning
+```
+
+覆盖：
+
+- real write → independent read verification → one `verified` experience；
+- restart 后同一 experience 可读取；
+- contradicted postcondition → `contradicted` experience；
+- Body success / naked exit 0 without postcondition → zero experience；
+- model/report-only success without independent observation → no experience；
+- masked pipeline/fallback/command-not-found swallowed status；
+- read-only pipeline 非误报；
+- privacy：SQLite serialized record 不含 task/content/path/root/private capability label；
+- hard bounded retention + contradiction preservation。
+
+本地执行环境没有 private-repo checkout，因此没有伪造 full local repo test 结果。仅做了 isolated pure-module smoke/`py_compile` 作为补充；权威结果是 GitHub CI。
+
+## 真实 CI
+
+Final code/test SHA：
+
+```text
+80292975264df35ff3a999ed32c7973cdd3514f5
+```
+
+Real GitHub Actions：
+
+```text
+ZN Kernel / Python      success
+Electron / TypeScript  success
+run                     32639405457
+```
+
+Push workflow 不运行 `Container / Runtime Smoke`，因此本阶段不宣称该 job。
+
+后续文档提交使用 `[skip ci]`，不能把 docs-only HEAD 冒充为重新跑过代码 CI。
+
+## 本阶段文档对账
 
 已更新：
 
 ```text
 docs/ZN-SOURCE-EXTRACTION.md
-fe40ecc0377d67871e4be4cfc579f3b8b73395aa
+5151f120f7ab621296bc3ae04a4bb15f839af639
 ```
 
-新增 extraction ledger：
+H-L1 从 source quarry / near-term 改成：**FIRST SLICE EXTRACTED INTO ZN / CI VERIFIED**，并明确未引入 Hermes control plane。
+
+已更新：
 
 ```text
-E11 mine inherited learning/procedural mechanisms
-→ SOURCE AUDIT COMPLETE
-→ bounded extraction candidates identified
+docs/ZN-IMPLEMENTATION-STATUS.md
+564dbc0282186fb119ddba7db5362a12f9630990
 ```
 
-### H-L1 — terminal failure/result semantics
-
-Sources：
-
-```text
-tools/terminal_hints.py
-agent/tool_result_classification.py
-```
-
-优先级：**NEAR-TERM / HIGH VALUE**。
-
-可抽：
-
-- bounded deterministic output-pattern failure classification；
-- common Git/Python/environment recovery hints；
-- exit 126/124/137 semantics；
-- merge conflict / command-not-found / module-not-found / already-exists / rate-limit / permission-denied features；
-- masked-success detection：`cmd | tail` / `cmd || echo` 虽 exit=0，但输出已证明真正命令失败；
-- no-effect vs side-effecting operation classification；
-- file mutation “result landed” checks。
-
-重要事实：Hermes `terminal_hints.py` 注释说明这些模式来自约 250k terminal-result production window，其中约 14k failed calls 被覆盖，平均 retry chain 约多 1.4 tool turns。
-
-这些可以成为 ZN 的 pre-existing engineering prior，减少模型老师成本；但 hint 仍只是 prior，当前现实验证才是事实。
-
-### H-L2 — repeated/no-progress guardrails
-
-Source：
-
-```text
-agent/tool_guardrails.py
-```
-
-优先级：**SELECTIVE EXTRACTION**。
-
-可抽：canonical action signatures、exact failure counts、same-tool failure counts、no-progress detection、poller exemptions、runaway caps、identical-result stubs。
-
-不要导入 inherited controller。ZN 已有更强的 evidence-bound blocked-action rule，只可把这些用作 evidence/features。
-
-### H-L3 — skill telemetry + lifecycle
-
-Sources：
-
-```text
-tools/skill_usage.py
-agent/curator.py
-```
-
-优先级：**L2-L5 / VERY HIGH VALUE**。
-
-成熟机制：
-
-- authored procedure content 与 operational telemetry 分离；
-- atomic/cross-process-safe usage sidecar；
-- use/view/patch/post-patch-reuse telemetry；
-- explicit management ownership/provenance；
-- pin/protected/upstream-owned boundaries；
-- deterministic active→stale→archived；
-- stale reactivation；
-- never-used grace period：absence of use != evidence of staleness；
-- durable scheduled-work reference protection；
-- autonomous archive recoverable，not hard delete；
-- optional LLM consolidation OFF by default while deterministic lifecycle remains model-free。
-
-ZN adaptation 必须用 verified support / contradiction / applicability / prediction reliability 驱动 skill maturity，而不是只按 use count/time。
-
-### H-L4 — mutation ledger / rollback
-
-Sources：
-
-```text
-tools/skill_ledger.py
-agent/curator_backup.py
-tools/skill_provenance.py
-```
-
-优先级：**VERY HIGH VALUE for promoted capabilities**。
-
-可抽：
-
-- actor/write-origin provenance；
-- append-only JSONL mutation ledger；
-- content-addressed SHA-256 before/after blobs，deduplicated；
-- path containment validation；
-- restore blobs pre-check；
-- fail-closed pre-rollback safety capture；
-- rollback itself reversible；
-- whole-run snapshots；
-- dependent scheduled references included in consistency rollback。
-
-这应接到 ZN 已有 `PromotedCapabilityLoader` + self-maintenance approval，不允许 generated code 直接变 live skill。
-
-### H-L5 — skill-manager safety mechanics
-
-Source：
-
-```text
-tools/skill_manager_tool.py
-```
-
-可抽安全机制：path/symlink/junction delete defense、never delete root、pin/protected/upstream-owner boundaries、read-before-write、ownership-unverifiable fail closed。
-
-明确拒绝：
-
-```text
-LLM writes SKILL.md
-→ call this procedural learning
-```
-
-### H-L6 — learning observability
-
-Sources：
-
-```text
-agent/learning_graph.py
-agent/learning_mutations.py
-agent/insights.py
-```
-
-Future only：可以给用户展示 “ZN 学会了什么”、skill-memory relations、usage/state、archive/restore、model/tool/skill cost metrics；不是 L1 critical path。
-
-### H-L7 — conventional memory machinery
-
-Sources：
-
-```text
-agent/memory_manager.py
-agent/memory_provider.py
-plugins/memory/query_rewrite.py
-plugins/memory/*
-```
-
-只当 support-memory quarry。可借 lifecycle/failure isolation/async sync/prefetch/session hooks/trivial-query gates/strict rewrite validation/stream scrubber。
-
-不能让：
-
-```text
-retrieve text → inject LLM → model owns memory/action
-```
-
-替代 ZN nervous/procedural memory。
-
-### H-L8 — browser substrate
-
-Sources：
-
-```text
-tools/browser_supervisor.py
-selected tools/browser_tool.py mechanisms
-```
-
-Later：persistent CDP supervision、frame/OOPIF/dialog/console state、accessibility-tree/ref interaction、bounded snapshots、credential-scrubbed subprocess env、platform launch robustness。
-
-必须 behind future ZN-owned browser Body/Sense seam；不得恢复 Hermes browser orchestration。
-
-## 本阶段检查的 inherited test evidence
-
-不是只看注释，已检查：
-
-```text
-tests/tools/test_skill_usage.py
-tests/agent/test_curator.py
-tests/tools/test_skill_ledger.py
-tests/agent/test_tool_result_classification.py
-```
-
-重要边界测试包括：
-
-- concurrent telemetry update 不丢计数；
-- lifecycle event 只在真实 transition 后发出；
-- post-patch reuse；
-- corrupted telemetry recovery；
-- bundled/hub/external ownership separation；
-- pinned/protected capability survival；
-- cron/durable-reference protection；
-- unrelated stale capability still ages out；
-- ledger content dedupe；
-- rollback path escape rejection；
-- missing blob abort before mutation；
-- pre-rollback safety capture fail closed；
-- delete/write-file exact recovery。
-
-这些 edge cases 可以直接变成未来 ZN tests 的来源。
-
-## L1 implementation decision after both surveys
-
-Do **not** install Avalanche/Mammoth/PyTorch/River/etc. merely to start learning。
-
-Do **not** import Hermes Curator/MemoryManager/SkillManager as control plane。
-
-第一 implementation 仍是 resident-native `VerifiedExperience`。
-
-但是 L1 现在应该优先 source-extract/adapt **非常窄的 deterministic Hermes outcome/failure semantics**：
-
-```text
-Body result
-→ normalized result/effect features
-→ masked-success / known-failure evidence where applicable
-→ independent postcondition observation
-→ VerifiedExperience
-```
-
-初始 record：
-
-- experience ID；
-- event/provenance ID；
-- source/teacher involvement (`native`, `external-cognition-assisted`, `human-assisted` etc.)；
-- Situation / Investigation evidence fingerprint；
-- domains / task-gap class；
-- action signature + kind；
-- expected-outcome summary；
-- normalized result/failure features；
-- independent verification summary；
-- verdict (`verified` / `contradicted`)；
-- timestamps/provenance；
-- privacy-safe grouping features。
-
-禁止持久化 unnecessary model transcript、credentials、private content、full command/content payloads。
-
-`native_action_failure_records` 仍是 execution anti-replay state，不能偷偷变成长期 learning store。
-
-## 当前没有实现、不得误报
-
-仍 PARTIAL / MISSING：
-
-- first-class causal `VerifiedExperience`；
-- extracted ZN-owned Hermes failure/result feature helper；
-- replay store/retention implementation；
-- repeated verified experience → `CandidateProcedure`；
-- maturity/reliability/inhibition state；
-- resident-owned mature skill activation；
-- procedural fast path；
-- drift-triggered de-proceduralization/relearning；
-- DAgger student training loop；
-- River/ADWIN prototype；
-- computer-use learned skill；
-- engineering learned skill；
-- retention/forgetting/model-removal benchmarks。
-
-Documenting the Hermes quarry is not extraction and is not runtime completion。
-
-## 真实 CI 基线
-
-Final code/test SHA：
-
-```text
-23ce3b42aad2d730afae4d60eb6af5d5b4bd1399
-```
-
-Real CI：
-
-```text
-ZN Kernel / Python      success
-Electron / TypeScript  success
-run                     32635668910
-```
-
-本轮只有 `[skip ci]` docs/source-audit updates，没有 runtime/test code 变更，因此没有新增 code CI，也不宣称有。
+Implementation Status 现在明确：
+
+- L1 first causal `VerifiedExperience` slice 已真实 CI 验证；
+- learning 不再是纯文档方向；
+- 仍未实现 repeated aggregation / candidate tendency / mature skill / procedural fast path；
+- Immediate sequence 已前移到 L2-style transparent aggregation/candidate tendency。
+
+`docs/ZN-SELF-MAINTENANCE.md` 本轮没有架构变化，因此没有为了形式而改。
+
+`ZN.md` 的核心 learning direction 没有改变；后部最新 learning section 与本轮实现一致。较早章节中仍存在历史性的 M8 “current priority”措辞，下轮如触碰 architecture status 可清理，但不得因此把主线倒退回 M8。
+
+## 当前真实 capability boundary
+
+已验证：
+
+- persistent zero-model resident Self；
+- durable event/WorkingState/Situation/Thought/Will；
+- nervous traces/association/schema/reconsolidation；
+- multi-pulse native Investigation；
+- native Body/action；
+- structured read-only Git sense；
+- exact text + explicit command postcondition verification；
+- compact durable execution context；
+- evidence-bound failed-action anti-replay；
+- first bounded/restart-safe/privacy-safe independently verified causal experience record；
+- deterministic masked-success/failure semantics；
+- bounded external cognition as resource；
+- ZN-owned terminal/PTTY/web/work/provider/channel paths；
+- independent ZN desktop/runtime/package identity foundations。
+
+仍未完成：
+
+- repeated `VerifiedExperience` retrieval/aggregation；
+- candidate procedural tendency object/state；
+- maturity/reliability/applicability/inhibition/de-proceduralization；
+- learned mature skill activation / procedural fast path；
+- stronger multi-action alternative recovery using learned evidence；
+- safe Git mutation + diff/test/reality verification；
+- GitHub repo/PR/CI resident read sense；
+- clean browser Body/Senses seam；
+- learned computer-use / engineering competence；
+- growth benchmarks proving familiar tasks reduce model dependence without reducing verification quality；
+- SM1+ self-maintenance implementation；
+- remaining bounded M8 installed updater/multi-OS/signing gates。
+
+## 风险 / 约束
+
+1. `VerifiedExperience` 是 causal episode substrate，不是 skill。不要把一个成功 episode 直接 promote 成 capability。
+2. `native_action_failure_records` 与 `verified_experiences` 必须保持不同职责：前者 execution anti-replay，后者 bounded learning evidence。
+3. 当前只对已有独立 postcondition contract 的动作形成经验；generic action 没有 contract 时不应为了“多学数据”而降低真值标准。
+4. domain/task/path/command/output 等隐私信息不能为了 future retrieval 重新原样塞回 learning store；如需语义检索，应设计明确、可审计的 privacy boundary。
+5. masked-success pattern 是 deterministic evidence，不是绝对世界真理；必须保持保守并由实际 verification/context 约束。
+6. 不要把 Hermes Curator/MemoryManager/SkillManager/tool loop 重新接成 active runtime。
+7. candidate maturity 后续必须由 verified support/contradiction/applicability/prediction reliability 驱动，不可只按 use count/time。
+8. 高风险 self-maintenance、identity、long-term memory、key permissions、updater/signing 仍按 `docs/ZN-SELF-MAINTENANCE.md` 保留人工批准边界。
+
+## 阻塞
+
+当前无代码/CI blocker。
+
+当前执行环境没有 private-repo checkout，但 GitHub connector 可读写仓库且真实 GitHub Actions 已完成权威验证。不要把这一环境限制误写成项目能力限制。
 
 ## 下一真实目标
 
-Fresh-restore 后实现 L1：
+Fresh restore 后，先重新读取 6 个强制文档、HEAD/diff/PR/CI，再沿当前代码决定精确实现点。
+
+优先目标：**repeated verified experience → candidate procedural tendency 的最小透明聚合层**。
+
+建议第一片：
+
+1. 读取 `VerifiedExperienceStore` 现有 grouping/retention，确认不会依赖 raw private payload；
+2. 定义 bounded aggregation/retrieval contract，例如基于 stable `group_key` / action kind / expected-outcome class / current evidence compatibility 的 support + contradiction counts；
+3. 只有重复兼容的 `verified` episodes 才能形成 candidate；单次成功不能；
+4. candidate 必须保留 contradiction、last-verified、support count、maturity/applicability/inhibited 等明确状态；
+5. current reality/evidence 不匹配时不能 fast-path；
+6. contradiction 必须能降低/抑制 candidate，而不是被 recency 覆盖；
+7. restart/bound/privacy tests；
+8. tests 明确证明 model text/one-shot success 不能创建 candidate；
+9. CI green 后再考虑把 A fail → genuinely different B verified success 接成 alternative-action learning consumer；
+10. 不要直接生成 SKILL.md，不要引入 LLM planner/curator，不要把 candidate 直接放进 `PromotedCapabilityLoader`。
+
+后续再进入：
 
 ```text
-current ZN Body/verification
-+ narrow extracted/adapted deterministic Hermes result semantics
-→ privacy-safe VerifiedExperience
-→ durable bounded store
-→ restart-safe retrieval
-→ provenance / evidence fingerprint
-→ deterministic retention
+candidate tendency
+→ repeated verified practice
+→ maturity / prediction reliability
+→ local activation under current evidence
+→ contradiction / inhibition / relearning
+→ promotion only after isolated test/benchmark/rollback gates
 ```
 
-第一 code slice 的优先顺序：
-
-1. 追 `BodyActionResult` / command verification 的当前真实数据结构；
-2. 设计 ZN-owned normalized action-result feature helper，不 import inherited `tools.*`；
-3. 只抽需要的 masked-success / known-failure semantics；
-4. 建 `VerifiedExperience` schema/store；
-5. 接 verified success + contradicted postcondition 两条路径；
-6. tests：model text/body return/exit0 alone 都不能冒充 positive learning；
-7. restart + bound + privacy tests；
-8. CI green 后再更新 implementation status / HANDOFF。
-
-L1 有真实数据后，进入 L2 transparent aggregation，并从 Hermes skill lifecycle 中吸收 maturity/stale/inhibit/retire 边界；再与 River/ADWIN prototype 做测量比较。
-
-## 风险 / 安全 / release boundary
-
-- 不做 one-shot skill creation；
-- 不把 teacher/model 当 truth owner；
-- 不把 embedding retrieval 伪装成 procedural competence；
-- 不把 absolute mouse-coordinate replay 当 reflex；
-- high-risk identity/memory/credentials/updater/rollback/signing/self-maintenance permissions 不因熟练化而绕过人工批准；
-- 不引入重型 ML runtime dependency，除非 benchmark 证明价值并验证多平台 packaging；
-- 不把 Hermes source quarry 变成 active control plane；
-- `main` untouched；
-- M8/release debt 保留为 bounded lane。
-
-## 文档状态
-
-本阶段更新：
-
-- `docs/ZN-SOURCE-EXTRACTION.md`；
-- `.agent/HANDOFF.md`。
-
-本阶段未改变 runtime implementation，因此没有更新：
-
-- `docs/ZN-IMPLEMENTATION-STATUS.md`；
-- `ZN.md` architecture direction；
-- `docs/ZN-SELF-MAINTENANCE.md`；
-- `AGENTS.md`；
-- `main`。
+M8 remaining updater/multi-OS/signing work继续保持 bounded release debt，不覆盖 learning mainline。
