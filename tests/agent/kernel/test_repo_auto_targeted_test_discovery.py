@@ -87,7 +87,8 @@ class RepoAutoTargetedTestDiscoveryTests(unittest.TestCase):
             )
             (root / ".github/workflows/zn-ci.yml").write_text(
                 "name: Test\nsteps:\n"
-                "  - run: uv run python -m unittest discover "
+                "  - name: Run ZN kernel tests\n"
+                "    run: uv run python -m unittest discover "
                 "-s tests/agent/kernel -p 'test_*.py' -v\n",
                 encoding="utf-8",
             )
