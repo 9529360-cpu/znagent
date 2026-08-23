@@ -1335,3 +1335,205 @@ Preserve applicable upstream license, copyright and attribution requirements for
 Provenance does not imply product dependence.
 
 ZN's identity, resident architecture, UI, runtime package, distribution lifecycle, data model and future maintenance belong to ZN.
+
+---
+
+## 25. Resident competence, procedural memory and reflex learning
+
+This section is a hard product architecture contract. Detailed implementation planning belongs in `docs/ZN-MEMORY-LEARNING.md`; current implementation status must remain honest in `docs/ZN-IMPLEMENTATION-STATUS.md`.
+
+The governing principle is:
+
+**Models may help ZN learn. Mature capability must belong to ZN.**
+
+A mature learned capability is not considered resident-owned if disconnecting every external model removes the ability itself. External cognition may teach, explain, propose or accelerate learning, but it must not remain the permanent hidden executor of skills ZN is supposed to have learned.
+
+The target is not biological brain emulation. ZN should borrow useful principles from human memory and skill learning—experience, repetition, association, consolidation, proceduralization, prediction error, inhibition and relearning—while implementing them as explicit, testable computational mechanisms.
+
+### 25.1 Memory is not primarily model context
+
+Conversation history, checkpoints, structured facts, embeddings or retrieval indexes may be useful support stores, but they are not the definition of ZN memory.
+
+ZN memory is resident-owned when lived experience changes persistent internal structure and future behavior even when no model is called.
+
+```text
+experience
+→ resident-owned trace / relation / state change
+→ later Situation activates relevant structure
+→ future Thought / Will / action tendency changes
+```
+
+A transcript or vector record that matters only after being retrieved into an LLM prompt is external-context support, not sufficient evidence of resident competence.
+
+### 25.2 Capability must be able to proceduralize
+
+Novel work may initially require slow explicit cognition:
+
+```text
+unfamiliar Situation
+→ Thought / Investigation
+→ optional external cognition
+→ concrete Body action
+→ expected outcome
+→ observe current reality
+→ verified / contradicted result
+→ lived experience
+```
+
+Repeated verified experience should be able to change the route:
+
+```text
+lived experience
+→ associations / recurring structure
+→ cross-context support
+→ skill tendency
+→ repeated verified use
+→ procedural competence
+→ familiar perception-action pathway
+```
+
+This is not one-skill-per-success. A single successful action is evidence, not a permanent skill. Proceduralization requires enough repeated and contextually compatible reality evidence to justify stronger automatic tendency.
+
+A learned skill representation may evolve, but conceptually it must preserve enough resident-owned structure to answer:
+
+- what Situation/context makes this competence applicable;
+- what goal or gap it helps resolve;
+- what action pattern or procedure it tends to produce;
+- what result it predicts;
+- how mature/confident the tendency is;
+- what verified evidence supports it;
+- what contradictions or failures weaken/inhibit it;
+- what safety/risk class still governs execution.
+
+Do not require an external model call merely to decode or execute a mature resident-owned skill.
+
+### 25.3 Reflex means fast prediction-backed action, not a dead script
+
+For familiar, sufficiently mature and low-risk conditions, ZN may use a faster perception-action route with less explicit Thought than an unfamiliar task.
+
+```text
+familiar Situation
+→ mature procedural tendency activates
+→ resident Body action
+→ immediate sensory/result feedback
+→ prediction check
+```
+
+A reflex pathway must still remain reality-bound.
+
+```text
+predicted result matches reality
+→ reinforce / retain competence
+
+predicted result does not match reality
+→ inhibit the familiar pathway
+→ return control to Thought / Investigation
+→ establish new evidence
+→ relearn / reconsolidate
+```
+
+Therefore:
+
+- reflex is not a cached model answer;
+- reflex is not an unconditional raw shell command;
+- reflex is not a hard-coded mouse coordinate detached from current visual structure;
+- familiarity never makes current evidence optional;
+- destructive, irreversible, identity, long-term-memory, credential, updater, rollback, signing or self-maintenance permission boundaries are never bypassed merely because a behavior is familiar.
+
+### 25.4 External models are teachers/advisers, not permanent skill owners
+
+A model may help ZN solve an unfamiliar problem:
+
+```text
+ZN reaches a genuine knowledge gap
+→ bounded external cognition
+→ candidate explanation / tactic / code / procedure
+→ ZN evaluates it
+→ ZN acts through its own Body
+→ ZN observes the real result
+```
+
+The model output becomes part of ZN competence only through resident-owned evidence and learning. Model text alone must not create a mature procedural skill.
+
+The desired long-term direction is:
+
+```text
+young / unfamiliar ZN
+→ more explicit Thought and external cognition
+
+experienced ZN
+→ more resident-owned recall and procedural competence
+
+mature familiar competence
+→ less model dependence and less explicit deliberation
+→ external cognition reserved for genuine novelty or difficult reasoning gaps
+```
+
+Changing provider, changing model family or disconnecting all models must not erase already matured resident-owned skills.
+
+### 25.5 Learning must include inhibition, forgetting and relearning
+
+Competence can become stale because software, interfaces, repositories, operating systems, user preferences or the world changes.
+
+ZN therefore must not only reinforce successful patterns. It also needs mechanisms for:
+
+- contradiction weakening;
+- context narrowing when a skill transfers too broadly;
+- temporary inhibition after prediction error;
+- de-proceduralization when a once-fast route becomes unreliable;
+- reconsolidation after new evidence;
+- gradual fading of unused weak tendencies where appropriate.
+
+A skill that cannot notice it has become wrong is not mature competence.
+
+### 25.6 Computer use and engineering ability should become resident competence
+
+The long-term target is not that ZN repeatedly asks a model how to use a computer or how to write software.
+
+When ZN has repeatedly and successfully learned recurring computer and engineering work, relevant portions should become its own procedural competence, for example:
+
+- navigating familiar application structures;
+- using keyboard/mouse patterns grounded in current visual state;
+- filesystem and terminal routines;
+- Git inspection and safe repository workflows;
+- test / diagnostic / verification habits;
+- recurring debugging and recovery patterns;
+- project-specific workflows and user-approved habits.
+
+Novel or changed situations can still invoke Thought, Investigation, external cognition or human help. The point is that familiarity should accumulate inside ZN rather than forcing a cognitive restart from an external model every time.
+
+### 25.7 Growth must be measurable
+
+ZN should be able to demonstrate that experience changed competence. Future learning tests/benchmarks should measure properties such as:
+
+- the same class of verified task requires fewer external cognition calls after repeated successful experience;
+- familiar work requires fewer explicit deliberative steps without reducing verification quality;
+- task completion becomes faster or more reliable as competence matures;
+- learned competence survives resident restart and runtime restart;
+- learned competence survives provider replacement and full external-model removal;
+- current-evidence-incompatible contexts do not blindly activate an old skill;
+- prediction error interrupts automatic behavior and returns control to investigation;
+- repeated contradiction weakens or inhibits stale behavior;
+- successful alternative tactics can later be activated more readily in similar evidence states.
+
+The optimization target is not “minimize model calls at all costs.” The target is **increasing resident-owned competence while preserving truthful reality verification and safety boundaries**.
+
+### 25.8 Immediate architectural consequence
+
+Before extending stronger alternative-action recovery as an isolated tactic mechanism, the project must first define the smallest coherent resident-owned path from verified experience to reusable competence.
+
+Alternative-action recovery then becomes an early consumer of the learning architecture:
+
+```text
+movement A fails
+→ Investigation establishes why / what changed
+→ genuinely different movement B succeeds
+→ B's expected outcome is independently verified
+→ the full Situation / action / outcome relationship becomes lived learning evidence
+→ later similar evidence can activate B more readily
+→ repeated verified use can proceduralize the tendency
+```
+
+This prevents the execution spine from drifting into an unnamed planner while keeping complex-task recovery as an important product goal.
+
+The target product remains one resident subject that gets more capable by living and doing—not a shell that merely gets better at asking external models what to do.
