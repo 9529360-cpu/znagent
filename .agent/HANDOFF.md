@@ -4,15 +4,15 @@
 
 ## 当前目标
 
-开发主线是 **ZN 核心复杂任务执行能力**：
+开发主线：
 
 ```text
 durable ZN Self
-+ mature Agent-level task execution depth
++ mature Agent-level complex-task execution depth
 + reality-based verification
 ```
 
-目标不是 `LLM -> planner -> tools -> agent`，而是让同一个持续存在的 Self 把复杂现实任务持续推进到经过证据验证的结果。
+不是 `LLM -> planner -> tools -> agent`。同一个 resident Self 必须持续拥有目标、调查、动作、反证、恢复和最终完成判断。
 
 当前优先级：
 
@@ -21,21 +21,22 @@ durable ZN Self
 3. practical Git + GitHub/repository work；
 4. browser body/sense；
 5. visual/computer use；
-6. real complex-task benchmarks；
-7. 在更强执行脊柱上继续 SM1+ self-maintenance。
+6. real complex-task benchmark；
+7. 更强执行脊柱上的 SM1+ self-maintenance。
 
-纯 UI/desktop polish 暂停。M8/release 保留为 bounded lane。
+纯 UI/desktop polish 暂停。M8/release 是 bounded lane。
 
 ## 当前分支 / HEAD
 
 - 分支：`dev/zn-agent`
-- 当前 code/test HEAD：`5ebb233a97969a9e93c6399615beb48ff6ae9f41` (`test: cover explicit command postconditions`)
-- 本 HANDOFF 是 docs-only `[skip ci]` 提交；下一维护者必须重新读取远程 `dev/zn-agent` 最终 HEAD。
+- 最新真实 code/test SHA：`f280c8f68af69dfc2ac10b94d8d83726c10aa14e`
+- implementation-status docs commit：`5b5798e2e451c2d55da35b00f29f33685d53b15f` (`[skip ci]`)
+- 本 HANDOFF 也是 docs-only `[skip ci]`；下一维护者必须重新读取远程 `dev/zn-agent` 最终 HEAD。
 - `main` 未修改。
 
-## 本轮恢复的真实现场
+## 已恢复并核对的真实现场
 
-已重新读取并核对：
+本阶段重新读取：
 
 - `ZN.md`
 - `AGENTS.md`
@@ -45,20 +46,52 @@ durable ZN Self
 - `docs/ZN-NEXT-PHASE.md`
 - `.agent/HANDOFF.md`
 
-已检查：
+并检查：
 
-- 开始时 `dev/zn-agent == 61129e09876723232fb3f73891cd9e03969b74ce`；
-- 无 open PR；
-- `main` untouched；
-- 当前执行环境仍没有可用本地 repo checkout，因此验证以 GitHub CI 为准。
+- `dev/zn-agent` HEAD；
+- open PR：无；
+- 相关 diff；
+- normal CI；
+- active resident call chain；
+- `main` untouched。
 
-## 已真实 CI 验证的上一核心切片
+当前执行环境仍无可用本地 private-repo checkout，所以不宣称本地 test run；真实验证来自 GitHub CI。
 
-code/test source：
+## 已真实 CI 验证：Git sense + first post-action verification
+
+source：
 
 ```text
 47ccd5601462641c50c16ec76f2a05085a33f9f3
-test: require reality verification after native writes
+```
+
+CI：
+
+```text
+ZN Kernel / Python      success
+Electron / TypeScript  success
+run                     32612456040
+```
+
+Verified：
+
+- `NativeBody.git_state` structured read-only repository evidence：root / branch / HEAD / detached / upstream / ahead-behind / dirty / changed / staged / unstaged / untracked / conflicted；
+- embodied investigation 通过正式 Body contract 使用 `changed_paths`；
+- non-append `write_text` 成功后不直接 complete；
+- durable `native_verification` stage + `verify_action` Thought；
+- later Body `read_text` re-observation 后 exact match 才 complete；
+- verification stage 跨 resident restart；
+- reality contradiction 返回 investigation；
+- identical failed action 不 blind replay。
+
+## 已真实 CI 验证：explicit command postconditions
+
+主要实现：
+
+```text
+5cc0b1bccca976a8c635fbf3ddd7f95912a4cdc6  feat: verify explicit command postconditions
+8a661a376bd0d24dc2eea5dbe4187a159a8f4df1  feat: surface verification evidence in resident thought
+f280c8f68af69dfc2ac10b94d8d83726c10aa14e  test: fix command verification shell contract
 ```
 
 真实 CI：
@@ -66,53 +99,27 @@ test: require reality verification after native writes
 ```text
 ZN Kernel / Python      success
 Electron / TypeScript  success
-Actions run             32612456040
+run                     32621596489
 ```
 
-因此以下现在可以正式视为 verified，而不再是 pending：
-
-1. structured read-only Git repository sense，包括 root/branch/HEAD/upstream/ahead-behind/changed/staged/unstaged/untracked/conflicted paths；
-2. active embodied investigation 使用 `NativeBody.git_state` 的 `changed_paths` 回答真实 changed files；
-3. non-append `write_text` 的 durable post-action verification：Body write success 不直接完成 event；
-4. `native_verification` 是持久化 resident stage，并形成 `verify_action` Thought；
-5. verification 会重新 `read_text` 当前现实，只有 exact postcondition 成立才 complete；
-6. action 后、verification 前重启仍恢复同一 event 且不重复 write；
-7. postcondition 被现实反证时回到 investigation，并阻止 identical action blind replay。
-
-## 当前新增切片：explicit command postconditions
-
-实现提交：
-
-```text
-5cc0b1bccca976a8c635fbf3ddd7f95912a4cdc6
-feat: verify explicit command postconditions
-```
-
-测试提交：
-
-```text
-5ebb233a97969a9e93c6399615beb48ff6ae9f41
-test: cover explicit command postconditions
-```
-
-真实 active call chain 仍是：
+Active chain：
 
 ```text
 resident event / WorkingState
 -> Situation / Thought
 -> native investigation
 -> native deliberation
--> NativeActionIntent
+-> NativeActionIntent(command)
 -> NativeBody.act(command)
--> BodyActionResult
+-> primary BodyActionResult
 -> native_verification
 -> verify_action Thought
--> NativeBody.act(command verification probe)
--> verification evidence
+-> NativeBody.act(independent verification command)
+-> observed exit/output evidence
 -> complete OR investigation/failure recovery
 ```
 
-事件现在可以显式声明：
+事件可显式声明：
 
 ```text
 expected_outcome:
@@ -120,111 +127,105 @@ expected_outcome:
   command: <independent verification command>
   exit_code: <expected code, default 0>
   output_contains: <optional string/list>
-  workdir: <optional, defaults to action workdir>
+  workdir: <optional>
 ```
 
-语义：
+Verified semantics：
 
 ```text
-primary command exit 0
+primary command success
 != task success
 
-primary action success
--> persist expected_outcome
--> later resident pulse performs independent verification command
--> compare observed exit code/output with expected state
+primary command success
+-> persist postcondition
+-> later Thought independently verifies current reality
 -> verified only then complete
 ```
 
-验证失败时：
+失败时：
 
-- 保存 `native_verification_result`；
-- 将明确失败证据写回 `local_failure`；
-- 回到 native investigation；
-- 将原 primary action signature 标记为已失败，避免盲目重放同一 primary command；
-- `model_policy=never` 时最终必须 truthful unresolved/failure，而不是假装成功。
+- `native_verification_result` 保存反证；
+- `local_failure` 保存明确原因；
+- stage 返回 `native_investigation`；
+- primary action signature 阻止 identical blind replay；
+- 下一 pulse 的 `CognitiveSituation` 直接看到 `last_verification_*`；
+- 下一 Thought 立即把 verification failure 视为 unknown/evidence，而不是继续把 primary action success 当目标成功。
 
-新增 `tests/agent/kernel/test_command_verification.py` 覆盖：
+## 本轮 CI 失败与修复记录
 
-1. primary command 成功后仍进入 `native_verification`；
-2. verification command exit/output 满足 expected outcome 后才完成；
-3. command verification stage 跨 resident restart 持久存在，primary command 不重复；
-4. verification exit/output 不满足时回 investigation，primary command 不盲目重放。
-
-## 当前 CI
-
-上一切片 `47ccd560...` 已真实 green，见上。
-
-当前最新 code/test SHA：
+早期 command test SHA `5ebb233...`：
 
 ```text
-5ebb233a97969a9e93c6399615beb48ff6ae9f41
+Electron / TypeScript  success
+ZN Kernel / Python      failure
+run                     32621385427
 ```
 
-本 HANDOFF 写入前查询 combined status 仍为：
+真实日志显示两个测试问题：
 
-```text
-statuses: []
-```
+1. POSIX 上使用 `subprocess.list2cmdline` 构造无空格 `python -c` 代码，shell quoting 错；
+2. 成功完成后 `_complete_result()` 正常把 WorkingState 归 idle，测试错误地从 completed WorkingState 读取 verification result。
 
-所以 **explicit command postconditions 仍是 PARTIAL / NOT CI-VERIFIED**。
+修复：
 
-下一维护动作必须先读取 `5ebb233...` 的真实 CI：
+- Windows 用 `subprocess.list2cmdline`，POSIX 用 `shlex.join`；
+- 成功路径通过 durable Body action history + event outcome 判断实际完成，不假设 completed WorkingState 保留活动态数据；
+- 同时新增 verification contradiction 直接进入 next Situation/Thought 的回归。
 
-- 若 Kernel/Python 失败，读取 job/log 并修到 green；
-- 若 green，再更新 `docs/ZN-IMPLEMENTATION-STATUS.md`，记录 first command-level independent verification contract；
-- 不得把 generic command verification 写成“复杂任务完成语义已经全部解决”。
+最终 `f280c8f...` 已 green。
 
-## 当前能力边界
+## 当前真实执行脊柱判断
 
-已 verified：
+### Verified foundation
 
-- persistent Self / resident continuity；
+- persistent Self / zero-model life；
 - durable event / WorkingState；
-- multi-pulse Investigation；
-- Body action intents；
-- failed action evidence/recovery；
-- non-append text action -> independent reality verification；
-- structured read-only Git repository sense。
+- Investigation 跨 pulse/restart；
+- NativeActionIntent / BodyActionResult；
+- failed body action evidence；
+- exact text postcondition independent verification；
+- explicit command postcondition independent verification；
+- verification contradiction immediate Situation/Thought feedback；
+- structured read-only Git repository sense；
+- bounded external cognition remains a resource, not owner。
 
-本轮 pending：
+### 仍 PARTIAL / MISSING
 
-- explicit command -> independent command postcondition verification。
-
-仍 PARTIAL / MISSING：
-
-- 自动从高层用户目标推导可靠 task-level postconditions；
-- multi-step goal/subgoal completion semantics；
-- long-horizon recovery beyond current bounded probes/actions；
-- safe Git mutation + verification；
-- GitHub repository/PR/CI resident-owned sense；
-- browser body/sense；
-- mature visual + mouse/keyboard computer use；
-- real complex-task benchmark suite；
-- SM1+ self-maintenance implementation。
+- high-level goal -> reliable postcondition derivation；
+- durable explicit `current goal / current gap / expected outcome / verification result` as a compact task-level contract；
+- multi-step task/subgoal execution and tactic changes over many actions；
+- successful completed-task verification evidence as a first-class event audit object（当前可以由 event outcome + durable Body action history重建，但尚未有独立 verification report object）；
+- verification failure 后形成 genuinely different recovery action，而不只是避免 blind replay / truthful failure；
+- safe Git mutation + diff/test/reality verification；
+- GitHub repo/PR/CI resident-owned read sense；
+- browser；
+- mature visual/mouse/keyboard computer use；
+- complex-task benchmark suite；
+- SM1+ self-maintenance。
 
 ## UI / Desktop / Release 边界
 
 - 不做 cosmetic UI polish / layout churn / dashboard expansion；
-- desktop 只在核心能力授权、evidence、browser/computer-use、maintenance approval 或真实 blocking usability defect 需要时进入；
-- M8/release 仍保留，但不抢占核心主线；
-- full installed updater handoff、Windows/macOS clean-install/login、signing/notarization 仍是明确 release debt。
+- desktop 只在核心能力授权、evidence、browser/computer-use、maintenance approval 或 blocking usability defect 需要时进入；
+- M8/release 保留 explicit debt，不抢核心主线；
+- full installed updater handoff、Windows/macOS clean-install/login、signing/notarization 仍未 complete。
 
 ## 风险 / 阻塞
 
-- 当前 command verifier 尚未有真实 CI 结果；
-- `expected_outcome.command` 当前是显式结构化 task contract，不是让模型文本直接变 shell；
-- generic shell exit 0 仍然只有在存在可靠 expected outcome 时才能区别 action success 与 goal success；
-- Git/GitHub mutation、自维护写路径必须保持权限/branch/diff/test/rollback 边界；
+- generic shell exit `0` 仍不等于任意高层目标成功；只有存在可靠 postcondition 时才有任务级验证语义；
+- 当前 explicit command expected_outcome 是结构化 event contract，不是模型文本直接进入 shell；
+- stale verification-result 生命周期需要在未来多动作循环中继续注意，不能让旧反证污染已形成的新动作；
+- Git/GitHub mutation、自维护写路径必须有权限/branch/diff/test/rollback 边界；
 - identity/memory/credential/updater/rollback/self-maintenance permission 高风险修改仍需人工批准；
 - `main` untouched。
 
-## 下一步
+## 下一真实目标
 
-1. 读取 `5ebb233...` 真实 CI；
-2. CI fail -> 读取 job/log -> 修复 -> 再 CI；
-3. CI green -> 更新 `docs/ZN-IMPLEMENTATION-STATUS.md` 和 HANDOFF；
-4. 下一 execution-spine 重点不是增加更多 command 类型，而是让 resident 能从真实 task/evidence 中维护明确的“当前目标 / next gap / expected outcome / verification result”；
-5. 随后进入 practical Git repository action + verification，再补 GitHub PR/CI read-only sense；
-6. 用真实“陌生 repo + failing CI -> diagnosis -> fix -> test -> diff -> evidence” benchmark 驱动后续能力；
-7. UI 暂停，`main` 不动。
+1. 继续 execution spine，而不是增加 UI；
+2. 让一个 durable event 以紧凑结构明确保存：原始 goal、当前 gap、当前 expected outcome、最近 verification evidence；
+3. 这些字段必须参与 Situation/Thought，并跨 pulse/restart，不做 ever-growing planner/task DB；
+4. 处理多动作生命周期，确保新的不同 action 开始后旧 verification verdict 不错误污染当前 Situation，同时历史失败证据仍能由 Investigation/Nervous state使用；
+5. 在此基础上做 practical Git mutation + diff/test/reality verification；
+6. 再加入 GitHub PR/CI read-only sense；
+7. 用真实 benchmark：陌生 repo + failing CI -> 调查 -> 修复 -> test -> diff/state -> evidence；
+8. `main` 不动。
