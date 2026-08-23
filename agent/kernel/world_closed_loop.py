@@ -566,6 +566,7 @@ class WorldAwareEmbodiedInvestigator(EmbodiedInvestigator):
             learning_evidence=learning_evidence,
             local_failure=local_failure,
         )
+        self._surface_procedural_applicability(event, readiness, result)
         predictions = result.state.facts.get("schema_predictions")
         nervous = getattr(self.resident, "nervous", None)
         if not isinstance(predictions, list) or not predictions or nervous is None:
