@@ -31,7 +31,7 @@ class RepoTestSemanticsAuthorityTests(unittest.TestCase):
         )
         self.assertTrue(
             ci_source_runs_kernel_unittest_suite(
-                "name: real\nsteps:\n  - run: " + command + "\n"
+                "name: real\nsteps:\n  - name: kernel\n    run: " + command + "\n"
             )
         )
 
