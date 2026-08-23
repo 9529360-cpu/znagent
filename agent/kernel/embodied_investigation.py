@@ -394,6 +394,7 @@ class EmbodiedInvestigator(NativeInvestigator):
                 "changed_region_indices": list(observation.changed_region_indices),
                 "visual_areas": list(areas),
                 "luminance_delta": observation.luminance_delta,
+                "luminance": luminance,
                 "source": observation.source,
                 "width": observation.width,
                 "height": observation.height,
