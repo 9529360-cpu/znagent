@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import shlex
 import sqlite3
@@ -53,7 +52,7 @@ class VerifiedExperienceTests(unittest.TestCase):
             root = Path(tmp)
             db = root / "kernel.db"
             target = root / "private-target.txt"
-            secret_task = "SECRET_TASK learn from this private write"
+            secret_task = f"ensure {target} contains SECRET_TASK private content"
             secret_content = "SECRET_CONTENT resident-owned learning"
 
             first = build_resident_runtime_from_existing_stack(
