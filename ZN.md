@@ -1302,7 +1302,7 @@ The ownership migration and first release-shape work are sufficiently advanced t
 
 The immediate target is now:
 
-**turn the newly verified resident-owned Git staging tactic family into reality-gated reusable competence, then extend the same organism-owned execution/verification discipline toward practical engineering work without introducing a model-owned planner.**
+**preserve and deepen the newly verified reality-gated Git procedural competence, then extend the same organism-owned execution/verification discipline toward practical engineering work without introducing a model-owned planner.**
 
 Current proven starting point:
 
@@ -1312,24 +1312,25 @@ current typed single-path Git staging goal
 → resident forms two bounded tactics:
    A = git add -- <current repo-relative path>
    B = git update-index --add -- <current repo-relative path>
-→ failed A remains blocked under unchanged evidence
-→ B can recover
+→ current Git semantics re-prove root/target/goal/variant before positive L3 influence
+→ mature procedural evidence may only reorder the freshly formed current A/B choices
+→ failed/contradicted choices remain blocked or revoked under unchanged evidence
 → fresh git_state independently proves the target is exclusively staged
-→ verified L1/L2 evidence can distinguish the two tactic variants
+→ already-satisfied current reality can resolve without mutation or model fallback
+→ verified L1/L2/L3 evidence distinguishes tactic variants without learned raw-command replay
 ```
 
 Concrete order:
 
 1. preserve the strict current-world authority boundary: one existing regular file inside the observed repository root, no conflict, no symlink/path-identity ambiguity, and no mutation choice when evidence is missing or the goal is already satisfied;
-2. add a Git-specific L3 applicability gate only when current structured Git facts can prove the same target/root/goal context; learned state may bias only between currently re-formed resident choices and must never replay a learned command/path;
+2. keep one canonical Git staging semantic/rendering contract across resident action formation, current-intent proof, active L3 applicability and read-only Investigation diagnostics so those paths cannot drift;
 3. keep fresh post-action `git_state` verification mandatory and let contradiction/failure revoke the current route and return to Investigation;
-4. fix the already-satisfied `git_path_staged` completion gap so current evidence can resolve the goal without unnecessary mutation or model fallback;
-5. extend engineering competence toward bounded mutation → diff/test/current-reality verification loops only where effect and verifier semantics are explicit; do not infer arbitrary shell-command equivalence from text;
-6. add negative tests before every authority expansion: stale/missing evidence, ambiguous equivalence, unsafe side effects, cross-target reuse and contradictions must fail closed;
-7. keep external models as bounded cognition for novelty; they may suggest tactics but cannot own the resident choice set or become the hidden executor of learned competence;
-8. establish browser interaction only through a clean resident-owned body/sense seam before claiming learned computer-use competence;
-9. add growth benchmarks showing familiar verified work reduces external cognition dependence without lowering verification quality;
-10. keep installed AppImage N → N+1 continuity, Windows/macOS clean-install/login continuity and signing/notarization explicit as M8/release-lane debt until that lane is deliberately activated.
+4. extend engineering competence toward bounded mutation → diff/test/current-reality verification loops only where effect and verifier semantics are explicit; do not infer arbitrary shell-command equivalence from text;
+5. add negative tests before every authority expansion: stale/missing evidence, ambiguous equivalence, unsafe side effects, cross-target reuse and contradictions must fail closed;
+6. keep external models as bounded cognition for novelty; they may suggest tactics but cannot own the resident choice set or become the hidden executor of learned competence;
+7. establish browser interaction only through a clean resident-owned body/sense seam before claiming learned computer-use competence;
+8. add growth benchmarks showing familiar verified work reduces external cognition dependence without lowering verification quality;
+9. keep installed AppImage N → N+1 continuity, Windows/macOS clean-install/login continuity and signing/notarization explicit as M8/release-lane debt until that lane is deliberately activated.
 
 Do not regress by reintroducing inherited main/preload/renderer/runtime control planes, by adding a planner tree to Will, or by letting procedural memory supply raw side-effect arguments.
 
@@ -1339,7 +1340,7 @@ Do not regress by reintroducing inherited main/preload/renderer/runtime control 
 
 Use this as the canonical restart prompt:
 
-> Continue `9529360-cpu/znagent` on `dev/zn-agent`. Read the current repository code and Git/CI state first, then read `ZN.md`, `AGENTS.md`, `docs/ZN-IMPLEMENTATION-STATUS.md`, `docs/ZN-SOURCE-EXTRACTION.md`, `docs/ZN-SELF-MAINTENANCE.md` and `.agent/HANDOFF.md` before changing code. ZN is the only product/subject. Hermes is source reference only: inspect mature mechanisms, extract/adapt them behind ZN-owned interfaces/config/lifecycle/tests, then switch the active caller; never make Hermes the runtime, UI, desktop control plane, gateway brain or release dependency. The packaged resident is the independent `runtime/python` `znagent` distribution booting `zn_agent.resident`; production runtime construction no longer uses `run_agent.AIAgent`. Active local terminal/PTTY and web paths are ZN-owned. The independent Electron main, preload, React workbench and `zn://` protocol are active. Resident learning now has independently verified L1 experience, L2 candidate tendencies, reality-gated L3 influence for the first safe write slice, and two resident-owned semantic tactic families: exact-text append/replace and bounded single-path Git staging (`git add` vs `git update-index`) with fresh structured Git verification. Current priority is to make the Git tactic family reality-gated reusable competence without learned raw-command replay, fix already-satisfied Git goal resolution, and then expand toward bounded mutation/diff/test/reality engineering loops. M8 installed updater continuity remains unverified release debt. Preserve zero-model organism behavior, CI cost discipline and `main` untouched until M10.
+> Continue `9529360-cpu/znagent` on `dev/zn-agent`. Read the current repository code and Git/CI state first, then read `ZN.md`, `AGENTS.md`, `docs/ZN-IMPLEMENTATION-STATUS.md`, `docs/ZN-SOURCE-EXTRACTION.md`, `docs/ZN-SELF-MAINTENANCE.md` and `.agent/HANDOFF.md` before changing code. ZN is the only product/subject. Hermes is source reference only: inspect mature mechanisms, extract/adapt them behind ZN-owned interfaces/config/lifecycle/tests, then switch the active caller; never make Hermes the runtime, UI, desktop control plane, gateway brain or release dependency. The packaged resident is the independent `runtime/python` `znagent` distribution booting `zn_agent.resident`; production runtime construction no longer uses `run_agent.AIAgent`. Active local terminal/PTTY and web paths are ZN-owned. The independent Electron main, preload, React workbench and `zn://` protocol are active. Resident learning now has independently verified L1 experience, L2 candidate tendencies, reality-gated L3 influence for the first safe write slice, and two resident-owned semantic tactic families: exact-text append/replace and bounded single-path Git staging (`git add` vs `git update-index`). The Git family now has its first reality-gated L3: current typed goal/root/target/variant must be re-proven, learned evidence may only reorder freshly formed current choices, already-satisfied goals resolve natively, and fresh `git_state` remains mandatory verification. Current priority is to keep those semantics aligned across formation/diagnostics and then expand toward bounded mutation/diff/test/current-reality engineering loops. M8 installed updater continuity remains unverified release debt. Preserve zero-model organism behavior, CI cost discipline and `main` untouched until M10.
 
 ---
 
@@ -1550,18 +1551,19 @@ current Situation / typed goal
 → candidate procedural tendency
 ```
 
-For the exact-text family, a reality-gated L3 slice can already bias current safe replacement choices. For the Git staging family, L1/L2 evidence is now recorded but positive L3 authority remains deliberately disabled until Git-specific current-reality applicability can prove the same root/target/goal and the resident has re-formed the current choices.
+For the exact-text family, a reality-gated L3 slice can bias current safe replacement choices. For the Git staging family, the first bounded reality-gated L3 slice is now also active: current structured Git/path evidence must re-prove the same typed goal, root, target/path identity and exact resident-formed action variant before positive influence. Mature Git evidence may only reorder the current freshly re-formed `git_add` / `git update-index --add` choices; it never supplies command, path or workdir. If current reality already proves the staging goal satisfied, Investigation resolves it without mutation or model fallback. Fresh `git_state` remains mandatory after any staging movement.
 
 The next architectural step is therefore not a planner tree or learned raw command replay. It is:
 
 ```text
-repeated verified Git tactic evidence
-→ current structured Git/path evidence proves applicability
-→ procedural tendency may bias only between current resident-formed Git tactics
-→ fresh git_state still verifies the result
+verified current-only procedural competence
+→ keep formation / applicability / diagnostic semantics aligned
+→ extend one explicit engineering effect at a time
+→ independently verify mutation through diff/test/current reality
+→ only verified compatible experience may proceduralize
 → prediction error / body failure revokes the route and returns to Investigation
 ```
 
-After that boundary is proven, engineering competence should grow through similarly bounded mutation → diff/test/current-reality loops whose effects and verifiers are explicit. Novel or ambiguous engineering work may still borrow external cognition, but models must not become the owner of the learned execution path.
+Engineering competence should grow through similarly bounded mutation → diff/test/current-reality loops whose effects and verifiers are explicit. Novel or ambiguous engineering work may still borrow external cognition, but models must not become the owner of the learned execution path.
 
 The target product remains one resident subject that gets more capable by living and doing—not a shell that merely gets better at asking external models what to do.
