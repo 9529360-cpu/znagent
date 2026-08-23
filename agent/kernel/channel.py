@@ -40,6 +40,25 @@ class ChannelAttachment:
 
 
 @dataclass(frozen=True, slots=True)
+class ChannelOutboundMedia:
+    """One local artifact explicitly nominated by the resident for delivery.
+
+    A nomination is not an authorization. Platform adapters must resolve and
+    authorize ``local_path`` through :class:`OutboundMediaPathPolicy` before
+    reading or uploading the file. Keeping this contract separate from inbound
+    ``ChannelAttachment`` prevents received media or arbitrary response text
+    from silently becoming outbound upload authority.
+    """
+
+    nomination_id: str
+    local_path: str
+    kind: str = "document"
+    file_name: str | None = None
+    mime_type: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class ChannelEvent:
     channel: str
     conversation_id: str
@@ -64,7 +83,7 @@ class ChannelMessage:
     reply_to_message_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     # Same compatibility rule as ChannelEvent: append new fields.
-    attachments: tuple[ChannelAttachment, ...] = ()
+    attachments: tuple[ChannelOutboundMedia, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

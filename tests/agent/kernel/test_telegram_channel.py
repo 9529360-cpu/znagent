@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
-from agent.kernel.channel import ChannelMessage
+from agent.kernel.channel import ChannelMessage, ChannelOutboundMedia
+from agent.kernel.outbound_media import (
+    OutboundMediaAuthorizationError,
+    OutboundMediaPathPolicy,
+)
 from agent.kernel.telegram_channel import (
     TelegramBotApiChannel,
     TelegramChannelError,
@@ -146,6 +152,119 @@ class TelegramChannelTests(unittest.TestCase):
         self.assertEqual(first["reply_parameters"], {"message_id": 9})
         for _url, call in client.calls:
             self.assertLessEqual(utf16_len(call["json"]["text"]), 4096)
+
+    def test_send_authorizes_then_uploads_resident_nominated_document(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "outbound"
+            root.mkdir()
+            artifact = root / "result.txt"
+            artifact.write_text("verified resident artifact", encoding="utf-8")
+            client = _Client(
+                [
+                    _Response({"ok": True, "result": {"message_id": 100}}),
+                    _Response({"ok": True, "result": {"message_id": 101}}),
+                ]
+            )
+            adapter = TelegramBotApiChannel(
+                "token",
+                client=client,
+                outbound_media_policy=OutboundMediaPathPolicy([root]),
+            )
+
+            delivery = adapter.send(
+                ChannelMessage(
+                    channel="telegram",
+                    conversation_id="77",
+                    text="completed",
+                    thread_id="8",
+                    reply_to_message_id="9",
+                    attachments=(
+                        ChannelOutboundMedia(
+                            nomination_id="media-1",
+                            local_path=str(artifact.resolve()),
+                            file_name="answer.txt",
+                            mime_type="text/plain",
+                        ),
+                    ),
+                )
+            )
+
+            self.assertEqual(delivery.message_ids, ("100", "101"))
+            self.assertEqual(delivery.metadata, {"chunks": 1, "attachments": 1})
+            self.assertIn("sendMessage", client.calls[0][0])
+            upload_url, upload = client.calls[1]
+            self.assertIn("sendDocument", upload_url)
+            self.assertNotIn("json", upload)
+            self.assertEqual(upload["data"]["chat_id"], "77")
+            self.assertEqual(upload["data"]["message_thread_id"], 8)
+            self.assertEqual(upload["files"]["document"][0], "answer.txt")
+            self.assertEqual(upload["files"]["document"][2], "text/plain")
+
+    def test_attachment_only_delivery_replies_on_document_without_empty_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "outbound"
+            root.mkdir()
+            artifact = root / "result.bin"
+            artifact.write_bytes(b"result")
+            client = _Client([_Response({"ok": True, "result": {"message_id": 101}})])
+            adapter = TelegramBotApiChannel(
+                "token",
+                client=client,
+                outbound_media_policy=OutboundMediaPathPolicy([root]),
+            )
+
+            delivery = adapter.send(
+                ChannelMessage(
+                    channel="telegram",
+                    conversation_id="77",
+                    text="",
+                    reply_to_message_id="9",
+                    attachments=(
+                        ChannelOutboundMedia(
+                            nomination_id="media-1",
+                            local_path=str(artifact.resolve()),
+                        ),
+                    ),
+                )
+            )
+
+            self.assertEqual(len(client.calls), 1)
+            self.assertIn("sendDocument", client.calls[0][0])
+            self.assertEqual(
+                client.calls[0][1]["data"]["reply_parameters"],
+                '{"message_id":9}',
+            )
+            self.assertEqual(delivery.metadata, {"chunks": 0, "attachments": 1})
+
+    def test_unauthorized_outbound_path_is_rejected_before_network_access(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "outbound"
+            root.mkdir()
+            outside = Path(tmp) / "private.txt"
+            outside.write_text("secret", encoding="utf-8")
+            client = _Client([])
+            adapter = TelegramBotApiChannel(
+                "token",
+                client=client,
+                outbound_media_policy=OutboundMediaPathPolicy([root]),
+            )
+
+            with self.assertRaises(OutboundMediaAuthorizationError):
+                adapter.send(
+                    ChannelMessage(
+                        channel="telegram",
+                        conversation_id="77",
+                        text="do not leak",
+                        attachments=(
+                            ChannelOutboundMedia(
+                                nomination_id="media-1",
+                                local_path=str(outside.resolve()),
+                            ),
+                        ),
+                    )
+                )
+
+            self.assertEqual(client.calls, [])
 
     def test_transport_error_never_echoes_bot_token(self):
         class BrokenClient:

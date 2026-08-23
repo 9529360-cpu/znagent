@@ -14,7 +14,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Iterable, Mapping
 
 from .channel import ChannelAdapter, ChannelEvent, ChannelMessage
-from .channel_delivery import ChannelDeliveryLedger
+from .channel_delivery import ChannelDeliveryLedger, ChannelMediaNomination
 from .config import load_zn_config
 from .event_ingress import enqueue_event_once, stable_external_event_id
 from .models import utc_now
@@ -123,6 +123,34 @@ class ResidentChannelSupervisor:
                 snapshots.append(asdict(state))
             return tuple(snapshots)
 
+    def nominate_outbound_media(
+        self,
+        event_id: str,
+        local_path: str,
+        *,
+        kind: str = "document",
+        file_name: str | None = None,
+        mime_type: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> ChannelMediaNomination:
+        """Record explicit resident egress intent without interpreting text.
+
+        The event must already belong to a durable channel route. Authorization
+        remains the adapter's responsibility immediately before file access.
+        """
+
+        event = self.resident.store.get_event(str(event_id or "").strip())
+        if event is None or event.kind != "channel_message":
+            raise ValueError("outbound media nomination requires a resident channel event")
+        return self.ledger.nominate_media(
+            event.event_id,
+            local_path,
+            kind=kind,
+            file_name=file_name,
+            mime_type=mime_type,
+            metadata=metadata,
+        )
+
     def _run_channel(self, name: str, adapter: ChannelAdapter) -> None:
         backoff = self.min_backoff
         with self._lock:
@@ -220,7 +248,8 @@ class ResidentChannelSupervisor:
             response = str(result.response or "").strip()
             if not response and self.reply_failures and not result.success:
                 response = str(result.reason or "ZN could not complete this request.").strip()
-            if not response:
+            attachments = self.ledger.media_for_event(route.event_id)
+            if not response and not attachments:
                 self.ledger.mark_delivered(route.event_id)
                 continue
             try:
@@ -231,6 +260,7 @@ class ResidentChannelSupervisor:
                         text=response,
                         thread_id=route.thread_id,
                         reply_to_message_id=route.reply_to_message_id,
+                        attachments=attachments,
                     )
                 )
                 if not delivery.ok:
