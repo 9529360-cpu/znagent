@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from agent.kernel.action import NativeActionIntent, derive_native_action_intents
+from agent.kernel.body import BodyActionResult
 from agent.kernel.models import AgentEvent
 from agent.kernel.procedural_influence import select_procedurally_influenced_intent
 from agent.kernel.procedural_tendency import CandidateProceduralTendency
+from agent.kernel.provider_bridge import build_resident_runtime
 
 
 class GitProceduralInfluenceTests(unittest.TestCase):
@@ -23,6 +27,29 @@ class GitProceduralInfluenceTests(unittest.TestCase):
             default=str,
         ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
+
+    @staticmethod
+    def _git(root: Path, *args: str) -> str:
+        proc = subprocess.run(
+            ["git", "-C", str(root), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            raise AssertionError(proc.stderr or proc.stdout)
+        return proc.stdout.strip()
+
+    @classmethod
+    def _repo(cls, root: Path) -> Path:
+        cls._git(root, "init", "-q")
+        cls._git(root, "config", "user.email", "zn-tests@example.invalid")
+        cls._git(root, "config", "user.name", "ZN Tests")
+        target = root / "tracked.txt"
+        target.write_text("base\n", encoding="utf-8")
+        cls._git(root, "add", "--", target.name)
+        cls._git(root, "commit", "-qm", "initial")
+        return target
 
     @classmethod
     def _candidate(cls, root: Path, target: Path, *, variant: str):
@@ -108,6 +135,29 @@ class GitProceduralInfluenceTests(unittest.TestCase):
                 "conflicted_paths": [],
             },
         }
+
+    @staticmethod
+    def _run_to_terminal(resident, limit: int = 120):
+        for _ in range(limit):
+            result = resident.live_once()
+            if result is not None:
+                return result
+        raise AssertionError("resident did not reach a terminal result")
+
+    @staticmethod
+    def _advance_until_stage(resident, stage: str, limit: int = 100) -> None:
+        for _ in range(limit):
+            state = resident.store.get_working_state()
+            if state.stage == stage:
+                return
+            result = resident.live_once()
+            if result is not None:
+                raise AssertionError(
+                    f"resident reached terminal result before {stage}: {result}"
+                )
+        raise AssertionError(
+            f"resident did not reach {stage}; current={resident.store.get_working_state().stage}"
+        )
 
     def test_supported_variant_only_reorders_fresh_current_git_choices(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -215,6 +265,123 @@ class GitProceduralInfluenceTests(unittest.TestCase):
 
             self.assertIsNone(influence)
             self.assertIs(selected, forged)
+
+    def test_active_resident_learns_plumbing_variant_then_biases_only_current_choice(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            target = self._repo(root)
+            resident = build_resident_runtime(
+                config={"model": {}},
+                store_path=root / ".zn" / "kernel.db",
+            )
+            original_dispatch = resident.body._dispatch
+            failed_events: set[str] = set()
+
+            def dispatch(action, started):
+                command = str(action.args.get("command") or "")
+                if (
+                    action.kind == "command"
+                    and command.startswith("git add -- ")
+                    and action.event_id not in failed_events
+                ):
+                    failed_events.add(action.event_id)
+                    return BodyActionResult(
+                        action_id=action.action_id,
+                        kind=action.kind,
+                        success=False,
+                        data={"command": command},
+                        error="synthetic porcelain staging failure for learning",
+                        event_id=action.event_id,
+                        started_at=started,
+                    )
+                return original_dispatch(action, started)
+
+            with patch.object(resident.body, "_dispatch", side_effect=dispatch):
+                for index in range(3):
+                    target.write_text(f"practice-{index}\n", encoding="utf-8")
+                    event = resident.enqueue(
+                        f"stage stable repository path practice {index}",
+                        payload={
+                            "path": str(target),
+                            "repo_path": str(root),
+                            "expected_outcome": {
+                                "kind": "git_path_staged",
+                                "path": str(target),
+                            },
+                            "model_policy": "never",
+                            "required_capabilities": ["it/git", "filesystem"],
+                        },
+                    )
+                    result = self._run_to_terminal(resident)
+                    self.assertTrue(result.success)
+                    experiences = resident.verified_experiences.for_event(event.event_id)
+                    self.assertEqual(len(experiences), 1)
+                    self.assertEqual(
+                        experiences[0].expected_outcome["action_variant"],
+                        "git_update_index",
+                    )
+
+            candidates = resident.verified_experiences.candidate_tendencies()
+            plumbing = [
+                item
+                for item in candidates
+                if item.expected_kind == "git_path_staged"
+                and item.applicability.get("stable_action_variant") == "git_update_index"
+            ]
+            self.assertEqual(len(plumbing), 1)
+            candidate = plumbing[0]
+            self.assertEqual(candidate.maturity_state, "supported")
+            self.assertEqual(candidate.support_count, 3)
+
+            target.write_text("learned-current-choice\n", encoding="utf-8")
+            event = resident.enqueue(
+                "stage stable repository path using current reality",
+                payload={
+                    "path": str(target),
+                    "repo_path": str(root),
+                    "expected_outcome": {
+                        "kind": "git_path_staged",
+                        "path": str(target),
+                    },
+                    "model_policy": "never",
+                    "required_capabilities": ["it/git", "filesystem"],
+                },
+            )
+            self._advance_until_stage(resident, "native_action")
+            state = resident.store.get_working_state()
+            selected = NativeActionIntent.from_dict(state.data["native_action_intent"])
+            self.assertEqual(
+                selected.expected_outcome["action_variant"],
+                "git_update_index",
+            )
+            influence = state.data.get("procedural_action_influence")
+            self.assertIsInstance(influence, dict)
+            self.assertEqual(influence["tendency_id"], candidate.tendency_id)
+            self.assertFalse(influence["revoked"])
+
+            result = self._run_to_terminal(resident)
+            self.assertTrue(result.success)
+            self.assertEqual(result.model_invocations, 0)
+            commands = [
+                item
+                for item in resident.body.recent_actions(80)
+                if item.event_id == event.event_id and item.kind == "command"
+            ]
+            self.assertEqual(len(commands), 1)
+            self.assertTrue(
+                str(commands[0].data.get("command") or "").startswith(
+                    "git update-index --add -- "
+                )
+            )
+            self.assertEqual(
+                self._git(root, "diff", "--name-only", "--", target.name),
+                "",
+            )
+            self.assertEqual(
+                self._git(root, "diff", "--cached", "--name-only", "--", target.name),
+                target.name,
+            )
+            resident.store.close()
 
 
 if __name__ == "__main__":
