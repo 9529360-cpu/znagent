@@ -2,7 +2,9 @@
 
 > 状态：架构契约 / SM0 COMPLETE / SM1+ 待实现
 >
-> 适用分支：`dev/zn-agent`
+> 开发分支：`dev/zn-agent`
+>
+> Canonical source/release branch：`main`
 >
 > 上位产品契约：[`../ZN.md`](../ZN.md)
 >
@@ -27,9 +29,9 @@ ZN 正常生活/工作
 → 运行验证
 → 审查 diff
 → 推送维护分支
-→ PR
+→ PR / verified promotion flow
 → CI
-→ 满足规则后合并
+→ 满足规则后进入 canonical source
 → 构建不可变新版本
 → 验证正式产物
 → 通知用户更新原因
@@ -114,7 +116,7 @@ ZN 的工程连续性不能属于某一个 GPT、Claude、Gemini、人类、聊�
 
 自维护不能重新引入外部产品/agent framework 作为 resident runtime、主循环、UI、gateway brain、Python distribution、build/release dependency 或产品控制面。
 
-需要成熟实现时，只能从 Git 历史或外部参考源研究并适配到 ZN ownership。
+需要成熟实现时，只能从 dedicated reference branch、Git 历史或外部参考源研究并适配到 ZN ownership。
 
 ## 4. GitHub 和仓库的角色
 
@@ -125,8 +127,10 @@ GitHub 是 ZN 的远程源码、协作、工程交接和版本历史边界之一
 ```text
 repository: 9529360-cpu/znagent
 working_branch: dev/zn-agent
-release_branch: main   # 仅在 M10 后按正式策略使用
+canonical_branch: main
 ```
+
+M10 canonical promotion 已完成。`main` 不再是“未来目标”，而是 canonical source/release branch；普通开发和自动修复仍必须先在 `dev/zn-agent` 或隔离 work branch 验证，不能直接在 `main` 试错。
 
 源码仓库连接信息属于配置。Token/密钥必须进入安全凭证存储，不能写入普通日志、记忆、提交或 HANDOFF。
 
@@ -190,7 +194,7 @@ ZN 自身代码缺陷
 
 ### 5.4 隔离开发
 
-真正进入开发的维护任务使用隔离分支/工作区，例如：
+真正进入开发的维护任务使用 `dev/zn-agent` 上的明确小修改，或隔离分支/工作区，例如：
 
 ```text
 work/self-maintenance-<issue-id>-<short-name>
@@ -199,7 +203,7 @@ work/self-maintenance-<issue-id>-<short-name>
 要求：
 
 - 不直接修改当前正式安装目录；
-- 不直接在 release/main 分支试错；
+- 不直接在 `main` 试错；
 - 开始前记录基线 commit；
 - 未知 dirty state 不能覆盖；
 - 改动范围保持小而可验证。
@@ -241,8 +245,8 @@ work/self-maintenance-<issue-id>-<short-name>
 review diff
 → 检查秘密/临时文件/调试输出
 → commit
-→ push isolated branch
-→ create PR
+→ push development/isolated branch
+→ create/update PR or follow repository promotion flow
 → CI
 → 读取真实结果
 ```
