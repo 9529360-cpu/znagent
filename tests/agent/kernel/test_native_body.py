@@ -94,7 +94,9 @@ class NativeBodyTests(unittest.TestCase):
 
     def test_git_repository_state_is_structured_body_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            base = Path(tmp)
+            root = base / "repo"
+            root.mkdir()
 
             def git(*args: str) -> subprocess.CompletedProcess[str]:
                 return subprocess.run(
@@ -124,7 +126,7 @@ class NativeBodyTests(unittest.TestCase):
 
             resident = build_resident_runtime_from_existing_stack(
                 config={"model": {}},
-                store_path=root / "kernel.db",
+                store_path=base / "resident" / "kernel.db",
             )
             observed = resident.body.act(
                 "git_state",
@@ -144,12 +146,11 @@ class NativeBodyTests(unittest.TestCase):
             self.assertTrue(observed.data["dirty"])
             self.assertEqual(
                 set(observed.data["changed_paths"]),
-                {"tracked.txt", "staged.txt", "untracked.txt", "kernel.db"},
+                {"tracked.txt", "staged.txt", "untracked.txt"},
             )
             self.assertEqual(observed.data["staged_paths"], ["staged.txt"])
             self.assertEqual(observed.data["unstaged_paths"], ["tracked.txt"])
-            self.assertIn("untracked.txt", observed.data["untracked_paths"])
-            self.assertIn("kernel.db", observed.data["untracked_paths"])
+            self.assertEqual(observed.data["untracked_paths"], ["untracked.txt"])
             self.assertEqual(observed.data["conflicted_paths"], [])
             resident.store.close()
 
