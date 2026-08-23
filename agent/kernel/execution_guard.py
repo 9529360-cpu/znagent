@@ -193,11 +193,12 @@ class EvidenceGuardedResidentRuntime(WorldAwareTransferResidentRuntime):
         ):
             return True
 
-        # Lazy migration for a resident that persisted the old one-slot guard
-        # before this runtime existed. Bind it to the facts currently visible at
-        # recovery time; later changed facts can then legitimately requalify it.
+        # Lazy migration applies only when no ledger exists yet. Once any
+        # evidence-bound record is present, the old one-slot signature is merely
+        # a parent compatibility shim; re-migrating it after evidence changes
+        # would accidentally turn a temporary failure into a permanent ban.
         legacy = str(state.data.get("native_action_failure_signature") or "")
-        if legacy and legacy == self._intent_signature(intent):
+        if not records and legacy and legacy == self._intent_signature(intent):
             self._record_failed_action(
                 event,
                 state,
@@ -290,7 +291,10 @@ class EvidenceGuardedResidentRuntime(WorldAwareTransferResidentRuntime):
             return [cls._stable_fact_value(item) for item in value]
         if isinstance(value, set):
             normalized = [cls._stable_fact_value(item) for item in value]
-            return sorted(normalized, key=lambda item: json.dumps(item, sort_keys=True, default=str))
+            return sorted(
+                normalized,
+                key=lambda item: json.dumps(item, sort_keys=True, default=str),
+            )
         if value is None or isinstance(value, (str, int, float, bool)):
             return value
         return str(value)
