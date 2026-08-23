@@ -11,7 +11,9 @@ never supplies Body arguments, bypasses anti-replay, skips verification, or
 becomes a fast path.
 """
 
+import os
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any, Iterable
 
 from .action import (
@@ -23,6 +25,7 @@ from .git_semantics import (
     current_git_goal_from_intent,
     git_path_stage_state,
     git_stage_command,
+    normalized_git_path,
 )
 from .procedural_influence import (
     ProceduralActionInfluence,
@@ -37,6 +40,7 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
     _PROCEDURAL_INFLUENCE_KEY = "procedural_action_influence"
     _PROCEDURAL_REVOKED_KEY = "procedural_revoked_tendencies"
     _NATIVE_CHOICE_RECOVERY_KEY = "native_choice_recovery"
+    _REPO_TEXT_BASELINE_KEY = "native_repo_text_baseline"
     _RECOVERABLE_CHOICE_SOURCES = frozenset({"structured_choice", "resident_choice"})
     _MAX_PROCEDURAL_REVOKED = 8
 
@@ -205,6 +209,211 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
             return True
         return False
 
+    def _repo_text_scope(self, event, intent: NativeActionIntent) -> dict[str, str] | None:
+        """Return one tracked Git scope for an already-authorized exact replacement."""
+
+        if (
+            intent.kind != "write_text"
+            or bool(intent.args.get("append", False))
+            or intent.source not in {"native_deliberation", "resident_choice"}
+        ):
+            return None
+        contract = self._verification_contract(event, intent)
+        if (
+            not isinstance(contract, dict)
+            or str(contract.get("kind") or "").strip().lower() != "text_equals"
+            or str(contract.get("action_variant") or "").strip().lower() != "replace"
+        ):
+            return None
+
+        investigation = self.investigator.current(event.event_id)
+        facts = dict(investigation.facts) if investigation is not None else {}
+        git = facts.get("git") if isinstance(facts.get("git"), dict) else {}
+        if git.get("available") is False:
+            return None
+        root_text = str(git.get("root") or "").strip()
+        head = str(git.get("head") or "").strip()
+        path_text = str(intent.args.get("path") or "").strip()
+        if not root_text or not head or not path_text:
+            return None
+
+        try:
+            root = Path(root_text).expanduser().resolve(strict=True)
+            requested = Path(path_text).expanduser()
+            candidate = requested if requested.is_absolute() else root / requested
+            lexical = Path(os.path.abspath(str(candidate)))
+            resolved = lexical.resolve(strict=True)
+            if resolved != lexical:
+                return None
+            relative = normalized_git_path(resolved.relative_to(root).as_posix())
+        except (OSError, RuntimeError, ValueError):
+            return None
+        if not relative:
+            return None
+
+        path_facts = facts.get("paths") if isinstance(facts.get("paths"), list) else []
+        matching = None
+        for item in path_facts:
+            if not isinstance(item, dict):
+                continue
+            try:
+                observed = Path(str(item.get("path") or "")).expanduser().resolve(strict=False)
+            except (OSError, RuntimeError, ValueError):
+                continue
+            if observed == resolved:
+                matching = item
+                break
+        if (
+            not isinstance(matching, dict)
+            or not bool(matching.get("exists"))
+            or str(matching.get("type") or "").strip().lower() != "file"
+        ):
+            return None
+
+        def git_paths(key: str) -> set[str]:
+            raw = git.get(key)
+            if not isinstance(raw, list):
+                return set()
+            return {
+                normalized_git_path(item)
+                for item in raw
+                if normalized_git_path(item)
+            }
+
+        # The first repository-delta slice deliberately excludes index mutation,
+        # conflicts and untracked-file semantics. Existing text verification
+        # remains available for those cases; this stronger proof only claims the
+        # tracked worktree replacement shape it can identify cleanly.
+        if (
+            relative in git_paths("staged_paths")
+            or relative in git_paths("untracked_paths")
+            or relative in git_paths("conflicted_paths")
+        ):
+            return None
+
+        return {
+            "root": str(root),
+            "head": head,
+            "path": str(resolved),
+            "relative_path": relative,
+        }
+
+    def _prepare_repo_text_baseline(
+        self,
+        event,
+        state,
+        intent: NativeActionIntent,
+        *,
+        thought=None,
+    ) -> bool:
+        scope = self._repo_text_scope(event, intent)
+        if scope is None:
+            state.data.pop(self._REPO_TEXT_BASELINE_KEY, None)
+            return True
+
+        observed = self.body.act(
+            "git_diff",
+            event_id=event.event_id,
+            path=scope["root"],
+            relative_path=scope["relative_path"],
+        )
+        data = observed.data if isinstance(observed.data, dict) else {}
+        worktree = data.get("worktree") if isinstance(data.get("worktree"), dict) else {}
+        staged = data.get("staged") if isinstance(data.get("staged"), dict) else {}
+        problems: list[str] = []
+        if not observed.success:
+            problems.append(observed.error or "target-scoped Git baseline could not be observed")
+        if observed.success and str(data.get("root") or "").strip() != scope["root"]:
+            problems.append("repository root changed before mutation")
+        if observed.success and str(data.get("head") or "").strip() != scope["head"]:
+            problems.append("repository HEAD changed before mutation")
+        if observed.success and str(data.get("scope_relative_path") or "") != scope["relative_path"]:
+            problems.append("target-scoped Git baseline resolved a different path")
+        if observed.success and data.get("scope_tracked") is not True:
+            problems.append("target is not a tracked repository path")
+        if observed.success and bool(data.get("truncated")):
+            problems.append("target-scoped Git baseline is truncated")
+        if observed.success and list(staged.get("paths") or ()):
+            problems.append("target has staged changes outside the first worktree-delta contract")
+        if observed.success and list(data.get("untracked_paths") or ()):
+            problems.append("target became untracked before mutation")
+
+        baseline = state.data.get(self._REPO_TEXT_BASELINE_KEY)
+        same_intent = (
+            isinstance(baseline, dict)
+            and str(baseline.get("intent_id") or "") == intent.intent_id
+        )
+        current_snapshot = {
+            "intent_id": intent.intent_id,
+            "root": scope["root"],
+            "head": scope["head"],
+            "relative_path": scope["relative_path"],
+            "state_sha256": str(data.get("state_sha256") or ""),
+            "worktree_patch_sha256": str(worktree.get("patch_sha256") or ""),
+            "staged_patch_sha256": str(staged.get("patch_sha256") or ""),
+            "source_action_id": observed.action_id,
+        }
+        if observed.success and not all(
+            current_snapshot[key]
+            for key in (
+                "state_sha256",
+                "worktree_patch_sha256",
+                "staged_patch_sha256",
+            )
+        ):
+            problems.append("target-scoped Git baseline is missing deterministic fingerprints")
+
+        if same_intent and not problems:
+            for key in (
+                "root",
+                "head",
+                "relative_path",
+                "state_sha256",
+                "worktree_patch_sha256",
+                "staged_patch_sha256",
+            ):
+                if str(baseline.get(key) or "") != current_snapshot[key]:
+                    problems.append("repository baseline became stale before mutation")
+                    break
+
+        if problems:
+            failure = "repository mutation precondition failed: " + "; ".join(problems)
+            state.data["local_failure"] = failure
+            self._record_failed_action(
+                event,
+                state,
+                intent,
+                source="precondition",
+                failure=failure,
+            )
+            if isinstance(state.data.get(self._PROCEDURAL_INFLUENCE_KEY), dict):
+                self._revoke_active_procedural_influence(
+                    state,
+                    reason="repository_precondition",
+                )
+            state.stage = "native_investigation"
+            state.next_action = "refresh repository evidence before another mutation"
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            if thought is not None:
+                if failure not in thought.unknown:
+                    thought.unknown = (*thought.unknown, failure)
+                thought.reason = (
+                    f"{thought.reason}; current repository evidence no longer proves a safe "
+                    "baseline for the selected file mutation"
+                )
+                self._persist_enriched_thought(thought)
+            return False
+
+        if not same_intent:
+            state.data[self._REPO_TEXT_BASELINE_KEY] = current_snapshot
+            self._sync_execution_context(event, state)
+            # Persist before movement so a restart cannot silently discard the
+            # baseline. A resumed native_action pulse must re-observe and match
+            # this exact scoped state before it is allowed to write.
+            self.store.save_working_state(state)
+        return True
+
     def _verification_contract(self, event, intent):
         """Verify current exact-text and bounded resident Git goals."""
 
@@ -303,6 +512,164 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
             )
         return contract
 
+    def _verify_repo_backed_text_replacement(
+        self,
+        event,
+        state,
+        intent: NativeActionIntent,
+        contract: dict[str, Any],
+        baseline: dict[str, Any],
+        *,
+        thought=None,
+    ):
+        path = str(contract.get("path") or "")
+        expected = str(contract.get("expected_text") or "")
+        text_observation = self.body.act(
+            "read_text",
+            event_id=event.event_id,
+            path=path,
+            max_chars=max(1, len(expected) + 1),
+        )
+        text_verified = bool(
+            text_observation.success
+            and not bool(text_observation.data.get("truncated"))
+            and text_observation.output == expected
+        )
+
+        diff_observation = self.body.act(
+            "git_diff",
+            event_id=event.event_id,
+            path=str(baseline.get("root") or ""),
+            relative_path=str(baseline.get("relative_path") or ""),
+        )
+        diff_data = (
+            diff_observation.data if isinstance(diff_observation.data, dict) else {}
+        )
+        worktree = (
+            diff_data.get("worktree")
+            if isinstance(diff_data.get("worktree"), dict)
+            else {}
+        )
+        staged = (
+            diff_data.get("staged")
+            if isinstance(diff_data.get("staged"), dict)
+            else {}
+        )
+        repo_delta = {
+            "checked": True,
+            "root_match": str(diff_data.get("root") or "") == str(baseline.get("root") or ""),
+            "head_match": str(diff_data.get("head") or "") == str(baseline.get("head") or ""),
+            "scope_match": str(diff_data.get("scope_relative_path") or "")
+            == str(baseline.get("relative_path") or ""),
+            "tracked": diff_data.get("scope_tracked") is True,
+            "not_truncated": not bool(diff_data.get("truncated")),
+            "index_unchanged": str(staged.get("patch_sha256") or "")
+            == str(baseline.get("staged_patch_sha256") or ""),
+            "worktree_changed": str(worktree.get("patch_sha256") or "")
+            != str(baseline.get("worktree_patch_sha256") or ""),
+            "state_changed": str(diff_data.get("state_sha256") or "")
+            != str(baseline.get("state_sha256") or ""),
+            "no_untracked_target": not bool(diff_data.get("untracked_paths")),
+            "observation_success": bool(diff_observation.success),
+            "baseline_state_sha256": str(baseline.get("state_sha256") or ""),
+            "observed_state_sha256": str(diff_data.get("state_sha256") or ""),
+        }
+        repo_verified = bool(
+            diff_observation.success
+            and all(
+                bool(repo_delta[key])
+                for key in (
+                    "root_match",
+                    "head_match",
+                    "scope_match",
+                    "tracked",
+                    "not_truncated",
+                    "index_unchanged",
+                    "worktree_changed",
+                    "state_changed",
+                    "no_untracked_target",
+                )
+            )
+        )
+        repo_delta["verified"] = repo_verified
+        verified = bool(text_verified and repo_verified)
+        verification_result = {
+            "verified": verified,
+            "kind": "text_equals",
+            "path": path,
+            "expected_chars": len(expected),
+            "observed_chars": (
+                int(text_observation.data.get("chars") or len(text_observation.output))
+                if text_observation.success
+                else None
+            ),
+            "observation": asdict(text_observation),
+            "repo_delta": repo_delta,
+            "repo_observation_action_id": diff_observation.action_id,
+        }
+        state.data["native_verification_result"] = verification_result
+        self._record_verified_experience(
+            event,
+            state,
+            intent,
+            verification_result=verification_result,
+        )
+        self._sync_execution_context(event, state)
+
+        if verified:
+            return self._complete_successful_body_action(
+                event,
+                state,
+                intent,
+                response=path,
+                reason=(
+                    "ZN completed the tracked text replacement only after fresh text "
+                    "observation and a target-scoped Git delta both matched the persisted baseline"
+                ),
+            )
+
+        problems: list[str] = []
+        if not text_observation.success:
+            problems.append(
+                text_observation.error or "current text state could not be observed"
+            )
+        elif not text_verified:
+            problems.append("requested text state does not match current reality")
+        if not diff_observation.success:
+            problems.append(
+                diff_observation.error or "target-scoped repository state could not be observed"
+            )
+        elif not repo_verified:
+            failed_checks = [
+                key
+                for key in (
+                    "root_match",
+                    "head_match",
+                    "scope_match",
+                    "tracked",
+                    "not_truncated",
+                    "index_unchanged",
+                    "worktree_changed",
+                    "state_changed",
+                    "no_untracked_target",
+                )
+                if not bool(repo_delta[key])
+            ]
+            problems.append(
+                "target-scoped repository delta contradicted baseline: "
+                + ", ".join(failed_checks)
+            )
+        failure = "postcondition verification failed for tracked text replacement: " + "; ".join(
+            problems or ["current reality did not prove the requested mutation"]
+        )
+        return self._fail_postcondition_verification(
+            event,
+            state,
+            intent,
+            failure=failure,
+            thought=thought,
+        )
+
     def _native_verification_step(
         self,
         event,
@@ -312,6 +679,29 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
         thought=None,
     ):
         raw_contract = state.data.get("native_verification")
+        raw_baseline = state.data.get(self._REPO_TEXT_BASELINE_KEY)
+        raw_intent = state.data.get("native_action_intent")
+        if (
+            isinstance(raw_contract, dict)
+            and str(raw_contract.get("kind") or "").strip().lower() == "text_equals"
+            and isinstance(raw_baseline, dict)
+            and isinstance(raw_intent, dict)
+        ):
+            intent = NativeActionIntent.from_dict(raw_intent)
+            if (
+                intent.kind == "write_text"
+                and not bool(intent.args.get("append", False))
+                and str(raw_baseline.get("intent_id") or "") == intent.intent_id
+            ):
+                return self._verify_repo_backed_text_replacement(
+                    event,
+                    state,
+                    intent,
+                    raw_contract,
+                    raw_baseline,
+                    thought=thought,
+                )
+
         if not isinstance(raw_contract, dict) or str(
             raw_contract.get("kind") or ""
         ).strip().lower() != "git_path_staged":
@@ -322,7 +712,6 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
                 thought=thought,
             )
 
-        raw_intent = state.data.get("native_action_intent")
         if not isinstance(raw_intent, dict):
             state.stage = "native_deliberation"
             state.next_action = "reconstruct missing postcondition verification"
@@ -417,6 +806,17 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
         readiness,
         thought=None,
     ):
+        raw_intent = state.data.get("native_action_intent")
+        if isinstance(raw_intent, dict):
+            intent = NativeActionIntent.from_dict(raw_intent)
+            if not self._prepare_repo_text_baseline(
+                event,
+                state,
+                intent,
+                thought=thought,
+            ):
+                return None
+
         result = super()._native_action_step(
             event,
             state,
