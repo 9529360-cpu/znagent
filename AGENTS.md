@@ -27,22 +27,24 @@
 4. 读取 `docs/ZN-SOURCE-EXTRACTION.md`。
 5. 读取 `docs/ZN-SELF-MAINTENANCE.md`。
 6. 读取 `.agent/HANDOFF.md`。
-7. 检查 `dev/zn-agent` 当前 HEAD、相关 diff、PR、CI、最近提交。
+7. 检查 `dev/zn-agent` 与 `main` 当前 HEAD、相关 diff、PR、CI、最近提交。
 8. 检查准备修改功能的真实调用链、测试和 active caller。
 
 文档与代码冲突时，以真实仓库状态为准，先对账再继续。新的维护者不需要知道上一位是谁，也不需要拥有上一段聊天记录。
 
 ## 分支边界
 
+M10 canonical promotion 已完成。当前分支职责：
+
 ```text
-main          = M10 正式晋升目标；M10 前保持不动
+main          = canonical source / release branch
 dev/zn-agent  = ZN 主开发分支
 work/*        = 隔离实验、研究或维护分支
 ```
 
-普通开发、自维护和实验不得直接在 `main` 试错。
+普通开发、自维护和实验不得直接在 `main` 试错。正常修改在 `dev/zn-agent` 或隔离 work branch 完成，经过真实测试/CI 后，才按仓库规则进入 `main`。
 
-除非用户明确要求，并且 `ZN.md` 的 M10 条件已经由真实代码/CI/发布证据满足，否则绝对不要修改 `main`。
+禁止为了“同步方便”对 `main` 或 `dev/zn-agent` 使用 force push 或历史重写。
 
 ## 开发顺序
 
@@ -79,7 +81,7 @@ work/*        = 隔离实验、研究或维护分支
 
 ```text
 ZN 有具体需求
-→ 阅读 Git 历史或外部参考实现
+→ 阅读 dedicated reference branch、Git 历史或外部参考实现
 → 理解机制和边界
 → 提取/适配最小完整机制
 → 放入 ZN-owned namespace/interface/config/state/lifecycle
