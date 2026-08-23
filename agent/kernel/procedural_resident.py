@@ -1,18 +1,19 @@
 from __future__ import annotations
 
-"""First bounded L3 action-influence runtime slice.
+"""Bounded L3 influence and resident-owned recovery over native choices.
 
-This layer sits inside the active world-aware resident hierarchy and leaves
-ordinary deliberation unchanged unless current ZN cognition has independently
-formed legal action shapes and present reality supports a sufficiently mature
-low-risk procedural tendency. Learned evidence can reorder those shapes; it
-cannot supply Body arguments, bypass anti-replay, skip verification, or become
-a fast path.
+This layer sits inside the active world-aware resident hierarchy. Ordinary
+single-action deliberation is unchanged. When the current event explicitly
+contains a bounded ``native_action_options`` choice set, current Investigation
+evidence may rule out an earlier option and the resident can continue with the
+first later option not contradicted under that same reality. Procedural evidence
+may additionally reorder eligible choices, but it never supplies Body arguments,
+bypasses anti-replay, skips verification, or becomes a fast path.
 """
 
-from typing import Any
+from typing import Any, Iterable
 
-from .action import derive_native_action_intents
+from .action import NativeActionIntent, derive_native_action_intents
 from .procedural_influence import (
     ProceduralActionInfluence,
     select_procedurally_influenced_intent,
@@ -21,10 +22,11 @@ from .world_closed_loop import WorldAwareTransferResidentRuntime
 
 
 class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
-    """Active resident whose verified procedural evidence may bias native choices."""
+    """Active resident with reality-gated procedural and native choice behavior."""
 
     _PROCEDURAL_INFLUENCE_KEY = "procedural_action_influence"
     _PROCEDURAL_REVOKED_KEY = "procedural_revoked_tendencies"
+    _NATIVE_CHOICE_RECOVERY_KEY = "native_choice_recovery"
     _MAX_PROCEDURAL_REVOKED = 8
 
     def _deliberation_step(
@@ -36,6 +38,11 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
         learning_evidence,
         thought=None,
     ):
+        # Any prior recovery marker described the previous movement. It remains
+        # visible through action/verification but cannot silently describe a new
+        # deliberation cycle.
+        state.data.pop(self._NATIVE_CHOICE_RECOVERY_KEY, None)
+
         investigation = self.investigator.current(event.event_id)
         facts = dict(investigation.facts) if investigation is not None else {}
         intents = derive_native_action_intents(event, facts=facts)
@@ -60,6 +67,13 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
         )
         if intent is None or influence is None:
             state.data.pop(self._PROCEDURAL_INFLUENCE_KEY, None)
+            if self._recover_from_blocked_structured_choices(
+                event,
+                state,
+                intents,
+                thought=thought,
+            ):
+                return None
             return super()._deliberation_step(
                 event,
                 state,
@@ -77,10 +91,17 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
                 state,
                 reason="blocked_by_current_evidence",
             )
-            # The fallback movement below is not procedurally influenced. Keep
-            # only the event-local revoked ID so later failure cannot be
-            # misattributed to a candidate that did not select that movement.
+            # A later choice, if any, is a native recovery rather than a
+            # procedurally selected movement. Keep only the event-local revoked
+            # ID so failure cannot be misattributed to the old candidate.
             state.data.pop(self._PROCEDURAL_INFLUENCE_KEY, None)
+            if self._recover_from_blocked_structured_choices(
+                event,
+                state,
+                intents,
+                thought=thought,
+            ):
+                return None
             self.store.save_working_state(state)
             return super()._deliberation_step(
                 event,
@@ -109,6 +130,67 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
             )
             self._persist_enriched_thought(thought)
         return None
+
+    def _recover_from_blocked_structured_choices(
+        self,
+        event,
+        state,
+        intents: Iterable[NativeActionIntent],
+        *,
+        thought=None,
+    ) -> bool:
+        """Advance to a later explicit choice only after current evidence blocks one.
+
+        ``native_action_options`` is an explicit alternatives contract. This
+        method does not infer alternatives from task text, memories, model text,
+        or failed action arguments. It merely consumes the bounded choices that
+        current ZN action formation already produced. The first unblocked choice
+        keeps historical priority; recovery happens only after at least one
+        earlier structured choice is contradicted under the current evidence
+        fingerprint.
+        """
+
+        current = tuple(intents)
+        if len(current) < 2:
+            return False
+        if any(intent.source != "structured_choice" for intent in current):
+            return False
+
+        blocked_count = 0
+        for index, intent in enumerate(current):
+            if self._action_blocked_by_current_evidence(event, state, intent):
+                blocked_count += 1
+                continue
+            if blocked_count == 0:
+                return False
+
+            self._begin_native_action_cycle(event, state, intent)
+            state.data[self._NATIVE_CHOICE_RECOVERY_KEY] = {
+                "selected_index": index,
+                "choice_count": len(current),
+                "blocked_prior_choices": blocked_count,
+                "action_kind": intent.kind,
+                "evidence_version": self._evidence_fingerprint(event.event_id)[:16],
+            }
+            self.store.save_working_state(state)
+            if thought is not None:
+                action = f"perform body action: {intent.kind}"
+                if action not in thought.possible_actions:
+                    thought.possible_actions = (*thought.possible_actions, action)
+                known = (
+                    f"current evidence blocked {blocked_count} earlier structured native "
+                    f"choice(s); choice {index + 1} remains admissible"
+                )
+                if known not in thought.known:
+                    thought.known = (*thought.known, known)
+                thought.reason = (
+                    f"{thought.reason}; current Investigation evidence ruled out earlier "
+                    "explicit alternatives, so native deliberation selected the first "
+                    "remaining structured choice"
+                )
+                self._persist_enriched_thought(thought)
+            return True
+        return False
 
     def _native_action_step(
         self,
@@ -160,6 +242,24 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
         state = self.store.get_working_state()
         if state.current_event_id != event.event_id:
             return
+
+        recovery = state.data.get(self._NATIVE_CHOICE_RECOVERY_KEY)
+        if isinstance(recovery, dict):
+            try:
+                selected_index = int(recovery.get("selected_index"))
+                blocked = int(recovery.get("blocked_prior_choices") or 0)
+            except (TypeError, ValueError):
+                selected_index = -1
+                blocked = 0
+            action_kind = str(recovery.get("action_kind") or "unknown").strip() or "unknown"
+            if selected_index >= 0 and blocked > 0:
+                known = (
+                    f"native choice recovery selected structured choice {selected_index + 1} "
+                    f"({action_kind}) after current evidence blocked {blocked} earlier choice(s)"
+                )
+                if known not in thought.known:
+                    thought.known = (*thought.known, known)
+
         raw = state.data.get(self._PROCEDURAL_INFLUENCE_KEY)
         if not isinstance(raw, dict):
             return
