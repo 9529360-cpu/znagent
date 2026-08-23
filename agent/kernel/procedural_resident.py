@@ -11,12 +11,18 @@ never supplies Body arguments, bypasses anti-replay, skips verification, or
 becomes a fast path.
 """
 
+from dataclasses import asdict
 from typing import Any, Iterable
 
 from .action import (
     NativeActionIntent,
     current_text_equals_postcondition,
     derive_native_action_intents,
+)
+from .git_semantics import (
+    current_git_goal_from_intent,
+    git_path_stage_state,
+    git_stage_command,
 )
 from .procedural_influence import (
     ProceduralActionInfluence,
@@ -200,13 +206,46 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
         return False
 
     def _verification_contract(self, event, intent):
-        """Verify current exact-text goals, including resident-derived append goals."""
+        """Verify current exact-text and bounded resident Git goals."""
 
         explicit = event.payload.get("expected_outcome")
+        explicit_kind = (
+            str(explicit.get("kind") or "").strip().lower()
+            if isinstance(explicit, dict)
+            else ""
+        )
+        if explicit_kind == "git_path_staged":
+            goal = current_git_goal_from_intent(intent.expected_outcome)
+            expected_command = (
+                git_stage_command(goal["action_variant"], goal["relative_path"])
+                if goal is not None
+                else None
+            )
+            if (
+                goal is None
+                or intent.source != "resident_choice"
+                or intent.kind != "command"
+                or str(intent.args.get("workdir") or "").strip() != goal["root"]
+                or str(intent.args.get("command") or "").strip() != expected_command
+            ):
+                return {
+                    "kind": "unsupported",
+                    "requested_kind": "git_path_staged",
+                    "error": (
+                        "resident Git staging postcondition requires the exact current "
+                        "bounded resident choice and repository root"
+                    ),
+                    "intent_id": intent.intent_id,
+                    "action_signature": self._intent_signature(intent),
+                }
+            return {
+                **goal,
+                "intent_id": intent.intent_id,
+                "action_signature": self._intent_signature(intent),
+            }
+
         if explicit is not None:
-            if isinstance(explicit, dict) and str(
-                explicit.get("kind") or ""
-            ).strip().lower() == "text_equals":
+            if explicit_kind == "text_equals":
                 goal = current_text_equals_postcondition(event)
                 if goal is None:
                     return {
@@ -263,6 +302,112 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
                 "append" if bool(intent.args.get("append", False)) else "replace"
             )
         return contract
+
+    def _native_verification_step(
+        self,
+        event,
+        state,
+        *,
+        readiness,
+        thought=None,
+    ):
+        raw_contract = state.data.get("native_verification")
+        if not isinstance(raw_contract, dict) or str(
+            raw_contract.get("kind") or ""
+        ).strip().lower() != "git_path_staged":
+            return super()._native_verification_step(
+                event,
+                state,
+                readiness=readiness,
+                thought=thought,
+            )
+
+        raw_intent = state.data.get("native_action_intent")
+        if not isinstance(raw_intent, dict):
+            state.stage = "native_deliberation"
+            state.next_action = "reconstruct missing postcondition verification"
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return None
+
+        intent = NativeActionIntent.from_dict(raw_intent)
+        goal = current_git_goal_from_intent(raw_contract)
+        if goal is None:
+            failure = "bounded Git staging verification contract is incomplete"
+            verification_result = {
+                "verified": False,
+                "kind": "git_path_staged",
+                "error": failure,
+            }
+            state.data["native_verification_result"] = verification_result
+            self._sync_execution_context(event, state)
+            return self._fail_postcondition_verification(
+                event,
+                state,
+                intent,
+                failure=failure,
+                thought=thought,
+            )
+
+        observed = self.body.act(
+            "git_state",
+            event_id=event.event_id,
+            path=goal["root"],
+        )
+        stage_state = (
+            git_path_stage_state(observed.data, goal["relative_path"])
+            if observed.success
+            else None
+        )
+        verified = bool(stage_state is not None and stage_state["satisfied"])
+        verification_result = {
+            "verified": verified,
+            "kind": "git_path_staged",
+            "path": goal["path"],
+            "root": goal["root"],
+            "relative_path": goal["relative_path"],
+            "action_variant": goal["action_variant"],
+            "staged": bool(stage_state and stage_state["staged"]),
+            "unstaged": bool(stage_state and stage_state["unstaged"]),
+            "untracked": bool(stage_state and stage_state["untracked"]),
+            "conflicted": bool(stage_state and stage_state["conflicted"]),
+            "observation": asdict(observed),
+        }
+        state.data["native_verification_result"] = verification_result
+        self._record_verified_experience(
+            event,
+            state,
+            intent,
+            verification_result=verification_result,
+        )
+        self._sync_execution_context(event, state)
+
+        if verified:
+            return self._complete_successful_body_action(
+                event,
+                state,
+                intent,
+                response=goal["relative_path"],
+                reason=(
+                    "ZN completed the task only after a fresh structured Git observation "
+                    "proved the target path is staged and matches the current worktree"
+                ),
+            )
+
+        failure = (
+            "postcondition Git staging verification failed: fresh repository state did not "
+            "show the target exclusively staged"
+            if observed.success
+            else "postcondition Git staging verification failed: "
+            + str(observed.error or "current repository state could not be observed")
+        )
+        return self._fail_postcondition_verification(
+            event,
+            state,
+            intent,
+            failure=failure,
+            thought=thought,
+        )
 
     def _native_action_step(
         self,
