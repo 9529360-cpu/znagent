@@ -82,6 +82,7 @@ class ResidentGitStageRecoveryTests(unittest.TestCase):
                         action_id=action.action_id,
                         kind=action.kind,
                         success=False,
+                        data={"command": command},
                         error="synthetic porcelain staging failure",
                         event_id=action.event_id,
                         started_at=started,
