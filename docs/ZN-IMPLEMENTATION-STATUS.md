@@ -4,6 +4,8 @@
 >
 > Current core direction: [`ZN-NEXT-PHASE.md`](ZN-NEXT-PHASE.md)
 >
+> Memory/learning architecture: [`ZN-MEMORY-LEARNING.md`](ZN-MEMORY-LEARNING.md)
+>
 > Source-extraction contract: [`ZN-SOURCE-EXTRACTION.md`](ZN-SOURCE-EXTRACTION.md)
 >
 > Self-maintenance contract: [`ZN-SELF-MAINTENANCE.md`](ZN-SELF-MAINTENANCE.md)
@@ -14,19 +16,35 @@
 
 ## 1. Current development checkpoint — 2026-08-23
 
-The active development mainline is:
+The active development mainline is now:
 
 ```text
 durable ZN Self
 + mature complex-task execution depth
 + reality-based verification
++ resident-owned learning / procedural competence
 ```
 
 Pure UI/desktop polish is paused. M8/release remains a bounded continuity/release lane.
 
 The resident already owns persistent Self/life, Situation/Thought/Will, nervous memory/reconsolidation, durable events/working state, multi-pulse Investigation, native Action/Body movement, bounded external cognition and zero-model continuity.
 
-The remaining core gap is practical execution depth: the same resident must sustain unfamiliar multi-step work, choose genuinely different tactics when evidence contradicts a movement, broaden Body/Senses, and verify the original goal from current reality rather than treating a successful model/tool/action call as completion.
+The execution spine now also has structured read-only Git sense, exact text and explicit command postcondition verification, compact durable execution context, and evidence-bound failed-action history.
+
+The newly documented memory/learning direction is architectural, **not yet an implementation claim**. Current code has meaningful associative lived-memory foundations, but it does not yet provide a first-class procedural competence substrate that can turn repeated verified experience into locally executable mature skills.
+
+The immediate core gap is therefore the transition:
+
+```text
+verified lived experience
+→ reusable resident-owned competence
+→ repeated verified practice
+→ mature procedural tendency
+→ familiar low-latency execution
+→ prediction-error interrupt / relearning
+```
+
+Stronger alternative-action recovery remains important, but it should become an early consumer of this learning path rather than a disconnected tactic generator.
 
 ## 2. Verified core execution spine
 
@@ -179,7 +197,40 @@ The final implementation lives inside the existing `EmbodiedResidentRuntime`; th
 
 This closes the A → B → A blind-replay gap and one false-completion path. It does **not** yet mean ZN can always generate a useful alternative tactic after a movement is blocked.
 
-## 3. Current core capability boundary
+## 3. Verified memory / nervous-system foundations
+
+Current code/test evidence already supports the following foundations:
+
+- `StructuredMemory` provides resident-owned durable structured facts with normalized key/alias recall;
+- `PersistentNervousSystem` stores persistent `NeuralTrace` records instead of transcript entries;
+- repeated matching experience strengthens one trace rather than appending endless duplicates;
+- co-active traces build associations that can spread activation;
+- visual/world/action/outcome/will experiences share the same nervous substrate;
+- trace activation considers cue overlap plus strength, salience, recency, repetition and associative gain;
+- persistent affective state survives restart;
+- consolidation can stabilize recurring structure, form schema traces, fade weak detail and prune sufficiently weak isolated traces;
+- lived traces and consolidated schemas can enter Situation/Thought locally;
+- private lived/schema details are not automatically dumped into external cognition context;
+- current reality gates transfer/reconsolidation rather than treating old memory as eternal truth.
+
+Representative test coverage includes `tests/agent/kernel/test_nervous_system.py` and `tests/agent/kernel/test_neural_cognition_boundary.py`.
+
+### Not yet implemented / not yet claimed
+
+The project does **not** yet claim:
+
+- first-class episodic records that preserve a complete causal Situation → action → expected outcome → observed verification relationship;
+- candidate procedural tendency objects with explicit applicability/maturity/contradiction state;
+- resident-owned mature skills that execute locally without external model interpretation;
+- procedural fast paths that reduce explicit Thought for familiar low-risk work;
+- prediction-error-driven inhibition/de-proceduralization of stale skills;
+- measurable learned computer-use competence;
+- measurable learned engineering competence;
+- benchmarks proving external cognition use falls for familiar task classes while verification quality remains intact.
+
+Those are future implementation targets defined by `ZN.md` and `docs/ZN-MEMORY-LEARNING.md`.
+
+## 4. Current core capability boundary
 
 ### Verified foundations
 
@@ -204,6 +255,8 @@ This closes the A → B → A blind-replay gap and one false-completion path. It
 
 ### Still PARTIAL / MISSING
 
+- verified experience → reusable resident-owned competence learning bridge;
+- first-class procedural skill/tendency maturity and inhibition;
 - resident-owned derivation and maintenance of reliable high-level task postconditions;
 - multi-step execution that can choose genuinely different tactics over many actions without becoming a model-owned planner;
 - stronger alternative-action recovery after evidence blocks a movement;
@@ -212,10 +265,12 @@ This closes the A → B → A blind-replay gap and one false-completion path. It
 - GitHub repository/PR/CI resident-owned read sense;
 - clean browser Body/Senses seam;
 - mature visual + mouse/keyboard application control;
-- real complex-task benchmark suite;
+- learned computer-use procedural competence;
+- learned engineering procedural competence;
+- real complex-task and learning-growth benchmark suites;
 - SM1+ self-maintenance implementation.
 
-## 4. Product/workbench state
+## 5. Product/workbench state
 
 ### Resident work loop
 
@@ -233,7 +288,7 @@ Status: **M2 complete for active main provider families**.
 
 ZN-owned filesystem/process/terminal/PTTY paths are active. Exact text and explicit command postcondition verification are CI-verified. Failed-action replay is now evidence-bound rather than controlled by one last signature.
 
-Status: **active; practical breadth and long-horizon composition remain incomplete**.
+Status: **active; practical breadth, long-horizon composition and procedural learning remain incomplete**.
 
 ### Web/world sense
 
@@ -251,7 +306,7 @@ Resident-owned channel lifecycle and Telegram text/inbound media are active. Out
 
 Independent ZN Electron main, preload, renderer/workbench and `zn://` are active. M4 is complete and M5/M6 are materially advanced. Pure UI polish is paused during the core-first phase.
 
-## 5. Runtime/package/release evidence
+## 6. Runtime/package/release evidence
 
 ### M1 runtime ownership
 
@@ -321,7 +376,7 @@ Still unverified as separate release gates:
 - signing/notarization when operationally configured;
 - additional architectures if required by eventual release matrix.
 
-## 6. Ownership/behavior contracts currently protected
+## 7. Ownership/behavior contracts currently protected
 
 Current regressions protect, among other things:
 
@@ -343,6 +398,11 @@ changed facts can requalify a prior action
 timestamp-only observation noise does not requalify a failed movement
 accepted external cognition cannot falsely complete the same still-blocked movement
 new action cycles archive old verification without current-state pollution
+persistent nervous traces survive restart
+repeated experience strengthens one trace instead of appending endless duplicates
+co-active experience builds associative activation
+consolidation can form schema and prune weak isolated detail
+private neural/schema evidence is not automatically dumped into external model context
 provider secrets/settings remain resident-owned and sanitized
 work/thread/workspace/progress remain resident authority
 ZN desktop main/preload/renderer do not delegate to inherited control planes
@@ -353,7 +413,9 @@ queued resident work prevents false-idle runtime handoff
 idle N -> N+1 preserves living-self/work continuity
 ```
 
-## 7. Milestone snapshot
+No current regression yet proves procedural competence formation or learned skill fast-path behavior; those remain future tests.
+
+## 8. Milestone snapshot
 
 ```text
 M0  blueprint/reset ownership contract                     COMPLETE
@@ -369,32 +431,22 @@ M9  product completeness/hardening                         LATER
 M10 repository migration / formal main promotion           LATER; main untouched
 ```
 
-## 8. Immediate next development sequence
+Learning architecture is currently tracked separately as `docs/ZN-MEMORY-LEARNING.md` L0 defined; L1+ are not implemented yet.
 
-1. continue the resident execution spine; do not return to cosmetic UI;
-2. implement stronger alternative-action recovery: when current evidence blocks a failed movement, the resident should form or select a genuinely different concrete tactic instead of replaying it or falsely completing;
-3. keep tactic recovery bounded and resident-owned, using current Situation/Investigation evidence rather than introducing a planner/task tree;
-4. then build conservative practical Git mutation behind ZN Body with workspace/branch/diff/test/reality-verification boundaries;
-5. add GitHub repository/PR/CI read-only resident sense before any remote write capability;
-6. establish browser interaction only through a clean ZN-owned Body/Senses seam;
-7. drive breadth using a real benchmark such as:
+## 9. Immediate next development sequence
 
-```text
-unfamiliar repo + failing CI
-→ inspect repository/Git/CI
-→ identify gap
-→ inspect code/tests/logs
-→ form hypothesis
-→ modify through ZN Body
-→ run tests
-→ observe result
-→ verify diff/repository state
-→ revise tactic if contradicted
-→ report concrete evidence
-```
+1. do not begin stronger alternative-action recovery as an isolated tactic generator;
+2. implement the first **verified experience record** that connects current Situation/evidence, goal/gap, concrete action, expected outcome and independently observed verification result;
+3. keep the record bounded, restart-safe and privacy-safe rather than storing a transcript or raw command history;
+4. prove model text alone cannot create a successful learned experience;
+5. then form the smallest candidate procedural tendency from repeated compatible verified experiences—no one-shot skill creation;
+6. gate candidate activation on current reality evidence and retain contradiction/maturity state;
+7. use stronger alternative-action recovery as an early learning consumer: verified success of a genuinely different B after A fails should become reusable learning evidence;
+8. then build practical Git mutation + diff/test/reality verification and GitHub repo/PR/CI sense as a strong engineering-competence benchmark;
+9. establish browser/visual/mouse/keyboard Body/Senses before claiming learned computer-use competence;
+10. add growth benchmarks that prove familiar tasks become less model-dependent without lowering verification quality;
+11. keep remaining M8 updater/multi-OS/signing work explicit as bounded release debt and fix it when it exposes a real continuity/security/data-integrity problem.
 
-8. keep remaining M8 updater/multi-OS/signing work explicit as bounded release debt and fix it when it exposes a real continuity/security/data-integrity problem.
+The architecture driver is now:
 
-The architecture driver remains:
-
-> **The same persistent ZN Self must be able to finish hard work and prove from current reality that it is finished.**
+> **The same persistent ZN Self must be able to finish hard work, prove from current reality that it is finished, and gradually internalize repeatedly verified competence so models become advisers for novelty rather than permanent owners of ability.**
