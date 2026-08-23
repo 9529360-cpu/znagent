@@ -97,6 +97,8 @@ jobs:
           cache: npm
       - name: Install locked workspace dependencies
         run: npm ci --ignore-scripts
+      - name: Reject high-severity production npm advisories
+        run: npm audit --omit=dev --audit-level=high
       - name: Typecheck Electron desktop
         run: npm run typecheck --workspace apps/desktop
       - name: Bundle independent ZN desktop control plane
