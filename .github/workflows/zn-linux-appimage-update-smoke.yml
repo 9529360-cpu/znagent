@@ -20,7 +20,6 @@ on:
       - apps/desktop/electron-builder.zn.yml
       - apps/desktop/package.json
       - apps/desktop/scripts/stage-zn-runtime.mjs
-      - agent/kernel/**
       - runtime/python/**
 
 permissions:
