@@ -54,6 +54,7 @@ class VerifiedExperienceTests(unittest.TestCase):
             target = root / "private-target.txt"
             secret_task = f"ensure {target} contains SECRET_TASK private content"
             secret_content = "SECRET_CONTENT resident-owned learning"
+            secret_domain = "SECRET_DOMAIN capability"
 
             first = build_resident_runtime_from_existing_stack(
                 config={"model": {}},
@@ -64,6 +65,7 @@ class VerifiedExperienceTests(unittest.TestCase):
                 payload={
                     "path": str(target),
                     "content": secret_content,
+                    "required_capabilities": [secret_domain],
                     "model_policy": "never",
                 },
             )
@@ -80,6 +82,7 @@ class VerifiedExperienceTests(unittest.TestCase):
             self.assertEqual(experience.verification["observation_kind"], "read_text")
             self.assertTrue(experience.verification["observation_success"])
             self.assertNotIn("path", experience.expected_outcome)
+            self.assertNotIn(secret_domain, experience.domains)
 
             with sqlite3.connect(db) as conn:
                 row = conn.execute(
@@ -91,6 +94,7 @@ class VerifiedExperienceTests(unittest.TestCase):
             for private_value in (
                 secret_task,
                 secret_content,
+                secret_domain,
                 str(target),
                 str(root),
             ):
@@ -209,6 +213,13 @@ class VerifiedExperienceTests(unittest.TestCase):
             detect_masked_success(
                 "cargo build || echo BUILD FAILED",
                 "BUILD FAILED",
+            ),
+            "fallback_swallow",
+        )
+        self.assertEqual(
+            detect_masked_success(
+                "missing-tool || echo fallback",
+                "missing-tool: command not found\nfallback",
             ),
             "fallback_swallow",
         )
