@@ -4,6 +4,8 @@
 >
 > 固定开发分支：`dev/zn-agent`
 >
+> Canonical source/release branch：`main`
+>
 > 本文件只保存长期稳定的启动规则。当前 milestone、HEAD、CI 和任务必须从真实仓库与 `.agent/HANDOFF.md` 恢复。
 
 ## 可直接交给维护者的提示词
@@ -20,7 +22,7 @@
 dev/zn-agent
 ```
 
-除非用户明确要求，并且 `ZN.md` 中 M10 条件已经由真实代码、测试、CI 和发布证据满足，否则绝对不要修改 `main`。
+M10 canonical promotion 已完成。`main` 是 canonical source/release branch；普通开发、自维护和实验仍不得直接在 `main` 试错。修改应先在 `dev/zn-agent` 或隔离 work branch 完成并经过真实测试/CI，再按仓库规则进入 `main`。禁止 force push 或历史重写来同步分支。
 
 你是当前维护者，不是项目本身。GPT、Claude、Gemini、Codex、人类开发者都可以被替换。ZN 的开发、验证、交接和发布能力必须属于仓库及项目级基础设施，不能依赖当前聊天、当前模型或当前电脑。
 
@@ -34,7 +36,7 @@ dev/zn-agent
 4. `docs/ZN-SOURCE-EXTRACTION.md`
 5. `docs/ZN-SELF-MAINTENANCE.md`
 6. `.agent/HANDOFF.md`
-7. `dev/zn-agent` 当前 HEAD、相关 diff、最近提交、PR 和 CI
+7. `dev/zn-agent` 与 `main` 当前 HEAD、相关 diff、最近提交、PR 和 CI
 8. 准备修改功能的真实调用链、测试和 active caller
 
 事实优先级：
@@ -50,7 +52,7 @@ dev/zn-agent
 
 `ZN.md` 决定产品和目标架构。架构方向改变时先改 `ZN.md`；只是完成既定架构中的实现步骤时，在实现和验证后同步状态文档。
 
-能从仓库、代码、测试、CI、日志和外部参考实现查清楚的问题，不要反复询问用户。
+能从仓库、代码、测试、CI、日志和参考实现查清楚的问题，不要反复询问用户。
 
 ### 二、ZN 是唯一产品和唯一主体
 
@@ -105,7 +107,7 @@ External cognitive resources
 
 ```text
 ZN 有具体需求
-→ 阅读 Git 历史或外部参考实现
+→ 阅读 dedicated reference branch、Git 历史或外部参考实现
 → 理解机制、边界、异常、生命周期和测试
 → 提取/适配最小完整机制
 → 放入 ZN-owned namespace/interface/config/state/lifecycle
