@@ -27,9 +27,9 @@ durable ZN Self
 
 Pure UI polish is paused. M8/release remains a bounded continuity/release lane.
 
-The resident already owns persistent Self/life, Situation/Thought/Will, nervous memory/reconsolidation, durable events/working state, multi-pulse Investigation, native Action/Body movement, bounded external cognition and zero-model continuity.
+The resident owns persistent Self/life, Situation/Thought/Will, nervous memory/reconsolidation, durable events/working state, multi-pulse Investigation, native Action/Body movement, bounded external cognition and zero-model continuity.
 
-The execution/learning spine has real CI verification for:
+The execution/learning spine now has real CI verification for:
 
 - structured read-only Git repository sense;
 - exact text and explicit command postcondition verification;
@@ -38,25 +38,29 @@ The execution/learning spine has real CI verification for:
 - bounded restart-safe privacy-safe `VerifiedExperience` L1 records grounded only in independent Body verification;
 - transparent L2 candidate procedural-tendency aggregation;
 - read-only L3 current-reality applicability (`supported | mismatch | untested`);
-- the first bounded L3 action-influence slice, where a sufficiently mature, non-inhibited, currently supported low-risk tendency may bias among action choices that current ZN state already formed, without supplying arguments or weakening verification;
-- bounded **native structured-choice recovery**: when an explicit current choice set already exists and current evidence blocks an earlier choice, the resident can continue to the first later unblocked choice without requiring procedural memory.
+- bounded L3 low-risk action influence over choices current ZN state already formed;
+- bounded recovery across explicit structured alternatives after current evidence blocks an earlier option;
+- the first **resident-owned bounded structured-choice formation** slice: for an append text movement, current Investigation may form a direct exact-state replacement alternative only when a typed `text_equals` task postcondition and a complete current file observation prove both movements reach the same final state;
+- learning across that resident-formed choice: a failed incumbent append can recover to the resident-formed exact replacement, independent verification can create L1 evidence, repeated verified replacement experience can mature into an L2 tendency, and later comparable current reality may let L3 bias the newly formed resident choice without supplying action arguments.
 
-The active transition is therefore:
+The current transition is therefore:
 
 ```text
 verified lived experience
 → repeated compatible evidence
 → candidate resident-owned tendency
-→ current Situation applicability test        VERIFIED FIRST SLICE
-→ bounded reality-gated action influence       VERIFIED FIRST SLICE
-→ consume bounded structured alternatives      VERIFIED RECOVERY SLICE
-→ resident-owned choice formation from Will/Investigation
+→ current Situation applicability test             VERIFIED FIRST SLICE
+→ bounded reality-gated action influence            VERIFIED FIRST SLICE
+→ consume bounded structured alternatives           VERIFIED
+→ form a narrowly proven resident-owned choice      VERIFIED FIRST SLICE
+→ learn from verified recovery                      VERIFIED FIRST SLICE
+→ broader resident-owned tactic formation
 → mature procedural competence
 → familiar low-latency execution
 → prediction-error interrupt / relearning
 ```
 
-The latest recovery slice is a prerequisite/consumer capability. It is **not** resident-owned generation of useful alternatives, a mature skill, a replay engine, a fast path, or a model-owned planner.
+The new choice-formation slice is deliberately narrow. It is not a general planner, free-text tactic inference, stored-action replay, mature skill system or broad autonomous alternative generator.
 
 ## 2. Verified core execution and learning spine
 
@@ -69,265 +73,161 @@ Representative source:
 59957637a6840a6ce54e10b67ee5dc7bc0623867  test: isolate Git sense from resident sqlite files
 ```
 
-Final first-slice CI:
-
-```text
-code/test SHA           47ccd5601462641c50c16ec76f2a05085a33f9f3
-ZN Kernel / Python      success
-Electron / TypeScript  success
-run                     32612456040
-```
+Final first-slice CI: code/test SHA `47ccd5601462641c50c16ec76f2a05085a33f9f3`, run `32612456040`, Python and Electron success.
 
 `NativeBody.git_state` returns structured root, branch, HEAD, upstream/ahead/behind, dirty state and bounded staged/unstaged/untracked/conflicted path evidence. This remains read-only repository sense; general Git mutation and GitHub maintenance are not claimed.
 
-### 2.2 Action result is evidence, not task completion
+### 2.2 Reality-based postcondition verification
 
 Representative source/test state:
 
 ```text
 7a30baea6b4a2471479152e2843c50c0c7279997  feat: verify body postconditions before task completion
 66f0fecc21b3cd7303c1f01b257095704f3454f4  feat: make post-action verification a resident thought stage
-47ccd5601462641c50c16ec76f2a05085a33f9f3  test: require reality verification after native writes
-```
-
-For exact non-append text mutation:
-
-```text
-Investigation
-→ NativeActionIntent(write_text)
-→ Body movement
-→ durable native_verification stage
-→ verify_action Thought
-→ independent Body read
-→ exact current-reality comparison
-→ complete only if verified
-```
-
-The verification stage survives restart. Contradiction returns control to Investigation and records failure evidence rather than silently completing.
-
-### 2.3 Explicit independent command postconditions
-
-Representative source/test state:
-
-```text
 5cc0b1bccca976a8c635fbf3ddd7f95912a4cdc6  feat: verify explicit command postconditions
-8a661a376bd0d24dc2eea5dbe4187a159a8f4df1  feat: surface verification evidence in resident thought
-f280c8f68af69dfc2ac10b94d8d83726c10aa14e  test: fix command verification shell contract
 ```
 
-Real CI: run `32621596489`, Python and Electron both success.
+Exact non-append writes and explicit command postconditions are independently re-observed before completion. Verification survives restart; contradiction returns control to Investigation and records failure evidence. Command verification CI run `32621596489`: Python and Electron success.
 
-A structured `expected_outcome` command check is executed independently after the primary movement. Generic shell exit `0` still does not prove an arbitrary high-level goal.
+The current active runtime also accepts an explicit typed `text_equals` task postcondition for the resident-owned exact-text choice slice. This contract is independently checked after the selected write; the postcondition is not satisfied merely because Body returned success.
 
-### 2.4 Compact durable execution context
+### 2.3 Compact durable execution context
 
-Representative source/test state:
+Code/test SHA `aaa6fa55c5c4e1968006f618a37260cb4f41675a`, run `32621878503`, Python and Electron success.
 
-```text
-470a8549901fd4201556188ea8276f83ebdb6033  feat: persist compact task execution context
-969e07125db396f3f949aaa4d846fb5f8a0fd6bf  feat: bring execution context into situation
-aaa6fa55c5c4e1968006f618a37260cb4f41675a  test: cover compact execution context
-```
+`WorkingState.execution_context` is bounded and carries active goal, stage, current gap, expected-outcome summary, current-action summary, latest verification, bounded verification history and failed-action summaries. It is not a plan tree.
 
-Real CI: run `32621878503`, Python and Electron both success.
+### 2.4 Evidence-bound failed-action history
 
-`WorkingState.execution_context` is bounded and carries the active goal, stage, current gap, expected-outcome summary, current-action summary, latest verification, bounded verification history and failed-action summaries. It is not a plan tree.
-
-### 2.5 Evidence-bound failed-action history
-
-Final code/test SHA:
-
-```text
-23ce3b42aad2d730afae4d60eb6af5d5b4bd1399
-ZN Kernel / Python      success
-Electron / TypeScript  success
-run                     32635668910
-```
+Code/test SHA `23ce3b42aad2d730afae4d60eb6af5d5b4bd1399`, run `32635668910`, Python and Electron success.
 
 `native_action_failure_records` stores bounded action-signature hashes tied to stable Investigation evidence fingerprints. Same-action replay stays blocked under unchanged reality; A → B → A does not reopen A merely because B was attempted; substantive new facts can requalify prior movement; timestamps alone cannot; records survive restart; accepted external cognition text is not world evidence and cannot unlock a failed movement by itself.
 
-This is anti-replay and causal recovery infrastructure, not a tactic generator.
+### 2.5 L1 independently verified resident experience
 
-### 2.6 L1 independently verified resident experience
-
-Final code/test SHA:
-
-```text
-80292975264df35ff3a999ed32c7973cdd3514f5
-ZN Kernel / Python      success
-Electron / TypeScript  success
-run                     32639405457
-```
+Code/test SHA `80292975264df35ff3a999ed32c7973cdd3514f5`, run `32639405457`, Python and Electron success.
 
 A `VerifiedExperience` is created only after independent Body verification. Positive and contradicted episodes are retained. Naked Body success, naked exit `0`, model text, report text and unsupported verification contracts cannot create positive learning. Raw task/gap text, commands, verification commands, paths/workdirs, content, output fragments and caller capability labels are excluded from persisted learned evidence.
 
-### 2.7 L2 transparent candidate procedural tendencies
+### 2.6 L2 transparent candidate procedural tendencies
 
-Final code/test SHA:
-
-```text
-25ff0ada9efc8e8d830d085856edca7ea772a696
-ZN Kernel / Python      success
-Electron / TypeScript  success
-run                     32640409344
-```
+Code/test SHA `25ff0ada9efc8e8d830d085856edca7ea772a696`, run `32640409344`, Python and Electron success.
 
 `VerifiedExperienceStore.candidate_tendencies()` derives bounded non-executable candidate state from L1 episodes. One event or same-event duplicates cannot fake repetition; support, contradiction, reliability, maturity and inhibition remain explicit; raw action arguments are not reconstructed; candidate state is derived rather than maintained as a second mutable skill database.
 
-### 2.8 L3 read-only current-reality applicability
+### 2.7 L3 read-only current-reality applicability
 
-Final code/test SHA:
+Code/test SHA `202b69e947db6c178d821c27e51fc1e61a90ce82`, run `32642408966`, Python and Electron success.
 
-```text
-202b69e947db6c178d821c27e51fc1e61a90ce82
-ZN Kernel / Python      success
-Electron / TypeScript  success
-run                     32642408966
-```
+`procedural_applicability.py` returns only `supported`, `mismatch` or `untested`. Positive support requires a current independent stable reality anchor and no untested compared field. Request shape alone cannot create support. Applicability is reconstructed from L1/L2 plus current Investigation facts and is not written back into Investigation facts.
 
-`procedural_applicability.py` returns only `supported`, `mismatch` or `untested`. Positive support requires a current independent stable reality anchor and no untested compared field. Request shape alone cannot create support. Applicability is reconstructed from L1/L2 plus current Investigation facts and is not written back into Investigation facts, so it cannot contaminate failed-action evidence identity.
+### 2.8 L3 bounded low-risk action influence
 
-### 2.9 L3 bounded low-risk action influence
-
-Final code/test SHA:
-
-```text
-aec75ec2b2a2e37eae57a4a26011f324c1a823ff
-ZN Kernel / Python      success
-Electron / TypeScript  success
-run                     32643849526
-```
+Code/test SHA `aec75ec2b2a2e37eae57a4a26011f324c1a823ff`, run `32643849526`, Python and Electron success.
 
 The active constructor returns `ProcedurallyInfluencedResidentRuntime`, which remains inside the full `WorldAwareTransferResidentRuntime` hierarchy.
 
 Authority remains deliberately small:
 
-- ordinary heuristic action formation remains historical single-choice behavior;
-- multiple choices exist only through explicit bounded `native_action_options`;
-- valid `body_action` / `native_action` remains exclusive;
-- free-text multi-clause tasks are not reinterpreted as alternatives;
-- procedural evidence may only reorder current intents and never create or modify their args;
+- procedural evidence only reorders current resident-owned intents; it does not construct or mutate args;
 - only supported/practiced, non-inhibited, reliability `>= 0.75`, currently `supported` candidates can positively influence;
 - mismatch/untested/immature/inhibited/revoked candidates have zero positive authority;
-- the first positively influenced shape is exact non-append `write_text` with resident-owned `text_equals` verification;
-- commands, append writes and direct structured-event actions receive no positive procedural influence in this slice;
+- the first positively influenced shape is exact non-append `write_text` with `text_equals` verification;
+- commands, append writes and direct `structured_event` actions receive no positive procedural influence in this slice;
 - evidence-bound anti-replay outranks familiarity;
 - Body and independent verification ownership remain unchanged;
 - failure/contradiction returns to Investigation and revokes the influenced route for the current event.
 
-The integration path proves three independently verified writes can create a supported candidate that biases an already-present `[command, write_text]` current choice toward the exact write; Body performs it and independently verifies it. A later verification contradiction revokes that influenced route.
+### 2.9 Bounded native structured-choice recovery
 
-### 2.10 Bounded native structured-choice recovery
+Code/test SHA `2632bcb2a6738c79a250205374d45a0d34bbad36`, run `32645416634`, Python and Electron success; container smoke skipped on normal push; status publisher success.
 
-Final code/test SHA:
-
-```text
-2632bcb2a6738c79a250205374d45a0d34bbad36
-ZN Kernel / Python      success
-Electron / TypeScript  success
-run                     32645416634
-Container / Runtime Smoke  skipped on normal push
-Publish commit statuses success
-```
-
-Source/test commits for this slice:
+Source/test commits:
 
 ```text
 3d1d7ebdce9c02224d4e836ef6c4c4d6df2758f7  feat: recover across bounded native choices
 2632bcb2a6738c79a250205374d45a0d34bbad36  test: cover bounded native choice recovery
 ```
 
-The active resident can now consume an explicit structured choice set correctly after reality rejects an earlier option:
+For an already-formed bounded choice set, current evidence may block earlier A and let deliberation continue to the first later unblocked B. No alternative or args are inferred from memory, free text, model output or failed-action history. Single explicit actions do not enter this path; all blocked choices fail closed.
 
-```text
-current explicit choices [A, B, ...]
-→ A is recorded failed under current evidence fingerprint
-→ deliberation re-observes the same current choice set
-→ anti-replay blocks A
-→ resident selects first later unblocked structured choice
-→ existing Body / verification path remains owner
-```
-
-Guarantees:
-
-- recovery requires at least two intents and every intent must be `source == structured_choice`;
-- no alternatives are inferred from free text, memory, model output or failed-action arguments;
-- no procedural candidate is required to move from blocked A to explicit B;
-- if the first choice is not blocked, historical declared order remains unchanged;
-- a single explicit `body_action` / `native_action` cannot trigger this recovery path;
-- current option args remain authoritative; failed history cannot supply replacement args;
-- if all choices are blocked, recovery fails closed and existing deliberation/impasse behavior remains owner;
-- bounded recovery metadata records only selected index/count, blocked-prior count, action kind and a truncated evidence version;
-- the recovery marker is visible to Thought and cleared before a later deliberation cycle;
-- the active runtime still contains the full `WorldAwareTransferResidentRuntime` chain;
-- independent verification remains mandatory wherever the selected action requires a postcondition contract.
-
-This closes a consumer-side prerequisite for future resident-owned choice formation. `native_action_options` is still an explicit structured event seam; ZN does **not** yet autonomously generate useful alternatives from Will/Investigation.
-
-The validated SHA also included unrelated concurrent channel/Telegram branch changes that were already present when this slice was committed. CI validated the combined branch state; this section makes no new product-capability claim from those concurrent files.
-
-### 2.11 Resident-owned outbound channel media seam
+### 2.10 Resident-owned exact-text structured-choice formation and learning
 
 Final code/test SHA:
 
 ```text
-018af2ec18abbac2a74e33f471101cb6a4308f36
-ZN Kernel / Python      success
-Electron / TypeScript  success
-run                     32645243684
+920bd70814e44d9b62b6ba5159e264ab442470a3
+ZN Kernel / Python          success
+Electron / TypeScript      success
+Container / Runtime Smoke  skipped on normal push
+Publish commit statuses    success
+run                         32647895984
 ```
 
-`ResidentChannelSupervisor.nominate_outbound_media()` records a bounded, JSON-safe media nomination only for an existing pending resident `channel_message` route. The intent is stored in the channel delivery SQLite ledger and survives supervisor restart. Delivery consumes this structured state; it never scans response text or inbound attachments for upload paths.
+Source/test commits:
 
-`TelegramBotApiChannel` authorizes every nominated file against explicit resolved ZN-owned roots at the adapter send boundary before any network request, then uploads authorized files as multipart `sendDocument`. The first slice preserves thread/reply routing, supports attachment-only delivery, sanitizes filenames, applies the existing transport size limit, and keeps bot tokens out of errors. An unauthorized nomination rejects the entire delivery before text or file transmission begins.
+```text
+1cb9d6f3d716fadb9f4c1379c955d2284d901b0f  feat: form resident exact-text action choices
+2da38f014f73f9f51224f5784fbc1e8853587a24  feat: align procedural applicability with exact-text goals
+0d566d04f55dff7d9e967c49bf901c0d90dfce60  feat: recover resident-formed exact-text choices
+5f10a4f5d60fb9c801ce53d400cba13ca1addee8  test: cover resident exact-text choice formation
+920bd70814e44d9b62b6ba5159e264ab442470a3  test: prove resident choice learning loop
+```
 
-This completes the durable nomination → authorization → first transport seam, not autonomous media judgment. No current Thought/Will/Investigation owner yet decides that a produced artifact should be nominated, and photo/audio/video-specific Telegram methods remain pending.
+The first resident-owned choice-forming contract is intentionally semantic and fail-closed:
 
-## 3. Verified memory / nervous-system foundations
+```text
+current task already implies append write authority
++ typed expected_outcome(kind=text_equals, path, expected_text)
++ Investigation has complete, untruncated current file text
++ current_text + append_content == expected_text
+→ current ZN cognition can form:
+   A = incumbent append movement
+   B = direct exact-state replace movement
+```
 
-Current foundations include:
+Guarantees:
 
-- `StructuredMemory` durable facts with normalized key/alias recall;
-- persistent `NeuralTrace` nervous memory rather than transcript storage;
-- repeated experience strengthening one trace;
-- associative co-activation;
-- visual/world/action/outcome/will traces in one resident substrate;
-- persistent affective state;
-- consolidation, schema formation, weak-detail fade and bounded pruning;
-- local lived/schema evidence entering Situation/Thought without automatically dumping private detail into external cognition;
-- reality-gated transfer/reconsolidation;
-- L1 verified causal episodes;
-- L2 transparent candidate tendencies;
-- L3 current-reality applicability;
-- first bounded L3 positive action influence;
-- bounded native recovery across an already-formed structured choice set.
+- both choices come from current event state plus current Investigation evidence;
+- both are marked `resident_choice` and serve one explicitly typed final-state contract;
+- free-text clauses do not create alternatives;
+- a missing, truncated or mismatching file preview yields historical single-action behavior;
+- a missing/mismatched target or incompatible path fails closed;
+- the direct replacement content comes from the current exact-state task contract, never from learned procedure arguments;
+- `body_action` / `native_action` remains exclusive and caller-provided `native_action_options` still keeps its explicit contract;
+- current declared/incumbent priority remains first until reality actually blocks it, unless a separately qualifying L3 tendency biases an already-formed alternative;
+- failed-action anti-replay can move from failed resident A to resident B under the same evidence contract;
+- selected B still goes through the existing Body and independent `text_equals` verification path;
+- the learning store remains privacy-safe: candidate serialization does not contain raw target path or learned file contents.
 
-Representative tests include:
+The end-to-end regression proves a genuine learning consumer loop without a model planner:
 
-- `tests/agent/kernel/test_nervous_system.py`
-- `tests/agent/kernel/test_neural_cognition_boundary.py`
-- `tests/agent/kernel/test_procedural_tendency.py`
-- `tests/agent/kernel/test_procedural_applicability.py`
-- `tests/agent/kernel/test_procedural_applicability_contract.py`
-- `tests/agent/kernel/test_procedural_influence.py`
-- `tests/agent/kernel/test_native_action_alternatives_contract.py`
-- `tests/agent/kernel/test_native_choice_recovery.py`
+```text
+resident forms [append A, exact-replace B]
+→ A fails in current environment
+→ current evidence blocks A
+→ resident recovers to B
+→ Body performs B
+→ independent read verifies exact final text
+→ L1 VerifiedExperience
+→ repeat across distinct events
+→ supported L2 write/text_equals tendency
+→ later comparable current file reality forms [A, B] again
+→ L3 may bias current B
+→ B still uses current path/content and independent verification
+```
 
-### Not yet implemented / not yet claimed
+This is the first verified resident-owned bounded choice formation slice, not broad tactic synthesis. General resident-owned alternatives across commands, Git operations, browser actions or long-horizon goals remain incomplete.
 
-The project does **not** yet claim:
+### 2.11 Resident-owned outbound channel media seam
 
-- resident-owned generation of useful structured action alternatives from Will/Investigation;
-- broad candidate influence over commands or arbitrary side effects;
-- procedural replay of raw commands/paths/content;
-- mature resident-owned skills;
-- procedural fast paths that reduce explicit Thought for familiar work;
-- autonomous de-proceduralization beyond candidate inhibition + event-local route revocation;
-- learned engineering competence;
-- learned computer-use competence;
-- growth benchmarks proving lower model dependence without lower verification quality.
+Code/test SHA `018af2ec18abbac2a74e33f471101cb6a4308f36`, run `32645243684`, Python and Electron success.
 
-## 4. Current core capability boundary
+`ResidentChannelSupervisor.nominate_outbound_media()` records a bounded JSON-safe media nomination only for an existing pending resident `channel_message` route. Delivery consumes this structured state; it never scans response text or inbound attachments for upload paths. Telegram authorizes nominated files against explicit resolved ZN-owned roots before any network request and currently transports them with `sendDocument`.
+
+This is not yet autonomous artifact selection; Thought/Will/Investigation does not independently decide when to nominate an artifact.
+
+## 3. Current core capability boundary
 
 ### Verified foundations
 
@@ -341,12 +241,14 @@ The project does **not** yet claim:
 - exact text and explicit independent command postcondition verification;
 - compact bounded current-event execution context;
 - evidence-bound failed-action ledger and A → B → A replay suppression under unchanged reality;
-- bounded native recovery to a later explicit structured choice after earlier choices are blocked under current evidence;
+- recovery across explicit or semantically proven resident-owned bounded choices after earlier choices are blocked;
+- the first resident-owned exact-text alternative formation contract;
 - blocked post-cognition movement cannot falsely complete;
 - bounded restart-safe privacy-safe L1 `VerifiedExperience`;
 - transparent L2 candidate tendencies;
 - L3 current-reality applicability;
-- bounded L3 bias among explicitly current choices for verified low-risk exact writes;
+- bounded L3 bias among current choices for verified low-risk exact writes;
+- verified learning from resident-formed recovery into later current-choice bias;
 - contradiction revokes active event-local procedural influence and returns to Investigation;
 - bounded external cognition returns as input to ZN rather than owning the resident loop;
 - ZN-owned local process/terminal/PTTY and web search/extract paths;
@@ -356,9 +258,12 @@ The project does **not** yet claim:
 
 ### Still PARTIAL / MISSING
 
-- resident-owned structured alternative formation from current Will/Investigation;
-- learned formation/recovery of genuinely different tactics rather than consumption of caller-provided options;
-- mature/procedural skill state and fast path;
+- broader resident-owned structured alternative formation from Will/Investigation beyond the exact-text proof slice;
+- learned formation/recovery of genuinely different tactics across commands, Git, browser or long-horizon work;
+- broad candidate influence over commands or arbitrary side effects;
+- procedural replay of raw commands/paths/content;
+- mature resident-owned skills and procedural fast paths;
+- autonomous de-proceduralization beyond candidate inhibition + event-local route revocation;
 - resident-owned reliable high-level postcondition derivation;
 - multi-step execution with genuinely different tactics over long horizons without a model-owned planner;
 - durable completed-task verification/audit beyond current bounded learning evidence;
@@ -368,11 +273,12 @@ The project does **not** yet claim:
 - mature visual + mouse/keyboard application control;
 - autonomous outbound artifact nomination from current Thought/Will/Investigation;
 - Telegram photo/audio/video-specific outbound transports;
-- learned computer-use and engineering competence;
+- learned engineering competence;
+- learned computer-use competence;
 - complex-task/learning-growth benchmarks;
 - SM1+ self-maintenance implementation.
 
-## 5. Product/workbench state
+## 4. Product/runtime/release state
 
 ### Resident work loop
 
@@ -388,29 +294,19 @@ Status: **M2 complete for active main provider families**.
 
 ### Local Body
 
-Filesystem/process/terminal/PTTY paths are ZN-owned. Verification, failed-action anti-replay and L1/L2/L3 learning evidence are active. Supported low-risk write evidence may bias an already-current choice, and the resident can now recover across an already-formed explicit choice set when earlier options are blocked. Candidates still cannot invent actions or replay stored args.
+Filesystem/process/terminal/PTTY paths are ZN-owned. Verification, failed-action anti-replay and L1/L2/L3 learning evidence are active. Exact-text current-state semantics can now form one bounded resident-owned alternative pair and verified experience can later bias the current replacement choice. General tactic formation and mature procedural competence remain incomplete.
 
-Status: **active; practical breadth, resident-owned alternative formation and mature procedural competence remain incomplete**.
+### Web/world / visual sense
 
-### Web/world sense
-
-ZN-owned search/extract providers and URL/network safety are active. Browser automation is not yet owned by a clean resident seam.
-
-### Visual sense
-
-Resident-owned visual sensing foundations exist and are tested. Mature screen understanding plus mouse/keyboard completion is not claimed.
+ZN-owned search/extract providers and URL/network safety are active. Resident-owned visual sensing foundations are tested. A clean browser automation seam and mature screen/mouse/keyboard control are not yet claimed.
 
 ### Communication
 
-Resident-owned channel lifecycle and Telegram text/inbound media are active. The first outbound-media slice is also active: a pending resident channel event may durably nominate a bounded local artifact, restart preserves that intent, and Telegram authorizes the resolved file through `OutboundMediaPathPolicy` before any network request. Authorized files are uploaded with `sendDocument`; attachment-only outcomes are supported, and response text or inbound attachments never become upload authority.
-
-This is not yet autonomous artifact selection. Current cognition does not independently decide when to nominate an artifact, and the first transport slice deliberately uses Telegram document delivery rather than selecting richer media-specific methods.
+Resident-owned channel lifecycle and Telegram text/inbound media are active. The first outbound-media slice is active with durable nomination and path-policy authorization. Autonomous artifact selection and media-specific method selection remain pending.
 
 ### Desktop/UI
 
 Independent ZN Electron main, preload, renderer/workbench and `zn://` are active. M4 is complete and M5/M6 are materially advanced. Pure UI polish remains paused during the core-first phase.
-
-## 6. Runtime/package/release evidence
 
 ### M1 runtime ownership
 
@@ -418,7 +314,7 @@ Status: **COMPLETE for active packaged resident path**.
 
 The independent `runtime/python` distribution is `znagent`, installed package `zn_agent`, entrypoint `zn-resident`. Packaged runtime rejects inherited `hermes_cli` and boots zero-model. `runtime/python/pyproject.toml` maps `zn_agent.core` directly to `../../agent/kernel`, so current kernel code is the packaged runtime source rather than a second copy.
 
-Normal CI run `32645416634` installed the isolated runtime distribution, booted it without a model, compiled the resident kernel and ran the full kernel test suite successfully.
+Run `32647895984` installed the isolated runtime distribution, booted it without a model, compiled the resident kernel and ran full kernel unittest discovery successfully.
 
 ### M7 formal artifact ownership
 
@@ -428,17 +324,6 @@ Status: **ARTIFACT SHAPE VERIFIED** on exercised targets:
 Linux   x86_64   AppImage / deb / rpm
 Windows x64      NSIS / MSI
 macOS   arm64    DMG / ZIP
-```
-
-Representative evidence:
-
-```text
-Linux artifact source   6219eaa61f6c444feb96864e149f886752b00ffe
-Linux integration       46685b66ff1381cb0b41b1e0564cc62ca5e34467
-Windows source          2e3cdb0ac893feca86325e19a058c455c906bfd7
-Windows smoke run       32590239803
-macOS source            518d233eafa39b2d12f2de5835a8c8c1ab7529ab
-macOS smoke run         32591343670
 ```
 
 This does not imply signing/notarization or complete release readiness.
@@ -451,78 +336,13 @@ Verified Linux clean install: run `32591603017`.
 
 Verified installed Linux autostart: run `32593886026`.
 
-Verified source-level N → N+1 continuity: normal CI run `32596442626`.
+Verified source-level N → N+1 continuity: run `32596442626`.
 
-Real AppImage successor run `32645354818` includes the outbound-media kernel code and completed both N and N+1 AppImage builds. At this documentation checkpoint its installed continuity step had exceeded the workflow's declared outer 15-minute command timeout without returning a final conclusion. It is therefore **not** recorded as success and remains an M8/updater-lane investigation item.
+Real AppImage successor run `32645354818` completed both N and N+1 AppImage builds but remains stuck/in-progress at the installed N → N+1 updater continuity step at the latest checked state. It must not be recorded as success. This is an M8/updater-lane investigation item, separate from the core learning slice.
 
-Still separate release gates:
+Still separate release gates include installed application updater continuity, Windows/macOS clean-install/login continuity for the intended release matrix, and signing/notarization when operationally configured.
 
-- installed Electron/application updater N → N+1;
-- Windows/macOS clean-install/login continuity for intended release matrix;
-- signing/notarization when operationally configured;
-- any additional architectures required by the eventual release matrix.
-
-## 7. Ownership/behavior contracts currently protected
-
-Current regressions protect, among other things:
-
-```text
-agent/kernel must not import hermes_cli or run_agent
-runtime distribution identifies as znagent
-packaged runtime rejects hermes_cli
-zero-model resident boot succeeds
-external model success returns as bounded cognition before resident acceptance
-resident event/investigation/action state survives restart
-NativeBody Git sense returns structured repository state
-successful movement does not automatically imply task completion
-write and explicit command postconditions are independently re-observed
-verification contradiction returns to Investigation
-failed-action records survive restart and stay evidence-bound
-A -> B -> A is blocked under unchanged Investigation facts
-changed facts can requalify a prior action
-timestamp-only noise does not requalify a failed action
-accepted external cognition cannot falsely complete the same still-blocked movement
-verified experiences require independent Body verification
-Body success, naked exit 0 and model/report text alone cannot create positive learned experience
-postcondition contradiction creates negative learned evidence
-learned storage excludes raw task/content/path/command/output/capability-label payloads
-one event or same-event duplicates cannot fake repeated procedural support
-candidate support/contradiction/reliability/applicability remain explicit and bounded
-candidate reconstruction survives restart without a second skill database
-candidate aggregation itself does not activate Body
-request-only applicability remains untested
-current matching stable target can support applicability
-mismatch/incomplete evidence fails closed
-applicability is not stored in Investigation facts
-active world-aware Investigation preserves applicability observation
-ordinary heuristic action formation remains historical single-choice behavior
-ordinary multi-clause task text is not reinterpreted as an alternative set
-explicit body_action/native_action remains exclusive
-native_action_options preserves declared order while its first choice remains admissible
-blocked earlier structured choices may be skipped only under the same current evidence-bound anti-replay contract
-structured-choice recovery never invents alternatives or action args from memory/failure history
-single explicit actions cannot use multi-choice recovery
-outbound channel media requires an explicit durable nomination on a pending resident route
-response text and inbound attachments never become outbound upload authority
-Telegram authorizes every nominated file before any delivery network request
-outbound paths outside explicit resolved ZN roots fail closed
-only supported/practiced non-inhibited reliable current-reality-supported low-risk write candidates can positively bias
-mismatch/untested/immature/inhibited/revoked/unsafe candidate routes have zero positive influence
-procedural influence never supplies action args
-influenced write still requires independent text_equals verification
-verification contradiction revokes the event-local influenced route and returns to Investigation
-active runtime still includes the full WorldAwareTransferResidentRuntime chain
-persistent nervous traces and schema consolidation survive restart
-private neural/schema evidence is not automatically dumped into external cognition
-provider secrets/settings remain resident-owned and sanitized
-work/thread/workspace/progress remain resident authority
-ZN desktop main/preload/renderer do not delegate to inherited control planes
-formal package metadata/protocol identify ZN only
-```
-
-These regressions prove the first causal L1 episode, transparent L2 aggregation, read-only L3 applicability, a narrowly bounded L3 positive influence seam, and correct native consumption/recovery across an explicitly current structured choice set. They do **not** prove autonomous choice generation, mature skills or fast-path behavior.
-
-## 8. Milestone snapshot
+## 5. Milestone snapshot
 
 ```text
 M0  blueprint/reset ownership contract                     COMPLETE
@@ -538,21 +358,18 @@ M9  product completeness/hardening                         LATER
 M10 repository migration / formal main promotion           LATER; main untouched
 ```
 
-Learning architecture is tracked separately in `docs/ZN-MEMORY-LEARNING.md`: L0 is defined; L1 verified experience, L2 candidate aggregation, read-only L3 applicability, bounded L3 influence and bounded structured-choice recovery are CI-verified. Autonomous resident-owned choice formation, mature procedural competence and fast-path work remain incomplete.
-
-## 9. Immediate next development sequence
+## 6. Immediate next development sequence
 
 1. keep `VerifiedExperience`, transparent candidate evidence and current independent Investigation facts as procedural-learning truth; current reality always outranks familiarity;
-2. implement the first **resident-owned bounded structured-choice formation** from current Will/Investigation state, now that the consumer can correctly recover across blocked explicit choices;
-3. require a semantic proof that candidates are genuine alternatives for the same current goal; do not infer alternatives merely because free text contains several action clauses;
-4. do not let external model output or stored procedural memory become the owner of the choice set;
-5. keep memory from supplying raw commands/args/path/content; action arguments must come from current resident-owned state;
-6. preserve current influence gates and mandatory independent verification;
-7. use a real learned recovery pattern as a consumer benchmark: A fails → genuinely different B succeeds → B independently verifies → later comparable reality may support B-pattern, without hardcoding an A/B tactic rule;
-8. then build practical Git mutation + diff/test/reality verification and GitHub repo/PR/CI sense as an engineering-competence benchmark;
-9. establish browser/visual/mouse/keyboard Body/Senses before claiming learned computer-use competence;
-10. add growth benchmarks proving familiar tasks reduce external cognition dependence without lowering verification quality;
-11. keep M8 updater/multi-OS/signing work explicit as bounded release debt until a real continuity/security/data-integrity need makes it the active lane.
+2. broaden resident-owned bounded choice formation only where current Will/Investigation can prove candidates are genuine alternatives for one goal;
+3. prefer a second semantically provable, genuinely different tactic class rather than generalizing from free-text action clauses;
+4. do not let external model output or stored procedural memory own the choice set or supply raw action args;
+5. preserve current influence gates, evidence-bound anti-replay and mandatory independent verification;
+6. add negative tests before each authority expansion: missing evidence, stale evidence, ambiguous goal equivalence, unsafe side effect and contradiction must fail closed;
+7. use practical Git mutation + diff/test/reality verification and GitHub repo/PR/CI sense as the engineering-competence benchmark once the next choice contract is semantically defensible;
+8. establish browser/visual/mouse/keyboard Body/Senses before claiming learned computer-use competence;
+9. add growth benchmarks proving familiar tasks reduce external cognition dependence without lowering verification quality;
+10. keep M8 updater/multi-OS/signing work explicit as bounded release debt until a real continuity/security/data-integrity need makes it the active lane.
 
 The architecture driver remains:
 
