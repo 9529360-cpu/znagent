@@ -116,25 +116,10 @@ def current_git_path_staged_goal(
     if not root_text:
         return None
 
-    try:
-        root = Path(root_text).expanduser().resolve(strict=True)
-        requested = Path(str(raw_path)).expanduser()
-        candidate = requested if requested.is_absolute() else root / requested
-        lexical = Path(os.path.abspath(str(candidate)))
-        resolved = lexical.resolve(strict=True)
-    except (OSError, RuntimeError, ValueError):
+    identity = _resolved_git_path_identity(root_text, raw_path)
+    if identity is None:
         return None
-
-    # Reject symlink/path-alias ambiguity.  This is a conservative safety check:
-    # a later slice can support symlinks only after Git-path identity is explicit.
-    if resolved != lexical:
-        return None
-    try:
-        relative = resolved.relative_to(root)
-    except ValueError:
-        return None
-    if not relative.parts:
-        return None
+    root, resolved, rel = identity
 
     path_fact = _matching_path_fact(current, resolved)
     if path_fact is None:
@@ -144,7 +129,6 @@ def current_git_path_staged_goal(
     if str(path_fact.get("type") or "").strip().lower() != "file":
         return None
 
-    rel = normalized_git_path(relative.as_posix())
     state = git_path_stage_state(git_fact, rel)
     if state is None or state["conflicted"]:
         return None
@@ -159,7 +143,7 @@ def current_git_path_staged_goal(
 
 
 def current_git_goal_from_intent(raw: Mapping[str, Any] | None) -> dict[str, Any] | None:
-    """Normalize the transient goal carried by an already-formed current intent."""
+    """Normalize and revalidate a transient goal carried by current working state."""
 
     if not isinstance(raw, Mapping):
         return None
@@ -171,13 +155,55 @@ def current_git_goal_from_intent(raw: Mapping[str, Any] | None) -> dict[str, Any
     variant = str(raw.get("action_variant") or "").strip().lower()
     if not root or not path or not rel or variant not in _GIT_STAGE_VARIANTS:
         return None
+
+    identity = _resolved_git_path_identity(root, path)
+    if identity is None:
+        return None
+    resolved_root, resolved_path, resolved_rel = identity
+    if resolved_rel != rel:
+        return None
     return {
         "kind": _GIT_STAGE_KIND,
-        "root": root,
-        "path": path,
-        "relative_path": rel,
+        "root": str(resolved_root),
+        "path": str(resolved_path),
+        "relative_path": resolved_rel,
         "action_variant": variant,
     }
+
+
+def _resolved_git_path_identity(
+    root_value: Any,
+    path_value: Any,
+) -> tuple[Path, Path, str] | None:
+    """Prove root, host path and repository-relative path name one regular location."""
+
+    root_text = str(root_value or "").strip()
+    path_text = str(path_value or "").strip()
+    if not root_text or not path_text:
+        return None
+    try:
+        root = Path(root_text).expanduser().resolve(strict=True)
+        requested = Path(path_text).expanduser()
+        candidate = requested if requested.is_absolute() else root / requested
+        lexical = Path(os.path.abspath(str(candidate)))
+        resolved = lexical.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+    # Reject symlink/path-alias ambiguity. A later slice can support aliases only
+    # after repository-path identity is made explicit rather than inferred.
+    if resolved != lexical:
+        return None
+    try:
+        relative = resolved.relative_to(root)
+    except ValueError:
+        return None
+    if not relative.parts:
+        return None
+    rel = normalized_git_path(relative.as_posix())
+    if not rel:
+        return None
+    return root, resolved, rel
 
 
 def _matching_path_fact(
