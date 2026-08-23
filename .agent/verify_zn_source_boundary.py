@@ -5,6 +5,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# Legal attribution in LICENSE must remain verbatim. This verifier enforces the
+# active source/product boundary everywhere else.
+TEXT_SCAN_EXEMPT = {"LICENSE"}
+
 # Retired reference-product identifiers are encoded so the active tree stays
 # text-clean while this verifier can still prevent them from returning.
 FORBIDDEN_MARKERS = tuple(
@@ -39,6 +43,8 @@ def main() -> int:
             if marker in lowered_path:
                 failures.append(f"{relative}: path contains retired marker {marker.hex()}")
 
+        if relative in TEXT_SCAN_EXEMPT:
+            continue
         data = path.read_bytes()
         if is_binary(data):
             continue
@@ -58,7 +64,7 @@ def main() -> int:
             print(f"- {failure}")
         return 1
 
-    print("ZN source-boundary verification passed: active tracked tree is reference-product text clean.")
+    print("ZN source-boundary verification passed: active tracked tree is reference-product text clean outside preserved legal attribution.")
     return 0
 
 
