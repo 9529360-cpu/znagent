@@ -4,7 +4,7 @@
 >
 > This document is the implementation contract for adopting mature capability code from the inherited/reference tree without embedding the inherited product control plane.
 >
-> Current checkpoint: 2026-08-22. Active development branch: `dev/zn-agent`.
+> Current checkpoint: 2026-08-23. Active development branch: `dev/zn-agent`.
 
 ## 1. Non-negotiable rule
 
@@ -58,6 +58,13 @@ Foreground/background process execution, cwd continuity, cleanup, bounded output
 Status: **ZN-native web search/extract active; browser interaction not yet owned**.
 
 Tavily/failover, Exa, Firecrawl and URL/network safety remain ZN-owned. The mature inherited browser implementation remains entangled with inherited config/plugin/session/provider ownership plus Node/Chromium/`agent-browser` lifecycle. Future browser work must first establish a real ZN-owned body/sense contract and packageable lifecycle.
+
+A 2026-08-23 source audit found two narrower browser mechanisms worth extracting later rather than importing `tools/browser_tool.py` wholesale:
+
+- `tools/browser_supervisor.py`: persistent CDP event/snapshot supervision, frame/OOPIF tracking, dialog state, console-event ring buffer and credential/page-text redaction;
+- selected `tools/browser_tool.py` slices: accessibility-tree snapshot/ref interaction, credential-scrubbed browser subprocess environment, bounded snapshot persistence and platform launch lifecycle.
+
+These are **sense/body source candidates only**. They must sit behind future `zn.senses.browser` / `zn.body.browser` ownership and must not restore inherited browser-session orchestration as ZN's brain.
 
 ### 3.4 Communication channels and outbound media finding
 
@@ -269,19 +276,277 @@ E7  build independent ZN Electron main/preload/UI foundation  DONE
 E8  remove active old-product control-plane imports           DONE for active resident + desktop
 E9  package independently bootable ZN product                 ARTIFACT SHAPE VERIFIED on Linux x86_64 / Windows x64 / macOS arm64
 E10 verify clean-machine install/upgrade/multi-OS release      IN PROGRESS; Linux deb fresh-install + installed autostart continuity verified
+E11 mine inherited learning/procedural mechanisms             SOURCE AUDIT COMPLETE; bounded extraction candidates identified
 ```
 
-## 9. Immediate code target
+### 8.1 Hermes learning/procedural source quarry — 2026-08-23
+
+The reference `main` branch remains exactly the inherited Hermes snapshot at:
+
+```text
+61dd880aa4bbbdb359ca544b752afc2c22845ce9
+```
+
+The audit deliberately looked for mechanisms that can shorten ZN's L1-L5 learning work without giving Hermes or an LLM ownership of the resident.
+
+#### H-L1 — terminal failure semantics and masked-success detection
+
+Source:
+
+```text
+tools/terminal_hints.py
+agent/tool_result_classification.py
+```
+
+Classification: **EXTRACT NEAR-TERM / HIGH VALUE**.
+
+Useful mature mechanisms:
+
+- bounded deterministic output-pattern classification;
+- production-mined recovery hints for common Git/Python/environment failures;
+- explicit `python`/`pip` interpreter recovery;
+- merge-conflict / already-exists / rate-limit / permission-denied handling;
+- exit 126/124/137 semantics;
+- conservative detection of shell pipelines / `||` fallbacks that return exit 0 while visible output proves the upstream command failed;
+- explicit no-effect versus potentially side-effecting tool classification;
+- file-mutation result checks that distinguish “tool returned” from “write actually landed”.
+
+`terminal_hints.py` documents that its common patterns came from a roughly 250k terminal-result production window and cover about 14k failed calls whose retry chains averaged about 1.4 extra tool turns. These patterns are therefore valuable pre-existing engineering experience for a young ZN.
+
+ZN adaptation:
+
+```text
+raw Body result
+→ ZN-owned deterministic failure/result features
+→ Investigation / VerifiedExperience evidence
+→ future procedural recovery support
+```
+
+A hint remains a hypothesis/prior. Current Body/Senses reality remains authoritative.
+
+#### H-L2 — no-progress/repeated-action guard primitives
+
+Source:
+
+```text
+agent/tool_guardrails.py
+```
+
+Classification: **EXTRACT SELECTIVELY**.
+
+Useful pieces:
+
+- canonical tool/action signatures without retaining raw arguments broadly;
+- idempotent versus mutating action categories;
+- repeated exact failure counters;
+- same-tool failure counters;
+- no-progress detection for repeated idempotent calls;
+- exemptions for legitimate pollers;
+- bounded per-turn runaway caps;
+- repeated identical large-result stubbing.
+
+Do not import the inherited controller. ZN already has the stronger resident-owned rule that an action blocked by current Investigation facts stays blocked until material evidence changes. Hermes primitives may enrich that rule with explicit no-progress/result features.
+
+#### H-L3 — procedural usage telemetry, provenance and lifecycle
+
+Source:
+
+```text
+tools/skill_usage.py
+agent/curator.py
+```
+
+Classification: **ADAPT FOR L2-L5 / VERY HIGH VALUE**.
+
+Mature mechanisms include:
+
+- operational usage telemetry kept outside authored procedure content;
+- atomic writes and cross-process locking;
+- use/view/patch counters and timestamps;
+- post-patch reuse tracking;
+- explicit management ownership/provenance rather than inferring it from location;
+- pinned/protected/external/upstream-owned capabilities excluded from autonomous lifecycle changes;
+- deterministic `active → stale → archived` aging;
+- reactivation when a stale skill becomes active again;
+- grace period for never-used skills: absence of use is not evidence of staleness;
+- protection for capabilities referenced by durable scheduled work;
+- recoverable archive instead of autonomous hard deletion;
+- LLM consolidation disabled by default while deterministic lifecycle still works model-free.
+
+ZN must adapt the semantics. Procedural competence maturity cannot be based on elapsed time/use count alone; it must be driven primarily by verified support, contradiction, applicability and prediction reliability. The Hermes lifecycle is useful engineering for the forgetting/inhibition/retirement side of that state machine.
+
+Likely ZN mapping:
+
+```text
+candidate
+→ practiced
+→ mature
+→ procedural
+→ stale / inhibited
+→ relearned or retired
+```
+
+#### H-L4 — capability mutation audit and rollback
+
+Source:
+
+```text
+tools/skill_ledger.py
+agent/curator_backup.py
+tools/skill_provenance.py
+```
+
+Classification: **ADAPT FOR PROMOTED ZN CAPABILITIES / VERY HIGH VALUE**.
+
+Useful mature mechanisms:
+
+- actor/write-origin provenance;
+- append-only mutation ledger;
+- content-addressed SHA-256 before/after blobs with deduplication;
+- human-readable durable JSONL audit outside the main DB;
+- all mutations auditable without making telemetry itself a fragile execution gate;
+- path containment validation before rollback;
+- pre-check all restore blobs before changing anything;
+- fail-closed pre-rollback safety capture;
+- rollback itself is reversible;
+- whole-run snapshot support for larger autonomous curation passes;
+- dependent scheduled references included in backup/rollback consistency.
+
+This should complement ZN's existing `PromotedCapabilityLoader` and self-maintenance approval architecture. Candidate/generated procedure code must still pass isolated tests/benchmarks/promotion before it can become a live promoted capability.
+
+#### H-L5 — skill manager safety/provenance mechanics
+
+Source:
+
+```text
+tools/skill_manager_tool.py
+```
+
+Classification: **SOURCE-EXTRACT SAFETY MECHANICS; REJECT AS PROCEDURAL-MEMORY OWNER**.
+
+Useful pieces:
+
+- strict path containment and symlink/junction deletion defense;
+- never recursively delete the skill root;
+- explicit pin/protected/upstream-owner boundaries;
+- autonomous background maintenance restricted to explicitly managed local material;
+- read-before-write for autonomous review;
+- fail closed when management ownership cannot be proven.
+
+Rejected pattern:
+
+```text
+LLM writes SKILL.md
+→ call that resident procedural learning
+```
+
+Text skills can remain useful instructions/support artifacts, but they are not a substitute for ZN's verified procedural substrate.
+
+#### H-L6 — learning graph / user observability
+
+Source:
+
+```text
+agent/learning_graph.py
+agent/learning_mutations.py
+agent/insights.py
+```
+
+Classification: **DEFER / FUTURE LEARNING OBSERVABILITY**.
+
+Useful ideas:
+
+- stable learned-node identity;
+- usage/state/pin metadata;
+- memory↔skill relation visualization;
+- user-visible edit/archive/restore controls;
+- model/tool/skill usage analytics and cost accounting.
+
+These can later support a “what has ZN learned?” surface and growth metrics, but they are not part of L1's execution-critical path.
+
+#### H-L7 — conventional memory provider machinery
+
+Source:
+
+```text
+agent/memory_manager.py
+agent/memory_provider.py
+plugins/memory/query_rewrite.py
+plugins/memory/*
+```
+
+Classification: **SUPPORT-MEMORY QUARRY ONLY**.
+
+Useful engineering:
+
+- provider lifecycle/failure isolation;
+- asynchronous sync/prefetch;
+- bounded shutdown drain/timeouts;
+- session-switch/pre-compress/delegation hooks;
+- trivial-prompt recall gate;
+- strict query-rewrite/output validation;
+- streaming memory-context scrubber.
+
+Rejected ownership model:
+
+```text
+retrieve past text
+→ inject into LLM context
+→ model becomes the mechanism that remembers/acts
+```
+
+This machinery may support optional semantic/context recall later, but it must not replace `PersistentNervousSystem`, `VerifiedExperience` or procedural competence.
+
+#### H-L8 — browser sense/body substrate
+
+Source:
+
+```text
+tools/browser_supervisor.py
+selected mechanisms from tools/browser_tool.py
+```
+
+Classification: **LATER SOURCE-EXTRACTION CANDIDATE**.
+
+Potentially useful:
+
+- persistent CDP event supervision;
+- thread-safe browser state snapshots;
+- frame/OOPIF and dialog state;
+- accessibility-tree/ref based interactions rather than absolute coordinates;
+- bounded snapshots;
+- subprocess credential stripping;
+- platform/browser launch robustness.
+
+Do not import the whole browser tool or inherited provider/session orchestration. Future active calls must enter a ZN-owned browser Body/Sense contract.
+
+### 8.2 Test evidence from the Hermes quarry
+
+This audit also inspected inherited tests rather than trusting implementation comments alone.
+
+Notable mature contracts include:
+
+- `tests/tools/test_skill_usage.py`: atomic/concurrent telemetry updates, real-transition-only events, post-patch reuse, provenance separation, corrupted-counter recovery and external/bundled/hub curation boundaries;
+- `tests/agent/test_curator.py`: pinned/protected skill survival, cron-reference protection, no over-protection of unrelated skills and offline deterministic lifecycle testing independent of the optional LLM review;
+- `tests/tools/test_skill_ledger.py`: content deduplication, actor tagging, path-escape rejection, missing-blob abort, fail-closed safety capture and exact rollback of edits/deletes/new files;
+- `tests/agent/test_tool_result_classification.py`: shared effect/result classification contracts.
+
+These tests are useful source material when ZN implements its own learning/capability lifecycle; copy behavioral edge cases, not inherited product ownership.
+
+## 9. Immediate extraction/code target
+
+The development mainline is now L1/P0 resident-owned learning. M8 release continuity remains a bounded parallel lane rather than the next learning implementation.
 
 Priority order:
 
-1. do not rebuild already-proven installer/autostart gates merely to recreate evidence;
-2. trace the active ZN-owned update/runtime-selection/resident call chain before changing handoff behavior;
-3. validate N → N+1 as two separate gates: busy resident must not be interrupted; idle resident must gracefully retire, start N+1 and preserve the same ZN home/identity/state;
-4. add Windows/macOS clean-install/login coverage only where it provides genuinely new release evidence;
-5. keep signing/notarization explicit and operational—never infer it from unsigned artifact success;
-6. establish browser interaction only through a clean resident-owned body/sense seam;
-7. define explicit resident artifact/message egress nomination before Telegram outbound attachment transport.
+1. keep current ZN Body/verification path as the source of truth;
+2. implement the bounded, restart-safe, privacy-safe `VerifiedExperience` unit linking Situation/evidence → action → expected outcome → independently observed result;
+3. source-extract/adapt only the deterministic Hermes outcome/failure semantics that improve that record, beginning with `terminal_hints.py` masked-success/failure features and the narrow effect/result classification primitives;
+4. do **not** import Hermes `MemoryManager`, Curator AIAgent review loop, SKILL.md system or tool loop controller as ZN ownership layers;
+5. after real `VerifiedExperience` data exists, adapt usage/lifecycle ideas from `skill_usage.py` / deterministic Curator transitions for candidate procedural tendency maturity, staleness/inhibition and retirement;
+6. when executable learned capabilities become promotable, adapt the ledger/content-addressed rollback patterns around ZN's existing `PromotedCapabilityLoader` and self-maintenance approval rules;
+7. keep browser extraction later, behind a clean ZN-owned body/sense seam;
+8. continue M8 N → N+1 busy/idle validation only as the bounded release lane, without displacing the learning mainline.
 
 ## 10. Completion test
 
@@ -303,4 +568,4 @@ The current ownership/extraction boundary requires ZN to be able to:
 - preserve ZN identity and embedded resident boot after a real fresh Linux deb installation;
 - register/start/stop/restart the fresh installed Linux resident through a ZN-owned systemd user login entry without source checkout or stale resident lease.
 
-The active source satisfies those structural boundaries for implemented slices. The next release-development work is N → N+1 continuity/upgrade validation; browser/egress work and later signing/repository migration remain explicit separate debt.
+For the learning/source-extraction direction, future completion additionally requires that inherited mature mechanisms become ZN-owned only after they are adapted behind ZN contracts and covered by ZN tests; documenting a source quarry is not itself an extraction.
