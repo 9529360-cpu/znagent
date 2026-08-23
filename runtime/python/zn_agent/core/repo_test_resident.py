@@ -28,6 +28,7 @@ class RepositoryVerifyingResidentRuntime(ProcedurallyInfluencedResidentRuntime):
 
     _RESIDENT_TEST_IDENTITY_SOURCE = "resident_repo_evidence"
     _RESIDENT_TEST_SOURCE_MAX_CHARS = 100_000
+    _RESIDENT_PYTHON_SOURCE_ROOT = "runtime/python"
 
     def _targeted_test_requested(self, event) -> bool:
         """Treat a durable resident-formed identity as required after formation.
@@ -73,6 +74,17 @@ class RepositoryVerifyingResidentRuntime(ProcedurallyInfluencedResidentRuntime):
         if test_file is None or ci_file is None:
             return None, None
 
+        try:
+            root = Path(scope["root"]).expanduser().resolve(strict=True)
+            source_root = (root / self._RESIDENT_PYTHON_SOURCE_ROOT).resolve(strict=True)
+            if (
+                source_root != root / self._RESIDENT_PYTHON_SOURCE_ROOT
+                or not source_root.is_dir()
+            ):
+                return None, None
+        except (KeyError, OSError, RuntimeError, ValueError):
+            return None, None
+
         test_text, _, test_problems = self._observe_resident_identity_file(
             event,
             scope,
@@ -107,6 +119,7 @@ class RepositoryVerifyingResidentRuntime(ProcedurallyInfluencedResidentRuntime):
             "identity_source": self._RESIDENT_TEST_IDENTITY_SOURCE,
             "target_module": identity["target_module"],
             "ci_relative_path": identity["ci_relative_path"],
+            "python_source_root_relative": self._RESIDENT_PYTHON_SOURCE_ROOT,
         }, None
 
     @staticmethod
@@ -224,6 +237,18 @@ class RepositoryVerifyingResidentRuntime(ProcedurallyInfluencedResidentRuntime):
             "root": str(spec.get("root") or ""),
             "head": str(spec.get("head") or ""),
         }
+        source_root_relative = str(spec.get("python_source_root_relative") or "")
+        if source_root_relative != self._RESIDENT_PYTHON_SOURCE_ROOT:
+            problems.append("resident-formed Python source root identity changed")
+        else:
+            try:
+                root = Path(scope["root"]).expanduser().resolve(strict=True)
+                source_root = (root / source_root_relative).resolve(strict=True)
+                if source_root != root / self._RESIDENT_PYTHON_SOURCE_ROOT or not source_root.is_dir():
+                    problems.append("resident-formed Python source root no longer resolves safely")
+            except (OSError, RuntimeError, ValueError):
+                problems.append("resident-formed Python source root no longer resolves safely")
+
         test_text, test_evidence, test_problems = self._observe_resident_identity_file(
             event,
             scope,
@@ -259,6 +284,7 @@ class RepositoryVerifyingResidentRuntime(ProcedurallyInfluencedResidentRuntime):
                 "identity_source": self._RESIDENT_TEST_IDENTITY_SOURCE,
                 "target_module": target_module,
                 "ci_relative_path": str(spec.get("ci_relative_path") or ""),
+                "python_source_root_relative": source_root_relative,
                 "test_source_sha256": test_evidence.get("source_sha256", ""),
                 "ci_source_sha256": ci_evidence.get("source_sha256", ""),
                 "ci_state_sha256": ci_evidence.get("state_sha256", ""),
@@ -289,6 +315,7 @@ class RepositoryVerifyingResidentRuntime(ProcedurallyInfluencedResidentRuntime):
             "identity_source",
             "target_module",
             "ci_relative_path",
+            "python_source_root_relative",
             "test_source_sha256",
             "ci_source_sha256",
             "ci_state_sha256",
