@@ -12,11 +12,11 @@
 >
 > Real code, Git state and CI outrank this ledger.
 
-Development branch: `dev/zn-agent`. Canonical branch target: `main` under the M10 decision recorded in `ZN.md`.
+Development branch: `dev/zn-agent`. Canonical source branch: `main`.
 
 ## 1. Current checkpoint — 2026-08-24
 
-The active repository is physically ZN-only.
+The active repository is physically ZN-only and M10 canonical source promotion has been executed by non-forced fast-forward.
 
 Current topology:
 
@@ -112,7 +112,7 @@ Still open for M8:
 3. rollback validation across a real version transition;
 4. remaining release-matrix evidence required before formal release-complete claims.
 
-M8 must not be reported complete until these are exercised.
+M8 must not be reported complete until these are exercised. M10 canonical source promotion does not change this status.
 
 ## 9. Repository source boundary — COMPLETE AND CI-ENFORCED
 
@@ -122,24 +122,26 @@ Status: **COMPLETE**.
 
 The historical source quarry is preserved outside the active tree in a dedicated reference branch at the old baseline. It is not an active runtime/build/test/package/release dependency.
 
-Fresh boundary evidence:
+Fresh exact-head pre-promotion evidence:
 
 ```text
-32670967428   ZN Source Boundary success
-32671061837   ZN Source Boundary success
+32671245421   ZN Source Boundary success
+               ZN Kernel / Python success
+               Electron / TypeScript success
+               Container / Runtime Smoke success
 ```
 
 ## 10. Dependency security state
 
 A normal full `npm ci` still reports two high-severity findings in the complete development/tooling dependency graph.
 
-CI now includes:
+CI includes:
 
 ```text
 npm audit --omit=dev --audit-level=high
 ```
 
-On run `32671061837` that production-dependency gate passed. Therefore the two known high findings are currently bounded to development/tooling dependencies, not accepted production/runtime dependencies.
+That production-dependency gate passed on current promotion evidence. Therefore the two known high findings are currently bounded to development/tooling dependencies, not accepted production/runtime dependencies.
 
 The exact development dependency chain remains to be traced and fixed where a safe stable update exists. Do not use blind forced audit fixes.
 
@@ -149,11 +151,11 @@ Architecture is defined in `ZN-SELF-MAINTENANCE.md`. ZN does not yet autonomousl
 
 High-risk identity/memory/credential/updater/rollback/signing/self-approval changes remain human-approved by default.
 
-## 12. M10 status — REVIEW PASSED; EXACT-HEAD CI/PROMOTION PENDING
+## 12. M10 status — CANONICAL PROMOTION EXECUTED
 
-The 2026-08-24 M10 review in `ZN.md` concludes that canonical source-branch promotion is acceptable once the exact decision/status commit has a fresh full CI pass.
+The 2026-08-24 M10 review in `ZN.md` passed for canonical source-branch promotion.
 
-Verified/reviewed:
+Verified/reviewed before the ref move:
 
 - ZN-owned resident/runtime and persistent-state boundary;
 - ZN-owned desktop and product identity;
@@ -164,13 +166,10 @@ Verified/reviewed:
 - production npm high-severity audit gate passes;
 - unresolved M8 gaps explicitly remain **PARTIAL** and are accepted for canonical branch promotion only, not formal release-complete claims;
 - user explicitly authorized promotion after cleanup;
-- `main` and `dev/zn-agent` have a fast-forward relation; force push/history rewrite is not permitted.
+- exact promotion commit `c158517225ff7b8cf0a952a0ae1dd6ebcf9c2c5d` passed full PR CI run `32671245421`;
+- `main` was then moved to that commit with `force=false` and no history rewrite.
 
-The promotion is complete only when:
-
-1. the exact final documentation/decision HEAD has Source Boundary, Python, Electron and Container CI success;
-2. `main` is non-forced fast-forwarded to that exact reviewed HEAD;
-3. canonical-branch CI is rechecked after the ref move.
+This document update exists to record that completed ref transition and to trigger a real canonical `main` push CI. Promotion is operationally closed only after that canonical CI is green and `dev/zn-agent` is synchronized to the same final documentation commit.
 
 ## 13. Current known debts
 
@@ -184,12 +183,13 @@ The promotion is complete only when:
 ## 14. Next real targets
 
 ```text
-1. pass exact-head full CI for the M10 decision/status commit
-2. non-forced fast-forward main to that exact HEAD and verify canonical CI
-3. trace/fix development-tooling npm advisory paths
-4. resume resident-owned engineering competence
-5. close remaining M8 continuity/signing/rollback evidence
-6. advance SM1+ behind existing safety boundaries
+1. verify canonical main push CI for the promotion-record commit
+2. fast-forward dev/zn-agent to the same final canonical documentation SHA
+3. close verification-only PR #5 without merge
+4. trace/fix development-tooling npm advisory paths
+5. resume resident-owned engineering competence
+6. close remaining M8 continuity/signing/rollback evidence
+7. advance SM1+ behind existing safety boundaries
 ```
 
 Any later status change must be reflected here only after real code/Git/CI evidence exists.
