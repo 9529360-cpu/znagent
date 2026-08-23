@@ -17,12 +17,18 @@ class NativeActionIntent:
     bridge between Thought and Body: cognition chooses an action, the action is
     persisted in working state, Body performs it, and the observed result flows
     back into the next Situation.
+
+    ``expected_outcome`` is current-event working state, not learned procedure
+    memory. It lets the same resident carry a postcondition it derived from
+    current Investigation evidence alongside the movement that should satisfy
+    it, instead of requiring a caller or procedural layer to own that contract.
     """
 
     intent_id: str
     event_id: str
     kind: str
     args: dict[str, Any] = field(default_factory=dict)
+    expected_outcome: dict[str, Any] | None = None
     reason: str = "native cognition selected a concrete body action"
     source: str = "native_deliberation"
     created_at: str = field(default_factory=utc_now)
@@ -34,30 +40,69 @@ class NativeActionIntent:
     def from_dict(cls, raw: dict[str, Any]) -> "NativeActionIntent":
         data = dict(raw)
         data["args"] = dict(data.get("args") or {})
+        expected = data.get("expected_outcome")
+        data["expected_outcome"] = dict(expected) if isinstance(expected, dict) else None
         return cls(**data)
 
 
-def current_text_equals_postcondition(event: AgentEvent) -> dict[str, str] | None:
-    """Return one normalized task-level exact-text goal, if explicitly present.
+def current_text_equals_postcondition(
+    event: AgentEvent,
+    *,
+    intent: NativeActionIntent | None = None,
+    facts: dict[str, Any] | None = None,
+) -> dict[str, str] | None:
+    """Return one normalized exact-text goal proven by current task state.
 
-    The contract is current event data, not learned procedure memory. A caller or
-    a resident-owned Will step may describe the final text state, but this helper
-    never turns that state into permission to mutate a file on its own.
+    An explicit task-level ``text_equals`` contract remains authoritative when
+    present. For an append movement, ZN may additionally derive the exact final
+    text itself, but only when current Investigation has observed the complete
+    target file. This derived contract is transient current-event cognition: it
+    is not stored procedure content and it never creates mutation authority on
+    its own.
     """
 
     payload = event.payload or {}
     raw = payload.get("expected_outcome")
-    if not isinstance(raw, dict):
+    if raw is not None:
+        if not isinstance(raw, dict):
+            return None
+        if str(raw.get("kind") or "").strip().lower() != "text_equals":
+            return None
+        raw_path = raw.get("path")
+        if raw_path is None or not str(raw_path).strip() or "expected_text" not in raw:
+            return None
+        return {
+            "kind": "text_equals",
+            "path": str(resolve_context_path(str(raw_path), payload)),
+            "expected_text": str(raw.get("expected_text") or ""),
+        }
+
+    if intent is None or intent.kind != "write_text":
         return None
-    if str(raw.get("kind") or "").strip().lower() != "text_equals":
+    if not bool(intent.args.get("append", False)):
         return None
-    raw_path = raw.get("path")
-    if raw_path is None or not str(raw_path).strip() or "expected_text" not in raw:
+    append_content = str(intent.args.get("content") or "")
+    if not append_content:
         return None
+    path = str(intent.args.get("path") or "").strip()
+    if not path:
+        return None
+
+    observed = facts if isinstance(facts, dict) else {}
+    preview = _matching_file_preview(observed, path)
+    if preview is None or bool(preview.get("truncated")):
+        return None
+    path_fact = _matching_path_fact(observed, path)
+    if path_fact is not None:
+        if not bool(path_fact.get("exists")):
+            return None
+        if str(path_fact.get("type") or "").strip().lower() != "file":
+            return None
+
     return {
         "kind": "text_equals",
-        "path": str(resolve_context_path(str(raw_path), payload)),
-        "expected_text": str(raw.get("expected_text") or ""),
+        "path": path,
+        "expected_text": str(preview.get("preview") or "") + append_content,
     }
 
 
@@ -84,14 +129,16 @@ def derive_native_action_intents(
 
     - the current event carries an explicit ``native_action_options`` contract; or
     - current Investigation evidence proves that two resident-formed text
-      movements reach the same explicit ``text_equals`` task postcondition.
+      movements reach the same exact ``text_equals`` postcondition.
 
     The second case is deliberately narrow. ZN must already have authority for a
-    concrete text mutation, the target must match the typed goal, and a complete
-    current file preview must prove that the incumbent append plus its current
-    content exactly equals the requested final text. Only then may ZN also form a
-    direct replace movement for that same final state. Free-text clauses, model
-    output and procedural memory never create the choice or supply its arguments.
+    concrete append mutation, the target must match the goal, and a complete
+    current file preview must prove the exact final text. The final-state contract
+    may be explicit current task data or may be derived by ZN itself from the
+    observed current text plus the current append content. Only then may ZN also
+    form a direct replacement movement for that same final state. Free-text
+    clauses, model output and procedural memory never create the choice or supply
+    its arguments.
 
     A valid explicit ``body_action`` / ``native_action`` remains exclusive.
     """
@@ -144,10 +191,21 @@ def derive_native_action_intents(
     if default is None:
         return ()
 
+    goal = current_text_equals_postcondition(
+        event,
+        intent=default,
+        facts=observed,
+    )
+    if goal is not None and default.kind == "write_text" and bool(
+        default.args.get("append", False)
+    ):
+        default.expected_outcome = dict(goal)
+
     resident_choices = _derive_resident_text_choice_set(
         event,
         default=default,
         observed=observed,
+        goal=goal,
     )
     return resident_choices or (default,)
 
@@ -157,10 +215,10 @@ def _derive_resident_text_choice_set(
     *,
     default: NativeActionIntent,
     observed: dict[str, Any],
+    goal: dict[str, str] | None,
 ) -> tuple[NativeActionIntent, ...]:
     """Form a bounded alternative only when current text semantics prove it."""
 
-    goal = current_text_equals_postcondition(event)
     if goal is None or default.kind != "write_text":
         return ()
     if not bool(default.args.get("append", False)):
@@ -189,7 +247,7 @@ def _derive_resident_text_choice_set(
 
     shared_reason = (
         "current Investigation observed the complete file state and proves that "
-        "the incumbent append and a direct replace both reach the same explicit "
+        "the incumbent append and a direct replace both reach the same exact "
         "text_equals task postcondition"
     )
     incumbent = NativeActionIntent(
@@ -197,6 +255,7 @@ def _derive_resident_text_choice_set(
         event_id=default.event_id,
         kind=default.kind,
         args=dict(default.args),
+        expected_outcome=dict(goal),
         reason=f"{default.reason}; {shared_reason}",
         source="resident_choice",
         created_at=default.created_at,
@@ -211,9 +270,10 @@ def _derive_resident_text_choice_set(
             "append": False,
             "create_parents": bool(default.args.get("create_parents", True)),
         },
+        expected_outcome=dict(goal),
         reason=(
             f"{shared_reason}; resident cognition formed the direct exact-state "
-            "movement from the current task goal, not from stored procedure arguments"
+            "movement from current goal/evidence, not from stored procedure arguments"
         ),
         source="resident_choice",
     )
