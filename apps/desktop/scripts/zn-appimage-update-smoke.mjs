@@ -491,12 +491,37 @@ try {
     try { desktop.kill('SIGTERM') } catch { void 0 }
   }
   try {
-    execFileSync('systemctl', ['--user', 'disable', '--now', 'zn-resident.service'], { stdio: 'ignore' })
+    execFileSync('systemctl', ['--user', 'disable', '--now', 'zn-resident.service'], {
+      stdio: 'ignore',
+      timeout: 10_000
+    })
   } catch { void 0 }
   try { await fsp.rm(unitPath, { force: true }) } catch { void 0 }
-  try { execFileSync('systemctl', ['--user', 'daemon-reload'], { stdio: 'ignore' }) } catch { void 0 }
+  try {
+    execFileSync('systemctl', ['--user', 'daemon-reload'], {
+      stdio: 'ignore',
+      timeout: 10_000
+    })
+  } catch { void 0 }
   if (updateServer) {
-    await new Promise(resolve => updateServer.close(resolve))
+    await new Promise(resolve => {
+      let settled = false
+      let forceTimer = null
+      const finish = () => {
+        if (settled) return
+        settled = true
+        if (forceTimer) clearTimeout(forceTimer)
+        resolve()
+      }
+      updateServer.close(finish)
+      updateServer.closeIdleConnections?.()
+      forceTimer = setTimeout(() => {
+        console.error('[zn-appimage-smoke] forcing update server connections closed during cleanup')
+        updateServer.closeAllConnections?.()
+        finish()
+      }, 2_000)
+    })
   }
   if (tlsDir) await fsp.rm(tlsDir, { recursive: true, force: true })
+  console.error('[zn-appimage-smoke] cleanup complete')
 }
