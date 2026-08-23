@@ -26,6 +26,7 @@ const debugPort = Number(process.env.ZN_SMOKE_DEBUG_PORT || 9323)
 const markerThread = 'm8-appimage-upgrade-continuity'
 const endpointPath = path.join(znHome, 'kernel', 'resident-endpoint.json')
 const unitPath = path.join(os.homedir(), '.config', 'systemd', 'user', 'zn-resident.service')
+const handoffProofTimeoutMs = 9 * 60_000
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -429,10 +430,19 @@ try {
 
   finalEndpoint = await waitFor('automatic N+1 resident handoff after work becomes idle', async () => {
     const endpoint = await readEndpoint()
-    if (endpoint.runtime_id !== newRuntimeId || endpoint.instance_id === initialEndpoint.instance_id) return null
+    if (endpoint.runtime_id !== newRuntimeId || endpoint.instance_id === initialEndpoint.instance_id) {
+      const status = await residentRpc(endpoint, 'status')
+      const queueDepth = Number(status?.queue_depth || 0)
+      const currentEventId = status?.working_state?.current_event_id || 'none'
+      const stage = status?.working_state?.stage || 'unknown'
+      throw new Error(
+        `resident still ${endpoint.runtime_id || 'unknown'} instance=${endpoint.instance_id || 'unknown'} ` +
+          `queue_depth=${queueDepth} current_event_id=${currentEventId} stage=${stage}`
+      )
+    }
     await residentRpc(endpoint, 'ping')
     return endpoint
-  }, 120_000, 300)
+  }, handoffProofTimeoutMs, 300)
 
   const finalSelf = await residentRpc(finalEndpoint, 'self')
   const finalWork = await residentRpc(finalEndpoint, 'work_get', { thread_id: markerThread })
