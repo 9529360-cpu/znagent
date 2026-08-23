@@ -243,7 +243,9 @@ class CommandPostconditionTests(unittest.TestCase):
             state = resident.store.get_working_state()
             self.assertEqual(state.stage, "native_investigation")
             self.assertIn("postcondition command verification failed", state.data["local_failure"])
-            self.assertTrue(state.data.get("native_action_failure_signature"))
+            failures = state.data["native_action_failure_records"]
+            self.assertEqual(len(failures), 1)
+            self.assertEqual(failures[0]["source"], "verification")
             verification = state.data["native_verification_result"]
             self.assertFalse(verification["verified"])
             self.assertEqual(verification["observed_exit_code"], 9)
@@ -257,6 +259,7 @@ class CommandPostconditionTests(unittest.TestCase):
             self.assertIn("postcondition command verification failed", context["current_gap"])
             self.assertFalse(context["latest_verification"]["verified"])
             self.assertEqual(context["latest_verification"]["observed_exit_code"], 9)
+            self.assertEqual(context["failed_actions"]["current_evidence_count"], 1)
 
             # The contradiction becomes part of the next resident Situation and
             # Thought immediately. Cognition does not spend another pulse acting
