@@ -4,6 +4,7 @@ import hashlib
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from agent.kernel.procedural_applicability import evaluate_candidate_applicability
@@ -151,15 +152,13 @@ class ProceduralApplicabilityTests(unittest.TestCase):
 
     def test_generalized_candidate_without_stable_reality_anchor_fails_closed(self):
         candidate = self._candidate()
-        candidate = CandidateProceduralTendency(
-            **{
-                **candidate.__dict__,
-                "applicability": {
-                    **candidate.applicability,
-                    "target_variants": 2,
-                    "stable_target_fingerprint": None,
-                },
-            }
+        candidate = replace(
+            candidate,
+            applicability={
+                **candidate.applicability,
+                "target_variants": 2,
+                "stable_target_fingerprint": None,
+            },
         )
 
         evaluation = evaluate_candidate_applicability(
@@ -290,7 +289,8 @@ class ProceduralApplicabilityTests(unittest.TestCase):
             self.assertIsNotNone(investigation)
             self.assertTrue(
                 any(
-                    candidate.tendency_id in item and "supported by current independent evidence" in item
+                    candidate.tendency_id in item
+                    and "supported by current independent evidence" in item
                     for item in investigation.evidence
                 )
             )
