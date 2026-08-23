@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from .action import NativeActionIntent, current_text_equals_postcondition
+from .git_semantics import current_git_stage_intent_goal
 from .models import AgentEvent
 from .procedural_tendency import CandidateProceduralTendency
 
@@ -47,29 +48,61 @@ def _normalized_expected_kind(value: Any) -> str | None:
     return kind
 
 
-def _current_action_variant(action_kind: str, args: Mapping[str, Any]) -> str | None:
-    if action_kind != "write_text":
-        return None
-    return "append" if bool(args.get("append", False)) else "replace"
+def _current_action_variant(
+    action_kind: str,
+    args: Mapping[str, Any],
+    expected: Mapping[str, Any],
+) -> str | None:
+    if action_kind == "write_text":
+        return "append" if bool(args.get("append", False)) else "replace"
+    if _normalized_expected_kind(expected.get("kind")) == "git_path_staged":
+        variant = str(expected.get("action_variant") or "").strip().lower()
+        return variant or None
+    return None
 
 
 def current_expected_outcome(
     event: AgentEvent,
     intent: NativeActionIntent,
+    *,
+    facts: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Build the transient verification shape relevant to applicability.
 
     This mirrors the resident's postcondition contract only far enough to compare
     privacy-safe L1/L2 features.  The returned mapping may contain raw current
     task values and therefore must never be persisted as procedural memory.
+
+    A typed Git staging goal is exposed only after ``git_semantics`` proves that
+    this exact current command intent was freshly reconstructed from the same
+    current repository/path evidence. Historical procedural memory never gets to
+    supply a command, path, workdir, or variant through this function.
     """
 
-    variant = _current_action_variant(intent.kind, intent.args)
+    current_facts = facts if isinstance(facts, Mapping) else {}
     explicit = event.payload.get("expected_outcome")
     if explicit is not None:
         if not isinstance(explicit, Mapping):
             return {"kind": "unsupported"}
         kind = _normalized_expected_kind(explicit.get("kind"))
+        if kind == "git_path_staged":
+            goal = current_git_stage_intent_goal(
+                event,
+                action_kind=intent.kind,
+                action_args=intent.args,
+                source=intent.source,
+                expected_outcome=intent.expected_outcome,
+                facts=current_facts,
+            )
+            if goal is None:
+                return {"kind": "unsupported"}
+            return {
+                "kind": "git_path_staged",
+                "path": goal["path"],
+                "workdir": goal["root"],
+                "action_variant": goal["action_variant"],
+                "current_goal_proven": True,
+            }
         if kind == "text_equals":
             goal = current_text_equals_postcondition(event)
             if goal is None:
@@ -77,7 +110,11 @@ def current_expected_outcome(
             return {
                 "kind": "text_equals",
                 "path": goal["path"],
-                "action_variant": variant,
+                "action_variant": (
+                    "append" if bool(intent.args.get("append", False)) else "replace"
+                    if intent.kind == "write_text"
+                    else None
+                ),
             }
         if kind != "command":
             return {"kind": kind or "unsupported"}
@@ -108,7 +145,11 @@ def current_expected_outcome(
             return {
                 "kind": "text_equals",
                 "path": path,
-                "action_variant": variant,
+                "action_variant": (
+                    "append" if bool(intent.args.get("append", False)) else "replace"
+                    if intent.kind == "write_text"
+                    else None
+                ),
             }
 
     if intent.kind != "write_text" or bool(intent.args.get("append", False)):
@@ -210,14 +251,23 @@ def evaluate_candidate_applicability(
     else:
         matched.append("action_kind")
 
-    current_variant = _current_action_variant(current_kind, args)
-    # Freshly aggregated write candidates always carry this marker. Historical
-    # retained episodes with no variant aggregate to variants=0 and therefore
-    # fail closed. Hand-built compatibility fixtures predating this metadata do
-    # not acquire authority from the marker and keep their existing unit scope.
-    if candidate.action_kind == "write_text" and "action_variant_variants" in applicability:
-        stable_variant = str(applicability.get("stable_action_variant") or "").strip()
+    current_variant = _current_action_variant(current_kind, args, expected)
+    stable_variant = str(applicability.get("stable_action_variant") or "").strip()
+    variant_metadata_present = "action_variant_variants" in applicability
+    if candidate.action_kind == "write_text" and variant_metadata_present:
         if not stable_variant:
+            untested.append("action_variant")
+        elif current_variant != stable_variant:
+            mismatched.append("action_variant")
+        else:
+            matched.append("action_variant")
+    elif candidate.expected_kind == "git_path_staged":
+        if not bool(expected.get("current_goal_proven")):
+            untested.append("git_goal_proven")
+        else:
+            matched.append("git_goal_proven")
+            reality_matched.append("git_goal_proven")
+        if not variant_metadata_present or not stable_variant:
             untested.append("action_variant")
         elif current_variant != stable_variant:
             mismatched.append("action_variant")
@@ -337,6 +387,7 @@ def evaluate_candidate_applicability(
         "target_fingerprint": current_target_fingerprint,
         "workdir_fingerprint": current_workdir_fingerprint,
         "verification_signature_hash": current_signature,
+        "git_goal_proven": bool(expected.get("current_goal_proven")),
         "observed_path_fingerprints": sorted(_observed_path_fingerprints(current_facts))[:16],
         "observed_git_root_fingerprint": _observed_git_root_fingerprint(current_facts),
     }
