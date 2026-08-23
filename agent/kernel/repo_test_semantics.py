@@ -81,6 +81,13 @@ def canonical_kernel_unittest_identity(
     }
 
 
+def _parse_python(source: str) -> ast.Module | None:
+    try:
+        return ast.parse(str(source or ""))
+    except (SyntaxError, ValueError, TypeError):
+        return None
+
+
 def test_source_directly_imports_target(source: str, target_module: str) -> bool:
     """Require a module-level direct import edge from the mirrored test to target."""
 
@@ -88,9 +95,8 @@ def test_source_directly_imports_target(source: str, target_module: str) -> bool
     if not module or "." not in module:
         return False
     package, leaf = module.rsplit(".", 1)
-    try:
-        tree = ast.parse(str(source or ""))
-    except (SyntaxError, ValueError, TypeError):
+    tree = _parse_python(source)
+    if tree is None:
         return False
 
     # Only imports that are direct statements in the module body count. Imports
@@ -107,6 +113,49 @@ def test_source_directly_imports_target(source: str, target_module: str) -> bool
         if imported_from == module:
             return True
         if imported_from == package and any(alias.name == leaf for alias in node.names):
+            return True
+    return False
+
+
+def test_source_has_discoverable_unittest_case(source: str) -> bool:
+    """Prove at least one top-level unittest TestCase exposes a test_* method."""
+
+    tree = _parse_python(source)
+    if tree is None:
+        return False
+
+    unittest_modules: set[str] = set()
+    testcase_names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "unittest":
+                    unittest_modules.add(alias.asname or "unittest")
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module == "unittest":
+            for alias in node.names:
+                if alias.name == "TestCase":
+                    testcase_names.add(alias.asname or "TestCase")
+
+    def is_testcase_base(base: ast.expr) -> bool:
+        if isinstance(base, ast.Name):
+            return base.id in testcase_names
+        return bool(
+            isinstance(base, ast.Attribute)
+            and base.attr == "TestCase"
+            and isinstance(base.value, ast.Name)
+            and base.value.id in unittest_modules
+        )
+
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        if not any(is_testcase_base(base) for base in node.bases):
+            continue
+        if any(
+            isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and member.name.startswith("test_")
+            for member in node.body
+        ):
             return True
     return False
 
