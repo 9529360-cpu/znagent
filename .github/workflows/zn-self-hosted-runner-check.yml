@@ -1,0 +1,71 @@
+name: ZN Self-Hosted Runner Check
+
+on:
+  push:
+    branches:
+      - dev/zn-agent
+    paths:
+      - .github/workflows/zn-self-hosted-runner-check.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: zn-self-hosted-runner-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runner-check:
+    name: Self-hosted runner connectivity
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Publish runner check pending status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: 'pending',
+              context: 'ZN Self-Hosted Runner',
+              description: 'self-hosted runner accepted the job',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            })
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Verify repository checkout and report runner identity
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('node:fs')
+            const required = ['ZN.md', 'AGENTS.md', '.github/workflows/zn-ci.yml']
+            for (const path of required) {
+              if (!fs.existsSync(path)) throw new Error(`missing required repository path: ${path}`)
+            }
+            core.info(`runner.name=${process.env.RUNNER_NAME ?? 'unknown'}`)
+            core.info(`runner.os=${process.env.RUNNER_OS ?? process.platform}`)
+            core.info(`runner.arch=${process.env.RUNNER_ARCH ?? process.arch}`)
+            core.info(`workspace=${process.env.GITHUB_WORKSPACE ?? process.cwd()}`)
+
+      - name: Publish runner check terminal status
+        if: ${{ always() }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const result = '${{ job.status }}'
+            const state = result === 'success' ? 'success' : result === 'failure' ? 'failure' : 'error'
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state,
+              context: 'ZN Self-Hosted Runner',
+              description: `self-hosted runner check: ${result}`.slice(0, 140),
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            })
