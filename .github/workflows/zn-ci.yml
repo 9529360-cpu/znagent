@@ -85,6 +85,7 @@ jobs:
       - name: Generate ZN-only Node lock and install from it
         run: |
           set -euo pipefail
+          rm -f package-lock.json
           npm install --package-lock-only --ignore-scripts
           npm ci --ignore-scripts
           node -e "const p=require('./package-lock.json'); if (JSON.stringify(p).includes('@hermes/')) process.exit(1)"
