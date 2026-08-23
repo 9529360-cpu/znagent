@@ -64,8 +64,8 @@ def allow_private_urls(
     """Resolve ZN's explicit private-network opt-out.
 
     ``ZN_ALLOW_PRIVATE_URLS`` has priority. Otherwise only ZN's own
-    ``security.allow_private_urls`` is read; the old Hermes browser/config
-    namespace is intentionally not consulted.
+    ``security.allow_private_urls`` is read; retired browser/config namespaces
+    are intentionally not consulted.
     """
     env = environ if environ is not None else os.environ
     raw = env.get("ZN_ALLOW_PRIVATE_URLS")
