@@ -4,8 +4,9 @@ from __future__ import annotations
 
 Procedural evidence never supplies Body arguments here. It can only strengthen
 an action shape that current ZN-owned event/fact logic has independently formed.
-The first slice is deliberately narrow: only exact, non-append text-state
-movements with an automatic independent postcondition are eligible.
+Positive authority remains deliberately narrow: exact non-append text-state
+movements and current resident-formed single-path Git staging choices with an
+independently provable postcondition.
 """
 
 from dataclasses import asdict, dataclass
@@ -57,26 +58,40 @@ class ProceduralActionInfluence:
 def _eligible_action_shape(
     event: AgentEvent,
     intent: NativeActionIntent,
+    *,
+    facts: dict[str, object] | None,
 ) -> bool:
     """Return whether learning may positively bias this already-formed intent.
 
-    The first action-influence slice intentionally excludes generic commands,
-    append writes, arbitrary explicit Body actions and any movement without a
-    resident-owned independent verification contract.
+    Generic commands, append writes, arbitrary explicit Body actions and any
+    movement without a resident-owned independent verification contract remain
+    excluded. A Git command is eligible only when current typed goal semantics
+    and current Investigation facts re-prove the exact resident choice.
     """
 
     if intent.source == "structured_event":
         return False
-    if intent.kind != "write_text":
+
+    expected = current_expected_outcome(event, intent, facts=facts)
+    if not expected:
         return False
-    if bool(intent.args.get("append", False)):
-        return False
-    expected = current_expected_outcome(event, intent)
-    return bool(
-        expected
-        and str(expected.get("kind") or "") == "text_equals"
-        and str(intent.args.get("path") or "").strip()
-    )
+
+    if intent.kind == "write_text":
+        return bool(
+            not bool(intent.args.get("append", False))
+            and str(expected.get("kind") or "") == "text_equals"
+            and str(intent.args.get("path") or "").strip()
+        )
+
+    if intent.kind == "command" and intent.source == "resident_choice":
+        return bool(
+            str(expected.get("kind") or "") == "git_path_staged"
+            and bool(expected.get("current_goal_proven"))
+            and str(expected.get("action_variant") or "")
+            in {"git_add", "git_update_index"}
+        )
+
+    return False
 
 
 def strongest_supported_action_influence(
@@ -96,11 +111,11 @@ def strongest_supported_action_influence(
     closed.
     """
 
-    if not _eligible_action_shape(event, intent):
+    if not _eligible_action_shape(event, intent, facts=facts):
         return None
 
     revoked = {str(item) for item in revoked_tendency_ids if str(item)}
-    expected = current_expected_outcome(event, intent)
+    expected = current_expected_outcome(event, intent, facts=facts)
     if expected is None:
         return None
 
