@@ -3,8 +3,13 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from .action import derive_native_action_intent
 from .life import BodyState, LivingState, SituationModel, ThoughtFrame, ZNLifeCore
 from .models import AgentEvent
+from .procedural_applicability import (
+    current_expected_outcome,
+    evaluate_candidate_applicability,
+)
 
 
 @dataclass(slots=True)
@@ -129,8 +134,10 @@ class EmbodiedLifeCore(ZNLifeCore):
         expected = raw_expected if isinstance(raw_expected, dict) else {}
         raw_history = execution.get("verification_history")
         verification_history = raw_history if isinstance(raw_history, list) else []
-        raw_applicability = working.data.get("procedural_applicability")
-        procedural_applicability = self._safe_procedural_applicability(raw_applicability)
+        procedural_applicability = self._current_procedural_applicability(
+            event_id,
+            investigation,
+        )
         raw_intent = working.data.get("native_action_intent")
         action_intent = raw_intent if isinstance(raw_intent, dict) else {}
         raw_result = working.data.get("native_action_result")
@@ -245,6 +252,42 @@ class EmbodiedLifeCore(ZNLifeCore):
             nervous_fatigue=(float(affect.fatigue) if affect is not None else 0.0),
             activated_neural_traces=neural_summaries,
         )
+
+    def _current_procedural_applicability(
+        self,
+        event_id: str | None,
+        investigation,
+    ) -> tuple[dict[str, Any], ...]:
+        if not event_id or investigation is None or not investigation.facts:
+            return ()
+        event = self.store.get_event(event_id)
+        if event is None:
+            return ()
+        try:
+            readiness = self.resident.kernel.self_model.assess_task(
+                event.task,
+                self.resident._required_capabilities(event),
+            )
+            intent = derive_native_action_intent(event, facts=investigation.facts)
+            if intent is None:
+                return ()
+            expected = current_expected_outcome(event, intent)
+            candidates = self.resident.verified_experiences.candidate_tendencies(limit=16)
+            evaluations = [
+                evaluate_candidate_applicability(
+                    candidate,
+                    current_domains=readiness.domains,
+                    action_kind=intent.kind,
+                    action_args=intent.args,
+                    expected_outcome=expected,
+                    facts=investigation.facts,
+                ).to_dict()
+                for candidate in candidates
+                if candidate.action_kind == intent.kind
+            ][:8]
+        except Exception:
+            return ()
+        return self._safe_procedural_applicability(evaluations)
 
     @staticmethod
     def _safe_procedural_applicability(raw: Any) -> tuple[dict[str, Any], ...]:
