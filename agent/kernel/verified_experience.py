@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from .store import KernelStore
 
 _MAX_VERIFIED_EXPERIENCES = 2048
+_GIT_STAGE_VARIANTS = frozenset({"git_add", "git_update_index"})
 
 
 def _stable_json(value: Any) -> str:
@@ -58,6 +59,19 @@ def _safe_expected_outcome(raw: Mapping[str, Any]) -> dict[str, Any]:
             int(raw.get("expected_chars") or len(str(raw.get("expected_text") or ""))),
         )
         summary["action_variant"] = variant if variant in {"append", "replace"} else None
+        return summary
+
+    if kind == "git_path_staged":
+        path = str(raw.get("path") or "").strip()
+        root = str(raw.get("root") or "").strip()
+        variant = str(raw.get("action_variant") or "").strip().lower()
+        summary.update(
+            {
+                "target_fingerprint": _fingerprint(path) if path else None,
+                "workdir_fingerprint": _fingerprint(root) if root else None,
+                "action_variant": variant if variant in _GIT_STAGE_VARIANTS else None,
+            }
+        )
         return summary
 
     if kind == "command":
@@ -127,6 +141,19 @@ def _safe_verification(
                     else None
                 ),
                 "truncated": bool(observed_data.get("truncated", False)),
+            }
+        )
+        return summary
+
+    if kind == "git_path_staged":
+        path = str(raw.get("path") or expected_outcome.get("path") or "").strip()
+        summary.update(
+            {
+                "target_fingerprint": _fingerprint(path) if path else None,
+                "staged": bool(raw.get("staged")),
+                "unstaged": bool(raw.get("unstaged")),
+                "untracked": bool(raw.get("untracked")),
+                "conflicted": bool(raw.get("conflicted")),
             }
         )
         return summary
@@ -221,7 +248,7 @@ def build_verified_experience(
     ):
         return None
     kind = str(verification_result.get("kind") or "").strip().lower()
-    if kind not in {"text_equals", "command"}:
+    if kind not in {"text_equals", "command", "git_path_staged"}:
         return None
 
     observation_raw = verification_result.get("observation")
