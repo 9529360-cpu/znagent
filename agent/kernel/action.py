@@ -42,13 +42,7 @@ def derive_native_action_intent(
     *,
     facts: dict[str, Any] | None = None,
 ) -> NativeActionIntent | None:
-    """Return the resident's current default structured action choice.
-
-    The compatibility API deliberately keeps the historical first-choice
-    behavior. L3 procedural influence may inspect the full set returned by
-    :func:`derive_native_action_intents`, but it cannot invent an action that
-    current event/fact logic did not already form.
-    """
+    """Return the resident's current default structured action choice."""
 
     intents = derive_native_action_intents(event, facts=facts)
     return intents[0] if intents else None
@@ -59,18 +53,18 @@ def derive_native_action_intents(
     *,
     facts: dict[str, Any] | None = None,
 ) -> tuple[NativeActionIntent, ...]:
-    """Compile all concrete local actions already justified by current state.
+    """Compile the current ZN-owned structured action choice set.
 
-    Action formation uses only state ZN already owns: the structured event and
-    concrete native investigation facts. The returned ordering preserves the
-    historical default priority (explicit action, command, text movement,
-    directory listing). A valid explicit body action remains exclusive because
-    learned experience must never override an action the current event directly
-    names. An invalid explicit shape retains the historical native fallback.
+    Ordinary task heuristics intentionally preserve the historical single-action
+    behavior. Multiple actions are returned only when the current event carries
+    an explicit ``native_action_options`` choice set. This distinction matters:
+    two action-shaped clauses in a task may be sequential obligations rather
+    than alternatives, so procedural memory must never reinterpret them as a
+    choice merely to gain influence.
 
-    An empty tuple means only "no action intent was derived". It never means
-    the task is already complete; completion must be established elsewhere by
-    current observed outcome evidence.
+    A valid explicit ``body_action`` / ``native_action`` remains exclusive. The
+    alternatives API never invents arguments and learned procedural evidence is
+    not consulted here.
     """
 
     payload = event.payload or {}
@@ -92,6 +86,43 @@ def derive_native_action_intents(
                 ),
             )
 
+    raw_options = payload.get("native_action_options")
+    if isinstance(raw_options, list):
+        options: list[NativeActionIntent] = []
+        for raw in raw_options[:8]:
+            kind, args = _explicit_action(raw, {})
+            if not kind:
+                continue
+            args = _contextualize_action_args(args, payload)
+            options.append(
+                NativeActionIntent(
+                    intent_id=f"act-{uuid.uuid4().hex[:12]}",
+                    event_id=event.event_id,
+                    kind=kind,
+                    args=args,
+                    reason="the current event contains a bounded structured native action choice",
+                    source="structured_choice",
+                )
+            )
+        if options:
+            return tuple(options)
+
+    default = _derive_heuristic_native_action_intent(
+        event,
+        payload=payload,
+        observed=observed,
+    )
+    return (default,) if default is not None else ()
+
+
+def _derive_heuristic_native_action_intent(
+    event: AgentEvent,
+    *,
+    payload: dict[str, Any],
+    observed: dict[str, Any],
+) -> NativeActionIntent | None:
+    """Historical single-choice native action formation."""
+
     task = event.task.lower()
     raw_path = (
         payload.get("path")
@@ -107,7 +138,6 @@ def derive_native_action_intents(
     command = payload.get("command")
     has_content = "content" in payload or "text" in payload
     content = payload.get("content", payload.get("text", ""))
-    intents: list[NativeActionIntent] = []
 
     if command is not None and any(
         token in task
@@ -122,27 +152,25 @@ def derive_native_action_intents(
         if not explicit_workdir and git.get("available") is not False and git.get("root"):
             observed_workdir = str(git["root"])
         workdir = explicit_workdir or observed_workdir
-        intents.append(
-            NativeActionIntent(
-                intent_id=f"act-{uuid.uuid4().hex[:12]}",
-                event_id=event.event_id,
-                kind="command",
-                args={
-                    "command": str(command),
-                    **({"workdir": str(workdir)} if workdir else {}),
-                    **(
-                        {"timeout": int(payload["timeout"])}
-                        if payload.get("timeout") is not None
-                        else {}
-                    ),
-                },
-                reason=(
-                    "native investigation observed the repository root that anchors the requested command"
-                    if observed_workdir
-                    else "native orientation identified an explicit local command to execute"
+        return NativeActionIntent(
+            intent_id=f"act-{uuid.uuid4().hex[:12]}",
+            event_id=event.event_id,
+            kind="command",
+            args={
+                "command": str(command),
+                **({"workdir": str(workdir)} if workdir else {}),
+                **(
+                    {"timeout": int(payload["timeout"])}
+                    if payload.get("timeout") is not None
+                    else {}
                 ),
-                source="native_deliberation" if observed_workdir else "native_orientation",
-            )
+            },
+            reason=(
+                "native investigation observed the repository root that anchors the requested command"
+                if observed_workdir
+                else "native orientation identified an explicit local command to execute"
+            ),
+            source="native_deliberation" if observed_workdir else "native_orientation",
         )
 
     if path and has_content and any(
@@ -155,87 +183,79 @@ def derive_native_action_intents(
         append = bool(payload.get("append", "append" in task or "追加" in task))
         path_fact = _matching_path_fact(observed, path)
         preview = _matching_file_preview(observed, path)
-        compatible_target = True
         if path_fact is not None and bool(path_fact.get("exists")):
             path_type = str(path_fact.get("type") or "").strip().lower()
             if path_type in {"directory", "other", "unavailable"}:
-                compatible_target = False
+                return None
 
-        if compatible_target:
-            if path_fact is not None and not bool(path_fact.get("exists")):
+        if path_fact is not None and not bool(path_fact.get("exists")):
+            reason = (
+                "native investigation observed that the requested file target is missing, "
+                "so the requested text state requires one write movement"
+            )
+        elif preview is not None and not append:
+            observed_text = str(preview.get("preview") or "")
+            if bool(preview.get("truncated")):
                 reason = (
-                    "native investigation observed that the requested file target is missing, "
-                    "so the requested text state requires one write movement"
+                    "native investigation observed the current file but not its complete "
+                    "contents; the requested text state still implies a concrete write movement"
                 )
-            elif preview is not None and not append:
-                observed_text = str(preview.get("preview") or "")
-                if bool(preview.get("truncated")):
-                    reason = (
-                        "native investigation observed the current file but not its complete "
-                        "contents; the requested text state still implies a concrete write movement"
-                    )
-                elif observed_text != str(content):
-                    reason = (
-                        "native investigation observed that current file content differs from "
-                        "the requested text state, so a write movement is needed"
-                    )
-                else:
-                    reason = (
-                        "native investigation confirmed the current file before the explicitly "
-                        "requested write movement"
-                    )
-            elif path_fact is not None:
+            elif observed_text != str(content):
                 reason = (
-                    "native investigation confirmed a compatible file target and the requested "
-                    "text state implies a concrete filesystem movement"
+                    "native investigation observed that current file content differs from "
+                    "the requested text state, so a write movement is needed"
                 )
             else:
-                reason = "native evidence and requested state imply a concrete filesystem movement"
-
-            intents.append(
-                NativeActionIntent(
-                    intent_id=f"act-{uuid.uuid4().hex[:12]}",
-                    event_id=event.event_id,
-                    kind="write_text",
-                    args={
-                        "path": path,
-                        "content": str(content),
-                        "append": append,
-                        "create_parents": bool(payload.get("create_parents", True)),
-                    },
-                    reason=reason,
-                    source="native_deliberation",
+                reason = (
+                    "native investigation confirmed the current file before the explicitly "
+                    "requested write movement"
                 )
+        elif path_fact is not None:
+            reason = (
+                "native investigation confirmed a compatible file target and the requested "
+                "text state implies a concrete filesystem movement"
             )
+        else:
+            reason = "native evidence and requested state imply a concrete filesystem movement"
+
+        return NativeActionIntent(
+            intent_id=f"act-{uuid.uuid4().hex[:12]}",
+            event_id=event.event_id,
+            kind="write_text",
+            args={
+                "path": path,
+                "content": str(content),
+                "append": append,
+                "create_parents": bool(payload.get("create_parents", True)),
+            },
+            reason=reason,
+            source="native_deliberation",
+        )
 
     if path and any(
         token in task
         for token in ("list directory", "list folder", "列出目录", "列出文件")
     ):
         path_fact = _matching_path_fact(observed, path)
-        compatible_directory = True
         if path_fact is not None:
             if not bool(path_fact.get("exists")):
-                compatible_directory = False
-            elif str(path_fact.get("type") or "").strip().lower() != "directory":
-                compatible_directory = False
-        if compatible_directory:
-            intents.append(
-                NativeActionIntent(
-                    intent_id=f"act-{uuid.uuid4().hex[:12]}",
-                    event_id=event.event_id,
-                    kind="list_directory",
-                    args={"path": path},
-                    reason=(
-                        "native investigation confirmed that the requested target is a directory"
-                        if path_fact is not None
-                        else "the requested state can be obtained directly through the filesystem body"
-                    ),
-                    source="native_deliberation",
-                )
-            )
+                return None
+            if str(path_fact.get("type") or "").strip().lower() != "directory":
+                return None
+        return NativeActionIntent(
+            intent_id=f"act-{uuid.uuid4().hex[:12]}",
+            event_id=event.event_id,
+            kind="list_directory",
+            args={"path": path},
+            reason=(
+                "native investigation confirmed that the requested target is a directory"
+                if path_fact is not None
+                else "the requested state can be obtained directly through the filesystem body"
+            ),
+            source="native_deliberation",
+        )
 
-    return tuple(intents)
+    return None
 
 
 def _matching_path_fact(
