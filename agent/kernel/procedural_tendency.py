@@ -49,6 +49,7 @@ def _compatibility_profile(experience: VerifiedExperience) -> dict[str, Any]:
         "group_key": str(experience.group_key),
         "domains": list(experience.domains),
         "action_kind": str(experience.action_kind or "unknown"),
+        "action_variant": expected.get("action_variant"),
         "expected_kind": str(expected.get("kind") or "unknown"),
         "expected_exit_code": expected.get("expected_exit_code"),
         "effect_class": str(result.get("effect_class") or "unknown"),
@@ -247,11 +248,13 @@ def aggregate_candidate_tendencies(
             "stable_verification_signature_hash": _stable_anchor(
                 supports, "verification_signature_hash"
             ),
+            "stable_action_variant": _stable_anchor(supports, "action_variant"),
             "target_variants": _variant_count(supports, "target_fingerprint"),
             "workdir_variants": _variant_count(supports, "workdir_fingerprint"),
             "verification_signature_variants": _variant_count(
                 supports, "verification_signature_hash"
             ),
+            "action_variant_variants": _variant_count(supports, "action_variant"),
             "goal_variants": len({item.goal_fingerprint for item in supports}),
             "situation_variants": len(
                 {item.situation_evidence_fingerprint for item in supports}
