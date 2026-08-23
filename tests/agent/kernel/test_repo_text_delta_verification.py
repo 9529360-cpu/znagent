@@ -152,23 +152,12 @@ class RepoTextDeltaVerificationTests(unittest.TestCase):
 
             self.assertTrue(result.success)
             self.assertEqual(result.model_invocations, 0)
+            self.assertIn("target-scoped Git delta", result.reason)
             self.assertEqual(target.read_text(encoding="utf-8"), "after\n")
             self.assertEqual(
                 unrelated.read_text(encoding="utf-8"),
                 "keep-this-unrelated-change\n",
             )
-            state = resident.store.get_working_state()
-            baseline = state.data.get("native_repo_text_baseline")
-            verification = state.data.get("native_verification_result")
-            self.assertIsInstance(baseline, dict)
-            self.assertIsInstance(verification, dict)
-            assert isinstance(baseline, dict)
-            assert isinstance(verification, dict)
-            self.assertEqual(baseline["relative_path"], "target.txt")
-            self.assertTrue(verification["verified"])
-            self.assertTrue(verification["repo_delta"]["verified"])
-            self.assertTrue(verification["repo_delta"]["worktree_changed"])
-            self.assertTrue(verification["repo_delta"]["state_changed"])
 
             actions = self._event_actions(resident, event.event_id)
             scoped = [
@@ -178,9 +167,19 @@ class RepoTextDeltaVerificationTests(unittest.TestCase):
                 and item.data.get("scope_relative_path") == "target.txt"
             ]
             self.assertEqual(len(scoped), 2)
+            self.assertIs(scoped[0].data["scope_tracked"], True)
+            self.assertIs(scoped[1].data["scope_tracked"], True)
             self.assertNotEqual(
                 scoped[0].data["state_sha256"],
                 scoped[1].data["state_sha256"],
+            )
+            self.assertNotEqual(
+                scoped[0].data["worktree"]["patch_sha256"],
+                scoped[1].data["worktree"]["patch_sha256"],
+            )
+            self.assertEqual(
+                scoped[0].data["staged"]["patch_sha256"],
+                scoped[1].data["staged"]["patch_sha256"],
             )
             self.assertTrue(
                 all("unrelated.txt" not in item.data.get("changed_paths", []) for item in scoped)
@@ -338,11 +337,8 @@ class RepoTextDeltaVerificationTests(unittest.TestCase):
             result = self._run_to_terminal(resident)
 
             self.assertTrue(result.success)
+            self.assertNotIn("target-scoped Git delta", result.reason)
             self.assertEqual(target.read_text(encoding="utf-8"), "after\n")
-            state = resident.store.get_working_state()
-            self.assertNotIn("native_repo_text_baseline", state.data)
-            self.assertTrue(state.data["native_verification_result"]["verified"])
-            self.assertNotIn("repo_delta", state.data["native_verification_result"])
             scoped = [
                 item
                 for item in self._event_actions(resident, event.event_id)
@@ -350,6 +346,9 @@ class RepoTextDeltaVerificationTests(unittest.TestCase):
                 and item.data.get("scope_relative_path") == "untracked.txt"
             ]
             self.assertEqual(scoped, [])
+            experiences = resident.verified_experiences.for_event(event.event_id)
+            self.assertEqual(len(experiences), 1)
+            self.assertEqual(experiences[0].verdict, "verified")
             resident.store.close()
 
 
