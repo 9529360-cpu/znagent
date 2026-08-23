@@ -198,12 +198,68 @@ class CdpSession {
     return result.result?.value
   }
 
-  close() {
-    try { this.socket.close() } catch { void 0 }
+  async close(timeoutMs = 2_000) {
+    const socket = this.socket
+    if (socket.readyState === WebSocket.CLOSED) return
+    await new Promise(resolve => {
+      let settled = false
+      let timer = null
+      const finish = () => {
+        if (settled) return
+        settled = true
+        if (timer) clearTimeout(timer)
+        socket.removeEventListener('close', finish)
+        resolve()
+      }
+      socket.addEventListener('close', finish, { once: true })
+      timer = setTimeout(() => {
+        console.error('[zn-appimage-smoke] CDP WebSocket did not close within cleanup deadline')
+        finish()
+      }, timeoutMs)
+      try { socket.close() } catch { finish() }
+    })
   }
 }
 
 let desktopExit = null
+
+function childHasExited(child) {
+  return child.exitCode !== null || child.signalCode !== null
+}
+
+async function waitForChildExit(child, timeoutMs) {
+  if (childHasExited(child)) return true
+  return await new Promise(resolve => {
+    let settled = false
+    let timer = null
+    const finish = exited => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      child.removeListener('exit', onExit)
+      resolve(exited)
+    }
+    const onExit = () => finish(true)
+    child.once('exit', onExit)
+    timer = setTimeout(() => finish(childHasExited(child)), timeoutMs)
+  })
+}
+
+async function stopChildProcess(child, label) {
+  if (!child) return
+  if (!childHasExited(child)) {
+    try { child.kill('SIGTERM') } catch { void 0 }
+    if (!(await waitForChildExit(child, 3_000))) {
+      console.error(`[zn-appimage-smoke] ${label} ignored SIGTERM; sending SIGKILL`)
+      try { child.kill('SIGKILL') } catch { void 0 }
+      if (!(await waitForChildExit(child, 2_000))) {
+        console.error(`[zn-appimage-smoke] ${label} still did not report exit after SIGKILL`)
+      }
+    }
+  }
+  child.stdout?.destroy()
+  child.stderr?.destroy()
+}
 
 async function connectDesktopCdp() {
   return await waitFor('real Electron renderer CDP target', async () => {
@@ -218,7 +274,7 @@ async function connectDesktopCdp() {
     await cdp.call('Runtime.enable')
     const exposed = await cdp.evaluate(`typeof window.znDesktop === 'object'`)
     if (!exposed) {
-      cdp.close()
+      await cdp.close()
       return null
     }
     return cdp
@@ -483,13 +539,11 @@ try {
     appimage_sha256: updateSha
   }, null, 2))
 } finally {
-  cdp?.close()
+  if (cdp) await cdp.close()
   if (finalEndpoint) {
     try { await residentRpc(finalEndpoint, 'shutdown', {}, 3_000) } catch { void 0 }
   }
-  if (desktop && desktop.exitCode === null && !desktop.killed) {
-    try { desktop.kill('SIGTERM') } catch { void 0 }
-  }
+  await stopChildProcess(desktop, 'ZN N desktop')
   try {
     execFileSync('systemctl', ['--user', 'disable', '--now', 'zn-resident.service'], {
       stdio: 'ignore',
@@ -513,15 +567,18 @@ try {
         if (forceTimer) clearTimeout(forceTimer)
         resolve()
       }
-      updateServer.close(finish)
-      updateServer.closeIdleConnections?.()
       forceTimer = setTimeout(() => {
         console.error('[zn-appimage-smoke] forcing update server connections closed during cleanup')
         updateServer.closeAllConnections?.()
         finish()
       }, 2_000)
+      updateServer.close(finish)
+      updateServer.closeIdleConnections?.()
     })
   }
   if (tlsDir) await fsp.rm(tlsDir, { recursive: true, force: true })
-  console.error('[zn-appimage-smoke] cleanup complete')
+  const activeHandles = process._getActiveHandles?.()
+    .filter(handle => handle !== process.stdin && handle !== process.stdout && handle !== process.stderr)
+    .map(handle => handle?.constructor?.name || typeof handle) || []
+  console.error(`[zn-appimage-smoke] cleanup complete active_handles=${JSON.stringify(activeHandles)}`)
 }
