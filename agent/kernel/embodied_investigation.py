@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from .action import derive_native_action_intent
+from .action import derive_native_action_intents
 from .investigation import NativeInvestigator
 from .models import AgentEvent
 from .procedural_applicability import (
     current_expected_outcome,
+    current_procedural_applicability_domains,
     evaluate_candidate_applicability,
 )
 from .reconsolidation import SchemaReconsolidator
@@ -160,27 +161,51 @@ class EmbodiedInvestigator(NativeInvestigator):
         """Record a bounded read-only reality check beside Investigation evidence."""
         if result.performed_probe is None:
             return
-        intent = derive_native_action_intent(event, facts=result.state.facts)
-        if intent is None:
+        intents = derive_native_action_intents(event, facts=result.state.facts)
+        if not intents:
             return
 
-        expected = current_expected_outcome(event, intent)
         candidates = self.resident.verified_experiences.candidate_tendencies(limit=16)
+        current_kinds = {intent.kind for intent in intents}
         relevant = [
-            item for item in candidates if item.action_kind == intent.kind
+            item for item in candidates if item.action_kind in current_kinds
         ][:8]
         if not relevant:
             return
 
         evidence = list(result.state.evidence)
+        status_rank = {"mismatch": 0, "untested": 1, "supported": 2}
         for candidate in relevant[-4:]:
-            evaluation = evaluate_candidate_applicability(
-                candidate,
-                current_domains=readiness.domains,
-                action_kind=intent.kind,
-                action_args=intent.args,
-                expected_outcome=expected,
-                facts=result.state.facts,
+            evaluations = []
+            for intent in intents:
+                if candidate.action_kind != intent.kind:
+                    continue
+                expected = current_expected_outcome(
+                    event,
+                    intent,
+                    facts=result.state.facts,
+                )
+                domains = current_procedural_applicability_domains(
+                    event,
+                    intent,
+                    expected_outcome=expected,
+                    current_domains=readiness.domains,
+                )
+                evaluations.append(
+                    evaluate_candidate_applicability(
+                        candidate,
+                        current_domains=domains,
+                        action_kind=intent.kind,
+                        action_args=intent.args,
+                        expected_outcome=expected,
+                        facts=result.state.facts,
+                    )
+                )
+            if not evaluations:
+                continue
+            evaluation = max(
+                evaluations,
+                key=lambda item: status_rank.get(item.status, -1),
             )
             if evaluation.status == "supported":
                 fields = ",".join(evaluation.reality_matched_fields) or "reality"
@@ -369,7 +394,6 @@ class EmbodiedInvestigator(NativeInvestigator):
                 "changed_region_indices": list(observation.changed_region_indices),
                 "visual_areas": list(areas),
                 "luminance_delta": observation.luminance_delta,
-                "luminance": luminance,
                 "source": observation.source,
                 "width": observation.width,
                 "height": observation.height,
