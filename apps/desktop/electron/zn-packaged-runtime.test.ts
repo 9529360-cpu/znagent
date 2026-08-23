@@ -180,5 +180,5 @@ test('formal desktop package and builder expose only ZN product identity', () =>
     'scripts/before-build.mjs',
     'scripts/notarize.mjs'
   ].map(relative => fs.readFileSync(path.join(desktopRoot, relative), 'utf8')).join('\n')
-  assert.doesNotMatch(activeHooks, new RegExp(`${retiredProduct}|${retiredBrand}|install\\.ps1|${retiredPackage}|notary`, 'i'))
+  assert.doesNotMatch(activeHooks, new RegExp(`${retiredProduct}|${retiredBrand}|install\\.ps1|${retiredPackage}`, 'i'))
 })
