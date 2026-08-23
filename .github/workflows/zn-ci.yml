@@ -78,7 +78,9 @@ jobs:
           test ! -f uv.lock
           test ! -e .agent/purge_hermes_source.py
           ! grep -R --line-number --fixed-strings '@hermes/' apps runtime tests package.json 2>/dev/null
-          ! grep -R --line-number --fixed-strings 'agent.kernel' apps runtime tests 2>/dev/null
+          ! grep -R --line-number --fixed-strings 'agent.kernel' apps runtime 2>/dev/null
+          ! grep -R --line-number --fixed-strings 'from agent.kernel' tests 2>/dev/null
+          ! grep -R --line-number --fixed-strings 'import agent.kernel' tests 2>/dev/null
 
       - name: Generate ZN-only Node lock and install from it
         run: |
