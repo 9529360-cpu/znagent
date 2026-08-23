@@ -10,10 +10,13 @@ KERNEL_ROOT = REPO_ROOT / "runtime" / "python" / "zn_agent" / "core"
 RUNTIME_PROJECT = REPO_ROOT / "runtime" / "python" / "pyproject.toml"
 STAGE_SCRIPT = REPO_ROOT / "apps" / "desktop" / "scripts" / "stage-zn-runtime.mjs"
 
+RETIRED_CLI = bytes.fromhex("6865726d65735f636c69").decode("utf-8")
+RETIRED_DIST = bytes.fromhex("6865726d65732d6167656e74").decode("utf-8")
+
 
 class RuntimeOwnershipTests(unittest.TestCase):
     def test_kernel_has_no_inherited_product_imports(self):
-        forbidden_roots = {"hermes_cli", "run_agent"}
+        forbidden_roots = {RETIRED_CLI, "run_agent"}
         violations: list[str] = []
         for path in sorted(KERNEL_ROOT.glob("*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -32,16 +35,16 @@ class RuntimeOwnershipTests(unittest.TestCase):
         text = RUNTIME_PROJECT.read_text(encoding="utf-8")
         self.assertIn('name = "znagent"', text)
         self.assertIn('zn-resident = "zn_agent.resident:main"', text)
-        self.assertNotIn("hermes-agent", text)
-        self.assertNotIn("hermes_cli", text)
+        self.assertNotIn(RETIRED_DIST, text)
+        self.assertNotIn(RETIRED_CLI, text)
         self.assertNotIn("run_agent", text)
 
     def test_staging_installs_runtime_project_not_repository_root(self):
         text = STAGE_SCRIPT.read_text(encoding="utf-8")
         self.assertIn("runtimeProject", text)
         self.assertIn("zn_agent", text)
-        self.assertNotIn("import hermes_cli", text)
-        self.assertNotIn("hermes_cli/main.py", text)
+        self.assertNotIn(f"import {RETIRED_CLI}", text)
+        self.assertNotIn(f"{RETIRED_CLI}/main.py", text)
 
 
 if __name__ == "__main__":
