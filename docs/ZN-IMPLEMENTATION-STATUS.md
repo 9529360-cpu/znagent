@@ -4,9 +4,113 @@
 >
 > Source-extraction contract: [`ZN-SOURCE-EXTRACTION.md`](ZN-SOURCE-EXTRACTION.md)
 >
+> Current core-development direction: [`ZN-NEXT-PHASE.md`](ZN-NEXT-PHASE.md)
+>
 > This file records **what is actually implemented now**. Code remains authoritative over this ledger.
 >
 > Active development branch: `dev/zn-agent`. `main` remains untouched until the explicit promotion milestone in `ZN.md`.
+
+## Core execution mainline checkpoint — 2026-08-23
+
+Development priority is now **durable ZN Self + mature complex-task execution depth + reality verification**. UI/desktop polish is paused; release/M8 remains a bounded continuity/release lane.
+
+### Verified structured Git repository sense
+
+Verified source includes:
+
+```text
+168579604157467bb2384f385849c621ca66cefe  feat: strengthen native Git repository sense
+59957637a6840a6ce54e10b67ee5dc7bc0623867  test: isolate Git sense from resident sqlite files
+47ccd5601462641c50c16ec76f2a05085a33f9f3  test: require reality verification after native writes
+```
+
+Real CI for the final first-slice source state:
+
+```text
+ZN Kernel / Python      success
+Electron / TypeScript  success
+run                     32612456040
+```
+
+The active embodied path now observes Git through `NativeBody.git_state`, with structured repository evidence including root, branch, full/short HEAD, detached state, upstream, ahead/behind, dirty state, unique changed paths, staged/unstaged/untracked/conflicted paths and bounded porcelain status. This remains read-only repository sense; it is **not** yet general Git mutation or GitHub maintenance capability.
+
+### Verified action → reality verification
+
+The same CI run `32612456040` proves the first resident-owned post-action verification contract for exact non-append text state:
+
+```text
+native investigation
+→ NativeActionIntent(write_text)
+→ Body write succeeds
+→ event does NOT complete
+→ durable native_verification stage
+→ verify_action Thought
+→ Body re-reads current reality
+→ exact postcondition match
+→ only then complete
+```
+
+The verification stage survives a resident restart. If current reality contradicts the requested text state, the resident records the failed postcondition, returns to investigation and blocks blind replay of the identical movement.
+
+### Verified explicit command postconditions
+
+Final source state for the next slice:
+
+```text
+5cc0b1bccca976a8c635fbf3ddd7f95912a4cdc6  feat: verify explicit command postconditions
+8a661a376bd0d24dc2eea5dbe4187a159a8f4df1  feat: surface verification evidence in resident thought
+f280c8f68af69dfc2ac10b94d8d83726c10aa14e  test: fix command verification shell contract
+```
+
+Real CI:
+
+```text
+ZN Kernel / Python      success
+Electron / TypeScript  success
+run                     32621596489
+```
+
+An event may now provide a structured `expected_outcome` command check. The primary command returning successfully is only action evidence. The resident persists the postcondition, forms a later `verify_action` Thought, runs an independent verification command through its own Body, compares observed exit code/output with the expected state and completes only when the postcondition is verified.
+
+The verified contract includes:
+
+- explicit expected verification command;
+- expected exit code, default `0`;
+- optional required output fragments;
+- verification workdir/timeout/output bounds;
+- restart continuity between primary action and verification;
+- failed verification → durable failure evidence → native investigation;
+- identical primary command is not blindly replayed after the failed postcondition;
+- verification contradiction is surfaced directly in the next `CognitiveSituation` / Thought instead of remaining hidden only in `WorkingState`.
+
+This does **not** mean arbitrary shell success now proves arbitrary high-level goals. Generic task-level postcondition derivation, multi-step goal/subgoal completion semantics and long-horizon recovery remain incomplete.
+
+### Current core capability boundary
+
+Verified foundations now include:
+
+- persistent Self / resident life and zero-model continuity;
+- durable event + `WorkingState` continuity across pulses/restarts;
+- multi-pulse native Investigation with retained hypotheses/evidence/facts;
+- native Body action intents and failed-action feedback;
+- structured read-only Git repository sense;
+- exact text state post-action verification;
+- explicit independent command postcondition verification;
+- immediate Situation/Thought awareness of a contradicted verification;
+- bounded external cognition that returns as input to ZN rather than becoming the task owner.
+
+Still PARTIAL / MISSING on the core mainline:
+
+- reliable resident-owned derivation/maintenance of high-level task postconditions;
+- multi-step goal/subgoal execution that can change tactics over many actions without becoming a model-owned planner;
+- durable completed-task verification evidence as a first-class audit object rather than relying on the event outcome plus retained Body action history;
+- broader failure recovery and alternative-action formation after verification contradiction;
+- safe Git mutation + diff/test/reality verification;
+- GitHub repository/PR/CI resident-owned read sense;
+- browser body/sense;
+- mature visual + mouse/keyboard application control;
+- real complex-task benchmark suite;
+- SM1+ self-maintenance implementation.
 
 ## Verified implementation baseline
 
@@ -18,7 +122,7 @@ Windows x64      NSIS / MSI
 macOS   arm64    DMG / ZIP
 ```
 
-M8 has two deliberately scoped installed-Linux proofs plus source-level N → N+1 continuity regressions. The installed proofs cover fresh `.deb` installation and systemd user login/start-stop-start continuity. The N → N+1 regressions now prove that versioned runtimes materialize side-by-side under the same ZN home, queued/claimed resident work keeps a runtime mismatch pending instead of idle, and an idle resident can gracefully retire N and start N+1 against the same durable self/work store.
+M8 has two deliberately scoped installed-Linux proofs plus source-level N → N+1 continuity regressions. The installed proofs cover fresh `.deb` installation and systemd user login/start-stop-start continuity. The N → N+1 regressions prove that versioned runtimes materialize side-by-side under the same ZN home, queued/claimed resident work keeps a runtime mismatch pending instead of idle, and an idle resident can gracefully retire N and start N+1 against the same durable self/work store.
 
 This is not complete M8/release validation. A full desktop/application updater handoff gate, Windows/macOS clean-install/login coverage, signing/notarization and any additional release architectures remain separate gates.
 
@@ -128,49 +232,6 @@ run                        32593886026
 fresh runner               Ubuntu 24.04.4 LTS
 ```
 
-The gate crossed a real artifact/install boundary:
-
-```text
-build runner with repository
-→ stage self-contained zn_agent runtime
-→ build formal Linux deb
-→ upload only the deb
-
-fresh Ubuntu runner with no checkout
-→ apt install deb under /opt/ZN
-→ start isolated systemd user manager
-→ embedded Python executes zn_agent.core.resident_autostart install
-→ verify enabled zn-resident.service
-→ verify packaged resident becomes active and RPC status is running
-→ systemctl --user stop zn-resident.service
-→ verify service is inactive after graceful SIGTERM cleanup
-→ restart default.target
-→ verify packaged resident is active/running again
-→ uninstall login entry
-```
-
-The installed login command was ZN-owned and self-contained:
-
-```text
-/opt/ZN/resources/zn-runtime/python/cpython-3.11.15-linux-x86_64-gnu/bin/python3.11
--m zn_agent.core.resident_server
---home /home/runner/.local/share/zn-autostart-smoke
-```
-
-The generated service used `WantedBy=default.target`, contained no inherited `agent.kernel` runtime command, no checkout path and no runtime `WorkingDirectory` dependency. The first installed resident was observed active with PID `2447`; after the explicit service stop and `default.target` restart the packaged status returned to `running; autostart: installed`.
-
-This validation exposed and closed three real lifecycle/package defects rather than adding compatibility wrappers:
-
-1. desktop autostart and generated login commands now use installed `zn_agent.core` modules instead of source-only `agent.kernel` names;
-2. login entries no longer depend on a runtime working directory;
-3. service-manager SIGTERM now unwinds through the resident's existing cleanup path so endpoint, organs, store and durable lease are retired before exit.
-
-The temporary autostart workflow was removed after successful evidence in:
-
-```text
-441f7a7e516118a2eac05668207dc8d8265cb610  test: retire Linux autostart smoke [skip ci]
-```
-
 This proves the current Linux installed OS-login/start-stop-start continuity slice. It does not prove the complete N → N+1 desktop/application handoff, Windows/macOS login behavior, equivalent clean installation on those platforms, signing/notarization or a final release matrix.
 
 ### M8 N → N+1 continuity regression evidence
@@ -193,36 +254,11 @@ Electron / TypeScript  success
 run                     32596442626
 ```
 
-The active desktop call chain is now explicitly exercised around the runtime-state boundary. Resident `status()` already reports durable SQLite-backed `queue_depth`; `describeZnResidentRuntime` treats a nonzero durable queue as busy before considering transient working/situation state. Claimed/processing work remains covered by `working_state.current_event_id`. A runtime mismatch therefore remains `pending` + `busy` while queued or claimed resident work exists, and the existing IPC handoff path returns before `ZnResidentProcess.restart()`.
+The active desktop call chain is exercised around the runtime-state boundary. Resident `status()` reports durable SQLite-backed `queue_depth`; `describeZnResidentRuntime` treats a nonzero durable queue as busy before transient working/situation state. Claimed/processing work remains covered by `working_state.current_event_id`.
 
-The packaged-runtime regression proves:
+The packaged-runtime regression proves N and N+1 can coexist under the same ZN home, and the kernel subprocess regression proves an idle N can retire cleanly before N+1 starts while living-self identity fields and durable work history persist.
 
-```text
-ZN_HOME/runtime/runtime-n
-ZN_HOME/runtime/runtime-n-plus-1
-```
-
-can coexist. Materializing/selecting N+1 changes the desired `ZN_RUNTIME_ID` / `ZN_RESIDENT_PYTHON` without deleting or overwriting N, while `ZN_AGENT_HOME` remains the same.
-
-The kernel suite also now launches two real resident subprocesses in sequence against one ZN home. It requires:
-
-```text
-N endpoint runtime_id == runtime-n
-→ create durable work/thread marker
-→ graceful shutdown RPC
-→ N process exits 0
-→ resident endpoint removed
-→ durable resident lease removed
-→ start a new process with runtime_id == runtime-n-plus-1
-→ N+1 endpoint reports runtime-n-plus-1
-→ resident instance_id changes (new body/process)
-→ living self born_at/name persist
-→ pulse history remains monotonic
-→ durable work/thread metadata persists
-→ final graceful shutdown retires endpoint
-```
-
-This proves the core idle runtime/body/process continuity contract at the resident boundary and closes the earlier false-idle bug for queued work. It is still not the final installed desktop/updater gate: the full Electron updater → desired runtime → future autostart → deferred busy handoff / idle restart path has not yet been exercised as one installed application scenario.
+This is still not the final installed desktop/updater gate.
 
 ### macOS M7 evidence
 
@@ -242,54 +278,11 @@ macOS smoke run             32591343670
 runner                      macos-26-arm64
 ```
 
-The scoped macOS workflow exercised the real formal chain:
-
-```text
-locked npm workspace
-→ stage-zn-runtime.mjs
-→ portable CPython 3.11.15 macOS arm64 + runtime/python znagent
-→ zero-model runtime staging verification
-→ ZN renderer/Electron build
-→ electron-builder.zn.yml --mac dmg zip
-→ mount real DMG + extract real ZIP
-→ assert ZN.app / app.asar / zn-runtime and reject hermes_cli
-→ read real Info.plist identity and URL schemes
-→ boot packaged resident zero-model from both extracted payloads
-```
-
-Verified artifacts for version `0.17.0`:
-
-```text
-ZN-0.17.0-mac-arm64.dmg  160M  sha256 5e1b3b6cd538fcf0605c3be27d0513f551f48614dff865a984e281b52d8459b9
-ZN-0.17.0-mac-arm64.zip  160M  sha256 416f6fbcde0477db6b201b1f8bcf2fbb2820d1e67f145c4a09bc24535ba72133
-```
-
-Both real extracted app bundles proved:
-
-```text
-CFBundleIdentifier  ai.zn.desktop
-CFBundleDisplayName ZN
-CFBundleName        ZN
-CFBundleExecutable  ZN
-URL scheme          zn  (and no second inherited scheme)
-```
-
-Both embedded `ZN.app/Contents/Resources/zn-runtime` payloads booted the resident successfully with zero external models.
-
-The macOS build explicitly logged:
-
-```text
-skipped macOS application code signing
-Skipping notarization: APPLE_API_KEY, APPLE_API_KEY_ID, and APPLE_API_ISSUER are not fully configured.
-```
-
-Therefore this evidence proves unsigned package shape/runtime ownership only. It does **not** claim signing/notarization completion.
-
-The temporary macOS workflow was removed after successful evidence in `f958db77041ffa88735e421159361d86e674849e`.
+Real DMG/ZIP payloads preserved `ai.zn.desktop`, ZN app identity, only `zn://`, self-contained `zn_agent` runtime and zero-model resident boot. The build was unsigned and notarization was skipped because Apple credentials were not configured; signing/notarization is not claimed.
 
 ### Windows M7 evidence
 
-Verified product source:
+Verified source:
 
 ```text
 2e3cdb0ac893feca86325e19a058c455c906bfd7  test: make MSI extraction deterministic
@@ -304,28 +297,7 @@ ZN Windows Installer Smoke   success
 Windows smoke run             32590239803
 ```
 
-Verified artifacts:
-
-```text
-ZN-0.17.0-win-x64.exe  138.9 MB  sha256 d7716714599b87c125ab4ad5095fd3fb34bf2860e0fbdeebdece7b5316d05192
-ZN-0.17.0-win-x64.msi  151.8 MB  sha256 bd4dc2cd6bee636fdb94941b02776e196c2c0808d0b13717ab6576ce4f32c01f
-```
-
-Both extracted payloads contained `ZN.exe`, `resources/app.asar`, one `resources/zn-runtime/runtime.json`, no packaged `hermes_cli`, and an independently bootable zero-model resident. Actual PE metadata read back as:
-
-```text
-ProductName     ZN
-FileDescription ZN
-CompanyName     ZN Project
-```
-
-The real Windows packaging exercise closed three source-level defects:
-
-1. portable CPython top-level aliases are removed/rejected before installer materialization;
-2. runtime `backend_root` is derived from installed `zn_agent` rather than generic site-package assumptions;
-3. `ZNLifeCore` short-lived SQLite connections are deterministically closed, with regression coverage.
-
-The temporary Windows workflow was removed after success in `36feb0092126e47929d7239f8518a2ad68908454`.
+Real NSIS/MSI payloads preserved ZN PE/package identity and self-contained zero-model resident boot.
 
 ### Linux M7 evidence
 
@@ -336,31 +308,15 @@ Verified source points:
 46685b66ff1381cb0b41b1e0564cc62ca5e34467  corrected AppImage desktop integration validation
 ```
 
-Verified artifacts:
-
-```text
-ZN-0.17.0-linux-x86_64.AppImage  179M  sha256 e4b1548f630fcb376e22257c3e6cc3c22589dee55746d6f1951605cc2a906120
-ZN-0.17.0-linux-amd64.deb         143M  sha256 3555059b606cf679b277e4f4452212c5ddaba7034aef9b9791d596adf8267606
-ZN-0.17.0-linux-x86_64.rpm        117M  sha256 34bd11a006937d1746b2e487f742edc8cb6d9ec3da75da3d5475757db37c9d03
-```
-
-Each extracted runtime booted zero-model. AppImage desktop integration proved `Name=ZN`, `StartupWMClass=ai.zn.desktop` and only `x-scheme-handler/zn`.
+Real AppImage/deb/rpm payloads preserved ZN identity, `zn://`, embedded ZN runtime and zero-model resident boot.
 
 ## Current development checkpoint
 
 The active product boundary is ZN-owned across resident runtime, cognition resources, local terminal/PTTY, web sensing, communication lifecycle, Electron main/preload/protocol, React workbench and formal desktop package/build identity.
 
-M5/M6 currently has:
+M5/M6 currently has resident-backed durable work/thread/workspace/progress plus contextual file/diff/terminal artifacts and resident-owned provider/settings lifecycle. M7 artifact/package shape is verified on Linux x86_64, Windows x64 and macOS arm64. M8 has installed-Linux proofs plus source-level busy/idle N → N+1 continuity regressions.
 
-- resident-backed durable work/thread continuity;
-- real resident-backed workspace/folder association;
-- contextual resident-backed file/diff/terminal artifacts;
-- resident-owned provider/settings editing with secure credential references and hot cognition reconfiguration;
-- durable active work-run identity plus resident-derived ongoing progress while work continues without the desktop.
-
-M7 artifact/package shape is verified on Linux x86_64, Windows x64 and macOS arm64. M8 has Linux amd64 deb fresh-install and installed systemd user autostart proofs, plus source-level busy/idle N → N+1 continuity regressions against the active runtime/resident boundaries.
-
-This still does **not** make the release ready. M8 continuity remains partial: the full installed desktop/application updater handoff and equivalent intended-platform clean-install/login coverage remain unverified; signing/notarization remains separate operational release hardening.
+The active development mainline is no longer release breadth. It is the resident execution spine described in `ZN-NEXT-PHASE.md`. M8 remains explicit bounded release debt.
 
 ## M5/M6 product loop
 
@@ -370,15 +326,15 @@ This still does **not** make the release ready. M8 continuity remains partial: t
 
 A browser contextual surface is **not** claimed yet. The mature inherited browser implementation remains coupled to inherited configuration/plugin/session/provider ownership plus Node/Chromium/`agent-browser`. The independent resident runtime has no clean ZN-owned browser action seam yet.
 
-Telegram outbound media remains intentionally pending. `OutboundMediaPathPolicy` already provides local-file authorization and `ChannelMessage` can represent attachments, but resident delivery does not yet expose explicit structured artifact/path nomination for egress. The adapter must not infer arbitrary local paths as upload authority.
+Telegram outbound media remains intentionally pending. `OutboundMediaPathPolicy` provides ZN local-file authorization, but resident delivery still lacks explicit structured resident-owned artifact/path nomination for egress.
 
 ## Current subsystem ledger
 
 ### Resident organism / kernel
 
-Status: **ZN-native resident organism active**.
+Status: **ZN-native resident organism active; execution verification spine materially strengthened but long-horizon task completion remains partial**.
 
-Persistent life, Situation/Thought/Will, nervous memory, native investigation/action/learning, sensing and bounded external cognition remain resident-owned. Zero-model operation is a hard contract. The resident service treats service-manager SIGTERM and explicit shutdown as graceful stop paths and unwinds through endpoint/organ/life/lease/store cleanup. A real N → N+1 subprocess regression now also proves that a new resident body/process can resume the same durable living self and work history from one ZN home after the prior process retires cleanly.
+Persistent life, Situation/Thought/Will, nervous memory, native investigation/action/learning, sensing and bounded external cognition remain resident-owned. Zero-model operation is a hard contract. Current verified execution semantics now include durable post-action verification for exact text state and explicit command postconditions, with contradiction returned immediately into Situation/Thought.
 
 ### Work/thread/workspace/artifacts
 
@@ -390,7 +346,11 @@ Status: **ZN-native resource layer plus resident-owned provider/credential edito
 
 ### Local terminal/body
 
-Status: **ZN local terminal/PTTY active with contextual resident presentation**.
+Status: **ZN local terminal/PTTY active; explicit command postcondition verification is now CI-verified**.
+
+### Git repository sense
+
+Status: **structured read-only ZN Body sense CI-verified; general mutation/verification loop still pending**.
 
 ### Web/world sense
 
@@ -404,45 +364,23 @@ Status: **resident-owned channel framework and Telegram text/inbound media activ
 
 Status: **M1 complete for the active packaged resident path**.
 
-The independent `runtime/python` `znagent` distribution boots through `zn_agent.resident` / `zn-resident`, rejects inherited `hermes_cli`, has real extraction/boot evidence inside Linux/Windows/macOS artifacts, and has fresh-runner installed Linux package resident-boot plus login-autostart continuity proof. Versioned runtime materialization is now also regression-protected so N and N+1 can coexist under the same ZN home without overwriting the active runtime.
+The independent `runtime/python` `znagent` distribution boots through `zn_agent.resident` / `zn-resident`, rejects inherited `hermes_cli`, and has real extraction/boot evidence inside Linux/Windows/macOS artifacts plus installed Linux proofs.
 
 ### Desktop/UI ownership
 
-Status: **M4 complete; M5/M6 materially advanced**.
-
-```text
-ZN Electron main
-→ ZN preload
-→ ZN React workbench
-→ ZN resident RPC
-→ long-lived zn_agent resident
-```
+Status: **M4 complete; M5/M6 materially advanced; pure UI polish paused for the core-first phase**.
 
 ### Packaging/release ownership
 
 Status: **M7 artifact ownership verified for current Linux x86_64, Windows x64 and macOS arm64 targets; M8 has installed-Linux proofs plus source-level N → N+1 continuity regressions**.
 
-Verified:
-
-- ZN package/repository/product/app/executable/artifact identity;
-- ZN-only formal protocol registration;
-- ZN-owned runtime resource path and no inherited install stamp;
-- Linux AppImage/deb/rpm package contents + desktop integration + resident boot;
-- Windows NSIS/MSI package contents + PE identity + resident boot;
-- macOS arm64 DMG/ZIP package contents + Info.plist identity + `zn://` + resident boot;
-- fresh Ubuntu 24.04 `.deb` installation from an artifact-only handoff, installed `/opt/ZN` product identity, system desktop integration and zero-model embedded resident boot;
-- fresh installed Linux systemd user autostart using packaged `zn_agent.core` modules, graceful service stop/lease cleanup and resident return after `default.target` activation;
-- side-by-side N/N+1 runtime materialization under one ZN home;
-- queued/claimed resident work keeps a mismatched desired runtime pending/busy;
-- idle resident shutdown/start across N → N+1 preserves endpoint/lease cleanup, living-self identity fields and durable work history.
-
 Still pending:
 
-- full installed Electron updater/application N → N+1 handoff evidence, including future autostart target and deferred busy handoff as one scenario;
-- Windows/macOS clean-install and login-autostart coverage for the intended release matrix;
+- full installed Electron updater/application N → N+1 handoff evidence;
+- Windows/macOS clean-install and login-autostart coverage for intended release matrix;
 - signing/notarization when operationally configured;
-- any additional architecture coverage required by the eventual release matrix (for example macOS x64/universal);
-- eventual cleanup of inactive inherited source/dependency/script debt without regressing active ownership.
+- any additional release architectures;
+- eventual inactive inherited-source cleanup without regressing active ownership.
 
 ## Ownership/behavior tests protecting the active path
 
@@ -459,21 +397,25 @@ completed detached work finalizes after reconstruction
 one thread rejects parallel active resident work
 progress comes from resident state, not renderer/localStorage
 workspace/artifacts remain resident-backed and bounded
+NativeBody Git sense returns structured repository state
+changed-path answers come from active embodied Git Body evidence
+successful write movement does not imply task completion
+write postconditions survive restart and are independently re-observed
+contradicted write postconditions return to investigation without blind replay
+explicit command expected_outcome is independently verified
+command verification survives restart without replaying the primary command
+failed command verification becomes immediate Situation/Thought evidence
 ZN desktop main/preload/renderer do not delegate to inherited control planes
 ZN deep links reject hermes://
 formal package metadata identifies ZN
 formal builder registers only zn://
-formal builder includes build/zn-runtime and excludes inherited install-stamp
-formal Linux launcher/window identity is aligned
-formal Windows pack hooks stamp ZN identity
-real macOS app bundles identify as ai.zn.desktop / ZN and only zn://
-real packaged zn-runtime boots zero-model after Linux/Windows/macOS artifact packaging
-fresh-runner Linux deb installation preserves ZN identity and boots its installed embedded resident zero-model
-SIGTERM stops a real resident subprocess with endpoint and durable lease retired before exit
-fresh-installed Linux systemd user autostart starts packaged zn_agent, stops cleanly, and returns through default.target
+real packaged zn-runtime boots zero-model after Linux/Windows/macOS packaging
+fresh-runner Linux deb installation preserves ZN identity and boots embedded resident
+SIGTERM retires endpoint and durable lease before resident exit
+fresh-installed Linux systemd user autostart starts/stops/returns packaged resident
 queued resident work prevents false-idle runtime handoff
-N and N+1 packaged runtimes materialize side-by-side under the same ZN home
-idle N → N+1 resident restart preserves living-self birth identity and durable work history
+N and N+1 packaged runtimes coexist under one ZN home
+idle N → N+1 restart preserves living-self identity and durable work history
 ```
 
 ## Milestone status snapshot
@@ -484,22 +426,24 @@ M1  independently packageable ZN Python resident runtime   COMPLETE for active p
 M2  ZN-native bounded provider cognition                   COMPLETE for active main provider families
 M3  ZN-owned terminal + web body/sense paths               COMPLETE for active local/web paths
 M4  independent Electron main + preload + zn://            COMPLETE
-M5  independent content-first ZN workbench                 IN PROGRESS; core owned surfaces active
-M6  resident work/artifact/workspace end-to-end loop       PARTIAL; durable active work/progress active
+M5  independent content-first ZN workbench                 IN PROGRESS; pure polish paused
+M6  resident work/artifact/workspace end-to-end loop       PARTIAL; core execution mainline active
 M7  formal packaging around owned product                  ARTIFACT SHAPE VERIFIED on Linux x86_64 / Windows x64 / macOS arm64
-M8  clean-machine/continuity multi-OS validation           IN PROGRESS; installed-Linux + source N→N+1 continuity evidence
+M8  clean-machine/continuity multi-OS validation           IN PROGRESS; bounded release lane
 M9  product completeness/hardening                         LATER
 M10 repository migration / formal main promotion           LATER; main untouched
 ```
 
 ## Immediate next development sequence
 
-1. do not repeat M7, the Linux deb clean-install gate, the proven Linux autostart gate, or the new source-level N/N+1 continuity regressions merely to recreate evidence;
-2. close the remaining desktop/application N → N+1 gate through the active Electron call chain: updater/materialized desired runtime → future autostart N+1 → busy defer with N endpoint/work untouched → idle graceful restart → endpoint/runtime identity N+1;
-3. keep busy authority resident-owned (`queue_depth` / durable working state), never renderer/localStorage or fixed timing;
-4. verify the installed/application scenario still uses the same ZN home and preserves living-self/work state; only then treat the N → N+1 M8 slice as complete;
-5. extend clean-install/login coverage to Windows/macOS only when it adds release evidence rather than duplicating package-shape proof;
-6. keep signing/notarization explicit and operational—never infer it from unsigned package success;
-7. in parallel product work, establish browser interaction only through a clean resident-owned body/sense seam and define explicit resident egress nomination before Telegram outbound attachments.
+1. keep the core mainline on durable complex-task execution; do not return to cosmetic UI or broad release work;
+2. strengthen task-level state so the same event retains an explicit current goal, current gap, expected outcome and verification result without becoming an ever-growing planner database;
+3. make verification evidence and failed attempts increasingly first-class durable evidence that can guide later actions and survive completion/restart where useful;
+4. extend failure recovery so a contradicted postcondition can lead to a genuinely different investigation/action rather than only truthful failure;
+5. then build practical Git repository action + diff/test/reality verification with conservative mutation boundaries;
+6. add GitHub repository/PR/CI read-only resident sense before any remote write capability;
+7. establish browser interaction only through a clean resident-owned Body/Senses seam;
+8. drive breadth using real benchmark tasks such as unfamiliar repo + failing CI → diagnosis → repair → tests → diff/state verification → evidence;
+9. keep remaining M8 updater/multi-OS/signing work explicit as bounded release debt and fix it only when it exposes a real continuity/security/data-integrity problem.
 
-The architecture driver remains the owned resident/workbench/product loop and independently bootable ZN package—not compatibility with inherited control planes.
+The architecture driver is now: **the same persistent ZN Self must be able to finish hard work and prove from current reality that it is finished.**
