@@ -1,4 +1,4 @@
-# ZN next phase — return to core capability mainline
+# ZN next phase — Self + mature execution depth
 
 > Date: 2026-08-23
 >
@@ -10,226 +10,298 @@
 >
 > Self-maintenance contract: [`ZN-SELF-MAINTENANCE.md`](ZN-SELF-MAINTENANCE.md)
 
-## 1. Why this phase exists
+## 1. Product target for this phase
 
-Recent work intentionally spent substantial effort on M7/M8 desktop packaging, clean installation, autostart and N → N+1 continuity because a resident subject that cannot survive installation/update boundaries is not a real product.
+The current organism-first architecture remains the governing design. This phase is a priority reset, not a return to a conventional model-owned agent architecture.
 
-That work was necessary, but it must not become the permanent center of development.
+The concrete product target is now:
 
-The next main development phase returns to **ZN core capability completeness**.
+> **ZN must keep its own durable Self and continuity while gaining the practical execution depth of a mature general-purpose Agent: it must be able to take a complex real-world/computer task and reliably carry it through to a verified outcome.**
 
-The product goal is not “finish the UI” and it is not “copy every feature from another agent”. The goal is:
+The project is not complete merely because ZN has Self, memory, Thought, Will and a resident loop. It is also not complete if a model/tool stack can perform impressive tasks while the model owns the plan and continuity.
+
+The target is the combination:
 
 ```text
-one durable ZN subject
-→ can perceive enough of the computer/world
-→ can investigate an unfamiliar problem
-→ can use its body to act
-→ can observe the result
-→ can continue the same work across pulses/time
-→ can verify reality instead of trusting model output
-→ can learn from the outcome
+durable ZN Self
++ mature task-execution depth
++ reality-based verification
+= the ZN we are building
 ```
 
-Desktop remains a face/work surface. Packaging/release remains an essential product lane. Neither should own the development agenda while core capability gaps are still material.
+A useful shorthand is:
 
-## 2. Priority reset
+**Self without execution depth is incomplete. Execution depth without Self ownership is the architecture ZN rejects.**
 
-Until the core capability gap is substantially reduced:
+## 2. What “finish a complex task” means
+
+A complex task is not one successful tool call. It can require many observations, hypotheses, body actions, failures and course corrections over many resident pulses or process restarts.
+
+The desired resident-owned loop is:
+
+```text
+Goal / durable event
+→ current Situation
+→ establish current reality
+→ identify the next important unknown
+→ Investigation / evidence
+→ choose one concrete next action
+→ record the expected result
+→ Body action
+→ observe the actual result
+→ compare expectation with reality
+→ verified / contradicted / uncertain
+→ update Situation / Investigation / Will / memory
+→ continue the same work across pulses and restarts
+→ verify the original goal against current reality
+→ Outcome
+```
+
+External cognition may help at any genuine knowledge gap, but it does not own this loop:
+
+```text
+exact gap
+→ bounded model request
+→ CognitiveIncrement
+→ ZN evaluates it against current evidence
+→ ZN decides whether to investigate, reject, revise or act
+```
+
+A model response, a zero exit code, a successful write syscall or a successful body call is evidence. None of those facts alone automatically means the user’s goal is complete.
+
+## 3. Core invariants
+
+The next implementation work must preserve these invariants:
+
+1. The same resident Self owns the task before, during and after model calls.
+2. Work continuity lives in ZN-owned durable state, not in a model context window.
+3. Investigation advances from current evidence, not from a giant static LLM plan.
+4. Body actions are movements of ZN, not tools owned by an external planner.
+5. **Action success is not task success.** Completion requires an observed postcondition or other task-level verification evidence.
+6. Failure becomes new evidence. It must not trigger an uncontrolled retry loop.
+7. Past memory/schema is a prediction source, not proof; current reality can contradict it.
+8. External models may suggest hypotheses/procedures/code, but ZN must test them.
+9. Zero-model operation remains meaningful even when some complex tasks cannot be completed without external cognition.
+10. No new capability may reintroduce Hermes or another agent framework as ZN’s control plane.
+
+## 4. Priority reset
+
+Until this execution gap is substantially reduced:
 
 - do not spend a development phase on cosmetic UI polish;
 - do not add dashboard surfaces merely because information can be displayed;
+- do not broaden desktop behavior unless it exposes, operates, debugs or safely authorizes a real core capability;
 - do not rebuild already-proven packaging gates only to recreate evidence;
-- desktop work is justified when it is required to expose, operate, debug or safely authorize a real core capability;
-- release/M8 work continues as a bounded validation lane, not as the definition of ZN's intelligence or agency;
-- bugs, security problems, data-integrity problems and release blockers remain legitimate exceptions.
+- keep M8/release work as a bounded continuity/release lane;
+- continue to fix genuine release, security, data-integrity and resident-continuity defects when encountered;
+- prefer work that measurably increases the resident’s ability to finish real tasks.
 
-This is a priority reset, not an architecture reset. The organism-first contract in `ZN.md` remains authoritative.
+Desktop remains ZN’s face/work surface. It is not the current intelligence/agency development center.
 
-## 3. Current core reality
+## 5. Current foundation
 
-The current repository already has a substantial ZN-native base:
+The repository already has substantial ZN-native foundations:
 
 - persistent resident life and identity;
 - Situation / Thought / Will;
-- nervous memory and reconsolidation machinery;
-- native investigation / action / learning loop;
+- nervous memory, schema and reconsolidation;
+- durable events and working state;
+- multi-pulse native Investigation with retained hypotheses/evidence/facts;
+- native Action intents and Body actions;
 - bounded external cognition through ZN-owned resource adapters;
 - meaningful zero-model operation;
-- ZN-owned local process/terminal/PTTY body;
+- ZN-owned filesystem/process/terminal/PTTY body paths;
 - ZN-owned web search/extract sensing and network safety;
+- practical Git repository sensing is being strengthened;
 - durable work/thread/workspace/active-run state;
-- contextual file/diff/terminal artifacts;
-- resident-owned provider/settings lifecycle;
-- resident-owned communication lifecycle with Telegram text/inbound media;
-- ZN-owned desktop main/preload/protocol/workbench;
-- independently packaged `zn_agent` runtime and proven package artifacts.
+- resident-owned provider/settings and communication lifecycle;
+- independent ZN runtime/package/desktop ownership.
 
-These are real foundations. They are **not** evidence that ZN already has the complete practical capability breadth of a mature general-purpose agent.
+These foundations are real. They do **not** yet prove mature-Agent-level complex task completion.
 
-## 4. Known capability gaps that must be audited in code
+The most important current execution gap found in the active call chain is representative: a successful `BodyActionResult` can currently cause the resident event to complete immediately. That means the system still needs a stronger action → observation → verification loop before it can honestly claim robust long-horizon execution.
 
-The next session must not mark these from documentation alone. It must trace active callers, ownership, state, lifecycle and tests before assigning status.
+## 6. Ordered capability priorities
 
-Initial categories to audit:
+The mainline priority order is now explicit.
 
-| Capability area | Current expectation before code audit |
+### P0 — Durable complex-task execution spine
+
+Strengthen the existing resident event / WorkingState / Investigation / Action loop so one task remains one continuing cognitive process across many pulses and restarts.
+
+Required properties include:
+
+- retained goal and current gap;
+- retained evidence and attempted actions;
+- one concrete next action at a time;
+- durable action intent/result;
+- explicit expected outcome / verification state where applicable;
+- final verification against the original requested state;
+- no cognitive restart merely because one pulse or one model call ended.
+
+Do not implement this as an ever-growing planner/task database.
+
+### P1 — Reality verification and failure recovery
+
+Turn the resident’s existing evidence discipline into a general execution discipline:
+
+```text
+intention
+→ expected result
+→ action
+→ observed result
+→ compare
+→ verified / contradicted / uncertain
+```
+
+When verification fails:
+
+```text
+preserve the evidence
+→ update Situation
+→ revise the hypothesis / next action
+→ avoid repeating the identical failed movement blindly
+→ continue or surface a truthful unresolved outcome
+```
+
+### P2 — Practical Git + GitHub/repository work
+
+Build enough resident-owned repository sense/body capability to perform real engineering tasks:
+
+- branch/HEAD/upstream/worktree state;
+- diffs and file changes;
+- commits/history when relevant;
+- safe Git mutation with explicit boundaries;
+- GitHub repository/PR/CI read-only sense first;
+- later controlled branch/PR write capability following self-maintenance risk rules.
+
+This capability should later support SM2–SM4; it must not become a separate “coding agent” personality.
+
+### P3 — Browser body/sense
+
+Establish a clean ZN-owned browser lifecycle and structured observation/action contract. Do not embed the inherited browser/session product control plane.
+
+### P4 — Visual + computer use
+
+Add screen/visual evidence and mouse/keyboard/application movement where platform permissions allow it. Visual failure remains a sensory failure, not resident death.
+
+### P5 — Broader practical capability composition
+
+Add capabilities only because real tasks expose a missing body/sense seam. Breadth is useful when the same resident can compose it into sustained work.
+
+### P6 — Real complex-task benchmark suite
+
+Evaluate ZN on tasks that require many steps and verification, not on class/interface presence.
+
+### P7 — Self-maintenance on top of the stronger execution spine
+
+Continue SM1 → SM4 and later stages using the same resident execution architecture rather than building a separate maintenance brain.
+
+## 7. Reference benchmark
+
+A representative benchmark is:
+
+```text
+Give ZN an unfamiliar repository and a real failing CI result:
+
+“Find why CI is failing, fix the defect, run the relevant validation,
+check the resulting diff/state, and report the evidence.”
+```
+
+A mature result requires ZN to be able to continue something like:
+
+```text
+inspect repository/Git/CI
+→ identify an unknown
+→ inspect relevant code/tests/logs
+→ form a hypothesis
+→ modify through its Body
+→ run tests
+→ observe failure or success
+→ verify the intended code/repository state
+→ revise if contradicted
+→ repeat until the original goal is actually satisfied
+→ report concrete evidence
+```
+
+The benchmark still counts if ZN consults GPT/Claude/Gemini for a hard reasoning gap, provided the model never becomes owner of identity, work continuity, action authority or truth.
+
+## 8. Immediate implementation sequence
+
+The first concrete work after this direction update is:
+
+1. close the current Git-sense CI failure honestly; the observed failure is a test-isolation defect caused by SQLite WAL/SHM files appearing inside the temporary Git workspace;
+2. strengthen the active embodied call chain so successful state-changing Body movement does not immediately imply task completion;
+3. add a durable post-action verification stage, beginning with filesystem text mutation where the requested postcondition is explicit and can be re-observed through `NativeBody`;
+4. prove that verification survives a resident restart and still belongs to the same event;
+5. prove a contradicted postcondition returns to investigation/failure recovery instead of silently completing or blindly repeating the same action;
+6. then widen the same execution contract into practical repository work and GitHub/CI sensing;
+7. use real benchmark failures to decide the next body/sense breadth rather than feature fashion.
+
+This sequence is deliberately narrow: establish the execution spine first, then widen the body.
+
+## 9. Capability-gap ledger
+
+Current high-level expectation, always subject to code/test/CI evidence:
+
+| Capability area | Current status |
 | --- | --- |
-| Persistent subject / zero-model life | strong existing foundation |
-| Durable long-running work | existing foundation, practical autonomy depth still needs audit |
-| Files/process/terminal body | active, breadth and task-level composition need audit |
-| Git body | architecture requires it; practical owned operation depth must be verified |
-| GitHub/repository interaction | not yet a resident-owned general maintenance body; SM2+ still planned |
+| Persistent subject / zero-model life | strong foundation |
+| Durable event/working-state continuity | strong foundation |
+| Multi-pulse native investigation | active, breadth limited |
+| Action → independent postcondition verification | **material gap / first target** |
+| Failure recovery across many task steps | partial |
+| Files/process/terminal body | active; composition depth incomplete |
+| Git repository sense | active slice in progress |
+| Git mutation for general resident work | incomplete |
+| GitHub/PR/CI resident sense | missing as general resident capability |
 | Web search/extract | active |
-| Browser interaction | missing as a clean ZN-owned body/sense capability |
-| Visual/screen sensing | architectural target; mature end-to-end capability not yet claimed |
-| Mouse/keyboard/computer use | not yet claimed as a mature owned capability |
-| Long-horizon autonomous investigation/action/verification | resident primitives exist; task success depth must be measured, not assumed |
-| Tool/capability ecosystem | selective owned capabilities exist; breadth is incomplete |
-| Communication | Telegram text/inbound media active; outbound attachment egress still partial |
-| Self-health observation / maintenance cases | SM1 planned |
-| Self-repository investigation | SM2 planned |
-| Isolated self-repair + PR/CI | SM3/SM4 planned |
+| Browser interaction | missing clean owned seam |
+| Visual/screen sensing | foundation/partial, not mature computer use |
+| Mouse/keyboard/application control | not mature/owned end-to-end |
+| Long-horizon complex-task completion | **partial; main phase objective** |
+| Self-maintenance | SM0 complete; SM1+ planned |
 
-The audit result should use four labels:
+Use `DONE / PARTIAL / MISSING / DO NOT COPY` when a detailed repository-backed audit is performed. Never infer DONE merely from an interface or class existing.
 
-```text
-DONE
-PARTIAL
-MISSING
-DO NOT COPY
-```
+## 10. M8/release lane boundary
 
-`DO NOT COPY` matters: a mainstream-agent feature that would reintroduce `LLM → planner → tools → agent` ownership, inherited control planes, or a model-owned identity should not be adopted merely for parity.
+M8 is not abandoned. Installation, resident continuity, update integrity, rollback and signing are necessary because a Self that cannot survive a body/runtime upgrade is not a complete product.
 
-## 5. How new capabilities must fit ZN
+But release breadth no longer defines the main development lane while complex-task execution remains materially incomplete.
 
-New capability work must strengthen the existing subject rather than create parallel agent brains.
+If M8 exposes a real continuity, identity, data-integrity or update-safety bug, fix it. Otherwise record the remaining release evidence explicitly and return to the core execution mainline.
 
-Preferred mapping:
+## 11. UI boundary
 
-```text
-Self
-Body
-Senses
-Memory
-Situation
-Thought
-Will
-Investigation
-Action
-Learning
-```
-
-Examples:
-
-```text
-browser navigation
-≠ browser agent
-= ZN body/sense capability
-
-Git / repository mutation
-≠ coding-agent personality
-= ZN body capability with evidence and safety boundaries
-
-GitHub / PR / CI reading
-≠ external maintainer brain
-= repository/world sense for the same resident
-
-long task execution
-≠ one giant LLM plan
-= durable work + repeated Situation → Investigation/Action → Evidence pulses
-```
-
-External models may propose hypotheses or candidate code. Their output still must be checked against current code, logs, tests, runtime evidence and world state.
-
-## 6. First task of the next session
-
-Do a **repository-backed ZN capability gap audit** before choosing the next implementation slice.
-
-Required method:
-
-```text
-restore repository state
-→ read architecture/status/HANDOFF
-→ inspect current HEAD/CI
-→ enumerate capability categories
-→ trace each real active call chain
-→ inspect ownership/state/lifecycle/tests
-→ run focused validation where status is ambiguous
-→ classify DONE / PARTIAL / MISSING / DO NOT COPY
-→ rank gaps by product leverage and architectural fit
-→ choose one coherent core slice
-→ update ZN.md first only if architecture direction must change
-→ implement/test/CI normally
-```
-
-The audit should compare capability categories with mature contemporary agents, but the comparison is a coverage tool, not the product definition.
-
-Do not assume ZN is strong merely because an interface/class exists. A capability counts when the active resident can actually use it and the behavior is protected by real tests/evidence.
-
-## 7. Likely high-value implementation lanes after the audit
-
-The audit decides exact order. The current strongest candidates are:
-
-1. durable long-task execution quality: keep investigation/action/verification moving across pulses without cognitive restart or a model owning the plan;
-2. clean ZN-owned browser body/sense boundary and lifecycle;
-3. visual/computer-use body and senses where local platform permissions allow it;
-4. practical Git + GitHub/repository body/sense capability, designed so it can later support SM2–SM4 safely;
-5. SM1 health observation / `MaintenanceCase`, then the self-maintenance sequence already defined in `ZN-SELF-MAINTENANCE.md`;
-6. broaden tool/resource coverage only where a real ZN task needs it.
-
-Do not decide among these by feature fashion. Prefer the slice that most increases ZN's ability to complete real work while preserving resident ownership.
-
-## 8. M8/release lane boundary
-
-M8 is not abandoned.
-
-At the implementation baseline before this document, `7ac39b53f0bd990513d9f2ff5928ee5e53fe145c` has normal CI success for:
-
-```text
-ZN Kernel / Python
-Electron / TypeScript
-Actions run 32609677486
-```
-
-The dedicated `ZN Linux AppImage Update Smoke` final commit status was not present when this phase document was written. Therefore the full AppImage application updater gate must **not** be recorded as green or complete yet.
-
-The correct relationship is:
-
-```text
-finish/record the current AppImage gate honestly
-→ keep remaining M8 multi-OS/signing/release breadth as explicit release work
-→ do not let release breadth consume the next core-development phase
-```
-
-If the dedicated AppImage gate exposes a real continuity/data-integrity defect, fix it. If it exposes only test-harness/release-validation debt, record and bound that debt instead of turning the project back into a packaging project.
-
-## 9. UI boundary for this phase
-
-UI work is allowed when it is the minimum necessary surface for a core capability, for example:
+UI work is allowed only when it is the minimum necessary surface for a core capability, for example:
 
 - permission/approval for a body action;
-- displaying evidence needed to understand an ongoing resident task;
-- browser/computer-use observation/control required by the capability;
-- maintenance-case visibility required by SM1;
-- fixing a real usability defect that blocks task completion.
+- evidence needed to understand an ongoing resident task;
+- browser/computer-use observation/control;
+- a required maintenance approval surface;
+- a real usability bug that blocks task completion.
 
-Pure visual polish, layout churn and extra dashboarding are not next-phase priorities.
+Pure visual polish, layout churn and extra dashboarding are paused.
 
-## 10. Phase success signal
+## 12. Phase success signal
 
-This phase is moving correctly when repository evidence increasingly supports statements such as:
+This phase is moving correctly when repository evidence increasingly supports:
 
 ```text
-ZN can take a durable real-world/computer task
-→ investigate using owned senses
-→ manipulate the computer using owned body capabilities
-→ use models only when useful
-→ verify outputs/results
-→ continue after a pulse/window/model interruption
-→ preserve the same Self/work/memory
-→ surface failure instead of pretending success
+ZN receives a complex durable task
+→ the same Self owns it throughout
+→ it investigates using owned senses
+→ acts through owned Body capabilities
+→ uses external cognition only when useful
+→ observes what actually happened
+→ does not confuse an action return value with goal completion
+→ recovers from failure by changing its understanding/action
+→ survives pulse/process/model interruption without losing the work
+→ verifies the original requested state
+→ records a truthful outcome and learns from it
 ```
 
-The objective is **a more capable ZN**, not a more decorated desktop and not a larger collection of model-owned tools.
+The objective is not a more decorated desktop, a larger tool list, or a more elaborate planner.
+
+The objective is **a persistent ZN subject that can actually finish hard things.**
