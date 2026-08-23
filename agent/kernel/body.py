@@ -281,6 +281,7 @@ class NativeBody:
 
     def _git_state(self, action: BodyAction, started: str) -> BodyActionResult:
         workspace = self._path_arg(action.args, default=os.getcwd())
+        limit = max(1, min(1000, int(action.args.get("limit", 200))))
 
         def run(*parts: str) -> subprocess.CompletedProcess[str]:
             return subprocess.run(
@@ -290,6 +291,11 @@ class NativeBody:
                 timeout=max(1.0, float(action.args.get("timeout", 5.0))),
                 check=False,
             )
+
+        def nul_paths(proc: subprocess.CompletedProcess[str]) -> list[str]:
+            if proc.returncode != 0:
+                return []
+            return [item for item in proc.stdout.split("\0") if item][:limit]
 
         root_proc = run("rev-parse", "--show-toplevel")
         if root_proc.returncode != 0:
@@ -303,18 +309,88 @@ class NativeBody:
                 started_at=started,
                 completed_at=utc_now(),
             )
+
         branch_proc = run("branch", "--show-current")
+        head_proc = run("rev-parse", "--verify", "HEAD")
         status_proc = run("status", "--porcelain")
-        changed = [line for line in status_proc.stdout.splitlines() if line.strip()]
+        staged_proc = run(
+            "diff", "--cached", "--name-only", "-z", "--diff-filter=ACDMRTUXB"
+        )
+        unstaged_proc = run("diff", "--name-only", "-z", "--diff-filter=ACDMRTUXB")
+        untracked_proc = run("ls-files", "--others", "--exclude-standard", "-z")
+        conflicted_proc = run("diff", "--name-only", "-z", "--diff-filter=U")
+        upstream_proc = run(
+            "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"
+        )
+
+        branch = branch_proc.stdout.strip() if branch_proc.returncode == 0 else ""
+        head = head_proc.stdout.strip() if head_proc.returncode == 0 else None
+        upstream = (
+            upstream_proc.stdout.strip()
+            if upstream_proc.returncode == 0 and upstream_proc.stdout.strip()
+            else None
+        )
+        ahead: int | None = None
+        behind: int | None = None
+        if head and upstream:
+            divergence_proc = run("rev-list", "--left-right", "--count", "HEAD...@{u}")
+            if divergence_proc.returncode == 0:
+                fields = divergence_proc.stdout.strip().split()
+                if len(fields) == 2:
+                    try:
+                        ahead = int(fields[0])
+                        behind = int(fields[1])
+                    except ValueError:
+                        ahead = None
+                        behind = None
+
+        staged_paths = nul_paths(staged_proc)
+        unstaged_paths = nul_paths(unstaged_proc)
+        untracked_paths = nul_paths(untracked_proc)
+        conflicted_paths = nul_paths(conflicted_proc)
+        changed_paths = list(
+            dict.fromkeys(
+                [
+                    *staged_paths,
+                    *unstaged_paths,
+                    *untracked_paths,
+                    *conflicted_paths,
+                ]
+            )
+        )[:limit]
+        changes = (
+            [line for line in status_proc.stdout.splitlines() if line.strip()][:limit]
+            if status_proc.returncode == 0
+            else []
+        )
+
         return self._ok(
             action,
             started,
             data={
                 "root": root_proc.stdout.strip(),
-                "branch": branch_proc.stdout.strip() if branch_proc.returncode == 0 else "",
-                "dirty": bool(changed),
-                "changed_files": len(changed),
-                "changes": changed[:200],
+                "branch": branch,
+                "head": head,
+                "head_short": head[:12] if head else None,
+                "detached": bool(head and not branch),
+                "upstream": upstream,
+                "ahead": ahead,
+                "behind": behind,
+                "dirty": bool(changed_paths),
+                "changed_files": len(changed_paths),
+                "changed_paths": changed_paths,
+                "staged_files": len(staged_paths),
+                "staged_paths": staged_paths,
+                "unstaged_files": len(unstaged_paths),
+                "unstaged_paths": unstaged_paths,
+                "untracked_files": len(untracked_paths),
+                "untracked_paths": untracked_paths,
+                "conflicted_files": len(conflicted_paths),
+                "conflicted_paths": conflicted_paths,
+                # Retain the bounded porcelain lines for existing callers that
+                # need compact status evidence, but make structured paths the
+                # primary resident-owned repository contract.
+                "changes": changes,
             },
         )
 
