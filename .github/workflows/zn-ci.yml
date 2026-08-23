@@ -85,6 +85,7 @@ jobs:
       - name: Generate ZN-only Node lock and install from it
         run: |
           set -euo pipefail
+          npm pkg set 'devDependencies.electron-builder-squirrel-windows=26.15.3' --workspace apps/desktop
           rm -f package-lock.json
           npm install --package-lock-only --ignore-scripts
           npm ci --ignore-scripts
