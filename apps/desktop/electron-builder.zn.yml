@@ -13,11 +13,8 @@ directories:
 files:
   - dist/**
   - assets/**
-  - public/**
   - package.json
 beforeBuild: scripts/before-build.mjs
-beforePack: scripts/before-pack.mjs
-afterPack: scripts/after-pack.mjs
 extraResources:
   - from: build/zn-runtime
     to: zn-runtime
@@ -26,8 +23,6 @@ extraResources:
 asar: true
 afterSign: scripts/notarize.mjs
 asarUnpack:
-  - '**/*.node'
-  - '**/prebuilds/**'
   - dist/**
 mac:
   category: public.app-category.productivity
@@ -37,9 +32,6 @@ mac:
     CFBundleDisplayName: ZN
     CFBundleExecutable: ZN
     CFBundleName: ZN
-    NSAudioCaptureUsageDescription: ZN uses audio capture for voice conversations.
-    NSCameraUsageDescription: ZN uses the camera when a feature or plugin you enable requests it.
-    NSMicrophoneUsageDescription: ZN uses the microphone for voice input and voice conversations.
   gatekeeperAssess: false
   hardenedRuntime: true
   target:

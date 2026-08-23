@@ -1,21 +1,23 @@
 {
-  "extends": "./tsconfig.json",
   "compilerOptions": {
-    "strict": false,
-    "noImplicitAny": false,
-    "noImplicitThis": false,
-    "strictNullChecks": false,
-    "strictFunctionTypes": false,
-    "strictBindCallApply": false,
-    "strictPropertyInitialization": false,
-    "noUncheckedIndexedAccess": false,
-    "exactOptionalPropertyTypes": false,
-    "ignoreDeprecations": "6.0",
-    "composite": true,
-    "declaration": true,
-    "rootDir": "..",
-    "outDir": "build/electron-types"
+    "target": "ES2023",
+    "lib": [
+      "ES2023"
+    ],
+    "types": [
+      "node"
+    ],
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "noEmit": true
   },
-  "include": ["electron", "../shared/src/data-url-read-max.ts", "../shared/src/translucency.ts"],
-  "exclude": ["src", "electron/**/*.e2e.mts"]
+  "include": [
+    "electron/zn-*.ts"
+  ]
 }
