@@ -250,7 +250,13 @@ def build_verified_experience(
     verification["verified"] = verdict == "verified"
 
     safe_domains = tuple(
-        sorted({str(item).strip() for item in domains if str(item).strip()})
+        sorted(
+            {
+                _fingerprint(str(item).strip())
+                for item in domains
+                if str(item).strip()
+            }
+        )
     )
     evidence_fp = str(situation_evidence_fingerprint or "").strip() or _fingerprint({})
     action_kind_safe = str(action_kind or "unknown").strip().lower() or "unknown"
