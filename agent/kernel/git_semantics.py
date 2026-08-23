@@ -171,6 +171,60 @@ def current_git_goal_from_intent(raw: Mapping[str, Any] | None) -> dict[str, Any
     }
 
 
+def current_git_stage_intent_goal(
+    event: AgentEvent,
+    *,
+    action_kind: str,
+    action_args: Mapping[str, Any] | None,
+    source: str,
+    expected_outcome: Mapping[str, Any] | None,
+    facts: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Prove a current command is exactly one resident-formed staging tactic.
+
+    This is the authority bridge used by reality-gated procedural applicability.
+    It does not learn or replay an old command.  Instead it recomputes the typed
+    goal from current Investigation facts, revalidates the transient intent
+    identity, and requires the current command/workdir to equal the canonical
+    rendering for that variant.  Any disagreement fails closed.
+    """
+
+    current = current_git_path_staged_goal(event, facts=facts)
+    if (
+        current is None
+        or not bool(current.get("stageable"))
+        or bool(current.get("satisfied"))
+    ):
+        return None
+
+    carried = current_git_goal_from_intent(expected_outcome)
+    if carried is None:
+        return None
+    if any(
+        str(carried.get(key) or "") != str(current.get(key) or "")
+        for key in ("root", "path", "relative_path")
+    ):
+        return None
+
+    args = action_args if isinstance(action_args, Mapping) else {}
+    variant = str(carried.get("action_variant") or "").strip().lower()
+    expected_command = git_stage_command(variant, carried["relative_path"])
+    if (
+        str(source or "").strip() != "resident_choice"
+        or str(action_kind or "").strip().lower() != "command"
+        or not expected_command
+        or str(args.get("workdir") or "").strip() != carried["root"]
+        or str(args.get("command") or "").strip() != expected_command
+    ):
+        return None
+
+    return {
+        **carried,
+        "stageable": True,
+        "satisfied": False,
+    }
+
+
 def _resolved_git_path_identity(
     root_value: Any,
     path_value: Any,
