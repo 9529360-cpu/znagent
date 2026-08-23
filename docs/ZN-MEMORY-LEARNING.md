@@ -7,6 +7,8 @@
 > Governing architecture: [`../ZN.md`](../ZN.md)
 >
 > Current implementation facts: [`ZN-IMPLEMENTATION-STATUS.md`](ZN-IMPLEMENTATION-STATUS.md)
+>
+> External learning/source research: [`ZN-LEARNING-SOURCE-RESEARCH.md`](ZN-LEARNING-SOURCE-RESEARCH.md)
 
 ## 1. Purpose
 
@@ -23,6 +25,8 @@ A mature ZN should become more capable through repeated verified experience even
 This document defines the memory/learning direction needed to make that true.
 
 It is not a claim that the current implementation already has mature procedural learning. Current code already has useful lived-memory foundations, but the path from experience to reusable resident-owned skill remains incomplete.
+
+The project should reuse mature continual-learning, imitation-learning, world-model and embodied-control research rather than reimplementing solved mechanisms. The source-research ledger classifies external work into design principles, research harnesses, prototypes and later algorithm options so reuse does not silently hand ZN's control plane to another framework.
 
 ## 2. What ZN must not become
 
@@ -210,6 +214,18 @@ As maturity increases, familiar work should require less explicit deliberation a
 
 The target is not zero reasoning. The target is to stop re-solving already learned work from scratch.
 
+A useful research-backed framing is to treat this as multiple learning time-scales rather than one memory bucket:
+
+```text
+WorkingState / current Situation       fastest
+VerifiedExperience / episode           fast
+associative/schema consolidation       medium
+procedural maturity                    slower
+promoted executable capability         slowest / highest evidence threshold
+```
+
+This is inspired by complementary-learning-system and continual-learning research, but the implementation remains ZN-owned and testable.
+
 ## 5. Verification is part of learning
 
 ZN must not learn from action return values alone.
@@ -269,6 +285,8 @@ Repeated contradiction should be able to:
 
 A behavior that only strengthens and never weakens is unsafe and not human-like in the useful sense.
 
+Online-learning/drift-detection work such as River/ADWIN is a candidate future mechanism for detecting stale competence from verified outcome streams. It remains a prototype/research option until it proves better than a transparent resident-native baseline and its packaging cost is justified.
+
 ## 7. External cognition and learning ownership
 
 External models can be valuable teachers/advisers for unfamiliar work.
@@ -295,6 +313,19 @@ model proposes procedure once
 Model output is not learning evidence by itself.
 
 The long-term success condition is that provider replacement or total model removal does not erase already learned resident-owned competence.
+
+DAgger-style dataset aggregation is the strongest current research pattern for the desired teacher/student relationship:
+
+```text
+ZN visits a state it genuinely encounters
+→ model/human teacher suggests a candidate action
+→ ZN executes/evaluates it under its own Body and safety boundaries
+→ reality verification labels the trajectory
+→ verified examples train/improve local resident competence
+→ teacher use falls as the local skill matures
+```
+
+The teacher is fallible. Reality, not teacher authority, supplies the final label.
 
 ## 8. Computer-use competence
 
@@ -332,6 +363,8 @@ Examples of eventual resident-owned competence:
 - opening/closing contextual tools;
 - recognizing expected post-action visual transitions;
 - recovering when the UI no longer matches the learned structure.
+
+Future browser training/evaluation should reuse BrowserGym rather than inventing a browser benchmark from scratch. Future desktop/computer-use evaluation should reuse OSWorld V2 where practical, with additional ZN-specific retention/model-removal tests.
 
 ## 9. Engineering competence
 
@@ -421,7 +454,27 @@ activated lived/schema evidence
 
 Future work should extend the existing nervous architecture rather than bolt a conventional LLM skill database beside it and call the problem solved.
 
-## 12. Relationship to alternative-action recovery
+## 12. Relationship to existing capability/evolution boundaries
+
+ZN already has useful implementation seams that should be reused.
+
+`CallableCapability` is a deterministic local capability shape whose own source comment already anticipates learned procedures being compiled into capabilities rather than replayed as prompt text.
+
+`PromotedCapabilityLoader` already enforces a stronger executable boundary:
+
+```text
+candidate/self-generated code
+→ isolated tests/benchmarks
+→ promotion decision
+→ promoted capability
+→ resident loading
+```
+
+Do not create a second executable skill loader beside this one unless a real capability class cannot fit it.
+
+The current `LearningCandidate` in `life.py` is still only a resolved-impasse summary and must not be mistaken for procedural evidence. L1 must add the causal verified-experience unit that this older object lacks.
+
+## 13. Relationship to alternative-action recovery
 
 Alternative-action recovery remains important, but it should become part of learning rather than a disconnected tactic generator.
 
@@ -447,7 +500,7 @@ similar evidence E'
 
 This creates real accumulated competence instead of repeatedly asking a model for a new plan.
 
-## 13. First implementation slices
+## 14. First implementation slices
 
 Do not attempt full human-like memory at once.
 
@@ -470,9 +523,12 @@ Create one bounded resident-owned structure that links:
 - observed verification result;
 - success/contradiction;
 - source event/time;
+- teacher/provenance involvement where useful;
 - privacy/safety-safe summaries rather than unnecessary raw payloads.
 
 The record must survive restart and must not be a transcript dump.
+
+The first replay/retention policy should remain deterministic and inspectable: preserve bounded representative verified successes, recent contradictions/failures and rare/novel cases. More sophisticated replay selection can be added only when real data shows a need.
 
 ### L2 — Candidate procedural tendency
 
@@ -486,11 +542,15 @@ Requirements:
 - contradiction is retained;
 - raw secrets/unsafe command payloads are not copied into broad memory.
 
+The first implementation should be a transparent resident-native aggregation baseline. River/ADWIN may then be tested on the same verified stream as a competing online-learning/drift mechanism.
+
 ### L3 — Reality-gated skill activation
 
 A candidate/mature tendency can influence resident deliberation only when current Situation provides enough matching evidence.
 
 Current reality remains authoritative.
+
+For bounded domains, DAgger-style teacher/student experiments may use external models or humans only to label/suggest actions at states ZN genuinely visits; successful student learning must still be measured by independent environment verification.
 
 ### L4 — Procedural fast path
 
@@ -507,11 +567,15 @@ Mature low-risk competence may bypass some explicit deliberative stages while st
 
 Contradictions weaken or inhibit stale competence and return control to Investigation.
 
+Only if a local neural skill model later shows measurable catastrophic forgetting should ZN benchmark continual-learning methods such as replay/EWC/DER/SI/GEM using research frameworks such as Avalanche/Mammoth.
+
 ### L6 — Computer-use and engineering competence benchmarks
 
 Prove that repeated verified experience causes measurable improvements without model dependence.
 
-## 14. Benchmarks for real growth
+BrowserGym and OSWorld V2 are preferred starting benchmark infrastructures instead of inventing all task environments internally.
+
+## 15. Benchmarks for real growth
 
 The following are better growth metrics than raw memory count.
 
@@ -529,11 +593,42 @@ For the same task family after verified practice:
 - changed context prevents blind replay;
 - prediction error interrupts the fast path;
 - repeated contradiction weakens the stale tendency;
-- successful alternative tactics become easier to select in similar situations.
+- successful alternative tactics become easier to select in similar situations;
+- previously mature skills retain performance after newer skills are learned;
+- high maturity/confidence remains calibrated against actual verified success.
 
 Do not optimize for minimum model calls if doing so lowers truthfulness or safety.
 
-## 15. Safety and privacy boundaries
+## 16. External-source adoption rules
+
+The current research classification is maintained in `ZN-LEARNING-SOURCE-RESEARCH.md`.
+
+The important categories are:
+
+```text
+ADOPT DESIGN PRINCIPLE   ideas we should encode in ZN architecture
+ADOPT MECHANISM          small mechanisms worth resident-native implementation
+PROTOTYPE                external library/algorithm to compare in isolated experiments
+RESEARCH HARNESS         dev-only framework for baselines/metrics
+SOURCE QUARRY            study useful code/behavior but reject its control plane
+LATER RESEARCH           valuable only after prerequisite data/models exist
+FUTURE DEV BENCHMARK     evaluation/training infrastructure, not product runtime
+```
+
+Current strongest conclusions:
+
+- complementary learning systems / fast-slow learning → adopt the multi-timescale design;
+- experience replay → adopt a bounded verified replay mechanism;
+- DAgger → prototype as the model/human-as-teacher pattern;
+- River/ADWIN → prototype for online adaptation and stale-skill drift;
+- Avalanche/Mammoth → use as research harnesses if/when neural continual learning becomes real;
+- Voyager → source quarry for reusable skills/feedback, reject GPT-owned control;
+- DreamerV3/world models → later research for prediction-backed bounded skill domains;
+- BrowserGym / OSWorld V2 → future dev benchmark infrastructure.
+
+No external framework becomes ZN's subject, Will or main loop.
+
+## 17. Safety and privacy boundaries
 
 Proceduralization must never bypass existing high-risk boundaries.
 
@@ -549,7 +644,7 @@ Familiarity does not authorize:
 
 Procedural memory should store the minimum information necessary to reproduce competence. Raw secrets, arbitrary private content and full shell histories should not be copied into long-lived learned structures merely because they appeared during successful work.
 
-## 16. Completion signal
+## 18. Completion signal
 
 This direction is working when ZN increasingly behaves like a long-term resident who has become practiced at its environment:
 
