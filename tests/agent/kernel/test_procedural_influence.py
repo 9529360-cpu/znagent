@@ -11,6 +11,7 @@ from agent.kernel.action import (
     derive_native_action_intent,
     derive_native_action_intents,
 )
+from agent.kernel.models import AgentEvent
 from agent.kernel.procedural_influence import (
     select_procedurally_influenced_intent,
     strongest_supported_action_influence,
@@ -19,7 +20,6 @@ from agent.kernel.procedural_resident import ProcedurallyInfluencedResidentRunti
 from agent.kernel.procedural_tendency import CandidateProceduralTendency
 from agent.kernel.provider_bridge import build_resident_runtime
 from agent.kernel.world_closed_loop import WorldAwareTransferResidentRuntime
-from agent.kernel.models import AgentEvent
 
 
 class ProceduralInfluenceTests(unittest.TestCase):
@@ -79,15 +79,33 @@ class ProceduralInfluenceTests(unittest.TestCase):
         )
 
     @staticmethod
-    def _ambiguous_event(target: str, content: str) -> AgentEvent:
+    def _choice_event(target: str, content: str) -> AgentEvent:
         return AgentEvent(
-            event_id="evt-ambiguous-current-shapes",
-            task="run the current command and ensure the stable target contains requested content",
+            event_id="evt-current-choice-set",
+            task="choose one current native route for the stable target",
             payload={
-                "command": "python -c \"print('default command')\"",
+                # Top-level path exists only so current Investigation observes
+                # the reality anchor. Action arguments stay inside the current
+                # structured choice set and are never supplied by learning.
                 "path": target,
-                "content": content,
                 "required_capabilities": ["filesystem"],
+                "native_action_options": [
+                    {
+                        "kind": "command",
+                        "args": {
+                            "command": "python -c \"print('default command')\"",
+                        },
+                    },
+                    {
+                        "kind": "write_text",
+                        "args": {
+                            "path": target,
+                            "content": content,
+                            "append": False,
+                            "create_parents": True,
+                        },
+                    },
+                ],
             },
         )
 
@@ -114,33 +132,51 @@ class ProceduralInfluenceTests(unittest.TestCase):
                 return result
         raise AssertionError("resident did not reach a terminal result")
 
-    def test_native_action_alternatives_preserve_default_order_and_explicit_exclusivity(self):
+    def test_native_action_choice_set_preserves_default_order_and_explicit_exclusivity(self):
         target = "/private/current.txt"
-        event = self._ambiguous_event(target, "current content")
+        event = self._choice_event(target, "current content")
         facts = {"paths": [{"path": target, "exists": True, "type": "file"}]}
 
         intents = derive_native_action_intents(event, facts=facts)
         self.assertEqual([item.kind for item in intents], ["command", "write_text"])
+        self.assertTrue(all(item.source == "structured_choice" for item in intents))
         self.assertEqual(derive_native_action_intent(event, facts=facts).kind, "command")
 
         explicit = AgentEvent(
             event_id="evt-explicit",
-            task="run and ensure current state",
+            task="perform the explicit current movement",
             payload={
                 "body_action": {"kind": "write_text", "path": target, "content": "x"},
-                "command": "python -c \"print('other')\"",
-                "path": target,
-                "content": "other",
+                "native_action_options": event.payload["native_action_options"],
             },
         )
         explicit_intents = derive_native_action_intents(explicit, facts=facts)
         self.assertEqual(len(explicit_intents), 1)
         self.assertEqual(explicit_intents[0].source, "structured_event")
+        self.assertEqual(explicit_intents[0].args["content"], "x")
+
+    def test_ordinary_multi_clause_task_is_not_reinterpreted_as_alternatives(self):
+        target = "/private/current.txt"
+        event = AgentEvent(
+            event_id="evt-sequential-looking-task",
+            task="run the current command and ensure the target contains requested content",
+            payload={
+                "command": "python -c \"print('first obligation')\"",
+                "path": target,
+                "content": "second obligation",
+            },
+        )
+        facts = {"paths": [{"path": target, "exists": True, "type": "file"}]}
+
+        intents = derive_native_action_intents(event, facts=facts)
+
+        self.assertEqual(len(intents), 1)
+        self.assertEqual(intents[0].kind, "command")
 
     def test_supported_candidate_can_only_reorder_current_safe_intents(self):
         target = "/private/stable.txt"
         content = "PRIVATE_CURRENT_CONTENT"
-        event = self._ambiguous_event(target, content)
+        event = self._choice_event(target, content)
         facts = {"paths": [{"path": target, "exists": True, "type": "file"}]}
         candidate = self._candidate(target=target)
         intents = derive_native_action_intents(event, facts=facts)
@@ -162,11 +198,11 @@ class ProceduralInfluenceTests(unittest.TestCase):
         self.assertNotIn(target, serialized)
         self.assertNotIn(content, serialized)
         self.assertNotIn(event.task, serialized)
-        self.assertNotIn(event.payload["command"], serialized)
+        self.assertNotIn("default command", serialized)
 
     def test_immature_mismatched_revoked_and_unsafe_shapes_have_zero_positive_influence(self):
         target = "/private/stable.txt"
-        event = self._ambiguous_event(target, "content")
+        event = self._choice_event(target, "content")
         facts = {"paths": [{"path": target, "exists": True, "type": "file"}]}
         write_intent = derive_native_action_intents(event, facts=facts)[1]
 
@@ -219,7 +255,7 @@ class ProceduralInfluenceTests(unittest.TestCase):
             event_id=event.event_id,
             kind="write_text",
             args={"path": target, "content": "more", "append": True},
-            source="native_deliberation",
+            source="structured_choice",
         )
         self.assertIsNone(
             strongest_supported_action_influence(
@@ -264,18 +300,31 @@ class ProceduralInfluenceTests(unittest.TestCase):
             self.assertEqual(candidate.maturity_state, "supported")
             self.assertEqual(candidate.support_count, 3)
 
-            # Current ZN action formation still prefers command first. Procedural
-            # evidence is allowed to reorder only because it independently
-            # supports the already-formed write_text alternative.
+            choice_payload = {
+                "path": str(target),
+                "required_capabilities": ["filesystem"],
+                "model_policy": "never",
+                "native_action_options": [
+                    {
+                        "kind": "command",
+                        "args": {
+                            "command": "python -c \"print('DEFAULT_COMMAND_SHOULD_NOT_RUN')\"",
+                        },
+                    },
+                    {
+                        "kind": "write_text",
+                        "args": {
+                            "path": str(target),
+                            "content": "learned-success",
+                            "append": False,
+                            "create_parents": True,
+                        },
+                    },
+                ],
+            }
             event = resident.enqueue(
-                "run the current command and ensure stable target contains learned state",
-                payload={
-                    "command": "python -c \"print('DEFAULT_COMMAND_SHOULD_NOT_RUN')\"",
-                    "path": str(target),
-                    "content": "learned-success",
-                    "required_capabilities": ["filesystem"],
-                    "model_policy": "never",
-                },
+                "choose one current native route for the stable target",
+                payload=choice_payload,
             )
             self._advance_until_stage(resident, "native_action")
             investigation = resident.investigator.current(event.event_id)
@@ -318,18 +367,31 @@ class ProceduralInfluenceTests(unittest.TestCase):
             self.assertIn("read_text", movements)
             self.assertNotIn("command", movements)
 
-            # A later equally supported route remains independently verified.
-            # If reality changes after the movement, the route is revoked for
-            # this event immediately and control returns to Investigation.
+            second_payload = {
+                "path": str(target),
+                "required_capabilities": ["filesystem"],
+                "model_policy": "never",
+                "native_action_options": [
+                    {
+                        "kind": "command",
+                        "args": {
+                            "command": "python -c \"print('SECOND_DEFAULT_SHOULD_NOT_RUN')\"",
+                        },
+                    },
+                    {
+                        "kind": "write_text",
+                        "args": {
+                            "path": str(target),
+                            "content": "learned-but-contradicted",
+                            "append": False,
+                            "create_parents": True,
+                        },
+                    },
+                ],
+            }
             event2 = resident.enqueue(
-                "run the current command and ensure stable target contains contradicted state",
-                payload={
-                    "command": "python -c \"print('SECOND_DEFAULT_SHOULD_NOT_RUN')\"",
-                    "path": str(target),
-                    "content": "learned-but-contradicted",
-                    "required_capabilities": ["filesystem"],
-                    "model_policy": "never",
-                },
+                "choose one current native route for the stable target again",
+                payload=second_payload,
             )
             self._advance_until_stage(resident, "native_action")
             state2 = resident.store.get_working_state()
