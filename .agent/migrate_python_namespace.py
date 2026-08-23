@@ -72,6 +72,38 @@ def main() -> None:
     )
     semantics.write_text(text, encoding="utf-8")
 
+    # Resident-formed repo tests must execute the current working-tree package,
+    # never the already-installed copy that happens to host the resident.
+    procedural = ROOT / "runtime" / "python" / "zn_agent" / "core" / "procedural_resident.py"
+    text = procedural.read_text(encoding="utf-8")
+    old = '''                        command = self._targeted_unittest_command(targeted_baseline)\n                        test_observation = self.body.act(\n                            "command",\n                            event_id=event.event_id,\n                            command=command,\n                            workdir=str(targeted_baseline.get("root") or ""),\n                            timeout=float(\n'''
+    new = '''                        command = self._targeted_unittest_command(targeted_baseline)\n                        command_env: dict[str, str] = {}\n                        source_root_relative = self._literal_repo_relative_path(\n                            targeted_baseline.get("python_source_root_relative")\n                        )\n                        if source_root_relative:\n                            try:\n                                repo_root = Path(\n                                    str(targeted_baseline.get("root") or "")\n                                ).expanduser().resolve(strict=True)\n                                lexical_source_root = Path(\n                                    os.path.abspath(\n                                        str(repo_root / Path(source_root_relative))\n                                    )\n                                )\n                                source_root = lexical_source_root.resolve(strict=True)\n                                source_root.relative_to(repo_root)\n                                if (\n                                    source_root != lexical_source_root\n                                    or not source_root.is_dir()\n                                ):\n                                    raise ValueError(\n                                        "targeted unittest source root is not one regular repository directory"\n                                    )\n                            except (OSError, RuntimeError, ValueError):\n                                problems.append(\n                                    "targeted unittest working-tree source root no longer resolves safely"\n                                )\n                            else:\n                                command_env["PYTHONPATH"] = str(source_root)\n\n                        if problems:\n                            test_observation = None\n                        else:\n                            test_observation = self.body.act(\n                                "command",\n                                event_id=event.event_id,\n                                command=command,\n                                workdir=str(targeted_baseline.get("root") or ""),\n                                env=command_env,\n                                timeout=float(\n'''
+    if old not in text:
+        raise SystemExit("targeted unittest execution block changed unexpectedly")
+    text = text.replace(old, new, 1)
+    # The rest of the verification block consumes a real observation. The
+    # source-root failure above is already fail-closed before command execution.
+    text = text.replace(
+        '''                            ),\n                            max_output_chars=50_000,\n                        )\n                        result_features = normalize_action_result(\n                            asdict(test_observation),\n                            command=command,\n                        )\n''',
+        '''                                ),\n                                max_output_chars=50_000,\n                            )\n                        if test_observation is None:\n                            result_features = {\n                                "masked_success": False,\n                                "failure_class": "working_tree_source_unavailable",\n                            }\n                            exit_code = None\n                            timed_out = False\n                            test_verified = False\n                        else:\n                            result_features = normalize_action_result(\n                                asdict(test_observation),\n                                command=command,\n                            )\n                            exit_code = test_observation.data.get("exit_code")\n                            timed_out = bool(test_observation.data.get("timed_out", False))\n                            test_verified = bool(\n                                test_observation.success\n                                and not timed_out\n                                and exit_code == 0\n                                and not bool(result_features.get("masked_success"))\n                                and not result_features.get("failure_class")\n                            )\n''',
+        1,
+    )
+    # Remove the old duplicate exit/test_verified calculation and make the
+    # durable marker tolerate the fail-before-execution path.
+    old_duplicate = '''                        exit_code = test_observation.data.get("exit_code")\n                        timed_out = bool(test_observation.data.get("timed_out", False))\n                        test_verified = bool(\n                            test_observation.success\n                            and not timed_out\n                            and exit_code == 0\n                            and not bool(result_features.get("masked_success"))\n                            and not result_features.get("failure_class")\n                        )\n'''
+    text = text.replace(old_duplicate, "", 1)
+    text = text.replace(
+        '"action_id": test_observation.action_id,\n                            "verified": test_verified,',
+        '"action_id": (test_observation.action_id if test_observation is not None else None),\n                            "verified": test_verified,',
+        1,
+    )
+    text = text.replace(
+        '"execution_action_id": test_observation.action_id,',
+        '"execution_action_id": (test_observation.action_id if test_observation is not None else None),',
+        1,
+    )
+    procedural.write_text(text, encoding="utf-8")
+
     workflow = ROOT / ".github" / "workflows" / "zn-ci.yml"
     text = workflow.read_text(encoding="utf-8")
     text = text.replace(
