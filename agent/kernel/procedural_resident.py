@@ -77,6 +77,10 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
                 state,
                 reason="blocked_by_current_evidence",
             )
+            # The fallback movement below is not procedurally influenced. Keep
+            # only the event-local revoked ID so later failure cannot be
+            # misattributed to a candidate that did not select that movement.
+            state.data.pop(self._PROCEDURAL_INFLUENCE_KEY, None)
             self.store.save_working_state(state)
             return super()._deliberation_step(
                 event,
