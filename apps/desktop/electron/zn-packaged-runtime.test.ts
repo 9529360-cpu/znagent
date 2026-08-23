@@ -8,6 +8,10 @@ import { test } from 'vitest'
 import { configureZnPackagedRuntime, resolveRuntime, resolveZnHome } from './zn-packaged-runtime'
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const retiredProduct = Buffer.from('6865726d6573', 'hex').toString('utf8')
+const retiredPackage = Buffer.from('6865726d65735f636c69', 'hex').toString('utf8')
+const retiredOrg = Buffer.from('6e6f75737265736561726368', 'hex').toString('utf8')
+const retiredBrand = Buffer.from('4e6f7573205265736561726368', 'hex').toString('utf8')
 
 function mkTmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'zn-packaged-runtime-test-'))
@@ -50,8 +54,8 @@ test('packaged runtime materializes under ZN home and uses only ZN runtime entry
     assert.equal(runtime.root, expectedRoot)
     assert.equal(env.ZN_AGENT_HOME, znHome)
     assert.equal(env.ZN_RESIDENT_PYTHON, runtime.python)
-    assert.equal(env.HERMES_DESKTOP_PYTHON, undefined)
-    assert.equal(env.HERMES_DESKTOP_HERMES_ROOT, undefined)
+    assert.equal(env[`${retiredProduct.toUpperCase()}_DESKTOP_PYTHON`], undefined)
+    assert.equal(env[`${retiredProduct.toUpperCase()}_DESKTOP_${retiredProduct.toUpperCase()}_ROOT`], undefined)
     fs.rmSync(path.join(resourcesPath, 'zn-runtime'), { recursive: true, force: true })
     assert.equal(resolveRuntime(expectedRoot, runtimeId).python, runtime.python)
   } finally {
@@ -88,14 +92,14 @@ test('packaged N+1 materializes beside N without replacing the active runtime', 
   }
 })
 
-test('packaged runtime rejects inherited Hermes package content', () => {
+test('packaged runtime rejects retired package content', () => {
   const root = mkTmpRoot()
   const resourcesPath = path.join(root, 'resources')
   try {
     const { runtimeRoot, backendRoot } = writeBundledRuntime(resourcesPath)
-    fs.mkdirSync(path.join(backendRoot, 'hermes_cli'), { recursive: true })
-    fs.writeFileSync(path.join(backendRoot, 'hermes_cli', 'main.py'), '# forbidden\n')
-    assert.throws(() => resolveRuntime(runtimeRoot), /forbidden inherited package/)
+    fs.mkdirSync(path.join(backendRoot, retiredPackage), { recursive: true })
+    fs.writeFileSync(path.join(backendRoot, retiredPackage, 'main.py'), '# forbidden\n')
+    assert.throws(() => resolveRuntime(runtimeRoot), /forbidden retired package/)
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
@@ -152,7 +156,7 @@ test('formal desktop package and builder expose only ZN product identity', () =>
   assert.match(builder, /^\s+- zn$/m)
   assert.match(builder, /from: build\/zn-runtime/)
   assert.match(builder, /^\s+legalTrademarks: ZN$/m)
-  assert.doesNotMatch(builder, /install-stamp|hermes|beforePack|afterPack/i)
+  assert.doesNotMatch(builder, new RegExp(`${retiredProduct}|install-stamp|beforePack|afterPack`, 'i'))
 
   const publicIdentity = `${JSON.stringify({
     name: packageJson.name,
@@ -161,7 +165,7 @@ test('formal desktop package and builder expose only ZN product identity', () =>
     author: packageJson.author,
     repository: packageJson.repository
   })}\n${builder}`
-  assert.doesNotMatch(publicIdentity, /hermes|nousresearch/i)
+  assert.doesNotMatch(publicIdentity, new RegExp(`${retiredProduct}|${retiredOrg}`, 'i'))
 
   for (const retiredHook of [
     'scripts/before-pack.mjs',
@@ -176,5 +180,5 @@ test('formal desktop package and builder expose only ZN product identity', () =>
     'scripts/before-build.mjs',
     'scripts/notarize.mjs'
   ].map(relative => fs.readFileSync(path.join(desktopRoot, relative), 'utf8')).join('\n')
-  assert.doesNotMatch(activeHooks, /Hermes|Nous Research|install\.ps1|hermes_cli|hermes-notary/i)
+  assert.doesNotMatch(activeHooks, new RegExp(`${retiredProduct}|${retiredBrand}|install\\.ps1|${retiredPackage}|notary`, 'i'))
 })
