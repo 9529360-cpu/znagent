@@ -33,6 +33,7 @@ The execution/learning spine now has real CI verification for:
 
 - structured read-only Git repository sense;
 - bounded structured read-only Git diff sense consumed by current Investigation without generic shell authority;
+- Workbench diff artifacts consuming that same structured `git_diff` Body sense rather than re-running separate presentation shell commands;
 - exact text and explicit command postcondition verification;
 - compact durable execution context;
 - evidence-bound failed-action anti-replay;
@@ -68,6 +69,7 @@ verified lived experience
 → Git-specific reality-gated learned choice bias    VERIFIED FIRST GIT SLICE
 → shared formation/diagnostic semantic contract     VERIFIED FIRST GIT SLICE
 → structured Git diff current-reality sensing       VERIFIED READ-ONLY SLICE
+→ shared resident/workbench diff presentation       VERIFIED READ-ONLY SLICE
 → broader resident-owned engineering competence
 → familiar low-latency execution
 → prediction-error interrupt / relearning
@@ -95,6 +97,8 @@ A later read-only engineering-sense slice is verified by code/test SHA `c29cae2c
 The active `EmbodiedInvestigator` consumes this sense only after current `git_state` evidence has already established a dirty repository and the current event carries explicit diff/mutation semantics through task wording or structured mutation/postcondition payload. It records structured `git_diff` facts and evidence without selecting or performing any mutation. A zero-model integration test proves the event observes `git_state` before `git_diff` and emits no generic Body `command` for this sensing path.
 
 One real intermediate regression is preserved as evidence: code/test SHA `bbffd538d0e3499b35eedd46c03686050285c9af`, run `32656924494`, had Electron success and one Python failure. The first trigger admitted broad words such as `debug`, `test`, `build` and `code`, causing a generic project-state investigation in an ambient dirty repository to acquire an unnecessary extra diff probe. The fix at `c29cae2...` narrowed the trigger to explicit diff/change/mutation semantics and retained the existing investigation-round invariant unchanged rather than weakening the old test.
+
+The presentation-consumer cleanup is verified by final code/test SHA `a5b628bb72b2b683882ed7f35afbe0112320782e`, run `32658783466`, with Python and Electron success. `ResidentWorkLedger` now consumes `git_state.changed_paths` directly for changed-file artifacts and consumes the same structured Body `git_diff` result for the persisted `Current workspace diff` artifact. Its duplicate porcelain-line parser and its two presentation-only generic shell commands were removed. The diff artifact preserves its existing UI/RPC shape while adding explicit source action, HEAD and diff-state fingerprint provenance. Regression coverage creates simultaneous staged and worktree changes, proves both patch sections survive, proves the artifact state hash matches the `git_diff` Body action, and proves the old presentation commands are absent from the event action history.
 
 ### 2.2 Reality-based postcondition verification
 
@@ -444,6 +448,7 @@ This is not yet autonomous artifact selection; Thought/Will/Investigation does n
 - native Action intents and Body action results;
 - structured read-only Git repository sense;
 - bounded structured read-only Git diff sense with current Investigation consumption;
+- Workbench diff artifacts sourced from the same structured `git_diff` Body observation rather than a second presentation command path;
 - exact text and explicit independent command postcondition verification;
 - narrow resident-derived exact append postcondition from complete current file observation;
 - compact bounded current-event execution context;
@@ -481,7 +486,6 @@ This is not yet autonomous artifact selection; Thought/Will/Investigation does n
 - multi-step execution with genuinely different tactics over long horizons without a model-owned planner;
 - durable completed-task verification/audit beyond current bounded learning evidence;
 - baseline-aware bounded Git mutation → diff/test/current-reality verification loop;
-- Workbench diff artifact migration from its existing presentation command path onto the structured `git_diff` Body sense;
 - Git commit/push/reset/checkout/branch mutation authority;
 - GitHub repository/PR/CI resident-owned sense;
 - clean browser Body/Senses seam;
@@ -497,7 +501,7 @@ This is not yet autonomous artifact selection; Thought/Will/Investigation does n
 
 ### Resident work loop
 
-`ResidentWorkLedger` owns durable threads/messages, workspace association, active-work linkage/progress and bounded contextual file/diff/terminal artifacts beside kernel state. Renderer/localStorage is not authority. Its existing diff presentation path still uses bounded generic command execution; migrating that presentation consumer onto the new structured `git_diff` sense remains explicitly incomplete and must not be confused with the now-verified Investigation consumer.
+`ResidentWorkLedger` owns durable threads/messages, workspace association, active-work linkage/progress and bounded contextual file/diff/terminal artifacts beside kernel state. Renderer/localStorage is not authority. Changed-file artifacts now consume structured `git_state.changed_paths`, and persisted diff artifacts consume the same structured `git_diff` Body observation used by resident Investigation. Workbench presentation therefore no longer owns a second Git-diff command/parsing path.
 
 Status: **M6 PARTIAL; core execution mainline active**.
 
@@ -509,7 +513,7 @@ Status: **M2 complete for active main provider families**.
 
 ### Local Body
 
-Filesystem/process/terminal/PTTY paths are ZN-owned. Verification, failed-action anti-replay and L1/L2/L3 learning evidence are active. Resident cognition can form two proven bounded tactic families: exact-text append/replace and single-path Git staging via porcelain/plumbing mechanisms. Git staging uses one canonical current renderer, can terminal-resolve an already-satisfied current goal, can consume the first Git-specific reality-gated learned choice bias, exposes aligned read-only applicability evidence, and still requires a fresh structured Git verifier. The Body now also exposes a bounded structured read-only `git_diff` sense used by Investigation; this does not itself authorize any mutation. General tactic formation and mature engineering procedural competence remain incomplete.
+Filesystem/process/terminal/PTTY paths are ZN-owned. Verification, failed-action anti-replay and L1/L2/L3 learning evidence are active. Resident cognition can form two proven bounded tactic families: exact-text append/replace and single-path Git staging via porcelain/plumbing mechanisms. Git staging uses one canonical current renderer, can terminal-resolve an already-satisfied current goal, can consume the first Git-specific reality-gated learned choice bias, exposes aligned read-only applicability evidence, and still requires a fresh structured Git verifier. The Body now also exposes a bounded structured read-only `git_diff` sense shared by Investigation and Workbench artifact presentation; this does not itself authorize any mutation. General tactic formation and mature engineering procedural competence remain incomplete.
 
 ### Web/world / visual sense
 
@@ -529,7 +533,7 @@ Status: **COMPLETE for active packaged resident path**.
 
 The independent `runtime/python` distribution is `znagent`, installed package `zn_agent`, entrypoint `zn-resident`. Packaged runtime rejects inherited `hermes_cli` and boots zero-model. `runtime/python/pyproject.toml` maps `zn_agent.core` directly to `../../agent/kernel`, so current kernel code is the packaged runtime source rather than a second copy.
 
-Run `32657175399` installed the isolated runtime distribution, booted it without a model, compiled the resident kernel and ran full kernel unittest discovery successfully.
+Run `32658783466` installed the isolated runtime distribution, booted it without a model, compiled the resident kernel and ran full kernel unittest discovery successfully.
 
 ### M7 formal artifact ownership
 
@@ -581,7 +585,7 @@ M10 repository migration / formal main promotion           LATER; main untouched
 4. keep diff sensing itself read-only and evidence-driven: a merely Git-related or generic debug/test/build task must not acquire extra probes unless current dirty Git reality plus explicit mutation/diff semantics justify them;
 5. add negative tests before every authority expansion: stale/missing evidence, ambiguous identity/equivalence, cross-target reuse, unsafe side effects and contradiction must fail closed;
 6. keep generic command positive authority prohibited unless a future semantic family independently proves current authority and verification;
-7. migrate the existing Workbench diff presentation path onto the shared structured diff sense when doing so preserves artifact behavior; presentation must not become a second Git semantics implementation;
+7. define the pre-mutation baseline and post-mutation diff/test/current-reality proof as explicit current-event evidence before allowing broader engineering mutation authority; Workbench presentation must stay a consumer, not a second verifier/control plane;
 8. add GitHub repo/PR/CI resident-owned sense when it has a concrete current-world consumer; do not make GitHub another cognitive agent;
 9. establish browser/visual/mouse/keyboard Body/Senses before claiming learned computer-use competence;
 10. add growth benchmarks proving familiar tasks reduce external cognition dependence without lowering verification quality;
