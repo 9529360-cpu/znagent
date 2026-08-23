@@ -10,7 +10,13 @@ from .budget import CognitiveBudgetManager
 from .capabilities import CapabilityRegistry
 from .cognition import CognitiveIncrement
 from .memory import StructuredMemory
-from .models import AgentEvent, ExecutionPath, ResidentRunResult, WorkingState
+from .models import (
+    AgentEvent,
+    ExecutionPath,
+    ResidentRunResult,
+    WorkingState,
+    utc_now,
+)
 from .resident import ZNResidentRuntime
 from .self_model import TaskReadiness
 
@@ -124,9 +130,7 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
             # blindly repeat it; let the normal impasse/cognition path reason
             # about the observed failure instead.
             if signature != failed_signature:
-                state.stage = "native_action"
-                state.next_action = f"move body: {intent.kind}"
-                state.data["native_action_intent"] = intent.to_dict()
+                self._begin_native_action_cycle(event, state, intent)
                 self.store.save_working_state(state)
                 if thought is not None:
                     action = f"perform body action: {intent.kind}"
@@ -146,6 +150,43 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
             thought=thought,
         )
 
+    def _begin_native_action_cycle(
+        self,
+        event: AgentEvent,
+        state: WorkingState,
+        intent: NativeActionIntent,
+    ) -> None:
+        """Begin one new movement without carrying a stale verdict into it.
+
+        Prior failed verification remains available as bounded history, but the
+        active verification slot is cleared before a genuinely different action
+        becomes current. This keeps one compact task context instead of letting
+        old result fields silently masquerade as present reality.
+        """
+        raw_context = state.data.get("execution_context")
+        context = dict(raw_context) if isinstance(raw_context, dict) else {}
+        raw_history = context.get("verification_history")
+        history = list(raw_history) if isinstance(raw_history, list) else []
+        prior = state.data.get("native_verification_result")
+        if isinstance(prior, dict):
+            history.append(
+                self._verification_summary(
+                    prior,
+                    error=str(state.data.get("local_failure") or "").strip() or None,
+                )
+            )
+        context["verification_history"] = history[-8:]
+        state.data["execution_context"] = context
+
+        state.data.pop("native_verification", None)
+        state.data.pop("native_verification_result", None)
+        state.data.pop("native_action_result", None)
+        state.data.pop("local_failure", None)
+        state.data["native_action_intent"] = intent.to_dict()
+        state.stage = "native_action"
+        state.next_action = f"move body: {intent.kind}"
+        self._sync_execution_context(event, state)
+
     def _native_action_step(
         self,
         event: AgentEvent,
@@ -158,6 +199,7 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         if not isinstance(raw, dict):
             state.stage = "native_deliberation"
             state.next_action = "reconstruct missing native action intent"
+            self._sync_execution_context(event, state)
             self.store.save_working_state(state)
             return None
 
@@ -178,6 +220,7 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
                 state.data["native_verification"] = verification
                 state.stage = "native_verification"
                 state.next_action = "verify the requested postcondition from current reality"
+                self._sync_execution_context(event, state)
                 self.store.save_working_state(state)
                 if thought is not None:
                     action = "verify the body action against the requested postcondition"
@@ -190,6 +233,7 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
                     self._persist_enriched_thought(thought)
                 return None
 
+            self._sync_execution_context(event, state)
             return self._complete_successful_body_action(
                 event,
                 state,
@@ -209,6 +253,7 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         state.data["native_action_failure_signature"] = self._intent_signature(intent)
         state.stage = "native_investigation"
         state.next_action = "inspect the failed body movement and update the hypothesis"
+        self._sync_execution_context(event, state)
         self.store.save_working_state(state)
         if thought is not None:
             if failure not in thought.unknown:
@@ -232,6 +277,7 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         if not isinstance(raw_contract, dict) or not isinstance(raw_intent, dict):
             state.stage = "native_deliberation"
             state.next_action = "reconstruct missing postcondition verification"
+            self._sync_execution_context(event, state)
             self.store.save_working_state(state)
             return None
 
@@ -357,6 +403,7 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
             }
 
         state.data["native_verification_result"] = verification_result
+        self._sync_execution_context(event, state)
 
         if verified:
             return self._complete_successful_body_action(
@@ -396,6 +443,7 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         state.data["native_action_failure_signature"] = self._intent_signature(intent)
         state.stage = "native_investigation"
         state.next_action = "investigate the contradicted postcondition before another movement"
+        self._sync_execution_context(event, state)
         self.store.save_working_state(state)
         if thought is not None:
             if failure not in thought.unknown:
@@ -425,6 +473,7 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         state.stage = "complete"
         state.next_action = None
         state.data["native_domains"] = list(domains)
+        self._sync_execution_context(event, state)
         self.store.save_working_state(state)
         self.store.record_runtime_task(model_invocations=0)
         return ResidentRunResult(
@@ -435,6 +484,118 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
             model_invocations=0,
             reason=reason,
         )
+
+    def _sync_execution_context(
+        self,
+        event: AgentEvent,
+        state: WorkingState,
+    ) -> dict[str, Any]:
+        """Keep one bounded task-level execution view inside durable work state.
+
+        This is not a plan tree. It is the minimum current contract needed for
+        the same resident to remember what it is trying to achieve, what still
+        blocks it, what result it expects, and what reality most recently said.
+        """
+        raw_context = state.data.get("execution_context")
+        context = dict(raw_context) if isinstance(raw_context, dict) else {}
+        context["goal"] = event.task
+        context["stage"] = str(state.stage or "idle")
+
+        gap = str(state.data.get("local_failure") or "").strip()
+        if not gap:
+            deliberation = state.data.get("native_deliberation")
+            if isinstance(deliberation, dict):
+                gap = str(deliberation.get("unknown") or "").strip()
+        if not gap:
+            investigation = self.investigator.current(event.event_id)
+            if investigation is not None:
+                gap = str(investigation.unresolved or "").strip()
+        context["current_gap"] = gap or None
+
+        raw_expected = state.data.get("native_verification")
+        if not isinstance(raw_expected, dict):
+            explicit = event.payload.get("expected_outcome")
+            raw_expected = explicit if isinstance(explicit, dict) else None
+        context["expected_outcome"] = (
+            self._expected_outcome_summary(raw_expected)
+            if isinstance(raw_expected, dict)
+            else None
+        )
+
+        raw_verification = state.data.get("native_verification_result")
+        context["latest_verification"] = (
+            self._verification_summary(
+                raw_verification,
+                error=str(state.data.get("local_failure") or "").strip() or None,
+            )
+            if isinstance(raw_verification, dict)
+            else None
+        )
+
+        raw_intent = state.data.get("native_action_intent")
+        if isinstance(raw_intent, dict):
+            context["current_action"] = {
+                "intent_id": str(raw_intent.get("intent_id") or "") or None,
+                "kind": str(raw_intent.get("kind") or "") or None,
+                "reason": str(raw_intent.get("reason") or "")[:600] or None,
+            }
+        else:
+            context["current_action"] = None
+        history = context.get("verification_history")
+        if isinstance(history, list):
+            context["verification_history"] = history[-8:]
+        else:
+            context["verification_history"] = []
+        context["updated_at"] = utc_now()
+        state.data["execution_context"] = context
+        return context
+
+    @staticmethod
+    def _expected_outcome_summary(raw: dict[str, Any]) -> dict[str, Any]:
+        kind = str(raw.get("kind") or "").strip().lower() or "unknown"
+        summary: dict[str, Any] = {"kind": kind}
+        if raw.get("path") is not None:
+            summary["path"] = str(raw.get("path"))
+        if raw.get("expected_text") is not None:
+            summary["expected_chars"] = len(str(raw.get("expected_text") or ""))
+        if raw.get("expected_exit_code") is not None:
+            summary["expected_exit_code"] = raw.get("expected_exit_code")
+        elif raw.get("exit_code") is not None:
+            summary["expected_exit_code"] = raw.get("exit_code")
+        output = raw.get("output_contains")
+        if isinstance(output, str):
+            summary["output_contains"] = [output]
+        elif isinstance(output, (list, tuple)):
+            summary["output_contains"] = [str(item) for item in output if str(item)][:8]
+        return summary
+
+    @staticmethod
+    def _verification_summary(
+        raw: dict[str, Any],
+        *,
+        error: str | None = None,
+    ) -> dict[str, Any]:
+        summary: dict[str, Any] = {
+            "kind": str(raw.get("kind") or "unknown"),
+            "verified": bool(raw.get("verified")),
+        }
+        for key in (
+            "path",
+            "expected_chars",
+            "observed_chars",
+            "expected_exit_code",
+            "observed_exit_code",
+            "requested_kind",
+        ):
+            if raw.get(key) is not None:
+                summary[key] = raw.get(key)
+        missing = raw.get("missing_output_contains")
+        if isinstance(missing, (list, tuple)) and missing:
+            summary["missing_output_contains"] = [str(item) for item in missing][:8]
+        message = str(error or raw.get("error") or "").strip()
+        if message:
+            summary["error"] = message[:1000]
+        return summary
 
     @staticmethod
     def _verification_contract(
@@ -598,6 +759,7 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         if not kernel_result.assessment.success:
             state.stage = "failed"
             state.next_action = None
+            self._sync_execution_context(event, state)
             self.store.save_working_state(state)
             self.life.mark_impasse_unresolved(event, reason)
             return ResidentRunResult(
@@ -633,6 +795,7 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         }
         state.stage = "cognition_integration"
         state.next_action = "judge and integrate borrowed cognition"
+        self._sync_execution_context(event, state)
         self.store.save_working_state(state)
         return None
 
@@ -648,6 +811,7 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         if not isinstance(raw, dict):
             state.stage = "native_deliberation"
             state.next_action = "recover missing cognitive increment"
+            self._sync_execution_context(event, state)
             self.store.save_working_state(state)
             return None
 
@@ -706,6 +870,7 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
             }
             state.data["cognition_integration"] = integration_data
             state.data["integrated_learning_domains"] = list(domains)
+            self._sync_execution_context(event, state)
             self.store.save_working_state(state)
 
         # Re-check whether the accepted increment accompanies a concrete native
@@ -720,14 +885,15 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
                 state.data.get("native_action_failure_signature") or ""
             )
             if signature != failed_signature:
-                state.data["native_action_intent"] = intent.to_dict()
-                state.stage = "native_action"
+                self._begin_native_action_cycle(event, state, intent)
                 state.next_action = f"move body after cognition: {intent.kind}"
+                self._sync_execution_context(event, state)
                 self.store.save_working_state(state)
                 return None
 
         state.stage = "complete"
         state.next_action = None
+        self._sync_execution_context(event, state)
         self.store.save_working_state(state)
         return ResidentRunResult(
             event=event,
