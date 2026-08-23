@@ -29,17 +29,17 @@ Pure UI/desktop polish is paused. M8/release remains a bounded continuity/releas
 
 The resident already owns persistent Self/life, Situation/Thought/Will, nervous memory/reconsolidation, durable events/working state, multi-pulse Investigation, native Action/Body movement, bounded external cognition and zero-model continuity.
 
-The execution spine now also has structured read-only Git sense, exact text and explicit command postcondition verification, compact durable execution context, and evidence-bound failed-action history.
+The execution spine now also has structured read-only Git sense, exact text and explicit command postcondition verification, compact durable execution context, evidence-bound failed-action history, and a first bounded restart-safe `VerifiedExperience` record grounded only in independent Body verification.
 
-The newly documented memory/learning direction is architectural, **not yet an implementation claim**. Current code has meaningful associative lived-memory foundations, but it does not yet provide a first-class procedural competence substrate that can turn repeated verified experience into locally executable mature skills.
+The memory/learning direction is no longer documentation-only at L1: the first causal verified-experience slice is implemented and CI-verified. It still does **not** provide a complete procedural competence substrate. Repeated compatible experiences are not yet aggregated into candidate tendencies, mature skills or fast paths.
 
 The immediate core gap is therefore the transition:
 
 ```text
 verified lived experience
-→ reusable resident-owned competence
-→ repeated verified practice
-→ mature procedural tendency
+→ repeated compatible evidence
+→ candidate resident-owned tendency
+→ mature procedural competence
 → familiar low-latency execution
 → prediction-error interrupt / relearning
 ```
@@ -197,6 +197,45 @@ The final implementation lives inside the existing `EmbodiedResidentRuntime`; th
 
 This closes the A → B → A blind-replay gap and one false-completion path. It does **not** yet mean ZN can always generate a useful alternative tactic after a movement is blocked.
 
+### 2.6 First independently verified experience record
+
+Final code/test state for this first L1 slice:
+
+```text
+ee287a41873eb9340406aa95a56961b42127296c  feat: add deterministic body result semantics
+1130148205471a14c964cc080ea481d6f72c3a93  feat: add bounded verified experience store
+b04a35356181abb86eb228cc7f963ebd01ca1653  feat: record independently verified resident experience
+20a3ffa9236e9de4279ef64e766d02f8cdce5988  fix: treat known swallowed failures as masked success
+474f636cd8dedeeb23c5997ad45e07a7d224136f  fix: fingerprint capability domains in learned episodes
+80292975264df35ff3a999ed32c7973cdd3514f5  test: cover private capability labels in learning
+```
+
+Real CI for final code/test SHA `80292975264df35ff3a999ed32c7973cdd3514f5`:
+
+```text
+ZN Kernel / Python      success
+Electron / TypeScript  success
+run                     32639405457
+```
+
+The active embodied verification path now creates one resident-owned `VerifiedExperience` only after an independent Body observation actually occurs. The record connects stable Situation evidence, goal/gap fingerprints, concrete action signature, privacy-safe expected-outcome features, normalized primary result features, independent verification features and a `verified` or `contradicted` verdict.
+
+Current guarantees:
+
+- exact text verification and explicit command verification can create causal experience records;
+- Body return success alone does not create a record;
+- generic command exit `0` without a postcondition does not create a record;
+- model/reported text without an independent observation cannot create a record;
+- unsupported verification contracts do not create a record;
+- contradicted postconditions create negative experience rather than being discarded;
+- verification commands with shell-masked success plus deterministic visible failure evidence cannot become positive learning;
+- normalized terminal semantics include bounded failure categories plus timeout/not-executable/killed/nonzero-exit classes;
+- raw task/gap text, commands, verification commands, paths/workdirs, output text/output fragments and caller-supplied capability labels are not persisted in the learning episode; stable fingerprints/counts/categories are retained instead;
+- records share the resident kernel SQLite lifecycle, survive restart, deduplicate deterministically and are bounded to 2048 by a retention pass that reserves contradiction evidence, then representative groups, then recency;
+- the learning store is distinct from `native_action_failure_records`; the latter remains immediate execution anti-replay state.
+
+This is the first verified causal episode substrate, not procedural competence. There is no candidate-tendency activation, replay scoring, mature skill, procedural fast path or one-shot skill creation claim yet.
+
 ## 3. Verified memory / nervous-system foundations
 
 Current code/test evidence already supports the following foundations:
@@ -219,8 +258,7 @@ Representative test coverage includes `tests/agent/kernel/test_nervous_system.py
 
 The project does **not** yet claim:
 
-- first-class episodic records that preserve a complete causal Situation → action → expected outcome → observed verification relationship;
-- candidate procedural tendency objects with explicit applicability/maturity/contradiction state;
+- aggregation/retrieval of repeated compatible `VerifiedExperience` records into candidate procedural tendencies with explicit support/contradiction/maturity/applicability state;
 - resident-owned mature skills that execute locally without external model interpretation;
 - procedural fast paths that reduce explicit Thought for familiar low-risk work;
 - prediction-error-driven inhibition/de-proceduralization of stale skills;
@@ -248,6 +286,8 @@ Those are future implementation targets defined by `ZN.md` and `docs/ZN-MEMORY-L
 - bounded failed-action ledger tied to stable Investigation evidence state;
 - A → B → A replay suppression under unchanged reality with retry eligibility after changed facts;
 - blocked post-cognition movement cannot falsely complete the task;
+- bounded restart-safe privacy-safe `VerifiedExperience` records created only from independent Body verification;
+- deterministic masked-success/failure semantics prevent visible swallowed failures from becoming positive command-verification learning;
 - bounded external cognition returning as input to ZN rather than owning the resident loop;
 - ZN-owned local process/terminal/PTTY and web search/extract paths;
 - persistent work/thread/workspace/active-run state;
@@ -255,12 +295,12 @@ Those are future implementation targets defined by `ZN.md` and `docs/ZN-MEMORY-L
 
 ### Still PARTIAL / MISSING
 
-- verified experience → reusable resident-owned competence learning bridge;
-- first-class procedural skill/tendency maturity and inhibition;
+- repeated verified experience → candidate resident-owned tendency aggregation/retrieval;
+- first-class procedural skill/tendency maturity, applicability and inhibition;
 - resident-owned derivation and maintenance of reliable high-level task postconditions;
 - multi-step execution that can choose genuinely different tactics over many actions without becoming a model-owned planner;
 - stronger alternative-action recovery after evidence blocks a movement;
-- first-class durable completed-task verification/audit evidence;
+- first-class durable completed-task verification/audit evidence beyond the current bounded first learning record;
 - safe Git mutation + diff/test/reality verification;
 - GitHub repository/PR/CI resident-owned read sense;
 - clean browser Body/Senses seam;
@@ -286,9 +326,9 @@ Status: **M2 complete for active main provider families**.
 
 ### Local Body
 
-ZN-owned filesystem/process/terminal/PTTY paths are active. Exact text and explicit command postcondition verification are CI-verified. Failed-action replay is now evidence-bound rather than controlled by one last signature.
+ZN-owned filesystem/process/terminal/PTTY paths are active. Exact text and explicit command postcondition verification are CI-verified. Failed-action replay is evidence-bound rather than controlled by one last signature, and independently verified action episodes now enter the first bounded learning store.
 
-Status: **active; practical breadth, long-horizon composition and procedural learning remain incomplete**.
+Status: **active; practical breadth, long-horizon composition and procedural competence formation remain incomplete**.
 
 ### Web/world sense
 
@@ -312,7 +352,7 @@ Independent ZN Electron main, preload, renderer/workbench and `zn://` are active
 
 Status: **COMPLETE for active packaged resident path**.
 
-The independent `runtime/python` distribution is `znagent`, installed package `zn_agent`, resident entrypoint `zn-resident`. Packaged runtime rejects inherited `hermes_cli` and can boot zero-model.
+The independent `runtime/python` distribution is `znagent`, installed package `zn_agent`, resident entrypoint `zn-resident`. Packaged runtime rejects inherited `hermes_cli` and can boot zero-model. `runtime/python/pyproject.toml` maps `zn_agent.core` directly to the owned `agent/kernel` source, so the verified-experience implementation is part of the packaged Python distribution rather than a second unsynchronized copy.
 
 ### M7 formal artifact ownership
 
@@ -398,6 +438,11 @@ changed facts can requalify a prior action
 timestamp-only observation noise does not requalify a failed movement
 accepted external cognition cannot falsely complete the same still-blocked movement
 new action cycles archive old verification without current-state pollution
+independently verified action/outcome episodes persist across restart
+Body success, naked exit 0 and model/report text alone cannot create positive learned experience
+postcondition contradiction creates negative verified-experience evidence
+verified-experience storage is bounded and excludes raw task/content/path/command/output/capability-label payloads
+shell-masked command success with visible deterministic failure evidence cannot positive-verify
 persistent nervous traces survive restart
 repeated experience strengthens one trace instead of appending endless duplicates
 co-active experience builds associative activation
@@ -413,7 +458,7 @@ queued resident work prevents false-idle runtime handoff
 idle N -> N+1 preserves living-self/work continuity
 ```
 
-No current regression yet proves procedural competence formation or learned skill fast-path behavior; those remain future tests.
+Current regressions now prove the first causal verified-experience unit. They do **not** yet prove procedural competence formation, candidate-tendency activation or learned skill fast-path behavior; those remain future tests.
 
 ## 8. Milestone snapshot
 
@@ -431,22 +476,21 @@ M9  product completeness/hardening                         LATER
 M10 repository migration / formal main promotion           LATER; main untouched
 ```
 
-Learning architecture is currently tracked separately as `docs/ZN-MEMORY-LEARNING.md` L0 defined; L1+ are not implemented yet.
+Learning architecture is tracked separately in `docs/ZN-MEMORY-LEARNING.md`: L0 is defined and the first L1 independently verified-experience slice is CI-verified; repeated aggregation/candidate tendency/procedural maturity L2+ remain unimplemented.
 
 ## 9. Immediate next development sequence
 
-1. do not begin stronger alternative-action recovery as an isolated tactic generator;
-2. implement the first **verified experience record** that connects current Situation/evidence, goal/gap, concrete action, expected outcome and independently observed verification result;
-3. keep the record bounded, restart-safe and privacy-safe rather than storing a transcript or raw command history;
-4. prove model text alone cannot create a successful learned experience;
-5. then form the smallest candidate procedural tendency from repeated compatible verified experiences—no one-shot skill creation;
-6. gate candidate activation on current reality evidence and retain contradiction/maturity state;
-7. use stronger alternative-action recovery as an early learning consumer: verified success of a genuinely different B after A fails should become reusable learning evidence;
-8. then build practical Git mutation + diff/test/reality verification and GitHub repo/PR/CI sense as a strong engineering-competence benchmark;
-9. establish browser/visual/mouse/keyboard Body/Senses before claiming learned computer-use competence;
-10. add growth benchmarks that prove familiar tasks become less model-dependent without lowering verification quality;
-11. keep remaining M8 updater/multi-OS/signing work explicit as bounded release debt and fix it when it exposes a real continuity/security/data-integrity problem.
+1. keep `VerifiedExperience` and current Body/verification reality evidence as the source of truth; do not jump directly to skill files or stronger tactic generation;
+2. build the smallest bounded retrieval/aggregation over repeated compatible verified episodes, preserving support, contradiction and representative evidence rather than transcript replay;
+3. form a **candidate procedural tendency** only from repeated compatible evidence—never one-shot skill creation;
+4. define applicability against current reality/evidence plus explicit maturity/contradiction/inhibition state before a candidate can influence action;
+5. prove contradictions weaken/inhibit the candidate and restart preserves the same learning state;
+6. use stronger alternative-action recovery as an early learning consumer: verified success of a genuinely different B after A fails should become reusable causal evidence rather than an isolated tactic rule;
+7. then build practical Git mutation + diff/test/reality verification and GitHub repo/PR/CI sense as a strong engineering-competence benchmark;
+8. establish browser/visual/mouse/keyboard Body/Senses before claiming learned computer-use competence;
+9. add growth benchmarks that prove familiar tasks become less model-dependent without lowering verification quality;
+10. keep remaining M8 updater/multi-OS/signing work explicit as bounded release debt and fix it when it exposes a real continuity/security/data-integrity problem.
 
-The architecture driver is now:
+The architecture driver remains:
 
 > **The same persistent ZN Self must be able to finish hard work, prove from current reality that it is finished, and gradually internalize repeatedly verified competence so models become advisers for novelty rather than permanent owners of ability.**
