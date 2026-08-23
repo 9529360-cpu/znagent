@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent.kernel import ExecutionPath
+from agent.kernel import ExecutionPath, NativeActionIntent, WorkingState
 from agent.kernel.provider_bridge import build_resident_runtime_from_existing_stack
 
 
@@ -76,15 +76,33 @@ class CommandPostconditionTests(unittest.TestCase):
             )
             self._advance_until_stage(resident, "native_action")
 
+            before = resident.store.get_working_state()
+            context = before.data["execution_context"]
+            self.assertEqual(context["goal"], event.task)
+            self.assertEqual(context["stage"], "native_action")
+            self.assertEqual(context["current_action"]["kind"], "command")
+            self.assertEqual(context["expected_outcome"]["kind"], "command")
+            self.assertEqual(context["verification_history"], [])
+
             self.assertIsNone(resident.live_once())
             state = resident.store.get_working_state()
             self.assertEqual(state.stage, "native_verification")
             self.assertEqual(state.data["native_verification"]["kind"], "command")
+            self.assertEqual(state.data["execution_context"]["stage"], "native_verification")
             self.assertEqual(target.read_text(encoding="utf-8"), "ready")
 
             pulse = resident.pulse()
+            situation = resident.life.snapshot().current_situation
             self.assertEqual(pulse.thought.action_kind, "verify_action")
             self.assertEqual(pulse.thought.action_target, event.event_id)
+            self.assertEqual(situation.task_goal, event.task)
+            self.assertEqual(situation.task_expected_outcome_kind, "command")
+            self.assertTrue(
+                any("my active task goal remains" in item for item in pulse.thought.known)
+            )
+            self.assertTrue(
+                any("completion criterion" in item for item in pulse.thought.known)
+            )
 
             result = resident.live_once()
             self.assertIsNotNone(result)
@@ -149,7 +167,13 @@ class CommandPostconditionTests(unittest.TestCase):
             )
             self._advance_until_stage(first, "native_action")
             self.assertIsNone(first.live_once())
-            self.assertEqual(first.store.get_working_state().stage, "native_verification")
+            first_state = first.store.get_working_state()
+            self.assertEqual(first_state.stage, "native_verification")
+            self.assertEqual(first_state.data["execution_context"]["goal"], event.task)
+            self.assertEqual(
+                first_state.data["execution_context"]["expected_outcome"]["kind"],
+                "command",
+            )
             self.assertEqual(target.read_text(encoding="utf-8"), "persisted")
             first.store.close()
 
@@ -160,6 +184,8 @@ class CommandPostconditionTests(unittest.TestCase):
             restored = second.store.get_working_state()
             self.assertEqual(restored.current_event_id, event.event_id)
             self.assertEqual(restored.stage, "native_verification")
+            self.assertEqual(restored.data["execution_context"]["goal"], event.task)
+            self.assertEqual(restored.data["execution_context"]["stage"], "native_verification")
             pulse = second.pulse()
             self.assertEqual(pulse.thought.action_kind, "verify_action")
 
@@ -225,12 +251,21 @@ class CommandPostconditionTests(unittest.TestCase):
                 "expected-success-marker",
                 verification["missing_output_contains"],
             )
+            context = state.data["execution_context"]
+            self.assertEqual(context["goal"], event.task)
+            self.assertEqual(context["stage"], "native_investigation")
+            self.assertIn("postcondition command verification failed", context["current_gap"])
+            self.assertFalse(context["latest_verification"]["verified"])
+            self.assertEqual(context["latest_verification"]["observed_exit_code"], 9)
 
             # The contradiction becomes part of the next resident Situation and
             # Thought immediately. Cognition does not spend another pulse acting
             # as though the successful primary process proved the goal.
             pulse = resident.pulse()
             situation = resident.life.snapshot().current_situation
+            self.assertEqual(situation.task_goal, event.task)
+            self.assertIn("postcondition command verification failed", situation.task_current_gap)
+            self.assertEqual(situation.task_expected_outcome_kind, "command")
             self.assertEqual(situation.last_verification_kind, "command")
             self.assertFalse(situation.last_verification_verified)
             self.assertIn(
@@ -267,6 +302,64 @@ class CommandPostconditionTests(unittest.TestCase):
                 sum(1 for item in actions if item.data.get("command") == verify),
                 1,
             )
+            resident.store.close()
+
+    def test_new_action_cycle_archives_old_verdict_without_current_pollution(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            event = resident.enqueue(
+                "pursue the same goal with a revised action",
+                payload={
+                    "expected_outcome": {
+                        "kind": "command",
+                        "command": "verify revised state",
+                    }
+                },
+            )
+            state = WorkingState(
+                current_event_id=event.event_id,
+                stage="native_deliberation",
+                data={
+                    "local_failure": "old postcondition was contradicted",
+                    "native_verification": {"kind": "command"},
+                    "native_verification_result": {
+                        "kind": "command",
+                        "verified": False,
+                        "expected_exit_code": 0,
+                        "observed_exit_code": 9,
+                    },
+                    "native_action_result": {"kind": "command", "success": True},
+                    "execution_context": {"verification_history": []},
+                },
+            )
+            intent = NativeActionIntent(
+                intent_id="act-revised",
+                event_id=event.event_id,
+                kind="command",
+                args={"command": "revised action"},
+                reason="new evidence supports a different movement",
+            )
+
+            resident._begin_native_action_cycle(event, state, intent)
+
+            self.assertEqual(state.stage, "native_action")
+            self.assertNotIn("native_verification", state.data)
+            self.assertNotIn("native_verification_result", state.data)
+            self.assertNotIn("native_action_result", state.data)
+            self.assertNotIn("local_failure", state.data)
+            context = state.data["execution_context"]
+            self.assertEqual(context["goal"], event.task)
+            self.assertIsNone(context["current_gap"])
+            self.assertIsNone(context["latest_verification"])
+            self.assertEqual(context["current_action"]["intent_id"], "act-revised")
+            self.assertEqual(len(context["verification_history"]), 1)
+            archived = context["verification_history"][0]
+            self.assertFalse(archived["verified"])
+            self.assertEqual(archived["observed_exit_code"], 9)
+            self.assertIn("old postcondition", archived["error"])
             resident.store.close()
 
 
