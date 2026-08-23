@@ -338,9 +338,9 @@ Verified installed Linux autostart: run `32593886026`.
 
 Verified source-level N → N+1 continuity: run `32596442626`.
 
-Real AppImage successor run `32645354818` completed both N and N+1 AppImage builds but remains stuck/in-progress at the installed N → N+1 updater continuity step at the latest checked state. It must not be recorded as success. This is an M8/updater-lane investigation item, separate from the core learning slice.
+Real AppImage successor run `32645354818` reached a terminal **cancelled** result for the `Real AppImage N to N+1` job. Both `Build real N AppImage` and `Build real N+1 AppImage` succeeded, while `Run real installed AppImage updater continuity smoke` was cancelled. Diagnostic capture, artifact upload and status publication succeeded. Therefore installed AppImage N → N+1 updater continuity is **not verified** and this remains an M8/updater-lane investigation item.
 
-Still separate release gates include installed application updater continuity, Windows/macOS clean-install/login continuity for the intended release matrix, and signing/notarization when operationally configured.
+Still separate release gates include successful installed application updater continuity, Windows/macOS clean-install/login continuity for the intended release matrix, and signing/notarization when operationally configured.
 
 ## 5. Milestone snapshot
 
