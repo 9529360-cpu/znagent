@@ -30,7 +30,6 @@ permissions:
 env:
   CI: 'true'
   NODE_OPTIONS: --max-old-space-size=4096
-  ZN_DESKTOP_UPDATE_CHANNEL_URL: https://127.0.0.1:9443/stable.json
   ZN_SMOKE_N_VERSION: '0.17.0'
   ZN_SMOKE_N_PLUS_1_VERSION: '0.17.1'
   ZN_SMOKE_N_RUNTIME_ID: 'version-0.17.0'
@@ -148,102 +147,11 @@ jobs:
           cp .ci/appimage-update/ZN-N.AppImage "$installed"
           chmod +x "$installed" .ci/appimage-update/ZN-N-plus-1.AppImage
 
-          UPDATE_PATH="$GITHUB_WORKSPACE/.ci/appimage-update/ZN-N-plus-1.AppImage" \
-          UPDATE_VERSION="$ZN_SMOKE_N_PLUS_1_VERSION" \
-          node - <<'NODE' >"$diagnostics/channel-server.log" 2>&1 &
-          const { execFileSync } = require('node:child_process')
-          const { createHash } = require('node:crypto')
-          const fs = require('node:fs')
-          const https = require('node:https')
-          const os = require('node:os')
-          const path = require('node:path')
-
-          const updatePath = process.env.UPDATE_PATH
-          const version = process.env.UPDATE_VERSION
-          const port = 9443
-          const tlsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-m8-fixed-channel-'))
-          const keyPath = path.join(tlsDir, 'key.pem')
-          const certPath = path.join(tlsDir, 'cert.pem')
-          execFileSync('openssl', [
-            'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
-            '-keyout', keyPath, '-out', certPath, '-days', '1',
-            '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1'
-          ], { stdio: 'ignore' })
-          const bytes = fs.readFileSync(updatePath)
-          const sha256 = createHash('sha256').update(bytes).digest('hex')
-          const base = `https://127.0.0.1:${port}`
-          const manifest = {
-            schema: 1,
-            product: 'ZN',
-            channel: 'stable',
-            version,
-            release_url: `${base}/releases/${version}`,
-            notes: {
-              new: ['M8 real AppImage updater smoke'],
-              improvements: [],
-              fixes: [],
-              impact: ['Resident identity and durable work must survive N to N+1.']
-            },
-            targets: [{
-              platform: 'linux',
-              arch: process.arch,
-              name: 'ZN-N-plus-1.AppImage',
-              url: `${base}/ZN-N-plus-1.AppImage`,
-              size: bytes.length,
-              sha256
-            }]
-          }
-          const server = https.createServer({
-            key: fs.readFileSync(keyPath),
-            cert: fs.readFileSync(certPath)
-          }, (request, response) => {
-            const pathname = new URL(request.url || '/', base).pathname
-            console.log(new Date().toISOString(), request.method, pathname)
-            if (pathname === '/stable.json') {
-              const body = Buffer.from(JSON.stringify(manifest))
-              response.writeHead(200, {
-                'content-type': 'application/json',
-                'content-length': String(body.length),
-                'cache-control': 'no-store'
-              })
-              response.end(body)
-              return
-            }
-            if (pathname === '/ZN-N-plus-1.AppImage') {
-              response.writeHead(200, {
-                'content-type': 'application/octet-stream',
-                'content-length': String(bytes.length),
-                'cache-control': 'no-store'
-              })
-              response.end(bytes)
-              return
-            }
-            response.writeHead(404)
-            response.end('not found')
-          })
-          server.listen(port, '127.0.0.1', () => {
-            console.log(`ZN M8 fixed release channel listening at ${base}/stable.json`)
-          })
-          NODE
-          channel_pid=$!
-          trap 'kill "$channel_pid" 2>/dev/null || true' EXIT
-
-          for attempt in $(seq 1 40); do
-            if curl -ksSf "$ZN_DESKTOP_UPDATE_CHANNEL_URL" >"$diagnostics/channel.json"; then
-              break
-            fi
-            if [[ "$attempt" == '40' ]]; then
-              echo "fixed update channel did not become ready"
-              cat "$diagnostics/channel-server.log" || true
-              exit 1
-            fi
-            sleep 0.25
-          done
-
-          xvfb-run -a node apps/desktop/scripts/zn-appimage-update-smoke.mjs \
-            "$installed" \
-            "$GITHUB_WORKSPACE/.ci/appimage-update/ZN-N-plus-1.AppImage" \
-            "$zn_home" 2>&1 | tee "$diagnostics/proof.txt"
+          timeout --foreground --signal=TERM --kill-after=10s 15m \
+            xvfb-run -a node apps/desktop/scripts/zn-appimage-update-smoke.mjs \
+              "$installed" \
+              "$GITHUB_WORKSPACE/.ci/appimage-update/ZN-N-plus-1.AppImage" \
+              "$zn_home" 2>&1 | tee "$diagnostics/proof.txt"
 
       - name: Capture smoke diagnostics
         if: ${{ always() }}
