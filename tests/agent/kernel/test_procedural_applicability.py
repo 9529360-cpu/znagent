@@ -283,10 +283,21 @@ class ProceduralApplicabilityTests(unittest.TestCase):
                 },
             )
 
-            self.assertIsNone(first.live_once())  # orient only
-            self.assertIsNone(first.live_once())  # inspect path only
-            investigation = first.investigator.current(event.event_id)
+            investigation = None
+            for _ in range(8):
+                result = first.live_once()
+                self.assertIsNone(result)
+                self.assertNotIn(
+                    "native_action_result",
+                    first.store.get_working_state().data,
+                )
+                investigation = first.investigator.current(event.event_id)
+                if investigation is not None and isinstance(
+                    investigation.facts.get("paths"), list
+                ):
+                    break
             self.assertIsNotNone(investigation)
+            self.assertIsInstance(investigation.facts.get("paths"), list)
             self.assertTrue(
                 any(
                     candidate.tendency_id in item
