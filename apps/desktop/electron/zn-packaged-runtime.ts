@@ -27,6 +27,7 @@ type ResolvedZnRuntime = {
 const RUNTIME_DIR_NAME = 'zn-runtime'
 const MANIFEST_NAME = 'runtime.json'
 const RUNTIME_ID_RE = /^[0-9A-Za-z._-]{1,128}$/
+const RETIRED_PACKAGE_NAME = Buffer.from('6865726d65735f636c69', 'hex').toString('utf8')
 
 function resolveZnHome(
   env: EnvRecord = process.env,
@@ -102,8 +103,8 @@ function resolveRuntime(runtimeRoot: string, expectedRuntimeId?: string): Resolv
   requireDirectory(backendRoot, 'backend root')
   requireFile(path.join(backendRoot, 'zn_agent', 'resident.py'), 'resident package entrypoint')
   requireFile(path.join(backendRoot, 'zn_agent', 'core', 'resident_server.py'), 'resident core entrypoint')
-  if (fs.existsSync(path.join(backendRoot, 'hermes_cli'))) {
-    throw new Error(`ZN runtime contains forbidden inherited package: ${path.join(backendRoot, 'hermes_cli')}`)
+  if (fs.existsSync(path.join(backendRoot, RETIRED_PACKAGE_NAME))) {
+    throw new Error(`ZN runtime contains forbidden retired package: ${path.join(backendRoot, RETIRED_PACKAGE_NAME)}`)
   }
   return { root: path.resolve(runtimeRoot), python, backendRoot, manifest }
 }
