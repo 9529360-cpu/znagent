@@ -344,16 +344,16 @@ class ProceduralInfluenceTests(unittest.TestCase):
             self.assertEqual(influence["tendency_id"], candidate.tendency_id)
             self.assertFalse(influence["revoked"])
 
-            pulse = resident.pulse()
+            self.assertIsNone(resident.live_once())
+            self.assertEqual(resident.store.get_working_state().stage, "native_verification")
+            action_thought = resident.life.snapshot().current_thought
+            self.assertIsNotNone(action_thought)
             self.assertTrue(
                 any(
                     candidate.tendency_id in item and "currently biases" in item
-                    for item in pulse.thought.known
+                    for item in action_thought.known
                 )
             )
-
-            self.assertIsNone(resident.live_once())
-            self.assertEqual(resident.store.get_working_state().stage, "native_verification")
             result = resident.live_once()
             self.assertIsNotNone(result)
             self.assertTrue(result.success)
