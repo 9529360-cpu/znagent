@@ -82,7 +82,7 @@ def canonical_kernel_unittest_identity(
 
 
 def test_source_directly_imports_target(source: str, target_module: str) -> bool:
-    """Require a static direct import edge from the mirrored test to its target."""
+    """Require a module-level direct import edge from the mirrored test to target."""
 
     module = str(target_module or "").strip()
     if not module or "." not in module:
@@ -93,7 +93,10 @@ def test_source_directly_imports_target(source: str, target_module: str) -> bool
     except (SyntaxError, ValueError, TypeError):
         return False
 
-    for node in ast.walk(tree):
+    # Only imports that are direct statements in the module body count. Imports
+    # hidden in a function, class, branch, try-block or dead code do not prove a
+    # load-time dependency and therefore cannot form execution authority.
+    for node in tree.body:
         if isinstance(node, ast.Import):
             if any(alias.name == module for alias in node.names):
                 return True
