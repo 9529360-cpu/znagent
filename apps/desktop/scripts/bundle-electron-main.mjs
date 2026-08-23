@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Build the independent ZN Electron control plane and active renderer. None of
-// these entries import the inherited Hermes main/preload or renderer root.
+// these entries import a retired product main/preload or renderer root.
 //
 // Output:
 //   dist/electron-main.mjs       ZN-owned Electron main process
