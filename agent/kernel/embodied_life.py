@@ -358,6 +358,13 @@ class EmbodiedLifeCore(ZNLifeCore):
             )
             if intent_known not in thought.known:
                 thought.known = (*thought.known, intent_known)
+        elif stage == "native_verification":
+            action = "verify the previous body movement against current reality"
+            kind = "verify_action"
+            reason = (
+                "the body movement returned successfully, but the requested state must "
+                "be independently observed before task completion"
+            )
         elif stage == "external_cognition":
             action = "consult an external cognitive resource for the isolated gap"
             kind = "external_cognition"
