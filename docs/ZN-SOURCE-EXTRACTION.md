@@ -276,7 +276,7 @@ E7  build independent ZN Electron main/preload/UI foundation  DONE
 E8  remove active old-product control-plane imports           DONE for active resident + desktop
 E9  package independently bootable ZN product                 ARTIFACT SHAPE VERIFIED on Linux x86_64 / Windows x64 / macOS arm64
 E10 verify clean-machine install/upgrade/multi-OS release      IN PROGRESS; Linux deb fresh-install + installed autostart continuity verified
-E11 mine inherited learning/procedural mechanisms             SOURCE AUDIT COMPLETE; bounded extraction candidates identified
+E11 mine inherited learning/procedural mechanisms             SOURCE AUDIT COMPLETE; H-L1 first extraction now active in ZN
 ```
 
 ### 8.1 Hermes learning/procedural source quarry — 2026-08-23
@@ -298,9 +298,9 @@ tools/terminal_hints.py
 agent/tool_result_classification.py
 ```
 
-Classification: **EXTRACT NEAR-TERM / HIGH VALUE**.
+Classification: **FIRST SLICE EXTRACTED INTO ZN / CI VERIFIED**.
 
-Useful mature mechanisms:
+Useful mature mechanisms identified by the quarry:
 
 - bounded deterministic output-pattern classification;
 - production-mined recovery hints for common Git/Python/environment failures;
@@ -313,16 +313,44 @@ Useful mature mechanisms:
 
 `terminal_hints.py` documents that its common patterns came from a roughly 250k terminal-result production window and cover about 14k failed calls whose retry chains averaged about 1.4 extra tool turns. These patterns are therefore valuable pre-existing engineering experience for a young ZN.
 
-ZN adaptation:
+The first extraction is now ZN-owned at:
+
+```text
+agent/kernel/result_semantics.py
+agent/kernel/verified_experience.py
+agent/kernel/embodied_resident.py
+tests/agent/kernel/test_verified_experience.py
+```
+
+Extracted/adapted behavior is deliberately narrower than the quarry: deterministic failure categories, exit/timing semantics, observation-only versus potentially side-effecting result features, and conservative masked-success detection for passthrough pipelines / fallback swallowing. Raw commands, output, paths and hint text are not persisted as learned episodes. `agent/kernel` does not import Hermes `tools.*` or restore its tool loop/controller.
+
+The active flow is now:
 
 ```text
 raw Body result
-→ ZN-owned deterministic failure/result features
-→ Investigation / VerifiedExperience evidence
-→ future procedural recovery support
+→ ZN-owned deterministic result features
+→ independent Body verification
+→ bounded privacy-safe VerifiedExperience
+→ future procedural recovery / tendency support
 ```
 
-A hint remains a hypothesis/prior. Current Body/Senses reality remains authoritative.
+A successful Body return, naked exit `0`, model text, unsupported check, or missing independent observation cannot create a positive `VerifiedExperience`. A verification command whose shell status is masked by visible deterministic failure evidence is treated as contradiction, not success.
+
+Real final code/test evidence:
+
+```text
+ee287a41873eb9340406aa95a56961b42127296c  feat: add deterministic body result semantics
+1130148205471a14c964cc080ea481d6f72c3a93  feat: add bounded verified experience store
+b04a35356181abb86eb228cc7f963ebd01ca1653  feat: record independently verified resident experience
+20a3ffa9236e9de4279ef64e766d02f8cdce5988  fix: treat known swallowed failures as masked success
+474f636cd8dedeeb23c5997ad45e07a7d224136f  fix: fingerprint capability domains in learned episodes
+80292975264df35ff3a999ed32c7973cdd3514f5  test: cover private capability labels in learning
+ZN Kernel / Python      success
+Electron / TypeScript  success
+run                     32639405457
+```
+
+Not extracted: Hermes terminal recovery prose/hints as authority, the Hermes agent loop, tool registry/controller, memory manager or SKILL.md ownership model. A hint remains only a possible hypothesis/prior; current Body/Senses reality remains authoritative.
 
 #### H-L2 — no-progress/repeated-action guard primitives
 
@@ -535,15 +563,15 @@ These tests are useful source material when ZN implements its own learning/capab
 
 ## 9. Immediate extraction/code target
 
-The development mainline is now L1/P0 resident-owned learning. M8 release continuity remains a bounded parallel lane rather than the next learning implementation.
+The development mainline remains resident-owned learning. The first L1 `VerifiedExperience` slice and H-L1 deterministic result extraction are now real CI-verified code. M8 release continuity remains a bounded parallel lane rather than the next learning implementation.
 
 Priority order:
 
-1. keep current ZN Body/verification path as the source of truth;
-2. implement the bounded, restart-safe, privacy-safe `VerifiedExperience` unit linking Situation/evidence → action → expected outcome → independently observed result;
-3. source-extract/adapt only the deterministic Hermes outcome/failure semantics that improve that record, beginning with `terminal_hints.py` masked-success/failure features and the narrow effect/result classification primitives;
-4. do **not** import Hermes `MemoryManager`, Curator AIAgent review loop, SKILL.md system or tool loop controller as ZN ownership layers;
-5. after real `VerifiedExperience` data exists, adapt usage/lifecycle ideas from `skill_usage.py` / deterministic Curator transitions for candidate procedural tendency maturity, staleness/inhibition and retirement;
+1. keep current ZN Body/verification path and `VerifiedExperience` records as the source of truth;
+2. aggregate only repeated compatible verified episodes into the smallest candidate procedural tendency/retrieval state—never one-shot skill creation;
+3. define applicability against current reality evidence plus explicit support/contradiction/maturity state before any candidate can influence action;
+4. source-extract/adapt H-L3 deterministic lifecycle/provenance ideas only where they strengthen that resident-owned tendency state; do **not** import Curator AIAgent review, Hermes MemoryManager, SKILL.md ownership or tool-loop controllers;
+5. use stronger alternative-action recovery as an early consumer: if A is contradicted and a genuinely different B later succeeds under independent verification, that sequence may become reusable causal evidence;
 6. when executable learned capabilities become promotable, adapt the ledger/content-addressed rollback patterns around ZN's existing `PromotedCapabilityLoader` and self-maintenance approval rules;
 7. keep browser extraction later, behind a clean ZN-owned body/sense seam;
 8. continue M8 N → N+1 busy/idle validation only as the bounded release lane, without displacing the learning mainline.
