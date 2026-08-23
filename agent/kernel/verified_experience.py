@@ -51,11 +51,13 @@ def _safe_expected_outcome(raw: Mapping[str, Any]) -> dict[str, Any]:
     summary: dict[str, Any] = {"kind": kind}
     if kind == "text_equals":
         path = str(raw.get("path") or "").strip()
+        variant = str(raw.get("action_variant") or "").strip().lower()
         summary["target_fingerprint"] = _fingerprint(path) if path else None
         summary["expected_chars"] = max(
             0,
             int(raw.get("expected_chars") or len(str(raw.get("expected_text") or ""))),
         )
+        summary["action_variant"] = variant if variant in {"append", "replace"} else None
         return summary
 
     if kind == "command":
@@ -268,6 +270,7 @@ def build_verified_experience(
         {
             "domains": safe_domains,
             "action_kind": action_kind_safe,
+            "action_variant": expected.get("action_variant"),
             "expected_kind": expected.get("kind"),
             "expected_exit_code": expected.get("expected_exit_code"),
             "effect_class": result_features.get("effect_class"),
