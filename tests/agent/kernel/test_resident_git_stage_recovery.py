@@ -108,16 +108,20 @@ class ResidentGitStageRecoveryTests(unittest.TestCase):
                 if item.event_id == event.event_id and item.kind == "command"
             ]
             self.assertEqual(len(commands), 2)
-            self.assertFalse(commands[0].success)
-            self.assertTrue(
-                str(commands[0].data.get("command") or "").startswith("git add -- ")
+            porcelain = next(
+                item
+                for item in commands
+                if str(item.data.get("command") or "").startswith("git add -- ")
             )
-            self.assertTrue(commands[1].success)
-            self.assertTrue(
-                str(commands[1].data.get("command") or "").startswith(
+            plumbing = next(
+                item
+                for item in commands
+                if str(item.data.get("command") or "").startswith(
                     "git update-index --add -- "
                 )
             )
+            self.assertFalse(porcelain.success)
+            self.assertTrue(plumbing.success)
 
             experiences = resident.verified_experiences.for_event(event.event_id)
             self.assertEqual(len(experiences), 1)
