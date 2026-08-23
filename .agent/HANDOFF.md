@@ -15,16 +15,16 @@ durable ZN Self
 
 > **ZN uses models. Models do not own ZN.**
 
-当前阶段已完成一个可复用、只读的 structured Git diff sense，并把它接入当前 Investigation。它是 broader engineering competence 的现实感觉基础，不是新的 mutation skill，也没有扩大 generic command authority。
+当前 engineering lane 已完成 shared structured Git diff reality source：`NativeBody.git_diff` 同时服务 resident Investigation 和 Workbench diff artifact presentation。Workbench 不再自己运行第二套 `git diff` shell command，也不再自己解析 porcelain status path。
 
-下一真实方向是：先消除 Workbench 现有 diff presentation 与 resident structured diff sense 的双轨语义，然后基于共享 current-reality diff 建立一个 baseline-aware bounded mutation → diff/test/current-reality verification loop。不能为了演示再堆专用 if / planner / raw command replay。
+下一真实目标是基于同一 current-reality source 定义 baseline-aware bounded mutation → diff/test/current-reality verifier。不要增加 generic planner、raw command replay 或“一看到工程任务就跑额外步骤”的 broad lexical overfit。
 
 ## 当前分支 / HEAD / CI
 
 - 固定开发分支：`dev/zn-agent`
-- 本阶段开始时 dev HEAD：`1189ae3554c9066a5f8d5bb8520abe22f46ae434`
-- 最终 code/test SHA：`c29cae2c9c10e94ec7dc75bccd16df40b7db7a17`
-- 权威 code/test CI：run `32657175399`
+- 本阶段开始时 exact dev HEAD：`1012ca2cb67439b84a9355591cf46c2e28fbadc1`
+- 最终 code/test SHA：`a5b628bb72b2b683882ed7f35afbe0112320782e`
+- 权威 code/test CI：run `32658783466`
   - `ZN Kernel / Python = success`
   - `Electron / TypeScript = success`
   - isolated `runtime/python` install = success
@@ -34,15 +34,15 @@ durable ZN Self
   - Electron locked install/typecheck/bundle/ownership/runtime/update/handoff/release verifiers = success
   - `Container / Runtime Smoke = skipped`（normal push contract）
   - `Publish commit statuses = success`
-- Python job：`97237648830`
-- Electron job：`97237648940`
-- implementation-status sync：`c7611950a5936648d7bd897a8c81aadae5247283` (`[skip ci]`)
+- Python job：`97241688503`
+- Electron job：`97241688384`
+- implementation-status sync：`93a5f6a2af508446fbadac1102a01fc7e2337472` (`[skip ci]`)
 - 本 HANDOFF 也是 docs-only `[skip ci]`；提交后必须重新读取 `dev/zn-agent` exact HEAD。
-- `main` 必须保持 inherited baseline `61dd880aa4bbbdb359ca544b752afc2c22845ce9`；M10 未满足。
+- `main` 必须保持 `61dd880aa4bbbdb359ca544b752afc2c22845ce9`；M10 未满足，禁止修改。
 
-## 本阶段开始前恢复的真实现场
+## 本阶段恢复的真实现场
 
-已按接手规则重新读取/检查：
+开始工作前已重新读取/检查：
 
 1. `ZN.md`
 2. `AGENTS.md`
@@ -50,185 +50,131 @@ durable ZN Self
 4. `docs/ZN-SOURCE-EXTRACTION.md`
 5. `docs/ZN-SELF-MAINTENANCE.md`
 6. `.agent/HANDOFF.md`
-7. `dev/zn-agent` exact HEAD
-8. main relation / open PR / recent commits / CI
-9. Body → Investigation → action/postcondition → work artifact 的真实调用链
+7. exact `dev/zn-agent` HEAD
+8. main relation / open PR / recent commits / prior CI
+9. `ResidentWorkLedger → Body → artifact → RPC → Workbench renderer` 的真实 diff 调用链
 
 恢复时事实：
 
-- dev HEAD = `1189ae3554c9066a5f8d5bb8520abe22f46ae434`
-- previous authoritative code/test SHA = `22e1abde5cd5e1bc228d19a7d09eff6d2f9c8cc8`
-- previous run = `32654830857`, Python/Electron 双绿
+- dev HEAD = `1012ca2cb67439b84a9355591cf46c2e28fbadc1`
+- previous authoritative code/test = `c29cae2c9c10e94ec7dc75bccd16df40b7db7a17`
+- previous run = `32657175399`, Python/Electron 双绿
 - main = `61dd880aa4bbbdb359ca544b752afc2c22845ce9`
-- dev ahead main = 588，behind = 0
+- dev ahead main = 594，behind = 0
 - open PR = 0
 - M8 real AppImage N→N+1 run `32645354818` installed updater smoke 仍 cancelled；不得报 verified
 
-## 本阶段真实调用链发现
+## 本阶段真实调用链与问题
 
-已有 `ResidentWorkLedger` 在 work 完成后会用 generic Body `command` 运行：
-
-```text
-git diff --no-ext-diff --no-color -- .
-git diff --cached --no-ext-diff --no-color -- .
-```
-
-产生 UI diff artifact。
-
-但此前 resident Investigation 只有 structured `git_state`，没有 structured diff current facts。因此：
+真实 Workbench diff path 原来是：
 
 ```text
-Workbench 能展示 diff
-≠ resident 能把 diff 当作自己的 current reality
+ResidentWorkLedger._finalize_run
+→ _collect_artifacts
+→ _collect_workspace_git_context
+→ Body git_state
+→ local porcelain status parsing for changed files
+→ Body command("git diff ...")
+→ Body command("git diff --cached ...")
+→ WorkArtifact(kind=diff)
+→ work_get RPC
+→ Workbench renderer displays artifact.content
 ```
 
-为避免过拟合，本阶段没有直接新增第三套专用 engineering skill / `repo_text_change` family，而是先建立所有未来 mutation verification / self-maintenance / workbench 都能复用的 read-only diff sense。
+Renderer 本身没有 Git semantics。重复语义实际在 `ResidentWorkLedger`：
+
+- 已有 `git_state.changed_paths`，但 WorkLedger 仍解析 `git_state.changes` porcelain lines；
+- 已有 structured `git_diff` sense，但 WorkLedger 仍运行两条 presentation-only generic shell commands。
+
+这会形成 resident reality 与 UI presentation 两套 Git diff truth source。
 
 ## 本阶段实现
 
-### 1. NativeBody structured `git_diff` sense
+### 1. WorkLedger 复用 structured Git state/diff
 
-文件：`agent/kernel/body.py`
+文件：`agent/kernel/work.py`
 
-commit：
-
-```text
-f7d730908e7fafcf7d58c00386a1f7dfd57559f3  feat: add structured git diff body sense
-```
-
-`NativeBody` 新增 exact `git_diff` action kind。它不是 caller-provided shell command；内部只运行固定 Git argv：
+当前实现：
 
 ```text
-git -C <workspace> rev-parse --show-toplevel
-git -C <workspace> diff --no-ext-diff --no-color -- .
-git -C <workspace> diff --cached --no-ext-diff --no-color -- .
-git -C <workspace> diff --name-only -z ...
-git -C <workspace> diff --cached --name-only -z ...
-git -C <workspace> ls-files --others --exclude-standard -z
-git -C <workspace> rev-parse --verify HEAD
+body.git_state(workspace)
+→ consume git_state.changed_paths for changed-file artifacts
+→ body.git_diff(workspace)
+→ consume structured worktree/staged patches
+→ persist same WorkArtifact(kind=diff)
 ```
 
-返回 bounded structured evidence：
+删除：
 
-- root / HEAD identity；
-- dirty / changed paths；
-- worktree paths + bounded patch + patch hash；
-- staged paths + bounded patch + patch hash；
-- untracked paths；
-- bounded observed diff-state fingerprint；
-- truncation metadata。
+- local `_path_from_porcelain(...)` parser；
+- `git diff --no-ext-diff --no-color -- .` presentation command；
+- `git diff --cached --no-ext-diff --no-color -- .` presentation command。
 
-边界：
+Diff artifact 保留既有 UI/RPC contract：
 
-- read-only；
-- 不扩大 mutation authority；
-- 不允许 caller 注入 arbitrary Git argv；
-- untracked file content 不会自动进入 patch，只记录 path；
-- 当前还未把它定义成 postcondition verifier。
+- `kind = diff`
+- `name = Current workspace diff`
+- `scope = current_workspace_after_event`
+- bounded textual preview / truncation
 
-### 2. Investigation 消费 structured diff
+同时新增 provenance：
 
-文件：`agent/kernel/embodied_investigation.py`
+- `source = git_diff`
+- `source_action_id`
+- `state_sha256`
+- `head`
 
-commits：
+这只是 presentation truth-source 去重，不扩大任何 mutation authority，也没有新增 Runtime subclass。
+
+### 2. Regression
+
+文件：`tests/agent/kernel/test_work_ledger.py`
+
+真实 temp Git repo 同时制造：
 
 ```text
-f772da038c7fe3ed5d22f3aa6f41482745b52e9e  feat: let investigation observe structured git diffs
-c29cae2c9c10e94ec7dc75bccd16df40b7db7a17  fix: keep git diff probing narrowly evidence driven
+HEAD:       notes.txt = before
+index:      notes.txt = staged
+worktree:   notes.txt = after
 ```
 
-新增 `git_diff` observation probe，但没有新增 Runtime subclass。
+测试证明：
 
-当前 gate：
+- file artifact 仍显示 current `after`；
+- diff artifact 同时包含 staged 和 worktree patch；
+- artifact 的 `state_sha256` 与 source `git_diff` Body action 完全一致；
+- source action kind 是 `git_diff`；
+- event action history 中不存在旧两条 presentation generic command；
+- RPC / persistent artifact 行为保持。
+
+## Diff hygiene
+
+首个原子 code+test commit：
 
 ```text
-current git probe already performed
-+ current structured git reality says dirty
-+ git_diff not already performed
-+ current event explicitly carries diff/mutation semantics
-→ observe git_diff
+2fdd471d6b819160a7fdd8af31881af8a8600d8a  refactor: reuse structured git diff in work artifacts
 ```
 
-显式语义来自：
-
-- task 的明确 diff/patch/change/modify/edit/write/create/replace/append/fix 等词；或
-- structured `content` / `text` / `expected_outcome` payload。
-
-Generic `debug` / `test` / `build` / `code` 不再单独触发 diff sensing。
-
-`git_diff` probe 只写 Investigation current facts/evidence；不选择、不形成、不执行 mutation。
-
-### 3. Tests
-
-文件：`tests/agent/kernel/test_native_body.py`
-
-commit：
+commit review 发现手工 blob 组装带入一处无关 `EventStatus` formatting drift；随后 cleanup：
 
 ```text
-bbffd538d0e3499b35eedd46c03686050285c9af  test: cover structured git diff sensing
+584cb810597e1197cbd36f9ed7ea4fb702ef2d08  chore: keep work ledger diff focused
 ```
 
-真实 temp Git repo coverage：
-
-1. structured Body diff：
-   - unstaged tracked edit；
-   - staged new file；
-   - untracked file；
-   - root/HEAD/path sets/patches/hash/truncation；
-   - untracked content 不被隐式读入；
-   - Body event 只有 `git_diff`，没有 generic `command`。
-
-2. zero-model active Investigation integration：
-   - current dirty repo；
-   - explicit diff task；
-   - 先 `git_state` 后 `git_diff`；
-   - Investigation durable facts 有 structured diff；
-   - event 内没有 generic `command`；
-   - 不因“看到了 diff”伪造 task completion。
-
-## 本阶段真实 CI failure / 修复
-
-### 中间 concurrency cancellation（不是代码 failure）
-
-SHA `f772da038c7fe3ed5d22f3aa6f41482745b52e9e`，run `32656887879`：
-
-- 后续 push 触发 workflow concurrency cancel；
-- cancel 前 runtime install / zero-model boot / compile 已成功；
-- kernel tests 和 Electron typecheck 在运行中被取消；
-- 不能报 green，也不属于实现失败。
-
-### 真实 Python failure
-
-SHA：
+第二次 review 又发现 `WorkArtifact` constructor 的 `path/content` 顺序被无关调换；再次恢复：
 
 ```text
-bbffd538d0e3499b35eedd46c03686050285c9af
+a5b628bb72b2b683882ed7f35afbe0112320782e  chore: restore work artifact field order
 ```
 
-run：
+最终 cumulative diff 相对阶段起点只包含两个目标文件：
 
 ```text
-32656924494
+agent/kernel/work.py                         23 additions / 31 deletions
+tests/agent/kernel/test_work_ledger.py      38 additions / 0 deletions
 ```
 
-结果：
-
-- Electron = success；
-- Python = failure；
-- 唯一失败：`test_one_live_cycle_advances_only_one_investigation_round`。
-
-根因：初版 `_git_diff_relevant()` 把 broad `debug/test/build/code` 也当作应该观察 diff。CI checkout 的 ambient repo reality 是 dirty，因此原本 generic project investigation 被多加一轮 `git_diff`，破坏既有 multi-pulse probe invariant。
-
-修复原则：
-
-- 没改旧测试；
-- 没降低旧 invariant；
-- 没把额外 probe 合理化；
-- 收窄新能力的 current-evidence trigger。
-
-`c29cae2...` 删除 broad trigger 后，最终完整 CI 双绿。
-
-这次 failure 是当前“避免过拟合”原则的真实工程证据：新 sense 必须只在当前语义需要时出现，不能因为“看起来是工程任务”就在所有工程问题上强行插入。
+两个 cleanup push 造成前一候选 workflow concurrency cancellation；例如 `584cb810...` 对应 run `32658723920` 的 Python/Electron job 在后续 push 后被 cancelled。cancel 前 runtime install、zero-model boot、compile 等已成功。这不是最终代码 failure；最终权威 SHA/run 为 `a5b628bb...` / `32658783466`，完整双绿。
 
 ## 本阶段文档
 
@@ -241,30 +187,21 @@ docs/ZN-IMPLEMENTATION-STATUS.md
 
 没有修改：
 
-- `ZN.md`：产品/架构方向没有变化；本阶段实现的是已批准的 Body/Senses + reality verification 方向；
+- `ZN.md`：架构方向没有改变；
 - `docs/ZN-SOURCE-EXTRACTION.md`：无 Hermes extraction state 变化；
 - `docs/ZN-SELF-MAINTENANCE.md`：无 self-maintenance architecture 变化；
 - `main`。
 
-## 本阶段关键 commits
-
-```text
-f7d730908e7fafcf7d58c00386a1f7dfd57559f3  feat: add structured git diff body sense
-f772da038c7fe3ed5d22f3aa6f41482745b52e9e  feat: let investigation observe structured git diffs
-bbffd538d0e3499b35eedd46c03686050285c9af  test: cover structured git diff sensing
-c29cae2c9c10e94ec7dc75bccd16df40b7db7a17  fix: keep git diff probing narrowly evidence driven
-c7611950a5936648d7bd897a8c81aadae5247283  docs: record structured git diff sensing [skip ci]
-```
-
 ## 当前仍未完成 / 不得误报
 
-- Workbench diff artifact 仍使用既有 generic Body `command` presentation path，尚未迁到 shared `git_diff` sense；
-- baseline-aware pre/post diff verifier 尚未实现；
-- bounded mutation → diff → test → current-reality verification loop 尚未完成；
+- baseline-aware pre-mutation / post-mutation diff verifier；
+- bounded mutation → diff → targeted test → current-reality verification loop；
+- 区分 pre-existing unrelated dirty changes 与本次 mutation 引入变化的通用 contract；
+- diff truncation / rename / binary / untracked-content 等 verifier semantics；
 - broader resident-owned tactic formation beyond exact-text + single-path Git staging；
-- arbitrary command equivalence / arbitrary side-effect tactic synthesis 仍应禁止；
+- arbitrary command equivalence / arbitrary side-effect tactic synthesis（继续禁止）；
 - general reliable high-level postcondition derivation；
-- multi-step long-horizon execution with genuinely different tactics without a model-owned planner；
+- multi-step long-horizon execution without model-owned planner；
 - Git commit/push/reset/checkout/branch mutation authority；
 - GitHub repo/PR/CI resident-owned sense；
 - mature resident-owned engineering competence / general procedural fast path；
@@ -283,12 +220,11 @@ Core lane 当前没有已知 CI blocker。
 
 主要风险：
 
-1. broad lexical trigger 会把一个有用 sense 变成对“工程任务”过拟合的额外流程；当前 narrow trigger 必须保持，未来优先用 typed/current facts 替代继续扩词表；
-2. `git_diff` 当前是 read-only sense，不是 task verifier；不能因为 patch 看起来合理就叫任务完成；
-3. 在把 diff 用作 verifier 前，需要定义 baseline identity、target scope、pre-existing unrelated changes、truncation、untracked-content、rename/binary/textconv 等明确语义；
-4. 当前 `state_sha256` 是 observed diff-state fingerprint，untracked file content 不参与，只包含 untracked path；不能把它误解成完整 workspace content hash；
-5. Workbench 仍有旧 diff presentation command 路径，下一步应合并事实源而不是长期保留两套 diff semantics；
-6. generic command positive procedural authority继续禁止。
+1. `git_diff.state_sha256` 是 observed diff-state fingerprint，不是整个 workspace 内容 hash；untracked content 不在 hash 中，不能误作完整 workspace baseline；
+2. Workbench 现在只是共享事实消费者，不能变成 verifier 或 control plane；
+3. 下一步如果只按“diff 变了”判成功，会把用户原有 dirty changes 和本次 mutation 混在一起；必须先建立 baseline identity/scope；
+4. broad lexical engineering triggers 会过拟合；优先 typed current-event contracts + current facts；
+5. generic command positive procedural authority继续禁止。
 
 M8 debt 未变化：run `32645354818` real installed AppImage updater continuity smoke cancelled；N/N+1 build success 不等于 updater continuity verified。
 
@@ -296,13 +232,13 @@ M8 debt 未变化：run `32645354818` real installed AppImage updater continuity
 
 Fresh restore 后：
 
-1. 重新读取必读文档和真实 dev HEAD/CI/diff/PR；
-2. 先检查 `ResidentWorkLedger` diff artifact consumer，尽量迁移到 `NativeBody.git_diff`，让 resident cognition 和 UI presentation 共用一个 Git diff reality source；
-3. 迁移时保持现有 artifact 行为和 bounded presentation，不让 renderer/work ledger 成为第二套 Git semantics；
-4. 在 shared sense 稳定后设计 baseline-aware bounded engineering mutation verifier：必须区分 mutation 前已有变化与本次动作引入的变化；
-5. 再把一个已有低风险、明确 authority 的 mutation 接到 diff/test/current-reality loop，而不是增加 arbitrary shell planner；
-6. authority 扩大前先补 stale/missing baseline、unrelated dirty changes、cross-target、truncation、identity ambiguity、unsafe side effect、contradiction negatives；
-7. generic command positive authority继续禁止，除非新的 semantic family 自己证明 current authority + independent verifier；
+1. 重新读取必读文档和 exact dev HEAD/CI/diff/PR；
+2. 追 `write_text` / `git_diff` / postcondition / command-test verification 的真实 active chain；
+3. 定义一个 bounded baseline contract：repo root + HEAD + scoped changed paths + diff fingerprint/patch identity，明确 pre-existing dirty state；
+4. 定义 mutation 后的 scoped delta proof，不能把 unrelated dirty changes算成本次成功；
+5. 在现有低风险、明确 authority 的 mutation 上接一个 targeted test/current-reality verifier，不扩大 arbitrary shell authority；
+6. negative cases 至少覆盖 stale/missing baseline、unrelated dirty changes、cross-target、truncation、identity ambiguity、contradiction；
+7. 只有 independent verifier 完整成立后才允许 positive `VerifiedExperience` / learning；
 8. M8 updater continuity 保持独立 release debt。
 
 判断标准：
