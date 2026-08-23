@@ -2,10 +2,10 @@ from __future__ import annotations
 
 """Privacy-safe deterministic features for ZN Body action results.
 
-The failure-pattern shapes are source-adapted from the inherited Hermes
-``tools/terminal_hints.py`` quarry documented in ZN-SOURCE-EXTRACTION.md.
-This module deliberately returns bounded categorical evidence only; it never
-persists the command, output, matched token, path, or recovery-hint text.
+The failure-pattern shapes are source-adapted from a retired terminal-hint
+quarry documented in ZN-SOURCE-EXTRACTION.md. This module deliberately returns
+bounded categorical evidence only; it never persists the command, output,
+matched token, path, or recovery-hint text.
 """
 
 import re
