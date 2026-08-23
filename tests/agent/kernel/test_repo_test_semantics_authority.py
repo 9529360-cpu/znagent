@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import unittest
 
-from agent.kernel.repo_test_semantics import test_source_directly_imports_target
+from agent.kernel.repo_test_semantics import (
+    ci_source_runs_kernel_unittest_suite,
+    test_source_directly_imports_target,
+)
 
 
 class RepoTestSemanticsAuthorityTests(unittest.TestCase):
@@ -15,6 +18,22 @@ class RepoTestSemanticsAuthorityTests(unittest.TestCase):
         ):
             with self.subTest(source=source):
                 self.assertFalse(test_source_directly_imports_target(source, module))
+
+    def test_ci_command_text_without_run_step_cannot_form_execution_authority(self):
+        command = (
+            "uv run python -m unittest discover -s tests/agent/kernel "
+            "-p 'test_*.py' -v"
+        )
+        self.assertFalse(
+            ci_source_runs_kernel_unittest_suite(
+                "name: misleading\ndescription: |\n  " + command + "\n"
+            )
+        )
+        self.assertTrue(
+            ci_source_runs_kernel_unittest_suite(
+                "name: real\nsteps:\n  - run: " + command + "\n"
+            )
+        )
 
 
 if __name__ == "__main__":
