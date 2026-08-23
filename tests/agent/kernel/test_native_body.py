@@ -154,6 +154,73 @@ class NativeBodyTests(unittest.TestCase):
             self.assertEqual(observed.data["conflicted_paths"], [])
             resident.store.close()
 
+    def test_git_diff_is_structured_read_only_body_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "repo"
+            root.mkdir()
+
+            def git(*args: str) -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    ["git", *args],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+
+            git("init")
+            git("config", "user.name", "ZN Test")
+            git("config", "user.email", "zn-test@example.invalid")
+            tracked = root / "tracked.txt"
+            tracked.write_text("before\n", encoding="utf-8")
+            git("add", "tracked.txt")
+            git("commit", "-m", "baseline")
+            head = git("rev-parse", "HEAD").stdout.strip()
+
+            tracked.write_text("after\n", encoding="utf-8")
+            staged = root / "staged.txt"
+            staged.write_text("staged-body-evidence\n", encoding="utf-8")
+            git("add", "staged.txt")
+            untracked = root / "untracked.txt"
+            untracked.write_text("not-in-patch\n", encoding="utf-8")
+
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=base / "resident" / "kernel.db",
+            )
+            observed = resident.body.act(
+                "git_diff",
+                event_id="evt-git-diff",
+                path=str(root),
+            )
+
+            self.assertTrue(observed.success)
+            self.assertEqual(Path(observed.data["root"]), root)
+            self.assertEqual(observed.data["head"], head)
+            self.assertTrue(observed.data["dirty"])
+            self.assertEqual(
+                set(observed.data["changed_paths"]),
+                {"tracked.txt", "staged.txt", "untracked.txt"},
+            )
+            self.assertEqual(observed.data["worktree"]["paths"], ["tracked.txt"])
+            self.assertIn("-before", observed.data["worktree"]["patch"])
+            self.assertIn("+after", observed.data["worktree"]["patch"])
+            self.assertEqual(observed.data["staged"]["paths"], ["staged.txt"])
+            self.assertIn("+staged-body-evidence", observed.data["staged"]["patch"])
+            self.assertEqual(observed.data["untracked_paths"], ["untracked.txt"])
+            self.assertNotIn("not-in-patch", observed.output)
+            self.assertEqual(len(observed.data["worktree"]["patch_sha256"]), 64)
+            self.assertEqual(len(observed.data["staged"]["patch_sha256"]), 64)
+            self.assertEqual(len(observed.data["state_sha256"]), 64)
+            actions = [
+                item
+                for item in resident.body.recent_actions(10)
+                if item.event_id == "evt-git-diff"
+            ]
+            self.assertEqual([item.kind for item in actions], ["git_diff"])
+            resident.store.close()
+
     def test_resident_reports_changed_paths_from_its_git_body(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -190,6 +257,62 @@ class NativeBodyTests(unittest.TestCase):
             self.assertIn("tracked.txt", result.response)
             latest = resident.investigator.recent(1)[0]
             self.assertIn("tracked.txt", latest.facts["git"]["changed_paths"])
+            resident.store.close()
+
+    def test_engineering_investigation_observes_git_state_then_diff_without_shell(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def git(*args: str) -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    ["git", *args],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+
+            git("init")
+            git("config", "user.name", "ZN Test")
+            git("config", "user.email", "zn-test@example.invalid")
+            tracked = root / "tracked.txt"
+            tracked.write_text("before\n", encoding="utf-8")
+            git("add", "tracked.txt")
+            git("commit", "-m", "baseline")
+            tracked.write_text("after\n", encoding="utf-8")
+
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=root / ".zn-test" / "kernel.db",
+            )
+            result = resident.submit(
+                "inspect the current workspace diff before changing code",
+                payload={
+                    "workspace_path": str(root),
+                    "required_capabilities": ["it/git"],
+                    "model_policy": "never",
+                },
+            )
+
+            self.assertFalse(result.success)
+            self.assertEqual(result.model_invocations, 0)
+            latest = resident.investigator.current(result.event.event_id)
+            self.assertIsNotNone(latest)
+            assert latest is not None
+            self.assertIn("git", latest.facts)
+            self.assertIn("git_diff", latest.facts)
+            self.assertTrue(latest.facts["git_diff"]["available"])
+            self.assertIn("tracked.txt", latest.facts["git_diff"]["changed_paths"])
+            event_actions = [
+                item
+                for item in reversed(resident.body.recent_actions(50))
+                if item.event_id == result.event.event_id
+            ]
+            kinds = [item.kind for item in event_actions]
+            self.assertIn("git_state", kinds)
+            self.assertIn("git_diff", kinds)
+            self.assertLess(kinds.index("git_state"), kinds.index("git_diff"))
+            self.assertFalse(any(item.kind == "command" for item in event_actions))
             resident.store.close()
 
     def test_multi_pulse_investigation_uses_body_for_evidence_and_next_action(self):
