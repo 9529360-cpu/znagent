@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .git_semantics import current_git_path_staged_goal
 from .models import AgentEvent, utc_now
 from .self_model import TaskReadiness
 
@@ -777,6 +778,13 @@ class NativeInvestigator:
             else []
         )
         processes = facts.get("processes") if isinstance(facts.get("processes"), list) else []
+
+        git_stage_goal = current_git_path_staged_goal(event, facts=facts)
+        if git_stage_goal is not None and bool(git_stage_goal.get("satisfied")):
+            return (
+                f"{git_stage_goal['relative_path']}: requested Git staging state "
+                "is already satisfied"
+            )
 
         if any(phrase in text for phrase in (
             "current working directory", "what is my cwd", "what's my cwd", "当前工作目录", "当前目录"
