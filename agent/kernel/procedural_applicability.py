@@ -210,8 +210,12 @@ def evaluate_candidate_applicability(
     else:
         matched.append("action_kind")
 
-    if candidate.action_kind == "write_text":
-        current_variant = _current_action_variant(current_kind, args)
+    current_variant = _current_action_variant(current_kind, args)
+    # Freshly aggregated write candidates always carry this marker. Historical
+    # retained episodes with no variant aggregate to variants=0 and therefore
+    # fail closed. Hand-built compatibility fixtures predating this metadata do
+    # not acquire authority from the marker and keep their existing unit scope.
+    if candidate.action_kind == "write_text" and "action_variant_variants" in applicability:
         stable_variant = str(applicability.get("stable_action_variant") or "").strip()
         if not stable_variant:
             untested.append("action_variant")
@@ -219,8 +223,6 @@ def evaluate_candidate_applicability(
             mismatched.append("action_variant")
         else:
             matched.append("action_variant")
-    else:
-        current_variant = None
 
     candidate_domains = set(candidate.domain_fingerprints)
     current_domain_fingerprints = {
