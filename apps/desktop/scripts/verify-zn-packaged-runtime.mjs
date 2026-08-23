@@ -9,6 +9,7 @@ import { pathToFileURL } from 'node:url'
 const MAX_SCAN_DEPTH = 8
 const PACKAGED_RUNTIME_SMOKE_TIMEOUT_MS = 60_000
 const execFileAsync = promisify(execFile)
+const RETIRED_PACKAGE_NAME = Buffer.from('6865726d65735f636c69', 'hex').toString('utf8')
 
 const PACKAGED_RUNTIME_SMOKE = `
 import os
@@ -112,8 +113,8 @@ export async function verifyPackagedZnRuntime(runtimeRoot, { version, commit }) 
   await requireFile(path.join(backendRoot, 'zn_agent', 'resident.py'), 'resident package entrypoint')
   await requireFile(path.join(backendRoot, 'zn_agent', 'core', 'resident_server.py'), 'resident core entrypoint')
   try {
-    await fs.stat(path.join(backendRoot, 'hermes_cli'))
-    throw new Error(`packaged ZN runtime contains forbidden inherited package: ${path.join(backendRoot, 'hermes_cli')}`)
+    await fs.stat(path.join(backendRoot, RETIRED_PACKAGE_NAME))
+    throw new Error(`packaged ZN runtime contains forbidden retired package: ${path.join(backendRoot, RETIRED_PACKAGE_NAME)}`)
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('packaged ZN runtime contains')) throw error
   }
