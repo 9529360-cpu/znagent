@@ -311,7 +311,13 @@ class NativeActionTests(unittest.TestCase):
             state = resident.store.get_working_state()
             self.assertEqual(state.stage, "native_investigation")
             self.assertIn("postcondition verification failed", state.data["local_failure"])
-            self.assertTrue(state.data.get("native_action_failure_signature"))
+            failures = state.data["native_action_failure_records"]
+            self.assertEqual(len(failures), 1)
+            self.assertEqual(failures[0]["source"], "verification")
+            self.assertEqual(
+                state.data["execution_context"]["failed_actions"]["current_evidence_count"],
+                1,
+            )
             self.assertFalse(state.data["native_verification_result"]["verified"])
 
             terminal = self._run_to_terminal(resident)
