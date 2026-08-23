@@ -107,7 +107,7 @@ def resolve_openai_compatible_route(
     *,
     environ: Mapping[str, str] | None = None,
 ) -> ModelRoute:
-    """Resolve one OpenAI-compatible route without any Hermes product imports.
+    """Resolve one OpenAI-compatible route without retired product imports.
 
     Explicit ZN route metadata wins.  Standard provider credential environment
     variables remain supported because they are provider conventions, not
