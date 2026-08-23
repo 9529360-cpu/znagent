@@ -200,27 +200,69 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
         return False
 
     def _verification_contract(self, event, intent):
-        """Accept the exact-text goal contract used by resident choice formation."""
+        """Verify current exact-text goals, including resident-derived append goals."""
 
         explicit = event.payload.get("expected_outcome")
-        if isinstance(explicit, dict) and str(
-            explicit.get("kind") or ""
-        ).strip().lower() == "text_equals":
-            goal = current_text_equals_postcondition(event)
-            if goal is None:
-                return {
-                    "kind": "unsupported",
-                    "requested_kind": "text_equals",
-                    "error": "text_equals postcondition requires path and expected_text",
+        if explicit is not None:
+            if isinstance(explicit, dict) and str(
+                explicit.get("kind") or ""
+            ).strip().lower() == "text_equals":
+                goal = current_text_equals_postcondition(event)
+                if goal is None:
+                    return {
+                        "kind": "unsupported",
+                        "requested_kind": "text_equals",
+                        "error": "text_equals postcondition requires path and expected_text",
+                        "intent_id": intent.intent_id,
+                        "action_signature": self._intent_signature(intent),
+                    }
+                contract = {
+                    **goal,
                     "intent_id": intent.intent_id,
                     "action_signature": self._intent_signature(intent),
                 }
-            return {
-                **goal,
-                "intent_id": intent.intent_id,
-                "action_signature": self._intent_signature(intent),
-            }
-        return super()._verification_contract(event, intent)
+            else:
+                contract = super()._verification_contract(event, intent)
+        else:
+            raw_goal = intent.expected_outcome
+            if isinstance(raw_goal, dict) and str(
+                raw_goal.get("kind") or ""
+            ).strip().lower() == "text_equals":
+                path = str(raw_goal.get("path") or "").strip()
+                intent_path = str(intent.args.get("path") or "").strip()
+                if (
+                    intent.kind != "write_text"
+                    or not path
+                    or path != intent_path
+                    or "expected_text" not in raw_goal
+                ):
+                    return {
+                        "kind": "unsupported",
+                        "requested_kind": "text_equals",
+                        "error": "resident text postcondition must match the current write target",
+                        "intent_id": intent.intent_id,
+                        "action_signature": self._intent_signature(intent),
+                    }
+                contract = {
+                    "kind": "text_equals",
+                    "path": path,
+                    "expected_text": str(raw_goal.get("expected_text") or ""),
+                    "intent_id": intent.intent_id,
+                    "action_signature": self._intent_signature(intent),
+                }
+            else:
+                contract = super()._verification_contract(event, intent)
+
+        if (
+            isinstance(contract, dict)
+            and str(contract.get("kind") or "").strip().lower() == "text_equals"
+            and intent.kind == "write_text"
+        ):
+            contract = dict(contract)
+            contract["action_variant"] = (
+                "append" if bool(intent.args.get("append", False)) else "replace"
+            )
+        return contract
 
     def _native_action_step(
         self,
