@@ -4,57 +4,36 @@
 
 ## 当前目标
 
+当前阶段已经完成 active repository 的物理 source evacuation。主目标从“继续迁移旧树”切回：
+
 ```text
-durable ZN Self
-+ mature Agent-level complex-task execution depth
-+ reality-based verification
-+ resident-owned learning / procedural competence
+保持 ZN-only ownership
+→ 恢复 resident-owned engineering competence 主线
+→ 关闭 M8 N→N+1 / intended-platform release continuity
+→ 逐步推进 SM1+ self-maintenance
+→ 只有在 fresh M10 review 通过且用户明确授权后才晋升 main
 ```
 
 核心原则：
 
 > **ZN uses models. Models do not own ZN.**
 
-桌面 UI 当前由独立协作者推进；本维护 lane 只推进 ZN core，不把 UI 变化混进 core authority / verification 工作。
-
-当前 core engineering lane 已完成第一条 **resident-owned targeted-test identity formation**：对 ZN 自己的 top-level `agent/kernel/<module>.py` tracked exact replacement，resident 可以只依赖当前仓库证据形成唯一 mirrored Python unittest identity，而不是要求 caller/model/memory 提供 test path 或 shell command。
-
-这仍不是通用测试发现器、任意 command verifier、通用 mutation engine 或 model-owned planner。
-
-## 当前分支 / HEAD / CI
+## 当前分支 / 权威基线
 
 - 固定开发分支：`dev/zn-agent`
-- 本阶段恢复时 exact dev HEAD：`ccd1b05f021f32bc479ad22b81fb5a5eca25b185`
-- 本阶段权威 code/test SHA：`20e7431e74f2c87f631564d7d8f1119057474dfc`
-- 权威 code/test CI：run `32663996928`
-  - `ZN Kernel / Python = success`
-  - `Electron / TypeScript = success`
-  - `Container / Runtime Smoke = skipped`（normal push contract）
-  - `Publish commit statuses = success`
-- Python job：`97254463582`
-  - locked repository deps = success
-  - isolated `runtime/python` install = success
-  - zero-model isolated runtime boot = success
-  - kernel compile = success
-  - full kernel unittest discovery = success
-- Electron job：`97254463704`
-  - locked install = success
-  - typecheck = success
-  - bundle = success
-  - ownership/runtime/update/handoff/release verifier suites = success
-- 本阶段 first failing code/test run：SHA `f13707c70fe0f1e5f8792985d457293a476e2a61`, run `32663836403`
-  - Electron success
-  - Python failure：3 failures + 1 error，全部来自新 recovery/authority test fixtures 使用 `- run:` inline YAML，而 production proof deliberately 只承认当前真实 `zn-ci.yml` 的独立 `run:` executable step；实现正例、旧 explicit targeted-test suite、repo-delta suite、isolated runtime boot/compile 均已通过。
-  - 修复方式是把 fixtures 对齐当前真实 CI shape，没有放宽 runtime authority parser。
-- implementation-status sync commit：`01bae1cb4987ddb1d9addf691de831e905195093` (`[skip ci]`)
-- 写入本最终 HANDOFF 前 exact dev HEAD：`01bae1cb4987ddb1d9addf691de831e905195093`；本 HANDOFF 本身是 docs-only `[skip ci]`，提交后必须重新读取 branch exact HEAD。
-- `main` = `61dd880aa4bbbdb359ca544b752afc2c22845ce9`，未修改；M10 未满足。
-- 写入本 HANDOFF 前 dev vs main = ahead 629 / behind 0。
-- 写入本 HANDOFF 前 open PR = 0。
+- 大规模删除前最后迁移修复：`624c3843dfc956e3753a3883c9cdc5208e6a46ea`
+- verified bulk evacuation commit：`6d5f78d22883857fcc99aff5cfd4ba1b9a2d3e6b`
+- one-shot verification run：`32669071891`
+- steady-state CI cleanup：`5e032e8b2241abf58aba9c03f0041eb4a13c6be9`
+- 当前文档/架构对账基线（写入本 HANDOFF 前）：`8589fdb8a9718b7c77d750ad7063b42b90c9286a`
+- 本 HANDOFF 提交后 branch HEAD 会再前进一个提交；接手者必须以 `git rev-parse origin/dev/zn-agent` / GitHub branch HEAD 为当前 exact HEAD，不要把上面的 authored-against SHA 当成自引用 HEAD。
+- `main` 仍未修改；M10 尚未完成 fresh promotion review。
 
-## 本阶段恢复的真实现场
+## 本阶段已完成
 
-开始修改前重新读取/检查：
+### 1. 真实恢复与调用链审计
+
+开始清理前重新读取并核对：
 
 1. `ZN.md`
 2. `AGENTS.md`
@@ -62,195 +41,237 @@ durable ZN Self
 4. `docs/ZN-SOURCE-EXTRACTION.md`
 5. `docs/ZN-SELF-MAINTENANCE.md`
 6. `.agent/HANDOFF.md`
-7. exact `dev/zn-agent` HEAD
-8. main relation / open PR / previous CI / recent commits
-9. `Investigation -> resident action formation -> procedural resident -> native_action -> independent verification -> VerifiedExperience` 调用链
-10. `NativeBody.git_diff` / `read_text` / command execution / restart semantics / packaged runtime mapping
+7. `dev/zn-agent` exact HEAD / main relation / PR / CI / recent commits
+8. Python runtime、desktop builder、test、Docker 和 release 的真实 active call chain
 
-恢复时事实：
+事实显示已有 `.agent/purge_hermes_source.py` 和 draft PR #5 one-shot verifier，但旧 HANDOFF/状态文档落后于真实代码。
 
-- dev HEAD = `ccd1b05f021f32bc479ad22b81fb5a5eca25b185`
-- previous authoritative code/test = `4a7e7311ecc1feaff97ea6b6bbe31ab94a9ab666`
-- previous run = `32662600128`, Python/Electron 双绿
-- main = `61dd880aa4bbbdb359ca544b752afc2c22845ce9`
-- dev ahead main = 612，behind = 0
-- open PR = 0
-- M8 installed AppImage N -> N+1 continuity remained unverified from cancelled run `32645354818`
+### 2. 修复 one-shot 删除验证器
 
-## 本阶段核心设计
+首轮 one-shot 在物理删树后已经证明 Python 382 tests 通过，但桌面测试仍要求已经应被删除的 duplicated `package.json.build` 和旧 packaging hook chain。
 
-### Resident-owned test identity authority
-
-自动 identity 只在下面这个窄合同尝试形成：
+修复提交：
 
 ```text
-current tracked exact replacement target = agent/kernel/<module>.py
-+ canonical mirror = tests/agent/kernel/test_<module>.py
-+ current test file is a regular non-symlink tracked clean file on same root/HEAD
-+ test source has a module-level direct AST import edge to agent.kernel.<module>
-+ test source exposes >=1 top-level unittest.TestCase with test_* method
-+ current .github/workflows/zn-ci.yml is a regular non-symlink tracked clean file on same root/HEAD
-+ current CI text contains the exact kernel unittest suite in an executable one-line run: step
--> resident may form python_unittest identity
+dec9ee08f552ce48eb98d7bb3db17915c9e08a50
+fix: verify ZN-only desktop after Hermes purge
 ```
 
-关键边界：
+处理原则：不恢复旧包装链，而是让删后测试验证唯一 `electron-builder.zn.yml`，并让 desktop `builder` 显式使用该配置。
 
-- 只承认 `agent/kernel/<module>.py` -> `tests/agent/kernel/test_<module>.py` 这一条 current ZN kernel mirror convention；
-- nested/function/class/branch/try/dead-code import 不形成 target relation；
-- 注释/字符串里的 module 名不形成 relation；
-- 仅有 import 但没有 discoverable unittest case 不形成 execution authority，避免 `0 tests / exit 0` 假证明；
-- CI 中仅有说明文字长得像 command 不形成 authority；必须是当前真实 executable `run:` field；
-- initial evidence 缺失/不干净/不匹配时，不猜另一个测试、不调用模型、不执行 command，只保留原有 tracked repo-delta verifier；
-- explicit typed `targeted_test` contract 继续优先走旧的严格验证路径，不被自动 discovery 改写。
+### 3. 保持 final commit guard 严格
 
-### Durable/restart semantics
+第二轮删后树已经全部功能绿，但提交守卫错误地禁止合法 workflow 删除。
 
-一旦 resident-formed identity 在 movement 前进入 `native_repo_text_baseline.targeted_test`，它就变成该 intent 的 required verifier：
-
-- restart 后不能因为 event 原本没有 `targeted_test` 字段而静默降级回 repo-delta-only；
-- verification 前重新证明 test + CI root/HEAD/path/tracked/clean/source semantics；
-- test/CI evidence 在 movement 后漂移会 block execution 并返回 Investigation；
-- test command 仍由已有 targeted-test verifier canonical render；caller/model/memory 没有 raw command authority；
-- 已有 durable `native_targeted_test_execution=status=started` anti-replay 规则继续生效：interruption 后拒绝盲目再次执行可能有副作用的 test。
-
-## 本阶段实现文件
+修复：
 
 ```text
-agent/kernel/repo_test_semantics.py
-agent/kernel/repo_test_resident.py
-agent/kernel/provider_bridge.py
-tests/agent/kernel/test_repo_auto_targeted_test_verification.py
-tests/agent/kernel/test_repo_auto_targeted_test_recovery.py
-tests/agent/kernel/test_repo_auto_targeted_test_discovery.py
-tests/agent/kernel/test_repo_test_semantics_authority.py
+c09fc406c8d57fc8e956632fd3237d5c69d054e0
+fix: allow verified purge deletions to commit
 ```
 
-核心行为：
+守卫只允许 workflow 删除，仍拒绝新增/修改 workflow 和生成物进入 purge commit；同时清掉临时 `.npmrc`。
 
-- `repo_test_semantics.py` 只做纯语义证明，不读文件、不执行命令；
-- `RepositoryVerifyingResidentRuntime` 在现有 `ProcedurallyInfluencedResidentRuntime` 之上只增加 bounded repository verifier identity formation；
-- `provider_bridge.build_resident_runtime()` 构造该 core resident，仍保留完整 world-aware resident inheritance chain；
-- packaged `runtime/python` 仍通过既有 package mapping 使用 `agent/kernel`，CI 已证明 isolated zero-model boot/compile/test 无回归。
-
-## Regression coverage
-
-已覆盖：
-
-- canonical top-level kernel target -> mirrored test identity；
-- passing resident-formed test -> test command actually executes, current-world rechecks complete, zero model calls；
-- failing resident-formed test -> Investigation + contradicted learning；
-- missing mirrored test -> no guessed command，repo-delta verifier仍可完成；
-- indirect/wrong target relation -> no execution authority；
-- dead/nested import -> no relation；
-- direct import but zero discoverable unittest cases -> no execution authority；
-- changed CI contract -> no initial authority；
-- misleading CI prose containing command text -> no authority；
-- dirty test / dirty CI -> no initial authority；
-- persisted resident-formed identity survives restart and remains required；
-- test/CI evidence changed after movement -> no test execution + Investigation；
-- existing explicit typed targeted-test verification suite remains green；
-- existing exact-replace scoped repo-delta suite remains green。
-
-## 真实 CI
-
-最终 code/test SHA：
+第三轮发现验证安装生成 `runtime/python/build/**`，守卫正确拒绝。没有放宽守卫，而是删除 Python build/egg-info 验证副产物：
 
 ```text
-20e7431e74f2c87f631564d7d8f1119057474dfc
+624c3843dfc956e3753a3883c9cdc5208e6a46ea
+fix: clean Python build artifacts before purge commit
 ```
 
-run：
+### 4. 大规模删除真正落盘
+
+用户已明确授权大规模删除。
+
+最终 one-shot run：
 
 ```text
-32663996928
+32669071891
 ```
 
-结果：
+`One-shot final Hermes source evacuation = success`，包含：
+
+```text
+apply ZN-only allowlist                 success
+fresh Node lock/install                 success
+isolated ZN Python install              success
+zero-model resident boot                success
+full tests/zn_agent/core                382 passed
+desktop typecheck/bundle                success
+desktop vitest                          37 passed
+retained release/runtime Node tests     8 passed
+ZN-only Docker build                    success
+Docker zero-model resident boot         success
+final cleaned-tree commit/push          success
+```
+
+生成的正式删除提交：
+
+```text
+6d5f78d22883857fcc99aff5cfd4ba1b9a2d3e6b
+refactor: evacuate inherited Hermes source from ZN
+```
+
+GitHub PR diff 显示该提交阶段将 changed-files 扩展到约 10k paths、删除约 2.99M lines；这是实际物理删树，不是 import shim。
+
+### 5. 删后真实树审计
+
+删后根目录只剩 ZN 所需高层结构：
+
+```text
+.agent/
+.github/
+apps/
+docs/
+runtime/
+tests/
+AGENTS.md
+Dockerfile
+LICENSE
+README.md
+ZN.md
+package.json
+package-lock.json
+.gitignore
+```
+
+旧 CLI / gateway / providers / plugins / tools / web / TUI / shared web workspace / root old Python distribution 等不再存在于 active dev tree。
+
+物理 core/test 路径现在是：
+
+```text
+runtime/python/zn_agent/core/
+tests/zn_agent/core/
+```
+
+迁移脚本已在 verified commit 中自行删除。
+
+### 6. 退役 one-shot CI 写权限
+
+成功删树后，临时 PR-only one-shot job 不应留在 steady-state CI，否则会继续依赖已删除脚本。
+
+提交：
+
+```text
+5e032e8b2241abf58aba9c03f0041eb4a13c6be9
+ci: retire completed source evacuation job
+```
+
+同时将 `zn-ci.yml` 的 `contents` 权限从 `write` 收回为 `read`；正常 steady-state CI 不再拥有仓库内容写权限。
+
+### 7. MD/架构清理
+
+已按删后事实清理：
+
+- `ZN.md`：从 migration/evacuation contract 改为 steady-state ZN-only product contract；
+- `AGENTS.md`：不再把旧产品树描述成长期开发/reference branch 架构；
+- `docs/ZN-SOURCE-EXTRACTION.md`：从 in-tree extraction plan 改为 closed source-adoption boundary ledger；
+- `docs/ZN-IMPLEMENTATION-STATUS.md`：移除过时 `agent/kernel` 等事实，记录物理 `zn_agent/core` 和真实删树 CI；
+- `docs/ZN-MAINTAINER-PROMPT.md`：改成 ZN-only 接手规则；
+- `docs/ZN-NEXT-PHASE.md`：明确 repository-boundary work 已结束，主线回到 competence/M8/SM；
+- `docs/ZN-SELF-MAINTENANCE.md`：按当前 ZN-only repository boundary 重写；
+- 删除纯 migration-history 文档 `docs/ZN-BLUEPRINT-BASELINE-2026-08-23.md`；Git history 已保留其历史内容。
+
+保留：
+
+- `docs/ZN-MEMORY-LEARNING.md`
+- `docs/ZN-LEARNING-SOURCE-RESEARCH.md`
+
+原因：这两份描述 ZN 的长期学习架构/外部研究，不是 active-tree 旧产品依赖说明。
+
+## 当前 CI / 验证事实
+
+大规模删除本身的权威验证：run `32669071891`，one-shot 全绿并完成 commit/push。
+
+该 run 中普通 job 已观察到：
 
 ```text
 ZN Kernel / Python     success
 Electron / TypeScript success
-Container smoke       skipped on normal push
-Publish statuses      success
 ```
 
-这是真实 push CI。当前环境没有 authenticated local checkout，因此本阶段不把本地测试写成通过；权威验证来自实际 GitHub Actions。
+外层 `Container / Runtime Smoke` 在 one-shot 已完成时仍可能处于独立运行中；删树正确性不依赖它，因为 one-shot 内部已经在删后树完成同等 Docker build + zero-model boot。
 
-## 当前仍未完成 / 不得误报
+文档/steady-state CI cleanup 后必须读取最新 branch push CI；不要把本 HANDOFF 之前的 run 当成后续文档提交的最终 CI。
 
-- 自动 identity 只完成 ZN top-level kernel mirrored `unittest` 第一条约定，不是 general test discovery；
-- 没有证明一个 mirrored test 对 target 的完整语义覆盖；当前只证明 direct module-level import + discoverable TestCase + current CI suite ownership；
-- 非 Python unittest framework 尚无 resident-owned verifier identity contract；
-- build/typecheck/lint verifier identity 尚未形成；
-- append/untracked/staged/conflicted/rename/binary mutation stronger baseline/delta/test proof 尚未定义；
-- general `mutation -> diff -> targeted test -> current reality` engineering loop 仍 partial；
-- arbitrary command equivalence / arbitrary side-effect tactic synthesis 继续禁止；
-- Git commit/push/reset/checkout/branch mutation authority；
-- GitHub repo/PR/CI resident-owned sense；
-- broader resident-owned tactic formation与成熟 engineering procedural fast path；
-- browser Body/Senses、learned computer-use、growth benchmarks；
-- M8 installed AppImage N -> N+1 updater continuity；
-- Windows/macOS clean-install/login continuity；
-- signing/notarization；
-- SM1+ self-maintenance。
+## 当前未完成
 
-## 风险 / 阻塞
+不要误报以下事项为 complete：
 
-Core lane 当前无已知 CI blocker。
+- M8 installed N → N+1 application/runtime/resident continuity；
+- intended Windows/macOS clean-install/login continuity（若仍是正式 release target）；
+- real signing/notarization；
+- real-version rollback proof；
+- general browser/computer-use Body/Senses；
+- general resident-owned engineering verifier selection；
+- mature broad procedural fast path / growth benchmarks；
+- SM1+ autonomous self-maintenance；
+- M10 promotion review / main promotion。
 
-主要风险：
+## 已知风险
 
-1. mirrored file naming 是当前 ZN repo convention，不应未经新的 current-reality proof 扩展到任意仓库；
-2. `direct import + discoverable unittest` 仍不是 semantic coverage proof；下一阶段如果扩大 authority，必须有更强 repo-owned mapping/config/evidence，而不是猜；
-3. test 可能有副作用，restart 继续使用 fail-closed no-replay，不宣称 idempotent；
-4. 不能把 CI command recognition 扩成任意 YAML/shell parser 来方便自动执行；
-5. model output、procedural memory、task prose、Body success、exit 0 单独都不是 authority/proof；
-6. UI lane 与 core lane 分离，避免把 UI 协作者的改动当成 core competence evidence；
-7. M8 release debt 继续独立。
+1. one-shot `npm install` 报告过 2 个 high-severity advisories；必须调查真实 dependency tree，不能直接 `npm audit fix --force`。
+2. `main` 仍是 M10 前旧 branch state；不要为了“看起来干净”提前修改。
+3. package/runtime ownership tests 中可以保留用于防回归的 forbidden-content 字符串；不要把“仓库文本完全没有某个历史词”误当成比实际 dependency/path isolation 更重要的安全目标。
+4. resident engineering verifier authority 仍然窄；不要因为现在物理路径已迁移，就扩大到任意 test/command guess。
 
 ## 相关文件
 
 ```text
-agent/kernel/repo_test_semantics.py
-agent/kernel/repo_test_resident.py
-agent/kernel/procedural_resident.py
-agent/kernel/provider_bridge.py
-agent/kernel/body.py
-agent/kernel/verified_experience.py
+ZN.md
+AGENTS.md
+Dockerfile
+package.json
+package-lock.json
+runtime/python/pyproject.toml
+runtime/python/zn_agent/core/
+tests/zn_agent/core/
+apps/desktop/
 .github/workflows/zn-ci.yml
-tests/agent/kernel/test_repo_auto_targeted_test_verification.py
-tests/agent/kernel/test_repo_auto_targeted_test_recovery.py
-tests/agent/kernel/test_repo_auto_targeted_test_discovery.py
-tests/agent/kernel/test_repo_test_semantics_authority.py
-tests/agent/kernel/test_repo_targeted_test_verification.py
+.github/workflows/zn-release.yml
+.github/workflows/zn-linux-appimage-update-smoke.yml
 docs/ZN-IMPLEMENTATION-STATUS.md
+docs/ZN-SOURCE-EXTRACTION.md
+docs/ZN-SELF-MAINTENANCE.md
+docs/ZN-NEXT-PHASE.md
 .agent/HANDOFF.md
 ```
 
-本阶段没有修改：
+## Task Queue
 
-```text
-ZN.md
-docs/ZN-SOURCE-EXTRACTION.md
-docs/ZN-SELF-MAINTENANCE.md
-main
-```
+### P0 — finish post-evacuation audit
 
-原因：没有改变 ZN 产品/主体架构、Hermes extraction 状态或 self-maintenance architecture；只是实现既定 core direction 的下一条 bounded current-world verifier formation。
+Status: **IN PROGRESS**
+
+- verify latest steady-state push CI after docs/CI cleanup;
+- close/retire temporary draft PR #5 without merging;
+- re-scan retained docs/tree for stale physical paths/reference-control-plane requirements;
+- reconcile any remaining stale doc facts.
+
+### P1 — investigate Node advisories
+
+Status: **PENDING**
+
+Trace the two high-severity advisories to direct/transitive packages and decide whether safe dependency updates can remove them without breaking Electron packaging. Do not force-upgrade blindly.
+
+### P2 — resume resident-owned engineering competence
+
+Status: **PENDING after P0**
+
+Start from physical `runtime/python/zn_agent/core` and `tests/zn_agent/core`. Preserve all existing current-reality authority/verification/restart gates.
+
+### P3 — M8 continuity
+
+Status: **PENDING**
+
+Complete installed N→N+1, intended-platform release continuity, rollback and signing/notarization evidence.
+
+### P4 — M10
+
+Status: **BLOCKED on fresh evidence review**
+
+Only after current runtime/desktop/release/CI/provenance/M8 risk review and explicit user authorization may `dev/zn-agent` be deliberately promoted to `main`.
 
 ## 下一真实目标
 
-Fresh restore 后：
-
-1. 重新读取必读文档、exact dev HEAD、diff/PR/CI；
-2. 保持当前 tracked exact-replace + explicit/auto Python unittest 的所有 gates 不变；
-3. 调查下一条 **repo-owned structured verifier mapping**：优先寻找当前仓库明确配置/manifest/CI ownership 能证明的 verifier relation，而不是继续靠命名 convention 扩张；
-4. 如果存在唯一且当前可证明的 mapping，先做 ambiguity/stale config/cross-target/symlink/dirty evidence/restart negatives，再给 execution authority；
-5. 如果当前仓库没有足够结构证据，就转向另一条能被 current reality 严格证明的 engineering verifier consumer，不强造自动选择；
-6. 不做 arbitrary command equivalence engine；
-7. UI 与 M8 release lane 保持独立。
-
-判断标准：
-
-> **ZN 当前自己的 Senses / Investigation 必须先证明“为什么这个 verifier 属于这个变化”，然后才允许执行；模型会猜、文件名像、命令返回 0 都不够。**
+Finish P0 first: read latest branch HEAD + CI, retire PR #5 without merge, and confirm the retained active tree/docs no longer depend on historical product paths. Then investigate the npm advisories before returning to resident competence.
