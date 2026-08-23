@@ -4,7 +4,7 @@ from __future__ import annotations
 
 Source-extracted from the mature POSIX ptyprocess and Windows pywinpty bridges.
 The old dashboard/WebSocket ownership is intentionally absent: this is a small
-computer-body primitive used by ``agent.kernel.terminal``.
+computer-body primitive used by ``zn_agent.core.terminal``.
 """
 
 import errno
