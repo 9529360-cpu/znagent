@@ -157,56 +157,46 @@ class EmbodiedInvestigator(NativeInvestigator):
         return result
 
     def _surface_procedural_applicability(self, event, readiness, result) -> None:
-        """Compare L2 candidates with current facts without granting action authority."""
-        working = self.store.get_working_state()
-        if working.current_event_id != event.event_id:
+        """Record a bounded read-only reality check beside Investigation evidence."""
+        if result.performed_probe is None:
             return
-
-        evaluations: list[dict[str, Any]] = []
         intent = derive_native_action_intent(event, facts=result.state.facts)
-        if intent is not None:
-            expected = current_expected_outcome(event, intent)
-            candidates = self.resident.verified_experiences.candidate_tendencies(limit=16)
-            relevant = [
-                item for item in candidates if item.action_kind == intent.kind
-            ][:8]
-            for candidate in relevant:
-                evaluation = evaluate_candidate_applicability(
-                    candidate,
-                    current_domains=readiness.domains,
-                    action_kind=intent.kind,
-                    action_args=intent.args,
-                    expected_outcome=expected,
-                    facts=result.state.facts,
-                )
-                evaluations.append(evaluation.to_dict())
-
-        working.data["procedural_applicability"] = evaluations[-8:]
-        self.store.save_working_state(working)
-
-        if not evaluations:
+        if intent is None:
             return
+
+        expected = current_expected_outcome(event, intent)
+        candidates = self.resident.verified_experiences.candidate_tendencies(limit=16)
+        relevant = [
+            item for item in candidates if item.action_kind == intent.kind
+        ][:8]
+        if not relevant:
+            return
+
         evidence = list(result.state.evidence)
-        for item in evaluations[-4:]:
-            tendency_id = str(item.get("tendency_id") or "unknown")
-            status = str(item.get("status") or "untested")
-            reality_fields = item.get("reality_matched_fields")
-            mismatch_fields = item.get("mismatched_fields")
-            if status == "supported":
-                fields = ",".join(str(value) for value in reality_fields or ()) or "reality"
+        for candidate in relevant[-4:]:
+            evaluation = evaluate_candidate_applicability(
+                candidate,
+                current_domains=readiness.domains,
+                action_kind=intent.kind,
+                action_args=intent.args,
+                expected_outcome=expected,
+                facts=result.state.facts,
+            )
+            if evaluation.status == "supported":
+                fields = ",".join(evaluation.reality_matched_fields) or "reality"
                 note = (
-                    f"procedural candidate {tendency_id} is supported by current "
+                    f"procedural candidate {evaluation.tendency_id} is supported by current "
                     f"independent evidence ({fields}); it remains observational"
                 )
-            elif status == "mismatch":
-                fields = ",".join(str(value) for value in mismatch_fields or ()) or "context"
+            elif evaluation.status == "mismatch":
+                fields = ",".join(evaluation.mismatched_fields) or "context"
                 note = (
-                    f"procedural candidate {tendency_id} mismatches current evidence "
+                    f"procedural candidate {evaluation.tendency_id} mismatches current evidence "
                     f"({fields}) and must not qualify"
                 )
             else:
                 note = (
-                    f"procedural candidate {tendency_id} remains untested by current "
+                    f"procedural candidate {evaluation.tendency_id} remains untested by current "
                     "independent evidence and must not qualify"
                 )
             self._append_unique(evidence, note)
