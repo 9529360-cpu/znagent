@@ -46,6 +46,24 @@ async function waitFor(label, probe, timeoutMs = 60_000, intervalMs = 250) {
   throw new Error(`timed out waiting for ${label}${detail}`)
 }
 
+function activeHandleNames() {
+  return process._getActiveHandles?.()
+    .filter(handle => handle !== process.stdin && handle !== process.stdout && handle !== process.stderr)
+    .map(handle => handle?.constructor?.name || typeof handle) || []
+}
+
+async function assertProcessHandlesClose(timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs
+  let handles = activeHandleNames()
+  while (handles.length > 0 && Date.now() < deadline) {
+    await sleep(100)
+    handles = activeHandleNames()
+  }
+  if (handles.length > 0) {
+    throw new Error(`smoke cleanup leaked active handles: ${JSON.stringify(handles)}`)
+  }
+}
+
 async function sha256(filePath) {
   const hash = createHash('sha256')
   const input = fs.createReadStream(filePath)
@@ -246,19 +264,14 @@ async function waitForChildExit(child, timeoutMs) {
 }
 
 async function stopChildProcess(child, label) {
-  if (!child) return
-  if (!childHasExited(child)) {
-    try { child.kill('SIGTERM') } catch { void 0 }
-    if (!(await waitForChildExit(child, 3_000))) {
-      console.error(`[zn-appimage-smoke] ${label} ignored SIGTERM; sending SIGKILL`)
-      try { child.kill('SIGKILL') } catch { void 0 }
-      if (!(await waitForChildExit(child, 2_000))) {
-        console.error(`[zn-appimage-smoke] ${label} still did not report exit after SIGKILL`)
-      }
-    }
+  if (!child || childHasExited(child)) return
+  try { child.kill('SIGTERM') } catch { void 0 }
+  if (await waitForChildExit(child, 3_000)) return
+  console.error(`[zn-appimage-smoke] ${label} ignored SIGTERM; sending SIGKILL`)
+  try { child.kill('SIGKILL') } catch { void 0 }
+  if (!(await waitForChildExit(child, 2_000))) {
+    throw new Error(`${label} did not report exit after SIGKILL`)
   }
-  child.stdout?.destroy()
-  child.stderr?.destroy()
 }
 
 async function connectDesktopCdp() {
@@ -389,10 +402,8 @@ try {
     '--no-sandbox'
   ], {
     env: launchEnv,
-    stdio: ['ignore', 'pipe', 'pipe']
+    stdio: ['ignore', 'inherit', 'inherit']
   })
-  desktop.stdout?.on('data', chunk => process.stdout.write(`[ZN N stdout] ${chunk}`))
-  desktop.stderr?.on('data', chunk => process.stderr.write(`[ZN N stderr] ${chunk}`))
   desktop.once('exit', (code, signal) => {
     desktopExit = { code, signal }
     console.error(`[ZN N exit] code=${code} signal=${signal}`)
@@ -577,8 +588,6 @@ try {
     })
   }
   if (tlsDir) await fsp.rm(tlsDir, { recursive: true, force: true })
-  const activeHandles = process._getActiveHandles?.()
-    .filter(handle => handle !== process.stdin && handle !== process.stdout && handle !== process.stderr)
-    .map(handle => handle?.constructor?.name || typeof handle) || []
-  console.error(`[zn-appimage-smoke] cleanup complete active_handles=${JSON.stringify(activeHandles)}`)
+  await assertProcessHandlesClose()
+  console.error('[zn-appimage-smoke] cleanup complete active_handles=[]')
 }
