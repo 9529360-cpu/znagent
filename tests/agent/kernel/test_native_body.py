@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -89,6 +90,105 @@ class NativeBodyTests(unittest.TestCase):
             self.assertTrue(result.data["alive"])
             self.assertEqual(result.data["pid"], os.getpid())
             self.assertEqual(resident.capabilities.names(), ())
+            resident.store.close()
+
+    def test_git_repository_state_is_structured_body_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def git(*args: str) -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    ["git", *args],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+
+            git("init")
+            git("config", "user.name", "ZN Test")
+            git("config", "user.email", "zn-test@example.invalid")
+            git("checkout", "-b", "dev/test")
+            tracked = root / "tracked.txt"
+            tracked.write_text("baseline\n", encoding="utf-8")
+            git("add", "tracked.txt")
+            git("commit", "-m", "baseline")
+            head = git("rev-parse", "HEAD").stdout.strip()
+
+            staged = root / "staged.txt"
+            staged.write_text("staged\n", encoding="utf-8")
+            git("add", "staged.txt")
+            tracked.write_text("baseline\nunstaged\n", encoding="utf-8")
+            untracked = root / "untracked.txt"
+            untracked.write_text("untracked\n", encoding="utf-8")
+
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=root / "kernel.db",
+            )
+            observed = resident.body.act(
+                "git_state",
+                event_id="evt-git-state",
+                path=str(root),
+            )
+
+            self.assertTrue(observed.success)
+            self.assertEqual(Path(observed.data["root"]), root)
+            self.assertEqual(observed.data["branch"], "dev/test")
+            self.assertEqual(observed.data["head"], head)
+            self.assertEqual(observed.data["head_short"], head[:12])
+            self.assertFalse(observed.data["detached"])
+            self.assertIsNone(observed.data["upstream"])
+            self.assertIsNone(observed.data["ahead"])
+            self.assertIsNone(observed.data["behind"])
+            self.assertTrue(observed.data["dirty"])
+            self.assertEqual(
+                set(observed.data["changed_paths"]),
+                {"tracked.txt", "staged.txt", "untracked.txt", "kernel.db"},
+            )
+            self.assertEqual(observed.data["staged_paths"], ["staged.txt"])
+            self.assertEqual(observed.data["unstaged_paths"], ["tracked.txt"])
+            self.assertIn("untracked.txt", observed.data["untracked_paths"])
+            self.assertIn("kernel.db", observed.data["untracked_paths"])
+            self.assertEqual(observed.data["conflicted_paths"], [])
+            resident.store.close()
+
+    def test_resident_reports_changed_paths_from_its_git_body(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def git(*args: str) -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    ["git", *args],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+
+            git("init")
+            git("config", "user.name", "ZN Test")
+            git("config", "user.email", "zn-test@example.invalid")
+            tracked = root / "tracked.txt"
+            tracked.write_text("baseline\n", encoding="utf-8")
+            git("add", "tracked.txt")
+            git("commit", "-m", "baseline")
+            tracked.write_text("changed\n", encoding="utf-8")
+
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=root / ".zn-test" / "kernel.db",
+            )
+            result = resident.submit(
+                "which files changed in the current git workspace?",
+                payload={"workspace_path": str(root), "model_policy": "never"},
+            )
+
+            self.assertTrue(result.success)
+            self.assertEqual(result.model_invocations, 0)
+            self.assertIn("tracked.txt", result.response)
+            latest = resident.investigator.recent(1)[0]
+            self.assertIn("tracked.txt", latest.facts["git"]["changed_paths"])
             resident.store.close()
 
     def test_multi_pulse_investigation_uses_body_for_evidence_and_next_action(self):
