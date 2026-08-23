@@ -2,11 +2,12 @@ from __future__ import annotations
 
 """First bounded L3 action-influence runtime slice.
 
-This layer sits inside the resident hierarchy and leaves ordinary deliberation
-unchanged unless current ZN cognition has independently formed more than one
-legal action shape and present reality supports a sufficiently mature low-risk
-procedural tendency. Learned evidence can reorder those shapes; it cannot supply
-Body arguments, bypass anti-replay, skip verification, or become a fast path.
+This layer sits inside the active world-aware resident hierarchy and leaves
+ordinary deliberation unchanged unless current ZN cognition has independently
+formed legal action shapes and present reality supports a sufficiently mature
+low-risk procedural tendency. Learned evidence can reorder those shapes; it
+cannot supply Body arguments, bypass anti-replay, skip verification, or become
+a fast path.
 """
 
 from typing import Any
@@ -16,11 +17,11 @@ from .procedural_influence import (
     ProceduralActionInfluence,
     select_procedurally_influenced_intent,
 )
-from .transfer_incubation import TransferAwareSituatedResidentRuntime
+from .world_closed_loop import WorldAwareTransferResidentRuntime
 
 
-class ProcedurallyInfluencedResidentRuntime(TransferAwareSituatedResidentRuntime):
-    """Resident whose verified procedural evidence may bias native choices."""
+class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
+    """Active resident whose verified procedural evidence may bias native choices."""
 
     _PROCEDURAL_INFLUENCE_KEY = "procedural_action_influence"
     _PROCEDURAL_REVOKED_KEY = "procedural_revoked_tendencies"
