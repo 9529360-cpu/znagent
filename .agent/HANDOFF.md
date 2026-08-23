@@ -4,31 +4,34 @@
 
 ## 当前目标
 
-完成 M10 canonical-branch promotion：对 exact final decision/status HEAD 跑完整 CI，通过后将 `main` 以非强制 fast-forward 指向同一 commit，再验证 canonical push CI。用户已明确授权该晋升。
+M10 canonical source promotion 已执行。当前只剩验证本次 `main` 文档记录 commit 的真实 canonical push CI，然后把 `dev/zn-agent` 以普通 fast-forward 同步到相同最终 SHA，并关闭 verification-only PR #5（不得 merge）。
 
 核心原则：
 
 > **ZN uses models. Models do not own ZN.**
 
-## 当前分支 / 基线
+## 当前分支 / 关键基线
 
 - 固定开发分支：`dev/zn-agent`
+- canonical source branch：`main`
 - bulk source evacuation：`6d5f78d22883857fcc99aff5cfd4ba1b9a2d3e6b`
 - bulk one-shot verification：run `32669071891`
-- source-boundary cleanup full green：`b8eb1727711810f83f26035355370fafdb09ed83` / run `32670967428`
-- production npm high gate added：`5466f51f4f9c3952483a824e718bb8a4c36cce68`
+- clean-tree full CI：`b8eb1727711810f83f26035355370fafdb09ed83` / run `32670967428`
+- production npm high gate：`5466f51f4f9c3952483a824e718bb8a4c36cce68`
 - M10 architecture decision：`c06e25c3fb85df3c3fe42049df7ab5f527135bf3`
-- implementation-status synchronization：`bf091650031b096353d405f0a70820ed0d3d0685`
-- 本文件提交前 `main` 仍为历史 baseline `61dd880aa4bbbdb359ca544b752afc2c22845ce9`；接手时必须重新读取 exact refs。
-- dedicated reference branch 已核实保留完整历史 baseline，active tree 不依赖它。
+- exact pre-promotion reviewed HEAD：`c158517225ff7b8cf0a952a0ae1dd6ebcf9c2c5d`
+- exact pre-promotion full PR CI：run `32671245421`，四项全部 success
+- `main` 已从历史 baseline 以 `force=false` fast-forward 到 reviewed ZN HEAD；没有 merge commit、force push 或历史重写。
+- dedicated reference branch 继续保留完整历史 baseline，active tree 不依赖它。
+- 接手时重新读取 exact `main` / `dev/zn-agent` refs；本文件不能自引用自身最终 commit SHA。
 
 ## 已完成
 
 ### 1. active source evacuation
 
-物理参考源撤离已完成。active high-level tree 仅保留 ZN-owned `.agent/.github/apps/docs/runtime/tests` 与必要 root metadata。迁移脚本和 migration-only write CI 均已退役。
+物理参考源撤离完成。active tree 仅保留 ZN-owned product/runtime/desktop/docs/automation structure 与必要 root metadata。迁移脚本和 migration-only write CI 已退役。
 
-真实 one-shot evidence：
+one-shot real evidence：
 
 ```text
 run 32669071891
@@ -43,26 +46,26 @@ ZN-only Docker build + boot              success
 verified deletion commit/push            success
 ```
 
-### 2. reference source isolated
+### 2. reference source isolation
 
-独立 reference branch 与旧 `main` baseline commit 完全一致，因此旧源码已有单独参考落点，不需要在 active tree 复制，也不需要重写历史。
+独立 reference branch 与晋升前旧 `main` baseline 完全一致。历史源码已有单独参考落点，不需要复制进 active tree，也不需要重写 Git 历史。
 
 ### 3. source-boundary hard gate
 
-`.agent/verify_zn_source_boundary.py` 扫描 tracked path 和 tracked non-binary text，禁止退休产品标识、旧 package namespace 和旧物理路径回流。
+`.agent/verify_zn_source_boundary.py` 扫描 tracked path 与 tracked non-binary text，阻止退休产品标识、旧 package namespace 和旧物理路径回流。
 
-`LICENSE` 文本是唯一法律 provenance 例外；原版权归属必须保留。路径本身仍受扫描。
+`LICENSE` 文本是唯一法律 provenance 例外；原版权归属必须保留。
 
-`ZN CI` 同时覆盖 `dev/zn-agent` 和 `main` push。
+`ZN CI` 覆盖 `dev/zn-agent` 与 `main` push。
 
-### 4. final retired-text cleanup
+### 4. final text cleanup
 
-初次 boundary run `32670680951` 给出精确残留清单。所有 active comments/docstrings/tests/runtime verifier 中的明文历史标识已清除或改为运行时 hex marker，拒绝能力未降低。
+所有 active comments/docstrings/tests/runtime verifier 中的历史产品明文均已清理或改为运行时 hex marker，拒绝能力保持。
 
-cleanup authority：
+exact reviewed evidence：
 
 ```text
-run 32670967428
+run 32671245421
 ZN Source Boundary        success
 ZN Kernel / Python        success
 Electron / TypeScript     success
@@ -71,49 +74,53 @@ Container / Runtime Smoke success
 
 ### 5. production npm security boundary
 
-普通完整 Node install 仍报告 2 个 high findings。CI 已新增：
+完整开发安装仍报告 2 个 high findings。CI 已强制：
 
 ```text
 npm audit --omit=dev --audit-level=high
 ```
 
-run `32671061837` 的该 production gate 已 success，因此当前两项 finding 属于 development/tooling dependency debt，不是被接受的 production/runtime dependency。
+production gate 已通过，因此当前两项 high finding 属于 development/tooling dependency debt，不是接受进 production/runtime 的依赖。
 
-不要做 blind `npm audit fix --force`；后续获取 exact dependency path 再安全修复。
+禁止 blind forced audit upgrade；后续先取得 exact dependency path。
 
-### 6. M10 review
+### 6. M10 canonical source promotion
 
-`ZN.md` 已记录 2026-08-24 M10 decision：
+M10 review 已按 `ZN.md` 完成：resident/runtime、desktop、build/package/release、CI、provenance、source independence、M8 risk acceptance 和用户授权均已审查。
 
-- resident/runtime ownership verified；
-- desktop ownership verified；
-- build/package/release ownership verified；
-- source boundary CI-enforced；
-- provenance/license retained；
-- historical source isolated；
-- production npm high gate active；
-- M8 仍 **PARTIAL**，remaining platform continuity/signing/rollback debt 只被接受用于 canonical branch promotion，不代表 formal release complete；
-- 用户已明确授权；
-- 只允许 non-forced fast-forward。
+M8 仍 **PARTIAL**。canonical source promotion 不代表 formal release complete。
+
+真实 ref 操作：
+
+```text
+main: historical baseline
+  -> c158517225ff7b8cf0a952a0ae1dd6ebcf9c2c5d
+force=false
+```
+
+随后 `main...dev/zn-agent` compare 为 identical。
+
+### 7. canonical promotion record
+
+因为 ref move 本身没有产生新的可识别 `main` push Actions run，已在 `main` 写入纯文档 promotion record，以真实触发 canonical push CI。实现代码没有在这一步改变。
 
 ## 当前未完成
 
-1. exact final docs/decision HEAD 的完整 PR CI；
-2. recheck `main...dev/zn-agent` fast-forward relation；
-3. non-forced `main` update；
-4. `main` push CI 复验；
-5. verification-only draft PR #5 关闭且不得 merge；
-6. 2 个 development/tooling npm high finding 的 exact dependency path；
-7. remaining M8 intended-platform continuity / secure signing / rollback；
-8. browser/computer Body/Senses、broader resident competence、SM1+。
+1. 验证最终 `main` promotion-record commit 的 canonical push CI；
+2. 将 `dev/zn-agent` force=false fast-forward 到同一最终 docs SHA；
+3. 确认 `main...dev/zn-agent` identical；
+4. close draft PR #5 without merge；
+5. development/tooling 2 个 high finding 的 exact dependency path；
+6. remaining M8 intended-platform continuity / secure signing / rollback；
+7. browser/computer Body/Senses、broader resident competence、SM1+。
 
 ## 风险 / 边界
 
 - 禁止 force push/history rewrite。
-- `LICENSE` legal attribution 不得为了文字清理而修改。
+- `LICENSE` legal attribution 不得删除或改写。
 - M8 不得写成 complete。
 - canonical `main` promotion 不等于正式 release。
-- PR #5 只是 full PR CI trigger，不是 promotion mechanism。
+- PR #5 只能关闭，不能 merge。
 
 ## Task Queue
 
@@ -125,17 +132,15 @@ Status: **COMPLETE**
 
 Status: **COMPLETE**
 
-### P2 — M10 review
+### P2 — M10 review and source promotion
 
-Status: **APPROVED FOR CANONICAL PROMOTION, EXACT-HEAD CI REQUIRED**
+Status: **COMPLETE; CANONICAL PUSH CI FINALIZATION PENDING**
 
-### P3 — main promotion
+### P3 — branch synchronization / verification PR retirement
 
-Status: **AUTHORIZED, PENDING EXACT-HEAD GREEN**
+Status: **PENDING CANONICAL GREEN**
 
-执行顺序：fresh full PR CI → compare refs → force=false fast-forward → main push CI → close PR #5 without merge。
-
-### P4 — remaining debt
+### P4 — remaining engineering debt
 
 Status: **PENDING**
 
@@ -143,4 +148,4 @@ Development/tooling audit exact path → M8 continuity/signing/rollback → resi
 
 ## 下一真实目标
 
-读取本提交后的 exact `dev/zn-agent` HEAD，等待/核实该 exact HEAD 的 Source Boundary、Python、Electron、Container 全绿；随后立即重新 compare `main...dev/zn-agent` 并执行 non-forced fast-forward promotion。
+读取本提交产生的 exact `main` HEAD 和其 `ZN CI` push run；确认 Source Boundary、Python、Electron 全绿后，将 `dev/zn-agent` 非强制 fast-forward 到相同 SHA，确认两支 identical，并关闭 PR #5 without merge。
