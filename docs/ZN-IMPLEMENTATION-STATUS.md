@@ -12,11 +12,11 @@
 >
 > Real code, Git state and CI outrank this ledger.
 
-Development branch: `dev/zn-agent`. Canonical source branch: `main`.
+Development branch: `dev/zn-agent`. Canonical source/release branch: `main`.
 
 ## 1. Current checkpoint — 2026-08-24
 
-The active repository is physically ZN-only. M10 canonical source promotion is complete.
+The active repository is physically ZN-only. M10 canonical source promotion is complete, and post-M10 branch/governance language has been normalized so future maintainers do not treat `main` promotion as an unfinished migration.
 
 Current topology:
 
@@ -36,7 +36,7 @@ Bulk source evacuation commit:
 6d5f78d22883857fcc99aff5cfd4ba1b9a2d3e6b
 ```
 
-Verified one-shot run `32669071891` proved the reduced tree before committing it:
+One-shot run `32669071891` proved the reduced tree before the migration machinery was retired:
 
 ```text
 fresh ZN-only Node lock/install          success
@@ -49,8 +49,6 @@ retained Node release/runtime tests      8 passed
 ZN-only Docker build + zero-model boot   success
 verified deletion commit/push            success
 ```
-
-The migration script and migration-only CI write path are retired.
 
 ## 2. Resident ownership — VERIFIED
 
@@ -89,6 +87,8 @@ ZN Electron main
 
 Ownership tests protect window/protocol lifecycle, preload surface, `zn://` deep links, resident-backed work/provider/progress surfaces, packaged runtime identity, update/application gates and the single formal builder configuration.
 
+Electron development/runtime tooling is pinned to `41.10.5` after the 2026-08-24 security cleanup.
+
 ## 7. Runtime and artifact ownership — VERIFIED FOR EXERCISED TARGETS
 
 Runtime identity:
@@ -120,30 +120,36 @@ Status: **COMPLETE**.
 
 `.agent/verify_zn_source_boundary.py` scans tracked paths and tracked non-binary text to reject retired product identifiers, package namespaces and old physical paths from the active tree. `LICENSE` text is the only explicit scan exception because original legal attribution must remain verbatim.
 
-The historical source quarry is preserved outside the active tree in a dedicated reference branch at the old baseline. It is not an active runtime/build/test/package/release dependency.
+The historical source quarry is preserved outside the active tree in a dedicated reference branch at the old baseline. It is read-only reference material and is not an active runtime/build/test/package/release dependency.
 
 Key evidence:
 
 ```text
-32671245421   exact reviewed PR CI success
-32671435423   canonical main push CI success
+32671245421   exact reviewed pre-M10 PR CI success
+32671589664   final canonical main push CI success
 ```
 
-On the canonical push run, Source Boundary, Python and Electron were successful. Container smoke is intentionally skipped on push by workflow design; it was successful on the exact reviewed PR commit before promotion.
+## 10. Dependency security state — HIGH-SEVERITY DEBT CLOSED
 
-## 10. Dependency security state
+The post-evacuation install originally exposed two high-severity development/tooling findings:
 
-A normal full `npm ci` still reports two high-severity findings in the complete development/tooling dependency graph.
+- Electron sandboxed iframe popup restriction bypass (`GHSA-9f4c-93c8-jc8g`);
+- legacy `extract-zip` symlink traversal (`GHSA-jmr9-qjv8-65gv`) through Electron's old download/extraction chain.
 
-CI includes:
+Investigation proved `electron 40.10.6` removed the legacy `extract-zip` chain but remained inside the iframe advisory's affected range. The stable patched branch begins at Electron `41.10.3`; ZN moved to the current patched 41 line, `41.10.5`.
+
+The regenerated lock now uses Electron's hardened internal extractor and current `@electron/get` chain; the old `extract-zip` package and its obsolete transitive chain are removed from the Electron dependency path.
+
+Steady-state CI now uses:
 
 ```text
-npm audit --omit=dev --audit-level=high
+npm ci --ignore-scripts
+npm audit --audit-level=high
 ```
 
-The production-dependency gate passes. Therefore the two known high findings are currently bounded to development/tooling dependencies, not accepted production/runtime dependencies.
+This is intentionally stricter than the previous production-only audit: any future high/critical npm finding in either production or development/tooling dependencies fails the Electron CI job.
 
-The exact development dependency chain remains to be traced and fixed where a safe stable update exists. Do not use blind forced audit fixes.
+The one-shot lock-refresh workflow write permission was removed immediately after the verified lock was committed. Steady-state `zn-ci.yml` has repository contents read-only permission again.
 
 ## 11. Self-maintenance — SM0 COMPLETE, SM1+ OPEN
 
@@ -151,42 +157,29 @@ Architecture is defined in `ZN-SELF-MAINTENANCE.md`. ZN does not yet autonomousl
 
 High-risk identity/memory/credential/updater/rollback/signing/self-approval changes remain human-approved by default.
 
-## 12. M10 status — COMPLETE FOR CANONICAL SOURCE PROMOTION
+## 12. M10 status — COMPLETE
 
-The 2026-08-24 M10 review in `ZN.md` passed and the canonical source promotion was executed.
+The 2026-08-24 M10 review passed and canonical source promotion was executed by non-forced fast-forward with no history rewrite.
 
-Verified/reviewed:
+`main` is canonical source/release; `dev/zn-agent` remains the normal development branch. Future work must not treat M10 as a pending migration gate.
 
-- ZN-owned resident/runtime and persistent-state boundary;
-- ZN-owned desktop and product identity;
-- ZN-owned build/package/release automation;
-- CI-enforced active source boundary;
-- preserved license/provenance obligations;
-- historical source separated into a dedicated reference branch;
-- production npm high-severity audit gate passes;
-- unresolved M8 gaps explicitly remain **PARTIAL** and are accepted for canonical branch promotion only, not formal release-complete claims;
-- user explicitly authorized promotion after cleanup;
-- exact reviewed commit `c158517225ff7b8cf0a952a0ae1dd6ebcf9c2c5d` passed full PR CI run `32671245421`;
-- `main` was non-forced fast-forwarded to that reviewed commit with no history rewrite;
-- canonical `main` push CI run `32671435423` then passed for the promotion-record state.
-
-Future documentation-only synchronization commits do not reopen M10. Their exact current CI state must still be checked from GitHub before reporting them green.
+Canonical promotion did not declare M8 complete. Release continuity/signing/rollback remain evidence-based milestones.
 
 ## 13. Current known debts
 
-- two high-severity development/tooling npm findings need exact dependency-path investigation;
 - M8 intended-platform continuity/signing/rollback gaps;
 - browser/computer-use Body/Senses;
 - broader resident engineering verifier selection;
 - mature procedural competence/growth benchmarks;
-- SM1+ autonomous self-maintenance.
+- SM1+ autonomous self-maintenance;
+- remaining non-security deprecation warnings in third-party packaging tooling should be reduced when a stable, verified dependency update is available, without blind forced upgrades.
 
 ## 14. Next real targets
 
 ```text
-1. keep main and dev/zn-agent synchronized after final documentation closeout
-2. retire verification-only PR #5 without merge
-3. trace/fix development-tooling npm advisory paths
+1. verify the exact post-cleanup dev HEAD with Source Boundary + Python + Electron + Container CI
+2. promote the verified cleanup to canonical main through normal non-forced flow
+3. recheck canonical main CI and resynchronize dev/main
 4. resume resident-owned engineering competence
 5. close remaining M8 continuity/signing/rollback evidence
 6. advance SM1+ behind existing safety boundaries
