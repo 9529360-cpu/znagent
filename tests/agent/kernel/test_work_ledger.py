@@ -167,6 +167,13 @@ class ResidentWorkLedgerTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
             )
+            target.write_text("staged\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "-C", str(workspace), "add", "notes.txt"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
             target.write_text("after\n", encoding="utf-8")
             status = subprocess.run(
                 ["git", "-C", str(workspace), "status", "--porcelain"],
@@ -198,11 +205,42 @@ class ResidentWorkLedgerTests(unittest.TestCase):
             diff_artifact = next(item for item in artifacts if item.kind == "diff")
             self.assertEqual(file_artifact.name, "notes.txt")
             self.assertEqual(file_artifact.content, "after\n")
+            self.assertIn("## Working tree", diff_artifact.content)
+            self.assertIn("## Staged", diff_artifact.content)
             self.assertIn("-before", diff_artifact.content)
+            self.assertIn("+staged", diff_artifact.content)
+            self.assertIn("-staged", diff_artifact.content)
             self.assertIn("+after", diff_artifact.content)
             self.assertEqual(
                 diff_artifact.metadata["scope"],
                 "current_workspace_after_event",
+            )
+            self.assertEqual(diff_artifact.metadata["source"], "git_diff")
+            self.assertEqual(len(diff_artifact.metadata["state_sha256"]), 64)
+            source_action_id = diff_artifact.metadata["source_action_id"]
+            event_actions = [
+                item
+                for item in resident.body.recent_actions(80)
+                if item.event_id == run.event.event_id
+            ]
+            source_action = next(
+                item for item in event_actions if item.action_id == source_action_id
+            )
+            self.assertEqual(source_action.kind, "git_diff")
+            self.assertEqual(
+                source_action.data["state_sha256"],
+                diff_artifact.metadata["state_sha256"],
+            )
+            old_presentation_commands = {
+                "git diff --no-ext-diff --no-color -- .",
+                "git diff --cached --no-ext-diff --no-color -- .",
+            }
+            self.assertFalse(
+                any(
+                    item.kind == "command"
+                    and str(item.data.get("command") or "") in old_presentation_commands
+                    for item in event_actions
+                )
             )
             self.assertEqual(
                 snapshot[1][-1].detail["artifacts"][0]["id"].split("-")[0],

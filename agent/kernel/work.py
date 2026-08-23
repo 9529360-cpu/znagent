@@ -565,8 +565,7 @@ class ResidentWorkLedger:
 
             persisted = self.resident.store.get_event(event.event_id)
             if persisted is not None and persisted.status in {
-                EventStatus.COMPLETED,
-                EventStatus.FAILED,
+                EventStatus.COMPLETED, EventStatus.FAILED
             }:
                 raise RuntimeError(
                     "resident event reached a terminal state without a durable outcome"
@@ -989,8 +988,8 @@ class ResidentWorkLedger:
 
         created: list[WorkArtifact] = []
         seen_paths: set[str] = set()
-        for status_line in list(git.data.get("changes") or ())[:12]:
-            relative = self._path_from_porcelain(str(status_line))
+        for raw_relative in list(git.data.get("changed_paths") or ())[:12]:
+            relative = str(raw_relative or "").strip()
             if not relative or relative in seen_paths:
                 continue
             seen_paths.add(relative)
@@ -1027,24 +1026,24 @@ class ResidentWorkLedger:
             if len(created) >= 4:
                 break
 
+        diff = body.act(
+            "git_diff",
+            event_id=event_id,
+            path=workspace.path,
+            timeout=10,
+            max_output_chars=_ARTIFACT_CONTENT_LIMIT,
+        )
+        if not diff.success:
+            return created
+
         diff_parts: list[str] = []
-        truncated = False
-        for label, command in (
-            ("Working tree", "git diff --no-ext-diff --no-color -- ."),
-            ("Staged", "git diff --cached --no-ext-diff --no-color -- ."),
-        ):
-            result = body.act(
-                "command",
-                event_id=event_id,
-                command=command,
-                workdir=workspace.path,
-                timeout=10,
-                max_output_chars=_ARTIFACT_CONTENT_LIMIT // 2,
-            )
-            if not result.success or not result.output.strip():
-                continue
-            diff_parts.append(f"## {label}\n{result.output.rstrip()}")
-            truncated = truncated or bool(result.data.get("truncated", False))
+        truncated = bool(diff.data.get("truncated", False))
+        for label, key in (("Working tree", "worktree"), ("Staged", "staged")):
+            scope = diff.data.get(key) if isinstance(diff.data.get(key), dict) else {}
+            patch = str(scope.get("patch") or "")
+            if patch.strip():
+                diff_parts.append(f"## {label}\n{patch.rstrip()}")
+            truncated = truncated or bool(scope.get("truncated", False))
         diff_content = "\n\n".join(diff_parts)
         if diff_content:
             artifact = WorkArtifact(
@@ -1058,24 +1057,16 @@ class ResidentWorkLedger:
                 metadata={
                     "workspace": workspace.to_dict(),
                     "scope": "current_workspace_after_event",
+                    "source": "git_diff",
+                    "source_action_id": diff.action_id,
+                    "state_sha256": diff.data.get("state_sha256"),
+                    "head": diff.data.get("head"),
                     "truncated": truncated or len(diff_content) > _ARTIFACT_CONTENT_LIMIT,
                 },
             )
             self._save_artifact(artifact)
             created.append(artifact)
         return created
-
-    @staticmethod
-    def _path_from_porcelain(status_line: str) -> str:
-        text = str(status_line or "")
-        if len(text) < 4:
-            return ""
-        path = text[3:].strip()
-        if " -> " in path:
-            path = path.rsplit(" -> ", 1)[-1].strip()
-        if path.startswith('"') and path.endswith('"'):
-            path = path[1:-1]
-        return path
 
     def _save_artifact(self, artifact: WorkArtifact) -> None:
         with self._lock, self._connect() as conn:
