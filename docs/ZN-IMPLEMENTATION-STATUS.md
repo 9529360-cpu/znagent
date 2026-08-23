@@ -30,7 +30,7 @@ apps/desktop/scripts/            ZN build/runtime/release tooling
 .github/workflows/               ZN CI/update/release automation
 ```
 
-The previous transitional `agent/kernel` physical source path is gone from `dev/zn-agent`. Root development metadata is ZN-owned; the old root Python distribution and unrelated product workspaces/source trees are absent.
+The previous transitional physical core path is gone from `dev/zn-agent`. Root development metadata is ZN-owned; the old root Python distribution and unrelated product workspaces/source trees are absent.
 
 Bulk evacuation commit:
 
