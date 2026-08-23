@@ -7,6 +7,7 @@ on:
       - dev/zn-agent
     paths:
       - .github/workflows/zn-linux-appimage-update-smoke.yml
+      - package-lock.json
       - apps/desktop/scripts/zn-appimage-update-smoke.mjs
       - apps/desktop/electron/zn-release-updater.ts
       - apps/desktop/electron/zn-release-application-gate.ts
@@ -58,10 +59,13 @@ jobs:
         with:
           version: '0.11.6'
           enable-cache: true
-          cache-dependency-glob: uv.lock
+          cache-dependency-glob: runtime/python/pyproject.toml
 
       - name: Install locked workspace dependencies
         run: npm ci --ignore-scripts
+
+      - name: Reject high-severity npm advisories
+        run: npm audit --audit-level=high
 
       - name: Install headless desktop dependencies
         shell: bash
