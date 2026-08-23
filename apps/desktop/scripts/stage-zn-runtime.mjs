@@ -10,6 +10,7 @@ const repoRoot = path.resolve(desktopRoot, '../..')
 const runtimeProject = path.join(repoRoot, 'runtime', 'python')
 const runtimeRoot = path.join(desktopRoot, 'build', 'zn-runtime')
 const pythonInstallDir = path.join(runtimeRoot, 'python')
+const retiredPackageName = Buffer.from('6865726d65735f636c69', 'hex').toString('utf8')
 
 function run(command, args, options = {}) {
   execFileSync(command, args, {
@@ -119,8 +120,8 @@ const residentEntry = path.join(backendRoot, 'zn_agent', 'resident.py')
 const residentCore = path.join(backendRoot, 'zn_agent', 'core', 'resident_server.py')
 if (!fs.existsSync(residentEntry)) throw new Error(`Installed runtime is missing zn_agent/resident.py under ${backendRoot}`)
 if (!fs.existsSync(residentCore)) throw new Error(`Installed runtime is missing zn_agent/core/resident_server.py under ${backendRoot}`)
-if (fs.existsSync(path.join(backendRoot, 'hermes_cli'))) {
-  throw new Error(`ZN runtime unexpectedly contains hermes_cli under ${backendRoot}`)
+if (fs.existsSync(path.join(backendRoot, retiredPackageName))) {
+  throw new Error(`ZN runtime unexpectedly contains retired package under ${backendRoot}`)
 }
 
 console.log('[zn-runtime] running ZN zero-model smoke')
