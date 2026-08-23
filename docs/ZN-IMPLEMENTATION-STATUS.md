@@ -40,9 +40,12 @@ The execution/learning spine now has real CI verification for:
 - read-only L3 current-reality applicability (`supported | mismatch | untested`);
 - bounded L3 low-risk action influence over choices current ZN state already formed;
 - bounded recovery across explicit structured alternatives after current evidence blocks an earlier option;
-- the first **resident-owned bounded structured-choice formation** slice: for an append text movement, current Investigation may form a direct exact-state replacement alternative when the exact final text is semantically proven from current state;
+- resident-owned exact-text choice formation: append versus direct exact-state replacement when current file evidence proves equivalent final text;
 - caller-free narrow exact-text postcondition derivation for append writes when Investigation has a complete current file observation;
-- learning across that resident-formed choice, with append and replace evidence kept as distinct privacy-safe action variants so procedural evidence cannot silently cross the movement boundary.
+- a second genuinely different resident-owned semantic tactic family: bounded single-path Git staging via porcelain `git add` versus plumbing `git update-index --add`, formed only from a typed staging goal plus current Git/path evidence;
+- recovery from a failed first Git tactic to the second under unchanged reality evidence;
+- fresh structured `git_state` post-action verification for that Git goal;
+- privacy-safe L1/L2 learning that keeps the two Git staging variants distinct without persisting raw path or command authority.
 
 The current transition is therefore:
 
@@ -50,19 +53,18 @@ The current transition is therefore:
 verified lived experience
 → repeated compatible evidence
 → candidate resident-owned tendency
-→ current Situation applicability test             VERIFIED FIRST SLICE
-→ bounded reality-gated action influence            VERIFIED FIRST SLICE
+→ current Situation applicability test             VERIFIED FIRST WRITE SLICE
+→ bounded reality-gated action influence            VERIFIED FIRST WRITE SLICE
 → consume bounded structured alternatives           VERIFIED
-→ form a narrowly proven resident-owned choice      VERIFIED FIRST SLICE
-→ derive a narrow current postcondition              VERIFIED FIRST SLICE
-→ learn from verified recovery                      VERIFIED FIRST SLICE
-→ broader resident-owned tactic formation
-→ mature procedural competence
+→ form resident-owned semantic choices               VERIFIED TWO TACTIC FAMILIES
+→ learn from independently verified recovery         VERIFIED
+→ Git-specific reality gate before Git L3 influence
+→ broader resident-owned engineering competence
 → familiar low-latency execution
 → prediction-error interrupt / relearning
 ```
 
-The current choice/postcondition slice is deliberately narrow. It is not a general planner, free-text tactic inference, stored-action replay, mature skill system, broad autonomous alternative generator or general high-level postcondition synthesizer.
+The current tactic slices remain deliberately narrow. They are not a general planner, free-text tactic inference, stored-action replay, mature skill system, arbitrary command equivalence engine or general high-level postcondition synthesizer.
 
 ## 2. Verified core execution and learning spine
 
@@ -77,7 +79,7 @@ Representative source:
 
 Final first-slice CI: code/test SHA `47ccd5601462641c50c16ec76f2a05085a33f9f3`, run `32612456040`, Python and Electron success.
 
-`NativeBody.git_state` returns structured root, branch, HEAD, upstream/ahead/behind, dirty state and bounded staged/unstaged/untracked/conflicted path evidence. This remains read-only repository sense; general Git mutation and GitHub maintenance are not claimed.
+`NativeBody.git_state` returns structured root, branch, HEAD, upstream/ahead/behind, dirty state and bounded staged/unstaged/untracked/conflicted path evidence. The sense itself remains read-only; the newer bounded staging mutation contract is documented separately in 2.12 and does not make general Git mutation complete.
 
 ### 2.2 Reality-based postcondition verification
 
@@ -91,7 +93,7 @@ Representative source/test state:
 
 Exact non-append writes and explicit command postconditions are independently re-observed before completion. Verification survives restart; contradiction returns control to Investigation and records failure evidence. Command verification CI run `32621596489`: Python and Electron success.
 
-The active runtime accepts explicit typed `text_equals` task postconditions and, in the narrow append slice described in 2.11, can also consume an exact-text postcondition derived by the resident from complete current file evidence. Neither path treats Body success as task proof; the final text is independently re-read.
+The active runtime accepts explicit typed `text_equals` task postconditions and, in the narrow append slice described in 2.11, can also consume an exact-text postcondition derived by the resident from complete current file evidence. Neither path treats Body success as task proof; the final text is independently re-read. The Git staging slice in 2.12 likewise treats the primary command result only as movement evidence and requires a separate structured `git_state` observation before completion.
 
 ### 2.3 Compact durable execution context
 
@@ -123,6 +125,8 @@ Code/test SHA `202b69e947db6c178d821c27e51fc1e61a90ce82`, run `32642408966`, Pyt
 
 `procedural_applicability.py` returns only `supported`, `mismatch` or `untested`. Positive support requires a current independent stable reality anchor and no untested compared field. Request shape alone cannot create support. Applicability is reconstructed from L1/L2 plus current Investigation facts and is not written back into Investigation facts.
 
+The new Git staging experience is intentionally not granted positive L3 authority yet. Its L1/L2 records exist, but a Git-specific target/root/current-goal applicability proof has not been implemented; commands remain outside the positive L3 influence whitelist.
+
 ### 2.8 L3 bounded low-risk action influence
 
 Code/test SHA `aec75ec2b2a2e37eae57a4a26011f324c1a823ff`, run `32643849526`, Python and Electron success.
@@ -140,6 +144,8 @@ Authority remains deliberately small:
 - Body and independent verification ownership remain unchanged;
 - failure/contradiction returns to Investigation and revokes the influenced route for the current event.
 
+The new resident Git staging choice family therefore does **not** silently widen L3 command authority.
+
 ### 2.9 Bounded native structured-choice recovery
 
 Code/test SHA `2632bcb2a6738c79a250205374d45a0d34bbad36`, run `32645416634`, Python and Electron success; container smoke skipped on normal push; status publisher success.
@@ -152,6 +158,8 @@ Source/test commits:
 ```
 
 For an already-formed bounded choice set, current evidence may block earlier A and let deliberation continue to the first later unblocked B. No alternative or args are inferred from memory, free text, model output or failed-action history. Single explicit actions do not enter this path; all blocked choices fail closed.
+
+This same recovery mechanism now has an end-to-end Git proof: a synthetic Body failure on current porcelain staging A leaves the repository unchanged, evidence-bound anti-replay blocks A, resident action formation re-creates the same semantic choices, plumbing B remains admissible, real Body execution stages the path, and a fresh Git observation verifies the final index state.
 
 ### 2.10 Resident-owned exact-text structured-choice formation and learning
 
@@ -219,7 +227,7 @@ resident forms [append A, exact-replace B]
 → B still uses current path/content and independent verification
 ```
 
-This is the first verified resident-owned bounded choice formation slice, not broad tactic synthesis. General resident-owned alternatives across commands, Git operations, browser actions or long-horizon goals remain incomplete.
+This is the first verified resident-owned bounded choice formation slice, not broad tactic synthesis.
 
 ### 2.11 Resident-derived append postcondition and write-variant safety
 
@@ -270,27 +278,80 @@ The contract is deliberately fail-closed:
 
 The learning boundary is also stricter. Exact-text L1 evidence now stores only a privacy-safe movement class, `action_variant = append | replace`. L1 grouping and L2 compatibility preserve that distinction. L3 checks the currently formed write variant before positive applicability: cross-variant evidence mismatches, and retained historical write evidence with no variant metadata becomes `untested` rather than silently gaining authority. Raw path/content remains excluded from learned procedure state.
 
-New regression coverage proves both sides:
+This is an ownership and safety hardening of the first exact-text tactic family.
+
+### 2.12 Resident-owned bounded single-path Git staging tactics
+
+Final code/test SHA:
 
 ```text
-no caller expected_outcome
-→ current Investigation obtains complete file text
-→ resident derives exact final state
-→ append movement
-→ independent read verifies exact final text
-→ positive L1 episode marked append
+7ec9725e9a2c9926adce36ec2d1ac8cfc9df926c
+ZN Kernel / Python          success
+Electron / TypeScript      success
+Container / Runtime Smoke  skipped on normal push
+Publish commit statuses    success
+run                         32650706582
 ```
 
-and:
+Representative commits:
 
 ```text
-append evidence != replace evidence at L2/L3
-legacy write evidence without variant → untested
+3df9fd78b7c41e38a36502e0ed429793e02f6b26  feat: define bounded git staging semantics
+60e34a73890b13819e3777e9b4977a6b39a6ef1a  refactor: centralize bounded git stage commands
+4cc04da8d8228991551e40366e8e3693b3824dab  feat: verify resident git staging choices
+4e24fa7eac5e8e69a3a89ce676b8d24a23bb2963  feat: learn verified git staging variants
+3a28a6aaa1310c53bb525df1ed0456e57cf474d4  test: prove resident git staging choices
+da912358b98530c61d951e2098a64262bdf083b1  test: prove git staging tactic recovery
+294f67100cd9d6a042873c8e0f854e7ec0c13110  fix: revalidate persisted git staging identity
+7ec9725e9a2c9926adce36ec2d1ac8cfc9df926c  test: cover git staging identity contract
 ```
 
-This is an ownership and safety hardening of the first exact-text tactic family. It is **not** the second genuinely different resident-owned tactic class, and it does not make general high-level postcondition derivation complete.
+The second genuinely different resident-owned semantic tactic family is now verified. It is deliberately one narrow Git mutation goal:
 
-### 2.12 Resident-owned outbound channel media seam
+```text
+explicit typed expected_outcome(kind=git_path_staged, path)
++ current Investigation has structured Git root/status evidence
++ current path evidence confirms one existing regular file
++ target resolves lexically and physically inside the observed repo root
++ no symlink/path-identity ambiguity
++ target is unstaged or untracked
++ target is not conflicted
+→ resident forms:
+   A = porcelain  git add -- <current repo-relative path>
+   B = plumbing   git update-index --add -- <current repo-relative path>
+```
+
+Important authority boundaries:
+
+- free text, model output and procedural memory do not construct these choices or supply their path/command args;
+- the command is a canonical rendering of the current resident-owned variant and current repository-relative target;
+- persisted `root/path/relative_path` identity is revalidated before verification, so a corrupted or mismatched working-state contract fails closed;
+- missing Git facts, missing path facts, outside-root targets, incompatible targets, conflicts and already-satisfied state do not create a mutation choice;
+- this slice does not authorize commit, push, reset, checkout, branch mutation or arbitrary shell mutation;
+- Body command success is not task completion.
+
+Independent verification is:
+
+```text
+selected Git staging movement
+→ Body command result
+→ fresh Body git_state(root)
+→ target must be staged
+→ target must not remain unstaged
+→ target must not be untracked
+→ target must not be conflicted
+→ only then complete / positive learning
+```
+
+Recovery is also proven end to end. A failed porcelain A under unchanged current reality becomes an evidence-bound failed action; resident formation reconstructs the same current semantic choice set; A remains blocked by its stable `{kind,args}` signature; plumbing B remains admissible; B stages the file; fresh `git_state` verifies the postcondition.
+
+L1 learning stores only privacy-safe target/root fingerprints, `action_variant = git_add | git_update_index`, and bounded structured verification booleans. Raw path and command are not persisted as learned authority. Existing L2 compatibility/grouping keeps the variants separate.
+
+This slice intentionally stops before Git L3 positive influence. Current generic applicability/positive-influence rules do not grant command authority, so learned Git evidence cannot yet reorder or replay these tactics. The next safe step is a Git-specific current-reality applicability proof that can only bias among choices the resident has just re-formed from the current typed goal and current Git/path evidence.
+
+One correctness gap remains explicit: when `git_path_staged` is already satisfied, mutation formation correctly returns no choice, but Investigation does not yet have a dedicated already-satisfied terminal-resolution contract for this typed goal. That must be fixed before broader Git procedural authority.
+
+### 2.13 Resident-owned outbound channel media seam
 
 Code/test SHA `018af2ec18abbac2a74e33f471101cb6a4308f36`, run `32645243684`, Python and Electron success.
 
@@ -314,13 +375,15 @@ This is not yet autonomous artifact selection; Thought/Will/Investigation does n
 - compact bounded current-event execution context;
 - evidence-bound failed-action ledger and A → B → A replay suppression under unchanged reality;
 - recovery across explicit or semantically proven resident-owned bounded choices after earlier choices are blocked;
-- the first resident-owned exact-text alternative formation contract;
+- resident-owned exact-text append/replace alternative formation;
+- resident-owned single-path Git staging alternatives using two distinct Git mechanisms;
+- fresh structured Git post-action verification for the bounded staging goal;
 - blocked post-cognition movement cannot falsely complete;
 - bounded restart-safe privacy-safe L1 `VerifiedExperience`;
-- transparent L2 candidate tendencies with append/replace write variants kept distinct;
+- transparent L2 candidate tendencies with write and Git action variants kept distinct;
 - L3 current-reality applicability with cross-variant write mismatch and legacy no-variant fail-closed behavior;
 - bounded L3 bias among current choices for verified low-risk exact writes;
-- verified learning from resident-formed recovery into later current-choice bias;
+- verified learning from resident-formed recovery;
 - contradiction revokes active event-local procedural influence and returns to Investigation;
 - bounded external cognition returns as input to ZN rather than owning the resident loop;
 - ZN-owned local process/terminal/PTTY and web search/extract paths;
@@ -330,23 +393,24 @@ This is not yet autonomous artifact selection; Thought/Will/Investigation does n
 
 ### Still PARTIAL / MISSING
 
-- a second genuinely different resident-owned structured alternative contract beyond exact-text file writing;
-- broader resident-owned structured alternative formation from Will/Investigation beyond the exact-text proof slice;
-- learned formation/recovery of genuinely different tactics across commands, Git, browser or long-horizon work;
+- Git-specific L3 current-reality applicability and positive bias among currently re-formed staging tactics;
+- already-satisfied typed `git_path_staged` terminal resolution without mutation/model fallback;
+- broader resident-owned structured alternative formation beyond exact-text and single-path Git staging;
+- learned formation/recovery of broader tactics across commands, browser or long-horizon work;
 - broad candidate influence over commands or arbitrary side effects;
-- procedural replay of raw commands/paths/content;
+- procedural replay of raw commands/paths/content (intentionally prohibited rather than a target capability);
 - mature resident-owned skills and procedural fast paths;
 - autonomous de-proceduralization beyond candidate inhibition + event-local route revocation;
-- resident-owned reliable general high-level postcondition derivation beyond the narrow exact append proof;
+- resident-owned reliable general high-level postcondition derivation beyond current narrow typed proofs;
 - multi-step execution with genuinely different tactics over long horizons without a model-owned planner;
 - durable completed-task verification/audit beyond current bounded learning evidence;
-- safe Git mutation + diff/test/reality verification;
+- practical broader Git mutation + diff/test/reality verification;
 - GitHub repository/PR/CI resident-owned sense;
 - clean browser Body/Senses seam;
 - mature visual + mouse/keyboard application control;
 - autonomous outbound artifact nomination from current Thought/Will/Investigation;
 - Telegram photo/audio/video-specific outbound transports;
-- learned engineering competence;
+- learned engineering competence beyond the current staging tactic proof;
 - learned computer-use competence;
 - complex-task/learning-growth benchmarks;
 - SM1+ self-maintenance implementation.
@@ -367,7 +431,7 @@ Status: **M2 complete for active main provider families**.
 
 ### Local Body
 
-Filesystem/process/terminal/PTTY paths are ZN-owned. Verification, failed-action anti-replay and L1/L2/L3 learning evidence are active. Exact-text current-state semantics can form one bounded resident-owned alternative pair. For append writes, complete current file evidence is now enough for the resident itself to derive the exact final-state verification contract; write learning keeps append and replace variants separate. General tactic formation and mature procedural competence remain incomplete.
+Filesystem/process/terminal/PTTY paths are ZN-owned. Verification, failed-action anti-replay and L1/L2/L3 learning evidence are active. Resident cognition can form two proven bounded tactic families: exact-text append/replace and single-path Git staging via porcelain/plumbing mechanisms. Git staging uses current args only and a fresh structured Git verifier. General tactic formation, Git L3 influence and mature procedural competence remain incomplete.
 
 ### Web/world / visual sense
 
@@ -387,7 +451,7 @@ Status: **COMPLETE for active packaged resident path**.
 
 The independent `runtime/python` distribution is `znagent`, installed package `zn_agent`, entrypoint `zn-resident`. Packaged runtime rejects inherited `hermes_cli` and boots zero-model. `runtime/python/pyproject.toml` maps `zn_agent.core` directly to `../../agent/kernel`, so current kernel code is the packaged runtime source rather than a second copy.
 
-Run `32648983622` installed the isolated runtime distribution, booted it without a model, compiled the resident kernel and ran full kernel unittest discovery successfully.
+Run `32650706582` installed the isolated runtime distribution, booted it without a model, compiled the resident kernel and ran full kernel unittest discovery successfully.
 
 ### M7 formal artifact ownership
 
@@ -434,16 +498,16 @@ M10 repository migration / formal main promotion           LATER; main untouched
 ## 6. Immediate next development sequence
 
 1. keep `VerifiedExperience`, transparent candidate evidence and current independent Investigation facts as procedural-learning truth; current reality always outranks familiarity;
-2. keep resident-owned exact-text postcondition derivation restricted to semantic proofs from complete current evidence rather than turning it into free-text goal synthesis;
-3. find a **second semantically provable, genuinely different tactic class** from current Will/Investigation rather than another file-write representation;
-4. prefer contracts with an independent current-world verifier; command/Git engineering work is a useful target only when equivalence and side-effect boundaries can be proven without guessing from command text;
-5. do not let external model output or stored procedural memory own the choice set or supply raw action args;
-6. preserve current influence gates, action-variant separation, evidence-bound anti-replay and mandatory independent verification;
-7. add negative tests before each authority expansion: missing evidence, stale evidence, ambiguous goal equivalence, unsafe side effect and contradiction must fail closed;
-8. use practical Git mutation + diff/test/reality verification and GitHub repo/PR/CI sense as the engineering-competence benchmark once the next choice contract is semantically defensible;
+2. fix already-satisfied `git_path_staged` resolution so current structured Git evidence can finish the typed goal without unnecessary movement or external cognition;
+3. implement Git-specific L3 applicability only if current root/target/goal and current resident-formed staging choices are all proven from current structured evidence;
+4. if Git L3 becomes positive, it may only reorder those current choices; it must never reconstruct/replay a learned path or command and must retain fresh `git_state` verification plus event-local revocation on failure/contradiction;
+5. preserve exact-text action-variant separation, evidence-bound anti-replay and mandatory independent verification;
+6. add negative tests before every authority expansion: stale/missing evidence, ambiguous identity/equivalence, cross-target reuse, unsafe side effects and contradiction must fail closed;
+7. extend practical engineering competence toward bounded Git mutation + diff/test/reality verification only where effects and independent verifiers are explicit;
+8. add GitHub repo/PR/CI resident-owned sense when it has a concrete current-world consumer; do not make GitHub another cognitive agent;
 9. establish browser/visual/mouse/keyboard Body/Senses before claiming learned computer-use competence;
 10. add growth benchmarks proving familiar tasks reduce external cognition dependence without lowering verification quality;
-11. keep M8 updater/multi-OS/signing work explicit as bounded release debt until a real continuity/security/data-integrity need makes it the active lane.
+11. keep M8 updater/multi-OS/signing work explicit as bounded release debt until that lane is deliberately activated.
 
 The architecture driver remains:
 
