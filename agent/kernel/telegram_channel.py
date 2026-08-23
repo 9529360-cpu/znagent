@@ -4,11 +4,12 @@ from __future__ import annotations
 
 This is source extraction from the mature Telegram implementation. The current
 slice keeps UTF-16 message limits, thread/reply routing, long-poll offsets,
-explicit inbound authorization, ZN-owned network fallback/proxy handling, and
-bounded inbound attachment caching while leaving old gateway/AIAgent/session
-ownership behind.
+explicit inbound authorization, ZN-owned network fallback/proxy handling,
+bounded inbound attachment caching, and policy-authorized outbound documents
+while leaving old gateway/AIAgent/session ownership behind.
 """
 
+import json
 import mimetypes
 import os
 import re
@@ -18,6 +19,7 @@ from typing import Any, Iterable, Mapping
 
 from .channel import ChannelAttachment, ChannelDelivery, ChannelEvent, ChannelMessage
 from .home import get_zn_home
+from .outbound_media import OutboundMediaPathPolicy
 from .telegram_network import build_telegram_http_client, parse_fallback_ip_env
 
 
@@ -130,6 +132,7 @@ class TelegramBotApiChannel:
         environ: Mapping[str, str] | None = None,
         attachment_root: str | Path | None = None,
         max_attachment_bytes: int | None = None,
+        outbound_media_policy: OutboundMediaPathPolicy | None = None,
     ):
         self.token = str(token or "").strip()
         if not self.token:
@@ -158,6 +161,9 @@ class TelegramBotApiChannel:
             )
         else:
             self.max_attachment_bytes = max(1, int(max_attachment_bytes))
+        self.outbound_media_policy = outbound_media_policy or OutboundMediaPathPolicy.for_zn_home(
+            max_bytes=self.max_attachment_bytes
+        )
         self._client = client or build_telegram_http_client(
             base_url=self.base_url,
             fallback_ips=self.fallback_ips,
@@ -284,10 +290,12 @@ class TelegramBotApiChannel:
         chat_id = str(message.conversation_id or "").strip()
         if not chat_id:
             raise ValueError("Telegram conversation_id must not be empty")
-        if message.attachments:
-            raise NotImplementedError("Telegram outbound attachment delivery is not extracted yet")
-
-        chunks = split_utf16_message(message.text, self.MAX_MESSAGE_LENGTH)
+        text = str(message.text or "")
+        chunks = split_utf16_message(text, self.MAX_MESSAGE_LENGTH) if text else []
+        authorized_media = tuple(
+            (item, self.outbound_media_policy.authorize(item.local_path))
+            for item in message.attachments
+        )
         sent_ids: list[str] = []
         for index, chunk in enumerate(chunks):
             payload: dict[str, Any] = {
@@ -311,12 +319,42 @@ class TelegramBotApiChannel:
             if isinstance(result, dict) and result.get("message_id") is not None:
                 sent_ids.append(str(result["message_id"]))
 
+        for index, (item, authorized) in enumerate(authorized_media):
+            data: dict[str, Any] = {"chat_id": chat_id}
+            if message.thread_id:
+                data["message_thread_id"] = (
+                    int(message.thread_id)
+                    if str(message.thread_id).isdigit()
+                    else message.thread_id
+                )
+            if not chunks and index == 0 and message.reply_to_message_id:
+                reply_id: Any = message.reply_to_message_id
+                if str(reply_id).isdigit():
+                    reply_id = int(str(reply_id))
+                data["reply_parameters"] = json.dumps(
+                    {"message_id": reply_id}, separators=(",", ":")
+                )
+            file_name = _safe_filename(
+                item.file_name,
+                fallback=authorized.path.name,
+            )
+            mime_type = str(item.mime_type or "").strip() or "application/octet-stream"
+            with authorized.path.open("rb") as handle:
+                raw = self._api_upload(
+                    "sendDocument",
+                    data,
+                    files={"document": (file_name, handle, mime_type)},
+                )
+            result = raw.get("result") or {}
+            if isinstance(result, dict) and result.get("message_id") is not None:
+                sent_ids.append(str(result["message_id"]))
+
         return ChannelDelivery(
             ok=True,
             channel=self.name,
             conversation_id=chat_id,
             message_ids=tuple(sent_ids),
-            metadata={"chunks": len(chunks)},
+            metadata={"chunks": len(chunks), "attachments": len(authorized_media)},
         )
 
     def close(self) -> None:
@@ -620,3 +658,43 @@ class TelegramBotApiChannel:
                 f"Telegram {method} failed: {_safe_error(detail, self.token)}"
             )
         return data
+
+    def _api_upload(
+        self,
+        method: str,
+        data: dict[str, Any],
+        *,
+        files: dict[str, Any],
+    ) -> dict[str, Any]:
+        url = f"{self.base_url}/bot{self.token}/{method}"
+        try:
+            response = self._client.post(
+                url,
+                data=data,
+                files=files,
+                timeout=self.request_timeout,
+            )
+        except Exception as exc:
+            raise TelegramChannelError(
+                f"Telegram {method} request failed: {_safe_error(exc, self.token)}"
+            ) from exc
+
+        status = int(getattr(response, "status_code", 0) or 0)
+        try:
+            payload = response.json()
+        except Exception as exc:
+            raise TelegramChannelError(
+                f"Telegram {method} returned invalid JSON (HTTP {status})"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise TelegramChannelError(f"Telegram {method} returned invalid response")
+        if status < 200 or status >= 300 or payload.get("ok") is not True:
+            detail = (
+                payload.get("description")
+                or getattr(response, "text", "")
+                or f"HTTP {status}"
+            )
+            raise TelegramChannelError(
+                f"Telegram {method} failed: {_safe_error(detail, self.token)}"
+            )
+        return payload

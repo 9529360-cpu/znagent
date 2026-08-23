@@ -222,6 +222,147 @@ class ResidentChannelSupervisorTests(unittest.TestCase):
             finally:
                 resident.store.close()
 
+    def test_resident_media_nomination_survives_restart_and_reaches_delivery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "kernel.db"
+            media_path = Path(tmp) / "artifact.txt"
+            media_path.write_text("resident output", encoding="utf-8")
+            resident = _Resident(store_path, auto_complete=False)
+            try:
+                first = _ReplayAdapter(replay=True)
+                first_supervisor = ResidentChannelSupervisor(
+                    resident,
+                    [first],
+                    poll_timeout=0.01,
+                    min_backoff=0.01,
+                )
+                first_supervisor.start()
+                event_id = stable_external_event_id("channel", "telegram:update:42")
+                deadline = time.monotonic() + 1.0
+                while resident.store.get_event(event_id) is None and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertIsNotNone(resident.store.get_event(event_id))
+                while (
+                    first_supervisor.ledger.route_for_event(event_id) is None
+                    and time.monotonic() < deadline
+                ):
+                    time.sleep(0.01)
+                self.assertIsNotNone(first_supervisor.ledger.route_for_event(event_id))
+                nomination = first_supervisor.nominate_outbound_media(
+                    event_id,
+                    str(media_path.resolve()),
+                    file_name="answer.txt",
+                    mime_type="text/plain",
+                    metadata={"resident_reason": "deliver verified result"},
+                )
+                first_supervisor.stop()
+
+                resident.outcomes[event_id] = SimpleNamespace(
+                    success=True,
+                    response="completed after restart",
+                    reason="",
+                )
+                second = _ReplayAdapter(replay=True)
+                second_supervisor = ResidentChannelSupervisor(
+                    resident,
+                    [second],
+                    poll_timeout=0.01,
+                    min_backoff=0.01,
+                )
+                second_supervisor.start()
+                self.assertTrue(second.delivered.wait(1.0))
+                second_supervisor.stop()
+
+                self.assertEqual(len(second.sent[0].attachments), 1)
+                restored = second.sent[0].attachments[0]
+                self.assertEqual(restored.nomination_id, nomination.nomination_id)
+                self.assertEqual(restored.local_path, str(media_path.resolve()))
+                self.assertEqual(restored.file_name, "answer.txt")
+                self.assertEqual(restored.metadata["resident_reason"], "deliver verified result")
+                self.assertEqual(
+                    second_supervisor.ledger.route_for_event(event_id).status,
+                    "delivered",
+                )
+            finally:
+                resident.store.close()
+
+    def test_media_nomination_rejects_non_channel_and_delivered_events(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = _Resident(Path(tmp) / "kernel.db")
+            try:
+                supervisor = ResidentChannelSupervisor(resident, [])
+                ordinary = resident.store.get_event("missing")
+                self.assertIsNone(ordinary)
+                with self.assertRaisesRegex(ValueError, "resident channel event"):
+                    supervisor.nominate_outbound_media("missing", str(Path(tmp) / "x"))
+
+                event = _FlakyAdapter.event()
+                supervisor._ingest_events([event])
+                event_id = stable_external_event_id("channel", "telegram:update:42")
+                supervisor.ledger.mark_delivered(event_id)
+                with self.assertRaisesRegex(ValueError, "pending channel route"):
+                    supervisor.nominate_outbound_media(event_id, str(Path(tmp) / "x"))
+            finally:
+                resident.store.close()
+
+    def test_response_text_that_mentions_a_path_never_becomes_upload_authority(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = _Resident(Path(tmp) / "kernel.db", auto_complete=False)
+            try:
+                adapter = _ReplayAdapter(replay=True)
+                supervisor = ResidentChannelSupervisor(
+                    resident,
+                    [adapter],
+                    poll_timeout=0.01,
+                    min_backoff=0.01,
+                )
+                supervisor.start()
+                event_id = stable_external_event_id("channel", "telegram:update:42")
+                deadline = time.monotonic() + 1.0
+                while (
+                    supervisor.ledger.route_for_event(event_id) is None
+                    and time.monotonic() < deadline
+                ):
+                    time.sleep(0.01)
+                resident.outcomes[event_id] = SimpleNamespace(
+                    success=True,
+                    response=f"result is at {Path(tmp) / 'private.txt'}",
+                    reason="",
+                )
+                self.assertTrue(adapter.delivered.wait(1.0))
+                supervisor.stop()
+
+                self.assertEqual(adapter.sent[0].attachments, ())
+            finally:
+                resident.store.close()
+
+    def test_media_nominations_are_bounded_and_metadata_must_be_json_safe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = _Resident(Path(tmp) / "kernel.db")
+            try:
+                supervisor = ResidentChannelSupervisor(resident, [])
+                supervisor._ingest_events([_FlakyAdapter.event()])
+                event_id = stable_external_event_id("channel", "telegram:update:42")
+                for index in range(8):
+                    supervisor.nominate_outbound_media(
+                        event_id,
+                        str(Path(tmp) / f"artifact-{index}.bin"),
+                    )
+                with self.assertRaisesRegex(ValueError, "nomination limit"):
+                    supervisor.nominate_outbound_media(
+                        event_id,
+                        str(Path(tmp) / "artifact-9.bin"),
+                    )
+                with self.assertRaisesRegex(ValueError, "JSON-safe"):
+                    supervisor.ledger.nominate_media(
+                        event_id,
+                        str(Path(tmp) / "artifact-0.bin"),
+                        kind="replacement-kind",
+                        metadata={"not_json": object()},
+                    )
+            finally:
+                resident.store.close()
+
     def test_channel_requires_explicit_enable(self):
         self.assertEqual(
             build_zn_channel_adapters(
