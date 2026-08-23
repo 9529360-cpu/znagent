@@ -11,7 +11,7 @@ import subprocess
 import uuid
 from contextlib import closing
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from .models import utc_now
@@ -397,6 +397,25 @@ class NativeBody:
             },
         )
 
+    @staticmethod
+    def _git_diff_scope(value: Any) -> str:
+        text = str(value or "").strip().replace("\\", "/")
+        while text.startswith("./"):
+            text = text[2:]
+        if not text:
+            raise ValueError("git_diff relative_path must not be empty")
+        if text.startswith("/") or (
+            len(text) >= 3 and text[0].isalpha() and text[1] == ":" and text[2] == "/"
+        ):
+            raise ValueError("git_diff relative_path must be repository-relative")
+        candidate = PurePosixPath(text)
+        if not candidate.parts or any(part == ".." for part in candidate.parts):
+            raise ValueError("git_diff relative_path must not escape the repository")
+        normalized = candidate.as_posix().rstrip("/")
+        if normalized in {"", ".", ".."}:
+            raise ValueError("git_diff relative_path must name one repository path")
+        return normalized
+
     def _git_diff(self, action: BodyAction, started: str) -> BodyActionResult:
         """Observe bounded repository diffs without routing through a shell command."""
 
@@ -407,6 +426,11 @@ class NativeBody:
             512,
             min(200_000, int(action.args.get("max_output_chars", 50_000))),
         )
+        raw_scope = action.args.get("relative_path")
+        scope_relative = (
+            self._git_diff_scope(raw_scope) if raw_scope is not None else None
+        )
+        pathspec = f":(literal){scope_relative}" if scope_relative else "."
 
         def run(*parts: str) -> subprocess.CompletedProcess[str]:
             return subprocess.run(
@@ -435,17 +459,26 @@ class NativeBody:
                 completed_at=utc_now(),
             )
 
-        worktree_patch_proc = run("diff", "--no-ext-diff", "--no-color", "--", ".")
+        worktree_patch_proc = run(
+            "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--", pathspec
+        )
         staged_patch_proc = run(
-            "diff", "--cached", "--no-ext-diff", "--no-color", "--", "."
+            "diff", "--cached", "--no-ext-diff", "--no-textconv", "--no-color", "--", pathspec
         )
         worktree_paths_proc = run(
-            "diff", "--name-only", "-z", "--diff-filter=ACDMRTUXB", "--", "."
+            "diff", "--name-only", "-z", "--diff-filter=ACDMRTUXB", "--", pathspec
         )
         staged_paths_proc = run(
-            "diff", "--cached", "--name-only", "-z", "--diff-filter=ACDMRTUXB", "--", "."
+            "diff", "--cached", "--name-only", "-z", "--diff-filter=ACDMRTUXB", "--", pathspec
         )
-        untracked_proc = run("ls-files", "--others", "--exclude-standard", "-z")
+        untracked_proc = run(
+            "ls-files", "--others", "--exclude-standard", "-z", "--", pathspec
+        )
+        scope_tracked_proc = (
+            run("ls-files", "--error-unmatch", "--", pathspec)
+            if scope_relative
+            else None
+        )
         for proc in (
             worktree_patch_proc,
             staged_patch_proc,
@@ -464,6 +497,21 @@ class NativeBody:
                     started_at=started,
                     completed_at=utc_now(),
                 )
+        if scope_tracked_proc is not None and scope_tracked_proc.returncode not in {0, 1}:
+            return BodyActionResult(
+                action_id=action.action_id,
+                kind=action.kind,
+                success=False,
+                error=(
+                    scope_tracked_proc.stderr
+                    or scope_tracked_proc.stdout
+                    or "git tracked-path observation failed"
+                ).strip(),
+                data={"workspace": str(workspace), "exit_code": scope_tracked_proc.returncode},
+                event_id=action.event_id,
+                started_at=started,
+                completed_at=utc_now(),
+            )
 
         worktree_raw = worktree_patch_proc.stdout
         staged_raw = staged_patch_proc.stdout
@@ -493,13 +541,16 @@ class NativeBody:
 
         head_proc = run("rev-parse", "--verify", "HEAD")
         head = head_proc.stdout.strip() if head_proc.returncode == 0 else None
+        state_value: dict[str, Any] = {
+            "worktree": worktree_raw,
+            "staged": staged_raw,
+            "untracked": untracked_paths,
+        }
+        if scope_relative:
+            state_value["scope"] = scope_relative
         state_fingerprint = hashlib.sha256(
             json.dumps(
-                {
-                    "worktree": worktree_raw,
-                    "staged": staged_raw,
-                    "untracked": untracked_paths,
-                },
+                state_value,
                 ensure_ascii=False,
                 sort_keys=True,
                 separators=(",", ":"),
@@ -517,6 +568,12 @@ class NativeBody:
                 "dirty": bool(changed_paths),
                 "changed_files": len(changed_paths),
                 "changed_paths": changed_paths,
+                "scope_relative_path": scope_relative,
+                "scope_tracked": (
+                    bool(scope_tracked_proc.returncode == 0)
+                    if scope_tracked_proc is not None
+                    else None
+                ),
                 "worktree": {
                     "paths": worktree_paths,
                     "files": len(worktree_paths),
