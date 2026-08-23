@@ -1,260 +1,171 @@
 # ZN Agent Handoff
 
-更新时间：2026-08-23
+更新时间：2026-08-24
 
 ## 当前目标
 
-active repository 的物理参考源撤离与删后审计已经完成。当前主线：
-
-```text
-保持 ZN-only ownership
-→ 调查 Node packaging advisory debt
-→ 恢复 resident-owned engineering competence
-→ 关闭 M8 N→N+1 / intended-platform release continuity
-→ 逐步推进 SM1+ self-maintenance
-→ fresh M10 review 通过且用户明确授权后才晋升 main
-```
+完成 active tree 的最终参考产品明文清理与防回流硬门槛，随后用 fresh CI 做 M10 晋升审查。用户已明确授权：参考源码保留在独立参考分支；active ZN 清理完成且 M10 条件满足后，将 `dev/zn-agent` 以非强制 fast-forward 晋升到 `main`。
 
 核心原则：
 
 > **ZN uses models. Models do not own ZN.**
 
-## 当前分支 / 权威基线
+## 当前分支 / HEAD
 
 - 固定开发分支：`dev/zn-agent`
-- 大规模删除前最后迁移修复：`624c3843dfc956e3753a3883c9cdc5208e6a46ea`
-- verified bulk evacuation commit：`6d5f78d22883857fcc99aff5cfd4ba1b9a2d3e6b`
-- bulk one-shot verification run：`32669071891`
-- steady-state CI cleanup：`5e032e8b2241abf58aba9c03f0041eb4a13c6be9`
-- steady-state audited code/docs HEAD：`732e03c413e9d222dc97c729051ba78f952f23c2`
-- steady-state full PR CI：`32669724116`
-- 本 HANDOFF 是验证完成后的 docs-only `[skip ci]` 同步；接手者必须重新读取 GitHub exact `dev/zn-agent` HEAD。
-- `main` 未修改；M10 尚未完成 fresh promotion review。
+- 本次 HANDOFF 同步前 branch HEAD：`707fd84daa281408324b7ee2ab5bec0c4272caf4`
+- bulk physical source evacuation：`6d5f78d22883857fcc99aff5cfd4ba1b9a2d3e6b`
+- previous steady-state full CI authority：`732e03c413e9d222dc97c729051ba78f952f23c2` / run `32669724116`
+- `main` 在本文件写入时仍是 `61dd880aa4bbbdb359ca544b752afc2c22845ce9`
+- 独立 upstream reference branch 已核实与该旧 `main` commit 完全相同，旧源码已有单独参考落点。
+- 接手者必须重新读取 GitHub exact HEAD；本文件不能自引用其自身最终 commit SHA。
 
 ## 已完成
 
-### 1. 真实恢复与调用链审计
+### 1. 物理源撤离
 
-开始清理前重新读取/核对必读文档、exact dev HEAD、main relation、PR/CI、最近提交，以及 Python runtime、desktop builder、tests、Docker、release 的真实 active call chain。
+用户已授权的大规模删除已经真实落盘，不是 shim/compatibility 隐藏层。
 
-### 2. 修复 one-shot 删树验证
-
-首轮物理删树后 Python 382 tests 已通过；桌面仍有两个测试要求已经应该删除的 duplicated package build metadata / retired packaging hook chain。
-
-修复提交：
-
-```text
-dec9ee08f552ce48eb98d7bb3db17915c9e08a50
-```
-
-没有恢复旧包装链；删后测试改为验证唯一 `electron-builder.zn.yml`，desktop builder 显式使用该配置。
-
-### 3. 保持最终提交 guard 严格
-
-删树功能验证全绿后，提交守卫又正确暴露：
-
-- 合法删除旧 workflow 被旧规则一并禁止；
-- Python 安装验证产生 `runtime/python/build/**` 副产物。
-
-修复提交：
-
-```text
-c09fc406c8d57fc8e956632fd3237d5c69d054e0
-624c3843dfc956e3753a3883c9cdc5208e6a46ea
-```
-
-没有放宽 generated-artifact guard；只允许 workflow 删除，并在 commit 前清掉 `.npmrc`、Python build/egg-info 等验证副产物。
-
-### 4. 大规模删除真正落盘
-
-用户已明确授权大规模删除。
-
-最终 one-shot run：
-
-```text
-32669071891
-```
-
-删后临时树验证：
-
-```text
-apply ZN-only allowlist                 success
-fresh Node lock/install                 success
-isolated ZN Python install              success
-zero-model resident boot                success
-full tests/zn_agent/core                382 passed
-desktop typecheck/bundle                success
-desktop vitest                          37 passed
-retained release/runtime Node tests     8 passed
-ZN-only Docker build                    success
-Docker zero-model resident boot         success
-final cleaned-tree commit/push          success
-```
-
-正式删除提交：
+bulk commit：
 
 ```text
 6d5f78d22883857fcc99aff5cfd4ba1b9a2d3e6b
 ```
 
-这是实际物理删树，不是 import shim 或 compatibility wrapper。
-
-### 5. 删后真实树
-
-当前高层结构：
+one-shot verification run：
 
 ```text
-.agent/
-.github/
-apps/
-docs/
-runtime/
-tests/
-AGENTS.md
-Dockerfile
-LICENSE
-README.md
-ZN.md
-package.json
-package-lock.json
-.gitignore
+32669071891
 ```
 
-旧 CLI / gateway / providers / plugins / tools / web / TUI / shared workspace / root old Python distribution 等不再存在于 active dev tree。
-
-物理 core/test：
+真实结果：
 
 ```text
-runtime/python/zn_agent/core/
-tests/zn_agent/core/
+fresh ZN-only Node lock/install          success
+isolated ZN Python install               success
+zero-model resident boot                 success
+Python core tests                        382 passed
+desktop typecheck/bundle                 success
+desktop vitest                           37 passed
+Node release/runtime tests               8 passed
+ZN-only Docker build + boot              success
+verified deletion commit/push            success
 ```
 
-一次性迁移脚本已在 verified commit 中自行删除。
+active high-level tree 仅保留 ZN-owned `.agent/.github/apps/docs/runtime/tests` 与必要 root metadata；一次性迁移脚本和写入型 migration CI 已退役。
 
-### 6. 退役一次性 CI 写权限
+### 2. 参考源码独立保留
 
-提交：
+已通过 GitHub commit compare 核实：独立 upstream reference branch 与旧 `main` commit `61dd880aa4bbbdb359ca544b752afc2c22845ce9` 完全相同。
+
+因此不需要在 active tree 再留一份源码，也不需要重写 Git 历史。参考分支仅用于未来阅读成熟机制，不是 runtime/build/release dependency。
+
+### 3. 防回流 source-boundary guard
+
+新增：
 
 ```text
-5e032e8b2241abf58aba9c03f0041eb4a13c6be9
+.agent/verify_zn_source_boundary.py
 ```
 
-PR-only migration job 已删除；`zn-ci.yml` 的 `contents` 权限从 `write` 收回为 `read`。steady-state CI 不再拥有仓库内容写权限。
+CI 新增 `ZN Source Boundary` job，扫描全部 tracked path 和非二进制 tracked text，阻止退休产品标识、旧 namespace 和旧物理路径重新进入 active tree。
 
-### 7. 文档清理
+法律例外只有 `LICENSE` 文本内容：原版权归属必须按许可证要求原样保留；路径仍受扫描。
 
-已按删后事实对账：
+`zn-ci.yml` 现在同时在 `dev/zn-agent` 与 `main` push 上运行，以便晋升后 canonical branch 继续受到同一门槛保护。
 
-- `ZN.md` → steady-state ZN-only product contract；
-- `AGENTS.md` → ZN-only 接手/施工规则；
-- `docs/ZN-SOURCE-EXTRACTION.md` → closed source-adoption boundary ledger；
-- `docs/ZN-IMPLEMENTATION-STATUS.md` → 当前物理 `zn_agent/core` 与真实删树 CI；
-- `docs/ZN-MAINTAINER-PROMPT.md` → 当前 ZN-only bootstrap；
-- `docs/ZN-NEXT-PHASE.md` → repository-boundary work 结束，恢复 competence/M8/SM 主线；
-- `docs/ZN-SELF-MAINTENANCE.md` → 当前仓库 ownership 自维护规则；
-- 删除纯 migration-history `docs/ZN-BLUEPRINT-BASELINE-2026-08-23.md`。
+### 4. 最后一轮明文清理
 
-保留：
+source-boundary run `32670680951` 精确暴露了最后一批残留；它们不是运行时依赖，而是历史说明或防回归测试字符串。
 
-- `docs/ZN-MEMORY-LEARNING.md`
-- `docs/ZN-LEARNING-SOURCE-RESEARCH.md`
+已清理/编码而不降低拒绝能力：
 
-两份保留文档经删后复查，没有旧物理 `agent/kernel` 路径，内容属于 ZN 长期学习架构/外部研究。
+- desktop bundler 注释；
+- packaged runtime/staging/verifier 中退休包拒绝 marker；
+- desktop ownership/runtime tests 中退休产品 marker；
+- cognition/web/result/url safety 注释和 docstring；
+- resident autostart 与 runtime ownership tests 的旧 namespace/package marker；
+- implementation status 的旧物理路径明文；
+- 本 HANDOFF 的旧路径明文。
 
-当前 `docs/` 只保留 7 份 ZN 文档。
+防回归检查改为 hex-decoded marker，只让测试在运行时构造退休标识，active tracked text 不再保存这些产品文字。
 
-### 8. active manifests / ownership 复查
+### 5. release/update ownership
 
-当前 root `package.json` 只声明 `apps/desktop` workspace。
+当前 release workflow 完全由 ZN-owned build/package/runtime verifier/public channel 组成；formal tag 通过 immutable assets → GitHub Release → `stable.json` 最后推进。
 
-当前 desktop manifest：
+Linux AppImage N→N+1 workflow 仍保留真实 installed update smoke；本轮删除了其中已经失效的旧路径触发项。
 
-```text
-name = zn-desktop
-builder = node scripts/run-electron-builder.mjs --config electron-builder.zn.yml
-```
+## 当前验证
 
-当前 Python distribution：
+此前完整 steady-state PR CI：
 
 ```text
-project = znagent
-script = zn-resident -> zn_agent.resident:main
-packages = zn_agent, zn_agent.*
-```
-
-### 9. steady-state CI 真正复验
-
-为避免把“应该有 push CI”当证据，临时重新打开既有 draft PR #5，仅触发当前 steady-state PR CI，不 merge。
-
-当前 HEAD `732e03c413e9d222dc97c729051ba78f952f23c2` 的真实 run：
-
-```text
-32669724116
-```
-
-结果：
-
-```text
+run 32669724116
 ZN Kernel / Python         success
 Electron / TypeScript     success
 Container / Runtime Smoke success
 ```
 
-这次 run 不含任何一次性 migration job。
+本轮 source-boundary 初次 fresh run：
 
-验证完成后 PR #5 已再次关闭，`merged = false`，`main` 未修改。
+```text
+run 32670680951
+ZN Source Boundary        failure
+```
+
+失败清单已全部按日志逐项修复；该 run 的其他 jobs 在修复提交出现后不再作为 final authority。必须对当前最终 HEAD 再跑一次完整 PR CI，确认 Source Boundary + Python + Electron + Container 全绿后，才能继续 M10 晋升。
 
 ## 当前未完成
 
-- M8 installed N → N+1 application/runtime/resident continuity；
-- intended Windows/macOS clean-install/login continuity（若仍为正式 release target）；
-- real signing/notarization；
-- real-version rollback proof；
+- final source-boundary + full CI on the exact final cleanup HEAD；
+- M10 风险审查与状态文档最终同步；
+- `main` fast-forward promotion；
+- promotion 后 `main` push CI 复验；
+- Node packaging 的 2 个 high-severity audit finding 精确依赖链；
+- M8 中除现有 Linux update smoke 外的 intended-platform continuity、real signing/notarization、real-version rollback；
 - general browser/computer-use Body/Senses；
-- general resident-owned engineering verifier selection；
-- mature broad procedural fast path / growth benchmarks；
-- SM1+ autonomous self-maintenance；
-- M10 promotion review / main promotion。
+- broader resident engineering competence；
+- SM1+ self-maintenance。
 
-## 已知风险
+## 风险 / 边界
 
-1. one-shot fresh Node install 报告 2 个 high-severity advisories。当前 lock 中多个 `brace-expansion` 节点已经处于 2026 已知高危公告的 patched versions，因此不能把这两个 finding 简单归因于它；下一步要获得真实 npm audit dependency path，再决定安全升级，不做 `--force` 或盲目 override。
-2. `main` 仍是 M10 前 branch state；不要为“看起来干净”提前修改。
-3. code/tests 中允许存在用于防回归的 forbidden-content test strings；判断 ownership 看真实 dependency/path/caller，不把“文本里完全没有历史词”当成产品安全证明。
-4. resident engineering verifier authority 仍然窄；不要扩大到任意 test/command guess。
+1. `LICENSE` 中原版权归属是法律 provenance，不得为文字清理而删除或改写。
+2. 2 个 Node high advisory 尚未获得 exact audit dependency path；禁止盲目 `--force` 或 alpha/major upgrade。
+3. M8 仍 PARTIAL。M10 允许的判断必须明确区分“把 ZN 设为 canonical main”与“宣称 formal release continuity 已全部完成”。若 unresolved release risk 对 branch promotion 可接受，必须在状态文档明确记录；不得把 M8 partial 写成 complete。
+4. promotion 只能是 normal fast-forward，禁止 force push/history rewrite。
+5. verification-only PR #5 不应被 merge；它只是 current-head PR CI 触发器，晋升应在 M10 通过后直接 fast-forward `main` ref。
 
 ## Task Queue
 
-### P0 — post-evacuation audit
+### P0 — active source evacuation
 
 Status: **COMPLETE**
 
-已完成：删后物理树、MD、manifests、CI、临时 PR、一次性写权限全部对账，并用 `32669724116` 对当前 steady-state HEAD 做 Python/Electron/Container 实际复验。
+### P1 — text-clean source boundary + regression guard
 
-### P1 — investigate Node advisories
+Status: **IMPLEMENTED, FINAL CI PENDING**
 
-Status: **NEXT**
+下一步先跑 current-head PR CI；若 Source Boundary 仍失败，只按真实日志清理，不弱化 guard（法律 provenance 例外除外）。
 
-获取真实 npm audit dependency path，区分 production/runtime 与 dev-only packaging dependency；只做可验证、安全、不破坏 Electron packaging 的升级。
+### P2 — M10 branch-promotion review
 
-### P2 — resume resident-owned engineering competence
+Status: **PENDING P1 GREEN**
 
-Status: **PENDING after P1**
+fresh review：resident/runtime、desktop、build/release、CI、license/provenance、source independence、M8 risk acceptance、用户授权。
 
-从物理 `runtime/python/zn_agent/core` 和 `tests/zn_agent/core` 继续，保留全部 current-reality authority/verification/restart gates。
+### P3 — main promotion
 
-### P3 — M8 continuity
+Status: **AUTHORIZED BY USER, BLOCKED UNTIL P2 PASSES**
+
+若 P2 通过：recheck `main...dev`, require fast-forward only, update `main` ref with force=false, then verify `main` push CI and close verification PR without merge.
+
+### P4 — remaining engineering debt
 
 Status: **PENDING**
 
-完成 installed N→N+1、intended-platform release continuity、rollback 和 signing/notarization evidence。
-
-### P4 — M10
-
-Status: **BLOCKED on fresh evidence review**
-
-source independence 已满足，但 M8/release continuity 风险仍未闭合。只有 current runtime/desktop/release/CI/provenance/M8 risk review 达到 `ZN.md` M10 条件且用户明确授权时，才允许把 `dev/zn-agent` 晋升到 `main`。
+Node audit exact path → M8 remaining continuity/signing/rollback → resident competence → SM1+。
 
 ## 下一真实目标
 
-P1：先把 Node 的 2 个 high-severity audit finding 精确追到依赖链；如果属于可安全修复的 packaging dependency，就修复并跑完整 CI。之后恢复 resident competence 主线，同时继续推进 M8。
+对当前 `dev/zn-agent` 最终清理 HEAD 跑 fresh full PR CI。只有 Source Boundary、Python、Electron、Container 全绿后，才执行 M10 final review 与非强制 `main` 晋升。
