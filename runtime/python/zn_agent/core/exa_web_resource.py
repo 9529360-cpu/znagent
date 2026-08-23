@@ -4,7 +4,7 @@ from __future__ import annotations
 
 Source-extracted from the mature Exa provider. The useful mechanism is kept:
 semantic search with highlights, normalized positions, batch content extraction
-and per-URL failure evidence. The old plugin registry, Hermes env resolver,
+and per-URL failure evidence. The old plugin registry, legacy env resolver,
 lazy-dependency manager and keyless MCP control plane are not dependencies.
 """
 
