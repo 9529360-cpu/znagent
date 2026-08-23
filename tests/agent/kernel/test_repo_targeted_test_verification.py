@@ -192,6 +192,77 @@ class RepoTargetedTestVerificationTests(unittest.TestCase):
             self.assertEqual(experiences[0].verdict, "contradicted")
             resident.store.close()
 
+    def test_restart_with_inflight_targeted_test_marker_refuses_replay(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "repo"
+            root.mkdir()
+            target, _ = self._init_repo(
+                root,
+                test_body="""
+                    import unittest
+
+                    class TargetTest(unittest.TestCase):
+                        def test_target(self):
+                            self.assertTrue(True)
+                """,
+            )
+            db = base / "resident" / "kernel.db"
+            first = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=db,
+            )
+            event = first.enqueue(
+                f"replace {target} and verify it with the bounded test",
+                payload=self._payload(
+                    root,
+                    target,
+                    targeted_test={
+                        "kind": "python_unittest",
+                        "path": "tests/test_target.py",
+                        "for_path": "target.txt",
+                    },
+                ),
+            )
+            self._advance_until_stage(first, "native_action")
+            self.assertIsNone(first.live_once())
+            state = first.store.get_working_state()
+            self.assertEqual(state.stage, "native_verification")
+            intent_id = state.data["native_action_intent"]["intent_id"]
+            targeted = state.data["native_repo_text_baseline"]["targeted_test"]
+            state.data["native_targeted_test_execution"] = {
+                "intent_id": intent_id,
+                "kind": "python_unittest",
+                "state_sha256": targeted["state_sha256"],
+                "status": "started",
+                "action_id": None,
+            }
+            first.store.save_working_state(state)
+            first.store.close()
+
+            second = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=db,
+            )
+            self.assertEqual(second.store.get_working_state().stage, "native_verification")
+            self.assertIsNone(second.live_once())
+            restored = second.store.get_working_state()
+            self.assertEqual(restored.stage, "native_investigation")
+            self.assertIn(
+                "refusing replay after interruption",
+                restored.data["local_failure"],
+            )
+            commands = [
+                item
+                for item in self._event_actions(second, event.event_id)
+                if item.kind == "command"
+            ]
+            self.assertEqual(commands, [])
+            experiences = second.verified_experiences.for_event(event.event_id)
+            self.assertEqual(len(experiences), 1)
+            self.assertEqual(experiences[0].verdict, "contradicted")
+            second.store.close()
+
     def test_dirty_targeted_test_file_blocks_write_before_mutation(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
