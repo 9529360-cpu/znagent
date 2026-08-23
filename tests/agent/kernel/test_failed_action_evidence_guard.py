@@ -6,9 +6,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from agent.kernel.action import NativeActionIntent
-from agent.kernel.execution_guard import EvidenceGuardedResidentRuntime
+from agent.kernel.embodied_resident import EmbodiedResidentRuntime
 from agent.kernel.models import AgentEvent, WorkingState
 from agent.kernel.provider_bridge import build_resident_runtime
+from agent.kernel.world_closed_loop import WorldAwareTransferResidentRuntime
 
 
 class FailedActionEvidenceGuardTests(unittest.TestCase):
@@ -29,19 +30,20 @@ class FailedActionEvidenceGuardTests(unittest.TestCase):
         )
 
     @staticmethod
-    def _resident(tmp: str, filename: str = "kernel.db") -> EvidenceGuardedResidentRuntime:
+    def _resident(tmp: str, filename: str = "kernel.db") -> EmbodiedResidentRuntime:
         resident = build_resident_runtime(
             config={"model": {}},
             store_path=Path(tmp) / filename,
         )
-        if not isinstance(resident, EvidenceGuardedResidentRuntime):
+        if not isinstance(resident, EmbodiedResidentRuntime):
             raise AssertionError(type(resident))
         return resident
 
-    def test_product_runtime_uses_evidence_guard(self):
+    def test_product_runtime_keeps_existing_world_aware_resident_chain(self):
         with tempfile.TemporaryDirectory() as tmp:
             resident = self._resident(tmp)
-            self.assertIsInstance(resident, EvidenceGuardedResidentRuntime)
+            self.assertIsInstance(resident, WorldAwareTransferResidentRuntime)
+            self.assertTrue(hasattr(resident, "_action_blocked_by_current_evidence"))
             self.assertEqual(resident.store.get_runtime_metrics().model_invocations, 0)
             resident.store.close()
 
@@ -54,7 +56,7 @@ class FailedActionEvidenceGuardTests(unittest.TestCase):
             action_b = self._intent("b")
 
             with patch.object(
-                EvidenceGuardedResidentRuntime,
+                EmbodiedResidentRuntime,
                 "_evidence_fingerprint",
                 return_value="reality-v1",
             ):
@@ -63,12 +65,6 @@ class FailedActionEvidenceGuardTests(unittest.TestCase):
                 )
                 resident._record_failed_action(
                     event, state, action_b, source="body", failure="B failed"
-                )
-                # The inherited compatibility slot now names B, but A must
-                # remain blocked by the evidence ledger rather than becoming
-                # eligible merely because another movement failed later.
-                state.data["native_action_failure_signature"] = resident._intent_signature(
-                    action_b
                 )
                 self.assertTrue(
                     resident._action_blocked_by_current_evidence(event, state, action_a)
@@ -90,7 +86,7 @@ class FailedActionEvidenceGuardTests(unittest.TestCase):
             action = self._intent("retry")
 
             with patch.object(
-                EvidenceGuardedResidentRuntime,
+                EmbodiedResidentRuntime,
                 "_evidence_fingerprint",
                 return_value="reality-v1",
             ):
@@ -101,19 +97,21 @@ class FailedActionEvidenceGuardTests(unittest.TestCase):
                     resident._action_blocked_by_current_evidence(event, state, action)
                 )
 
-            # The legacy single-signature compatibility field must not turn a
-            # changed reality state into a permanent blacklist.
+            # An old interrupted runtime may still have the historical one-slot
+            # signature. Once the ledger exists, it cannot turn a changed reality
+            # state into a permanent blacklist.
             state.data["native_action_failure_signature"] = resident._intent_signature(action)
             with patch.object(
-                EvidenceGuardedResidentRuntime,
+                EmbodiedResidentRuntime,
                 "_evidence_fingerprint",
                 return_value="reality-v2",
             ):
-                resident._apply_parent_failure_shim(event, state, action)
                 self.assertFalse(
                     resident._action_blocked_by_current_evidence(event, state, action)
                 )
+                resident._begin_native_action_cycle(event, state, action)
             self.assertNotIn("native_action_failure_signature", state.data)
+            self.assertEqual(state.stage, "native_action")
             resident.store.close()
 
     def test_repeated_failure_is_deduplicated_and_ledger_is_bounded(self):
@@ -124,7 +122,7 @@ class FailedActionEvidenceGuardTests(unittest.TestCase):
             repeated = self._intent("repeat")
 
             with patch.object(
-                EvidenceGuardedResidentRuntime,
+                EmbodiedResidentRuntime,
                 "_evidence_fingerprint",
                 return_value="same-reality",
             ):
@@ -140,7 +138,7 @@ class FailedActionEvidenceGuardTests(unittest.TestCase):
 
             for index in range(resident._MAX_FAILED_ACTION_RECORDS + 5):
                 with patch.object(
-                    EvidenceGuardedResidentRuntime,
+                    EmbodiedResidentRuntime,
                     "_evidence_fingerprint",
                     return_value=f"reality-{index}",
                 ):
@@ -160,7 +158,7 @@ class FailedActionEvidenceGuardTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             store_path = Path(tmp) / "kernel.db"
             resident = build_resident_runtime(config={"model": {}}, store_path=store_path)
-            self.assertIsInstance(resident, EvidenceGuardedResidentRuntime)
+            self.assertIsInstance(resident, EmbodiedResidentRuntime)
             event = self._event()
             state = WorkingState(
                 current_event_id=event.event_id,
@@ -168,7 +166,7 @@ class FailedActionEvidenceGuardTests(unittest.TestCase):
             )
             action = self._intent("persist")
             with patch.object(
-                EvidenceGuardedResidentRuntime,
+                EmbodiedResidentRuntime,
                 "_evidence_fingerprint",
                 return_value="persisted-reality",
             ):
@@ -179,7 +177,7 @@ class FailedActionEvidenceGuardTests(unittest.TestCase):
             resident.store.close()
 
             restarted = build_resident_runtime(config={"model": {}}, store_path=store_path)
-            self.assertIsInstance(restarted, EvidenceGuardedResidentRuntime)
+            self.assertIsInstance(restarted, EmbodiedResidentRuntime)
             recovered = restarted.store.get_working_state()
             records = recovered.data[restarted._FAILED_ACTION_RECORDS_KEY]
             self.assertEqual(len(records), 1)
@@ -187,8 +185,31 @@ class FailedActionEvidenceGuardTests(unittest.TestCase):
             self.assertEqual(records[0]["evidence_fingerprint"], "persisted-reality")
             restarted.store.close()
 
+    def test_legacy_single_signature_migrates_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = self._resident(tmp)
+            event = self._event()
+            state = WorkingState(current_event_id=event.event_id)
+            action = self._intent("legacy")
+            state.data["native_action_failure_signature"] = resident._intent_signature(action)
+            state.data["local_failure"] = "old persisted failure"
+
+            with patch.object(
+                EmbodiedResidentRuntime,
+                "_evidence_fingerprint",
+                return_value="migration-reality",
+            ):
+                self.assertTrue(
+                    resident._action_blocked_by_current_evidence(event, state, action)
+                )
+            records = state.data[resident._FAILED_ACTION_RECORDS_KEY]
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["source"], "legacy")
+            self.assertEqual(records[0]["evidence_fingerprint"], "migration-reality")
+            resident.store.close()
+
     def test_evidence_fingerprint_ignores_observation_clock_noise(self):
-        first = EvidenceGuardedResidentRuntime._stable_fact_value(
+        first = EmbodiedResidentRuntime._stable_fact_value(
             {
                 "git": {"head": "abc123", "dirty": True},
                 "world": {
@@ -198,7 +219,7 @@ class FailedActionEvidenceGuardTests(unittest.TestCase):
                 "updated_at": "2026-08-23T10:00:01+00:00",
             }
         )
-        second = EvidenceGuardedResidentRuntime._stable_fact_value(
+        second = EmbodiedResidentRuntime._stable_fact_value(
             {
                 "git": {"head": "abc123", "dirty": True},
                 "world": {
@@ -208,7 +229,7 @@ class FailedActionEvidenceGuardTests(unittest.TestCase):
                 "updated_at": "2026-08-23T11:00:01+00:00",
             }
         )
-        changed = EvidenceGuardedResidentRuntime._stable_fact_value(
+        changed = EmbodiedResidentRuntime._stable_fact_value(
             {
                 "git": {"head": "def456", "dirty": True},
                 "world": {
