@@ -13,61 +13,63 @@ durable ZN Self
 + resident-owned learning / procedural competence
 ```
 
-核心产品原则：
+核心原则：
 
 > **Models may help ZN learn. Mature capability must belong to ZN.**
 
-ZN 不是 `LLM -> planner -> tools -> agent`。外部模型可以作为 teacher/adviser，但不能长期拥有 ZN 的任务连续性、动作权、真值判断或已经学会的能力。
+L1 `VerifiedExperience`、L2 transparent candidate aggregation，以及第一片 **L3 read-only current-reality applicability** 已完成并经过真实主 CI。
 
-L1/P0 `VerifiedExperience` 与 L2 第一片 transparent candidate aggregation 已完成并经过真实主 CI。当前下一真实实现目标是：**L3 current-reality applicability evaluator**。
+下一真实目标不是 fast path，也不是 raw replay。下一步是：
 
 ```text
-CandidateProceduralTendency
-+ current Situation / Investigation facts
-→ supported / mismatch / untested applicability
-→ Thought/Investigation evidence only
-→ later reality-gated action influence
+supported CandidateProceduralTendency
++ current independently observed reality
+→ bounded low-risk influence on existing ZN-owned structured action formation
+→ independent post-action verification remains mandatory
 ```
 
-当前 candidate 即使状态为 `practiced` 也没有 Body 权限。不要跳过 L3 直接接 `_deliberation_step`、capability loader 或 nervous `activate()`。
+`mismatch` / `untested` candidate 必须保持零正向动作权。即使 candidate 为 `supported` / `practiced`，当前实现仍不直接控制 Body。
 
-stronger alternative-action recovery 不删除；它继续作为 learning architecture 的早期 consumer，而不是孤立 tactic generator。
+stronger alternative-action recovery 保留为 learning architecture 的早期 consumer，而不是孤立 tactic generator。
 
-纯 UI/desktop polish 继续暂停。M8/release 保留为 bounded parallel lane。
+纯 UI/desktop polish 继续暂停。M8/release 保持 bounded parallel lane。
 
-## 当前分支 / HEAD
+## 当前分支 / HEAD / CI
 
 - 分支：`dev/zn-agent`
-- 最后一个真实 code/test SHA：`25ff0ada9efc8e8d830d085856edca7ea772a696`
-- real code CI：run `32640409344`
+- 本阶段最终真实 code/test SHA：`202b69e947db6c178d821c27e51fc1e61a90ce82`
+- real code CI：run `32642408966`
   - `ZN Kernel / Python = success`
   - `Electron / TypeScript = success`
-- implementation-status docs：`f3f1858267bf49b8b24dc8d46b04422776c0096e` (`[skip ci]`)
-- 本 HANDOFF 提交本身为 docs-only `[skip ci]`；它会成为新的远程 HEAD，因此下一维护者必须重新读取远程 `dev/zn-agent` 精确 HEAD。
-- `main` 未修改。
+- implementation-status docs：`5af75e475960dfddd2cf3267bb6069d480b89fc6` (`[skip ci]`)
+- 本 HANDOFF 更新本身为 docs-only `[skip ci]`，会成为新的远程 HEAD；下一维护者必须从 Git 重新读取 `dev/zn-agent` 精确 HEAD，不能把上面的 code SHA 当作分支 HEAD。
+- Open PR 在本阶段开始时为 0；结束前必须再次核对。
+- `main` 本阶段未修改；结束前必须再次对比原基线 `61dd880aa4bbbdb359ca544b752afc2c22845ce9`。
 
-## 本阶段恢复并核对的真实现场
+当前执行环境没有 private-repo checkout，也没有 `gh` CLI。因此本阶段没有宣称 full local repo tests；真实代码验证以 GitHub Actions 为权威。
 
-本阶段开始时重新读取/检查：
+## 本阶段开始时重新恢复的真实现场
 
-- `ZN.md`
-- `AGENTS.md`
-- `docs/ZN-IMPLEMENTATION-STATUS.md`
-- `docs/ZN-SOURCE-EXTRACTION.md`
-- `docs/ZN-SELF-MAINTENANCE.md`
-- `.agent/HANDOFF.md`
-- `dev/zn-agent` HEAD / recent commits / open PR / CI
-- `VerifiedExperienceStore` / embodied verification / nervous reconsolidation / provider bridge / packaged Python mapping
+开始工作前重新读取并核对：
 
-本阶段开始时远程 `dev/zn-agent` 精确 HEAD：
+1. `ZN.md`
+2. `AGENTS.md`
+3. `docs/ZN-IMPLEMENTATION-STATUS.md`
+4. `docs/ZN-SOURCE-EXTRACTION.md`
+5. `docs/ZN-SELF-MAINTENANCE.md`
+6. `.agent/HANDOFF.md`
+7. `dev/zn-agent` HEAD / recent commits / open PR / CI
+8. 当前 L1/L2/Investigation/Situation/Action active call chain
+
+开始时 `dev/zn-agent` 精确 HEAD：
 
 ```text
-e24fef1574c46c211be63d5816a97559e797ee31
+d739a03e599bf5881ef721fa40883cc5d55a5db5
 ```
 
-compare 当时为 identical；Open PR：无；最后 code SHA `80292975264df35ff3a999ed32c7973cdd3514f5` 的旧 CI 仍双绿。
+开始时 compare identical；Open PR 0；旧 code/test SHA `25ff0ada9efc8e8d830d085856edca7ea772a696` 的 run `32640409344` 仍 Python/Electron 双绿。
 
-当前执行环境无 private-repo checkout、无 `gh` CLI，因此不宣称 full local repo tests。真实代码验证以 GitHub CI 为权威。
+同时重新读取 `docs/ZN-MEMORY-LEARNING.md` 的 L3 约束。
 
 ## 当前真实 learning call chain
 
@@ -76,7 +78,7 @@ compare 当时为 identical；Open PR：无；最后 code SHA `80292975264df35ff
 ```text
 provider bridge
 → WorldAwareTransferResidentRuntime
-→ existing EmbodiedResidentRuntime
+→ EmbodiedResidentRuntime
 → Investigation / NativeActionIntent
 → BodyActionResult
 → durable native_verification
@@ -85,7 +87,7 @@ provider bridge
 → VerifiedExperienceStore
 ```
 
-可信正/负 learning label 来自 independent verification，而不是：
+正/负 learning label 仍来自 independent verification，不来自：
 
 ```text
 model text
@@ -95,318 +97,317 @@ naked shell exit 0
 
 ### L2 candidate owner
 
+```text
+VerifiedExperienceStore.candidate_tendencies()
+→ retained bounded causal episodes
+→ privacy-safe compatible aggregation
+→ CandidateProceduralTendency
+```
+
+Candidate 是 derived resident-owned view，不是第二个 mutable skill DB；restart 后由 L1 evidence 重建。
+
+### L3 read-only applicability owner
+
 新增：
 
 ```text
-agent/kernel/procedural_tendency.py
+agent/kernel/procedural_applicability.py
 ```
 
 当前路径：
 
 ```text
-VerifiedExperienceStore.candidate_tendencies()
-→ scan retained bounded causal episodes
-→ aggregate compatible privacy-safe groups
-→ CandidateProceduralTendency
+CandidateProceduralTendency
++ current NativeActionIntent shape
++ current expected-outcome contract
++ current persisted Investigation facts
+→ evaluate_candidate_applicability()
+→ supported / mismatch / untested
+→ bounded observational evidence
+→ CognitiveSituation.procedural_applicability
+→ Thought.known
 ```
 
-没有新 runtime shim。active product constructor 仍是原来的 `WorldAwareTransferResidentRuntime` chain。
+Active packaged product constructor 仍是：
 
-Candidate 目前只是 derived resident-owned view，不是第二个 mutable skill database；restart 后从同一 L1 persistent evidence 重建相同 ID/state。
+```text
+provider_bridge.build_resident_runtime()
+→ WorldAwareTransferResidentRuntime
+→ WorldAwareEmbodiedInvestigator
+```
 
-## 本阶段完成：L2 first transparent candidate slice
+这条 active-caller 事实在本阶段 CI 中实际抓到并修复，见下文。
 
-### 1. Candidate data model / aggregation
+## 本阶段完成：L3 first read-only applicability slice
+
+### 1. Pure evaluator
 
 关键提交：
 
 ```text
-3f00dbc884a899626fba7d32c6f2130a0f11ce0d  feat: derive candidate procedural tendencies
+cf2c270f3619e566cd0c07f81e6a2c5f59697cad  feat: add reality-gated procedural applicability
+f36db4de98c75f200459f9a0a62d05509bd12e29  fix: fail closed on untested applicability fields
 ```
 
-`CandidateProceduralTendency` 当前保存：
+`ProceduralApplicabilityEvaluation` 只保留：
 
-- deterministic tendency ID；
-- privacy-safe compatibility/group key；
+- evaluation ID；
+- tendency ID；
+- `supported | mismatch | untested`；
 - action kind；
-- domain fingerprints；
-- expected-result kind / expected exit；
-- effect/failure class；
-- support count；
-- contradiction count；
-- distinct event count；
-- native vs assisted support counts；
-- transparent reliability ratio；
-- candidate-level maturity state；
-- inhibited flag；
-- bounded privacy-safe applicability profile；
-- bounded recent verdicts / supporting and contradicting experience IDs；
-- first/last seen time。
+- candidate maturity/reliability/inhibited state；
+- matched / mismatched / untested field names；
+- independently reality-matched field names；
+- privacy-safe current-context fingerprint。
 
-Hard boundary：
+没有 raw command、args、path、content、task text。
 
-- one verified event => no candidate；
-- duplicate same-event records => cannot fake repetition；
-- minimum two distinct independently verified events required；
-- raw command/content/path/task/model text/caller capability label are not copied；
-- no executable handler/args/callable is stored；
-- candidate states are only transparent L2 states: `candidate`, `supported`, `practiced`, `contested`, `inhibited`；
-- no state is called mature/procedural yet。
+核心 fail-closed 规则：
 
-### 2. Bounded retrieval
+- task/request shape 可以 disqualify / compare，但不能单独证明 applicability；
+- `supported` 要求至少一个 stable candidate reality anchor 被当前独立 Investigation observation 命中；
+- 所有当前参与比较的 contract field 必须已测试；
+- current target/workdir/verification signature mismatch => `mismatch`；
+- missing/incomplete current evidence => `untested`；
+- generalized candidate 没有 stable target/workdir anchor => `untested`；
+- inhibited candidate => cannot qualify；
+- matching repo root 但缺 current command verification contract => `untested`，不能因为“同目录”就支持。
+
+Current expected-outcome comparison 是 transient；raw current values 不写入 procedural memory。
+
+### 2. Investigation/Situation/Thought integration
 
 关键提交：
 
 ```text
-3c989a077152a5c28757ff1891fb393ebe0d10bb  feat: expose bounded procedural candidate retrieval
+87d5d9a6a46b0b9f94061502bbcb24752e9643f7  feat: surface procedural applicability from investigation
+2404825f971b2deb252db16ac5ae3ecded17a5db  feat: expose procedural applicability to thought
+4300d0bc7cdca615d75ed362156dd5bf8dda787e  fix: derive applicability from durable reality evidence
 ```
 
-`VerifiedExperienceStore.candidate_tendencies()` scans the already-bounded retained L1 evidence rather than only the default recent 100 rows, so an older repeated pattern does not vanish merely because unrelated recent episodes exist.
+最终 ownership：
 
-This is retrieval/aggregation only. It does not modify Thought or action choice.
+- Investigation 可保留 bounded textual observational note；
+- `CognitiveSituation` 每次从 persisted event + persisted Investigation facts + current L2 candidate 重新 derive structured evaluation；
+- restart 不需要第二个 applicability DB/cache；
+- Thought 可以知道 candidate 当前是 supported/mismatch/untested；
+- stage-derived `chosen_action` / `action_kind` 不因该评价改变。
 
-### 3. Retention repaired for L2 continuity
+### 3. 两个生命周期陷阱已避免
 
-静态审查发现 L1 旧 retention 在容量压力下只保证 per-group singleton representative，可能把已经拥有两次独立 support 的 L2 candidate 削回单例。
+#### A. 不把 L3 evaluation 塞进 `Investigation.facts`
 
-修复提交：
+`EmbodiedResidentRuntime._evidence_fingerprint()` 会把 `Investigation.facts` 作为 L1 reality identity / failed-action retry evidence。
+
+如果把 derived L3 judgement 写进 facts：
 
 ```text
-f0f5ba49d3d4b9a152a05e9d3e0f056667351162  fix: retain repeated support for procedural candidates
+L3 judgement
+→ changes L1 evidence fingerprint
+→ could falsely appear as new reality evidence
+→ could incorrectly unlock a previously failed movement
 ```
 
-新 retention 顺序：
+因此当前实现明确不这么做。
 
-1. reserve bounded recent contradiction evidence；
-2. when capacity permits, preserve two distinct verified events for already-repeated groups；
-3. preserve one verified representative for other groups；
-4. fill remaining capacity by recency。
+#### B. 不依赖 Investigator 单独写 WorkingState cache
 
-Same-event duplicate does not satisfy the two-event retention pair。
+上层 `_investigation_step()` 持有自己的 `WorkingState` 并在 investigator 返回后保存。若 investigator 内部单独写同一个 WorkingState，很可能随后被上层旧 state 覆盖。
 
-### 4. Tests
+因此 structured applicability 不放在这种脆弱 cache；Situation 从 durable Investigation + L1/L2 现场重建。
+
+### 4. Active caller 修复
+
+真实主 runtime 的 `WorldAwareEmbodiedInvestigator.investigate()` 为避免 world schema feedback 重复，原本直接调用：
+
+```text
+NativeInvestigator.investigate(self, ...)
+```
+
+这会绕过 `EmbodiedInvestigator.investigate()` 的 L3 hook。
+
+最终修复：
+
+```text
+202b69e947db6c178d821c27e51fc1e61a90ce82  fix: preserve applicability in active world investigator
+```
+
+只在 active world-aware caller 的 native probe 返回后显式调用同一个 read-only hook。
+
+该提交 diff 已核对为：
+
+```text
+agent/kernel/world_closed_loop.py  +1 / -0
+```
+
+没有误写整文件。
+
+## 测试 / CI 真实结果
 
 新增：
 
 ```text
-tests/agent/kernel/test_procedural_tendency.py
-```
-
-最终测试提交：
-
-```text
-25ff0ada9efc8e8d830d085856edca7ea772a696  test: preserve candidate support under retention
+tests/agent/kernel/test_procedural_applicability.py
+tests/agent/kernel/test_procedural_applicability_contract.py
 ```
 
 覆盖：
 
-- one-shot verified success cannot create candidate；
-- same-event duplicate cannot create candidate；
-- two distinct verified events create one non-executable candidate；
-- three supports progress to `supported` baseline；
-- four supports progress to `practiced` baseline；
-- contradiction produces `contested`；
-- repeated/recent contradiction can produce `inhibited`；
-- incompatible group/action does not merge；
-- candidate evidence references/recent verdicts are bounded；
-- bounded L1 retention preserves existing two-event candidate support + contradiction under pressure；
-- real resident two separate write→independent-read events form one candidate；
-- candidate serialization excludes private task/content/path/domain strings；
-- restart reconstructs same candidate ID/support/state。
+- matching task context without current observation => `untested`；
+- observed matching stable target => `supported`；
+- other observed target => `mismatch`；
+- generalized candidate without stable reality anchor => `untested`；
+- inhibited candidate cannot qualify；
+- command candidate requires observed repo root；
+- matching repo root without complete current verification contract => `untested`；
+- serialized evaluation excludes raw workdir/path/command/action command；
+- real resident first creates one L2 candidate from two independently verified writes；
+- third comparable event reaches path reality observation before any Body mutation and exposes supported applicability；
+- supported applicability does not create `native_action_result` and Thought remains on existing `investigate` stage/action；
+- `Investigation.facts` does not contain derived applicability；
+- Situation applicability serialization excludes private temp path/content/task；
+- restart reconstructs same supported applicability from durable evidence without moving Body。
 
-真实主 CI：
+### CI failure history — 不要抹掉
+
+第一轮 final-candidate SHA `ad415dc897c7f3d5bbbaab6d8201a4ce660e4a1a`：
 
 ```text
-25ff0ada9efc8e8d830d085856edca7ea772a696
+run 32641858655
+Electron / TypeScript  success
+ZN Kernel / Python      failure
+```
+
+唯一失败来自 integration test 错误假设“固定两次 `live_once()` 后一定已经完成 path probe”。产品 evaluator unit boundaries 都通过。
+
+改为等待真实 path observation 后，SHA `8d26a458a05ad17f0f4df003f732164d9cd21c11`：
+
+```text
+run 32642032803
+Electron / TypeScript  success
+ZN Kernel / Python      failure
+```
+
+这次 path facts 已真实存在，但 Investigation note 仍缺失，证明不是 timing 问题。
+
+诊断 SHA `f876eb5641c82f3cab79c5ba2b7f0e5deb55dbc6` 在同一真实时刻直接将 candidate + readiness + intent + facts 喂 evaluator，证明 evaluator 返回 `supported`；因此问题收敛到 active caller hook。
+
+修复 `WorldAwareEmbodiedInvestigator` 后最终 code/test SHA：
+
+```text
+202b69e947db6c178d821c27e51fc1e61a90ce82
 ZN Kernel / Python      success
 Electron / TypeScript  success
-run                     32640409344
+run                     32642408966
 ```
 
-## L2/L3 ownership boundary — 不要回退
+这是当前代码验证权威。
 
-当前没有任何 candidate-to-action connection：
+## L3 ownership boundary — 不要回退
+
+当前仍然没有 candidate-to-action authority：
 
 ```text
-CandidateProceduralTendency
--X-> EmbodiedResidentRuntime._deliberation_step
--X-> NativeBody
--X-> CapabilityRegistry / PromotedCapabilityLoader
+ProceduralApplicabilityEvaluation
+-X-> raw command replay
+-X-> direct NativeBody action
+-X-> CapabilityRegistry / PromotedCapabilityLoader promotion
 -X-> PersistentNervousSystem.activate as action authority
+-X-> direct override of _deliberation_step chosen action
 ```
 
-这是故意的。
+`CognitiveSituation` / Thought 知道 `supported` 并不等于“执行它”。
 
-现有 `PersistentNervousSystem` / `SchemaReconsolidator` 已经有一般 associative pattern、support/refinement/contradiction、strength/confidence/reconsolidation semantics，但这些是 general lived prediction substrate，不等于 executable procedural skill。不要为了省代码把 neural familiarity 偷换成动作资格。
-
-L3 必须显式问：
-
-> 当前 Situation / Investigation facts 是否真的测试并支持这个 candidate 的 applicability？
-
-如果当前证据没有测试它，结果应是 `untested`，不是默认匹配。
-
-## 当前已有的 L1 / nervous / capability foundations
-
-### L1 `VerifiedExperience`
-
-关键旧提交：
-
-```text
-ee287a41873eb9340406aa95a56961b42127296c  deterministic result semantics
-1130148205471a14c964cc080ea481d6f72c3a93  bounded verified experience store
-b04a35356181abb86eb228cc7f963ebd01ca1653  record after independent verification
-20a3ffa9236e9de4279ef64e766d02f8cdce5988  masked-success hardening
-474f636cd8dedeeb23c5997ad45e07a7d224136f  capability-label privacy
-80292975264df35ff3a999ed32c7973cdd3514f5  L1 final tests
-```
-
-L1 real CI：run `32639405457`, Python/Electron success。
-
-### Nervous / reconsolidation
-
-Current code already has：
-
-- persistent neural traces；
-- repeated-trace strengthening；
-- associative links/spreading activation；
-- consolidation/schema；
-- fading/pruning；
-- prediction/reality comparison；
-- support/refinement/contradiction；
-- prediction-error-driven reconsolidation。
-
-继续把它当 general associative substrate，不要另装 LLM-memory product。
-
-### Capability boundary
-
-`CallableCapability` remains deterministic local capability shape。
-
-`PromotedCapabilityLoader` remains the future stronger executable boundary：
-
-```text
-candidate/self-generated code
-→ isolated tests/benchmarks
-→ promotion decision
-→ promoted capability
-→ resident loading
-```
-
-L2 candidate 不得直接进入 loader。
-
-### Existing `LearningCandidate`
-
-`life.py` 旧 `LearningCandidate` 仍只是 resolved-impasse summary，external cognition success 也可以产生；它不是 `CandidateProceduralTendency`，不得混为一谈。
-
-## Hermes / external research state retained
-
-外部 learning research：
-
-```text
-docs/ZN-LEARNING-SOURCE-RESEARCH.md
-6196e114f590475da8494aee994e737d19896c92
-```
-
-memory/learning integration：
-
-```text
-docs/ZN-MEMORY-LEARNING.md
-0f08f5de3d59cd426ba8dfb6744155f18635dcc6
-```
-
-选中方向仍是 fast/slow learning、bounded replay、DAgger teacher/student、River/ADWIN drift、Avalanche/Mammoth research baselines、later world-model research、BrowserGym/OSWorld benchmark。
-
-No external learning framework has been added to runtime。
-
-Hermes source quarry 仍在 `docs/ZN-SOURCE-EXTRACTION.md`：
-
-- H-L1 deterministic terminal/result semantics: first slice already source-adapted into ZN；
-- H-L2 repeated/no-progress guardrails: selective future extraction；
-- H-L3 skill telemetry/lifecycle: useful later for maturity/stale/inhibition/retirement mechanics, but do not import Curator owner；
-- H-L4 ledger/rollback: future promoted-capability safety；
-- H-L5 skill-manager safety only, reject `LLM writes SKILL.md -> procedural learning`；
-- H-L6 observability later；
-- H-L7 conventional memory only support-memory quarry；
-- H-L8 browser substrate later behind ZN Body/Sense seam。
-
-本阶段没有新增 Hermes extraction，因此 `docs/ZN-SOURCE-EXTRACTION.md` 没有形式性修改。
+现有 `PersistentNervousSystem` / `SchemaReconsolidator` 是 general associative prediction/reconsolidation substrate，不等于 executable skill。不要把 neural familiarity 偷换成 action eligibility。
 
 ## 当前没有实现、不得误报
 
 仍 PARTIAL / MISSING：
 
-- L3 current-Situation applicability evaluator；
-- candidate influence on resident Thought/deliberation；
+- L3 candidate influence on resident native action selection/deliberation；
 - mature/procedural resident-owned skill state；
 - procedural fast path；
-- prediction-error interrupt of an actually activated procedural route；
+- prediction-error interrupt/deproceduralization of an actually activated procedural route；
 - stronger alternative-action recovery as a learned consumer；
-- DAgger student training loop；
-- River/ADWIN prototype；
-- learned computer-use competence；
 - learned engineering competence；
-- retention/forgetting/model-removal growth benchmarks；
-- practical Git mutation + diff/test verification；
+- learned computer-use competence；
+- growth benchmarks proving familiar work reduces external cognition while preserving verification quality；
+- practical Git mutation + diff/test/reality verification；
 - GitHub repo/PR/CI resident-owned sense；
 - browser Body/Sense seam；
 - SM1+ self-maintenance implementation。
 
-Do not describe L2 `practiced` as mature skill. It is still observational evidence aggregation with zero action authority。
+Do not describe read-only L3 `supported` as a mature skill or as an activated procedure。
 
 ## 下一真实目标
 
-Fresh restore 后先实现 L3 的**只读 applicability evaluator**，不要一上来执行动作：
+Fresh restore 后做最小 **bounded low-risk L3 action-influence slice**。
+
+推荐边界：
+
+1. 重新读取六份必读文档、remote HEAD、PR、CI、最近提交；
+2. 重新追 `_deliberation_step` / `derive_native_action_intent()` / current Situation applicability active call chain；
+3. 只允许 `supported` 且 non-inhibited candidate 产生正向 bias；
+4. `mismatch` / `untested` 必须产生零 positive influence；
+5. candidate 不得提供 raw command/args/path/content/model text；
+6. influence 只能作用于**已经由 ZN 当前结构化 action formation 合法生成的候选动作形状**；
+7. 第一 slice 不做 raw replay、不做 SKILL.md generation、不做 automatic capability promotion；
+8. independent post-action verification 永远保留；熟练度不能降低真值要求；
+9. candidate contradiction / prediction error 必须能够立即撤销 influence 并回 Investigation；
+10. high-risk identity/long-term-memory/credentials/updater/rollback/signing/self-maintenance permissions 仍保留人工批准，不因 maturity 绕过。
+
+第一个 concrete learning consumer 仍建议：
 
 ```text
-CandidateProceduralTendency
-+ current Investigation facts / Situation
-→ compare privacy-safe applicability expectations
-→ supported / mismatch / untested
-→ bounded applicability evidence
-→ Thought / Investigation visibility
+A fails
+→ genuinely different B succeeds
+→ B independently verified
+→ later comparable current reality supports B-pattern
+→ supported candidate may bias existing structured choice toward B
+→ still independently verify outcome
 ```
 
-第一 slice 建议顺序：
+不要把它实现成 hardcoded A/B tactic rule。
 
-1. 重新追 `CognitiveSituation` / `EmbodiedInvestigator.facts` / `NativeActionIntent` 的当前真实结构；
-2. 明确哪些 current evidence 可以与 candidate applicability 的 fingerprints/counts 做可靠 comparison；
-3. evaluator 必须 fail closed：没有可测试证据 => `untested`；
-4. mismatch/contradiction 必须降低或 inhibit candidate route，而不是“相似就算匹配”；
-5. 先只把 evaluation 放进 Situation/Thought evidence，不改变动作；
-6. restart/privacy/bound tests；
-7. prove stale/other-target/current-context mismatch cannot qualify；
-8. CI green 后才考虑让低风险 supported candidate **bias** existing ZN action formation；
-9. 即使以后 influence action，也只能选择 ZN-owned structured action shape，不能 replay raw command/model text；
-10. high-risk identity/memory/credentials/updater/rollback/signing/self-maintenance 权限永远不因 maturity 绕过批准。
+## 风险
 
-之后再把 A fail → genuinely different B independently verified success 做成第一个 concrete learning consumer。
+- current domain comparison 是保守 exact-match；后续泛化需要真实 benchmark，不要先放宽；
+- generalized target/workdir candidate 当前 fail closed；这是刻意的，不是 bug；
+- candidate retrieval / applicability 每个 Situation pulse 都是 bounded derivation，第一 slice 可接受；若以后性能成为事实问题再 profile，不要先建第二个 mutable cache；
+- active caller hierarchy 中存在 world-aware overrides，后续改 owner 方法必须继续追最终 runtime 的真实 override；
+- `Investigation.facts` 是 L1 reality evidence substrate，不要塞 derived learning judgement；
+- 不把外部模型、Hermes Curator、skill-manager 重新变成 procedural owner；
+- no one-shot skill creation；
+- no embedding similarity as action authority；
+- `main` 不动；
+- M8 updater/signing/multi-OS release debt 仍存在，但当前不是 core-learning 主线。
 
-## 风险 / 安全 / release boundary
+## 阻塞
 
-- 不做 one-shot skill creation；
-- 不把 teacher/model 当 truth owner；
-- 不把 embedding retrieval 伪装成 procedural competence；
-- candidate 不是 action authority；
-- nervous familiarity 不是 action authority；
-- `native_action_failure_records` / `verified_experiences` / candidate derived view 保持 execution-vs-causal-learning-vs-procedural-aggregation 分工；
-- 不为了 applicability 把 task/path/command/output/private domain 原样放回 broad memory；
-- current reality must remain authoritative；
-- high-risk operations do not become automatic through maturity；
-- 不引入重型 ML runtime dependency，除非 benchmark 证明价值并验证多平台 packaging；
-- 不把 Hermes source quarry 变成 active control plane；
-- `main` untouched；
-- M8/release debt 保留为 bounded parallel lane。
+当前无已知代码阻塞。
+
+环境限制：没有本地 private checkout / `gh`，因此依赖 GitHub connector + Actions 做真实 repo/CI 验证。
 
 ## 文档状态
 
 本阶段更新：
 
-- `docs/ZN-IMPLEMENTATION-STATUS.md`：L2 transparent aggregation/retrieval CI verified，下一目标前移到 L3 applicability；
-- `.agent/HANDOFF.md`：当前 code SHA/CI/L2边界/下一目标已同步。
+- `docs/ZN-IMPLEMENTATION-STATUS.md`
+- `.agent/HANDOFF.md`
 
-本阶段未改变 source extraction/self-maintenance/architecture direction，因此没有为了形式修改：
+本阶段未更新：
 
-- `docs/ZN-SOURCE-EXTRACTION.md`；
-- `docs/ZN-SELF-MAINTENANCE.md`；
-- `ZN.md`；
-- `AGENTS.md`；
-- `main`。
+- `ZN.md`：架构方向没有变化；实现了既定 L3 read-only slice；
+- `AGENTS.md`：无规则变化；
+- `docs/ZN-SOURCE-EXTRACTION.md`：没有新 Hermes extraction；
+- `docs/ZN-SELF-MAINTENANCE.md`：没有 self-maintenance architecture 变化。
+
+## 下一维护者开始前
+
+不要根据本文件直接假设现场未变化。必须重新：
+
+1. 读六份必读文档；
+2. 查 `dev/zn-agent` 精确 HEAD；
+3. 查 diff / PR / CI / recent commits；
+4. 查最终 runtime active caller；
+5. 以代码 + Git + CI 为准对账本 HANDOFF。
