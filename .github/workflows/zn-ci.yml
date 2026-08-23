@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   statuses: write
 
 env:
@@ -25,6 +25,83 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  migrate-python-namespace:
+    name: One-shot ZN Python namespace migration
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact development revision
+        uses: actions/checkout@v4
+        with:
+          ref: dev/zn-agent
+          fetch-depth: 0
+
+      - name: Require non-diverged dev HEAD
+        run: |
+          set -euo pipefail
+          test "$(git branch --show-current)" = "dev/zn-agent"
+          git fetch origin dev/zn-agent
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/dev/zn-agent)"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+
+      - name: Apply mechanical namespace migration
+        run: |
+          set -euo pipefail
+          python .agent/migrate_python_namespace.py
+          rmdir tests/agent 2>/dev/null || true
+          git diff --check
+          ! grep -R --line-number --fixed-strings 'from agent.kernel' tests/zn_agent/core
+          ! grep -R --line-number --fixed-strings 'import agent.kernel' tests/zn_agent/core
+
+      - name: Install migrated ZN runtime only
+        run: |
+          set -euo pipefail
+          uv venv .ci/migration-venv --python 3.12
+          uv pip install --python .ci/migration-venv/bin/python runtime/python
+
+      - name: Verify migrated zero-model resident and full core suite
+        run: |
+          set -euo pipefail
+          .ci/migration-venv/bin/python -I - <<'PY'
+          import os
+          from pathlib import Path
+          from zn_agent.core.provider_bridge import build_resident_runtime
+
+          home = Path(os.environ['ZN_AGENT_HOME']) / 'migration-runtime'
+          home.mkdir(parents=True, exist_ok=True)
+          resident = build_resident_runtime(config={'model': {}}, store_path=home / 'kernel.db')
+          pulse = resident.pulse()
+          state = resident.life.snapshot()
+          assert pulse.sequence >= 1
+          assert state.body is not None
+          assert state.external_brains == ()
+          resident.store.close()
+          PY
+          .ci/migration-venv/bin/python -m compileall -q runtime/python/zn_agent/core
+          .ci/migration-venv/bin/python -m unittest discover -s tests/zn_agent/core -p 'test_*.py' -v
+
+      - name: Commit only after verification
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'refactor: move ZN core tests to zn_agent namespace'
+          git fetch origin dev/zn-agent
+          test "$(git rev-parse HEAD^)" = "$(git rev-parse origin/dev/zn-agent)"
+          git push origin HEAD:dev/zn-agent
+
   kernel:
     name: ZN Kernel / Python
     runs-on: ubuntu-latest
