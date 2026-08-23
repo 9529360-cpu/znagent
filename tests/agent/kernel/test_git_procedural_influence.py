@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from agent.kernel.action import NativeActionIntent, derive_native_action_intents
 from agent.kernel.body import BodyActionResult
+from agent.kernel.git_semantics import git_stage_command
 from agent.kernel.models import AgentEvent
 from agent.kernel.procedural_influence import select_procedurally_influenced_intent
 from agent.kernel.procedural_tendency import CandidateProceduralTendency
@@ -162,7 +163,7 @@ class GitProceduralInfluenceTests(unittest.TestCase):
     def test_supported_variant_only_reorders_fresh_current_git_choices(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
-            target = root / "tracked.txt"
+            target = root / "tracked file.txt"
             target.write_text("changed\n", encoding="utf-8")
             event = self._event(root, target)
             facts = self._facts(root, target)
@@ -173,13 +174,21 @@ class GitProceduralInfluenceTests(unittest.TestCase):
                 intents[1].expected_outcome["action_variant"],
                 "git_update_index",
             )
+            for intent in intents:
+                self.assertEqual(
+                    intent.args["command"],
+                    git_stage_command(
+                        intent.expected_outcome["action_variant"],
+                        intent.expected_outcome["relative_path"],
+                    ),
+                )
 
             candidate = self._candidate(root, target, variant="git_update_index")
             selected, influence = select_procedurally_influenced_intent(
                 event,
                 intents,
                 candidates=(candidate,),
-                current_domains=("it/git", "filesystem"),
+                current_domains=("it", "it/git", "filesystem"),
                 facts=facts,
             )
 
@@ -348,6 +357,17 @@ class GitProceduralInfluenceTests(unittest.TestCase):
                 },
             )
             self._advance_until_stage(resident, "native_action")
+            investigation = resident.investigator.current(event.event_id)
+            self.assertIsNotNone(investigation)
+            self.assertTrue(
+                any(
+                    candidate.tendency_id in item
+                    and "supported by current independent evidence" in item
+                    for item in investigation.evidence
+                ),
+                investigation.evidence,
+            )
+
             state = resident.store.get_working_state()
             selected = NativeActionIntent.from_dict(state.data["native_action_intent"])
             self.assertEqual(
