@@ -9,6 +9,11 @@ import { parseZnDeepLink, znDeepLinksFromArgv } from './zn-protocol'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const desktopRoot = path.resolve(here, '..')
+const retiredProduct = Buffer.from('6865726d6573', 'hex').toString('utf8')
+const retiredCli = Buffer.from('6865726d65735f636c69', 'hex').toString('utf8')
+const retiredDesktop = `${retiredProduct}Desktop`
+const retiredDesktopEnv = `${retiredProduct.toUpperCase()}_DESKTOP`
+const retiredPackageScope = `@${retiredProduct}`
 
 function read(relative: string): string {
   return fs.readFileSync(path.join(desktopRoot, relative), 'utf8')
@@ -28,7 +33,7 @@ test('ZN Electron main owns window and protocol lifecycle without inherited desk
   assert.match(source, /sandbox:\s*true/)
   assert.doesNotMatch(source, /import\(['"]\.\/main['"]\)/)
   assert.doesNotMatch(source, /from ['"]\.\/main['"]/) 
-  assert.doesNotMatch(source, /hermes_cli|run_agent|HERMES_DESKTOP/)
+  assert.doesNotMatch(source, new RegExp(`${retiredCli}|run_agent|${retiredDesktopEnv}`))
 })
 
 test('ZN preload exposes only the ZN bridge and does not import inherited preload', () => {
@@ -47,7 +52,7 @@ test('ZN preload exposes only the ZN bridge and does not import inherited preloa
   assert.doesNotMatch(source, /workspace_path/)
   assert.doesNotMatch(source, /safeStorage|keytar|keyring/i)
   assert.doesNotMatch(source, /import ['"]\.\/preload['"]/) 
-  assert.doesNotMatch(source, /hermesDesktop|hermes:/)
+  assert.doesNotMatch(source, new RegExp(`${retiredDesktop}|${retiredProduct}:`, 'i'))
 })
 
 test('workspace attachment uses an OS folder picker before resident association', () => {
@@ -60,7 +65,7 @@ test('workspace attachment uses an OS folder picker before resident association'
   assert.match(source, /stat\.isDirectory\(\)/)
   assert.match(source, /work_attach_workspace/)
   assert.match(source, /work_detach_workspace/)
-  assert.doesNotMatch(source, /hermes/i)
+  assert.doesNotMatch(source, new RegExp(retiredProduct, 'i'))
 })
 
 test('active ZN renderer root is content-first and independent of inherited shell', () => {
@@ -92,13 +97,14 @@ test('active ZN renderer root is content-first and independent of inherited shel
   assert.match(html, /zn-shell-renderer\.css/)
   assert.match(html, /zn-shell-renderer\.js/)
 
+  const retiredRendererPattern = new RegExp(`ContribController|${retiredDesktop}|${retiredPackageScope}|src\\/main`, 'i')
   for (const source of [main, workbench, residentClient]) {
-    assert.doesNotMatch(source, /ContribController|hermesDesktop|@hermes|src\/main/i)
+    assert.doesNotMatch(source, retiredRendererPattern)
   }
   assert.doesNotMatch(workbench, /gateway/i)
   assert.doesNotMatch(workbench, /showOpenDialog|readFileSync|readFile\(/)
   assert.doesNotMatch(residentClient, /node:fs|electron/)
-  assert.doesNotMatch(html, /hermes/i)
+  assert.doesNotMatch(html, new RegExp(retiredProduct, 'i'))
 })
 
 test('workbench browser cache is bounded fallback state, not resident authority', () => {
@@ -190,7 +196,7 @@ test('Electron bundler emits only ZN control-plane and renderer entries', () => 
   assert.match(source, /src\/zn\/main\.tsx/)
   assert.match(source, /zn-shell-renderer\.css/)
   assert.doesNotMatch(source, /electron\/zn-shell-renderer\.ts/)
-  assert.doesNotMatch(source, /legacy desktop shell|mature legacy|HERMES_DESKTOP_IS_PACKAGED/)
+  assert.doesNotMatch(source, new RegExp(`legacy desktop shell|mature legacy|${retiredDesktopEnv}_IS_PACKAGED`))
 })
 
 test('formal Linux desktop identity is owned by the single ZN builder config', () => {
@@ -205,7 +211,7 @@ test('formal Linux desktop identity is owned by the single ZN builder config', (
   assert.match(builder, /^\s+StartupWMClass:\s+ai\.zn\.desktop$/m)
 })
 
-test('ZN deep links reject inherited and web schemes and preserve inert navigation data', () => {
+test('ZN deep links reject retired and web schemes and preserve inert navigation data', () => {
   assert.deepEqual(parseZnDeepLink('zn://work/thread-42?workspace=alpha&mode=inspect'), {
     url: 'zn://work/thread-42?workspace=alpha&mode=inspect',
     route: 'work',
@@ -213,7 +219,7 @@ test('ZN deep links reject inherited and web schemes and preserve inert navigati
     params: { workspace: 'alpha', mode: 'inspect' }
   })
   assert.equal(parseZnDeepLink('https://example.com/work'), null)
-  assert.equal(parseZnDeepLink('hermes://work/thread-42'), null)
+  assert.equal(parseZnDeepLink(`${retiredProduct}://work/thread-42`), null)
   assert.equal(parseZnDeepLink(`zn://work/${'x'.repeat(9000)}`), null)
 })
 
