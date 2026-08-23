@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 from dataclasses import asdict
@@ -43,6 +44,21 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         "verify_action",
         "integrate_cognition",
     }
+    _FAILED_ACTION_RECORDS_KEY = "native_action_failure_records"
+    _MAX_FAILED_ACTION_RECORDS = 16
+    _VOLATILE_FACT_KEYS = frozenset(
+        {
+            "captured_at",
+            "created_at",
+            "updated_at",
+            "started_at",
+            "completed_at",
+            "observed_at",
+            "checked_at",
+            "sampled_at",
+            "timestamp",
+        }
+    )
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         # Do not call ZNResidentRuntime.__init__: it deliberately constructs the
@@ -121,15 +137,11 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         intent = derive_native_action_intent(event, facts=facts)
 
         if intent is not None:
-            signature = self._intent_signature(intent)
-            failed_signature = str(
-                state.data.get("native_action_failure_signature") or ""
-            )
-            # A failed movement may return to investigation for more evidence.
-            # If that evidence produces the exact same action again, do not
-            # blindly repeat it; let the normal impasse/cognition path reason
-            # about the observed failure instead.
-            if signature != failed_signature:
+            # A failed movement remains blocked while the Investigation facts
+            # describing current reality are unchanged. A different failure in
+            # between cannot erase it, and a merely repeated probe does not
+            # unlock it. Genuinely revised facts create a new evidence version.
+            if not self._action_blocked_by_current_evidence(event, state, intent):
                 self._begin_native_action_cycle(event, state, intent)
                 self.store.save_working_state(state)
                 if thought is not None:
@@ -182,6 +194,10 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         state.data.pop("native_verification_result", None)
         state.data.pop("native_action_result", None)
         state.data.pop("local_failure", None)
+        # This field existed before evidence-bound records. Keep lazy read
+        # migration for old persisted state, but never carry the one-slot guard
+        # into a newly admitted action cycle.
+        state.data.pop("native_action_failure_signature", None)
         state.data["native_action_intent"] = intent.to_dict()
         state.stage = "native_action"
         state.next_action = f"move body: {intent.kind}"
@@ -250,7 +266,13 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         )
         failure = result.error or f"body action {intent.kind} failed"
         state.data["local_failure"] = failure
-        state.data["native_action_failure_signature"] = self._intent_signature(intent)
+        self._record_failed_action(
+            event,
+            state,
+            intent,
+            source="body",
+            failure=failure,
+        )
         state.stage = "native_investigation"
         state.next_action = "inspect the failed body movement and update the hypothesis"
         self._sync_execution_context(event, state)
@@ -440,7 +462,13 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
             success=False,
         )
         state.data["local_failure"] = failure
-        state.data["native_action_failure_signature"] = self._intent_signature(intent)
+        self._record_failed_action(
+            event,
+            state,
+            intent,
+            source="verification",
+            failure=failure,
+        )
         state.stage = "native_investigation"
         state.next_action = "investigate the contradicted postcondition before another movement"
         self._sync_execution_context(event, state)
@@ -546,6 +574,20 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
             context["verification_history"] = history[-8:]
         else:
             context["verification_history"] = []
+
+        failed_actions = self._failure_records(state)
+        evidence_fingerprint = self._evidence_fingerprint(event.event_id)
+        current_failures = [
+            item
+            for item in failed_actions
+            if str(item.get("evidence_fingerprint") or "") == evidence_fingerprint
+        ]
+        context["failed_actions"] = {
+            "total": len(failed_actions),
+            "current_evidence_count": len(current_failures),
+            "evidence_version": evidence_fingerprint[:16],
+            "recent": [self._failure_summary(item) for item in failed_actions[-8:]],
+        }
         context["updated_at"] = utc_now()
         state.data["execution_context"] = context
         return context
@@ -875,16 +917,13 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
 
         # Re-check whether the accepted increment accompanies a concrete native
         # body intent. The action stays ZN-owned; external text is never passed
-        # straight through as a shell/tool instruction.
+        # straight through as a shell/tool instruction. Borrowed text is not new
+        # reality evidence, so it cannot by itself unlock a failed movement.
         investigation = self.investigator.current(event.event_id)
         facts = dict(investigation.facts) if investigation is not None else {}
         intent = derive_native_action_intent(event, facts=facts)
         if intent is not None:
-            signature = self._intent_signature(intent)
-            failed_signature = str(
-                state.data.get("native_action_failure_signature") or ""
-            )
-            if signature != failed_signature:
+            if not self._action_blocked_by_current_evidence(event, state, intent):
                 self._begin_native_action_cycle(event, state, intent)
                 state.next_action = f"move body after cognition: {intent.kind}"
                 self._sync_execution_context(event, state)
@@ -951,6 +990,134 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
             thought.action_kind = "integrate_cognition"
             thought.action_target = event.event_id
             thought.reason = f"a bounded increment from {source} has returned for my judgment"
+
+    def _action_blocked_by_current_evidence(
+        self,
+        event: AgentEvent,
+        state: WorkingState,
+        intent: NativeActionIntent,
+    ) -> bool:
+        evidence_fingerprint = self._evidence_fingerprint(event.event_id)
+        signature_hash = self._signature_hash(intent)
+        records = self._failure_records(state)
+        if any(
+            str(item.get("signature_hash") or "") == signature_hash
+            and str(item.get("evidence_fingerprint") or "") == evidence_fingerprint
+            for item in records
+        ):
+            return True
+
+        # Upgrade an interrupted resident that still has the previous one-slot
+        # anti-replay field. Once the evidence ledger exists, the old field is
+        # ignored and will be removed when a new action is admitted.
+        legacy = str(state.data.get("native_action_failure_signature") or "")
+        if not records and legacy and legacy == self._intent_signature(intent):
+            self._record_failed_action(
+                event,
+                state,
+                intent,
+                source="legacy",
+                failure=str(state.data.get("local_failure") or "prior body action failed"),
+                evidence_fingerprint=evidence_fingerprint,
+            )
+            return True
+        return False
+
+    def _record_failed_action(
+        self,
+        event: AgentEvent,
+        state: WorkingState,
+        intent: NativeActionIntent,
+        *,
+        source: str,
+        failure: str,
+        evidence_fingerprint: str | None = None,
+    ) -> dict[str, Any]:
+        fingerprint = evidence_fingerprint or self._evidence_fingerprint(event.event_id)
+        signature_hash = self._signature_hash(intent)
+        record = {
+            "signature_hash": signature_hash,
+            "kind": intent.kind,
+            "evidence_fingerprint": fingerprint,
+            "source": str(source or "body")[:80],
+            "failure": str(failure or "body action failed")[:1000],
+            "at": utc_now(),
+        }
+        records = [
+            item
+            for item in self._failure_records(state)
+            if not (
+                str(item.get("signature_hash") or "") == signature_hash
+                and str(item.get("evidence_fingerprint") or "") == fingerprint
+            )
+        ]
+        records.append(record)
+        state.data[self._FAILED_ACTION_RECORDS_KEY] = records[
+            -self._MAX_FAILED_ACTION_RECORDS :
+        ]
+        return record
+
+    def _evidence_fingerprint(self, event_id: str) -> str:
+        investigation = self.investigator.current(event_id)
+        facts = investigation.facts if investigation is not None else {}
+        stable = self._stable_fact_value(facts)
+        encoded = json.dumps(
+            stable,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    @classmethod
+    def _stable_fact_value(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                str(key): cls._stable_fact_value(item)
+                for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+                if not cls._volatile_fact_key(str(key))
+            }
+        if isinstance(value, (list, tuple)):
+            return [cls._stable_fact_value(item) for item in value]
+        if isinstance(value, set):
+            normalized = [cls._stable_fact_value(item) for item in value]
+            return sorted(
+                normalized,
+                key=lambda item: json.dumps(item, sort_keys=True, default=str),
+            )
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        return str(value)
+
+    @classmethod
+    def _volatile_fact_key(cls, key: str) -> bool:
+        normalized = str(key or "").strip().lower()
+        return normalized in cls._VOLATILE_FACT_KEYS or normalized.endswith("_at")
+
+    @classmethod
+    def _failure_records(cls, state: WorkingState) -> list[dict[str, Any]]:
+        raw = state.data.get(cls._FAILED_ACTION_RECORDS_KEY)
+        if not isinstance(raw, list):
+            return []
+        return [dict(item) for item in raw if isinstance(item, dict)][
+            -cls._MAX_FAILED_ACTION_RECORDS :
+        ]
+
+    @classmethod
+    def _failure_summary(cls, raw: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "signature": str(raw.get("signature_hash") or "")[:16],
+            "kind": str(raw.get("kind") or "unknown"),
+            "evidence_version": str(raw.get("evidence_fingerprint") or "")[:16],
+            "source": str(raw.get("source") or "unknown")[:80],
+            "failure": str(raw.get("failure") or "")[:500] or None,
+        }
+
+    @classmethod
+    def _signature_hash(cls, intent: NativeActionIntent) -> str:
+        raw = cls._intent_signature(intent).encode("utf-8")
+        return hashlib.sha256(raw).hexdigest()
 
     @staticmethod
     def _intent_signature(intent: NativeActionIntent) -> str:
