@@ -248,8 +248,8 @@ class ResidentWorkLedger:
             event_id=str(row["event_id"]),
             kind=str(row["kind"]),
             name=str(row["name"]),
-            content=str(row["content"]),
             path=str(row["path"]) if row["path"] is not None else None,
+            content=str(row["content"]),
             metadata=metadata,
             created_at=str(row["created_at"]),
         )
