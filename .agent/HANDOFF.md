@@ -4,71 +4,212 @@
 
 ## 当前目标
 
-把 ZN 建成“维护者无关”的长期项目：任何人类或外部模型接手，都以仓库、测试和 CI 为事实来源，可以继续开发、PR、合并和发布；ZN 后续再逐步具备自维护自身源码的能力。
+下一开发阶段把重心从桌面/UI/打包收回到 **ZN 核心能力完整性**。
+
+当前原则：
+
+```text
+先诚实收尾当前 M8 AppImage gate
+→ 不继续以 UI polish 为开发主线
+→ 下一会话先做 repository-backed capability gap audit
+→ 用真实代码/调用链/测试把能力标成 DONE / PARTIAL / MISSING / DO NOT COPY
+→ 选择最高价值的一个 ZN 核心能力切片实现
+```
+
+详细下一阶段契约见：
+
+- `docs/ZN-NEXT-PHASE.md`
+
+桌面仍然是 ZN 的脸和工作台；release/M8 仍然是必要产品通道，但在核心能力仍有明显缺口时，不再作为开发重心。
 
 ## 当前分支 / HEAD
 
 - 分支：`dev/zn-agent`
-- 最近确认的新增自维护文档提交：`0da639dbf75d99650df86f34a16e2e6d4f0d05b5`
-- 当前远程 HEAD 可能已因后续文档提交继续前进；接手时必须重新读取分支 HEAD，不得把上面的 SHA 当成最新 HEAD。
-- 本会话通过 GitHub 远程接口工作，没有本地工作区状态可声明。
+- 本轮开始时真实远程 HEAD：`7ac39b53f0bd990513d9f2ff5928ee5e53fe145c` (`test: bound AppImage smoke teardown`)
+- 新增下一阶段文档提交：`c963562c6e811792ba5f9cb77ff7a5f42683be06` (`docs: refocus next phase on ZN core [skip ci]`)
+- 本 HANDOFF 更新本身会产生新的文档提交；下一维护者必须重新读取 `dev/zn-agent` HEAD，不得把上面 SHA 当成最终 HEAD。
+- 本轮通过 GitHub 远程接口工作，没有可声明的本地 working tree。
+- `main` 未修改。
 
-## 已完成
+## 当前真实实现基线
 
-- 已确认 `main` 是 Hermes 参考基线，真实 ZN 开发在 `dev/zn-agent`。
-- 已重新确认 ZN 核心方向：模型是可替换认知资源，不是 ZN 主体。
-- 已确认现有 N → N+1 runtime / update 架构与“身体可换、身份/记忆连续”方向一致。
-- 新增 `docs/ZN-SELF-MAINTENANCE.md`，定义自维护、自修复、PR/CI、发布、用户确认安装和回退闭环。
-- 已确认仓库已有 `.github/workflows/zn-ci.yml`、`zn-release.yml`、`zn-linux-appimage-update-smoke.yml`。
-- 已确认正式发布工作流使用 GitHub Actions，正式 tag 为 `zn-v*`，多平台构建后发布不可变更新资产并最后推进 `stable.json`。
-- 已确认发布所需外部存储凭证通过 GitHub Secrets/Variables 引用，而不是硬编码进源码。
+已经具备的核心基础（不是“通用 Agent 已完成”的宣称）：
 
-## 重要发现
+- ZN-native resident organism：持久 Self/life、Situation、Thought、Will、nervous memory、investigation、action、learning、sensing；
+- zero-model operation 是硬契约；
+- 外部 GPT/Claude/Gemini/OpenAI-compatible 等只通过 ZN-owned bounded cognition resource 使用；
+- ZN-owned local process / terminal / PTY body；
+- ZN-owned web search/extract sensing + URL/network safety；
+- durable resident work/thread/workspace/WorkRun/progress；
+- contextual file/diff/terminal artifacts；
+- resident-owned provider/settings/credential references；
+- resident-owned channel lifecycle，Telegram text/inbound media 已有；
+- independent Electron main/preload/renderer/`zn://`；
+- independent packaged `runtime/python` / `zn_agent` runtime；
+- M7 Linux/Windows/macOS formal artifact shape/runtime evidence；
+- M8 Linux deb fresh-install、systemd user autostart、source-level N→N+1 continuity evidence。
 
-- 根目录已有 `AGENTS.md`，但当前仍是 Hermes 开发指南，不能新建同名文件；后续应在不丢失仍有参考价值内容的前提下，把 ZN 接手规则放到文件最前面或逐步迁移为 ZN 规则。
-- 当前没有发现已有 `.agent/HANDOFF.md`，本文件为首次建立。
-- 当前发布流水线已经具备“维护者可替换”的重要基础，但 GitHub 仓库级权限/分支保护/Secrets 的实际配置不能仅从源码文件推断，需要通过 GitHub 设置确认。
+仍然不能宣称完成的通用能力：
 
-## Task Queue
+- clean ZN-owned browser interaction；
+- mature visual/screen sensing + mouse/keyboard computer use；
+- 已验证的强 Git body / GitHub repository body/sense 闭环；
+- mature long-horizon autonomous repo/task completion comparable to mature coding agents；
+- broad tool/capability ecosystem；
+- Telegram outbound attachment transport；
+- SM1+ 自维护实现。
 
-| 优先级 | 任务 | 状态 | 依赖 | 备注 |
-| --- | --- | --- | --- | --- |
-| P1 | 把维护者无关原则正式接入 `ZN.md` | planned | 无 | 明确换 GPT/Claude/人类不影响开发发布 |
-| P1 | 更新根 `AGENTS.md` 为 ZN-first 接手规则 | planned | 无 | 保留必要 Hermes 参考规范，但 ZN 规则必须优先 |
-| P1 | 更新 `docs/ZN-IMPLEMENTATION-STATUS.md` | planned | ZN.md | 标记 SM0 完成、SM1 planned |
-| P1 | 完成 M8 N→N+1 busy/idle 连续性验证 | in_progress | 现有 runtime/update | 自维护最终安装闭环的地基 |
-| P1 | 核对 GitHub Actions/分支保护/Secrets/Variables 实际权限 | planned | 仓库设置权限 | 代码不能证明设置已正确配置 |
-| P2 | SM1：健康观察与维护任务 | planned | 文档契约 + M8关键连续性 | 暂不自动改源码 |
-| P2 | SM2：自身仓库只读调查 | planned | SM1 | GitHub 凭证只走安全引用 |
-| P2 | SM3/SM4：隔离修复 + PR/CI | planned | SM2 | 不直接写正式分支 |
-| P2 | SM5/SM6：风险审批 + 自动发布 | planned | SM4 | 高风险修改保留人工批准 |
-| P2 | SM7：用户确认更新 + 自动回退 | planned | M8 + SM6 | 客户端最终点击更新 |
+## 本轮新完成
 
-## 已验证的仓库自动化
+- 重新读取并核对：`ZN.md`、`AGENTS.md`、`docs/ZN-IMPLEMENTATION-STATUS.md`、`docs/ZN-SOURCE-EXTRACTION.md`、`docs/ZN-SELF-MAINTENANCE.md`、旧 `.agent/HANDOFF.md`。
+- 确认本轮开始时 `dev/zn-agent` 与 `7ac39b5...` identical。
+- 确认无 open PR 指向当前工作。
+- 新增 `docs/ZN-NEXT-PHASE.md`，正式记录下一阶段优先级：从 UI/release-heavy 工作回到 ZN core capability completeness。
+- 下一阶段文档明确：不以“有接口/类”为能力完成证据，必须跟真实 active call chain、state、lifecycle、tests、运行证据。
+- 明确 capability audit 使用 `DONE / PARTIAL / MISSING / DO NOT COPY` 四类，避免为了追赶主流 Agent 把 ZN 重新做成模型拥有的 planner/tools agent。
 
-通过读取仓库文件确认：
+## 当前 CI / M8 事实
 
-- `.github/workflows/zn-release.yml`
-  - `zn-v*` tag 可触发正式发布；
-  - Linux / Windows / macOS 多平台打包；
-  - 使用仓库变量 `ZN_UPDATE_CHANNEL_URL`、`ZN_PUBLIC_RELEASE_URL`、`ZN_UPDATE_S3_*`；
-  - 使用 GitHub Secrets `ZN_UPDATE_S3_ACCESS_KEY_ID` / `ZN_UPDATE_S3_SECRET_ACCESS_KEY`；
-  - 正式版本先上传不可变资产；
-  - 创建/更新 GitHub Release；
-  - `stable.json` 最后推进。
+`7ac39b53f0bd990513d9f2ff5928ee5e53fe145c` 的真实普通 CI：
 
-本轮没有实际触发 release，也没有宣称发布成功。
+```text
+ZN Kernel / Python       success
+Electron / TypeScript   success
+Actions run              32609677486
+```
+
+专用 `ZN Linux AppImage Update Smoke` 在本轮最后检查时 **仍没有在该 commit 的 combined status 中出现最终状态**。
+
+因此：
+
+- 不得把该 AppImage gate 写成 green/complete；
+- 不得因此把整个 M8 写成 complete；
+- 先前 diagnostics 已证明某次 AppImage smoke 的实际 N→N+1 continuity proof 在几分钟内成功，随后测试 teardown/open handles 长时间挂住；
+- `7ac39b5` 只修改 smoke teardown：给 `systemctl` cleanup 加 timeout，并 bounded close update HTTPS server；production behavior 未改；
+- 下一维护者若要继续这条 gate，先重新读取该 commit 的真实 status；如果出现 AppImage status，使用其 `target_url` 的真实 run id 读取 jobs/logs/artifact，不猜 run id。
+
+## 下一阶段能力审计
+
+下一会话第一项工作不是继续 UI，也不是立刻凭感觉写 browser。
+
+先做 repository-backed capability gap audit：
+
+```text
+恢复真实仓库状态
+→ 枚举成熟 Agent 的能力类别
+→ 对每一类追真实 ZN active caller
+→ owner
+→ state
+→ lifecycle
+→ dependency
+→ tests
+→ active use
+→ 必要时跑 focused validation
+→ DONE / PARTIAL / MISSING / DO NOT COPY
+→ 按产品杠杆和 ZN 架构适配度排序
+```
+
+重点审计：
+
+1. durable long-task investigation/action/verification；
+2. filesystem/process/terminal 实际任务组合能力；
+3. Git body；
+4. GitHub/repository sense/body；
+5. browser interaction；
+6. visual/screen sense；
+7. mouse/keyboard computer use；
+8. tool/capability registration and breadth；
+9. communication egress；
+10. SM1 health observation / MaintenanceCase；
+11. long-horizon coding/repo work 的真实成功链路。
+
+## 下一阶段实现候选
+
+最终顺序必须以 capability audit 的代码证据决定。目前高价值候选是：
+
+- 强化 durable long-task execution，使一个真实任务能跨 pulses 持续调查→动作→验证，而不是认知重启；
+- 建立 clean ZN-owned browser body/sense seam，再接实际浏览器能力；
+- 建立 visual/computer-use body/senses；
+- 补强 Git + GitHub/repository 能力，为日常工作和 SM2–SM4 同时打基础；
+- 按 `docs/ZN-SELF-MAINTENANCE.md` 推进 SM1 health observation / MaintenanceCase，然后 SM2 read-only repo investigation。
+
+不要靠 feature fashion 决定；优先能显著提高 ZN 完成真实复杂任务能力、同时不破坏 resident ownership 的切片。
+
+## UI / Desktop 边界
+
+下一阶段默认不做纯 UI polish。
+
+UI 改动只在以下情况合理：
+
+- 新核心能力必须有操作/授权界面；
+- 必须向用户展示任务现实证据/进度；
+- browser/computer-use 必须有观察或权限面；
+- SM1 必须展示 MaintenanceCase；
+- 真实 usability bug 阻塞任务完成。
+
+不要做纯布局 churn、dashboard 扩张或视觉精修来替代核心能力工作。
+
+## M8 / Release lane
+
+M8 不放弃，但降为有边界的 release/continuity lane。
+
+原则：
+
+- 真实 continuity/data-integrity bug 必须修；
+- 测试 harness / CI teardown 问题应修成可靠 gate，但不要无限消耗核心开发阶段；
+- 已经验证过的 M7、Linux clean-install、Linux autostart 不重复跑来制造“进度”；
+- Windows/macOS clean-install/login/signing/notarization保持明确 release debt；
+- `main` 在 M10 前继续 untouched。
+
+## 自维护顺序
+
+`docs/ZN-SELF-MAINTENANCE.md` 现有契约仍有效：
+
+```text
+关键 M8 continuity evidence
+→ SM1 health observation / MaintenanceCase
+→ SM2 read-only self-repository investigation
+→ SM3 isolated repair
+→ SM4 PR/CI loop
+→ SM5 risk/approval
+→ SM6 self-maintenance release
+→ SM7 user-confirmed update/rollback
+```
+
+下一阶段 capability audit 可以决定是否先做一个更基础的 Git/browser/long-task body slice；如果要改变这条架构顺序，先更新 `ZN.md` / self-maintenance contract，不能静默跑偏。
+
+## 相关文件
+
+- `ZN.md`
+- `AGENTS.md`
+- `docs/ZN-NEXT-PHASE.md`
+- `docs/ZN-IMPLEMENTATION-STATUS.md`
+- `docs/ZN-SOURCE-EXTRACTION.md`
+- `docs/ZN-SELF-MAINTENANCE.md`
+- `.agent/HANDOFF.md`
+- `agent/kernel/**`
+- `runtime/python/**`
+- `apps/desktop/electron/**`
+- `apps/desktop/scripts/zn-appimage-update-smoke.mjs`
+- `.github/workflows/zn-ci.yml`
+- `.github/workflows/zn-linux-appimage-update-smoke.yml`
 
 ## 风险 / 阻塞
 
-- 无法仅通过仓库源码确认 GitHub Secrets 是否已经真实配置。
-- 无法仅通过仓库源码确认 `dev/zn-agent` / 未来 `main` 的 branch protection 是否符合预期。
-- 根 `AGENTS.md` 仍以 Hermes 为主，未来模型接手时可能产生错误方向，属于需要尽快修正的 P1 文档风险。
-- 不要把任何 GitHub Token、S3 key、签名证书写进本文件。
+- 不要把“organism architecture 已成形”误写成“通用 Agent 能力已完整”。
+- 不要为了快速获得 browser/coding-agent 功能重新接回 inherited browser/session/gateway/full-agent control plane。
+- 不要把模型输出直接当事实/动作；必须通过代码、日志、测试、运行/世界证据验证。
+- AppImage gate final status 在本轮尚未取得，仍是未完成证据。
+- 高风险 identity/memory/credential/updater/rollback/self-maintenance permissions 修改仍需要人工批准。
 
 ## 下一步
 
-1. 先把“维护者可替换、仓库自动化拥有发布能力”的原则补进 `ZN.md`。
-2. 再改现有 `AGENTS.md`，让任何新模型第一眼知道 ZN 才是产品，Hermes 只是参考源码。
-3. 同步 `ZN-IMPLEMENTATION-STATUS.md`。
-4. 核对 GitHub 仓库实际权限配置后，再决定是否调整 branch protection / Actions 权限。
+下一会话：
+
+1. 重新读取所有必读 MD 和最新 `dev/zn-agent` HEAD/CI；
+2. 先检查 AppImage gate 是否已经落最终 status，并诚实记录；
+3. 读取 `docs/ZN-NEXT-PHASE.md`；
+4. 开始 repository-backed **ZN capability gap audit**；
+5. 形成 DONE/PARTIAL/MISSING/DO NOT COPY 清单；
+6. 选出一个最高价值核心能力切片，追完整调用链后开始实现；
+7. 不继续以 UI polish 为主线。
