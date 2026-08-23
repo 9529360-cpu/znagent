@@ -29,18 +29,20 @@ Pure UI/desktop polish is paused. M8/release remains a bounded continuity/releas
 
 The resident already owns persistent Self/life, Situation/Thought/Will, nervous memory/reconsolidation, durable events/working state, multi-pulse Investigation, native Action/Body movement, bounded external cognition and zero-model continuity.
 
-The execution spine now also has structured read-only Git sense, exact text and explicit command postcondition verification, compact durable execution context, evidence-bound failed-action history, bounded restart-safe `VerifiedExperience` records grounded only in independent Body verification, and a first transparent L2 candidate-procedural-tendency aggregation over repeated compatible episodes.
+The execution spine now also has structured read-only Git sense, exact text and explicit command postcondition verification, compact durable execution context, evidence-bound failed-action history, bounded restart-safe `VerifiedExperience` records grounded only in independent Body verification, transparent L2 candidate-procedural-tendency aggregation over repeated compatible episodes, and the first read-only L3 current-reality applicability evaluator.
 
-The memory/learning direction now has CI-verified L1 and the first L2 baseline. Repeated compatible independently verified events can form a non-executable candidate with explicit support, contradiction, reliability, maturity/inhibition state and privacy-safe applicability features. This still does **not** mean candidate tendencies can influence Body action: current-reality applicability gating and action activation remain L3 work.
+The memory/learning direction now has CI-verified L1, L2 and the first observational L3 slice. Repeated compatible independently verified events can form a non-executable candidate with explicit support, contradiction, reliability, maturity/inhibition state and privacy-safe applicability features. Current Investigation evidence can now classify such a candidate as `supported`, `mismatch` or `untested`; request shape alone cannot make it supported, incomplete evidence fails closed, and the result is surfaced into Situation/Thought without moving Body.
 
-The immediate core gap is therefore the transition:
+This still does **not** mean candidate tendencies can influence Body action. The next learning gap is bounded low-risk action influence through existing ZN-owned structured action formation, with mismatch/untested candidates retaining zero authority.
+
+The active transition is therefore:
 
 ```text
 verified lived experience
 → repeated compatible evidence
 → candidate resident-owned tendency
-→ current Situation applicability test
-→ reality-gated action influence
+→ current Situation applicability test        FIRST READ-ONLY SLICE VERIFIED
+→ reality-gated action influence              NEXT
 → mature procedural competence
 → familiar low-latency execution
 → prediction-error interrupt / relearning
@@ -273,7 +275,57 @@ run                     32640409344
 - candidates are derived from retained causal evidence, so restart reconstructs the same candidate ID/state without a second mutable skill database;
 - the implementation does **not** connect candidates to `_deliberation_step`, `NativeBody`, capability loading or nervous-system `activate()`.
 
-This closes the first L2 aggregation/retrieval slice only. A candidate, even `practiced`, currently has zero authority to move the Body. L3 must independently compare current Situation/evidence against applicability before any candidate can influence action, and high-risk authorization remains separate regardless of maturity.
+This closes the first L2 aggregation/retrieval slice only. A candidate, even `practiced`, currently has zero authority to move the Body.
+
+### 2.8 Read-only current-reality procedural applicability
+
+Final code/test state for the first L3 slice:
+
+```text
+cf2c270f3619e566cd0c07f81e6a2c5f59697cad  feat: add reality-gated procedural applicability
+87d5d9a6a46b0b9f94061502bbcb24752e9643f7  feat: surface procedural applicability from investigation
+2404825f971b2deb252db16ac5ae3ecded17a5db  feat: expose procedural applicability to thought
+4300d0bc7cdca615d75ed362156dd5bf8dda787e  fix: derive applicability from durable reality evidence
+f36db4de98c75f200459f9a0a62d05509bd12e29  fix: fail closed on untested applicability fields
+ad415dc897c7f3d5bbbaab6d8201a4ce660e4a1a  test: keep incomplete applicability contracts untested
+f876eb5641c82f3cab79c5ba2b7f0e5deb55dbc6  test: diagnose resident applicability at reality boundary
+202b69e947db6c178d821c27e51fc1e61a90ce82  fix: preserve applicability in active world investigator
+```
+
+Real CI for final code/test SHA `202b69e947db6c178d821c27e51fc1e61a90ce82`:
+
+```text
+ZN Kernel / Python      success
+Electron / TypeScript  success
+run                     32642408966
+```
+
+The first L3 implementation is intentionally read-only. `procedural_applicability.py` compares an L2 candidate with current structured task context plus independently observed Investigation facts and returns only `supported`, `mismatch` or `untested`.
+
+Current guarantees:
+
+- task/request structure can disqualify or compare a candidate but cannot by itself prove applicability;
+- `supported` requires at least one stable candidate reality anchor to be independently observed now, and every compared contract field must be tested;
+- matching stable filesystem target can be supported only after the target appears in current `paths` observation;
+- matching command/workdir applicability can be supported only after current Git observation confirms the stable repository root and the current command verification contract is complete and compatible;
+- a different target/workdir/verification contract is a `mismatch`;
+- missing evidence or incomplete contract is `untested`, including the case where a repository root matches but the current verification contract is absent;
+- generalized candidates without a stable target/workdir reality anchor fail closed as `untested`;
+- inhibited candidates cannot qualify;
+- output is bounded and privacy-safe: hashes, candidate IDs, status and compared field names are retained, not raw task/path/content/command values;
+- the evaluation is derived from persisted L1/L2 evidence plus current persisted Investigation facts, so Situation can reconstruct it after resident restart without a second mutable skill/evaluation database;
+- applicability is **not** written into `Investigation.facts`; this deliberately avoids feeding a derived L3 judgment back into the L1 reality evidence fingerprint used by failed-action anti-replay and verified experience;
+- Investigation retains only bounded observational evidence text, while `CognitiveSituation` derives a bounded structured view and Thought can acknowledge it;
+- `supported` does not change Thought's existing stage-derived chosen action, does not populate `native_action_result`, and does not call Body, capability loading or `_deliberation_step` as action authority.
+
+Two real CI failures were intentionally retained as development evidence rather than hidden:
+
+- run `32641858655`: Python failed because the integration test incorrectly assumed a fixed number of resident pulses before the path probe;
+- run `32642032803`: after fixing that timing assumption, Python still failed and proved the active product caller bypassed `EmbodiedInvestigator.investigate()`;
+- direct safe diagnostic evaluation then showed the actual candidate/current facts were correctly `supported`; the active `WorldAwareEmbodiedInvestigator` was calling `NativeInvestigator.investigate()` directly to avoid duplicate schema feedback;
+- the final one-line active-caller fix invokes the same read-only applicability hook in that world-aware path, after which run `32642408966` is fully green.
+
+This closes only the read-only L3 applicability slice. Candidate influence on action selection, mature procedural skill state, fast path and activated-route de-proceduralization remain unimplemented.
 
 ## 3. Verified memory / nervous-system foundations
 
@@ -289,15 +341,17 @@ Current code/test evidence already supports the following foundations:
 - consolidation can stabilize recurring structure, form schema traces, fade weak detail and prune sufficiently weak isolated traces;
 - lived traces and consolidated schemas can enter Situation/Thought locally;
 - private lived/schema details are not automatically dumped into external cognition context;
-- current reality gates transfer/reconsolidation rather than treating old memory as eternal truth.
+- current reality gates transfer/reconsolidation rather than treating old memory as eternal truth;
+- repeated independently verified episodes can form transparent non-executable procedural candidates;
+- current independent Investigation evidence can now classify candidate applicability without granting action authority.
 
-Representative test coverage includes `tests/agent/kernel/test_nervous_system.py` and `tests/agent/kernel/test_neural_cognition_boundary.py`.
+Representative test coverage includes `tests/agent/kernel/test_nervous_system.py`, `tests/agent/kernel/test_neural_cognition_boundary.py`, `tests/agent/kernel/test_procedural_tendency.py`, `tests/agent/kernel/test_procedural_applicability.py` and `tests/agent/kernel/test_procedural_applicability_contract.py`.
 
 ### Not yet implemented / not yet claimed
 
 The project does **not** yet claim:
 
-- reality-gated activation of candidate procedural tendencies against the current Situation;
+- candidate procedural tendencies influencing native action selection or deliberation;
 - resident-owned mature skills that execute locally without external model interpretation;
 - procedural fast paths that reduce explicit Thought for familiar low-risk work;
 - prediction-error-driven de-proceduralization/relearning of an activated procedural route beyond the current candidate inhibition baseline;
@@ -329,6 +383,7 @@ Those are future implementation targets defined by `ZN.md` and `docs/ZN-MEMORY-L
 - deterministic masked-success/failure semantics prevent visible swallowed failures from becoming positive command-verification learning;
 - repeated compatible verified episodes can be retrieved as transparent non-executable candidate tendencies with bounded support/contradiction/reliability/applicability state;
 - candidate evidence survives restart through resident-owned L1 causal storage and L2-aware retention;
+- read-only L3 applicability compares candidates with current Investigation reality, fails closed on missing/mismatched evidence, survives restart through derivation, and surfaces into Situation/Thought without changing Body authority;
 - bounded external cognition returning as input to ZN rather than owning the resident loop;
 - ZN-owned local process/terminal/PTTY and web search/extract paths;
 - persistent work/thread/workspace/active-run state;
@@ -336,8 +391,8 @@ Those are future implementation targets defined by `ZN.md` and `docs/ZN-MEMORY-L
 
 ### Still PARTIAL / MISSING
 
-- current-reality/Situation matching that can qualify a candidate to influence resident deliberation;
-- mature/procedural skill state beyond the transparent L2 candidate/practiced baseline;
+- bounded low-risk candidate influence on existing ZN-owned structured action formation;
+- mature/procedural skill state beyond the transparent L2 candidate/practiced baseline and read-only L3 applicability;
 - resident-owned derivation and maintenance of reliable high-level task postconditions;
 - multi-step execution that can choose genuinely different tactics over many actions without becoming a model-owned planner;
 - stronger alternative-action recovery after evidence blocks a movement;
@@ -367,9 +422,9 @@ Status: **M2 complete for active main provider families**.
 
 ### Local Body
 
-ZN-owned filesystem/process/terminal/PTTY paths are active. Exact text and explicit command postcondition verification are CI-verified. Failed-action replay is evidence-bound rather than controlled by one last signature, independently verified action episodes enter the bounded learning store, and repeated compatible episodes can now form observational candidates. Candidates do not yet control Body action.
+ZN-owned filesystem/process/terminal/PTTY paths are active. Exact text and explicit command postcondition verification are CI-verified. Failed-action replay is evidence-bound rather than controlled by one last signature, independently verified action episodes enter the bounded learning store, repeated compatible episodes can form observational candidates, and current Investigation reality can now classify candidate applicability. Candidates still do not control Body action.
 
-Status: **active; practical breadth, long-horizon composition and reality-gated procedural activation remain incomplete**.
+Status: **active; practical breadth, long-horizon composition and reality-gated procedural action influence remain incomplete**.
 
 ### Web/world sense
 
@@ -393,7 +448,7 @@ Independent ZN Electron main, preload, renderer/workbench and `zn://` are active
 
 Status: **COMPLETE for active packaged resident path**.
 
-The independent `runtime/python` distribution is `znagent`, installed package `zn_agent`, resident entrypoint `zn-resident`. Packaged runtime rejects inherited `hermes_cli` and can boot zero-model. `runtime/python/pyproject.toml` maps `zn_agent.core` directly to the owned `agent/kernel` source, so the verified-experience and candidate-tendency implementation is part of the packaged Python distribution rather than a second unsynchronized copy.
+The independent `runtime/python` distribution is `znagent`, installed package `zn_agent`, resident entrypoint `zn-resident`. Packaged runtime rejects inherited `hermes_cli` and can boot zero-model. `runtime/python/pyproject.toml` maps `zn_agent.core` directly to the owned `agent/kernel` source, so the verified-experience, candidate-tendency and applicability implementation is part of the packaged Python distribution rather than a second unsynchronized copy.
 
 ### M7 formal artifact ownership
 
@@ -493,6 +548,17 @@ candidate reconstruction survives resident restart without a second skill databa
 retention preserves minimum repeated support for existing candidates when capacity permits
 candidate serialization does not restore raw task/content/path/capability-label data
 candidate aggregation does not activate Body, deliberation, capability loading or nervous action selection
+matching task/request context without independent current observation remains untested
+matching observed stable target can support a candidate
+other-target or incompatible current contract produces mismatch
+inhibited candidate cannot qualify
+generalized candidate without a stable reality anchor remains untested
+matching repository root without a complete current verification contract remains untested
+applicability output excludes raw path/content/task/command values
+applicability is reconstructed after restart from durable evidence rather than a second mutable database
+applicability is not stored in Investigation facts and therefore does not perturb L1 reality fingerprints
+active WorldAwareEmbodiedInvestigator preserves the read-only applicability hook
+supported applicability does not execute Body or change stage-derived action selection
 persistent nervous traces survive restart
 repeated experience strengthens one trace instead of appending endless duplicates
 co-active experience builds associative activation
@@ -508,7 +574,7 @@ queued resident work prevents false-idle runtime handoff
 idle N -> N+1 preserves living-self/work continuity
 ```
 
-Current regressions now prove the first causal L1 episode and the first transparent L2 candidate aggregation/retrieval baseline. They do **not** prove reality-gated candidate activation, mature resident-owned skills or learned skill fast-path behavior; those remain future tests.
+Current regressions now prove the first causal L1 episode, the transparent L2 candidate aggregation/retrieval baseline, and the first read-only reality-gated L3 applicability slice. They do **not** prove candidate-driven action influence, mature resident-owned skills or learned skill fast-path behavior; those remain future tests.
 
 ## 8. Milestone snapshot
 
@@ -526,16 +592,16 @@ M9  product completeness/hardening                         LATER
 M10 repository migration / formal main promotion           LATER; main untouched
 ```
 
-Learning architecture is tracked separately in `docs/ZN-MEMORY-LEARNING.md`: L0 is defined, L1 independently verified experience is CI-verified, and the first transparent L2 candidate aggregation/retrieval baseline is CI-verified. L3 current-reality activation and later procedural maturity/fast-path work remain unimplemented.
+Learning architecture is tracked separately in `docs/ZN-MEMORY-LEARNING.md`: L0 is defined, L1 independently verified experience is CI-verified, the transparent L2 candidate aggregation/retrieval baseline is CI-verified, and the first read-only L3 current-reality applicability slice is CI-verified. L3 action influence and later procedural maturity/fast-path work remain unimplemented.
 
 ## 9. Immediate next development sequence
 
-1. keep `VerifiedExperience` plus transparent candidate evidence as the source of procedural-learning truth; do not let candidate state bypass current reality;
-2. implement the smallest **L3 applicability evaluator** that compares a candidate's privacy-safe applicability profile with the current Situation/Investigation evidence and can return `supported`, `mismatch` or `untested` without moving Body;
-3. surface that evaluation into current resident Thought/Investigation first; a candidate must remain observational until current evidence genuinely tests it;
-4. only after tests prove correct reality gating, allow a qualifying low-risk candidate to bias native deliberation toward an already-valid ZN-owned action shape—never raw command replay or model-text execution;
-5. ensure contradiction/prediction error immediately inhibits the candidate route and returns control to Investigation;
-6. use stronger alternative-action recovery as an early learning consumer: verified success of a genuinely different B after A fails should become reusable causal evidence rather than an isolated tactic rule;
+1. keep `VerifiedExperience`, transparent candidate evidence and current independent Investigation facts as the source of procedural-learning truth; candidate state must never bypass current reality;
+2. build the smallest **bounded low-risk L3 action-influence slice**: only a `supported`, non-inhibited candidate may bias existing ZN-owned structured action formation, never supply raw commands/args or become a replay engine;
+3. `mismatch` or `untested` must have zero positive action influence and must leave control with current Investigation/Thought;
+4. preserve independent post-action verification even for a supported candidate; procedural familiarity must not lower truth requirements;
+5. ensure later contradiction/prediction error immediately inhibits/deproceduralizes the candidate route and returns control to Investigation before any fast path is claimed;
+6. use stronger alternative-action recovery as an early concrete learning consumer: verified success of genuinely different B after A fails should become reusable causal evidence rather than an isolated tactic rule;
 7. then build practical Git mutation + diff/test/reality verification and GitHub repo/PR/CI sense as a strong engineering-competence benchmark;
 8. establish browser/visual/mouse/keyboard Body/Senses before claiming learned computer-use competence;
 9. add growth benchmarks that prove familiar tasks become less model-dependent without lowering verification quality;
