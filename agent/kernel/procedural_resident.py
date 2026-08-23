@@ -45,6 +45,7 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
     _PROCEDURAL_REVOKED_KEY = "procedural_revoked_tendencies"
     _NATIVE_CHOICE_RECOVERY_KEY = "native_choice_recovery"
     _REPO_TEXT_BASELINE_KEY = "native_repo_text_baseline"
+    _TARGETED_TEST_EXECUTION_KEY = "native_targeted_test_execution"
     _RECOVERABLE_CHOICE_SOURCES = frozenset({"structured_choice", "resident_choice"})
     _MAX_PROCEDURAL_REVOKED = 8
     _TARGETED_TEST_KIND = "python_unittest"
@@ -968,105 +969,144 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
                 }
 
                 if not problems:
-                    command = self._targeted_unittest_command(targeted_baseline)
-                    test_observation = self.body.act(
-                        "command",
-                        event_id=event.event_id,
-                        command=command,
-                        workdir=str(targeted_baseline.get("root") or ""),
-                        timeout=float(
-                            targeted_baseline.get("timeout")
-                            or self._TARGETED_TEST_DEFAULT_TIMEOUT
-                        ),
-                        max_output_chars=50_000,
-                    )
-                    result_features = normalize_action_result(
-                        asdict(test_observation),
-                        command=command,
-                    )
-                    exit_code = test_observation.data.get("exit_code")
-                    timed_out = bool(test_observation.data.get("timed_out", False))
-                    test_verified = bool(
-                        test_observation.success
-                        and not timed_out
-                        and exit_code == 0
-                        and not bool(result_features.get("masked_success"))
-                        and not result_features.get("failure_class")
-                    )
-                    targeted_result.update(
-                        {
-                            "execution_action_id": test_observation.action_id,
-                            "observed_exit_code": exit_code,
-                            "timed_out": timed_out,
-                            "result_features": result_features,
+                    prior_execution = state.data.get(self._TARGETED_TEST_EXECUTION_KEY)
+                    if (
+                        isinstance(prior_execution, dict)
+                        and str(prior_execution.get("intent_id") or "") == intent.intent_id
+                    ):
+                        problems.append(
+                            "targeted unittest execution may already have started; refusing replay after interruption"
+                        )
+                    else:
+                        state.data[self._TARGETED_TEST_EXECUTION_KEY] = {
+                            "intent_id": intent.intent_id,
+                            "kind": self._TARGETED_TEST_KIND,
+                            "state_sha256": str(
+                                targeted_baseline.get("state_sha256") or ""
+                            ),
+                            "status": "started",
+                            "action_id": None,
+                        }
+                        self._sync_execution_context(event, state)
+                        # Persist before the potentially side-effecting verifier.
+                        # If the process dies after this point, a resumed pulse
+                        # fails closed instead of executing the same test twice.
+                        self.store.save_working_state(state)
+
+                        command = self._targeted_unittest_command(targeted_baseline)
+                        test_observation = self.body.act(
+                            "command",
+                            event_id=event.event_id,
+                            command=command,
+                            workdir=str(targeted_baseline.get("root") or ""),
+                            timeout=float(
+                                targeted_baseline.get("timeout")
+                                or self._TARGETED_TEST_DEFAULT_TIMEOUT
+                            ),
+                            max_output_chars=50_000,
+                        )
+                        result_features = normalize_action_result(
+                            asdict(test_observation),
+                            command=command,
+                        )
+                        exit_code = test_observation.data.get("exit_code")
+                        timed_out = bool(test_observation.data.get("timed_out", False))
+                        test_verified = bool(
+                            test_observation.success
+                            and not timed_out
+                            and exit_code == 0
+                            and not bool(result_features.get("masked_success"))
+                            and not result_features.get("failure_class")
+                        )
+                        state.data[self._TARGETED_TEST_EXECUTION_KEY] = {
+                            "intent_id": intent.intent_id,
+                            "kind": self._TARGETED_TEST_KIND,
+                            "state_sha256": str(
+                                targeted_baseline.get("state_sha256") or ""
+                            ),
+                            "status": "completed",
+                            "action_id": test_observation.action_id,
                             "verified": test_verified,
                         }
-                    )
-                    if not test_verified:
-                        if timed_out:
-                            problems.append("targeted unittest timed out")
-                        elif exit_code != 0:
-                            problems.append(
-                                f"targeted unittest exited with code {exit_code}"
-                            )
-                        elif result_features.get("masked_success"):
-                            problems.append("targeted unittest shell status was masked")
-                        elif result_features.get("failure_class"):
-                            problems.append(
-                                "targeted unittest emitted deterministic failure evidence: "
-                                + str(result_features.get("failure_class"))
-                            )
-                        else:
-                            problems.append("targeted unittest did not complete successfully")
-
-                    if test_verified:
-                        (
-                            final_text_observation,
-                            final_diff_observation,
-                            final_text_verified,
-                            final_repo_verified,
-                            final_repo_delta,
-                        ) = self._observe_repo_backed_text_replacement(
-                            event,
-                            baseline,
-                            path=path,
-                            expected=expected,
+                        self._sync_execution_context(event, state)
+                        # Record completion before any later verifier can crash.
+                        # Restart still refuses replay; current execution may
+                        # continue using the Body result already in memory.
+                        self.store.save_working_state(state)
+                        targeted_result.update(
+                            {
+                                "execution_action_id": test_observation.action_id,
+                                "observed_exit_code": exit_code,
+                                "timed_out": timed_out,
+                                "result_features": result_features,
+                                "verified": test_verified,
+                            }
                         )
-                        problems.extend(
-                            self._repo_text_verification_problems(
+                        if not test_verified:
+                            if timed_out:
+                                problems.append("targeted unittest timed out")
+                            elif exit_code != 0:
+                                problems.append(
+                                    f"targeted unittest exited with code {exit_code}"
+                                )
+                            elif result_features.get("masked_success"):
+                                problems.append("targeted unittest shell status was masked")
+                            elif result_features.get("failure_class"):
+                                problems.append(
+                                    "targeted unittest emitted deterministic failure evidence: "
+                                    + str(result_features.get("failure_class"))
+                                )
+                            else:
+                                problems.append("targeted unittest did not complete successfully")
+
+                        if test_verified:
+                            (
                                 final_text_observation,
                                 final_diff_observation,
-                                text_verified=final_text_verified,
-                                repo_verified=final_repo_verified,
-                                repo_delta=final_repo_delta,
-                            )
-                        )
-                        targeted_post, targeted_post_problems = (
-                            self._observe_targeted_test_snapshot(
+                                final_text_verified,
+                                final_repo_verified,
+                                final_repo_delta,
+                            ) = self._observe_repo_backed_text_replacement(
                                 event,
-                                targeted_baseline,
+                                baseline,
+                                path=path,
+                                expected=expected,
                             )
-                        )
-                        if (
-                            not targeted_post_problems
-                            and not self._targeted_test_snapshot_matches(
-                                targeted_baseline,
-                                targeted_post,
+                            problems.extend(
+                                self._repo_text_verification_problems(
+                                    final_text_observation,
+                                    final_diff_observation,
+                                    text_verified=final_text_verified,
+                                    repo_verified=final_repo_verified,
+                                    repo_delta=final_repo_delta,
+                                )
                             )
-                        ):
-                            targeted_post_problems.append(
-                                "targeted test file evidence changed during execution"
+                            targeted_post, targeted_post_problems = (
+                                self._observe_targeted_test_snapshot(
+                                    event,
+                                    targeted_baseline,
+                                )
                             )
-                        problems.extend(targeted_post_problems)
-                        targeted_result["postcondition_action_id"] = targeted_post.get(
-                            "source_action_id"
-                        )
-                        targeted_result["verified"] = bool(
-                            targeted_result["verified"]
-                            and final_text_verified
-                            and final_repo_verified
-                            and not targeted_post_problems
-                        )
+                            if (
+                                not targeted_post_problems
+                                and not self._targeted_test_snapshot_matches(
+                                    targeted_baseline,
+                                    targeted_post,
+                                )
+                            ):
+                                targeted_post_problems.append(
+                                    "targeted test file evidence changed during execution"
+                                )
+                            problems.extend(targeted_post_problems)
+                            targeted_result["postcondition_action_id"] = targeted_post.get(
+                                "source_action_id"
+                            )
+                            targeted_result["verified"] = bool(
+                                targeted_result["verified"]
+                                and final_text_verified
+                                and final_repo_verified
+                                and not targeted_post_problems
+                            )
         elif isinstance(targeted_baseline, dict):
             problems.append("unexpected targeted test baseline without a current typed request")
 
