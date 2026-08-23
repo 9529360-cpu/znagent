@@ -7,7 +7,11 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from agent.kernel.procedural_applicability import evaluate_candidate_applicability
+from agent.kernel.action import derive_native_action_intent
+from agent.kernel.procedural_applicability import (
+    current_expected_outcome,
+    evaluate_candidate_applicability,
+)
 from agent.kernel.procedural_tendency import CandidateProceduralTendency
 from agent.kernel.provider_bridge import build_resident_runtime_from_existing_stack
 
@@ -298,12 +302,33 @@ class ProceduralApplicabilityTests(unittest.TestCase):
                     break
             self.assertIsNotNone(investigation)
             self.assertIsInstance(investigation.facts.get("paths"), list)
+
+            readiness = first.kernel.self_model.assess_task(
+                event.task,
+                first._required_capabilities(event),
+            )
+            intent = derive_native_action_intent(event, facts=investigation.facts)
+            self.assertIsNotNone(intent)
+            direct_evaluation = evaluate_candidate_applicability(
+                candidate,
+                current_domains=readiness.domains,
+                action_kind=intent.kind,
+                action_args=intent.args,
+                expected_outcome=current_expected_outcome(event, intent),
+                facts=investigation.facts,
+            )
+            self.assertEqual(
+                direct_evaluation.status,
+                "supported",
+                direct_evaluation.to_dict(),
+            )
             self.assertTrue(
                 any(
                     candidate.tendency_id in item
                     and "supported by current independent evidence" in item
                     for item in investigation.evidence
-                )
+                ),
+                investigation.evidence,
             )
 
             pulse = first.pulse()
