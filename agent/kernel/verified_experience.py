@@ -411,7 +411,7 @@ class VerifiedExperienceStore:
 
     def _prune(self, conn: sqlite3.Connection) -> None:
         rows = conn.execute(
-            "SELECT experience_id, verdict, group_key, created_at "
+            "SELECT experience_id, event_id, verdict, group_key, created_at "
             "FROM verified_experiences ORDER BY created_at DESC, experience_id DESC"
         ).fetchall()
         if len(rows) <= self.max_records:
@@ -420,36 +420,79 @@ class VerifiedExperienceStore:
         keep: list[str] = []
         kept: set[str] = set()
 
-        contradiction_quota = max(1, self.max_records // 4)
-        for row in rows:
-            if row["verdict"] != "contradicted":
-                continue
-            experience_id = str(row["experience_id"])
-            keep.append(experience_id)
-            kept.add(experience_id)
-            if len(keep) >= contradiction_quota:
-                break
-
-        seen_groups: set[str] = set()
-        for row in rows:
+        def retain(row: sqlite3.Row) -> bool:
             if len(keep) >= self.max_records:
-                break
-            experience_id = str(row["experience_id"])
-            group_key = str(row["group_key"])
-            if experience_id in kept or group_key in seen_groups:
-                continue
-            keep.append(experience_id)
-            kept.add(experience_id)
-            seen_groups.add(group_key)
-
-        for row in rows:
-            if len(keep) >= self.max_records:
-                break
+                return False
             experience_id = str(row["experience_id"])
             if experience_id in kept:
-                continue
+                return False
             keep.append(experience_id)
             kept.add(experience_id)
+            return True
+
+        # Contradiction remains first-class evidence. Reserve a bounded recent
+        # slice before selecting successful representatives.
+        contradiction_quota = max(1, self.max_records // 4)
+        contradictions_kept = 0
+        for row in rows:
+            if str(row["verdict"]) != "contradicted":
+                continue
+            if retain(row):
+                contradictions_kept += 1
+            if contradictions_kept >= contradiction_quota:
+                break
+
+        # L2 needs at least two independently verified events before a tendency
+        # may exist. Preserve that minimum causal support for already-repeated
+        # groups before singleton representatives or generic recency can crowd it
+        # out. Same-event duplicates never satisfy the pair.
+        verified_by_group: dict[str, list[sqlite3.Row]] = {}
+        seen_group_events: dict[str, set[str]] = {}
+        group_order: list[str] = []
+        for row in rows:
+            if str(row["verdict"]) != "verified":
+                continue
+            group_key = str(row["group_key"])
+            event_id = str(row["event_id"])
+            if group_key not in verified_by_group:
+                verified_by_group[group_key] = []
+                seen_group_events[group_key] = set()
+                group_order.append(group_key)
+            if event_id in seen_group_events[group_key]:
+                continue
+            seen_group_events[group_key].add(event_id)
+            if len(verified_by_group[group_key]) < 2:
+                verified_by_group[group_key].append(row)
+
+        for group_key in group_order:
+            pair = verified_by_group[group_key]
+            if len(pair) < 2 or len(keep) + 2 > self.max_records:
+                continue
+            for row in pair:
+                retain(row)
+
+        # Keep one verified representative for other groups when capacity allows.
+        represented_verified_groups = {
+            str(row["group_key"])
+            for row in rows
+            if str(row["experience_id"]) in kept and str(row["verdict"]) == "verified"
+        }
+        for row in rows:
+            if len(keep) >= self.max_records:
+                break
+            if str(row["verdict"]) != "verified":
+                continue
+            group_key = str(row["group_key"])
+            if group_key in represented_verified_groups:
+                continue
+            if retain(row):
+                represented_verified_groups.add(group_key)
+
+        # Fill remaining capacity by recency regardless of verdict/group.
+        for row in rows:
+            if len(keep) >= self.max_records:
+                break
+            retain(row)
 
         placeholders = ",".join("?" for _ in keep)
         conn.execute(
