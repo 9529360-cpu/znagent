@@ -7,7 +7,7 @@ from pathlib import Path
 
 from agent.kernel.procedural_tendency import aggregate_candidate_tendencies
 from agent.kernel.provider_bridge import build_resident_runtime_from_existing_stack
-from agent.kernel.verified_experience import VerifiedExperience
+from agent.kernel.verified_experience import VerifiedExperience, VerifiedExperienceStore
 
 
 class ProceduralTendencyTests(unittest.TestCase):
@@ -175,6 +175,41 @@ class ProceduralTendencyTests(unittest.TestCase):
         self.assertLessEqual(len(candidate.supporting_experience_ids), 8)
         self.assertLessEqual(len(candidate.contradicting_experience_ids), 8)
         self.assertLessEqual(len(candidate.recent_verdicts), 4)
+
+    def test_retention_preserves_two_event_support_for_existing_candidate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            bounded = VerifiedExperienceStore(resident.store, max_records=5)
+
+            # This older repeated group should remain a candidate even after
+            # newer unrelated singletons put the episode table under pressure.
+            bounded.record(self._experience(1, group_key="candidate-group"))
+            bounded.record(self._experience(2, group_key="candidate-group"))
+            bounded.record(
+                self._experience(
+                    9,
+                    verdict="contradicted",
+                    group_key="negative-group",
+                )
+            )
+            for index in range(10, 14):
+                bounded.record(
+                    self._experience(index, group_key=f"singleton-{index}")
+                )
+
+            self.assertEqual(bounded.count(), 5)
+            candidates = bounded.candidate_tendencies()
+            self.assertEqual(len(candidates), 1)
+            self.assertEqual(candidates[0].group_key, "candidate-group")
+            self.assertEqual(candidates[0].support_count, 2)
+            retained_ids = {item.experience_id for item in bounded.recent(10)}
+            self.assertIn("vx-1", retained_ids)
+            self.assertIn("vx-2", retained_ids)
+            self.assertIn("vx-9", retained_ids)
+            resident.store.close()
 
     def test_real_resident_repeated_verified_writes_form_restart_safe_private_candidate(self):
         with tempfile.TemporaryDirectory() as tmp:
