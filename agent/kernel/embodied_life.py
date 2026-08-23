@@ -22,6 +22,7 @@ class CognitiveSituation(SituationModel):
     investigation_round: int = 0
     investigation_evidence_count: int = 0
     investigation_next_probe: str | None = None
+    procedural_applicability: tuple[dict[str, Any], ...] = ()
     native_action_intent_id: str | None = None
     native_action_kind: str | None = None
     native_action_reason: str | None = None
@@ -128,6 +129,8 @@ class EmbodiedLifeCore(ZNLifeCore):
         expected = raw_expected if isinstance(raw_expected, dict) else {}
         raw_history = execution.get("verification_history")
         verification_history = raw_history if isinstance(raw_history, list) else []
+        raw_applicability = working.data.get("procedural_applicability")
+        procedural_applicability = self._safe_procedural_applicability(raw_applicability)
         raw_intent = working.data.get("native_action_intent")
         action_intent = raw_intent if isinstance(raw_intent, dict) else {}
         raw_result = working.data.get("native_action_result")
@@ -168,6 +171,7 @@ class EmbodiedLifeCore(ZNLifeCore):
             investigation_next_probe=(
                 investigation.next_probe if investigation is not None else None
             ),
+            procedural_applicability=procedural_applicability,
             native_action_intent_id=(
                 str(action_intent.get("intent_id"))
                 if action_intent.get("intent_id")
@@ -241,6 +245,47 @@ class EmbodiedLifeCore(ZNLifeCore):
             nervous_fatigue=(float(affect.fatigue) if affect is not None else 0.0),
             activated_neural_traces=neural_summaries,
         )
+
+    @staticmethod
+    def _safe_procedural_applicability(raw: Any) -> tuple[dict[str, Any], ...]:
+        if not isinstance(raw, list):
+            return ()
+        safe: list[dict[str, Any]] = []
+        for item in raw[-8:]:
+            if not isinstance(item, dict):
+                continue
+            safe.append(
+                {
+                    "evaluation_id": str(item.get("evaluation_id") or "")[:40],
+                    "tendency_id": str(item.get("tendency_id") or "")[:40],
+                    "status": str(item.get("status") or "untested")[:20],
+                    "action_kind": str(item.get("action_kind") or "unknown")[:80],
+                    "candidate_maturity_state": str(
+                        item.get("candidate_maturity_state") or "candidate"
+                    )[:40],
+                    "candidate_reliability": float(
+                        item.get("candidate_reliability") or 0.0
+                    ),
+                    "candidate_inhibited": bool(item.get("candidate_inhibited")),
+                    "matched_fields": [
+                        str(value)[:80] for value in item.get("matched_fields") or ()
+                    ][:16],
+                    "mismatched_fields": [
+                        str(value)[:80] for value in item.get("mismatched_fields") or ()
+                    ][:16],
+                    "untested_fields": [
+                        str(value)[:80] for value in item.get("untested_fields") or ()
+                    ][:16],
+                    "reality_matched_fields": [
+                        str(value)[:80]
+                        for value in item.get("reality_matched_fields") or ()
+                    ][:8],
+                    "context_fingerprint": str(
+                        item.get("context_fingerprint") or ""
+                    )[:64],
+                }
+            )
+        return tuple(safe)
 
     def _form_thought(
         self,
@@ -362,6 +407,28 @@ class EmbodiedLifeCore(ZNLifeCore):
             if investigation_known not in thought.known:
                 thought.known = (*thought.known, investigation_known)
 
+        for applicability in situation.procedural_applicability[:4]:
+            tendency_id = str(applicability.get("tendency_id") or "unknown")
+            status = str(applicability.get("status") or "untested")
+            action_kind = str(applicability.get("action_kind") or "unknown")
+            if status == "supported":
+                procedural_known = (
+                    f"current independent evidence supports procedural candidate "
+                    f"{tendency_id} for {action_kind}, but it remains observational"
+                )
+            elif status == "mismatch":
+                procedural_known = (
+                    f"current evidence mismatches procedural candidate {tendency_id} "
+                    f"for {action_kind}; it must not qualify"
+                )
+            else:
+                procedural_known = (
+                    f"procedural candidate {tendency_id} for {action_kind} remains "
+                    "untested by current independent evidence and must not qualify"
+                )
+            if procedural_known not in thought.known:
+                thought.known = (*thought.known, procedural_known)
+
         if situation.last_body_action_kind:
             if situation.last_body_action_success is False:
                 body_unknown = (
@@ -478,6 +545,7 @@ class EmbodiedLifeCore(ZNLifeCore):
             "external_brains",
             "changes",
             "activated_neural_traces",
+            "procedural_applicability",
         ):
             data[key] = tuple(data.get(key) or ())
         data.setdefault("working_event_id", None)
@@ -491,6 +559,7 @@ class EmbodiedLifeCore(ZNLifeCore):
         data.setdefault("investigation_round", 0)
         data.setdefault("investigation_evidence_count", 0)
         data.setdefault("investigation_next_probe", None)
+        data.setdefault("procedural_applicability", ())
         data.setdefault("native_action_intent_id", None)
         data.setdefault("native_action_kind", None)
         data.setdefault("native_action_reason", None)
