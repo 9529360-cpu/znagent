@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - dev/zn-agent
+      - main
   pull_request:
     branches:
       - main
@@ -25,6 +26,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  source-boundary:
+    name: ZN Source Boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Verify active tree is ZN-only
+        run: python .agent/verify_zn_source_boundary.py
+
   kernel:
     name: ZN Kernel / Python
     runs-on: ubuntu-latest
@@ -129,7 +140,7 @@ jobs:
   publish-status:
     name: Publish commit statuses
     if: ${{ always() && github.event_name != 'pull_request' }}
-    needs: [kernel, desktop, container]
+    needs: [source-boundary, kernel, desktop, container]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -140,6 +151,7 @@ jobs:
             const normalize = (result) => result === 'success' ? 'success' : result === 'failure' ? 'failure' : 'error'
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
             const rows = [
+              ['ZN Source Boundary', '${{ needs.source-boundary.result }}'],
               ['ZN Kernel / Python', '${{ needs.kernel.result }}'],
               ['Electron / TypeScript', '${{ needs.desktop.result }}'],
             ]
