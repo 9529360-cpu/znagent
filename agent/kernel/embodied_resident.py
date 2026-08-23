@@ -19,7 +19,9 @@ from .models import (
     utc_now,
 )
 from .resident import ZNResidentRuntime
+from .result_semantics import normalize_action_result
 from .self_model import TaskReadiness
+from .verified_experience import VerifiedExperienceStore, build_verified_experience
 
 
 class EmbodiedResidentRuntime(ZNResidentRuntime):
@@ -72,6 +74,7 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         self.capabilities = capabilities or CapabilityRegistry()
         self.budget = budget or CognitiveBudgetManager()
         self.memory = StructuredMemory(self.store)
+        self.verified_experiences = VerifiedExperienceStore(self.store)
         self._cycle_lock = threading.RLock()
         self.store.recover_interrupted_events()
         self.store.get_working_state()
@@ -375,10 +378,16 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
                 for fragment in expected_output
                 if fragment not in observed.output
             ]
+            result_features = normalize_action_result(
+                asdict(observed),
+                command=command,
+            )
+            masked_success = bool(result_features.get("masked_success"))
             verified = bool(
                 not timed_out
                 and exit_code == expected_exit_code
                 and not missing_output
+                and not masked_success
             )
             verification_result = {
                 "verified": verified,
@@ -389,6 +398,7 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
                 "observed_exit_code": exit_code,
                 "expected_output_contains": expected_output,
                 "missing_output_contains": missing_output,
+                "result_features": result_features,
                 "observation": asdict(observed),
             }
             response = observed.output.strip() or (
@@ -405,6 +415,10 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
                 problems.append(
                     "missing expected output fragment(s): "
                     + ", ".join(repr(item) for item in missing_output)
+                )
+            if masked_success:
+                problems.append(
+                    "verification shell status was masked by deterministic failure evidence"
                 )
             failure = (
                 "postcondition command verification failed: "
@@ -425,6 +439,12 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
             }
 
         state.data["native_verification_result"] = verification_result
+        self._record_verified_experience(
+            event,
+            state,
+            intent,
+            verification_result=verification_result,
+        )
         self._sync_execution_context(event, state)
 
         if verified:
@@ -446,6 +466,56 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
             failure=failure,
             thought=thought,
         )
+
+    def _record_verified_experience(
+        self,
+        event: AgentEvent,
+        state: WorkingState,
+        intent: NativeActionIntent,
+        *,
+        verification_result: dict[str, Any],
+    ) -> None:
+        raw_contract = state.data.get("native_verification")
+        raw_primary = state.data.get("native_action_result")
+        if not isinstance(raw_contract, dict) or not isinstance(raw_primary, dict):
+            return
+
+        context = state.data.get("execution_context")
+        context_data = context if isinstance(context, dict) else {}
+        integration = state.data.get("cognition_integration")
+        source = (
+            "external-cognition-assisted"
+            if isinstance(integration, dict) and bool(integration.get("accepted"))
+            else "native"
+        )
+        primary_command = (
+            str(intent.args.get("command") or "").strip() or None
+            if intent.kind in {"command", "terminal", "shell"}
+            else None
+        )
+        experience = build_verified_experience(
+            event_id=event.event_id,
+            goal=event.task,
+            gap=str(context_data.get("current_gap") or "").strip() or None,
+            source=source,
+            domains=self._required_capabilities(event),
+            situation_evidence_fingerprint=self._evidence_fingerprint(event.event_id),
+            action_kind=intent.kind,
+            action_signature_hash=self._signature_hash(intent),
+            primary_action_result=raw_primary,
+            primary_command=primary_command,
+            expected_outcome=raw_contract,
+            verification_result=verification_result,
+        )
+        if experience is None:
+            return
+        self.verified_experiences.record(experience)
+        state.data["latest_verified_experience"] = {
+            "experience_id": experience.experience_id,
+            "verdict": experience.verdict,
+            "group_key": experience.group_key,
+            "source": experience.source,
+        }
 
     def _fail_postcondition_verification(
         self,
