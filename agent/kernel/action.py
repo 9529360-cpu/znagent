@@ -64,8 +64,9 @@ def derive_native_action_intents(
     Action formation uses only state ZN already owns: the structured event and
     concrete native investigation facts. The returned ordering preserves the
     historical default priority (explicit action, command, text movement,
-    directory listing). Explicit body actions remain exclusive because learned
-    experience must never override an action the current event directly names.
+    directory listing). A valid explicit body action remains exclusive because
+    learned experience must never override an action the current event directly
+    names. An invalid explicit shape retains the historical native fallback.
 
     An empty tuple means only "no action intent was derived". It never means
     the task is already complete; completion must be established elsewhere by
@@ -78,19 +79,18 @@ def derive_native_action_intents(
 
     if explicit:
         kind, args = _explicit_action(explicit, payload)
-        if not kind:
-            return ()
-        args = _contextualize_action_args(args, payload)
-        return (
-            NativeActionIntent(
-                intent_id=f"act-{uuid.uuid4().hex[:12]}",
-                event_id=event.event_id,
-                kind=kind,
-                args=args,
-                reason="the oriented event contains a concrete body action",
-                source="structured_event",
-            ),
-        )
+        if kind:
+            args = _contextualize_action_args(args, payload)
+            return (
+                NativeActionIntent(
+                    intent_id=f"act-{uuid.uuid4().hex[:12]}",
+                    event_id=event.event_id,
+                    kind=kind,
+                    args=args,
+                    reason="the oriented event contains a concrete body action",
+                    source="structured_event",
+                ),
+            )
 
     task = event.task.lower()
     raw_path = (
