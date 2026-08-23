@@ -61,10 +61,13 @@ jobs:
         with:
           version: '0.11.6'
           enable-cache: true
-          cache-dependency-glob: uv.lock
+          cache-dependency-glob: runtime/python/pyproject.toml
 
       - name: Install locked workspace dependencies
         run: npm ci
+
+      - name: Reject high-severity npm advisories
+        run: npm audit --audit-level=high
 
       - name: Resolve release version
         id: version
