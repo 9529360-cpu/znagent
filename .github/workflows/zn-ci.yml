@@ -141,12 +141,24 @@ jobs:
           set -euo pipefail
           find runtime/python tests/zn_agent -type d -name __pycache__ -prune -exec rm -rf {} +
           find runtime/python tests/zn_agent -type f -name '*.pyc' -delete
+          rm -f .npmrc
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
           git diff --cached --check
-          test -z "$(git diff --cached --name-only | grep '^\.github/workflows/' || true)"
-          test -z "$(git diff --cached --name-only | grep -E '(^|/)(__pycache__|node_modules|build|dist|release|\.ci)(/|$)|\.pyc$|\.db$' || true)"
+          while IFS=$'\t' read -r status path rest; do
+            case "$status" in
+              D*) continue ;;
+            esac
+            if [[ "$path" == .github/workflows/* ]]; then
+              echo "refusing workflow addition/modification during purge: $status $path" >&2
+              exit 1
+            fi
+            if [[ "$path" =~ (^|/)(__pycache__|node_modules|build|dist|release|\.ci)(/|$)|\.pyc$|\.db$ ]]; then
+              echo "refusing generated artifact during purge: $status $path" >&2
+              exit 1
+            fi
+          done < <(git diff --cached --name-status)
           git commit -m 'refactor: evacuate inherited Hermes source from ZN'
           git fetch origin dev/zn-agent
           test "$(git rev-parse HEAD^)" = "$(git rev-parse origin/dev/zn-agent)"
