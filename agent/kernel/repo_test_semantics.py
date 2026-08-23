@@ -112,16 +112,15 @@ def test_source_directly_imports_target(source: str, target_module: str) -> bool
 
 
 def ci_source_runs_kernel_unittest_suite(source: str) -> bool:
-    """Fail closed unless current CI text still contains the exact kernel suite."""
+    """Require the exact current kernel suite in an executable one-line run step."""
 
     for raw_line in str(source or "").splitlines():
         line = raw_line.strip()
-        if not line:
+        if not line.startswith("run:"):
             continue
-        if line.startswith("run:"):
-            line = line[4:].strip()
-            if not line or line in {"|", ">", "|-", ">-"}:
-                continue
+        line = line[4:].strip()
+        if not line or line in {"|", ">", "|-", ">-"}:
+            continue
         try:
             argv = tuple(shlex.split(line, posix=True))
         except ValueError:
