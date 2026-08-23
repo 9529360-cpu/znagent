@@ -34,6 +34,7 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
     _ACTIVE_THOUGHT_KINDS = {
         *ZNResidentRuntime._ACTIVE_THOUGHT_KINDS,
         "body_action",
+        "verify_action",
         "integrate_cognition",
     }
 
@@ -73,6 +74,13 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
     ) -> ResidentRunResult | None:
         if state.stage == "native_action":
             return self._native_action_step(
+                event,
+                state,
+                readiness=readiness,
+                thought=thought,
+            )
+        if state.stage == "native_verification":
+            return self._native_verification_step(
                 event,
                 state,
                 readiness=readiness,
@@ -162,26 +170,32 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         state.data["native_action_result"] = asdict(result)
 
         if result.success:
-            domains = self.kernel.self_model.observe_native_outcome(
-                event.task,
-                self._required_capabilities(event),
-                success=True,
-                quality=0.95,
-            )
-            state.stage = "complete"
-            state.next_action = None
-            state.data["native_domains"] = list(domains)
-            self.store.save_working_state(state)
-            self.store.record_runtime_task(model_invocations=0)
-            response = result.output.strip()
-            if not response:
-                response = json.dumps(result.data, ensure_ascii=False, sort_keys=True)
-            return ResidentRunResult(
-                event=event,
-                execution_path=ExecutionPath.BODY,
-                success=True,
-                response=response,
-                model_invocations=0,
+            verification = self._verification_contract(intent)
+            if verification is not None:
+                # A successful movement is evidence, not proof that the user's
+                # requested state now exists. Persist the postcondition and let
+                # a later resident pulse re-observe reality before completion.
+                state.data["native_verification"] = verification
+                state.stage = "native_verification"
+                state.next_action = "verify the requested postcondition from current reality"
+                self.store.save_working_state(state)
+                if thought is not None:
+                    action = "verify the body action against the requested postcondition"
+                    if action not in thought.possible_actions:
+                        thought.possible_actions = (*thought.possible_actions, action)
+                    thought.reason = (
+                        f"{thought.reason}; the body movement returned successfully but task "
+                        "completion still requires independent observation"
+                    )
+                    self._persist_enriched_thought(thought)
+                return None
+
+            return self._complete_successful_body_action(
+                event,
+                state,
+                intent,
+                response=result.output.strip()
+                or json.dumps(result.data, ensure_ascii=False, sort_keys=True),
                 reason=f"ZN completed the task through its body: {intent.kind}",
             )
 
@@ -204,6 +218,145 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
             )
             self._persist_enriched_thought(thought)
         return None
+
+    def _native_verification_step(
+        self,
+        event: AgentEvent,
+        state: WorkingState,
+        *,
+        readiness: TaskReadiness,
+        thought=None,
+    ) -> ResidentRunResult | None:
+        raw_contract = state.data.get("native_verification")
+        raw_intent = state.data.get("native_action_intent")
+        if not isinstance(raw_contract, dict) or not isinstance(raw_intent, dict):
+            state.stage = "native_deliberation"
+            state.next_action = "reconstruct missing postcondition verification"
+            self.store.save_working_state(state)
+            return None
+
+        intent = NativeActionIntent.from_dict(raw_intent)
+        kind = str(raw_contract.get("kind") or "")
+        if kind != "text_equals":
+            state.stage = "native_deliberation"
+            state.next_action = "resolve unsupported postcondition verification"
+            self.store.save_working_state(state)
+            return None
+
+        path = str(raw_contract.get("path") or "")
+        expected = str(raw_contract.get("expected_text") or "")
+        observed = self.body.act(
+            "read_text",
+            event_id=event.event_id,
+            path=path,
+            max_chars=max(1, len(expected) + 1),
+        )
+        verified = bool(
+            observed.success
+            and not bool(observed.data.get("truncated"))
+            and observed.output == expected
+        )
+        state.data["native_verification_result"] = {
+            "verified": verified,
+            "kind": kind,
+            "path": path,
+            "expected_chars": len(expected),
+            "observed_chars": (
+                int(observed.data.get("chars") or len(observed.output))
+                if observed.success
+                else None
+            ),
+            "observation": asdict(observed),
+        }
+
+        if verified:
+            return self._complete_successful_body_action(
+                event,
+                state,
+                intent,
+                response=path,
+                reason=(
+                    "ZN completed the task only after independently verifying the "
+                    "requested text postcondition through its body"
+                ),
+            )
+
+        self.kernel.self_model.observe_native_outcome(
+            event.task,
+            self._required_capabilities(event),
+            success=False,
+        )
+        if observed.success:
+            failure = (
+                f"postcondition verification failed for {path}: requested text state "
+                "does not match current reality"
+            )
+        else:
+            failure = (
+                f"postcondition verification failed for {path}: "
+                f"{observed.error or 'current text state could not be observed'}"
+            )
+        state.data["local_failure"] = failure
+        state.data["native_action_failure_signature"] = self._intent_signature(intent)
+        state.stage = "native_investigation"
+        state.next_action = "investigate the contradicted postcondition before another movement"
+        self.store.save_working_state(state)
+        if thought is not None:
+            if failure not in thought.unknown:
+                thought.unknown = (*thought.unknown, failure)
+            thought.reason = (
+                f"{thought.reason}; current reality contradicted the expected result of my "
+                "previous body movement"
+            )
+            self._persist_enriched_thought(thought)
+        return None
+
+    def _complete_successful_body_action(
+        self,
+        event: AgentEvent,
+        state: WorkingState,
+        intent: NativeActionIntent,
+        *,
+        response: str,
+        reason: str,
+    ) -> ResidentRunResult:
+        domains = self.kernel.self_model.observe_native_outcome(
+            event.task,
+            self._required_capabilities(event),
+            success=True,
+            quality=0.95,
+        )
+        state.stage = "complete"
+        state.next_action = None
+        state.data["native_domains"] = list(domains)
+        self.store.save_working_state(state)
+        self.store.record_runtime_task(model_invocations=0)
+        return ResidentRunResult(
+            event=event,
+            execution_path=ExecutionPath.BODY,
+            success=True,
+            response=response,
+            model_invocations=0,
+            reason=reason,
+        )
+
+    @staticmethod
+    def _verification_contract(intent: NativeActionIntent) -> dict[str, Any] | None:
+        # Start with explicit replace/create text mutations where the requested
+        # final state can be re-observed exactly. Append and generic command
+        # semantics need richer postcondition contracts and remain future slices.
+        if intent.kind != "write_text" or bool(intent.args.get("append", False)):
+            return None
+        path = str(intent.args.get("path") or "").strip()
+        if not path:
+            return None
+        return {
+            "kind": "text_equals",
+            "path": path,
+            "expected_text": str(intent.args.get("content") or ""),
+            "intent_id": intent.intent_id,
+            "action_signature": EmbodiedResidentRuntime._intent_signature(intent),
+        }
 
     def _external_cognition_step(
         self,
@@ -424,6 +577,19 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
             thought.action_kind = "body_action"
             thought.action_target = event.event_id
             thought.reason = "native cognition has selected a concrete movement of my body"
+            return
+
+        if state.stage == "native_verification":
+            action = "verify the previous body movement against current reality"
+            if action not in thought.possible_actions:
+                thought.possible_actions = (*thought.possible_actions, action)
+            thought.chosen_action = action
+            thought.action_kind = "verify_action"
+            thought.action_target = event.event_id
+            thought.reason = (
+                "a successful body call is only evidence; the requested postcondition must "
+                "be observed before I can call the task complete"
+            )
             return
 
         if state.stage == "cognition_integration":
