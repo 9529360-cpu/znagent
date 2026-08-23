@@ -14,6 +14,7 @@ from .models import utc_now
 from .result_semantics import normalize_action_result
 
 if TYPE_CHECKING:
+    from .procedural_tendency import CandidateProceduralTendency
     from .store import KernelStore
 
 _MAX_VERIFIED_EXPERIENCES = 2048
@@ -379,6 +380,27 @@ class VerifiedExperienceStore:
                 (str(event_id), max(1, int(limit))),
             ).fetchall()
         return [VerifiedExperience.from_dict(json.loads(row["data"])) for row in rows]
+
+    def candidate_tendencies(
+        self,
+        *,
+        minimum_support: int = 2,
+        limit: int = 32,
+    ) -> list[CandidateProceduralTendency]:
+        """Derive bounded non-executable L2 candidates from retained episodes."""
+
+        from .procedural_tendency import aggregate_candidate_tendencies
+
+        # The episode table is already hard-bounded by ``max_records``. Scan the
+        # retained causal evidence rather than only the default recent 100 so a
+        # legitimate repeated pattern does not disappear merely because newer
+        # unrelated episodes arrived.
+        experiences = self.recent(self.max_records)
+        return aggregate_candidate_tendencies(
+            experiences,
+            minimum_support=minimum_support,
+            limit=limit,
+        )
 
     def count(self) -> int:
         with closing(self._connect()) as conn:
