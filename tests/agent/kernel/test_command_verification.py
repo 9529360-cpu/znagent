@@ -226,6 +226,30 @@ class CommandPostconditionTests(unittest.TestCase):
                 verification["missing_output_contains"],
             )
 
+            # The contradiction becomes part of the next resident Situation and
+            # Thought immediately. Cognition does not spend another pulse acting
+            # as though the successful primary process proved the goal.
+            pulse = resident.pulse()
+            situation = resident.life.snapshot().current_situation
+            self.assertEqual(situation.last_verification_kind, "command")
+            self.assertFalse(situation.last_verification_verified)
+            self.assertIn(
+                "postcondition command verification failed",
+                situation.last_verification_error,
+            )
+            self.assertTrue(
+                any(
+                    "postcondition command verification failed" in item
+                    for item in pulse.thought.unknown
+                )
+            )
+            self.assertTrue(
+                any(
+                    "verification was contradicted by current reality" in item
+                    for item in pulse.thought.known
+                )
+            )
+
             terminal = self._run_to_terminal(resident)
             self.assertFalse(terminal.success)
             self.assertEqual(terminal.model_invocations, 0)
