@@ -41,21 +41,22 @@ ZN 现在不是只会消费 caller 提供的 `native_action_options`。在一个
   - desktop typecheck/bundle/ownership/update/handoff/release verifier tests = success
   - `Container / Runtime Smoke = skipped`（normal push workflow contract）
   - `Publish commit statuses = success`
-- implementation-status docs commit：`1fe89bde2fa16b39d0feb574399600fa288ef9ac` (`[skip ci]`)
-- 本 HANDOFF 也是 docs-only `[skip ci]`；提交后它会成为新的 branch HEAD，下一维护者必须重新读取真实 branch ref，不能把 `920bd708...` 当作当前 HEAD
+- implementation-status latest docs commit：`50ebda8d51681a8e0503baddafc4aaddb34edd08` (`[skip ci]`)
+- previous HANDOFF docs commit：`38f706fd4257ca879e04eefe09a4ab293f02eead` (`[skip ci]`)
+- 本 HANDOFF 也是 docs-only `[skip ci]`；提交后它会成为新的 branch HEAD，下一维护者必须重新读取真实 branch ref，不能把 `920bd708...`、`50ebda8...` 或本段文字当作未来 HEAD 的替代品
 
 ### M8 / AppImage 真实终态
 
 旧 run `32645354818` 已从之前的长期 in-progress 变为终态：
 
 ```text
-Real AppImage N to N+1 job                     cancelled
-Build real N AppImage                          success
-Build real N+1 AppImage                        success
-Run real installed AppImage updater continuity smoke  cancelled
-Capture smoke diagnostics                      success
-Upload smoke proof and diagnostics             success
-Publish AppImage update smoke status           success
+Real AppImage N to N+1 job                            cancelled
+Build real N AppImage                                 success
+Build real N+1 AppImage                               success
+Run real installed AppImage updater continuity smoke cancelled
+Capture smoke diagnostics                             success
+Upload smoke proof and diagnostics                    success
+Publish AppImage update smoke status                  success
 ```
 
 因此：
@@ -258,6 +259,8 @@ docs/ZN-IMPLEMENTATION-STATUS.md
 5f10a4f5d60fb9c801ce53d400cba13ca1addee8  test: cover resident exact-text choice formation
 920bd70814e44d9b62b6ba5159e264ab442470a3  test: prove resident choice learning loop
 1fe89bde2fa16b39d0feb574399600fa288ef9ac  docs: record resident-owned choice learning slice [skip ci]
+38f706fd4257ca879e04eefe09a4ab293f02eead  docs: hand off resident choice learning state [skip ci]
+50ebda8d51681a8e0503baddafc4aaddb34edd08  docs: record cancelled AppImage continuity result [skip ci]
 ```
 
 ## 测试 / CI
