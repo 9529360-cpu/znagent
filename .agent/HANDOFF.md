@@ -46,8 +46,11 @@ durable ZN Self
   - Electron success
   - Python failure：3 failures + 1 error，全部来自新 recovery/authority test fixtures 使用 `- run:` inline YAML，而 production proof deliberately 只承认当前真实 `zn-ci.yml` 的独立 `run:` executable step；实现正例、旧 explicit targeted-test suite、repo-delta suite、isolated runtime boot/compile 均已通过。
   - 修复方式是把 fixtures 对齐当前真实 CI shape，没有放宽 runtime authority parser。
-- `main` 必须保持 `61dd880aa4bbbdb359ca544b752afc2c22845ce9`；M10 未满足，禁止修改。
-- 本 HANDOFF 为 docs-only `[skip ci]`；最终维护者必须重新读取 exact `dev/zn-agent` HEAD 并以 Git 为准。
+- implementation-status sync commit：`01bae1cb4987ddb1d9addf691de831e905195093` (`[skip ci]`)
+- 写入本最终 HANDOFF 前 exact dev HEAD：`01bae1cb4987ddb1d9addf691de831e905195093`；本 HANDOFF 本身是 docs-only `[skip ci]`，提交后必须重新读取 branch exact HEAD。
+- `main` = `61dd880aa4bbbdb359ca544b752afc2c22845ce9`，未修改；M10 未满足。
+- 写入本 HANDOFF 前 dev vs main = ahead 629 / behind 0。
+- 写入本 HANDOFF 前 open PR = 0。
 
 ## 本阶段恢复的真实现场
 
