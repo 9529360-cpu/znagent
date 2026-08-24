@@ -3,12 +3,13 @@ name: ZN Windows Compatibility Repair One Shot
 on:
   push:
     branches:
-      - dev/zn-agent
+      - work/windows-ci-compat
     paths:
       - .github/workflows/zn-windows-compat-patch-once.yml
 
 permissions:
   contents: write
+  statuses: write
 
 jobs:
   repair:
@@ -16,6 +17,20 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 20
     steps:
+      - name: Publish repair pending status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: 'pending',
+              context: 'ZN Windows Compatibility Repair',
+              description: 'focused Windows compatibility repair running',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            })
+
       - name: Require Windows x64 runner
         shell: powershell
         run: |
@@ -23,7 +38,7 @@ jobs:
             throw "ZN Windows compatibility repair requires Windows X64"
           }
 
-      - name: Checkout exact development head
+      - name: Checkout exact repair head
         uses: actions/checkout@v7
         with:
           fetch-depth: 2
@@ -31,7 +46,7 @@ jobs:
       - name: Verify one-shot base
         shell: powershell
         run: |
-          $expectedParent = '2f50b9f0c9cd415018e3ba28b1fdd042ff8f3c90'
+          $expectedParent = '49ef4617594640f4912694dc1fcb8cbb58eceded'
           $parent = (git rev-parse HEAD^).Trim()
           if ($parent -ne $expectedParent) {
             throw "One-shot repair base changed: expected $expectedParent, got $parent"
@@ -137,13 +152,29 @@ jobs:
             }
           }
 
-      - name: Commit verified repair and remove one-shot workflow
+      - name: Commit verified repair to isolated branch
         shell: powershell
         run: |
-          git rm .github/workflows/zn-windows-compat-patch-once.yml
           git config user.name 'ZN CI Maintainer'
           git config user.email 'zn-ci@users.noreply.github.com'
           git add runtime/python/zn_agent/core/body.py runtime/python/zn_agent/core/terminal.py tests/zn_agent/core/test_native_body.py tests/zn_agent/core/test_native_choice_recovery.py tests/zn_agent/core/test_resident_derived_postcondition.py tests/zn_agent/core/test_procedural_influence.py tests/zn_agent/core/test_resident_autostart.py
           git diff --cached --check
           git commit -m 'fix: make resident verification Windows-native'
-          git push origin HEAD:dev/zn-agent
+          git push origin HEAD:work/windows-ci-compat
+
+      - name: Publish repair terminal status
+        if: ${{ always() }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const result = '${{ job.status }}'
+            const state = result === 'success' ? 'success' : result === 'failure' ? 'failure' : 'error'
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state,
+              context: 'ZN Windows Compatibility Repair',
+              description: `focused repair: ${result}`.slice(0, 140),
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            })
