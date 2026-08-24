@@ -6,6 +6,7 @@ import re
 import sqlite3
 import threading
 import uuid
+from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -140,7 +141,7 @@ class ResidentWorkLedger:
         return conn
 
     def _init_schema(self) -> None:
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn:
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS work_threads(
@@ -196,6 +197,7 @@ class ResidentWorkLedger:
                     ON work_runs(ledger_state, updated_at DESC);
                 """
             )
+            conn.commit()
 
     @staticmethod
     def _normalize_thread_id(value: str | None) -> str:
@@ -291,7 +293,7 @@ class ResidentWorkLedger:
         return thread
 
     def _save_thread(self, thread: WorkThread) -> None:
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn:
             conn.execute(
                 """
                 INSERT INTO work_threads(
@@ -310,10 +312,11 @@ class ResidentWorkLedger:
                     thread.updated_at,
                 ),
             )
+            conn.commit()
 
     def get_thread(self, thread_id: str) -> WorkThread | None:
         normalized_id = self._normalize_thread_id(thread_id)
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn:
             row = conn.execute(
                 "SELECT * FROM work_threads WHERE thread_id=?", (normalized_id,)
             ).fetchone()
@@ -321,7 +324,7 @@ class ResidentWorkLedger:
 
     def list_threads(self, *, limit: int = 24) -> list[WorkThread]:
         bounded = max(1, min(100, int(limit)))
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn:
             rows = conn.execute(
                 "SELECT * FROM work_threads ORDER BY updated_at DESC LIMIT ?", (bounded,)
             ).fetchall()
@@ -330,7 +333,7 @@ class ResidentWorkLedger:
     def list_messages(self, thread_id: str, *, limit: int = 120) -> list[WorkMessage]:
         normalized_id = self._normalize_thread_id(thread_id)
         bounded = max(1, min(500, int(limit)))
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM (
@@ -347,7 +350,7 @@ class ResidentWorkLedger:
     def list_artifacts(self, thread_id: str, *, limit: int = 48) -> list[WorkArtifact]:
         normalized_id = self._normalize_thread_id(thread_id)
         bounded = max(1, min(_MAX_ARTIFACTS_PER_THREAD, int(limit)))
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn:
             rows = conn.execute(
                 "SELECT * FROM work_artifacts WHERE thread_id=? "
                 "ORDER BY created_at DESC LIMIT ?",
@@ -685,14 +688,14 @@ class ResidentWorkLedger:
         normalized = str(event_id or "").strip()
         if not normalized:
             return None
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn:
             row = conn.execute(
                 "SELECT * FROM work_runs WHERE event_id=?", (normalized,)
             ).fetchone()
         return self._run_from_row(row) if row else None
 
     def _active_run_for_thread(self, thread_id: str) -> WorkRun | None:
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn:
             row = conn.execute(
                 "SELECT * FROM work_runs WHERE thread_id=? AND ledger_state='active' "
                 "ORDER BY created_at DESC LIMIT 1",
@@ -701,7 +704,7 @@ class ResidentWorkLedger:
         return self._run_from_row(row) if row else None
 
     def _save_run(self, run: WorkRun) -> None:
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn:
             conn.execute(
                 """
                 INSERT INTO work_runs(
@@ -723,6 +726,7 @@ class ResidentWorkLedger:
                     run.finalized_at,
                 ),
             )
+            conn.commit()
 
     def _finalize_completed_runs(self, *, thread_id: str | None = None) -> None:
         sql = "SELECT * FROM work_runs WHERE ledger_state='active'"
@@ -731,7 +735,7 @@ class ResidentWorkLedger:
             sql += " AND thread_id=?"
             params.append(thread_id)
         sql += " ORDER BY created_at ASC LIMIT 64"
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn:
             rows = conn.execute(sql, params).fetchall()
         for row in rows:
             run = self._run_from_row(row)
@@ -1070,7 +1074,7 @@ class ResidentWorkLedger:
         return created
 
     def _save_artifact(self, artifact: WorkArtifact) -> None:
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn:
             conn.execute(
                 """
                 INSERT INTO work_artifacts(
@@ -1102,9 +1106,10 @@ class ResidentWorkLedger:
                 "ORDER BY created_at DESC LIMIT -1 OFFSET ?) ",
                 (artifact.thread_id, _MAX_ARTIFACTS_PER_THREAD),
             )
+            conn.commit()
 
     def _append(self, thread: WorkThread, message: WorkMessage) -> None:
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn:
             conn.execute(
                 """
                 INSERT OR IGNORE INTO work_messages(
@@ -1120,5 +1125,6 @@ class ResidentWorkLedger:
                     message.created_at,
                 ),
             )
+            conn.commit()
         thread.updated_at = message.created_at
         self._save_thread(thread)
