@@ -4,74 +4,31 @@
 
 ## 当前目标
 
-当前主线已经从 post-M10 migration/cleanup 收口回到 ZN resident-owned engineering competence。
+当前主线是 ZN resident-owned engineering competence，不是 migration cleanup。
 
-本轮发现并修复一个真实调用链回归：`RepositoryVerifyingResidentRuntime` 通过当前 `.github/workflows/zn-ci.yml` 证明 kernel module → mirrored unittest 的执行 authority，但 `ci_source_runs_kernel_unittest_suite()` 只识别旧的一行式 `run: python -m unittest ...`，无法识别当前 Windows PowerShell block。结果是 steady-state CI 本身可以全绿，但 resident 的“由当前仓库证据形成 targeted verifier identity”路径会 fail closed，退化为仅 repo-delta verification。
-
-当前目标：让这条 resident-owned verifier authority 与真实 Windows CI 契约重新一致，并取得 exact-head Windows CI 证据。
+本阶段先恢复了 resident 对当前 Windows PowerShell kernel CI 的 targeted unittest authority，随后向 `docs/ZN-NEXT-PHASE.md` P1 推进一个更广但仍 fail-closed 的 verifier-selection 机制：repo-owned verifier manifest 只能声明非镜像 kernel module → unittest candidate relation；它不能提供任意命令，也不能单独形成执行 authority。
 
 核心原则：
 
 > **ZN uses models. Models do not own ZN.**
 
-Linux/macOS 现阶段是 optional/on-demand evidence；不得再把 Linux Container/AppImage manual smoke 当作阻塞 Windows 主线或 PR 收口的必需条件。M8 仍然是 Windows clean install / N→N+1 / rollback / signing evidence-based partial milestone。
+Linux/macOS 当前仅是 optional/on-demand evidence。Windows x64 是 intended product/steady-state CI target。M8 Windows clean install / N→N+1 / rollback / signing 仍是独立 partial milestone。
 
 ## 当前分支 / HEAD
 
 - 固定开发分支：`dev/zn-agent`
 - canonical source/release branch：`main`
-- 本文件更新前开发 HEAD：`dd237947a5122e2577ef75fd3556fa63b9a5e595`
+- 本文件更新前开发 HEAD：`2f338cc13b8f8bb458908609ce60aac2610628e5`
 - canonical `main`：`8234a835dea604783cea0bd9d28a40de654ec03d`
-- `dev/zn-agent` 相对 `main`：ahead 50 / behind 0，仍为线性候选
+- `dev/zn-agent` 相对 `main`：线性 ahead / behind 0；禁止 force push/history rewrite
 - PR #6：draft/open，base `main`，head `dev/zn-agent`，未合并
-- 本文件提交后 HEAD 会继续前进；接手者必须重新读取真实 ref
+- 本文件提交后开发 HEAD 会再次前进；接手者必须重新读取真实 ref
 
-## 本轮已完成
+## 已完成事项
 
-### 1. 恢复真实现场
+### 1. Windows verifier contract regression
 
-已重新读取：
-
-- `ZN.md`
-- `AGENTS.md`
-- `docs/ZN-IMPLEMENTATION-STATUS.md`
-- `docs/ZN-SOURCE-EXTRACTION.md`
-- `docs/ZN-SELF-MAINTENANCE.md`
-- `.agent/HANDOFF.md`
-- `docs/ZN-NEXT-PHASE.md`
-
-并检查：
-
-- `dev/zn-agent` / `main` compare；
-- PR #6；
-- 最新 Windows CI；
-- resident targeted verifier 的真实调用链；
-- `.github/workflows/zn-ci.yml` 当前 kernel test step。
-
-发现旧 HANDOFF 与最新产品契约冲突：HANDOFF 把 Linux manual evidence 作为 P1/P2 阻塞项，而最新 `ZN.md` 已明确 Windows x64 是当前 intended target，Linux/macOS 只属 optional/on-demand evidence。以最新架构契约和真实代码为准，本文件已纠正。
-
-### 2. 确认此前 Windows 修复仍有真实 green evidence
-
-开发基线 `993fef35f3734748cd72cb7f2a6cdf03ce0d3edb` 的 run：
-
-```text
-32701839271
-```
-
-真实结果：
-
-```text
-ZN Source Boundary / Windows        success
-ZN Kernel / Python / Windows        success
-Electron / TypeScript / Windows     success
-Publish Windows CI statuses         success
-```
-
-这证明此前 SQLite connection ownership fix 与 Windows Git-Bash test portability fix 已收敛。
-
-### 3. 追 resident-owned targeted verifier 调用链
-
-真实链路：
+此前真实调用链：
 
 ```text
 RepositoryVerifyingResidentRuntime
@@ -85,140 +42,176 @@ RepositoryVerifyingResidentRuntime
 → current-world post-test recheck
 ```
 
-当前 `zn-ci.yml` 的 kernel suite 是：
+旧语义只识别一行式 `run: python -m unittest ...`，无法识别当前 Windows PowerShell block，因此 steady-state CI 可以全绿而 resident verifier identity formation fail closed。
 
-```powershell
-$env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
-& .\.ci\runtime-venv\Scripts\python.exe -m unittest discover -s tests/zn_agent/core -p 'test_*.py' -v
-```
-
-但原 `ci_source_runs_kernel_unittest_suite()` 只识别单行：
-
-```text
-run: python -m unittest discover -s tests/zn_agent/core -p 'test_*.py' -v
-```
-
-因此当前真实 CI 文本不能形成 resident verifier authority。这是产品能力回归，不是 CI failure。
-
-### 4. 修复 verifier contract 识别
-
-提交：
+修复提交：
 
 ```text
 d302421385409d205183031d4a1726ad3d2f419f
 fix: recognize current Windows kernel verifier contract
-```
 
-修改：
-
-```text
-runtime/python/zn_agent/core/repo_test_semantics.py
-```
-
-新逻辑保留旧单行精确契约，同时对当前 Windows steady-state CI 仅接受严格的 literal PowerShell block：
-
-- 前一 sibling 必须是 `shell: powershell`；
-- 必须设置 working-tree `PYTHONPATH` 为 `runtime\python`；
-- 必须调用 `.ci\runtime-venv\Scripts\python.exe`；
-- unittest discover target/pattern/verbosity 必须精确匹配；
-- run block 不能夹带额外 executable lines；
-- 任一 shell/path/target/command 漂移都会 fail closed，直到重新证明当前 verifier relation。
-
-### 5. 补回归测试
-
-提交：
-
-```text
 dd237947a5122e2577ef75fd3556fa63b9a5e595
 test: cover current Windows kernel verifier semantics
 ```
 
-修改：
+当前语义只接受精确 current Windows verifier contract：PowerShell shell、working-tree `PYTHONPATH`、isolated runtime Python、exact unittest discover target/pattern/verbosity；shell/path/target/extra executable line 漂移均 fail closed。
+
+### 2. Broader repo-owned verifier selection — bounded manifest slice
+
+新增提交：
 
 ```text
-tests/zn_agent/core/test_repo_test_semantics_authority.py
+c3f0ffbd7e09020dbda38d62fecae4bae8f8ec84
+feat: add repo-owned verifier manifest semantics
+
+96ce7cd4fde054c8ae958bd593457621592f09a4
+feat: form verifier identity from tracked manifest
+
+aaf1ed22ccfa060c11a61fcf669bb7f8ae93d9f9
+feat: declare bounded repo verifier mapping
+
+2f338cc13b8f8bb458908609ce60aac2610628e5
+test: prove manifest verifier authority boundaries
 ```
 
-新增正例覆盖当前 Windows kernel run block，并增加负例：
-
-- shell 改为 bash；
-- runtime venv path 漂移；
-- tests target 漂移；
-- PYTHONPATH 漂移；
-- command 被注释；
-- block 添加额外 executable line。
-
-## 本地 / 隔离验证
-
-因为当前环境没有私有仓库本地 checkout，本轮不能伪装成运行了完整 working tree tests。
-
-已在隔离最小模块副本中真实运行新增语义测试：
+新增：
 
 ```text
-3 tests passed
+.agent/zn-engineering-verifiers.json
+```
+
+当前只声明一个真实非镜像关系：
+
+```text
+runtime/python/zn_agent/core/repo_test_semantics.py
+→ tests/zn_agent/core/test_repo_test_semantics_authority.py
+```
+
+manifest contract：
+
+- JSON schema 极小：`version` + `mappings`；
+- mapping 只有 `target` + `test`；
+- 不能携带 command/shell/workdir/timeout 等执行参数；
+- 只允许 ZN kernel top-level Python target 与 `tests/zn_agent/core/test_*.py`；
+- duplicate target、未知字段、非法路径、错误版本、过大 mapping list 全部 fail closed；
+- canonical mirrored test relation 仍优先，manifest 只补非 canonical relation。
+
+resident authority 仍要求独立现实证据：
+
+```text
+manifest tracked + clean + same HEAD
++ selected test tracked + clean + same HEAD
++ selected test directly imports target module
++ selected test has discoverable unittest TestCase/test_ method
++ current CI still proves exact kernel unittest suite
++ runtime/python source root resolves safely
+→ candidate python_unittest identity
+```
+
+形成 identity 后，仍走原来的 bounded executor、execution-start anti-replay、target/test/CI post-action recheck。manifest 自身 source/Git fingerprints 也进入 baseline/snapshot matching；manifest relation 漂移会撤销旧 identity。
+
+### 3. 新测试
+
+新增：
+
+```text
+tests/zn_agent/core/test_repo_manifest_verifier.py
 ```
 
 覆盖：
 
-- 非 run 文本不能形成 authority；
-- 旧单行精确 verifier 仍可识别；
-- 当前 Windows PowerShell verifier 可识别；
-- 上述漂移负例全部 fail closed。
+- 一个 literal/unambiguous mapping 可解析；
+- malformed JSON / wrong version / duplicate target / unknown command field / path escape fail closed；
+- tracked clean manifest 可选择非 canonical unittest；
+- dirty manifest 不能形成 command authority；
+- test 不直接 import target 时不能形成 command authority。
 
-这只是局部语义验证，不替代仓库 Windows CI。
+现有 `test_repo_auto_targeted_test_recovery.py` 已覆盖 resident-formed verifier 的 restart、CI drift、test-source drift；manifest fingerprint 被接入同一 snapshot lifecycle，未复制第二套 recovery framework。
 
-## 当前真实 CI
+## 真实测试 / CI 结果
 
-本轮 exact-head run：
+### 已有 Windows 绿基线
+
+`993fef35f3734748cd72cb7f2a6cdf03ce0d3edb` 的 run `32701839271`：
 
 ```text
-32783489487
-head = dd237947a5122e2577ef75fd3556fa63b9a5e595
+ZN Source Boundary / Windows        success
+ZN Kernel / Python / Windows        success
+Electron / TypeScript / Windows     success
+Publish Windows CI statuses         success
 ```
 
-当前状态：
+它证明此前 SQLite connection ownership fix 与 Windows Git-Bash portability fix 已收敛，但不覆盖本阶段新 manifest verifier 代码。
+
+### 本阶段 exact-head CI
+
+当前代码 HEAD `2f338cc13b8f8bb458908609ce60aac2610628e5` 对应 run：
 
 ```text
+32789614531
 status = pending
-jobs = none assigned yet
 conclusion = none
+jobs = []
 ```
 
-即 GitHub 已创建 push run，但当前 self-hosted Windows runner 尚未接走 job。不要把它写成 success，也不要把 pending 当代码 failure。
+GitHub 已创建 workflow run，但 self-hosted runner 尚未接走任何 job。连续 push 会取消旧 run，因此只认最新 exact HEAD 的真实执行结果。
 
-前一个代码提交 `d302421...` 的 run 因连续 push / concurrency 可能被后续 exact-head run 取代；最终只认最新 exact HEAD 的真实执行结果。
+不要把 pending 写成 success，也不要把 `jobs=[]` 写成代码 failure。
+
+当前连接器没有暴露 repository runner inventory/online-state API，因此只能从 Actions run 无 job assignment 这一现实证据判断 runner 尚未接受任务。
+
+### 本地/当前环境限制
+
+当前环境没有私有仓库本地 checkout，因此没有伪装运行完整 working-tree suite。上一阶段只对 Windows verifier semantics 做过最小隔离语义验证；本阶段 manifest integration tests 尚需仓库 Windows CI 作为权威执行证据。
+
+## Diff 对账
+
+相对本阶段起点 `ac7a5ffb26bb119000ceec58fcf208938ace2d1f`，当前仅新增/修改：
+
+```text
+.agent/zn-engineering-verifiers.json
+runtime/python/zn_agent/core/repo_test_semantics.py
+runtime/python/zn_agent/core/repo_test_resident.py
+tests/zn_agent/core/test_repo_manifest_verifier.py
+```
+
+无 main 修改，无 force push/history rewrite，无外部产品 runtime/control-plane 回流。
 
 ## 相关文件
 
 ```text
-runtime/python/zn_agent/core/repo_test_semantics.py
-runtime/python/zn_agent/core/repo_test_resident.py
-runtime/python/zn_agent/core/procedural_resident.py
-tests/zn_agent/core/test_repo_test_semantics_authority.py
-tests/zn_agent/core/test_repo_auto_targeted_test_verification.py
-.github/workflows/zn-ci.yml
+ZN.md
+AGENTS.md
 docs/ZN-NEXT-PHASE.md
 docs/ZN-IMPLEMENTATION-STATUS.md
 .agent/HANDOFF.md
+.agent/zn-engineering-verifiers.json
+.github/workflows/zn-ci.yml
+runtime/python/zn_agent/core/procedural_resident.py
+runtime/python/zn_agent/core/repo_test_semantics.py
+runtime/python/zn_agent/core/repo_test_resident.py
+tests/zn_agent/core/test_repo_test_semantics_authority.py
+tests/zn_agent/core/test_repo_auto_targeted_test_verification.py
+tests/zn_agent/core/test_repo_auto_targeted_test_recovery.py
+tests/zn_agent/core/test_repo_manifest_verifier.py
 ```
 
 ## 风险 / 边界
 
 - 不修改 `main`，除非用户明确要求且 promotion 条件真实满足。
 - 禁止 force push / history rewrite。
-- 不能因 CI workflow 改写就静默扩大 command authority；verifier mapping 必须由当前 repo-owned 结构证据形成并 fail closed。
-- CI success 与 resident ability 是两个不同事实；CI 绿不能证明 resident 的 verifier identity parser 仍认识当前 CI。
-- 不能把 pending/cancelled Actions run 写成成功或代码失败。
-- Linux/macOS evidence 当前不阻塞 Windows intended target；但历史 evidence 不能被改写成不存在。
-- M8 updater / rollback / signing 仍属高风险 release boundary。
+- manifest 不是 command catalog；不得加入任意 shell command、模型建议命令或 task-prose-derived authority。
+- manifest 不能绕过 test direct-import proof、CI proof、Git clean/HEAD proof、post-action verification 或 anti-replay。
+- dirty/stale/ambiguous manifest 必须 fail closed。
+- CI success 与 resident ability 是两个不同事实；必须测试 resident identity formation，而不能只看 workflow 自己绿。
+- self-hosted runner pending 是基础设施阻塞，不等于代码失败。
+- `docs/ZN-IMPLEMENTATION-STATUS.md` 暂不把 manifest slice 写成 VERIFIED，直到 exact-head Windows CI 真正执行并通过。
+- M8 updater/rollback/signing 仍属于高风险 release boundary。
 
-## 当前未完成 / Task Queue
+## Task Queue
 
-### P0 — current Windows verifier contract regression
-Status: **PATCHED + LOCAL SEMANTIC TESTED / EXACT CI PENDING**
-
-### P1 — exact-head Windows CI
-Status: **PENDING SELF-HOSTED RUNNER EXECUTION**
+### P0 — exact-head Windows CI for verifier work
+Status: **BLOCKED ON SELF-HOSTED RUNNER ACCEPTING JOB**
 
 需要真实通过：
 
@@ -229,10 +222,15 @@ Electron / TypeScript / Windows
 Publish Windows CI statuses
 ```
 
-### P2 — broader resident-owned engineering verifier selection
-Status: **NEXT PRODUCT LANE AFTER P0/P1**
+### P1 — repo-owned verifier manifest slice
+Status: **IMPLEMENTED + TESTS ADDED / CI NOT YET EXECUTED**
 
-继续 `docs/ZN-NEXT-PHASE.md` P1：寻找 repo-owned structured verifier mappings，不从文件名、模型建议或 task prose 猜任意命令。
+若 CI 失败，按真实日志修复，不降低 authority/assertion 边界。
+
+### P2 — broader resident-owned verifier selection
+Status: **PARTIAL**
+
+当前只支持 canonical mirrored unittest + 一个明确 manifest relation。不要扩成任意命令或自动猜测。下一步应基于真实 repo-owned structure/evidence 评估是否需要更多 verifier kind/relations。
 
 ### P3 — M8 Windows continuity / rollback / signing
 Status: **PENDING / PARTIAL**
@@ -245,8 +243,8 @@ Status: **PENDING**
 
 ## 下一真实目标
 
-1. 读取本 HANDOFF 提交后的真实 `dev/zn-agent` HEAD；
-2. 读取该 exact HEAD 的 Windows CI，只有真实 job 执行且全绿才把本轮 verifier regression 标 verified；
-3. 若 CI failure，读取真实 job logs 并修复，不降低断言或 authority 边界；
-4. CI 通过后更新 `docs/ZN-IMPLEMENTATION-STATUS.md`，记录当前 Windows verifier relation 已恢复；
-5. 然后继续 resident-owned engineering verifier selection，而不是回到已结束的 migration 主线或让 optional Linux evidence 阻塞 Windows 开发。
+1. 重新读取本 HANDOFF 提交后的真实 `dev/zn-agent` HEAD；
+2. 读取该 exact HEAD 的 Windows CI；
+3. 若 runner 执行并 CI failure，读取真实 job logs并修复；
+4. 若 exact-head Windows CI 全绿，更新 `docs/ZN-IMPLEMENTATION-STATUS.md`，把 current Windows verifier relation 与 bounded manifest slice 按实际证据写入 VERIFIED NARROW SLICES；
+5. 然后继续 `docs/ZN-NEXT-PHASE.md` P1，寻找下一个 repo-owned structured verifier relation，不从文件名、模型建议或 task prose 猜任意命令。
