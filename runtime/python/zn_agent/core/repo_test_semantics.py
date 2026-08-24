@@ -1,20 +1,16 @@
 from __future__ import annotations
 
-"""Pure semantics for one resident-owned repository test identity.
+"""Pure semantics for resident-owned repository test identities.
 
 This module deliberately does not inspect the filesystem or execute anything.
-It only answers whether already-observed current repository text proves the
-first narrow ZN engineering-test relation:
-
-``runtime/python/zn_agent/core/<module>.py``
-    -> ``tests/zn_agent/core/test_<module>.py``
-    -> current ZN CI still runs the kernel unittest discovery suite.
-
-The resident must separately prove root/HEAD/tracked/clean identity through its
-Body before these semantics can grant any test-verification authority.
+It only answers whether already-observed current repository text proves one of
+ZN's bounded engineering-test relations. The resident separately proves
+root/HEAD/tracked/clean identity through its Body before these semantics can
+grant any test-verification authority.
 """
 
 import ast
+import json
 import shlex
 from pathlib import PurePosixPath
 from typing import Any
@@ -23,7 +19,10 @@ from typing import Any
 ZN_KERNEL_SOURCE_DIR = PurePosixPath("runtime/python/zn_agent/core")
 ZN_KERNEL_TEST_DIR = PurePosixPath("tests/zn_agent/core")
 ZN_CI_WORKFLOW_PATH = ".github/workflows/zn-ci.yml"
+ZN_VERIFIER_MANIFEST_PATH = ".agent/zn-engineering-verifiers.json"
 ZN_KERNEL_UNITTEST_KIND = "python_unittest"
+_ZN_VERIFIER_MANIFEST_VERSION = 1
+_ZN_MAX_VERIFIER_MAPPINGS = 64
 _ZN_KERNEL_UNITTEST_ARGV = (
     "python",
     "-m",
@@ -59,11 +58,7 @@ def _repo_relative_path(value: Any) -> PurePosixPath | None:
     return path
 
 
-def canonical_kernel_unittest_identity(
-    target_relative_path: Any,
-) -> dict[str, str] | None:
-    """Return the one canonical mirrored unittest identity for a kernel module."""
-
+def _kernel_target_identity(target_relative_path: Any) -> tuple[PurePosixPath, str] | None:
     target = _repo_relative_path(target_relative_path)
     if target is None or len(target.parts) != 5:
         return None
@@ -74,14 +69,101 @@ def canonical_kernel_unittest_identity(
     module_leaf = target.stem
     if not module_leaf.isidentifier():
         return None
-    test = ZN_KERNEL_TEST_DIR / f"test_{module_leaf}.py"
+    return target, f"zn_agent.core.{module_leaf}"
+
+
+def _kernel_test_path(test_relative_path: Any) -> PurePosixPath | None:
+    test = _repo_relative_path(test_relative_path)
+    if test is None or len(test.parts) != 4:
+        return None
+    if PurePosixPath(*test.parts[:3]) != ZN_KERNEL_TEST_DIR:
+        return None
+    if test.suffix != ".py" or not test.name.startswith("test_"):
+        return None
+    return test
+
+
+def canonical_kernel_unittest_identity(
+    target_relative_path: Any,
+) -> dict[str, str] | None:
+    """Return the canonical mirrored unittest identity for one kernel module."""
+
+    target_identity = _kernel_target_identity(target_relative_path)
+    if target_identity is None:
+        return None
+    target, target_module = target_identity
+    test = ZN_KERNEL_TEST_DIR / f"test_{target.stem}.py"
     return {
         "kind": ZN_KERNEL_UNITTEST_KIND,
         "target_relative_path": target.as_posix(),
         "test_relative_path": test.as_posix(),
-        "target_module": f"zn_agent.core.{module_leaf}",
+        "target_module": target_module,
         "ci_relative_path": ZN_CI_WORKFLOW_PATH,
     }
+
+
+def mapped_kernel_unittest_identity(
+    manifest_source: str,
+    target_relative_path: Any,
+) -> dict[str, str] | None:
+    """Resolve one explicit repo-owned non-canonical unittest relation.
+
+    The manifest can only name a candidate relation. It cannot prove that the
+    manifest is tracked/clean/current, that the test imports the target, or that
+    CI executes the suite; the resident must prove all of those independently.
+    Any malformed or ambiguous manifest fails closed as a whole.
+    """
+
+    target_identity = _kernel_target_identity(target_relative_path)
+    if target_identity is None:
+        return None
+    requested_target, requested_module = target_identity
+
+    try:
+        manifest = json.loads(str(manifest_source or ""))
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    if not isinstance(manifest, dict) or set(manifest) != {"version", "mappings"}:
+        return None
+    version = manifest.get("version")
+    if isinstance(version, bool) or version != _ZN_VERIFIER_MANIFEST_VERSION:
+        return None
+    mappings = manifest.get("mappings")
+    if (
+        not isinstance(mappings, list)
+        or len(mappings) > _ZN_MAX_VERIFIER_MAPPINGS
+    ):
+        return None
+
+    matched: dict[str, str] | None = None
+    seen_targets: set[str] = set()
+    for item in mappings:
+        if not isinstance(item, dict) or set(item) != {"target", "test"}:
+            return None
+        mapped_target_identity = _kernel_target_identity(item.get("target"))
+        mapped_test = _kernel_test_path(item.get("test"))
+        if mapped_target_identity is None or mapped_test is None:
+            return None
+        mapped_target, mapped_module = mapped_target_identity
+        target_text = mapped_target.as_posix()
+        if target_text in seen_targets:
+            return None
+        seen_targets.add(target_text)
+        if mapped_test.as_posix() == target_text:
+            return None
+        if mapped_target != requested_target:
+            continue
+        matched = {
+            "kind": ZN_KERNEL_UNITTEST_KIND,
+            "target_relative_path": target_text,
+            "test_relative_path": mapped_test.as_posix(),
+            "target_module": mapped_module,
+            "ci_relative_path": ZN_CI_WORKFLOW_PATH,
+        }
+
+    if matched is None or matched["target_module"] != requested_module:
+        return None
+    return matched
 
 
 def _parse_python(source: str) -> ast.Module | None:
@@ -92,7 +174,7 @@ def _parse_python(source: str) -> ast.Module | None:
 
 
 def test_source_directly_imports_target(source: str, target_module: str) -> bool:
-    """Require a module-level direct import edge from the mirrored test to target."""
+    """Require a module-level direct import edge from the selected test to target."""
 
     module = str(target_module or "").strip()
     if not module or "." not in module:
