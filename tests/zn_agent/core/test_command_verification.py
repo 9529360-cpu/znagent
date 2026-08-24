@@ -43,13 +43,14 @@ class CommandPostconditionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             target = root / "marker.txt"
+            target_arg = target.as_posix()
             primary = self._python_command(
                 "from pathlib import Path; "
-                f"Path({str(target)!r}).write_text('ready', encoding='utf-8')"
+                f"Path({target_arg!r}).write_text('ready', encoding='utf-8')"
             )
             verify = self._python_command(
                 "from pathlib import Path; "
-                f"p=Path({str(target)!r}); "
+                f"p=Path({target_arg!r}); "
                 "text=p.read_text(encoding='utf-8') if p.exists() else ''; "
                 "print(text); raise SystemExit(0 if text == 'ready' else 7)"
             )
@@ -136,13 +137,14 @@ class CommandPostconditionTests(unittest.TestCase):
             root = Path(tmp)
             db = root / ".zn" / "kernel.db"
             target = root / "restart-marker.txt"
+            target_arg = target.as_posix()
             primary = self._python_command(
                 "from pathlib import Path; "
-                f"Path({str(target)!r}).write_text('persisted', encoding='utf-8')"
+                f"Path({target_arg!r}).write_text('persisted', encoding='utf-8')"
             )
             verify = self._python_command(
                 "from pathlib import Path; "
-                f"p=Path({str(target)!r}); "
+                f"p=Path({target_arg!r}); "
                 "raise SystemExit(0 if p.exists() and "
                 "p.read_text(encoding='utf-8') == 'persisted' else 8)"
             )
