@@ -46,7 +46,7 @@ jobs:
       - name: Verify one-shot base
         shell: powershell
         run: |
-          $expectedParent = '49ef4617594640f4912694dc1fcb8cbb58eceded'
+          $expectedParent = 'bcfbac6ddaea23ee2a27e9b626dd4574722e4bbe'
           $parent = (git rev-parse HEAD^).Trim()
           if ($parent -ne $expectedParent) {
             throw "One-shot repair base changed: expected $expectedParent, got $parent"
@@ -92,6 +92,12 @@ jobs:
               'runtime/python/zn_agent/core/terminal.py',
               '''def _cwd_usable(value: str) -> bool:\n    return bool(value) and os.path.isdir(value) and os.access(value, os.X_OK)''',
               '''def _cwd_usable(value: str) -> bool:\n    if not value or not os.path.isdir(value):\n        return False\n    if _IS_WINDOWS:\n        return True\n    return os.access(value, os.X_OK)''',
+          )
+
+          replace_exact(
+              'runtime/python/zn_agent/core/terminal.py',
+              '''    @staticmethod\n    def _wrap_command(command: str, marker: str) -> str:\n        marker_literal = marker.replace("'", "")\n        return (\n            "trap '__zn_status=$?; printf \\\"\\\\n"\n            + marker_literal\n            + "%s\\\\n\\\" \\\"$PWD\\\"; exit $__zn_status' EXIT\\n"\n            + command\n        )''',
+              '''    @staticmethod\n    def _wrap_command(command: str, marker: str) -> str:\n        marker_literal = marker.replace("'", "")\n        cwd_probe = "pwd -W" if _IS_WINDOWS else "pwd -P"\n        return (\n            "trap '__zn_status=$?; __zn_cwd=$("\n            + cwd_probe\n            + "); printf \\\"\\\\n"\n            + marker_literal\n            + "%s\\\\n\\\" \\\"$__zn_cwd\\\"; exit $__zn_status' EXIT\\n"\n            + command\n        )''',
           )
 
           replace_exact(
