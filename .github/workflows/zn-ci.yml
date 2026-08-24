@@ -53,8 +53,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           version: '0.11.6'
-          enable-cache: true
-          cache-dependency-glob: runtime/python/pyproject.toml
+          enable-cache: false
       - name: Prepare unprivileged Python 3.12
         shell: powershell
         run: |
@@ -95,8 +94,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           version: '0.11.6'
-          enable-cache: true
-          cache-dependency-glob: runtime/python/pyproject.toml
+          enable-cache: false
       - name: Prepare ZN home and isolated runtime
         shell: powershell
         run: |
@@ -166,7 +164,6 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: '22.22.0'
-          cache: npm
       - name: Install locked workspace dependencies
         shell: powershell
         run: npm ci --ignore-scripts
