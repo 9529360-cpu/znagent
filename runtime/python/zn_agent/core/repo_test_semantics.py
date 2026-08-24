@@ -35,6 +35,11 @@ _ZN_KERNEL_UNITTEST_ARGV = (
     "test_*.py",
     "-v",
 )
+_ZN_WINDOWS_KERNEL_RUN_BLOCK = (
+    r"$env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'",
+    r"& .\.ci\runtime-venv\Scripts\python.exe -m unittest discover -s tests/zn_agent/core -p 'test_*.py' -v",
+)
+_ZN_LITERAL_RUN_BLOCK_MARKERS = frozenset({"|", "|-"})
 
 
 def _repo_relative_path(value: Any) -> PurePosixPath | None:
@@ -158,20 +163,67 @@ def test_source_has_discoverable_unittest_case(source: str) -> bool:
     return False
 
 
-def ci_source_runs_kernel_unittest_suite(source: str) -> bool:
-    """Require the exact current kernel suite in an executable one-line run step."""
+def _line_indent(raw_line: str) -> int:
+    return len(raw_line) - len(raw_line.lstrip(" "))
 
-    for raw_line in str(source or "").splitlines():
+
+def _previous_nonblank_line(lines: list[str], index: int) -> tuple[int, str] | None:
+    for previous in range(index - 1, -1, -1):
+        if lines[previous].strip():
+            return previous, lines[previous]
+    return None
+
+
+def _literal_run_block(lines: list[str], index: int, indent: int) -> tuple[str, ...]:
+    commands: list[str] = []
+    for following in range(index + 1, len(lines)):
+        raw = lines[following]
+        if raw.strip() and _line_indent(raw) <= indent:
+            break
+        if raw.strip():
+            commands.append(raw.strip())
+    return tuple(commands)
+
+
+def ci_source_runs_kernel_unittest_suite(source: str) -> bool:
+    """Require a current repo-owned kernel unittest execution contract.
+
+    The historical one-line ``python -m unittest`` form remains recognized. The
+    active Windows CI form is deliberately stricter: it must be a literal
+    PowerShell run block, explicitly use the isolated runtime interpreter, set
+    the working-tree Python source root, and contain no extra executable lines.
+    Small CI wording changes therefore fail closed until ZN re-proves the
+    verifier relation from current repository evidence.
+    """
+
+    lines = str(source or "").splitlines()
+    for index, raw_line in enumerate(lines):
         line = raw_line.strip()
         if not line.startswith("run:"):
             continue
-        line = line[4:].strip()
-        if not line or line in {"|", ">", "|-", ">-"}:
+        run_value = line[4:].strip()
+        if not run_value:
             continue
-        try:
-            argv = tuple(shlex.split(line, posix=True))
-        except ValueError:
+        if run_value not in _ZN_LITERAL_RUN_BLOCK_MARKERS:
+            try:
+                argv = tuple(shlex.split(run_value, posix=True))
+            except ValueError:
+                continue
+            if argv == _ZN_KERNEL_UNITTEST_ARGV:
+                return True
             continue
-        if argv == _ZN_KERNEL_UNITTEST_ARGV:
+
+        run_indent = _line_indent(raw_line)
+        previous = _previous_nonblank_line(lines, index)
+        if previous is None:
+            continue
+        previous_index, previous_line = previous
+        if (
+            previous_index != index - 1
+            or _line_indent(previous_line) != run_indent
+            or previous_line.strip().lower() != "shell: powershell"
+        ):
+            continue
+        if _literal_run_block(lines, index, run_indent) == _ZN_WINDOWS_KERNEL_RUN_BLOCK:
             return True
     return False
