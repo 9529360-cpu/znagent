@@ -371,7 +371,7 @@ class NativeBody:
             action,
             started,
             data={
-                "root": root_proc.stdout.strip(),
+                "root": str(Path(root_proc.stdout.strip()).expanduser().resolve(strict=True)),
                 "branch": branch,
                 "head": head,
                 "head_short": head[:12] if head else None,
@@ -562,7 +562,7 @@ class NativeBody:
             started,
             output=output,
             data={
-                "root": root_proc.stdout.strip(),
+                "root": str(Path(root_proc.stdout.strip()).expanduser().resolve(strict=True)),
                 "head": head,
                 "head_short": head[:12] if head else None,
                 "dirty": bool(changed_paths),

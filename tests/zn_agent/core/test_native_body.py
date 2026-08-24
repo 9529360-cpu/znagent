@@ -135,7 +135,7 @@ class NativeBodyTests(unittest.TestCase):
             )
 
             self.assertTrue(observed.success)
-            self.assertEqual(Path(observed.data["root"]), root)
+            self.assertEqual(observed.data["root"], str(root.resolve()))
             self.assertEqual(observed.data["branch"], "dev/test")
             self.assertEqual(observed.data["head"], head)
             self.assertEqual(observed.data["head_short"], head[:12])
@@ -196,7 +196,7 @@ class NativeBodyTests(unittest.TestCase):
             )
 
             self.assertTrue(observed.success)
-            self.assertEqual(Path(observed.data["root"]), root)
+            self.assertEqual(observed.data["root"], str(root.resolve()))
             self.assertEqual(observed.data["head"], head)
             self.assertTrue(observed.data["dirty"])
             self.assertEqual(

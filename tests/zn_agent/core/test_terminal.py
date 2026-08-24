@@ -45,7 +45,7 @@ class ZNLocalTerminalTests(unittest.TestCase):
             )
             self.assertTrue(first.success)
             second = self.terminal.execute(
-                TerminalRequest(command="pwd -P", context_id="ctx")
+                TerminalRequest(command="pwd -W" if os.name == "nt" else "pwd -P", context_id="ctx")
             )
             self.assertTrue(second.success)
             self.assertEqual(Path(second.cwd or "").resolve(), child.resolve())
