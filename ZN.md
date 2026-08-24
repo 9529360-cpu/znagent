@@ -209,6 +209,8 @@ Credentials and secrets belong in appropriate secure stores/project secret infra
 
 ## 8. Release/update architecture
 
+The current intended desktop platform is **Windows x64**. Formal release readiness and M8 evidence are Windows-first. Linux and macOS packaging or continuity checks may be retained as optional/on-demand evidence, but they do not block normal development or M8 unless they are explicitly restored as intended product targets.
+
 Formal installers and update assets are ZN-only:
 
 ```text
@@ -221,9 +223,9 @@ traceable commit/tag
 → advance stable.json LAST
 ```
 
-A clean machine must not require a source checkout, system Python, Node/npm or private source credentials.
+A clean Windows machine must not require a source checkout, system Python, Node/npm or private source credentials.
 
-Hashes are integrity checks, not signatures. Signing/notarization remain separate release hardening gates where applicable.
+Hashes are integrity checks, not signatures. Windows signing remains a separate release hardening gate.
 
 ## 9. Self-maintenance
 
@@ -234,6 +236,8 @@ First-stage principle: ZN may investigate, develop, test, prepare branches/PRs a
 Identity, long-term memory, credentials, updater, rollback, signing and self-maintenance permission rules remain high-risk boundaries requiring conservative approval.
 
 ## 10. Testing contract
+
+The steady-state daily CI target is Windows x64. It should run automatically from repository events on a replaceable self-hosted Windows x64 runner rather than depending on a specific runner name or maintainer session. A replacement Windows x64 runner registered to the repository must be able to resume the same workflow.
 
 At minimum protect:
 
@@ -248,11 +252,13 @@ At minimum protect:
 - release/runtime staging integrity;
 - repository-boundary scans that prevent historical/reference product paths, package namespaces or control planes from becoming active dependencies again.
 
-Tests retained in the active tree must describe ZN behavior or guard ZN ownership boundaries.
+Tests retained in the active tree must describe ZN behavior or guard ZN ownership boundaries. Optional Linux/macOS checks must not be presented as required evidence while those platforms are not intended targets.
 
 ## 11. M8 and M10 boundaries
 
-M8 release continuity debt remains separate and must not be falsely reported complete. Installed N→N+1 continuity, intended-platform clean-install/login evidence and signing/notarization remain explicit until verified.
+M8 release continuity debt remains separate and must not be falsely reported complete. For the current Windows x64 product target, M8 requires Windows clean-install/login evidence, installed N→N+1 continuity, rollback evidence and applicable Windows signing evidence.
+
+Historical Linux/macOS evidence remains useful engineering evidence, but Linux AppImage, Linux container and macOS continuity/signing are not current M8 blockers unless those platforms are deliberately restored as intended targets.
 
 M10 canonical source promotion is complete. Its continuing value is the stable ownership rule it established:
 
@@ -273,15 +279,16 @@ Canonical branch promotion does not mean M8 or formal release readiness is compl
 The repository-boundary evacuation and M10 canonical promotion are complete. Engineering priority is now:
 
 ```text
-keep ZN-only ownership guards green
+keep automatic Windows x64 self-hosted CI green on push / PR
+→ keep ZN-only ownership guards green
 → remove remaining development/tooling security debt where safely possible
 → advance resident-owned engineering competence
 → strengthen browser/computer Body/Senses only behind ZN ownership
-→ close M8 N→N+1 and intended-platform continuity gaps
+→ close Windows M8 install / N→N+1 / rollback / signing gaps
 → maintain self-maintenance/release automation
 ```
 
-Do not expand product behavior by restoring old control planes or generic agent-framework ownership.
+Linux/macOS work is optional/on-demand at the current product stage. Do not let dormant secondary-platform work block Windows development, and do not expand product behavior by restoring old control planes or generic agent-framework ownership.
 
 ## 13. Provenance
 
