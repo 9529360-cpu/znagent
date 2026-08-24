@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from zn_agent.core.daemon import ResidentRpcServer
@@ -181,7 +182,7 @@ class ResidentSocketServiceTests(unittest.TestCase):
                 self.assertTrue(shutdown["ok"])
                 self.assertEqual(first.wait(timeout=8.0), 0)
                 self.assertFalse(endpoint_path.exists())
-                with sqlite3.connect(store_path) as connection:
+                with closing(sqlite3.connect(store_path)) as connection:
                     self.assertIsNone(
                         connection.execute(
                             "SELECT instance_id, pid FROM resident_lease WHERE id=1"
@@ -283,7 +284,7 @@ class ResidentSocketServiceTests(unittest.TestCase):
                 endpoint = self._wait_for_endpoint(endpoint_path, child)
                 self.assertEqual(int(endpoint["pid"]), child.pid)
 
-                with sqlite3.connect(store_path) as connection:
+                with closing(sqlite3.connect(store_path)) as connection:
                     lease = connection.execute(
                         "SELECT instance_id, pid FROM resident_lease WHERE id=1"
                     ).fetchone()
@@ -299,7 +300,7 @@ class ResidentSocketServiceTests(unittest.TestCase):
                 error_text = child.stderr.read() if child.stderr else ""
                 self.assertEqual(returncode, 0, error_text)
                 self.assertFalse(endpoint_path.exists())
-                with sqlite3.connect(store_path) as connection:
+                with closing(sqlite3.connect(store_path)) as connection:
                     remaining = connection.execute(
                         "SELECT instance_id, pid FROM resident_lease WHERE id=1"
                     ).fetchone()
