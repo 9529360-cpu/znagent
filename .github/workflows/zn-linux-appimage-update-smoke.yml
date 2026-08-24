@@ -2,26 +2,6 @@ name: ZN Linux AppImage Update Smoke
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - dev/zn-agent
-    paths:
-      - .github/workflows/zn-linux-appimage-update-smoke.yml
-      - package-lock.json
-      - apps/desktop/scripts/zn-appimage-update-smoke.mjs
-      - apps/desktop/electron/zn-release-updater.ts
-      - apps/desktop/electron/zn-release-application-gate.ts
-      - apps/desktop/electron/zn-resident-update-readiness.ts
-      - apps/desktop/electron/zn-resident-ipc.ts
-      - apps/desktop/electron/zn-resident-process.ts
-      - apps/desktop/electron/zn-resident-autostart.ts
-      - apps/desktop/electron/zn-packaged-runtime.ts
-      - apps/desktop/electron/zn-main.ts
-      - apps/desktop/electron/zn-preload.ts
-      - apps/desktop/electron-builder.zn.yml
-      - apps/desktop/package.json
-      - apps/desktop/scripts/stage-zn-runtime.mjs
-      - runtime/python/**
 
 permissions:
   contents: read
