@@ -46,7 +46,7 @@ jobs:
       - name: Verify one-shot base
         shell: powershell
         run: |
-          $expectedParent = 'bcfbac6ddaea23ee2a27e9b626dd4574722e4bbe'
+          $expectedParent = '2541b288d528884c205d03fb1ee84e233184f572'
           $parent = (git rev-parse HEAD^).Trim()
           if ($parent -ne $expectedParent) {
             throw "One-shot repair base changed: expected $expectedParent, got $parent"
@@ -98,6 +98,12 @@ jobs:
               'runtime/python/zn_agent/core/terminal.py',
               '''    @staticmethod\n    def _wrap_command(command: str, marker: str) -> str:\n        marker_literal = marker.replace("'", "")\n        return (\n            "trap '__zn_status=$?; printf \\\"\\\\n"\n            + marker_literal\n            + "%s\\\\n\\\" \\\"$PWD\\\"; exit $__zn_status' EXIT\\n"\n            + command\n        )''',
               '''    @staticmethod\n    def _wrap_command(command: str, marker: str) -> str:\n        marker_literal = marker.replace("'", "")\n        cwd_probe = "pwd -W" if _IS_WINDOWS else "pwd -P"\n        return (\n            "trap '__zn_status=$?; __zn_cwd=$("\n            + cwd_probe\n            + "); printf \\\"\\\\n"\n            + marker_literal\n            + "%s\\\\n\\\" \\\"$__zn_cwd\\\"; exit $__zn_status' EXIT\\n"\n            + command\n        )''',
+          )
+
+          replace_exact(
+              'tests/zn_agent/core/test_terminal.py',
+              'TerminalRequest(command="pwd -P", context_id="ctx")',
+              'TerminalRequest(command="pwd -W" if os.name == "nt" else "pwd -P", context_id="ctx")',
           )
 
           replace_exact(
@@ -163,7 +169,7 @@ jobs:
         run: |
           git config user.name 'ZN CI Maintainer'
           git config user.email 'zn-ci@users.noreply.github.com'
-          git add runtime/python/zn_agent/core/body.py runtime/python/zn_agent/core/terminal.py tests/zn_agent/core/test_native_body.py tests/zn_agent/core/test_native_choice_recovery.py tests/zn_agent/core/test_resident_derived_postcondition.py tests/zn_agent/core/test_procedural_influence.py tests/zn_agent/core/test_resident_autostart.py
+          git add runtime/python/zn_agent/core/body.py runtime/python/zn_agent/core/terminal.py tests/zn_agent/core/test_terminal.py tests/zn_agent/core/test_native_body.py tests/zn_agent/core/test_native_choice_recovery.py tests/zn_agent/core/test_resident_derived_postcondition.py tests/zn_agent/core/test_procedural_influence.py tests/zn_agent/core/test_resident_autostart.py
           git diff --cached --check
           git commit -m 'fix: make resident verification Windows-native'
           git push origin HEAD:work/windows-ci-compat
