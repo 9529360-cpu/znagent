@@ -4,215 +4,229 @@
 
 ## 当前目标
 
-Post-M10 steady-state cleanup 已基本实现。当前收口目标是取得两类 exact evidence：
-
-1. 当前 `dev/zn-agent` 的 fresh full PR CI；
-2. Electron `41.10.5` 下真实 Linux AppImage N→N+1 resident continuity smoke。
-
-两者均通过后，才把本轮 cleanup 以非强制 fast-forward 晋升到 canonical `main`，再验证 canonical push CI。
+Post-M10 steady-state cleanup 的 Windows CI 修复已收敛。当前目标是保持 `dev/zn-agent` exact HEAD 的 Windows Source Boundary / Python / Electron CI 为绿，并补齐仍未完成的 Linux manual evidence：Container runtime smoke 与真实 AppImage N→N+1 resident continuity smoke。
 
 核心原则：
 
 > **ZN uses models. Models do not own ZN.**
 
-## 当前分支 / 基线
+不要因为 Windows CI 已绿就把 Linux AppImage continuity 写成完成；旧 run 在最关键的 installed updater continuity 步骤被取消。
+
+## 当前分支 / HEAD
 
 - 固定开发分支：`dev/zn-agent`
 - canonical source/release branch：`main`
-- 当前开发线在本文件更新前 HEAD：`a77da5435ee36ecf8ea0a19c044e6e04d2fe9490`
+- 本文件更新前开发 HEAD：`8d8be1f819f047d0436ca997c573616e3e61d7b9`
 - 当前 canonical `main`：`8234a835dea604783cea0bd9d28a40de654ec03d`
-- compare：`dev/zn-agent` ahead 21 / behind 0；merge base 为当前 `main`，因此仍是线性 fast-forward 候选。
-- PR #6：draft/open，base `main`，head `dev/zn-agent`，未合并。
-- dedicated historical reference branch 仅作只读 quarry；active tree 不依赖它。
-- 接手者必须重新读取 exact refs；本文件不能可靠自引用自身最终 commit SHA。
+- PR #6：draft/open，base `main`，head `dev/zn-agent`，未合并
+- 本文件自身提交会再次推进 `dev/zn-agent`；接手者必须读取真实 branch HEAD，不得把上面的 pre-HANDOFF SHA 当最终 HEAD
 
 ## 本轮已完成
 
-### 1. post-M10 governance cleanup
+### 1. 恢复真实 CI 现场并区分 cancellation 与代码失败
 
-长期规则已从“M10 前 main 是未来目标”切换到稳态分支模型：
-
-```text
-main          canonical source/release
-dev/zn-agent  normal development
-work/*        isolated work
-```
-
-已同步 `ZN.md`、`AGENTS.md`、维护者 prompt、source extraction、自维护文档和 README。普通开发仍不得直接在 `main` 试错；禁止 force push/history rewrite。
-
-README 入口已纠正：仓库拥有 ZN 实现、测试和自动化；resident 的 durable Self/state 由 resident-owned persistent storage 持有，不由 source tree 或某个维护模型拥有。
-
-### 2. source boundary 保持 ZN-only
-
-`.agent/verify_zn_source_boundary.py` 继续阻止退休产品标识、旧 namespace/path 和 control-plane 回流。
-
-`LICENSE` 原法律 provenance 是唯一明确文本例外，不能为“清理干净”而删除或改写。
-
-### 3. npm high-severity debt 已关闭
-
-真实 audit 调查确认原 2 个 high：
+`zn-ci.yml` 使用：
 
 ```text
-electron 40.10.2
-  → GHSA-9f4c-93c8-jc8g
-extract-zip 2.0.1
-  → GHSA-jmr9-qjv8-65gv
+concurrency:
+  group: zn-ci-${{ github.ref }}
+  cancel-in-progress: true
 ```
 
-`40.10.6` 只消掉 legacy `extract-zip` path，仍受 Electron advisory 影响，因此未作为完成版本。
+因此连续 push 会取消上一轮 run。此前若干红色 status 来自 cancelled run，并不是四套代码同时失败。
 
-ZN 最终升级到 patched stable `electron 41.10.5`。真实 lock commit：
+最后一个真实执行到 Python suite 的失败基线是 `0ec4acf84468833e037c475146be3535588cd2a7`：
 
 ```text
-22a0b56c4300441c7fddb63ab5ad6b82ecf909c3
-deps: refresh Electron security lock [skip ci]
+ZN Source Boundary / Windows   success
+Electron / TypeScript / Windows success
+ZN Kernel / Python / Windows   failure
 ```
 
-当前 lock 使用 Electron `41.10.5`、`@electron/get 5.1.0`、`@electron-internal/extract-zip 1.0.5`，旧 `extract-zip` / yauzl Electron chain 已退出。
+Python 真实结果：383 tests，13 errors，5 skipped。13 个错误分成：
 
-Steady-state Electron CI 现在强制：
+- 2 个 Windows/Git-Bash command verification 功能失败；
+- 11 个 Windows `WinError 32` / `kernel.db` cleanup lock。
+
+### 2. 修复真实 SQLite connection ownership bug
+
+根因位于：
 
 ```text
-npm ci --ignore-scripts
-npm audit --audit-level=high
+runtime/python/zn_agent/core/schema_structure.py
 ```
 
-已观察到真实 runner 输出 `found 0 vulnerabilities`。
+`SchemaStructurePlasticity._rewire_links()` 原来使用：
 
-### 4. 临时 CI 写权限已撤销
+```python
+with self.nervous._connect() as conn:
+```
 
-一次性 lock 生成/写回只用于避免人工猜测 200KB lock integrity。完成后已删除 generation/commit step 并恢复 `contents: read`。
+Python `sqlite3.Connection` 的 context manager 只处理 transaction commit/rollback，不保证关闭连接。该短连接独立于 `KernelStore._conn`，所以即使调用 `store.close()`，Windows 仍会锁住 `kernel.db`。
 
-steady-state CI 没有 repository write permission。
-
-### 5. GitHub Actions runtime 清理
-
-核心 workflows 已迁移到当前 Node 24 action runtime：
-
-- `actions/checkout@v7`
-- `actions/setup-node@v7`
-- `actions/setup-python@v7`
-
-旧 Node 20 runtime deprecation warning 已在真实 Electron job 日志中消失。
-
-同时修正 release/AppImage uv cache authority：旧根 `uv.lock` 路径已改为 `runtime/python/pyproject.toml`。
-
-### 6. Release / AppImage 安全门槛补强
-
-- Release packaging 在 locked install 后执行 full `npm audit --audit-level=high`。
-- AppImage N→N+1 smoke 也执行同一 full audit。
-- AppImage smoke path filter 现在包含根 `package-lock.json`，避免纯 lock 安全变化漏测。
-- AppImage smoke 启动即发布 `ZN Linux AppImage Update Smoke = pending`，结束时再发布 success/failure，解决长跑期间无法区分“未触发”和“仍执行”的可观测性缺口。
-
-## 当前真实验证
-
-历史权威：
+修复提交：
 
 ```text
-32669071891   source evacuation one-shot success
-32671245421   exact pre-M10 full PR CI success
-32671589664   canonical M10 main push CI success
-32672071791   npm exact dependency-path investigation
-32672294469   Electron 41.10.5 regenerated-lock validation success
-32672797496   fa134632... full PR CI success
+f9837e55f5d8aa67ceaa7852e9730cdbf5ad69a8
+fix: close schema merge sqlite connection
 ```
 
-`32672797496` 已在 Actions v7 + read-only steady-state CI 上真实通过：
+现在使用 `contextlib.closing(...)` 明确关闭 schema merge 短连接。
+
+### 3. 修复 Windows Git-Bash command verification test path
+
+根因位于：
 
 ```text
-ZN Source Boundary        success
-ZN Kernel / Python        success
-Electron / TypeScript     success
-Container / Runtime Smoke success
+tests/zn_agent/core/test_command_verification.py
 ```
 
-其 Electron job 真实输出：
+产品 terminal 在 Windows 明确使用 Git Bash；不应为了测试改成 `cmd.exe`。两个失败 case 把 Windows backslash path 直接嵌入经 `bash -c` 传递的 Python `-c` 源码。纯 `print(...)` 命令在同一 terminal/helper 下能正常执行，证明问题不是整体 shell contract。
+
+修复提交：
 
 ```text
-npm ci                    found 0 vulnerabilities
-npm audit --audit-level=high  found 0 vulnerabilities
-typecheck                 success
-bundle                    success
-desktop tests             37 passed
-release/runtime tests     8 passed
+8d8be1f819f047d0436ca997c573616e3e61d7b9
+test: make command verification paths bash-portable on Windows
 ```
 
-### 当前 AppImage continuity run
+仅把嵌入 Python 源码的 target path 改为 `Path.as_posix()`；Windows `pathlib.Path` 可正常接受 forward slash，不改变 ZN terminal 产品语义。
 
-Run `32672795722`，head `fa134632077251c009c35c56b0c61d15ec9a63f0`。
+## 真实测试 / CI 结果
 
-已真实通过：
+### Windows exact-head evidence
+
+Run：
+
+```text
+32700998620
+```
+
+Checkout 日志明确验证：
+
+```text
+HEAD = 8d8be1f819f047d0436ca997c573616e3e61d7b9
+```
+
+结果：
+
+```text
+ZN Source Boundary / Windows       success
+Electron / TypeScript / Windows    success
+ZN Kernel / Python / Windows       success
+Publish Windows CI statuses        success
+```
+
+Kernel exact evidence：
+
+```text
+Python 3.12.13 isolated runtime boot   success
+compileall resident core               success
+383 core tests                         OK
+skipped                                5
+runtime                                388.541s
+```
+
+此前失败的两个 command verification case 已在真实 Windows CI 中变为 `ok`；此前触发 DB lock 的 schema/integrated/situated/neural tests 也已通过。
+
+Electron exact evidence：
+
+```text
+locked npm install                     success
+npm audit --audit-level=high           success
+typecheck                              success
+bundle                                 success
+desktop ownership/runtime/update tests success
+release/runtime verifier tests         success
+```
+
+Source Boundary exact evidence：success。
+
+### Linux Container
+
+`.github/workflows/zn-linux-container-smoke.yml` 当前是 `workflow_dispatch` only，不会由普通 dev push 自动运行。
+
+历史 run 有成功证据，但本轮 Windows-fix exact HEAD 尚未取得新的 manual Container smoke。不要把它写成当前 exact-head 已验证。
+
+### Linux AppImage N→N+1 continuity
+
+`.github/workflows/zn-linux-appimage-update-smoke.yml` 当前也是 `workflow_dispatch` only。
+
+旧 run：
+
+```text
+32672795722
+```
+
+最终 conclusion：`cancelled`。
+
+已真实完成：
 
 ```text
 pending status publication             success
 checkout / Node / uv                    success
 locked npm install                      success
-full npm high audit                     success
+npm high audit                          success
 headless dependencies                   success
 isolated user systemd manager           success
 real N AppImage build                   success
 real N+1 AppImage build                 success
 ```
 
-当前仍在：
+取消点：
 
 ```text
-Run real installed AppImage updater continuity smoke   in_progress
+Run real installed AppImage updater continuity smoke   cancelled
 ```
 
-不得把它写成 success，直到 GitHub 给出 terminal conclusion。
+因此 Linux installed updater resident continuity 仍是未完成证据，不得标 success。
 
-### 当前 exact-head CI anomaly
+## 相关文件
 
-README-only commit `a77da543...` 触发 PR run `32673206922`。该 run 四个主 job 在约 3 秒内全部 failure，且 GitHub 返回 `steps: null`，重跑失败 jobs 后仍同样零步骤 failure。
-
-这与前一 commit `fa134632...` 的完整真实 green run 相冲突，形态更像 GitHub Actions runner/check-suite 层异常，而不是 Source Boundary、Python、Electron、Container 四套代码同时回归。
-
-因此不要把 `32673206922` 作为代码失败结论；必须由新的 commit 触发 fresh exact-head run，并以真实 step execution 为准。
-
-## 当前未完成
-
-1. AppImage run `32672795722` 的 terminal result；
-2. 本 HANDOFF commit 之后的 fresh exact-head full PR CI；
-3. 两者均绿后，非强制 fast-forward `main`；
-4. canonical `main` push CI；
-5. M8 remaining intended-platform continuity / signing / rollback；
-6. browser/computer Body/Senses；
-7. broader resident engineering competence；
-8. SM1+ self-maintenance。
+```text
+.github/workflows/zn-ci.yml
+.github/workflows/zn-linux-container-smoke.yml
+.github/workflows/zn-linux-appimage-update-smoke.yml
+runtime/python/zn_agent/core/schema_structure.py
+tests/zn_agent/core/test_command_verification.py
+tests/zn_agent/core/test_resident_sqlite_lifecycle.py
+docs/ZN-IMPLEMENTATION-STATUS.md
+.agent/HANDOFF.md
+```
 
 ## 风险 / 边界
 
-- `LICENSE` legal attribution 不得删除或改写。
-- 不使用 `npm audit fix --force`。
-- steady-state CI 不保留 repository write permission。
-- M8 仍 PARTIAL；本轮 cleanup 或 canonical source promotion 不代表 formal release complete。
-- historical reference branch 不能重新成为 active dependency/control plane。
-- AppImage updater/rollback 属于高风险边界；测试失败必须修真实原因，不能绕过或降低验证。
+- 不修改 `main`，除非用户明确要求并且相关晋升条件真实满足。
+- 禁止 force push / history rewrite。
+- 不把 cancelled CI 当作代码 failure，也不把 cancelled AppImage smoke 当作 success。
+- `sqlite3.Connection` 不能仅靠普通 `with conn:` 推断连接已经关闭；Windows 会暴露残留句柄。
+- Windows terminal 的 Git Bash contract 是产品设计，不应为单个测试失败切换 shell。
+- AppImage updater / rollback / signing 属于高风险发布边界，不能降低验证标准。
+- GitHub Actions 当前日志有第三方 action Node runtime deprecation warning；本轮 run 未因此失败，后续按稳定上游 action 版本处理，不做盲目升级。
 
-## Task Queue
+## 当前未完成 / Task Queue
 
-### P0 — source evacuation / source boundary
-Status: **COMPLETE**
+### P0 — Windows CI blocker
+Status: **COMPLETE / EXACT CI VERIFIED**
 
-### P1 — M10 canonical promotion
-Status: **COMPLETE**
+### P1 — fresh exact-head Container runtime smoke
+Status: **PENDING MANUAL WORKFLOW EVIDENCE**
 
-### P2 — post-M10 governance cleanup
-Status: **IMPLEMENTED / FINAL EVIDENCE IN PROGRESS**
+### P2 — real Linux AppImage N→N+1 installed resident continuity
+Status: **PENDING; OLD RUN 32672795722 CANCELLED DURING CORE CONTINUITY STEP**
 
-### P3 — npm high-severity dependency cleanup
-Status: **IMPLEMENTED / 0 VULNERABILITIES VERIFIED / FINAL PROMOTION PENDING**
+### P3 — PR #6 cleanup promotion decision
+Status: **BLOCKED ON REQUIRED FINAL EVIDENCE / USER AUTHORIZATION FOR MAIN**
 
-### P4 — Actions runtime / release CI cleanup
-Status: **IMPLEMENTED / VERIFIED ON fa134632...**
+### P4 — remaining M8 intended-platform continuity / signing / rollback
+Status: **PENDING / PARTIAL**
 
-### P5 — Linux AppImage N→N+1 continuity
-Status: **IN PROGRESS — run 32672795722**
-
-### P6 — resident competence / remaining M8 / SM1+
+### P5 — browser/computer Body/Senses, broader resident engineering competence, SM1+
 Status: **PENDING**
 
 ## 下一真实目标
 
-先读取 run `32672795722` 的 terminal result 与 diagnostics（若失败），并读取本次 HANDOFF 更新触发的 fresh PR CI。只有两条证据都真实通过，才允许把本轮 cleanup 非强制 fast-forward 到 `main`。
+1. 读取本 HANDOFF commit 后的真实 `dev/zn-agent` HEAD，并确认它触发的 Windows CI；
+2. 取得当前开发线的 manual Linux Container runtime smoke；
+3. 重新运行真实 Linux AppImage N→N+1 installed resident continuity smoke，并读取 terminal diagnostics；
+4. 只有所需 evidence 真实通过后，才评估 PR #6 / canonical `main` 的正常非强制晋升；不得把 partial 写成 complete。
