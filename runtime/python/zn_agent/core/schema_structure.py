@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from contextlib import closing
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, Iterable
 
@@ -656,7 +657,7 @@ class SchemaStructurePlasticity:
                 neighbor,
                 amount=max(0.02, min(0.85, float(strength))),
             )
-        with self.nervous._connect() as conn:
+        with closing(self.nervous._connect()) as conn:
             conn.execute(
                 "DELETE FROM neural_links WHERE left_id=? OR right_id=?",
                 (absorbed.trace_id, absorbed.trace_id),
