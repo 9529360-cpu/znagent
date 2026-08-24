@@ -1,0 +1,149 @@
+name: ZN Windows Compatibility Repair One Shot
+
+on:
+  push:
+    branches:
+      - dev/zn-agent
+    paths:
+      - .github/workflows/zn-windows-compat-patch-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    name: Apply verified Windows compatibility repair
+    runs-on: self-hosted
+    timeout-minutes: 20
+    steps:
+      - name: Require Windows x64 runner
+        shell: powershell
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "ZN Windows compatibility repair requires Windows X64"
+          }
+
+      - name: Checkout exact development head
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+
+      - name: Verify one-shot base
+        shell: powershell
+        run: |
+          $expectedParent = '2f50b9f0c9cd415018e3ba28b1fdd042ff8f3c90'
+          $parent = (git rev-parse HEAD^).Trim()
+          if ($parent -ne $expectedParent) {
+            throw "One-shot repair base changed: expected $expectedParent, got $parent"
+          }
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+
+      - name: Prepare isolated Python
+        shell: powershell
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/compat-venv -ErrorAction SilentlyContinue
+          uv venv .ci/compat-venv --python 3.12
+          uv pip install --python .ci/compat-venv/Scripts/python.exe runtime/python
+
+      - name: Apply exact compatibility replacements
+        shell: powershell
+        run: |
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\compat-venv\Scripts\python.exe'
+          @'
+          from pathlib import Path
+
+          def replace_exact(path, old, new, count=1):
+              file = Path(path)
+              text = file.read_text(encoding='utf-8')
+              actual = text.count(old)
+              if actual != count:
+                  raise SystemExit(f'{path}: expected {count} exact match(es), found {actual}')
+              file.write_text(text.replace(old, new), encoding='utf-8')
+
+          replace_exact(
+              'runtime/python/zn_agent/core/body.py',
+              '"root": root_proc.stdout.strip(),',
+              '"root": str(Path(root_proc.stdout.strip()).expanduser().resolve(strict=True)),',
+              count=2,
+          )
+
+          replace_exact(
+              'runtime/python/zn_agent/core/terminal.py',
+              '''def _cwd_usable(value: str) -> bool:\n    return bool(value) and os.path.isdir(value) and os.access(value, os.X_OK)''',
+              '''def _cwd_usable(value: str) -> bool:\n    if not value or not os.path.isdir(value):\n        return False\n    if _IS_WINDOWS:\n        return True\n    return os.access(value, os.X_OK)''',
+          )
+
+          replace_exact(
+              'tests/zn_agent/core/test_native_body.py',
+              'self.assertEqual(Path(observed.data["root"]), root)',
+              'self.assertEqual(observed.data["root"], str(root.resolve()))',
+              count=2,
+          )
+
+          replace_exact(
+              'tests/zn_agent/core/test_native_choice_recovery.py',
+              'self.assertEqual(selected.args["path"], "/current/b")',
+              'self.assertEqual(Path(selected.args["path"]), Path("/current/b"))',
+          )
+
+          replace_exact(
+              'tests/zn_agent/core/test_resident_derived_postcondition.py',
+              '''            {\n                "kind": "text_equals",\n                "path": target,\n                "expected_text": "prefix-suffix",\n            },''',
+              '''            {\n                "kind": "text_equals",\n                "path": str(Path(target)),\n                "expected_text": "prefix-suffix",\n            },''',
+          )
+
+          replace_exact(
+              'tests/zn_agent/core/test_procedural_influence.py',
+              '''    def test_supported_candidate_can_only_reorder_current_safe_intents(self):\n        target = "/private/stable.txt"''',
+              '''    def test_supported_candidate_can_only_reorder_current_safe_intents(self):\n        target = str(Path("/private/stable.txt"))''',
+          )
+
+          replace_exact(
+              'tests/zn_agent/core/test_resident_autostart.py',
+              '''    _resident_argv,\n    _windows_task_xml,''',
+              '''    _resident_argv,\n    _systemd_quote,\n    _windows_task_xml,''',
+          )
+          replace_exact(
+              'tests/zn_agent/core/test_resident_autostart.py',
+              '''            self.assertIn(str(python.resolve()), unit)\n            self.assertIn(str(home.resolve()), unit)''',
+              '''            self.assertIn(_systemd_quote(python.resolve()), unit)\n            self.assertIn(_systemd_quote(home.resolve()), unit)''',
+          )
+          '@ | & $python -I -
+
+      - name: Run focused Windows regressions
+        shell: powershell
+        run: |
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\compat-venv\Scripts\python.exe'
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $patterns = @(
+            'test_native_body.py',
+            'test_terminal.py',
+            'test_native_choice_recovery.py',
+            'test_resident_derived_postcondition.py',
+            'test_procedural_influence.py',
+            'test_resident_autostart.py',
+            'test_repo_text_delta_verification.py'
+          )
+          foreach ($pattern in $patterns) {
+            & $python -m unittest discover -s tests/zn_agent/core -p $pattern -v
+            if ($LASTEXITCODE -ne 0) {
+              throw "Focused regression failed: $pattern"
+            }
+          }
+
+      - name: Commit verified repair and remove one-shot workflow
+        shell: powershell
+        run: |
+          git rm .github/workflows/zn-windows-compat-patch-once.yml
+          git config user.name 'ZN CI Maintainer'
+          git config user.email 'zn-ci@users.noreply.github.com'
+          git add runtime/python/zn_agent/core/body.py runtime/python/zn_agent/core/terminal.py tests/zn_agent/core/test_native_body.py tests/zn_agent/core/test_native_choice_recovery.py tests/zn_agent/core/test_resident_derived_postcondition.py tests/zn_agent/core/test_procedural_influence.py tests/zn_agent/core/test_resident_autostart.py
+          git diff --cached --check
+          git commit -m 'fix: make resident verification Windows-native'
+          git push origin HEAD:dev/zn-agent
