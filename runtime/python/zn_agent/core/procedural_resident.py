@@ -61,9 +61,6 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
         learning_evidence,
         thought=None,
     ):
-        # Any prior recovery marker described the previous movement. It remains
-        # visible through action/verification but cannot silently describe a new
-        # deliberation cycle.
         state.data.pop(self._NATIVE_CHOICE_RECOVERY_KEY, None)
 
         investigation = self.investigator.current(event.event_id)
@@ -105,18 +102,12 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
                 thought=thought,
             )
 
-        # Existing evidence-bound anti-replay remains stronger than learned
-        # familiarity. A procedure that points at a movement already contradicted
-        # under unchanged reality is immediately revoked for this event.
         if self._action_blocked_by_current_evidence(event, state, intent):
             self._activate_procedural_influence(state, influence)
             self._revoke_active_procedural_influence(
                 state,
                 reason="blocked_by_current_evidence",
             )
-            # A later choice, if any, is a native recovery rather than a
-            # procedurally selected movement. Keep only the event-local revoked
-            # ID so failure cannot be misattributed to the old candidate.
             state.data.pop(self._PROCEDURAL_INFLUENCE_KEY, None)
             if self._recover_from_blocked_structured_choices(
                 event,
@@ -288,10 +279,6 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
                 if normalized_git_path(item)
             }
 
-        # The first repository-delta slice deliberately excludes index mutation,
-        # conflicts and untracked-file semantics. Existing text verification
-        # remains available for those cases; this stronger proof only claims the
-        # tracked worktree replacement shape it can identify cleanly.
         if (
             relative in git_paths("staged_paths")
             or relative in git_paths("untracked_paths")
@@ -503,7 +490,7 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
             "-p",
             relative.name,
         ]
-        return subprocess.list2cmdline(args) if os.name == "nt" else shlex.join(args)
+        return shlex.join(args)
 
     def _fail_repo_text_precondition(
         self,
@@ -666,9 +653,6 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
         if not same_intent:
             state.data[self._REPO_TEXT_BASELINE_KEY] = current_snapshot
             self._sync_execution_context(event, state)
-            # Persist before movement so a restart cannot silently discard the
-            # baseline. A resumed native_action pulse must re-observe and match
-            # this exact scoped state before it is allowed to write.
             self.store.save_working_state(state)
         return True
 
@@ -988,9 +972,6 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
                             "action_id": None,
                         }
                         self._sync_execution_context(event, state)
-                        # Persist before the potentially side-effecting verifier.
-                        # If the process dies after this point, a resumed pulse
-                        # fails closed instead of executing the same test twice.
                         self.store.save_working_state(state)
 
                         command = self._targeted_unittest_command(targeted_baseline)
@@ -1034,8 +1015,8 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
                                 workdir=str(targeted_baseline.get("root") or ""),
                                 env=command_env,
                                 timeout=float(
-                                targeted_baseline.get("timeout")
-                                or self._TARGETED_TEST_DEFAULT_TIMEOUT
+                                    targeted_baseline.get("timeout")
+                                    or self._TARGETED_TEST_DEFAULT_TIMEOUT
                                 ),
                                 max_output_chars=50_000,
                             )
@@ -1068,17 +1049,22 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
                                 targeted_baseline.get("state_sha256") or ""
                             ),
                             "status": "completed",
-                            "action_id": (test_observation.action_id if test_observation is not None else None),
+                            "action_id": (
+                                test_observation.action_id
+                                if test_observation is not None
+                                else None
+                            ),
                             "verified": test_verified,
                         }
                         self._sync_execution_context(event, state)
-                        # Record completion before any later verifier can crash.
-                        # Restart still refuses replay; current execution may
-                        # continue using the Body result already in memory.
                         self.store.save_working_state(state)
                         targeted_result.update(
                             {
-                                "execution_action_id": (test_observation.action_id if test_observation is not None else None),
+                                "execution_action_id": (
+                                    test_observation.action_id
+                                    if test_observation is not None
+                                    else None
+                                ),
                                 "observed_exit_code": exit_code,
                                 "timed_out": timed_out,
                                 "result_features": result_features,
