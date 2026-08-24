@@ -196,7 +196,7 @@ class NativeChoiceRecoveryTests(unittest.TestCase):
 
             self.assertTrue(recovered)
             selected = NativeActionIntent.from_dict(state.data["native_action_intent"])
-            self.assertEqual(selected.args["path"], "/current/b")
+            self.assertEqual(Path(selected.args["path"]), Path("/current/b"))
             self.assertEqual(selected.args["content"], "B")
             self.assertNotIn("old content was contradicted", selected.args.values())
             resident.store.close()

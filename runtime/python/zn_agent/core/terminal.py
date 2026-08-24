@@ -606,10 +606,13 @@ class ZNLocalTerminal:
     @staticmethod
     def _wrap_command(command: str, marker: str) -> str:
         marker_literal = marker.replace("'", "")
+        cwd_probe = "pwd -W" if _IS_WINDOWS else "pwd -P"
         return (
-            "trap '__zn_status=$?; printf \"\\n"
+            "trap '__zn_status=$?; __zn_cwd=$("
+            + cwd_probe
+            + "); printf \"\\n"
             + marker_literal
-            + "%s\\n\" \"$PWD\"; exit $__zn_status' EXIT\n"
+            + "%s\\n\" \"$__zn_cwd\"; exit $__zn_status' EXIT\n"
             + command
         )
 
@@ -779,7 +782,11 @@ def _normalize_host_path(value: str) -> str:
 
 
 def _cwd_usable(value: str) -> bool:
-    return bool(value) and os.path.isdir(value) and os.access(value, os.X_OK)
+    if not value or not os.path.isdir(value):
+        return False
+    if _IS_WINDOWS:
+        return True
+    return os.access(value, os.X_OK)
 
 
 def _resolve_safe_cwd(value: str) -> str:
