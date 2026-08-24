@@ -49,13 +49,21 @@ jobs:
           }
       - name: Checkout
         uses: actions/checkout@v7
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
         with:
-          python-version: '3.12'
+          version: '0.11.6'
+          enable-cache: true
+          cache-dependency-glob: runtime/python/pyproject.toml
+      - name: Prepare unprivileged Python 3.12
+        shell: powershell
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/source-venv -ErrorAction SilentlyContinue
+          uv venv .ci/source-venv --python 3.12
       - name: Verify active tree is ZN-only
         shell: powershell
-        run: python .agent/verify_zn_source_boundary.py
+        run: .\.ci\source-venv\Scripts\python.exe .agent/verify_zn_source_boundary.py
 
   kernel:
     name: ZN Kernel / Python / Windows
@@ -83,10 +91,6 @@ jobs:
           }
       - name: Checkout
         uses: actions/checkout@v7
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: '3.12'
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
@@ -97,6 +101,7 @@ jobs:
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path $env:ZN_AGENT_HOME | Out-Null
+          uv python install 3.12
           Remove-Item -Recurse -Force .ci/runtime-venv -ErrorAction SilentlyContinue
           uv venv .ci/runtime-venv --python 3.12
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\runtime-venv\Scripts\python.exe'
