@@ -13,21 +13,17 @@ permissions:
 
 jobs:
   signal-probe:
-    name: Runner 150 second signal isolation
+    name: Runner Python signal isolation
     runs-on: self-hosted
     timeout-minutes: 5
     steps:
-      - name: Survive beyond observed interrupt window
+      - name: Run bare CPython beyond observed interrupt window
         shell: powershell
         run: |
           if ($env:RUNNER_OS -ne 'Windows') {
             throw "Windows runner required"
           }
-          $started = Get-Date
-          Write-Host "signal_probe.started=$started"
-          for ($i = 1; $i -le 15; $i++) {
-            Start-Sleep -Seconds 10
-            $elapsed = [Math]::Round(((Get-Date) - $started).TotalSeconds, 3)
-            Write-Host "signal_probe.elapsed_seconds=$elapsed"
-          }
-          Write-Host "signal_probe.completed=true"
+          uv python install 3.12
+          $python = (uv python find 3.12).Trim()
+          Write-Host "signal_probe.python=$python"
+          & $python -c "import os,sys,time; print(f'signal_probe.pid={os.getpid()}'); print(f'signal_probe.version={sys.version.split()[0]}'); sys.stdout.flush(); started=time.monotonic(); [(time.sleep(5), print(f'signal_probe.elapsed_seconds={time.monotonic()-started:.3f}', flush=True)) for _ in range(25)]; print('signal_probe.completed=true', flush=True)"
