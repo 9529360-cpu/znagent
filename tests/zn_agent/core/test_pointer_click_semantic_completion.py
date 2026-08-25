@@ -375,7 +375,12 @@ class PointerClickSemanticCompletionTests(unittest.TestCase):
 
             self.assertIsNone(resident.live_once())
             self.assertEqual(body.click_calls, 1)
-            self.assertEqual(resident.store.get_working_state().stage, "native_verification")
+            state = resident.store.get_working_state()
+            self.assertEqual(state.stage, "native_verification")
+            admission = state.data[resident._SEMANTIC_PRECONDITION_KEY]
+            self.assertTrue(admission["verified"])
+            self.assertTrue(admission["reverified"])
+            self.assertEqual(admission["reverified_phase"], "final_before_pointer_input")
 
             result = resident.live_once()
             self.assertIsNotNone(result)
@@ -384,12 +389,6 @@ class PointerClickSemanticCompletionTests(unittest.TestCase):
             self.assertEqual(body.click_calls, 1)
             self.assertEqual(foreground.calls, 3)
             self.assertEqual(resident.visual_region.calls, 2)
-            admission = resident.store.get_working_state().data[
-                resident._SEMANTIC_PRECONDITION_KEY
-            ]
-            self.assertTrue(admission["verified"])
-            self.assertTrue(admission["reverified"])
-            self.assertEqual(admission["reverified_phase"], "final_before_pointer_input")
             self.assertIn("foreground-window Sense exactly matched", result.reason)
             self.assertIn("task prose was not used", result.reason)
             resident.store.close()
