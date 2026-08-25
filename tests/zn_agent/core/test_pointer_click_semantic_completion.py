@@ -27,6 +27,7 @@ class _SemanticClickBody(NativeBody):
         self.screen_height = 51
         self.move_calls: list[tuple[int, int]] = []
         self.click_calls = 0
+        self.baseline_captured = False
 
     def _read_primary_pointer_state(self):
         return {
@@ -65,6 +66,8 @@ class _SemanticVisualRegion:
         height_fraction: float,
     ) -> VisualRegionObservation:
         self.calls += 1
+        if self.body.click_calls == 0:
+            self.body.baseline_captured = True
         signature = "after-click-signature" if self.body.click_calls else "before-click-signature"
         return VisualRegionObservation(
             signature=signature,
@@ -93,11 +96,13 @@ class _SemanticForegroundWindow:
         target_before_click: bool = False,
         target_after_click: bool = True,
         drift_after_move: bool = False,
+        drift_after_baseline: bool = False,
     ):
         self.body = body
         self.target_before_click = bool(target_before_click)
         self.target_after_click = bool(target_after_click)
         self.drift_after_move = bool(drift_after_move)
+        self.drift_after_baseline = bool(drift_after_baseline)
         self.calls = 0
 
     @staticmethod
@@ -132,6 +137,13 @@ class _SemanticForegroundWindow:
                 process_name="explorer.exe",
                 title="Desktop",
                 class_name="Progman",
+            )
+        if self.drift_after_baseline and self.body.baseline_captured:
+            return self._observation(
+                process_id=300,
+                process_name="calc.exe",
+                title="Calculator",
+                class_name="ApplicationFrameWindow",
             )
         if self.drift_after_move and self.body.move_calls:
             return self._observation(
@@ -377,11 +389,12 @@ class PointerClickSemanticCompletionTests(unittest.TestCase):
             ]
             self.assertTrue(admission["verified"])
             self.assertTrue(admission["reverified"])
+            self.assertEqual(admission["reverified_phase"], "final_before_pointer_input")
             self.assertIn("foreground-window Sense exactly matched", result.reason)
             self.assertIn("task prose was not used", result.reason)
             resident.store.close()
 
-    def test_foreground_drift_after_pointer_move_fails_before_click(self):
+    def test_foreground_drift_after_pointer_move_fails_at_final_input_boundary(self):
         with tempfile.TemporaryDirectory() as tmp:
             resident, body = self._resident(tmp)
             foreground = _SemanticForegroundWindow(body, drift_after_move=True)
@@ -398,8 +411,40 @@ class PointerClickSemanticCompletionTests(unittest.TestCase):
             self.assertEqual(state.stage, "native_investigation")
             self.assertEqual(body.click_calls, 0)
             self.assertEqual(foreground.calls, 2)
-            self.assertEqual(resident.visual_region.calls, 0)
-            self.assertIn("drifted after pointer preparation", state.data["local_failure"])
+            self.assertEqual(resident.visual_region.calls, 1)
+            execution = state.data[resident._POINTER_CLICK_EXECUTION_KEY]
+            self.assertEqual(execution["status"], "aborted")
+            self.assertFalse(execution["input_sent"])
+            self.assertIn("final input boundary", state.data["local_failure"])
+            resident.store.close()
+
+    def test_foreground_drift_after_visual_baseline_aborts_before_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, body = self._resident(tmp)
+            foreground = _SemanticForegroundWindow(body, drift_after_baseline=True)
+            resident.foreground_window = foreground
+            self._event(resident)
+            self._advance_until_stage(resident, "native_action")
+
+            self.assertIsNone(resident.live_once())
+            self.assertEqual(body.move_calls, [(50, 20)])
+            self.assertEqual(body.click_calls, 0)
+            self.assertFalse(body.baseline_captured)
+
+            self.assertIsNone(resident.live_once())
+            state = resident.store.get_working_state()
+            self.assertEqual(state.stage, "native_investigation")
+            self.assertEqual(body.click_calls, 0)
+            self.assertTrue(body.baseline_captured)
+            self.assertEqual(resident.visual_region.calls, 1)
+            self.assertEqual(foreground.calls, 2)
+            execution = state.data[resident._POINTER_CLICK_EXECUTION_KEY]
+            self.assertEqual(execution["status"], "aborted")
+            self.assertFalse(execution["input_sent"])
+            admission = state.data[resident._SEMANTIC_PRECONDITION_KEY]
+            self.assertFalse(admission["reverified"])
+            self.assertEqual(admission["reverified_phase"], "final_before_pointer_input")
+            self.assertIn("after the visual baseline", state.data["local_failure"])
             resident.store.close()
 
     def test_pre_input_action_precondition_admission_drift_is_rejected(self):

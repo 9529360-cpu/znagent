@@ -193,6 +193,32 @@ class VerifiedPointerClickResidentRuntime(RepositoryVerifyingResidentRuntime):
         # unknowable rather than assuming the click did or did not happen.
         self.store.save_working_state(state)
 
+        final_precondition_error = self._pointer_click_final_input_precondition(
+            event,
+            state,
+            intent,
+            contract,
+            prepared,
+        )
+        if final_precondition_error:
+            execution = dict(state.data[self._POINTER_CLICK_EXECUTION_KEY])
+            execution.update(
+                {
+                    "status": "aborted",
+                    "aborted_at": utc_now(),
+                    "input_sent": False,
+                    "error": str(final_precondition_error),
+                }
+            )
+            state.data[self._POINTER_CLICK_EXECUTION_KEY] = execution
+            return self._fail_pointer_click_precondition(
+                event,
+                state,
+                intent,
+                final_precondition_error,
+                thought=thought,
+            )
+
         result = self.body.act(
             "pointer_click",
             event_id=event.event_id,
@@ -237,6 +263,24 @@ class VerifiedPointerClickResidentRuntime(RepositoryVerifyingResidentRuntime):
         state.next_action = "re-observe the local visual region after the click"
         self._sync_execution_context(event, state)
         self.store.save_working_state(state)
+        return None
+
+    def _pointer_click_final_input_precondition(
+        self,
+        event,
+        state,
+        intent: NativeActionIntent,
+        contract: dict[str, Any],
+        prepared: dict[str, Any],
+    ) -> str | None:
+        """Return an error when a subclass cannot prove a final pre-input condition.
+
+        The durable non-replayable ``started`` marker is already persisted when
+        this hook runs. A failing subclass therefore aborts before input while a
+        crash in this narrow danger zone still resolves conservatively as an
+        uncertain started click on restart.
+        """
+
         return None
 
     def _native_verification_step(
