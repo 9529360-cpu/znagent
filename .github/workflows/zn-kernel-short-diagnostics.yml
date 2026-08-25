@@ -20,7 +20,7 @@ env:
 
 jobs:
   short-kernel-diagnostics:
-    name: Native body victim isolation
+    name: Exact native body test isolation
     runs-on: self-hosted
     timeout-minutes: 5
     steps:
@@ -44,8 +44,8 @@ jobs:
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\runtime-short-diag\Scripts\python.exe'
           uv pip install --python $python runtime/python
 
-      - name: Run native body module alone
+      - name: Run exact previously interrupted test only
         shell: powershell
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
-          & .\.ci\runtime-short-diag\Scripts\python.exe -m unittest tests.zn_agent.core.test_native_body -v
+          & .\.ci\runtime-short-diag\Scripts\python.exe -m unittest tests.zn_agent.core.test_native_body.NativeBodyTests.test_resident_reports_changed_paths_from_its_git_body -v
