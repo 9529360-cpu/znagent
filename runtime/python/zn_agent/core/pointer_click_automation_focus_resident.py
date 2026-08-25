@@ -15,9 +15,11 @@ from .pointer_click_resident import VerifiedPointerClickResidentRuntime
 class AutomationFocusPointerClickResidentRuntime(FocusedControlPointerClickResidentRuntime):
     """Require focus to land on the exact UIA element captured before input.
 
-    UI Automation is a read-only Sense. The target is identified only by an
-    opaque RuntimeId for the current action cycle. No UIA tree walk, event
-    subscription, control pattern, or mutation method is used.
+    UI Automation is a read-only Sense. The target is identified by an opaque
+    RuntimeId for the current action cycle and may be narrowed by exact cached
+    control type/class evidence. AutomationId remains bounded diagnostic evidence,
+    not durable identity or execution authority. No UIA tree walk, event
+    subscription, control pattern, dynamic Name read, or mutation method is used.
     """
 
     _AUTOMATION_SCOPE_KIND = "focused_automation_element_at_pointer"
@@ -248,8 +250,8 @@ class AutomationFocusPointerClickResidentRuntime(FocusedControlPointerClickResid
             return "final UI Automation target probe before pointer input was unavailable: " + str(error)
         if not self._automation_element_eligible(target, scope):
             return (
-                "the UI Automation element at the final pointer target is not an enabled, "
-                "on-screen, keyboard-focusable element owned by the exact completion process; "
+                "the UI Automation element at the final pointer target does not match the exact "
+                "typed completion scope or is not enabled, on-screen and keyboard-focusable; "
                 "refusing pointer input"
             )
         state.data[self._AUTOMATION_TARGET_KEY] = {
@@ -361,8 +363,9 @@ class AutomationFocusPointerClickResidentRuntime(FocusedControlPointerClickResid
                     "ZN completed this ui_state_transition only after the bounded click effect "
                     "was independently observed and fresh read-only UI Automation evidence "
                     "proved that keyboard focus landed on the exact opaque element captured at "
-                    "the final pointer target before input; no UI Automation control pattern or "
-                    "task prose was used as execution or completion authority"
+                    "the final pointer target before input and still matched the typed target "
+                    "scope; no UI Automation control pattern or task prose was used as execution "
+                    "or completion authority"
                 ),
             )
         detail = (
@@ -375,7 +378,7 @@ class AutomationFocusPointerClickResidentRuntime(FocusedControlPointerClickResid
             state,
             intent,
             "fresh focused UI Automation evidence did not match the exact pre-click target "
-            "runtime identity: " + detail,
+            "runtime identity and typed target scope: " + detail,
         )
 
     def _post_admission_error(
@@ -383,7 +386,7 @@ class AutomationFocusPointerClickResidentRuntime(FocusedControlPointerClickResid
         event,
         state,
         intent: NativeActionIntent,
-        scope: dict[str, str],
+        scope: dict[str, Any],
         action_precondition: dict[str, str],
     ) -> str | None:
         error = self._semantic_admission_error(
@@ -408,7 +411,7 @@ class AutomationFocusPointerClickResidentRuntime(FocusedControlPointerClickResid
 
     def _automation_completion_scope(
         self, event
-    ) -> tuple[dict[str, str] | None, str | None]:
+    ) -> tuple[dict[str, Any] | None, str | None]:
         raw = event.payload.get("completion_scope")
         if (
             not isinstance(raw, dict)
@@ -422,7 +425,14 @@ class AutomationFocusPointerClickResidentRuntime(FocusedControlPointerClickResid
         unknown = sorted(
             str(key)
             for key in raw
-            if key not in {"kind", "process_name", "title_equals"}
+            if key
+            not in {
+                "kind",
+                "process_name",
+                "title_equals",
+                "control_type",
+                "class_name_equals",
+            }
         )
         if unknown:
             return None, (
@@ -436,11 +446,38 @@ class AutomationFocusPointerClickResidentRuntime(FocusedControlPointerClickResid
                 "focused_automation_element_at_pointer requires exact non-empty process_name "
                 "and title_equals"
             )
-        return {
+
+        control_type = raw.get("control_type")
+        if control_type is not None and (
+            isinstance(control_type, bool)
+            or not isinstance(control_type, int)
+            or int(control_type) <= 0
+        ):
+            return None, (
+                "focused_automation_element_at_pointer control_type must be a positive integer"
+            )
+
+        has_class_name = "class_name_equals" in raw
+        class_name = str(raw.get("class_name_equals") or "").strip()
+        if has_class_name and not class_name:
+            return None, (
+                "focused_automation_element_at_pointer class_name_equals must be non-empty"
+            )
+        if len(class_name) > 256:
+            return None, (
+                "focused_automation_element_at_pointer class_name_equals exceeds 256 characters"
+            )
+
+        scope: dict[str, Any] = {
             "kind": self._AUTOMATION_SCOPE_KIND,
             "process_name": process_name,
             "title_equals": title,
-        }, None
+        }
+        if control_type is not None:
+            scope["control_type"] = int(control_type)
+        if has_class_name:
+            scope["class_name_equals"] = class_name
+        return scope, None
 
     def _probe_target_element_from_contract(
         self, event, contract: dict[str, Any]
@@ -486,8 +523,18 @@ class AutomationFocusPointerClickResidentRuntime(FocusedControlPointerClickResid
 
     @staticmethod
     def _automation_element_eligible(
-        observed: AutomationElementObservation, scope: dict[str, str]
+        observed: AutomationElementObservation, scope: dict[str, Any]
     ) -> bool:
+        expected_control_type = scope.get("control_type")
+        if expected_control_type is not None and int(observed.control_type) != int(
+            expected_control_type
+        ):
+            return False
+        expected_class_name = scope.get("class_name_equals")
+        if expected_class_name is not None and str(observed.class_name or "") != str(
+            expected_class_name
+        ):
+            return False
         return bool(
             str(observed.process_name or "").strip().lower() == scope["process_name"]
             and observed.runtime_id
@@ -502,15 +549,16 @@ class AutomationFocusPointerClickResidentRuntime(FocusedControlPointerClickResid
         return (
             f"automation process={observed.process_name!s} framework={observed.framework_id!r} "
             f"control_type={observed.control_type} class={observed.class_name!r} "
-            f"enabled={observed.is_enabled} focusable={observed.is_keyboard_focusable} "
-            f"focused={observed.has_keyboard_focus} offscreen={observed.is_offscreen}"
+            f"automation_id={observed.automation_id!r} enabled={observed.is_enabled} "
+            f"focusable={observed.is_keyboard_focusable} focused={observed.has_keyboard_focus} "
+            f"offscreen={observed.is_offscreen}"
         )
 
     def _automation_verification(
         self,
         target: AutomationElementObservation,
         focused: AutomationElementObservation,
-        scope: dict[str, str],
+        scope: dict[str, Any],
         *,
         verified: bool,
         before_input: bool,
@@ -521,6 +569,8 @@ class AutomationFocusPointerClickResidentRuntime(FocusedControlPointerClickResid
             "before_input": bool(before_input),
             "expected_process_name": scope["process_name"],
             "expected_title": scope["title_equals"],
+            "expected_control_type": scope.get("control_type"),
+            "expected_class_name": scope.get("class_name_equals"),
             "target_runtime_id": list(target.runtime_id),
             "target_observation": asdict(target),
             "focused_observation": asdict(focused),
