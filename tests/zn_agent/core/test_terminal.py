@@ -92,6 +92,30 @@ class ZNLocalTerminalTests(unittest.TestCase):
         self.assertTrue(final.success)
         self.assertEqual(final.output, "background-ok")
 
+    @unittest.skipUnless(os.name == "nt", "Windows shell resolution contract")
+    def test_windows_shell_uses_git_bash_even_when_system_bash_is_first_on_path(self):
+        git = r"C:\Program Files\Git\cmd\git.exe"
+        git_bash = r"C:\Program Files\Git\bin\bash.exe"
+        system_bash = r"C:\WINDOWS\system32\bash.exe"
+
+        def fake_isfile(path: str) -> bool:
+            return os.path.normcase(path) == os.path.normcase(git_bash)
+
+        def fake_which(name: str) -> str | None:
+            if name == "git":
+                return git
+            if name == "bash":
+                return system_bash
+            return None
+
+        with patch.dict(os.environ, {"ZN_GIT_BASH_PATH": ""}, clear=False), patch(
+            "zn_agent.core.terminal.shutil.which",
+            side_effect=fake_which,
+        ), patch("zn_agent.core.terminal.os.path.isfile", side_effect=fake_isfile):
+            shell = ZNLocalTerminal._find_shell()
+
+        self.assertEqual(os.path.normcase(shell), os.path.normcase(git_bash))
+
     def test_output_is_bounded_head_and_tail(self):
         rendered, truncated = _bounded_output("a" * 1000 + "z" * 1000, 256)
         self.assertTrue(truncated)

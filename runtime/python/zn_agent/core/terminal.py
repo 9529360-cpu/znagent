@@ -659,10 +659,16 @@ class ZNLocalTerminal:
                 return configured
             return shutil.which("bash") or shutil.which("sh") or "/bin/sh"
 
-        candidates = [str(os.environ.get("ZN_GIT_BASH_PATH") or "").strip()]
-        which = shutil.which("bash")
-        if which:
-            candidates.append(which)
+        configured = str(os.environ.get("ZN_GIT_BASH_PATH") or "").strip()
+        candidates: list[str] = [configured] if configured else []
+
+        git_executable = shutil.which("git")
+        if git_executable:
+            git_dir = os.path.dirname(os.path.abspath(git_executable))
+            candidates.append(os.path.join(git_dir, "bash.exe"))
+            if os.path.basename(git_dir).casefold() in {"cmd", "bin"}:
+                candidates.append(os.path.join(os.path.dirname(git_dir), "bin", "bash.exe"))
+
         program_files = [
             os.environ.get("ProgramFiles"),
             os.environ.get("ProgramFiles(x86)"),
