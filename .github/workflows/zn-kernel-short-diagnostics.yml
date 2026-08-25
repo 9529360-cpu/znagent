@@ -6,6 +6,8 @@ on:
       - dev/zn-agent
     paths:
       - .github/workflows/zn-kernel-short-diagnostics.yml
+      - runtime/python/zn_agent/core/terminal.py
+      - tests/zn_agent/core/test_terminal.py
   workflow_dispatch:
 
 permissions:
@@ -53,6 +55,12 @@ jobs:
           uv venv .ci/runtime-short-diag --python 3.12
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\runtime-short-diag\Scripts\python.exe'
           uv pip install --python $python runtime/python
+
+      - name: Run terminal regression module
+        shell: powershell
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          & .\.ci\runtime-short-diag\Scripts\python.exe -m unittest tests.zn_agent.core.test_terminal -v
 
       - name: Run command verification module
         shell: powershell
