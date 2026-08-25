@@ -12,160 +12,194 @@
 
 Development branch: `dev/zn-agent`. Canonical source/release branch: `main`.
 
-## 1. Current checkpoint — 2026-08-25
+## 1. Current checkpoint - 2026-08-25
 
 M10 canonical source promotion remains complete. `main` is canonical source/release; ordinary development remains on `dev/zn-agent`.
 
 Latest verified implementation head before this ledger sync:
 
 ```text
-head  de61fef5e24eb8a2f2fb99a389bf77b21faddcef
-run   32861070432
+head  6f25b30c46d2f1bcafdd8f62e0968c2a4d05623e
+run   32866088556
 
 ZN Kernel / Python / Windows        success
-ZN Source Boundary / Windows        success
-Electron / TypeScript / Windows     success
-Publish Windows CI statuses         success
+ZN Source Boundary / Windows       success
+Electron / TypeScript / Windows    success
+Publish Windows CI statuses        success
 ```
 
-The exact-head Windows kernel job created a fresh isolated Python 3.12.13 environment, installed the formal `runtime/python` distribution with 29 packages including `Pillow==12.3.0`, booted the resident with zero external models, compiled the resident core and ran the full working-tree suite: **405 tests passed with 5 platform-appropriate skips**.
+The exact-head Windows kernel job used a fresh isolated CPython 3.12.13 environment, installed the formal `runtime/python` distribution with 29 packages including `Pillow==12.3.0` and `psutil==7.2.2`, booted the resident with zero external models, compiled the resident core, and ran the full working-tree suite: **416 tests passed with 5 platform-appropriate skips**.
 
-This checkpoint closes the first event-level completion-scope hole around pointer click. A verified target-local visual change can terminal-complete only an event explicitly typed as an `effect_probe` whose structured `completion_scope` is exactly `verified_effect / visual_region_changed`. A normal `user_task`, a missing scope, a broader scope, or extra authority fields fail closed before pointer movement/input. Effect-only click completion also no longer credits arbitrary `event.task` prose as native self ability.
+This checkpoint adds the first narrow semantic/current-world UI completion slice without widening mutation authority. Pointer click may now close a `ui_state_transition` only when the structured completion scope is exactly `foreground_window_matches(process_name, title_equals)` and fresh resident-owned Windows foreground-window evidence matches that scope. Natural-language task prose and model output are not completion evidence.
 
-This does **not** implement a stronger semantic UI/business/world verifier. It prevents narrow local evidence from being silently promoted into broader task success while that verifier is still absent.
+This proves only foreground application/window identity. It does **not** prove deeper business semantics such as "form submitted", "message sent", "purchase completed", or equivalent application state.
 
-## 2. Resident ownership — VERIFIED
+## 2. Resident ownership - VERIFIED
 
-The resident owns persistent Self/life state, Situation/Thought/Will, durable WorkingState, Investigation, native Body actions and Senses, bounded cognition resources, memory/reconsolidation, verified experience/procedural tendencies, channels and resident work/progress state.
+The resident owns persistent Self/life state, Situation/Thought/Will, durable WorkingState, Investigation, native Body actions and Senses, bounded cognition resources, memory/reconsolidation, verified experience/procedural tendencies, channels, and resident work/progress state.
 
-Zero-model boot passed at exact head `de61fef5...`.
+The active builder now constructs `SemanticPointerClickResidentRuntime`, layered over `EffectScopedPointerClickResidentRuntime` and `VerifiedPointerClickResidentRuntime`. The previously verified effect-only completion guard remains intact.
 
-The active builder now constructs `EffectScopedPointerClickResidentRuntime`, which extends `VerifiedPointerClickResidentRuntime` and preserves the existing repository-verifying/procedural/world-aware resident inheritance chain.
+Zero-model boot passed at exact head `6f25b30c...`.
 
-## 3. Engineering competence — VERIFIED NARROW SLICES
+## 3. Engineering competence - VERIFIED NARROW SLICES
 
-Current resident-owned engineering behavior includes structured Git state/diff evidence, bounded file/process/terminal/PTTY actions, exact text and command postcondition verification, tracked pre/post Git proof, evidence-bound anti-replay, current-reality-gated alternatives, bounded staging choices, targeted unittest verification and restart-safe side-effect verification.
+Current resident-owned engineering behavior includes structured Git state/diff evidence, bounded file/process/terminal/PTTY actions, exact text and command postcondition verification, tracked pre/post Git proof, evidence-bound anti-replay, current-reality-gated alternatives, bounded staging choices, targeted unittest verification, and restart-safe side-effect verification.
 
-The repository-owned verifier manifest remains bounded to three real literal target/test relations and cannot declare command, shell, workdir, timeout, model or task-prose authority:
+The repository-owned verifier manifest remains bounded to three real literal target/test relations:
 
 ```text
 runtime/python/zn_agent/core/repo_test_semantics.py
-→ tests/zn_agent/core/test_repo_test_semantics_authority.py
+-> tests/zn_agent/core/test_repo_test_semantics_authority.py
 
 runtime/python/zn_agent/core/git_semantics.py
-→ tests/zn_agent/core/test_git_staging_semantics.py
+-> tests/zn_agent/core/test_git_staging_semantics.py
 
 runtime/python/zn_agent/core/result_semantics.py
-→ tests/zn_agent/core/test_verified_experience.py
+-> tests/zn_agent/core/test_verified_experience.py
 ```
 
 Do not expand the manifest merely for count.
 
-## 4. Memory and learning — VERIFIED FOUNDATION, MATURITY PARTIAL
+## 4. Memory and learning - VERIFIED FOUNDATION, MATURITY PARTIAL
 
-Persistent traces, associations, schema formation, fading/pruning, prediction error, reconsolidation, independently verified episodic evidence and bounded procedural tendencies exist.
+Persistent traces, associations, schema formation, fading/pruning, prediction error, reconsolidation, independently verified episodic evidence, and bounded procedural tendencies exist.
 
-General procedural competence, mature computer use, broad local training and long-horizon growth benchmarks remain partial.
+`visual_region_changed` remains outside positive verified-experience kinds, and pointer-click semantic completion still bypasses generic task-prose native-ability credit. General procedural competence, mature computer use, broad local training, and long-horizon growth benchmarks remain partial.
 
-## 5. Body / Senses / computer interaction — VERIFIED FOUNDATION, MATURITY PARTIAL
+## 5. Body / Senses / computer interaction - VERIFIED FOUNDATION, MATURITY PARTIAL
 
 ### Resident visual foundation
 
-`ResidentSocketService` owns persistent `NativeVisualSense` and on-demand read-only `NativeVisualRegionSense`. Default capture uses local Pillow `ImageGrab`; raw pixels are discarded inside capture. Target-local probes return only compact signature/luminance/bounds metadata and do not create mutation authority, another agent, persistent retina writes or model calls.
+`ResidentSocketService` owns persistent `NativeVisualSense` and on-demand read-only `NativeVisualRegionSense`. Default capture uses local Pillow `ImageGrab`; raw pixels are discarded inside capture. Target-local probes return only compact signature/luminance/bounds metadata and do not create mutation authority, another agent, persistent retina writes, or model calls.
 
-Run `32847172662` verified the local visual probe foundation with 397 passed / 5 skipped. Injected test probes do not constitute real interactive-desktop screenshot E2E evidence.
+Historical run `32847172662` verified the local visual probe foundation with 397 passed / 5 skipped. Injected probes do not constitute real interactive-desktop screenshot E2E evidence.
 
 ### Verified pointer movement
 
 ```text
 explicit structured pointer_move
-→ resident-owned NativeBody
-→ Windows primary-screen movement
-→ fresh pointer_state observation
-→ complete only if current cursor matches the expected bounded target
-→ contradiction → Investigation
+-> resident-owned NativeBody
+-> Windows primary-screen movement
+-> fresh pointer_state observation
+-> complete only if current cursor matches the expected bounded target
+-> contradiction -> Investigation
 ```
 
-Only finite normalized primary-screen coordinates are accepted. No task prose/model/procedural coordinate invention is permitted. Body movement success is not task success. Run `32844167956` verified this lifecycle with 393 passing core tests.
+Only finite normalized primary-screen coordinates are accepted. No task prose/model/procedural coordinate invention is permitted. Body movement success is not task success.
 
-### Verified narrow pointer click lifecycle
+### Verified local pointer-click effect
 
-The active call chain is now:
+The existing narrow effect chain remains:
 
 ```text
-provider_bridge.build_resident_runtime()
-→ EffectScopedPointerClickResidentRuntime
-→ VerifiedPointerClickResidentRuntime
-→ explicit NativeActionIntent(kind="pointer_click")
-→ require expected_outcome.kind="visual_region_changed"
-→ require event.kind="effect_probe"
-→ require completion_scope.kind="verified_effect"
-→ require completion_scope.effect_kind="visual_region_changed"
-→ move pointer to explicit normalized target
-→ fresh pointer_state verifies target
-→ persist prepared state
-→ fresh target-local visual baseline
-→ persist execution-start marker BEFORE input
-→ NativeBody.act("pointer_click")
-→ exactly one left click only if pointer is still at target
-→ native_verification
-→ fresh target-local visual probe
-→ changed signature: close only the explicitly effect-scoped event
-→ unchanged/unavailable: contradiction → Investigation
+explicit NativeActionIntent(kind="pointer_click")
+-> expected_outcome.kind="visual_region_changed"
+-> event.kind="effect_probe"
+-> completion_scope = verified_effect / visual_region_changed
+-> explicit normalized pointer target
+-> fresh pointer_state verification
+-> fresh target-local visual baseline
+-> durable started marker before click delivery
+-> exactly one left click
+-> fresh target-local visual verification
+-> changed signature may close only that effect_probe
+-> contradiction/unavailable evidence -> Investigation
 ```
 
-Properties:
+Ordinary `user_task` click, missing/invalid effect scope, broader scope, or unknown authority fields still fail closed before pointer movement/input.
 
-- only one explicit left click exists; no right click, double click, drag, keyboard or generic browser agent;
-- `NativeBody.pointer_click` never moves the cursor implicitly;
-- click input API success is not completion proof;
-- a durable `started` marker is written before click delivery; unresolved started state refuses blind replay;
-- fresh local baseline and fresh post-click observation are required;
-- missing/invalid visual postcondition, missing visual Sense, non-`effect_probe` event, missing/invalid completion scope, broader scope or unknown scope authority fields fail before input;
-- `visual_region_changed` proves only that typed local effect;
-- effect-only click success bypasses broad `event.task` self-model native-ability credit;
-- broader semantic outcomes such as “form submitted”, “message sent”, “purchase completed” or equivalent remain unverified and therefore cannot use this narrow slice as proof.
+### Narrow semantic UI-state completion
+
+New read-only Sense:
+
+```text
+NativeForegroundWindowSense
+-> Windows user32 GetForegroundWindow
+-> GetWindowTextW
+-> GetWindowThreadProcessId
+-> GetClassNameW
+-> psutil process name lookup
+-> ForegroundWindowObservation
+```
+
+The Sense is stateless and read-only. It returns bounded `process_id`, exact `title`, required `process_name`, `class_name`, capture time, and source metadata. It performs no OCR, model call, pixel persistence, or input action. Missing process identity/name fails as unavailable evidence.
+
+New typed completion chain:
+
+```text
+structured body_action/native_action pointer_click
+-> require existing visual_region_changed click-effect contract
+-> require event.kind="ui_state_transition"
+-> require completion_scope.kind="foreground_window_matches"
+-> require exact non-empty completion_scope.process_name
+-> require exact non-empty completion_scope.title_equals
+-> reject unknown scope authority fields
+-> fresh foreground-window preflight BEFORE pointer preparation
+   -> already matches: complete without pointer movement/click
+   -> unavailable: fail closed before pointer movement
+   -> mismatch: continue existing bounded click lifecycle
+-> persist admitted event kind + semantic completion scope in native_verification
+-> local click effect must verify first
+-> fresh foreground-window probe after click
+   -> exact process/title match: close only this typed ui_state_transition
+   -> mismatch/unavailable: Investigation, no click replay
+-> admitted scope/event-kind drift after click: Investigation, no replay
+```
+
+Important boundary:
+
+- foreground-window identity is a real semantic/current-world slice, but it is still narrow;
+- exact `process_name + title_equals` proves only that the matching application window is foreground;
+- it does not prove internal application state, network delivery, transaction completion, or arbitrary task prose;
+- no keyboard, right-click, double-click, drag, browser automation catalog, or new mutation primitive was added;
+- the old `effect_probe` guard remains active for local-effect-only clicks;
+- real interactive-desktop E2E evidence is still absent; CI uses injected probes for this semantic lifecycle.
 
 Key commits:
 
 ```text
 44ecb72d4c58f2c75a8e5c5d65d1820e64ceeed4  feat: add verified pointer click lifecycle
-e2ab7600cafd18ca0956932af43fe6ae83f82449  refactor: minimize pointer body diff
-a32c0f0dfd34e47371530e0ded2368401d3a8efb  test: align click success assertion with terminal lifecycle
 de61fef5e24eb8a2f2fb99a389bf77b21faddcef  fix: bind pointer click completion scope
+6f25b30c46d2f1bcafdd8f62e0968c2a4d05623e  feat: verify foreground ui state
 ```
 
-Exact-head run `32861070432` verified the current implementation with **405 tests passed / 5 skipped**. All eight pointer-click lifecycle tests passed, including:
+Exact-head run `32866088556` verified the current implementation with **416 tests passed / 5 skipped**. The 11 new tests passed:
 
 ```text
-test_pointer_click_body_never_moves_implicitly
-test_click_waits_for_position_baseline_and_fresh_effect_verification
-test_interrupted_started_click_is_not_replayed
-test_unchanged_local_region_contradicts_click_completion
-test_click_without_narrow_visual_postcondition_fails_before_input
-test_user_task_click_is_rejected_before_pointer_movement
-test_effect_probe_without_exact_completion_scope_fails_before_input
-test_effect_probe_completion_does_not_credit_task_prose_as_native_ability
+test_probe_returns_bounded_structured_identity_from_injected_source
+test_probe_rejects_unusable_identity
+test_probe_rejects_missing_process_name
+test_active_resident_owns_foreground_window_sense_without_probing_on_boot
+test_ui_state_transition_requires_exact_semantic_scope_before_input
+test_ui_state_transition_requires_typed_event_kind_before_input
+test_already_satisfied_ui_state_completes_without_pointer_input
+test_ui_state_transition_needs_fresh_semantic_match_after_click
+test_semantic_mismatch_after_click_returns_to_investigation_without_replay
+test_post_input_scope_drift_is_rejected_without_replay
+test_missing_semantic_sense_fails_before_pointer_movement
 ```
 
-## 6. External cognition, web/world and channels — VERIFIED FOUNDATION
+All eight previous pointer-click lifecycle tests also passed in the same full discovery.
 
-Supported model providers remain bounded ZN-owned cognitive resources. Provider replacement does not replace resident identity, store or life state. ZN owns URL/network safety and web resource boundaries; channels remain I/O for the same resident.
+## 6. External cognition, web/world and channels - VERIFIED FOUNDATION
 
-## 7. Desktop ownership — VERIFIED
+Supported model providers remain bounded ZN-owned cognitive resources. Provider replacement does not replace resident identity, store, or life state. ZN owns URL/network safety and web resource boundaries; channels remain I/O for the same resident.
+
+## 7. Desktop ownership - VERIFIED
 
 Active desktop path remains:
 
 ```text
 ZN Electron main
-→ ZN preload / IPC
-→ long-lived resident RPC
-→ ZN renderer
+-> ZN preload / IPC
+-> long-lived resident RPC
+-> ZN renderer
 ```
 
-Run `32861070432` passed locked workspace dependency installation, high-severity npm audit, Electron typecheck, bundle, desktop ownership/runtime/update/handoff tests and release/runtime artifact verifier tests.
+Run `32866088556` passed locked workspace dependency installation, high-severity npm audit, Electron typecheck, bundle, desktop ownership/runtime/update/handoff tests, and release/runtime artifact verifier tests.
 
-## 8. Runtime and artifact ownership — VERIFIED FOR EXERCISED TARGETS
+## 8. Runtime and artifact ownership - VERIFIED FOR EXERCISED TARGETS
 
 Runtime identity remains:
 
@@ -175,44 +209,44 @@ Python package:      zn_agent
 entrypoint:          zn-resident
 ```
 
-Run `32861070432` installed 29 formal runtime packages in fresh Windows Python 3.12.13 before zero-model boot and full tests. Historical artifact evidence exists for other exercised targets; steady-state development verification remains Windows x64.
+Run `32866088556` installed the formal runtime in fresh Windows Python 3.12.13 before zero-model boot and full tests. Steady-state development verification remains Windows x64.
 
-## 9. Release/update state — M8 PARTIAL
+## 9. Release/update state - M8 PARTIAL
 
 Still open for current Windows x64 M8 target:
 
 1. clean Windows install/login evidence;
-2. installed Windows N→N+1 continuity evidence;
+2. installed Windows N->N+1 continuity evidence;
 3. rollback validation across a real Windows version transition;
 4. applicable secure Windows signing evidence.
 
 M8 must not be reported complete until those are exercised.
 
-## 10. Repository source boundary — COMPLETE AND CI-ENFORCED
+## 10. Repository source boundary - COMPLETE AND CI-ENFORCED
 
-Status: **COMPLETE**. The active tree remains physically ZN-only and exact-head Source Boundary passed in run `32861070432`. The historical source quarry is not an active runtime/build/test/package/release dependency.
+Status: **COMPLETE**. The active tree remains physically ZN-only and exact-head Source Boundary passed in run `32866088556`. The historical source quarry is not an active runtime/build/test/package/release dependency.
 
 ## 11. Dependency security state
 
 Electron remains on the patched `41.10.5` line and steady-state CI uses locked install plus `npm audit --audit-level=high`.
 
-GitHub Actions still reports non-blocking Node 20→24 runtime deprecation warnings for some actions. Treat this as tooling maintenance debt, not a product failure.
+GitHub Actions still reports non-blocking Node 20->24 runtime deprecation warnings for some actions. Treat this as tooling maintenance debt, not a product failure.
 
-## 12. Self-maintenance — SM0 COMPLETE, SM1+ OPEN
+## 12. Self-maintenance - SM0 COMPLETE, SM1+ OPEN
 
-Architecture remains defined by `ZN-SELF-MAINTENANCE.md`. Full autonomous detect → investigate → isolated fix → PR → CI → merge → release is not yet owned end-to-end by ZN. High-risk identity/memory/credential/updater/rollback/signing/self-approval changes remain human-approved by default.
+Architecture remains defined by `ZN-SELF-MAINTENANCE.md`. Full autonomous detect -> investigate -> isolated fix -> PR -> CI -> merge -> release is not yet owned end-to-end by ZN. High-risk identity/memory/credential/updater/rollback/signing/self-approval changes remain human-approved by default.
 
-## 13. M10 status — COMPLETE
+## 13. M10 status - COMPLETE
 
 Canonical source promotion remains complete. `main` stays canonical source/release and `dev/zn-agent` stays normal development. This checkpoint did not modify `main` and did not change M8 status.
 
 ## 14. Current known debts
 
-- a stronger typed semantic/current-world verifier for requested UI/application/world outcomes;
-- a representation for higher-level completion scope that can be independently observed without model/task prose becoming authority or fact;
-- real-session screen-capture and interactive-desktop availability evidence;
+- semantic verification deeper than foreground application/window identity;
+- structured read-only evidence for internal application/UI state without model/task prose becoming fact;
+- real-session foreground-window/screen-capture/click E2E evidence;
 - broader computer-use primitives remain intentionally absent until matching authority and verifier contracts exist;
-- M8 Windows clean-install/login, installed N→N+1, rollback and signing evidence;
+- M8 Windows clean-install/login, installed N->N+1, rollback, and signing evidence;
 - mature procedural competence/growth benchmarks;
 - SM1+ autonomous self-maintenance;
 - Node-action/deprecation warnings and other non-security tooling warnings.
@@ -221,12 +255,13 @@ Canonical source promotion remains complete. `main` stays canonical source/relea
 
 ```text
 1. keep automatic Windows x64 CI green on every exact dev HEAD
-2. preserve the new fail-closed effect completion scope while investigating semantic UI proof
-3. design the smallest typed higher-level outcome contract with fresh current-world evidence appropriate to that contract
-4. do not expand click/browser/input authority until such a verifier is implemented and tested
-5. add real interactive-desktop/screen availability evidence when a suitable environment exists
-6. close Windows M8 clean-install / N→N+1 / rollback / signing evidence
-7. advance SM1+ behind existing approval and verification boundaries
+2. preserve both fail-closed click layers: local effect scope and foreground-window semantic scope
+3. trace the smallest useful internal UI/application state that can be independently observed read-only
+4. add a typed outcome only when its fresh evidence can prove that exact state; never infer it from task prose/model output
+5. do not expand click/browser/input authority merely because foreground-window identity is now verifiable
+6. add real interactive-desktop evidence when a suitable environment exists
+7. close Windows M8 clean-install / N->N+1 / rollback / signing evidence
+8. advance SM1+ behind existing approval and verification boundaries
 ```
 
 Do not modify `main` through ordinary development. Any later status change belongs here only after real code/Git/CI evidence exists.
