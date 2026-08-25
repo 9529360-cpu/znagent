@@ -19,8 +19,8 @@ M10 canonical source promotion remains complete. `main` is canonical source/rele
 Latest fully verified implementation head:
 
 ```text
-1e325926149f4df00ac7f7f83ba3d82c6611b7e6
-test: assert click admission before completion reset
+32cfd3d4a6ed76906243ddf916a76fe5d2960cfe
+feat: verify focused native control state
 ```
 
 Status: **VERIFIED ON REAL WINDOWS X64 CI**.
@@ -28,7 +28,7 @@ Status: **VERIFIED ON REAL WINDOWS X64 CI**.
 Exact-head workflow evidence:
 
 ```text
-run 32882987054
+run 32885707163
 
 ZN Source Boundary / Windows       success
 ZN Kernel / Python / Windows       success
@@ -36,25 +36,32 @@ Electron / TypeScript / Windows   success
 Publish Windows CI statuses       success
 ```
 
-The kernel job used CPython 3.12.13, installed the formal `znagent` runtime from `runtime/python`, booted an isolated resident with zero external models, compiled the resident core, and ran full discovery:
+The Kernel job used CPython 3.12.13, installed the formal `znagent` runtime from `runtime/python`, booted an isolated resident with zero external models, compiled the resident core, and ran full discovery:
 
 ```text
-Ran 423 tests
+Ran 432 tests in 489.510s
 OK (skipped=5)
 ```
 
-The commit status publisher also finished successfully; `ZN Source Boundary`, `ZN Kernel / Python`, and `Electron / TypeScript` are published as success for `1e325926...`.
+The exact focused-control tests, existing foreground semantic-click tests, final input-boundary drift tests, source-boundary verification, desktop typecheck/build/tests, and CI status publisher all passed in that run.
 
-The immediately preceding exact-head run `32875624835` at `abbacede34e...` executed on the same Windows runner and exposed one test error. The runtime behavior itself had reached successful semantic completion, but the test tried to read `native_pointer_click_semantic_precondition` after `_complete_result()` had intentionally replaced WorkingState with `stage="idle"`. Commit `1e325926...` moved those admission assertions to the preceding `native_verification` state. No product runtime behavior changed in that fix. The subsequent exact-head run above proves the correction.
+Published commit contexts for `32cfd3d4...` are success:
+
+```text
+ZN Source Boundary
+ZN Kernel / Python
+Electron / TypeScript
+```
 
 ## 2. Resident ownership
 
 The resident continues to own persistent Self/life state, Situation/Thought/Will, durable WorkingState, Investigation, native Body actions and Senses, bounded cognition resources, memory/reconsolidation, verified experience/procedural tendencies, channels, and resident work/progress state.
 
-Active pointer-click construction remains:
+The active pointer-click construction is now:
 
 ```text
 provider_bridge.build_resident_runtime()
+-> FocusedControlPointerClickResidentRuntime
 -> SemanticPointerClickResidentRuntime
 -> EffectScopedPointerClickResidentRuntime
 -> VerifiedPointerClickResidentRuntime
@@ -67,66 +74,99 @@ External models do not own identity, execution authority, current-world truth, o
 
 ## 3. Body / Senses / computer interaction
 
-### Verified foreground-aware click boundary
+### 3.1 Foreground-aware click boundary
 
-The narrow UI chain is now verified through `1e325926...`.
-
-It includes:
+The previously verified foreground semantic lifecycle remains intact:
 
 - structured bounded `pointer_click` authority;
 - exact typed `ui_state_transition` event authority;
 - read-only `NativeForegroundWindowSense`;
-- exact destination `completion_scope.kind=foreground_window_matches` with process/title identity;
 - exact source `action_precondition.kind=foreground_window_matches`;
-- target-already-satisfied completion with zero pointer input;
+- exact destination `completion_scope.kind=foreground_window_matches`;
+- zero-input completion when destination is already satisfied;
 - bounded pointer movement and fresh pointer-state verification;
 - fresh target-local visual baseline;
 - durable non-replayable click `status="started"` marker;
-- a final fresh source-foreground check after the visual baseline and immediately before input;
-- explicit final-precondition rejection recorded as `status="aborted"` and `input_sent=false`;
-- exactly one left click when authority remains valid;
+- final fresh source-foreground recheck after the visual baseline and immediately before input;
+- explicit final-precondition rejection as `status="aborted"`, `input_sent=false`;
+- exactly one left click only while admitted authority remains valid;
 - fresh local visual-effect verification;
 - admitted event/scope/source-precondition drift checks after input;
-- fresh destination foreground proof before semantic completion.
+- fresh destination proof before semantic completion.
 
-Verified lifecycle:
+### 3.2 Focused native-control Sense
+
+Commit `32cfd3d4...` adds `NativeFocusedControlSense`, a resident-owned read-only Windows Sense for one deeper UI fact than top-level foreground identity.
+
+It uses the current foreground GUI thread and Windows `GetGUIThreadInfo` to obtain the actual focused HWND, then fails closed unless that HWND is a real child/descendant of the current foreground window and belongs to the same foreground process.
+
+The bounded observation contains:
 
 ```text
-fresh source foreground observation
--> if exact destination is already satisfied: complete with zero input
--> otherwise require exact source action_precondition
--> source must match before pointer movement
--> persist admitted event/scope/source authority
--> bounded pointer movement/preparation
--> reject admitted authority drift
--> fresh pointer-state check
--> fresh target-local visual baseline
--> persist baseline + durable execution status="started"
--> FINAL fresh source-foreground check
-   -> exact match: continue
-   -> mismatch/unavailable: status="aborted", input_sent=false; Investigation
--> one left click
--> fresh local visual effect verification
--> reject post-input event/scope/source-authority drift
--> fresh destination foreground match
--> typed ui_state_transition completion
+process_id
+process_name
+foreground_title
+foreground_class_name
+control_class_name
+control_id
+enabled
+visible
+captured_at
+source
 ```
 
-The base `VerifiedPointerClickResidentRuntime` owns a default no-op `_pointer_click_final_input_precondition()` hook. `SemanticPointerClickResidentRuntime` overrides it with the foreground source check. Effect-only click semantics therefore were not widened.
+The native probe deliberately does **not** read focused-control text, inspect pixels, use OCR, call a model, or invoke accessibility mutation APIs. It also requires a positive control/dialog id; absent or ambiguous native identity fails closed.
 
-Foreground process/title proves only application/window identity. It does not prove internal control state, transaction completion, message delivery, network success, or arbitrary task prose.
+### 3.3 Focused-control semantic completion
+
+The active runtime adds a new exact completion scope:
+
+```text
+completion_scope.kind = focused_control_matches
+process_name           = exact expected foreground process
+foreground_title       = exact expected foreground title
+control_class_name     = exact expected native control class
+control_id             = exact positive native control id
+```
+
+A match additionally requires the observed control to be enabled and visible.
+
+This scope is permitted only for typed `ui_state_transition` pointer-click events. If the target control is already focused, the event completes with zero pointer input.
+
+If mutation is still needed, the existing exact foreground-window source `action_precondition` remains mandatory. The focused-control layer does not bypass the lower click lifecycle: pointer preparation, visual baseline, durable anti-replay marker, final source-window recheck, one left click, visual-effect proof, admitted-authority drift checks, and Investigation on contradiction remain in force.
+
+After input, completion requires fresh exact focused-control evidence. Mismatch or unavailable focused-control evidence returns to Investigation without replaying the click.
+
+Real Windows CI verified tests for:
+
+- active resident ownership of the new Sense without probing on boot;
+- bounded observation validation;
+- already-focused target completing with zero input;
+- exact focused-control match after click completing the typed transition;
+- final source drift after visual baseline aborting before input;
+- focused-control mismatch after click returning to Investigation without replay;
+- invalid scope failing before probe/movement;
+- missing focused-control Sense failing before pointer movement.
+
+### 3.4 Scope limit
+
+This is an HWND/native-control slice, not generic internal application semantics.
+
+It is useful where an application exposes meaningful native child controls with stable class/id identity. It does **not** prove arbitrary Electron/Chromium DOM state, web content semantics, transaction completion, message delivery, network success, or arbitrary task prose.
+
+Windows UI Automation remains a plausible later read-only cross-framework evidence source because it can expose element-level semantics beyond raw HWNDs, but it is a larger COM/cross-process surface. It is not yet part of ZN's runtime or authority model.
 
 No keyboard, right-click, double-click, drag, OCR, generic browser control plane, model-derived execution fact, new dependency, or new mutation primitive was added by this slice.
 
 ## 4. Repository source boundary
 
-The active tree remains ZN-only by contract and by current exact-head CI evidence.
+The active tree remains ZN-only by contract and by exact-head CI evidence.
 
-Run `32882987054` completed `ZN Source Boundary / Windows` successfully at `1e325926...`. No ownership rule or scanner exemption was weakened by the pointer-click work or the test-only follow-up.
+Run `32885707163` completed `ZN Source Boundary / Windows` successfully at `32cfd3d4...`. No ownership rule or scanner exemption was weakened.
 
 ## 5. Desktop / runtime / release
 
-Run `32882987054` also completed `Electron / TypeScript / Windows` successfully at the exact verified head, including locked dependency installation, high-severity advisory rejection, typecheck, bundle, desktop ownership/runtime/update/handoff contract tests, and release-channel/runtime-staging/artifact-verifier tests.
+Run `32885707163` completed `Electron / TypeScript / Windows` successfully at the exact verified head, including locked dependency installation, high-severity advisory rejection, typecheck, bundle, desktop ownership/runtime/update/handoff contract tests, and release-channel/runtime-staging/artifact-verifier tests.
 
 M8 remains **PARTIAL**. Still open for Windows x64:
 
@@ -141,13 +181,13 @@ SM0 remains complete. SM1+ remains open. No self-maintenance architecture change
 
 ## 7. Current known debts / blockers
 
-The self-hosted Windows runner availability incident is no longer the current blocker; the runner accepted and completed the exact-head workflow.
+There is no current Windows CI infrastructure blocker.
 
 Still open:
 
-- real interactive-desktop foreground-window/screen-capture/click E2E evidence;
-- semantic verification deeper than application/window identity;
-- structured read-only internal UI/application-state evidence with a real active caller;
+- real interactive-desktop foreground/screen/click/focused-control E2E evidence;
+- semantic verification for modern framework/internal application elements that are not meaningful native child HWND controls;
+- a bounded read-only cross-framework UI element Sense with a real typed caller, if justified;
 - broader input primitives until matching typed authority and independent verification exist;
 - M8 Windows install/upgrade/rollback/signing evidence;
 - mature procedural competence/growth benchmarks;
@@ -158,10 +198,11 @@ Still open:
 
 ```text
 1. keep exact-head Windows x64 CI green
-2. resume P5 with the smallest useful read-only internal UI/application-state evidence beyond foreground-window identity
-3. trace entry -> owner -> state -> lifecycle -> dependency -> tests -> active caller before adding that Sense
-4. do not add dead telemetry: new evidence must feed a typed completion/precondition/investigation boundary that actually uses it
-5. keep real interactive-desktop E2E explicitly open until executed
-6. keep M8 and SM1+ explicitly partial/open
-7. leave main untouched through ordinary development
+2. evaluate the smallest useful read-only cross-framework UI element evidence beyond native HWND focus
+3. trace entry -> owner -> state -> lifecycle -> dependency -> tests -> active caller before implementation
+4. prefer read-only evidence first; do not let UI Automation or another accessibility layer become a mutation/control plane
+5. add nothing if it would be unused telemetry
+6. keep real interactive-desktop E2E explicitly open until executed
+7. keep M8 and SM1+ explicitly partial/open
+8. leave main untouched through ordinary development
 ```
