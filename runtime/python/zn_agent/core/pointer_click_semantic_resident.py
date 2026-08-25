@@ -187,35 +187,6 @@ class SemanticPointerClickResidentRuntime(EffectScopedPointerClickResidentRuntim
                     admission_error,
                     thought=thought,
                 )
-            assert isinstance(action_precondition, dict)
-            observed, probe_error = self._probe_foreground_window()
-            if observed is None:
-                return self._fail_pointer_click_precondition(
-                    event,
-                    state,
-                    intent,
-                    "fresh foreground-window recheck before pointer input was unavailable: "
-                    + str(probe_error or "unknown foreground-window error"),
-                    thought=thought,
-                )
-            verified = self._foreground_window_matches(observed, action_precondition)
-            admission = dict(state.data[self._SEMANTIC_PRECONDITION_KEY])
-            admission["reverified"] = bool(verified)
-            admission["reverified_observation"] = asdict(observed)
-            admission["reverified_at"] = utc_now()
-            state.data[self._SEMANTIC_PRECONDITION_KEY] = admission
-            if not verified:
-                return self._fail_pointer_click_precondition(
-                    event,
-                    state,
-                    intent,
-                    "foreground window drifted after pointer preparation; refusing to send "
-                    "input because fresh evidence no longer matches action_precondition: "
-                    + self._response(observed),
-                    thought=thought,
-                )
-            self._sync_execution_context(event, state)
-            self.store.save_working_state(state)
 
         return super()._pointer_click_action_step(
             event,
@@ -223,6 +194,59 @@ class SemanticPointerClickResidentRuntime(EffectScopedPointerClickResidentRuntim
             intent,
             thought=thought,
         )
+
+    def _pointer_click_final_input_precondition(
+        self,
+        event,
+        state,
+        intent: NativeActionIntent,
+        contract: dict[str, Any],
+        prepared: dict[str, Any],
+    ) -> str | None:
+        scope = contract.get("completion_scope")
+        if not isinstance(scope, dict) or scope.get("kind") != self._UI_SCOPE_KIND:
+            return super()._pointer_click_final_input_precondition(
+                event,
+                state,
+                intent,
+                contract,
+                prepared,
+            )
+
+        action_precondition = contract.get("action_precondition")
+        admission_error = self._semantic_admission_error(
+            event,
+            state,
+            intent,
+            scope,
+            action_precondition,
+        )
+        if admission_error:
+            return admission_error
+        assert isinstance(action_precondition, dict)
+
+        observed, probe_error = self._probe_foreground_window()
+        if observed is None:
+            return (
+                "final foreground-window recheck before pointer input was unavailable: "
+                + str(probe_error or "unknown foreground-window error")
+            )
+
+        verified = self._foreground_window_matches(observed, action_precondition)
+        admission = dict(state.data[self._SEMANTIC_PRECONDITION_KEY])
+        admission["reverified"] = bool(verified)
+        admission["reverified_observation"] = asdict(observed)
+        admission["reverified_at"] = utc_now()
+        admission["reverified_phase"] = "final_before_pointer_input"
+        state.data[self._SEMANTIC_PRECONDITION_KEY] = admission
+        if not verified:
+            return (
+                "foreground window drifted at the final input boundary after the visual baseline; "
+                "refusing pointer input because fresh evidence no longer matches "
+                "action_precondition: "
+                + self._response(observed)
+            )
+        return None
 
     def _complete_successful_body_action(
         self,
