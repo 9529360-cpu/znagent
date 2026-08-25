@@ -4,6 +4,8 @@ import tempfile
 import unittest
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
 from zn_agent.core.visual_sense import NativeVisualSense, VisualFrame
@@ -17,6 +19,13 @@ class VisualAttentionRhythmTests(unittest.TestCase):
             width=320,
             height=180,
             source="test-screen",
+        )
+
+    @staticmethod
+    def _healthy_disk():
+        return patch(
+            "zn_agent.core.life.shutil.disk_usage",
+            return_value=SimpleNamespace(total=100, used=50, free=50),
         )
 
     @classmethod
@@ -161,35 +170,38 @@ class VisualAttentionRhythmTests(unittest.TestCase):
 
     def test_visual_thought_attention_temporarily_tightens_sampling(self):
         with tempfile.TemporaryDirectory() as tmp:
-            resident = build_resident_runtime_from_existing_stack(
-                config={"model": {}},
-                store_path=Path(tmp) / "kernel.db",
-            )
-            retina = NativeVisualSense(
-                resident,
-                capture_fn=lambda: self._frame("a"),
-                interval_seconds=2.0,
-            )
-            self._settle(retina, 3)
-            self.assertEqual(retina.rhythm().mode, "stable")
+            with self._healthy_disk():
+                resident = build_resident_runtime_from_existing_stack(
+                    config={"model": {}},
+                    store_path=Path(tmp) / "kernel.db",
+                )
+                try:
+                    retina = NativeVisualSense(
+                        resident,
+                        capture_fn=lambda: self._frame("a"),
+                        interval_seconds=2.0,
+                    )
+                    self._settle(retina, 3)
+                    self.assertEqual(retina.rhythm().mode, "stable")
 
-            resident.perceive_visual(
-                "a newly salient visual thread",
-                features=("screen", "visual_change:local"),
-                source="resident-retina",
-                salience=1.0,
-                arousal=0.9,
-            )
-            pulse = resident.pulse()
-            self.assertIsNotNone(pulse.thought)
-            self.assertEqual(pulse.thought.action_kind, "observe")
-            self.assertEqual(pulse.thought.focus, "a newly salient visual thread")
+                    resident.perceive_visual(
+                        "a newly salient visual thread",
+                        features=("screen", "visual_change:local"),
+                        source="resident-retina",
+                        salience=1.0,
+                        arousal=0.9,
+                    )
+                    pulse = resident.pulse()
+                    self.assertIsNotNone(pulse.thought)
+                    self.assertEqual(pulse.thought.action_kind, "observe")
+                    self.assertEqual(pulse.thought.focus, "a newly salient visual thread")
 
-            rhythm = retina.rhythm()
-            self.assertEqual(rhythm.mode, "thought_attention")
-            self.assertEqual(rhythm.interval_seconds, 1.5)
-            self.assertEqual(resident.store.get_runtime_metrics().model_invocations, 0)
-            resident.store.close()
+                    rhythm = retina.rhythm()
+                    self.assertEqual(rhythm.mode, "thought_attention")
+                    self.assertEqual(rhythm.interval_seconds, 1.5)
+                    self.assertEqual(resident.store.get_runtime_metrics().model_invocations, 0)
+                finally:
+                    resident.store.close()
 
 
 if __name__ == "__main__":
