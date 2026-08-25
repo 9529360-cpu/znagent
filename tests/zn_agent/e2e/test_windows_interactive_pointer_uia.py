@@ -11,25 +11,26 @@ from pathlib import Path
 
 from zn_agent.core import ExecutionPath
 from zn_agent.core.automation_element_sense import NativeAutomationElementSense
+from zn_agent.core.daemon import ResidentRpcServer
 from zn_agent.core.focused_control_sense import NativeFocusedControlSense
 from zn_agent.core.foreground_window_sense import NativeForegroundWindowSense
 from zn_agent.core.provider_bridge import build_resident_runtime
-from zn_agent.core.visual_region_sense import NativeVisualRegionSense
+from zn_agent.core.resident_server import ResidentSocketService
 
 
 class _Win32FocusFixture:
+    """Owned native window whose target checkbox changes through real Windows input."""
+
     TITLE = "ZN Interactive Desktop E2E"
     SOURCE_CONTROL_ID = 1001
     TARGET_CONTROL_ID = 1002
 
     def __init__(self) -> None:
         self.ready = threading.Event()
-        self.clicked = threading.Event()
         self.error: BaseException | None = None
         self.hwnd = 0
         self.source_hwnd = 0
         self.target_hwnd = 0
-        self._class_name = f"ZNInteractiveE2E_{os.getpid()}_{id(self):x}"
         self._thread = threading.Thread(
             target=self._run,
             name="zn-interactive-e2e-window",
@@ -44,7 +45,7 @@ class _Win32FocusFixture:
             raise RuntimeError(
                 f"interactive fixture failed: {type(self.error).__name__}: {self.error}"
             )
-        if not self.hwnd or not self.target_hwnd:
+        if not self.hwnd or not self.source_hwnd or not self.target_hwnd:
             raise RuntimeError("interactive fixture did not expose native window handles")
 
     def close(self) -> None:
@@ -58,6 +59,20 @@ class _Win32FocusFixture:
             ]
             user32.PostMessageW.restype = wintypes.BOOL
             user32.PostMessageW(self.hwnd, 0x0010, 0, 0)  # WM_CLOSE
+            user32.PostThreadMessageW.argtypes = [
+                wintypes.DWORD,
+                wintypes.UINT,
+                wintypes.WPARAM,
+                wintypes.LPARAM,
+            ]
+            user32.PostThreadMessageW.restype = wintypes.BOOL
+            if self._thread.ident:
+                user32.PostThreadMessageW(
+                    int(self._thread.native_id or 0),
+                    0x0012,  # WM_QUIT
+                    0,
+                    0,
+                )
         self._thread.join(timeout=3.0)
 
     def target_center(self) -> tuple[int, int]:
@@ -72,46 +87,24 @@ class _Win32FocusFixture:
             (int(rect.top) + int(rect.bottom)) // 2,
         )
 
+    def target_checked(self) -> bool:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.SendMessageW.argtypes = [
+            wintypes.HWND,
+            wintypes.UINT,
+            wintypes.WPARAM,
+            wintypes.LPARAM,
+        ]
+        user32.SendMessageW.restype = ctypes.c_ssize_t
+        return int(user32.SendMessageW(self.target_hwnd, 0x00F0, 0, 0)) == 1  # BM_GETCHECK
+
     def _run(self) -> None:
         try:
             user32 = ctypes.WinDLL("user32", use_last_error=True)
             kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-            lresult_t = ctypes.c_ssize_t
-            wndproc_t = ctypes.WINFUNCTYPE(
-                lresult_t,
-                wintypes.HWND,
-                wintypes.UINT,
-                wintypes.WPARAM,
-                wintypes.LPARAM,
-            )
-
-            class WNDCLASSEXW(ctypes.Structure):
-                _fields_ = [
-                    ("cbSize", wintypes.UINT),
-                    ("style", wintypes.UINT),
-                    ("lpfnWndProc", wndproc_t),
-                    ("cbClsExtra", ctypes.c_int),
-                    ("cbWndExtra", ctypes.c_int),
-                    ("hInstance", wintypes.HINSTANCE),
-                    ("hIcon", wintypes.HICON),
-                    ("hCursor", wintypes.HANDLE),
-                    ("hbrBackground", wintypes.HBRUSH),
-                    ("lpszMenuName", wintypes.LPCWSTR),
-                    ("lpszClassName", wintypes.LPCWSTR),
-                    ("hIconSm", wintypes.HICON),
-                ]
 
             kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
             kernel32.GetModuleHandleW.restype = wintypes.HMODULE
-            user32.DefWindowProcW.argtypes = [
-                wintypes.HWND,
-                wintypes.UINT,
-                wintypes.WPARAM,
-                wintypes.LPARAM,
-            ]
-            user32.DefWindowProcW.restype = lresult_t
-            user32.RegisterClassExW.argtypes = [ctypes.POINTER(WNDCLASSEXW)]
-            user32.RegisterClassExW.restype = wintypes.ATOM
             user32.CreateWindowExW.argtypes = [
                 wintypes.DWORD,
                 wintypes.LPCWSTR,
@@ -127,6 +120,8 @@ class _Win32FocusFixture:
                 wintypes.LPVOID,
             ]
             user32.CreateWindowExW.restype = wintypes.HWND
+            user32.DestroyWindow.argtypes = [wintypes.HWND]
+            user32.DestroyWindow.restype = wintypes.BOOL
             user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
             user32.ShowWindow.restype = wintypes.BOOL
             user32.UpdateWindow.argtypes = [wintypes.HWND]
@@ -137,9 +132,6 @@ class _Win32FocusFixture:
             user32.SetForegroundWindow.restype = wintypes.BOOL
             user32.SetFocus.argtypes = [wintypes.HWND]
             user32.SetFocus.restype = wintypes.HWND
-            user32.SetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPCWSTR]
-            user32.SetWindowTextW.restype = wintypes.BOOL
-            user32.PostQuitMessage.argtypes = [ctypes.c_int]
             user32.GetMessageW.argtypes = [
                 ctypes.POINTER(wintypes.MSG),
                 wintypes.HWND,
@@ -150,72 +142,20 @@ class _Win32FocusFixture:
             user32.TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
             user32.TranslateMessage.restype = wintypes.BOOL
             user32.DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
-            user32.DispatchMessageW.restype = lresult_t
-            user32.SetWindowPos.argtypes = [
-                wintypes.HWND,
-                wintypes.HWND,
-                ctypes.c_int,
-                ctypes.c_int,
-                ctypes.c_int,
-                ctypes.c_int,
-                wintypes.UINT,
-            ]
-            user32.SetWindowPos.restype = wintypes.BOOL
+            user32.DispatchMessageW.restype = ctypes.c_ssize_t
 
-            WM_COMMAND = 0x0111
-            WM_DESTROY = 0x0002
-            BN_CLICKED = 0
-            SWP_NOZORDER = 0x0004
             WS_OVERLAPPEDWINDOW = 0x00CF0000
             WS_VISIBLE = 0x10000000
             WS_CHILD = 0x40000000
             WS_TABSTOP = 0x00010000
+            BS_PUSHBUTTON = 0x00000000
+            BS_AUTOCHECKBOX = 0x00000003
 
-            @wndproc_t
-            def wndproc(hwnd, message, wparam, lparam):
-                if message == WM_COMMAND:
-                    control_id = int(wparam) & 0xFFFF
-                    notification = (int(wparam) >> 16) & 0xFFFF
-                    if (
-                        control_id == self.TARGET_CONTROL_ID
-                        and notification == BN_CLICKED
-                    ):
-                        if self.target_hwnd:
-                            user32.SetWindowTextW(self.target_hwnd, "Clicked")
-                            if not user32.SetWindowPos(
-                                self.target_hwnd,
-                                None,
-                                80,
-                                280,
-                                200,
-                                100,
-                                SWP_NOZORDER,
-                            ):
-                                self.error = OSError("SetWindowPos failed after click")
-                            self.clicked.set()
-                        return 0
-                if message == WM_DESTROY:
-                    user32.PostQuitMessage(0)
-                    return 0
-                return user32.DefWindowProcW(hwnd, message, wparam, lparam)
-
-            self._wndproc = wndproc
             instance = kernel32.GetModuleHandleW(None)
-            wc = WNDCLASSEXW()
-            wc.cbSize = ctypes.sizeof(WNDCLASSEXW)
-            wc.lpfnWndProc = wndproc
-            wc.hInstance = instance
-            wc.hbrBackground = wintypes.HBRUSH(6)  # COLOR_WINDOW + 1
-            wc.lpszClassName = self._class_name
-            if not user32.RegisterClassExW(ctypes.byref(wc)):
-                raise OSError(
-                    f"RegisterClassExW failed with WinError {ctypes.get_last_error()}"
-                )
-
             self.hwnd = int(
                 user32.CreateWindowExW(
                     0,
-                    self._class_name,
+                    "STATIC",
                     self.TITLE,
                     WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                     80,
@@ -239,10 +179,10 @@ class _Win32FocusFixture:
                     0,
                     "BUTTON",
                     "Source",
-                    WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
                     80,
                     120,
-                    200,
+                    220,
                     100,
                     self.hwnd,
                     wintypes.HMENU(self.SOURCE_CONTROL_ID),
@@ -256,10 +196,10 @@ class _Win32FocusFixture:
                     0,
                     "BUTTON",
                     "Target",
-                    WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
                     380,
                     120,
-                    200,
+                    220,
                     100,
                     self.hwnd,
                     wintypes.HMENU(self.TARGET_CONTROL_ID),
@@ -288,7 +228,12 @@ class _Win32FocusFixture:
         except BaseException as exc:
             self.error = exc
             self.ready.set()
-            self.clicked.set()
+        finally:
+            if self.hwnd:
+                try:
+                    ctypes.windll.user32.DestroyWindow(self.hwnd)
+                except Exception:
+                    pass
 
 
 class WindowsInteractivePointerUiAE2ETests(unittest.TestCase):
@@ -316,24 +261,17 @@ class WindowsInteractivePointerUiAE2ETests(unittest.TestCase):
         user32.SetCursorPos.restype = wintypes.BOOL
         user32.GetSystemMetrics.argtypes = [ctypes.c_int]
         user32.GetSystemMetrics.restype = ctypes.c_int
-        DESKTOP_READOBJECTS = 0x0001
-        DESKTOP_WRITEOBJECTS = 0x0080
-        DESKTOP_SWITCHDESKTOP = 0x0100
-        desktop = user32.OpenInputDesktop(
-            0,
-            False,
-            DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_SWITCHDESKTOP,
-        )
+
+        desktop = user32.OpenInputDesktop(0, False, 0x0001 | 0x0080 | 0x0100)
         if not desktop:
             raise AssertionError(
                 "GitHub runner process cannot open the Windows input desktop; "
-                "interactive E2E requires a runner launched in an unlocked interactive user session"
+                "interactive E2E requires an unlocked interactive user session"
             )
         try:
             if not user32.SwitchDesktop(desktop):
                 raise AssertionError(
-                    "GitHub runner process can open but cannot switch to the input desktop; "
-                    "interactive E2E is not authoritative in this session"
+                    "GitHub runner process cannot switch to the Windows input desktop"
                 )
         finally:
             user32.CloseDesktop(desktop)
@@ -343,22 +281,19 @@ class WindowsInteractivePointerUiAE2ETests(unittest.TestCase):
             raise AssertionError("interactive E2E cannot read the real Windows cursor")
         width = int(user32.GetSystemMetrics(0))
         height = int(user32.GetSystemMetrics(1))
-        if width <= 1 or height <= 0:
-            raise AssertionError("interactive E2E cannot read primary screen dimensions")
         probe_x = int(original.x) + 1 if int(original.x) + 1 < width else max(0, int(original.x) - 1)
         probe_y = max(0, min(height - 1, int(original.y)))
         probe = wintypes.POINT()
         try:
             if not user32.SetCursorPos(probe_x, probe_y):
                 raise AssertionError(
-                    "Windows input desktop is visible but rejects SetCursorPos; "
-                    "the runner must execute in an unlocked interactive user session"
+                    "Windows input desktop rejects SetCursorPos; runner is not authoritative for input E2E"
                 )
             if not user32.GetCursorPos(ctypes.byref(probe)):
                 raise AssertionError("interactive E2E cannot re-read the cursor after SetCursorPos")
             if int(probe.x) != probe_x or int(probe.y) != probe_y:
                 raise AssertionError(
-                    "Windows input desktop did not retain a reversible cursor movement; "
+                    "Windows input desktop did not retain reversible cursor movement; "
                     f"requested=({probe_x},{probe_y}) observed=({int(probe.x)},{int(probe.y)})"
                 )
         finally:
@@ -377,9 +312,7 @@ class WindowsInteractivePointerUiAE2ETests(unittest.TestCase):
             if last is not None and last.title == title:
                 return last
             time.sleep(0.05)
-        raise AssertionError(
-            f"fixture did not become foreground; last observation={last!r}"
-        )
+        raise AssertionError(f"fixture did not become foreground; last observation={last!r}")
 
     @staticmethod
     def _advance_until_stage(resident, stage: str, limit: int = 20) -> None:
@@ -388,9 +321,7 @@ class WindowsInteractivePointerUiAE2ETests(unittest.TestCase):
                 return
             result = resident.live_once()
             if result is not None:
-                raise AssertionError(
-                    f"event reached terminal result before {stage}: {result}"
-                )
+                raise AssertionError(f"event reached terminal result before {stage}: {result}")
         raise AssertionError(f"resident did not reach {stage}")
 
     @staticmethod
@@ -429,6 +360,7 @@ class WindowsInteractivePointerUiAE2ETests(unittest.TestCase):
             self.assertTrue(target_before.is_enabled)
             self.assertTrue(target_before.is_keyboard_focusable)
             self.assertFalse(target_before.is_offscreen)
+            self.assertFalse(fixture.target_checked())
 
             with tempfile.TemporaryDirectory() as tmp:
                 resident = build_resident_runtime(
@@ -436,6 +368,9 @@ class WindowsInteractivePointerUiAE2ETests(unittest.TestCase):
                     store_path=Path(tmp) / "kernel.db",
                 )
                 try:
+                    service = ResidentSocketService(ResidentRpcServer(resident=resident))
+                    self.assertIs(resident.visual_region, service.visual_region)
+
                     pointer = resident.body.act("pointer_state")
                     self.assertTrue(pointer.success, pointer.error)
                     original_pointer = (int(pointer.data["x"]), int(pointer.data["y"]))
@@ -451,10 +386,10 @@ class WindowsInteractivePointerUiAE2ETests(unittest.TestCase):
                     self.assertLessEqual(abs(predicted_x - target_x), 1)
                     self.assertLessEqual(abs(predicted_y - target_y), 1)
 
-                    visual = NativeVisualRegionSense().probe(
+                    visual = resident.visual_region.probe(
                         center_x_fraction=x_fraction,
                         center_y_fraction=y_fraction,
-                        width_fraction=0.08,
+                        width_fraction=0.12,
                         height_fraction=0.08,
                     )
                     self.assertTrue(visual.signature)
@@ -474,7 +409,7 @@ class WindowsInteractivePointerUiAE2ETests(unittest.TestCase):
                             },
                             "expected_outcome": {
                                 "kind": "visual_region_changed",
-                                "width_fraction": 0.08,
+                                "width_fraction": 0.12,
                                 "height_fraction": 0.08,
                             },
                             "completion_scope": {
@@ -494,17 +429,14 @@ class WindowsInteractivePointerUiAE2ETests(unittest.TestCase):
 
                     self.assertIsNone(resident.live_once())
                     state_after_move = resident.store.get_working_state()
-                    prepared = state_after_move.data.get(
-                        resident._POINTER_CLICK_PRECONDITION_KEY
-                    )
+                    prepared = state_after_move.data.get(resident._POINTER_CLICK_PRECONDITION_KEY)
                     if (
                         state_after_move.stage != "native_action"
                         or not isinstance(prepared, dict)
                         or not prepared.get("position_verified")
                     ):
                         self.fail(
-                            "resident did not establish durable pointer-click preparation after "
-                            "the first native_action pulse; "
+                            "resident did not establish durable pointer-click preparation; "
                             f"stage={state_after_move.stage!r} "
                             f"local_failure={state_after_move.data.get('local_failure')!r} "
                             f"body_actions={self._body_trace(resident)!r}"
@@ -514,29 +446,14 @@ class WindowsInteractivePointerUiAE2ETests(unittest.TestCase):
 
                     moved = resident.body.act("pointer_state")
                     self.assertTrue(moved.success, moved.error)
-                    if (
-                        abs(int(moved.data["x"]) - predicted_x) > 1
-                        or abs(int(moved.data["y"]) - predicted_y) > 1
-                    ):
-                        self.fail(
-                            "resident recorded a verified pointer preparation but the real cursor "
-                            "no longer matches it before the next pulse; another input source may "
-                            "have moved the cursor or the desktop stopped accepting pointer state. "
-                            f"expected=({predicted_x},{predicted_y}) "
-                            f"observed=({moved.data['x']},{moved.data['y']}) "
-                            f"body_actions={self._body_trace(resident)!r}"
-                        )
+                    self.assertLessEqual(abs(int(moved.data["x"]) - predicted_x), 1)
+                    self.assertLessEqual(abs(int(moved.data["y"]) - predicted_y), 1)
 
                     self.assertIsNone(resident.live_once())
                     self.assertTrue(
-                        fixture.clicked.wait(3.0),
-                        "real SendInput click did not reach the owned target control",
+                        fixture.target_checked(),
+                        "real SendInput click did not toggle the owned Windows target checkbox",
                     )
-                    if fixture.error is not None:
-                        raise AssertionError(
-                            "fixture failed after click: "
-                            f"{type(fixture.error).__name__}: {fixture.error}"
-                        )
 
                     result = resident.live_once()
                     self.assertIsNotNone(result)
@@ -548,10 +465,7 @@ class WindowsInteractivePointerUiAE2ETests(unittest.TestCase):
                     self.assertEqual(focused_after.runtime_id, target_before.runtime_id)
                     self.assertTrue(focused_after.has_keyboard_focus)
                     focused_native_after = NativeFocusedControlSense().probe()
-                    self.assertEqual(
-                        focused_native_after.control_id,
-                        fixture.TARGET_CONTROL_ID,
-                    )
+                    self.assertEqual(focused_native_after.control_id, fixture.TARGET_CONTROL_ID)
                 finally:
                     resident.store.close()
                     resident = None
