@@ -21,8 +21,8 @@ The active repository remains physically ZN-only. M10 canonical source promotion
 Latest verified implementation head before this ledger sync:
 
 ```text
-head  83f45fd922ebc216933987d269b3c797d3875f2b
-run   32844167956
+head  f437ab85be63972005d8d7fb6a78f3f204d57dc4
+run   32847172662
 
 ZN Kernel / Python / Windows        success
 ZN Source Boundary / Windows        success
@@ -30,23 +30,15 @@ Electron / TypeScript / Windows     success
 Publish Windows CI statuses         success
 ```
 
-The Windows kernel job created a fresh isolated Python 3.12 environment, installed the `znagent` runtime from `runtime/python`, booted ZN without a model, compiled the resident core, and ran the complete working-tree suite: **393 tests passed with 5 platform-appropriate skips**.
+The Windows kernel job created a fresh isolated Python 3.12 environment, installed the `znagent` runtime from `runtime/python`, booted ZN without a model, compiled the resident core, and ran the complete working-tree suite: **397 tests passed with 5 platform-appropriate skips**.
 
-The three new pointer tests passed:
-
-```text
-test_pointer_move_is_bounded_normalized_body_movement
-test_structured_pointer_move_waits_for_fresh_position_verification
-test_pointer_drift_contradicts_success_and_returns_to_investigation
-```
-
-This verifies the first bounded computer-action slice without claiming mature computer use.
+This checkpoint adds a resident-owned, on-demand local visual region sense after the already-verified pointer movement slice. It does not add click, keyboard or browser mutation authority.
 
 ## 2. Resident ownership — VERIFIED
 
 The resident owns persistent Self/life state, Situation/Thought/Will, durable WorkingState, Investigation, native Body actions and senses, bounded cognition resources, provider settings, nervous memory/reconsolidation, verified experience/procedural tendencies, channel lifecycle and resident work/progress state.
 
-Zero-model boot remains a hard CI contract and passed at exact head `83f45fd922ebc216933987d269b3c797d3875f2b`.
+Zero-model boot remains a hard CI contract and passed at exact head `f437ab85be63972005d8d7fb6a78f3f204d57dc4`.
 
 ## 3. Engineering competence — VERIFIED NARROW SLICES
 
@@ -69,7 +61,7 @@ runtime/python/zn_agent/core/result_semantics.py
 → tests/zn_agent/core/test_verified_experience.py
 ```
 
-The third relation is intentionally non-canonical and evidence-based. Run `32829830325` verified all three relations with the live repository self-check and complete Windows kernel suite; later exact-head runs keep the contract green. Do not expand the manifest merely for count.
+Run `32829830325` verified all three relations; later exact-head runs keep the contract green. Do not expand the manifest merely for count.
 
 ## 4. Memory and learning — VERIFIED FOUNDATION, MATURITY PARTIAL
 
@@ -79,9 +71,9 @@ General procedural competence, mature computer use, broad local training and lon
 
 ## 5. Body / Senses / computer interaction — VERIFIED FOUNDATION, MATURITY PARTIAL
 
-Resident-owned visual sensing is a verified foundation: `ResidentSocketService` owns a persistent `NativeVisualSense`; default capture uses local Pillow `ImageGrab`; raw pixels are discarded inside capture; only compact frame/region/luminance structure enters the resident nervous system. The formal runtime declares and installs `Pillow==12.3.0`.
+Resident-owned background vision is a verified foundation: `ResidentSocketService` owns a persistent `NativeVisualSense`; default capture uses local Pillow `ImageGrab`; raw pixels are discarded inside capture; only compact frame/coarse-region/luminance structure enters the resident nervous system. The formal runtime declares and installs `Pillow==12.3.0`.
 
-The first bounded computer movement is now verified:
+### Verified pointer movement
 
 ```text
 structured event authority
@@ -95,19 +87,55 @@ structured event authority
 → contradiction returns to Investigation and records negative evidence
 ```
 
-Properties of this slice:
+Properties:
 
-- only typed `pointer_move`; no click, keyboard or generic browser agent;
-- only finite normalized primary-screen coordinates in `[0, 1]`;
+- typed `pointer_move` only; no click, keyboard or generic browser agent;
+- finite normalized primary-screen coordinates in `[0, 1]`;
 - no coordinate inference from model prose, task text or procedural memory;
 - movement API success is not completion proof;
 - fresh cursor position is independently observed after the action;
-- drift or contradictory observation fails verification and returns to Investigation;
-- active procedural/runtime inheritance was kept compatible with the verification-result contract.
+- drift or contradictory observation fails verification and returns to Investigation.
 
-Run `32844167956` verifies this lifecycle with 393 passing core tests. Tests use an injected/fake pointer body and therefore do **not** claim real interactive-desktop click or cursor E2E on the CI host.
+Run `32844167956` verified this lifecycle with 393 passing core tests.
 
-Real-session screen capture and interactive-desktop availability/permission remain environmental evidence gaps. Mature click/browser interaction still requires an independent current-world postcondition stronger than an input API return code.
+### Verified local visual region sense
+
+`f437ab85be63972005d8d7fb6a78f3f204d57dc4` adds `NativeVisualRegionSense`, owned by `ResidentSocketService` alongside the persistent retina. It is deliberately on-demand and read-only:
+
+```text
+ResidentSocketService
+→ NativeVisualRegionSense
+→ explicit bounded normalized region
+→ lazy Pillow ImageGrab capture
+→ crop target-local region
+→ local grayscale / quantized derivative
+→ compact signature + luminance + pixel bounds
+→ raw pixels closed and discarded
+→ VisualRegionObservation
+```
+
+Properties:
+
+- service construction does not capture the screen; `ImageGrab` is lazy and runs only on `probe()`;
+- center coordinates must be finite normalized `[0, 1]` values;
+- probe width/height are bounded to `0.01..0.50` of the primary screen;
+- returned evidence is a compact local signature, mean luminance, pixel bounds and capture metadata;
+- raw frame persistence is explicitly rejected;
+- probing does not write persistent retina state, create nervous traces, change background visual sampling rhythm, or call a model;
+- the probe is a Sense, not action authority and not another agent.
+
+Run `32847172662` verifies this foundation with **397 tests passed / 5 skipped**, including:
+
+```text
+test_invalid_region_never_reaches_capture_authority
+test_probe_is_bounded_fresh_read_only_local_evidence
+test_probe_rejects_raw_pixel_persistence_claim
+test_resident_service_owns_region_sense_without_writing_retina_or_memory
+```
+
+The tests use injected region probes; they do not claim real interactive-desktop screenshot E2E on the CI host. The formal isolated runtime does prove that the production Pillow dependency is installed and that the resident can boot without an active model.
+
+This local probe creates a credible pre/post evidence primitive for a future click lifecycle, but **local visual change alone is not yet equivalent to semantic task success**. Click remains unimplemented until the action contract can bind an explicit target/effect to fresh evidence without relying on input-delivery success.
 
 ## 6. External cognition, web/world and channels — VERIFIED FOUNDATION
 
@@ -128,7 +156,7 @@ ZN Electron main
 
 Ownership tests protect window/protocol lifecycle, preload surface, `zn://` deep links, resident-backed work/provider/progress surfaces, packaged runtime identity, update/application gates and the single formal builder configuration.
 
-Electron development/runtime tooling remains pinned to `41.10.5`. Run `32844167956` passed locked install, high-severity npm audit, typecheck, bundle, desktop ownership/runtime/update tests and release/runtime artifact verifier tests.
+Electron development/runtime tooling remains pinned to `41.10.5`. Run `32847172662` passed locked install, high-severity npm audit, typecheck, bundle, desktop ownership/runtime/update tests and release/runtime artifact verifier tests.
 
 ## 8. Runtime and artifact ownership — VERIFIED FOR EXERCISED TARGETS
 
@@ -140,13 +168,7 @@ Python package:      zn_agent
 entrypoint:          zn-resident
 ```
 
-The runtime project explicitly owns its default visual-capture dependency:
-
-```text
-Pillow==12.3.0
-```
-
-Fresh isolated Windows runtime installation continues to resolve the declared runtime distribution before zero-model boot and the working-tree suite.
+The runtime project explicitly owns `Pillow==12.3.0` for resident visual capture. Run `32847172662` resolved 29 packages in the fresh isolated Windows runtime, including Pillow, before zero-model boot and the full suite.
 
 Historical artifact evidence includes Linux packages, Windows installers, macOS artifacts, fresh Ubuntu installation and installed Linux resident lifecycle evidence. Current steady-state development verification is Windows x64.
 
@@ -169,9 +191,7 @@ Status: **COMPLETE**.
 
 `.agent/verify_zn_source_boundary.py` scans tracked paths and tracked non-binary text to reject retired product identifiers, package namespaces and old physical paths from the active tree. `LICENSE` text is the only explicit scan exception because original legal attribution must remain verbatim.
 
-The historical source quarry remains outside the active tree in the dedicated reference branch/Git history and is not an active runtime/build/test/package/release dependency.
-
-Key evidence includes current exact-head Windows Source Boundary success in run `32844167956`.
+The historical source quarry remains outside the active tree in the dedicated reference branch/Git history and is not an active runtime/build/test/package/release dependency. Run `32847172662` passed the current Windows source-boundary job.
 
 ## 11. Dependency security state — HIGH-SEVERITY DEBT CLOSED
 
@@ -194,7 +214,8 @@ The 2026-08-24 M10 review passed and canonical source promotion was executed by 
 ## 14. Current known debts
 
 - M8 Windows clean-install/login, installed N→N+1, rollback and signing evidence;
-- independent post-action evidence strong enough to support a future click/browser mutation rather than merely input-delivery success;
+- a typed click/browser mutation contract that captures a local visual baseline before the side effect and performs a fresh post-action comparison;
+- a stronger semantic verifier when mere local visual change is insufficient to prove the requested UI/world outcome;
 - real-session screen-capture and interactive-desktop availability evidence;
 - mature procedural competence/growth benchmarks;
 - SM1+ autonomous self-maintenance;
@@ -205,8 +226,8 @@ The 2026-08-24 M10 review passed and canonical source promotion was executed by 
 ```text
 1. keep automatic Windows x64 self-hosted CI green on each exact dev HEAD
 2. do not expand the verifier manifest without a genuine repo-owned relation that adds capability
-3. investigate the smallest click/browser action whose success can be independently proven from fresh ZN-owned current-world evidence
-4. if no such verifier is currently trustworthy, strengthen Senses/current-world evidence before adding another side effect
+3. trace the smallest typed click lifecycle: explicit authority → fresh local baseline → bounded side effect → fresh local observation → contradiction/success semantics
+4. do not equate a changed region or input API success with semantic task completion; add stronger evidence where required
 5. close Windows M8 clean-install / N→N+1 / rollback / signing evidence
 6. advance SM1+ behind existing approval and verification boundaries
 ```
