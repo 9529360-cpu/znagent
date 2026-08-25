@@ -19,8 +19,8 @@ M10 canonical source promotion remains complete. `main` is canonical source/rele
 Latest fully verified implementation head:
 
 ```text
-32cfd3d4a6ed76906243ddf916a76fe5d2960cfe
-feat: verify focused native control state
+f5bca98003d01fb8bf64b36cf56c2a440385ff1b
+fix: create UI automation v2 client directly
 ```
 
 Status: **VERIFIED ON REAL WINDOWS X64 CI**.
@@ -28,7 +28,7 @@ Status: **VERIFIED ON REAL WINDOWS X64 CI**.
 Exact-head workflow evidence:
 
 ```text
-run 32885707163
+run 32891800589
 
 ZN Source Boundary / Windows       success
 ZN Kernel / Python / Windows       success
@@ -36,16 +36,14 @@ Electron / TypeScript / Windows   success
 Publish Windows CI statuses       success
 ```
 
-The Kernel job used CPython 3.12.13, installed the formal `znagent` runtime from `runtime/python`, booted an isolated resident with zero external models, compiled the resident core, and ran full discovery:
+The Kernel job used CPython 3.12.13, installed the formal `znagent` runtime from `runtime/python`, booted an isolated resident with zero external models, compiled the resident core, initialized the native Windows UI Automation reader, and ran full discovery:
 
 ```text
-Ran 432 tests in 489.510s
+Ran 446 tests in 515.441s
 OK (skipped=5)
 ```
 
-The exact focused-control tests, existing foreground semantic-click tests, final input-boundary drift tests, source-boundary verification, desktop typecheck/build/tests, and CI status publisher all passed in that run.
-
-Published commit contexts for `32cfd3d4...` are success:
+The native UI Automation initialization test passed on the real Windows runner. Published commit contexts for `f5bca980...` are success:
 
 ```text
 ZN Source Boundary
@@ -61,6 +59,7 @@ The active pointer-click construction is now:
 
 ```text
 provider_bridge.build_resident_runtime()
+-> AutomationFocusPointerClickResidentRuntime
 -> FocusedControlPointerClickResidentRuntime
 -> SemanticPointerClickResidentRuntime
 -> EffectScopedPointerClickResidentRuntime
@@ -74,16 +73,14 @@ External models do not own identity, execution authority, current-world truth, o
 
 ## 3. Body / Senses / computer interaction
 
-### 3.1 Foreground-aware click boundary
+### 3.1 Existing verified click boundary
 
-The previously verified foreground semantic lifecycle remains intact:
+The previously verified lifecycle remains intact:
 
 - structured bounded `pointer_click` authority;
 - exact typed `ui_state_transition` event authority;
-- read-only `NativeForegroundWindowSense`;
+- read-only foreground-window Sense;
 - exact source `action_precondition.kind=foreground_window_matches`;
-- exact destination `completion_scope.kind=foreground_window_matches`;
-- zero-input completion when destination is already satisfied;
 - bounded pointer movement and fresh pointer-state verification;
 - fresh target-local visual baseline;
 - durable non-replayable click `status="started"` marker;
@@ -92,81 +89,117 @@ The previously verified foreground semantic lifecycle remains intact:
 - exactly one left click only while admitted authority remains valid;
 - fresh local visual-effect verification;
 - admitted event/scope/source-precondition drift checks after input;
-- fresh destination proof before semantic completion.
+- contradiction returns to Investigation without replaying uncertain input.
 
-### 3.2 Focused native-control Sense
+The native focused-control scope also remains verified and available for meaningful Win32 child controls with stable class/control-id identity.
 
-Commit `32cfd3d4...` adds `NativeFocusedControlSense`, a resident-owned read-only Windows Sense for one deeper UI fact than top-level foreground identity.
+### 3.2 Read-only Windows UI Automation Sense
 
-It uses the current foreground GUI thread and Windows `GetGUIThreadInfo` to obtain the actual focused HWND, then fails closed unless that HWND is a real child/descendant of the current foreground window and belongs to the same foreground process.
+The new cross-framework element Sense is `NativeAutomationElementSense`.
+
+Windows runtime dependency:
+
+```text
+comtypes==1.4.16 ; platform_system == "Windows"
+```
+
+The native reader is deliberately narrow:
+
+- starts lazily only when the Sense is first used;
+- runs on a dedicated daemon MTA worker rather than the resident thread;
+- selects MTA before the first `comtypes` import on a fresh worker;
+- creates the UI Automation v2-capable `CUIAutomation8` client and uses `IUIAutomation2` for bounded provider timeouts;
+- uses `BuildCache` calls with `AutomationElementMode_None` and `TreeScope_Element`;
+- reads only cached element properties;
+- probes either the element at one exact desktop point or the current focused element;
+- does not walk the UIA tree;
+- does not subscribe to UIA events;
+- does not request or invoke any control pattern;
+- does not mutate application state through UI Automation.
 
 The bounded observation contains:
 
 ```text
+runtime_id
 process_id
 process_name
-foreground_title
-foreground_class_name
-control_class_name
-control_id
-enabled
-visible
+framework_id
+control_type
+class_name
+is_enabled
+is_keyboard_focusable
+has_keyboard_focus
+is_offscreen
+native_window_handle
 captured_at
 source
 ```
 
-The native probe deliberately does **not** read focused-control text, inspect pixels, use OCR, call a model, or invoke accessibility mutation APIs. It also requires a positive control/dialog id; absent or ambiguous native identity fails closed.
+`Name` and `AutomationId` are intentionally not collected or persisted. `RuntimeId` is treated as opaque short-lived identity for comparison inside the current action cycle only, not as a durable semantic identifier across restarts or application versions.
 
-### 3.3 Focused-control semantic completion
+### 3.3 Focused automation-element completion
 
-The active runtime adds a new exact completion scope:
+The active runtime recognizes the exact scope:
 
 ```text
-completion_scope.kind = focused_control_matches
-process_name           = exact expected foreground process
-foreground_title       = exact expected foreground title
-control_class_name     = exact expected native control class
-control_id             = exact positive native control id
+completion_scope.kind = focused_automation_element_at_pointer
+process_name
+ title_equals
 ```
 
-A match additionally requires the observed control to be enabled and visible.
+The source `action_precondition.kind=foreground_window_matches` must identify the same exact foreground process/title as the completion scope.
 
-This scope is permitted only for typed `ui_state_transition` pointer-click events. If the target control is already focused, the event completes with zero pointer input.
+For this scope:
 
-If mutation is still needed, the existing exact foreground-window source `action_precondition` remains mandatory. The focused-control layer does not bypass the lower click lifecycle: pointer preparation, visual baseline, durable anti-replay marker, final source-window recheck, one left click, visual-effect proof, admitted-authority drift checks, and Investigation on contradiction remain in force.
+1. If the exact pointer-target UIA element already has keyboard focus, the transition may complete with zero pointer movement/input.
+2. If mutation is required, the lower verified click lifecycle prepares the exact coordinates and visual baseline first.
+3. At the final input boundary, the resident freshly rechecks the source foreground window.
+4. Only then does it call read-only `ElementFromPointBuildCache` for the exact prepared pointer coordinate.
+5. The target must belong to the expected process and be enabled, on-screen, and keyboard-focusable.
+6. Its opaque `RuntimeId` is recorded for the current action cycle before input.
+7. After the one admitted click and independent local visual-effect proof, the resident freshly verifies the destination foreground window and calls read-only `GetFocusedElementBuildCache`.
+8. Completion requires the focused element to have the same opaque `RuntimeId`, remain eligible, and report keyboard focus.
+9. Missing/mismatched evidence returns to Investigation and does not replay the click.
 
-After input, completion requires fresh exact focused-control evidence. Mismatch or unavailable focused-control evidence returns to Investigation without replaying the click.
+This adds cross-framework focus evidence for UIA-exposed elements, including cases where meaningful internal application elements are not represented by useful native child HWND controls.
 
-Real Windows CI verified tests for:
+It does **not** prove arbitrary DOM state, text/content meaning, business transaction completion, message delivery, network success, or arbitrary task prose.
 
-- active resident ownership of the new Sense without probing on boot;
-- bounded observation validation;
-- already-focused target completing with zero input;
-- exact focused-control match after click completing the typed transition;
-- final source drift after visual baseline aborting before input;
-- focused-control mismatch after click returning to Investigation without replay;
-- invalid scope failing before probe/movement;
-- missing focused-control Sense failing before pointer movement.
+### 3.4 Real Windows verification
 
-### 3.4 Scope limit
+Run `32891800589` at `f5bca980...` verified:
 
-This is an HWND/native-control slice, not generic internal application semantics.
+- native MTA UI Automation reader initialization;
+- correct UI Automation v2 client creation;
+- Windows-only COM client dependency installation;
+- observation excludes dynamic `Name` and `AutomationId` fields;
+- injected point/focused probes return bounded structured observations;
+- invalid/missing RuntimeId fails closed;
+- active resident owns the automation Sense without probing on boot;
+- already-focused exact target completes with zero input;
+- exact pre-click UIA target receiving focus after click completes the typed transition;
+- final foreground drift aborts before UIA target capture/input;
+- non-focusable final target is rejected before input;
+- invalid scope fails before probe/movement;
+- missing UIA Sense fails before movement;
+- post-click focus mismatch returns to Investigation without replay;
+- source window must equal the destination window for this element-focus scope;
+- all previously verified foreground/native-focused-control/click lifecycle tests remain green.
 
-It is useful where an application exposes meaningful native child controls with stable class/id identity. It does **not** prove arbitrary Electron/Chromium DOM state, web content semantics, transaction completion, message delivery, network success, or arbitrary task prose.
+Two preceding CI failures were resolved without weakening tests or authority:
 
-Windows UI Automation remains a plausible later read-only cross-framework evidence source because it can expose element-level semantics beyond raw HWNDs, but it is a larger COM/cross-process surface. It is not yet part of ZN's runtime or authority model.
-
-No keyboard, right-click, double-click, drag, OCR, generic browser control plane, model-derived execution fact, new dependency, or new mutation primitive was added by this slice.
+- `fa214a4c...` fixed COM apartment initialization order by selecting MTA before first `comtypes` import on a fresh worker;
+- `f5bca980...` fixed `E_NOINTERFACE` by creating the v2-capable UI Automation COM class directly instead of querying the older class for an unsupported interface.
 
 ## 4. Repository source boundary
 
 The active tree remains ZN-only by contract and by exact-head CI evidence.
 
-Run `32885707163` completed `ZN Source Boundary / Windows` successfully at `32cfd3d4...`. No ownership rule or scanner exemption was weakened.
+Run `32891800589` completed `ZN Source Boundary / Windows` successfully at `f5bca980...`. No ownership rule or scanner exemption was weakened.
 
 ## 5. Desktop / runtime / release
 
-Run `32885707163` completed `Electron / TypeScript / Windows` successfully at the exact verified head, including locked dependency installation, high-severity advisory rejection, typecheck, bundle, desktop ownership/runtime/update/handoff contract tests, and release-channel/runtime-staging/artifact-verifier tests.
+Run `32891800589` completed `Electron / TypeScript / Windows` successfully at the exact verified head, including locked dependency installation, high-severity advisory rejection, typecheck, bundle, desktop ownership/runtime/update/handoff contract tests, and release-channel/runtime-staging/artifact-verifier tests.
 
 M8 remains **PARTIAL**. Still open for Windows x64:
 
@@ -185,9 +218,9 @@ There is no current Windows CI infrastructure blocker.
 
 Still open:
 
-- real interactive-desktop foreground/screen/click/focused-control E2E evidence;
-- semantic verification for modern framework/internal application elements that are not meaningful native child HWND controls;
-- a bounded read-only cross-framework UI element Sense with a real typed caller, if justified;
+- real interactive-desktop foreground/screen/pointer/native-focus/UIA-focus E2E evidence;
+- broader semantic verification for application state beyond keyboard focus;
+- any future UIA property/tree use must have a real typed active caller and remain read-only unless a separate authority design is approved;
 - broader input primitives until matching typed authority and independent verification exist;
 - M8 Windows install/upgrade/rollback/signing evidence;
 - mature procedural competence/growth benchmarks;
@@ -198,11 +231,10 @@ Still open:
 
 ```text
 1. keep exact-head Windows x64 CI green
-2. evaluate the smallest useful read-only cross-framework UI element evidence beyond native HWND focus
-3. trace entry -> owner -> state -> lifecycle -> dependency -> tests -> active caller before implementation
-4. prefer read-only evidence first; do not let UI Automation or another accessibility layer become a mutation/control plane
-5. add nothing if it would be unused telemetry
-6. keep real interactive-desktop E2E explicitly open until executed
-7. keep M8 and SM1+ explicitly partial/open
-8. leave main untouched through ordinary development
+2. run/establish real interactive-desktop E2E evidence for the existing screen -> pointer -> foreground -> UIA focus chain before widening UI semantics
+3. investigate the next useful read-only application-state evidence only from a concrete typed caller
+4. do not turn UI Automation into a generic mutation/control plane
+5. keep RuntimeId short-lived and action-cycle scoped
+6. keep M8 and SM1+ explicitly partial/open
+7. leave main untouched through ordinary development
 ```
