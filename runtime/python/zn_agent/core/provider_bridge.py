@@ -239,8 +239,8 @@ def build_resident_runtime(
 ):
     """Build the resident organism around the ZN-owned kernel."""
     from .budget import CognitiveBudgetManager
-    from .pointer_click_focused_control_resident import (
-        FocusedControlPointerClickResidentRuntime,
+    from .pointer_click_automation_focus_resident import (
+        AutomationFocusPointerClickResidentRuntime,
     )
 
     effective_config = config if config is not None else load_zn_config()
@@ -259,7 +259,7 @@ def build_resident_runtime(
             0.0, min(1.0, float(resident_cfg.get("high_risk_threshold", 0.8)))
         ),
     )
-    return FocusedControlPointerClickResidentRuntime(kernel=kernel, budget=budget)
+    return AutomationFocusPointerClickResidentRuntime(kernel=kernel, budget=budget)
 
 
 # Transitional source-level aliases only. They preserve existing ZN callers

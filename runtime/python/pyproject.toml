@@ -9,6 +9,7 @@ description = "ZN resident runtime"
 requires-python = ">=3.11,<3.14"
 license = "MIT"
 dependencies = [
+  "comtypes==1.4.16; sys_platform == 'win32'",
   "httpx[socks]==0.28.1",
   "keyring==25.7.0",
   "openai==2.24.0",
