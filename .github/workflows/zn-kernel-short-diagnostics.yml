@@ -6,8 +6,6 @@ on:
       - dev/zn-agent
     paths:
       - .github/workflows/zn-kernel-short-diagnostics.yml
-      - runtime/python/zn_agent/core/terminal.py
-      - tests/zn_agent/core/test_terminal.py
   workflow_dispatch:
 
 permissions:
@@ -22,7 +20,7 @@ env:
 
 jobs:
   short-kernel-diagnostics:
-    name: Short kernel failure isolation
+    name: Native body victim isolation
     runs-on: self-hosted
     timeout-minutes: 5
     steps:
@@ -36,16 +34,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Report executable resolution
-        shell: powershell
-        run: |
-          Write-Host "PATH=$env:PATH"
-          Get-Command git | Format-List Name,Source,Version
-          git --version
-          Get-Command bash -ErrorAction SilentlyContinue | Format-List Name,Source,Version
-          Get-Command pwsh -ErrorAction SilentlyContinue | Format-List Name,Source,Version
-          Get-Command powershell | Format-List Name,Source,Version
-
       - name: Prepare isolated runtime
         shell: powershell
         run: |
@@ -56,21 +44,8 @@ jobs:
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\runtime-short-diag\Scripts\python.exe'
           uv pip install --python $python runtime/python
 
-      - name: Run terminal regression module
+      - name: Run native body module alone
         shell: powershell
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
-          & .\.ci\runtime-short-diag\Scripts\python.exe -m unittest tests.zn_agent.core.test_terminal -v
-
-      - name: Run command verification module
-        shell: powershell
-        run: |
-          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
-          & .\.ci\runtime-short-diag\Scripts\python.exe -m unittest tests.zn_agent.core.test_command_verification -v
-
-      - name: Run git procedural influence module
-        if: ${{ always() }}
-        shell: powershell
-        run: |
-          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
-          & .\.ci\runtime-short-diag\Scripts\python.exe -m unittest tests.zn_agent.core.test_git_procedural_influence -v
+          & .\.ci\runtime-short-diag\Scripts\python.exe -m unittest tests.zn_agent.core.test_native_body -v
