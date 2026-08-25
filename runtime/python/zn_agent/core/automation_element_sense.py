@@ -11,6 +11,9 @@ from typing import Callable
 from .models import utc_now
 
 
+_MAX_AUTOMATION_ID_CHARS = 256
+
+
 @dataclass(frozen=True, slots=True)
 class AutomationElementObservation:
     runtime_id: tuple[int, ...]
@@ -25,6 +28,7 @@ class AutomationElementObservation:
     is_offscreen: bool
     native_window_handle: int
     captured_at: str
+    automation_id: str = ""
     source: str = "windows-uia-cache"
 
 
@@ -142,6 +146,7 @@ class _WindowsUiAutomationReader:
             for property_id in (
                 client.UIA_RuntimeIdPropertyId,
                 client.UIA_ProcessIdPropertyId,
+                client.UIA_AutomationIdPropertyId,
                 client.UIA_FrameworkIdPropertyId,
                 client.UIA_ControlTypePropertyId,
                 client.UIA_ClassNamePropertyId,
@@ -179,6 +184,7 @@ class _WindowsUiAutomationReader:
                 request.result = self._snapshot(
                     element,
                     runtime_id_property_id=client.UIA_RuntimeIdPropertyId,
+                    automation_id_property_id=client.UIA_AutomationIdPropertyId,
                 )
             except Exception as exc:
                 request.error = f"Windows UI Automation read probe failed: {type(exc).__name__}: {exc}"
@@ -187,13 +193,25 @@ class _WindowsUiAutomationReader:
                     request.done.set()
 
     @staticmethod
-    def _snapshot(element, *, runtime_id_property_id: int) -> AutomationElementObservation:
-        # RuntimeId is a normal cached UIA property, but generated COM wrappers
-        # do not consistently expose a CachedRuntimeId convenience accessor.
-        # Read it through the standard cached-property method so the Sense keeps
-        # AutomationElementMode_None and never falls back to a current/full read.
+    def _snapshot(
+        element,
+        *,
+        runtime_id_property_id: int,
+        automation_id_property_id: int,
+    ) -> AutomationElementObservation:
+        # RuntimeId and AutomationId are normal cached UIA properties, but
+        # generated COM wrappers do not consistently expose convenience
+        # accessors for every cached property. Read both through the standard
+        # cached-property method so the Sense keeps AutomationElementMode_None
+        # and never falls back to a current/full read. AutomationId is bounded
+        # application-provided evidence only; it is not durable identity or
+        # execution authority, and dynamic Name/text remains intentionally out
+        # of this narrow Sense.
         runtime_value = element.GetCachedPropertyValue(int(runtime_id_property_id))
         runtime_id = tuple(int(value) for value in runtime_value)
+        automation_id = str(
+            element.GetCachedPropertyValue(int(automation_id_property_id)) or ""
+        ).strip()[:_MAX_AUTOMATION_ID_CHARS]
         process_id = int(element.CachedProcessId)
         try:
             import psutil
@@ -217,6 +235,7 @@ class _WindowsUiAutomationReader:
             is_offscreen=bool(element.CachedIsOffscreen),
             native_window_handle=int(element.CachedNativeWindowHandle or 0),
             captured_at=utc_now(),
+            automation_id=automation_id,
             source="windows-uia-cache",
         )
 
@@ -227,6 +246,9 @@ class NativeAutomationElementSense:
     The native reader starts lazily on first use, runs on a separate MTA daemon
     thread, requests cached properties only, and never requests a control pattern,
     walks the UIA tree, subscribes to an event, or calls a UIA mutation method.
+    AutomationId is short-lived bounded evidence about the current application
+    element; it does not replace opaque RuntimeId inside an action cycle and is
+    not durable semantic identity or mutation authority.
     """
 
     def __init__(
@@ -278,4 +300,6 @@ class NativeAutomationElementSense:
             raise ValueError("automation element probe returned no process name")
         if int(observation.control_type) <= 0:
             raise ValueError("automation element probe returned no control type")
+        if len(str(observation.automation_id or "")) > _MAX_AUTOMATION_ID_CHARS:
+            raise ValueError("automation element probe returned an oversized automation id")
         return observation
