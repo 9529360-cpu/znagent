@@ -7,7 +7,12 @@ import unittest
 from pathlib import Path
 
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
-from zn_agent.core.repo_test_semantics import mapped_kernel_unittest_identity
+from zn_agent.core.repo_test_semantics import (
+    ZN_VERIFIER_MANIFEST_PATH,
+    mapped_kernel_unittest_identity,
+    test_source_directly_imports_target,
+    test_source_has_discoverable_unittest_case,
+)
 
 
 class RepoManifestVerifierTests(unittest.TestCase):
@@ -64,7 +69,7 @@ class RepoManifestVerifierTests(unittest.TestCase):
         target = root / "runtime/python/zn_agent/core/sample.py"
         target.write_text('def current_value():\n    return "before"\n', encoding="utf-8")
         (root / "tests/zn_agent/core/test_semantics.py").write_text(test_source, encoding="utf-8")
-        (root / ".agent/zn-engineering-verifiers.json").write_text(
+        (root / ZN_VERIFIER_MANIFEST_PATH).write_text(
             manifest_source,
             encoding="utf-8",
         )
@@ -129,6 +134,32 @@ class RepoManifestVerifierTests(unittest.TestCase):
             with self.subTest(source=source):
                 self.assertIsNone(mapped_kernel_unittest_identity(source, target))
 
+    def test_repository_manifest_mappings_are_real_test_relations(self):
+        root = Path(__file__).resolve().parents[3]
+        manifest_path = root / ZN_VERIFIER_MANIFEST_PATH
+        manifest_source = manifest_path.read_text(encoding="utf-8")
+        manifest = json.loads(manifest_source)
+
+        for mapping in manifest["mappings"]:
+            with self.subTest(mapping=mapping):
+                identity = mapped_kernel_unittest_identity(
+                    manifest_source,
+                    mapping["target"],
+                )
+                self.assertIsNotNone(identity)
+                target_path = root / identity["target_relative_path"]
+                test_path = root / identity["test_relative_path"]
+                self.assertTrue(target_path.is_file())
+                self.assertTrue(test_path.is_file())
+                test_source = test_path.read_text(encoding="utf-8")
+                self.assertTrue(
+                    test_source_directly_imports_target(
+                        test_source,
+                        identity["target_module"],
+                    )
+                )
+                self.assertTrue(test_source_has_discoverable_unittest_case(test_source))
+
     def test_tracked_clean_manifest_can_select_noncanonical_test(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -162,7 +193,7 @@ class RepoManifestVerifierTests(unittest.TestCase):
                 item
                 for item in self._actions(resident, event.event_id)
                 if item.kind == "git_diff"
-                and item.data.get("scope_relative_path") == ".agent/zn-engineering-verifiers.json"
+                and item.data.get("scope_relative_path") == ZN_VERIFIER_MANIFEST_PATH
             ]
             self.assertGreaterEqual(len(manifest_scopes), 3)
             resident.store.close()
@@ -193,7 +224,7 @@ class RepoManifestVerifierTests(unittest.TestCase):
                     test_source=test_source,
                 )
                 if name == "dirty-manifest":
-                    manifest = root / ".agent/zn-engineering-verifiers.json"
+                    manifest = root / ZN_VERIFIER_MANIFEST_PATH
                     manifest.write_text(manifest.read_text(encoding="utf-8") + "\n", encoding="utf-8")
                 resident = build_resident_runtime_from_existing_stack(
                     config={"model": {}},
