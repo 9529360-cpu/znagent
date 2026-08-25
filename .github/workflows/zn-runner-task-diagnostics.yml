@@ -46,7 +46,7 @@ jobs:
             throw 'No PowerShell launcher ancestor found for Runner.Listener.exe'
           }
 
-          $launcherTime = [System.Management.ManagementDateTimeConverter]::ToDateTime([string]$launcher.CreationDate)
+          $launcherTime = [datetime]$launcher.CreationDate
           Write-Host "runner.launcher.pid=$($launcher.ProcessId)"
           Write-Host "runner.launcher.created=$launcherTime"
 
