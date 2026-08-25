@@ -126,7 +126,7 @@ jobs:
               public static extern uint GetConsoleProcessList(uint[] processList, uint processCount);
           }
           '@
-          [uint[]]$consolePids = New-Object 'System.UInt32[]' 64
+          $consolePids = [System.UInt32[]]::new(64)
           $consoleCount = [ZNConsoleProbe]::GetConsoleProcessList($consolePids, $consolePids.Length)
           Write-Host "console.process_count=$consoleCount"
           $limit = [Math]::Min([int]$consoleCount, $consolePids.Length)
@@ -143,6 +143,29 @@ jobs:
             Write-Host "console.process[$index].name=$($consoleProcess.Name)"
             Write-Host "console.process[$index].ppid=$($consoleProcess.ParentProcessId)"
             Write-Host "console.process[$index].created=$($consoleProcess.CreationDate)"
+          }
+
+          $hostServicePids = @()
+          if ($null -ne $listener) {
+            $cursor = $listener
+            for ($depth = 0; $depth -lt 12 -and $null -ne $cursor; $depth++) {
+              if ($cursor.Name -eq 'svchost.exe') {
+                $hostServicePids += [int]$cursor.ProcessId
+              }
+              if (-not $cursor.ParentProcessId) { break }
+              $cursor = Get-CimInstance Win32_Process -Filter "ProcessId = $($cursor.ParentProcessId)"
+            }
+          }
+          foreach ($hostPid in ($hostServicePids | Select-Object -Unique)) {
+            $hosted = @(Get-CimInstance Win32_Service -Filter "ProcessId = $hostPid")
+            Write-Host "runner.host_svchost.pid=$hostPid"
+            Write-Host "runner.host_svchost.service_count=$($hosted.Count)"
+            foreach ($service in $hosted) {
+              Write-Host "runner.host_service.name=$($service.Name)"
+              Write-Host "runner.host_service.display_name=$($service.DisplayName)"
+              Write-Host "runner.host_service.state=$($service.State)"
+              Write-Host "runner.host_service.start_mode=$($service.StartMode)"
+            }
           }
 
           $services = @(Get-Service -ErrorAction SilentlyContinue |
