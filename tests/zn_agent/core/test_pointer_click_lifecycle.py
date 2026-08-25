@@ -105,26 +105,37 @@ class PointerClickLifecycleTests(unittest.TestCase):
         )
 
     @staticmethod
-    def _event(resident):
-        return resident.enqueue(
-            "perform the explicitly supplied bounded click",
-            payload={
-                "body_action": {
-                    "kind": "pointer_click",
-                    "args": {
-                        "x_fraction": 0.5,
-                        "y_fraction": 0.4,
-                        "button": "left",
-                    },
+    def _event(
+        resident,
+        *,
+        task: str = "perform the explicitly supplied bounded click",
+        kind: str = "effect_probe",
+        completion_scope: bool | dict[str, str] = True,
+    ):
+        payload = {
+            "body_action": {
+                "kind": "pointer_click",
+                "args": {
+                    "x_fraction": 0.5,
+                    "y_fraction": 0.4,
+                    "button": "left",
                 },
-                "expected_outcome": {
-                    "kind": "visual_region_changed",
-                    "width_fraction": 0.08,
-                    "height_fraction": 0.08,
-                },
-                "model_policy": "never",
             },
-        )
+            "expected_outcome": {
+                "kind": "visual_region_changed",
+                "width_fraction": 0.08,
+                "height_fraction": 0.08,
+            },
+            "model_policy": "never",
+        }
+        if completion_scope is True:
+            payload["completion_scope"] = {
+                "kind": "verified_effect",
+                "effect_kind": "visual_region_changed",
+            }
+        elif isinstance(completion_scope, dict):
+            payload["completion_scope"] = dict(completion_scope)
+        return resident.enqueue(task, kind=kind, payload=payload)
 
     def test_pointer_click_body_never_moves_implicitly(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -203,6 +214,7 @@ class PointerClickLifecycleTests(unittest.TestCase):
             self.assertTrue(result.success)
             self.assertEqual(result.execution_path, ExecutionPath.BODY)
             self.assertEqual(result.model_invocations, 0)
+            self.assertIn("effect_probe", result.reason)
             self.assertIn("visual_region_changed", result.reason)
             self.assertEqual(body.click_calls, 1)
             self.assertEqual(len(visual.calls), 2)
@@ -274,10 +286,15 @@ class PointerClickLifecycleTests(unittest.TestCase):
             resident.visual_region = _ClickVisualRegion(body)
             resident.enqueue(
                 "perform the explicitly supplied bounded click",
+                kind="effect_probe",
                 payload={
                     "body_action": {
                         "kind": "pointer_click",
                         "args": {"x_fraction": 0.5, "y_fraction": 0.4},
+                    },
+                    "completion_scope": {
+                        "kind": "verified_effect",
+                        "effect_kind": "visual_region_changed",
                     },
                     "model_policy": "never",
                 },
@@ -290,6 +307,80 @@ class PointerClickLifecycleTests(unittest.TestCase):
             self.assertEqual(body.click_calls, 0)
             self.assertEqual(body.move_calls, [])
             self.assertIn("visual_region_changed", state.data["local_failure"])
+            resident.store.close()
+
+    def test_user_task_click_is_rejected_before_pointer_movement(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            body = _ClickBody(resident=resident)
+            visual = _ClickVisualRegion(body)
+            resident.body = body
+            resident.visual_region = visual
+            self._event(resident, kind="user_task")
+            self._advance_until_stage(resident, "native_action")
+
+            self.assertIsNone(resident.live_once())
+            state = resident.store.get_working_state()
+            self.assertEqual(state.stage, "native_investigation")
+            self.assertEqual(body.move_calls, [])
+            self.assertEqual(body.click_calls, 0)
+            self.assertEqual(visual.calls, [])
+            self.assertIn("effect_probe", state.data["local_failure"])
+            self.assertIn("broader user task", state.data["local_failure"])
+            resident.store.close()
+
+    def test_effect_probe_without_exact_completion_scope_fails_before_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            body = _ClickBody(resident=resident)
+            visual = _ClickVisualRegion(body)
+            resident.body = body
+            resident.visual_region = visual
+            self._event(resident, completion_scope=False)
+            self._advance_until_stage(resident, "native_action")
+
+            self.assertIsNone(resident.live_once())
+            state = resident.store.get_working_state()
+            self.assertEqual(state.stage, "native_investigation")
+            self.assertEqual(body.move_calls, [])
+            self.assertEqual(body.click_calls, 0)
+            self.assertEqual(visual.calls, [])
+            self.assertIn("completion_scope", state.data["local_failure"])
+            self.assertIn("verified_effect", state.data["local_failure"])
+            resident.store.close()
+
+    def test_effect_probe_completion_does_not_credit_task_prose_as_native_ability(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            body = _ClickBody(resident=resident)
+            resident.body = body
+            resident.visual_region = _ClickVisualRegion(body)
+            before = resident.kernel.self_model.get("communication/writing")
+            self.assertEqual(before.evidence_count, 0)
+
+            self._event(
+                resident,
+                task="write the quarterly report",
+            )
+            self._advance_until_stage(resident, "native_action")
+            self.assertIsNone(resident.live_once())
+            self.assertIsNone(resident.live_once())
+            result = resident.live_once()
+
+            self.assertIsNotNone(result)
+            self.assertTrue(result.success)
+            after = resident.kernel.self_model.get("communication/writing")
+            self.assertEqual(after.evidence_count, 0)
+            self.assertEqual(body.click_calls, 1)
             resident.store.close()
 
 
