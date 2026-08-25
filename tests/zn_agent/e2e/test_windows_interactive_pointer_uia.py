@@ -310,6 +310,12 @@ class WindowsInteractivePointerUiAE2ETests(unittest.TestCase):
         user32.SwitchDesktop.restype = wintypes.BOOL
         user32.CloseDesktop.argtypes = [wintypes.HANDLE]
         user32.CloseDesktop.restype = wintypes.BOOL
+        user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+        user32.GetCursorPos.restype = wintypes.BOOL
+        user32.SetCursorPos.argtypes = [ctypes.c_int, ctypes.c_int]
+        user32.SetCursorPos.restype = wintypes.BOOL
+        user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+        user32.GetSystemMetrics.restype = ctypes.c_int
         DESKTOP_READOBJECTS = 0x0001
         DESKTOP_WRITEOBJECTS = 0x0080
         DESKTOP_SWITCHDESKTOP = 0x0100
@@ -331,6 +337,32 @@ class WindowsInteractivePointerUiAE2ETests(unittest.TestCase):
                 )
         finally:
             user32.CloseDesktop(desktop)
+
+        original = wintypes.POINT()
+        if not user32.GetCursorPos(ctypes.byref(original)):
+            raise AssertionError("interactive E2E cannot read the real Windows cursor")
+        width = int(user32.GetSystemMetrics(0))
+        height = int(user32.GetSystemMetrics(1))
+        if width <= 1 or height <= 0:
+            raise AssertionError("interactive E2E cannot read primary screen dimensions")
+        probe_x = int(original.x) + 1 if int(original.x) + 1 < width else max(0, int(original.x) - 1)
+        probe_y = max(0, min(height - 1, int(original.y)))
+        probe = wintypes.POINT()
+        try:
+            if not user32.SetCursorPos(probe_x, probe_y):
+                raise AssertionError(
+                    "Windows input desktop is visible but rejects SetCursorPos; "
+                    "the runner must execute in an unlocked interactive user session"
+                )
+            if not user32.GetCursorPos(ctypes.byref(probe)):
+                raise AssertionError("interactive E2E cannot re-read the cursor after SetCursorPos")
+            if int(probe.x) != probe_x or int(probe.y) != probe_y:
+                raise AssertionError(
+                    "Windows input desktop did not retain a reversible cursor movement; "
+                    f"requested=({probe_x},{probe_y}) observed=({int(probe.x)},{int(probe.y)})"
+                )
+        finally:
+            user32.SetCursorPos(int(original.x), int(original.y))
 
     @staticmethod
     def _wait_for_foreground(title: str, timeout: float = 4.0):
@@ -360,6 +392,18 @@ class WindowsInteractivePointerUiAE2ETests(unittest.TestCase):
                     f"event reached terminal result before {stage}: {result}"
                 )
         raise AssertionError(f"resident did not reach {stage}")
+
+    @staticmethod
+    def _body_trace(resident, limit: int = 8) -> list[dict[str, object]]:
+        return [
+            {
+                "kind": item.kind,
+                "success": item.success,
+                "error": item.error,
+                "data": item.data,
+            }
+            for item in reversed(resident.body.recent_actions(limit))
+        ]
 
     def test_real_resident_click_proves_visual_foreground_and_uia_focus(self) -> None:
         self._require_input_desktop()
@@ -391,96 +435,126 @@ class WindowsInteractivePointerUiAE2ETests(unittest.TestCase):
                     config={"model": {}},
                     store_path=Path(tmp) / "kernel.db",
                 )
-                pointer = resident.body.act("pointer_state")
-                self.assertTrue(pointer.success, pointer.error)
-                original_pointer = (int(pointer.data["x"]), int(pointer.data["y"]))
-                width = int(pointer.data["screen_width"])
-                height = int(pointer.data["screen_height"])
-                self.assertGreater(width, 0)
-                self.assertGreater(height, 0)
+                try:
+                    pointer = resident.body.act("pointer_state")
+                    self.assertTrue(pointer.success, pointer.error)
+                    original_pointer = (int(pointer.data["x"]), int(pointer.data["y"]))
+                    width = int(pointer.data["screen_width"])
+                    height = int(pointer.data["screen_height"])
+                    self.assertGreater(width, 0)
+                    self.assertGreater(height, 0)
 
-                x_fraction = round(target_x / max(1, width - 1), 6)
-                y_fraction = round(target_y / max(1, height - 1), 6)
-                predicted_x = int(round(x_fraction * max(0, width - 1)))
-                predicted_y = int(round(y_fraction * max(0, height - 1)))
-                self.assertLessEqual(abs(predicted_x - target_x), 1)
-                self.assertLessEqual(abs(predicted_y - target_y), 1)
+                    x_fraction = round(target_x / max(1, width - 1), 6)
+                    y_fraction = round(target_y / max(1, height - 1), 6)
+                    predicted_x = int(round(x_fraction * max(0, width - 1)))
+                    predicted_y = int(round(y_fraction * max(0, height - 1)))
+                    self.assertLessEqual(abs(predicted_x - target_x), 1)
+                    self.assertLessEqual(abs(predicted_y - target_y), 1)
 
-                visual = NativeVisualRegionSense().probe(
-                    center_x_fraction=x_fraction,
-                    center_y_fraction=y_fraction,
-                    width_fraction=0.08,
-                    height_fraction=0.08,
-                )
-                self.assertTrue(visual.signature)
-                self.assertFalse(visual.raw_frame_persisted)
-
-                resident.enqueue(
-                    "focus the exact owned UI element at the pointer target",
-                    kind="ui_state_transition",
-                    payload={
-                        "body_action": {
-                            "kind": "pointer_click",
-                            "args": {
-                                "x_fraction": x_fraction,
-                                "y_fraction": y_fraction,
-                                "button": "left",
-                            },
-                        },
-                        "expected_outcome": {
-                            "kind": "visual_region_changed",
-                            "width_fraction": 0.08,
-                            "height_fraction": 0.08,
-                        },
-                        "completion_scope": {
-                            "kind": "focused_automation_element_at_pointer",
-                            "process_name": foreground.process_name,
-                            "title_equals": fixture.TITLE,
-                        },
-                        "action_precondition": {
-                            "kind": "foreground_window_matches",
-                            "process_name": foreground.process_name,
-                            "title_equals": fixture.TITLE,
-                        },
-                        "model_policy": "never",
-                    },
-                )
-                self._advance_until_stage(resident, "native_action")
-
-                self.assertIsNone(resident.live_once())
-                moved = resident.body.act("pointer_state")
-                self.assertTrue(moved.success, moved.error)
-                self.assertLessEqual(abs(int(moved.data["x"]) - predicted_x), 1)
-                self.assertLessEqual(abs(int(moved.data["y"]) - predicted_y), 1)
-
-                self.assertIsNone(resident.live_once())
-                self.assertTrue(
-                    fixture.clicked.wait(3.0),
-                    "real SendInput click did not reach the owned target control",
-                )
-                if fixture.error is not None:
-                    raise AssertionError(
-                        "fixture failed after click: "
-                        f"{type(fixture.error).__name__}: {fixture.error}"
+                    visual = NativeVisualRegionSense().probe(
+                        center_x_fraction=x_fraction,
+                        center_y_fraction=y_fraction,
+                        width_fraction=0.08,
+                        height_fraction=0.08,
                     )
+                    self.assertTrue(visual.signature)
+                    self.assertFalse(visual.raw_frame_persisted)
 
-                result = resident.live_once()
-                self.assertIsNotNone(result)
-                self.assertTrue(result.success, result)
-                self.assertEqual(result.execution_path, ExecutionPath.BODY)
-                self.assertIn("exact opaque element", result.reason)
+                    resident.enqueue(
+                        "focus the exact owned UI element at the pointer target",
+                        kind="ui_state_transition",
+                        payload={
+                            "body_action": {
+                                "kind": "pointer_click",
+                                "args": {
+                                    "x_fraction": x_fraction,
+                                    "y_fraction": y_fraction,
+                                    "button": "left",
+                                },
+                            },
+                            "expected_outcome": {
+                                "kind": "visual_region_changed",
+                                "width_fraction": 0.08,
+                                "height_fraction": 0.08,
+                            },
+                            "completion_scope": {
+                                "kind": "focused_automation_element_at_pointer",
+                                "process_name": foreground.process_name,
+                                "title_equals": fixture.TITLE,
+                            },
+                            "action_precondition": {
+                                "kind": "foreground_window_matches",
+                                "process_name": foreground.process_name,
+                                "title_equals": fixture.TITLE,
+                            },
+                            "model_policy": "never",
+                        },
+                    )
+                    self._advance_until_stage(resident, "native_action")
 
-                focused_after = automation.probe_focused()
-                self.assertEqual(focused_after.runtime_id, target_before.runtime_id)
-                self.assertTrue(focused_after.has_keyboard_focus)
-                focused_native_after = NativeFocusedControlSense().probe()
-                self.assertEqual(
-                    focused_native_after.control_id,
-                    fixture.TARGET_CONTROL_ID,
-                )
+                    self.assertIsNone(resident.live_once())
+                    state_after_move = resident.store.get_working_state()
+                    prepared = state_after_move.data.get(
+                        resident._POINTER_CLICK_PRECONDITION_KEY
+                    )
+                    if (
+                        state_after_move.stage != "native_action"
+                        or not isinstance(prepared, dict)
+                        or not prepared.get("position_verified")
+                    ):
+                        self.fail(
+                            "resident did not establish durable pointer-click preparation after "
+                            "the first native_action pulse; "
+                            f"stage={state_after_move.stage!r} "
+                            f"local_failure={state_after_move.data.get('local_failure')!r} "
+                            f"body_actions={self._body_trace(resident)!r}"
+                        )
+                    self.assertEqual(int(prepared["target_x"]), predicted_x)
+                    self.assertEqual(int(prepared["target_y"]), predicted_y)
 
-                resident.store.close()
-                resident = None
+                    moved = resident.body.act("pointer_state")
+                    self.assertTrue(moved.success, moved.error)
+                    if (
+                        abs(int(moved.data["x"]) - predicted_x) > 1
+                        or abs(int(moved.data["y"]) - predicted_y) > 1
+                    ):
+                        self.fail(
+                            "resident recorded a verified pointer preparation but the real cursor "
+                            "no longer matches it before the next pulse; another input source may "
+                            "have moved the cursor or the desktop stopped accepting pointer state. "
+                            f"expected=({predicted_x},{predicted_y}) "
+                            f"observed=({moved.data['x']},{moved.data['y']}) "
+                            f"body_actions={self._body_trace(resident)!r}"
+                        )
+
+                    self.assertIsNone(resident.live_once())
+                    self.assertTrue(
+                        fixture.clicked.wait(3.0),
+                        "real SendInput click did not reach the owned target control",
+                    )
+                    if fixture.error is not None:
+                        raise AssertionError(
+                            "fixture failed after click: "
+                            f"{type(fixture.error).__name__}: {fixture.error}"
+                        )
+
+                    result = resident.live_once()
+                    self.assertIsNotNone(result)
+                    self.assertTrue(result.success, result)
+                    self.assertEqual(result.execution_path, ExecutionPath.BODY)
+                    self.assertIn("exact opaque element", result.reason)
+
+                    focused_after = automation.probe_focused()
+                    self.assertEqual(focused_after.runtime_id, target_before.runtime_id)
+                    self.assertTrue(focused_after.has_keyboard_focus)
+                    focused_native_after = NativeFocusedControlSense().probe()
+                    self.assertEqual(
+                        focused_native_after.control_id,
+                        fixture.TARGET_CONTROL_ID,
+                    )
+                finally:
+                    resident.store.close()
+                    resident = None
         finally:
             if resident is not None:
                 resident.store.close()
