@@ -1,0 +1,88 @@
+name: ZN Runner Task Diagnostics
+
+on:
+  push:
+    branches:
+      - dev/zn-agent
+    paths:
+      - .github/workflows/zn-runner-task-diagnostics.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  task-diagnostics:
+    name: Runner scheduler task evidence
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Identify scheduler task near listener launch
+        shell: powershell
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows') {
+            Write-Host "runner.scheduler=non-windows"
+            exit 0
+          }
+
+          $listener = Get-CimInstance Win32_Process -Filter "Name = 'Runner.Listener.exe'" |
+            Sort-Object CreationDate -Descending |
+            Select-Object -First 1
+          if ($null -eq $listener) {
+            throw 'Runner.Listener.exe is not running'
+          }
+
+          $cursor = $listener
+          $launcher = $null
+          for ($depth = 0; $depth -lt 12 -and $null -ne $cursor; $depth++) {
+            if ($cursor.Name -eq 'powershell.exe') {
+              $launcher = $cursor
+              break
+            }
+            if (-not $cursor.ParentProcessId) { break }
+            $cursor = Get-CimInstance Win32_Process -Filter "ProcessId = $($cursor.ParentProcessId)"
+          }
+          if ($null -eq $launcher) {
+            throw 'No PowerShell launcher ancestor found for Runner.Listener.exe'
+          }
+
+          $launcherTime = [System.Management.ManagementDateTimeConverter]::ToDateTime([string]$launcher.CreationDate)
+          Write-Host "runner.launcher.pid=$($launcher.ProcessId)"
+          Write-Host "runner.launcher.created=$launcherTime"
+
+          $matches = @()
+          foreach ($task in Get-ScheduledTask -ErrorAction Stop) {
+            $info = $null
+            try {
+              $info = Get-ScheduledTaskInfo -TaskName $task.TaskName -TaskPath $task.TaskPath -ErrorAction Stop
+            } catch {
+              continue
+            }
+            if ($null -eq $info.LastRunTime -or $info.LastRunTime -eq [datetime]::MinValue) {
+              continue
+            }
+            $delta = [Math]::Abs(($info.LastRunTime - $launcherTime).TotalSeconds)
+            if ($delta -le 180) {
+              $matches += [pscustomobject]@{
+                DeltaSeconds = [Math]::Round($delta, 3)
+                TaskPath = $task.TaskPath
+                TaskName = $task.TaskName
+                State = $task.State
+                LastRunTime = $info.LastRunTime
+                LastTaskResult = $info.LastTaskResult
+                NextRunTime = $info.NextRunTime
+              }
+            }
+          }
+
+          $matches = @($matches | Sort-Object DeltaSeconds,TaskPath,TaskName)
+          Write-Host "runner.scheduler.match_count=$($matches.Count)"
+          foreach ($match in $matches) {
+            Write-Host "runner.scheduler.task.path=$($match.TaskPath)"
+            Write-Host "runner.scheduler.task.name=$($match.TaskName)"
+            Write-Host "runner.scheduler.task.state=$($match.State)"
+            Write-Host "runner.scheduler.task.delta_seconds=$($match.DeltaSeconds)"
+            Write-Host "runner.scheduler.task.last_run=$($match.LastRunTime)"
+            Write-Host "runner.scheduler.task.last_result=$($match.LastTaskResult)"
+            Write-Host "runner.scheduler.task.next_run=$($match.NextRunTime)"
+          }
