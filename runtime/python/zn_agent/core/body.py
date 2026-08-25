@@ -14,6 +14,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
+import psutil
+
 from .models import utc_now
 from .terminal import TerminalRequest, TerminalResult, get_zn_local_terminal
 
@@ -260,20 +262,10 @@ class NativeBody:
 
     def _process_state(self, action: BodyAction, started: str) -> BodyActionResult:
         pid = int(action.args.get("pid", os.getpid()))
-        alive = True
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            alive = False
-        except PermissionError:
-            alive = True
-        except OSError:
-            alive = False
+        alive = bool(pid > 0 and psutil.pid_exists(pid))
         data: dict[str, Any] = {"pid": pid, "alive": alive}
         if alive:
             try:
-                import psutil
-
                 proc = psutil.Process(pid)
                 data.update(
                     {
@@ -650,9 +642,6 @@ class NativeBody:
                 "untracked_paths": untracked_paths,
                 "conflicted_files": len(conflicted_paths),
                 "conflicted_paths": conflicted_paths,
-                # Retain the bounded porcelain lines for existing callers that
-                # need compact status evidence, but make structured paths the
-                # primary resident-owned repository contract.
                 "changes": changes,
             },
         )
