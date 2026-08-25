@@ -187,7 +187,7 @@ tests/zn_agent/core/test_pointer_click_semantic_completion.py        added
 
 The previous `pointer_click_completion_resident.py` was not modified. `dev/zn-agent` was advanced with `force=false`.
 
-No `ZN.md`, `ZN-SOURCE-EXTRACTION.md`, or `ZN-SELF-MAINTENANCE.md` change is required for this stage: no architecture direction, Hermes extraction state, or self-maintenance architecture changed.
+No `ZN.md`, `ZN-SOURCE-EXTRACTION.md`, or `ZN-SELF-MAINTENANCE.md` change is required for this stage: no architecture direction, reference-source extraction state, or self-maintenance architecture changed.
 
 ## Risks / boundaries
 
