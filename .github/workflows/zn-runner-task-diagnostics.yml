@@ -65,24 +65,29 @@ jobs:
             if ($delta -le 180) {
               $matches += [pscustomobject]@{
                 DeltaSeconds = [Math]::Round($delta, 3)
-                TaskPath = $task.TaskPath
-                TaskName = $task.TaskName
-                State = $task.State
-                LastRunTime = $info.LastRunTime
-                LastTaskResult = $info.LastTaskResult
-                NextRunTime = $info.NextRunTime
+                Task = $task
+                Info = $info
               }
             }
           }
 
-          $matches = @($matches | Sort-Object DeltaSeconds,TaskPath,TaskName)
+          $matches = @($matches | Sort-Object DeltaSeconds)
           Write-Host "runner.scheduler.match_count=$($matches.Count)"
           foreach ($match in $matches) {
-            Write-Host "runner.scheduler.task.path=$($match.TaskPath)"
-            Write-Host "runner.scheduler.task.name=$($match.TaskName)"
-            Write-Host "runner.scheduler.task.state=$($match.State)"
+            $task = $match.Task
+            $info = $match.Info
+            Write-Host "runner.scheduler.task.path=$($task.TaskPath)"
+            Write-Host "runner.scheduler.task.name=$($task.TaskName)"
+            Write-Host "runner.scheduler.task.state=$($task.State)"
             Write-Host "runner.scheduler.task.delta_seconds=$($match.DeltaSeconds)"
-            Write-Host "runner.scheduler.task.last_run=$($match.LastRunTime)"
-            Write-Host "runner.scheduler.task.last_result=$($match.LastTaskResult)"
-            Write-Host "runner.scheduler.task.next_run=$($match.NextRunTime)"
+            Write-Host "runner.scheduler.task.last_run=$($info.LastRunTime)"
+            Write-Host "runner.scheduler.task.last_result=$($info.LastTaskResult)"
+            Write-Host "runner.scheduler.task.next_run=$($info.NextRunTime)"
+            Write-Host "runner.scheduler.task.execution_time_limit=$($task.Settings.ExecutionTimeLimit)"
+            Write-Host "runner.scheduler.task.multiple_instances=$($task.Settings.MultipleInstances)"
+            Write-Host "runner.scheduler.task.restart_count=$($task.Settings.RestartCount)"
+            Write-Host "runner.scheduler.task.restart_interval=$($task.Settings.RestartInterval)"
+            Write-Host "runner.scheduler.task.stop_if_batteries=$($task.Settings.StopIfGoingOnBatteries)"
+            Write-Host "runner.scheduler.task.wake_to_run=$($task.Settings.WakeToRun)"
+            Write-Host "runner.scheduler.task.allow_demand_start=$($task.Settings.AllowDemandStart)"
           }
