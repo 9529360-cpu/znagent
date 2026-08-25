@@ -5,10 +5,12 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from zn_agent.core.automation_element_sense import (
     AutomationElementObservation,
     NativeAutomationElementSense,
+    _WindowsUiAutomationReader,
 )
 from zn_agent.core.models import utc_now
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
@@ -66,6 +68,37 @@ class AutomationElementSenseTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "runtime id"):
             sense.probe_at_point(1, 2)
+
+    def test_snapshot_reads_runtime_id_through_standard_cached_property_api(self):
+        class CachedElement:
+            CachedProcessId = 321
+            CachedFrameworkId = "test-framework"
+            CachedControlType = 50004
+            CachedClassName = "TestEdit"
+            CachedIsEnabled = True
+            CachedIsKeyboardFocusable = True
+            CachedHasKeyboardFocus = False
+            CachedIsOffscreen = False
+            CachedNativeWindowHandle = 0
+
+            def __init__(self):
+                self.calls = []
+
+            def GetCachedPropertyValue(self, property_id):
+                self.calls.append(property_id)
+                return (42, 7, 9)
+
+        element = CachedElement()
+        with patch("psutil.Process") as process:
+            process.return_value.name.return_value = "notepad.exe"
+            observation = _WindowsUiAutomationReader._snapshot(
+                element,
+                runtime_id_property_id=30000,
+            )
+
+        self.assertEqual(element.calls, [30000])
+        self.assertEqual(observation.runtime_id, (42, 7, 9))
+        self.assertFalse(hasattr(element, "CachedRuntimeId"))
 
     def test_active_resident_owns_automation_sense_without_probing_on_boot(self):
         with tempfile.TemporaryDirectory() as tmp:

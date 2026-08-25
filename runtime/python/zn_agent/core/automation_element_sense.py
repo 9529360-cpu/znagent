@@ -176,7 +176,10 @@ class _WindowsUiAutomationReader:
                     raise ValueError(f"unknown automation element probe mode: {request.mode}")
                 if not element:
                     raise RuntimeError("Windows UI Automation returned no element")
-                request.result = self._snapshot(element)
+                request.result = self._snapshot(
+                    element,
+                    runtime_id_property_id=client.UIA_RuntimeIdPropertyId,
+                )
             except Exception as exc:
                 request.error = f"Windows UI Automation read probe failed: {type(exc).__name__}: {exc}"
             finally:
@@ -184,8 +187,13 @@ class _WindowsUiAutomationReader:
                     request.done.set()
 
     @staticmethod
-    def _snapshot(element) -> AutomationElementObservation:
-        runtime_id = tuple(int(value) for value in element.CachedRuntimeId)
+    def _snapshot(element, *, runtime_id_property_id: int) -> AutomationElementObservation:
+        # RuntimeId is a normal cached UIA property, but generated COM wrappers
+        # do not consistently expose a CachedRuntimeId convenience accessor.
+        # Read it through the standard cached-property method so the Sense keeps
+        # AutomationElementMode_None and never falls back to a current/full read.
+        runtime_value = element.GetCachedPropertyValue(int(runtime_id_property_id))
+        runtime_id = tuple(int(value) for value in runtime_value)
         process_id = int(element.CachedProcessId)
         try:
             import psutil
