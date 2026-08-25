@@ -289,13 +289,31 @@ class NativeBody:
         return self._ok(action, started, data=data)
 
     def _pointer_state(self, action: BodyAction, started: str) -> BodyActionResult:
-        return self._ok(action, started, data=self._read_primary_pointer_state())
+        return self._ok(
+            action,
+            started,
+            data=self._read_primary_pointer_state(),
+        )
 
     def _pointer_move(self, action: BodyAction, started: str) -> BodyActionResult:
-        """Move the primary-screen pointer from explicit normalized coordinates."""
+        """Move the primary-screen pointer from explicit normalized coordinates.
 
-        x_fraction = self._unit_fraction_arg(action.args, "x_fraction", action_kind="pointer_move")
-        y_fraction = self._unit_fraction_arg(action.args, "y_fraction", action_kind="pointer_move")
+        This is intentionally only a movement primitive. It does not click,
+        select an element, interpret a screen, or infer coordinates from task
+        prose. The resident verification lifecycle must re-observe pointer state
+        before the event can be completed.
+        """
+
+        x_fraction = self._unit_fraction_arg(
+            action.args,
+            "x_fraction",
+            action_kind="pointer_move",
+        )
+        y_fraction = self._unit_fraction_arg(
+            action.args,
+            "y_fraction",
+            action_kind="pointer_move",
+        )
         before = self._read_primary_pointer_state()
         width = int(before.get("screen_width") or 0)
         height = int(before.get("screen_height") or 0)
@@ -327,7 +345,12 @@ class NativeBody:
                 started_at=started,
                 completed_at=utc_now(),
             )
-        return self._ok(action, started, output=f"{target_x},{target_y}", data=data)
+        return self._ok(
+            action,
+            started,
+            output=f"{target_x},{target_y}",
+            data=data,
+        )
 
     def _pointer_click(self, action: BodyAction, started: str) -> BodyActionResult:
         """Send one bounded click only when the pointer is already at its target.
@@ -338,8 +361,16 @@ class NativeBody:
         before the non-replayable click is sent.
         """
 
-        x_fraction = self._unit_fraction_arg(action.args, "x_fraction", action_kind="pointer_click")
-        y_fraction = self._unit_fraction_arg(action.args, "y_fraction", action_kind="pointer_click")
+        x_fraction = self._unit_fraction_arg(
+            action.args,
+            "x_fraction",
+            action_kind="pointer_click",
+        )
+        y_fraction = self._unit_fraction_arg(
+            action.args,
+            "y_fraction",
+            action_kind="pointer_click",
+        )
         button = str(action.args.get("button") or "left").strip().lower()
         if button != "left":
             raise ValueError("pointer_click currently supports only the left button")
@@ -368,7 +399,10 @@ class NativeBody:
             "tolerance_pixels": tolerance,
             "button": button,
         }
-        if abs(current_x - target_x) > tolerance or abs(current_y - target_y) > tolerance:
+        if (
+            abs(current_x - target_x) > tolerance
+            or abs(current_y - target_y) > tolerance
+        ):
             return BodyActionResult(
                 action_id=action.action_id,
                 kind=action.kind,
@@ -394,7 +428,12 @@ class NativeBody:
                 started_at=started,
                 completed_at=utc_now(),
             )
-        return self._ok(action, started, output=f"{button}@{target_x},{target_y}", data=data)
+        return self._ok(
+            action,
+            started,
+            output=f"{button}@{target_x},{target_y}",
+            data=data,
+        )
 
     def _read_primary_pointer_state(self) -> dict[str, Any]:
         if platform.system() != "Windows":
@@ -459,14 +498,31 @@ class NativeBody:
 
         class Input(ctypes.Structure):
             _anonymous_ = ("union",)
-            _fields_ = [("type", wintypes.DWORD), ("union", InputUnion)]
+            _fields_ = [
+                ("type", wintypes.DWORD),
+                ("union", InputUnion),
+            ]
 
-        events = (Input * 2)()
-        events[0].type = 0
-        events[0].mi = MouseInput(0, 0, 0, 0x0002, 0, 0)
-        events[1].type = 0
-        events[1].mi = MouseInput(0, 0, 0, 0x0004, 0, 0)
-        sent = int(ctypes.windll.user32.SendInput(len(events), events, ctypes.sizeof(Input)))
+        input_mouse = 0
+        mouse_left_down = 0x0002
+        mouse_left_up = 0x0004
+        events = (Input * 2)(
+            Input(
+                type=input_mouse,
+                mi=MouseInput(0, 0, 0, mouse_left_down, 0, 0),
+            ),
+            Input(
+                type=input_mouse,
+                mi=MouseInput(0, 0, 0, mouse_left_up, 0, 0),
+            ),
+        )
+        sent = int(
+            ctypes.windll.user32.SendInput(
+                len(events),
+                events,
+                ctypes.sizeof(Input),
+            )
+        )
         return sent == len(events)
 
     @staticmethod
@@ -520,15 +576,23 @@ class NativeBody:
         branch_proc = run("branch", "--show-current")
         head_proc = run("rev-parse", "--verify", "HEAD")
         status_proc = run("status", "--porcelain")
-        staged_proc = run("diff", "--cached", "--name-only", "-z", "--diff-filter=ACDMRTUXB")
+        staged_proc = run(
+            "diff", "--cached", "--name-only", "-z", "--diff-filter=ACDMRTUXB"
+        )
         unstaged_proc = run("diff", "--name-only", "-z", "--diff-filter=ACDMRTUXB")
         untracked_proc = run("ls-files", "--others", "--exclude-standard", "-z")
         conflicted_proc = run("diff", "--name-only", "-z", "--diff-filter=U")
-        upstream_proc = run("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+        upstream_proc = run(
+            "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"
+        )
 
         branch = branch_proc.stdout.strip() if branch_proc.returncode == 0 else ""
         head = head_proc.stdout.strip() if head_proc.returncode == 0 else None
-        upstream = upstream_proc.stdout.strip() if upstream_proc.returncode == 0 and upstream_proc.stdout.strip() else None
+        upstream = (
+            upstream_proc.stdout.strip()
+            if upstream_proc.returncode == 0 and upstream_proc.stdout.strip()
+            else None
+        )
         ahead: int | None = None
         behind: int | None = None
         if head and upstream:
@@ -547,8 +611,21 @@ class NativeBody:
         unstaged_paths = nul_paths(unstaged_proc)
         untracked_paths = nul_paths(untracked_proc)
         conflicted_paths = nul_paths(conflicted_proc)
-        changed_paths = list(dict.fromkeys([*staged_paths, *unstaged_paths, *untracked_paths, *conflicted_paths]))[:limit]
-        changes = [line for line in status_proc.stdout.splitlines() if line.strip()][:limit] if status_proc.returncode == 0 else []
+        changed_paths = list(
+            dict.fromkeys(
+                [
+                    *staged_paths,
+                    *unstaged_paths,
+                    *untracked_paths,
+                    *conflicted_paths,
+                ]
+            )
+        )[:limit]
+        changes = (
+            [line for line in status_proc.stdout.splitlines() if line.strip()][:limit]
+            if status_proc.returncode == 0
+            else []
+        )
 
         return self._ok(
             action,
@@ -573,6 +650,9 @@ class NativeBody:
                 "untracked_paths": untracked_paths,
                 "conflicted_files": len(conflicted_paths),
                 "conflicted_paths": conflicted_paths,
+                # Retain the bounded porcelain lines for existing callers that
+                # need compact status evidence, but make structured paths the
+                # primary resident-owned repository contract.
                 "changes": changes,
             },
         )
@@ -584,7 +664,9 @@ class NativeBody:
             text = text[2:]
         if not text:
             raise ValueError("git_diff relative_path must not be empty")
-        if text.startswith("/") or (len(text) >= 3 and text[0].isalpha() and text[1] == ":" and text[2] == "/"):
+        if text.startswith("/") or (
+            len(text) >= 3 and text[0].isalpha() and text[1] == ":" and text[2] == "/"
+        ):
             raise ValueError("git_diff relative_path must be repository-relative")
         candidate = PurePosixPath(text)
         if not candidate.parts or any(part == ".." for part in candidate.parts):
@@ -600,9 +682,14 @@ class NativeBody:
         workspace = self._path_arg(action.args, default=os.getcwd())
         limit = max(1, min(1000, int(action.args.get("limit", 200))))
         timeout = max(1.0, float(action.args.get("timeout", 8.0)))
-        max_output_chars = max(512, min(200_000, int(action.args.get("max_output_chars", 50_000))))
+        max_output_chars = max(
+            512,
+            min(200_000, int(action.args.get("max_output_chars", 50_000))),
+        )
         raw_scope = action.args.get("relative_path")
-        scope_relative = self._git_diff_scope(raw_scope) if raw_scope is not None else None
+        scope_relative = (
+            self._git_diff_scope(raw_scope) if raw_scope is not None else None
+        )
         pathspec = f":(literal){scope_relative}" if scope_relative else "."
 
         def run(*parts: str) -> subprocess.CompletedProcess[str]:
@@ -632,13 +719,33 @@ class NativeBody:
                 completed_at=utc_now(),
             )
 
-        worktree_patch_proc = run("diff", "--no-ext-diff", "--no-textconv", "--no-color", "--", pathspec)
-        staged_patch_proc = run("diff", "--cached", "--no-ext-diff", "--no-textconv", "--no-color", "--", pathspec)
-        worktree_paths_proc = run("diff", "--name-only", "-z", "--diff-filter=ACDMRTUXB", "--", pathspec)
-        staged_paths_proc = run("diff", "--cached", "--name-only", "-z", "--diff-filter=ACDMRTUXB", "--", pathspec)
-        untracked_proc = run("ls-files", "--others", "--exclude-standard", "-z", "--", pathspec)
-        scope_tracked_proc = run("ls-files", "--error-unmatch", "--", pathspec) if scope_relative else None
-        for proc in (worktree_patch_proc, staged_patch_proc, worktree_paths_proc, staged_paths_proc, untracked_proc):
+        worktree_patch_proc = run(
+            "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--", pathspec
+        )
+        staged_patch_proc = run(
+            "diff", "--cached", "--no-ext-diff", "--no-textconv", "--no-color", "--", pathspec
+        )
+        worktree_paths_proc = run(
+            "diff", "--name-only", "-z", "--diff-filter=ACDMRTUXB", "--", pathspec
+        )
+        staged_paths_proc = run(
+            "diff", "--cached", "--name-only", "-z", "--diff-filter=ACDMRTUXB", "--", pathspec
+        )
+        untracked_proc = run(
+            "ls-files", "--others", "--exclude-standard", "-z", "--", pathspec
+        )
+        scope_tracked_proc = (
+            run("ls-files", "--error-unmatch", "--", pathspec)
+            if scope_relative
+            else None
+        )
+        for proc in (
+            worktree_patch_proc,
+            staged_patch_proc,
+            worktree_paths_proc,
+            staged_paths_proc,
+            untracked_proc,
+        ):
             if proc.returncode != 0:
                 return BodyActionResult(
                     action_id=action.action_id,
@@ -655,7 +762,11 @@ class NativeBody:
                 action_id=action.action_id,
                 kind=action.kind,
                 success=False,
-                error=(scope_tracked_proc.stderr or scope_tracked_proc.stdout or "git tracked-path observation failed").strip(),
+                error=(
+                    scope_tracked_proc.stderr
+                    or scope_tracked_proc.stdout
+                    or "git tracked-path observation failed"
+                ).strip(),
                 data={"workspace": str(workspace), "exit_code": scope_tracked_proc.returncode},
                 event_id=action.event_id,
                 started_at=started,
@@ -667,7 +778,9 @@ class NativeBody:
         worktree_paths = nul_paths(worktree_paths_proc)
         staged_paths = nul_paths(staged_paths_proc)
         untracked_paths = nul_paths(untracked_proc)
-        changed_paths = list(dict.fromkeys([*worktree_paths, *staged_paths, *untracked_paths]))[:limit]
+        changed_paths = list(
+            dict.fromkeys([*worktree_paths, *staged_paths, *untracked_paths])
+        )[:limit]
 
         scope_limit = max(256, max_output_chars // 2)
         worktree_patch = worktree_raw[:scope_limit]
@@ -688,11 +801,20 @@ class NativeBody:
 
         head_proc = run("rev-parse", "--verify", "HEAD")
         head = head_proc.stdout.strip() if head_proc.returncode == 0 else None
-        state_value: dict[str, Any] = {"worktree": worktree_raw, "staged": staged_raw, "untracked": untracked_paths}
+        state_value: dict[str, Any] = {
+            "worktree": worktree_raw,
+            "staged": staged_raw,
+            "untracked": untracked_paths,
+        }
         if scope_relative:
             state_value["scope"] = scope_relative
         state_fingerprint = hashlib.sha256(
-            json.dumps(state_value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            json.dumps(
+                state_value,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
         ).hexdigest()
 
         return self._ok(
@@ -707,13 +829,19 @@ class NativeBody:
                 "changed_files": len(changed_paths),
                 "changed_paths": changed_paths,
                 "scope_relative_path": scope_relative,
-                "scope_tracked": bool(scope_tracked_proc.returncode == 0) if scope_tracked_proc is not None else None,
+                "scope_tracked": (
+                    bool(scope_tracked_proc.returncode == 0)
+                    if scope_tracked_proc is not None
+                    else None
+                ),
                 "worktree": {
                     "paths": worktree_paths,
                     "files": len(worktree_paths),
                     "patch": worktree_patch,
                     "patch_chars": len(worktree_raw),
-                    "patch_sha256": hashlib.sha256(worktree_raw.encode("utf-8")).hexdigest(),
+                    "patch_sha256": hashlib.sha256(
+                        worktree_raw.encode("utf-8")
+                    ).hexdigest(),
                     "truncated": worktree_truncated,
                 },
                 "staged": {
@@ -721,7 +849,9 @@ class NativeBody:
                     "files": len(staged_paths),
                     "patch": staged_patch,
                     "patch_chars": len(staged_raw),
-                    "patch_sha256": hashlib.sha256(staged_raw.encode("utf-8")).hexdigest(),
+                    "patch_sha256": hashlib.sha256(
+                        staged_raw.encode("utf-8")
+                    ).hexdigest(),
                     "truncated": staged_truncated,
                 },
                 "untracked_paths": untracked_paths,
@@ -736,14 +866,27 @@ class NativeBody:
         if not command:
             raise ValueError("command body action requires command")
 
-        context_id = str(action.args.get("session_id") or action.args.get("task_id") or action.event_id or "zn-resident")
+        context_id = str(
+            action.args.get("session_id")
+            or action.args.get("task_id")
+            or action.event_id
+            or "zn-resident"
+        )
         explicit_env = action.args.get("env")
-        env = {str(key): str(value) for key, value in explicit_env.items()} if isinstance(explicit_env, dict) else {}
+        env = (
+            {str(key): str(value) for key, value in explicit_env.items()}
+            if isinstance(explicit_env, dict)
+            else {}
+        )
         result = get_zn_local_terminal().execute(
             TerminalRequest(
                 command=command,
                 context_id=context_id,
-                workdir=str(action.args["workdir"]) if action.args.get("workdir") is not None else None,
+                workdir=(
+                    str(action.args["workdir"])
+                    if action.args.get("workdir") is not None
+                    else None
+                ),
                 timeout=float(action.args.get("timeout", 60.0)),
                 background=bool(action.args.get("background", False)),
                 pty=bool(action.args.get("pty", False)),
@@ -755,7 +898,13 @@ class NativeBody:
         )
         return self._terminal_body_result(action, started, result)
 
-    def _terminal_session(self, action: BodyAction, started: str, *, operation: str) -> BodyActionResult:
+    def _terminal_session(
+        self,
+        action: BodyAction,
+        started: str,
+        *,
+        operation: str,
+    ) -> BodyActionResult:
         session_id = str(action.args.get("session_id") or "").strip()
         if not session_id:
             raise ValueError(f"{action.kind} body action requires session_id")
@@ -769,17 +918,18 @@ class NativeBody:
                 data = action.args["input"]
             else:
                 raise ValueError(f"{action.kind} body action requires data/input")
-            return self._terminal_body_result(action, started, terminal.write_stdin(session_id, str(data)))
-        if operation == "resize":
             return self._terminal_body_result(
                 action,
                 started,
-                terminal.resize(
-                    session_id,
-                    cols=max(1, int(action.args.get("cols", 80))),
-                    rows=max(1, int(action.args.get("rows", 24))),
-                ),
+                terminal.write_stdin(session_id, str(data)),
             )
+        if operation == "resize":
+            result = terminal.resize(
+                session_id,
+                cols=max(1, int(action.args.get("cols", 80))),
+                rows=max(1, int(action.args.get("rows", 24))),
+            )
+            return self._terminal_body_result(action, started, result)
         if operation == "stop":
             result = terminal.stop(session_id)
             return BodyActionResult(
@@ -796,7 +946,11 @@ class NativeBody:
         raise ValueError(f"unknown terminal session operation: {operation}")
 
     @staticmethod
-    def _terminal_body_result(action: BodyAction, started: str, result: TerminalResult) -> BodyActionResult:
+    def _terminal_body_result(
+        action: BodyAction,
+        started: str,
+        result: TerminalResult,
+    ) -> BodyActionResult:
         return BodyActionResult(
             action_id=action.action_id,
             kind=action.kind,
@@ -817,7 +971,13 @@ class NativeBody:
         return Path(str(raw)).expanduser()
 
     @staticmethod
-    def _ok(action: BodyAction, started: str, *, output: str = "", data: dict[str, Any] | None = None) -> BodyActionResult:
+    def _ok(
+        action: BodyAction,
+        started: str,
+        *,
+        output: str = "",
+        data: dict[str, Any] | None = None,
+    ) -> BodyActionResult:
         return BodyActionResult(
             action_id=action.action_id,
             kind=action.kind,
