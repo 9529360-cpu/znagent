@@ -360,6 +360,9 @@ class WindowsInteractivePointerUiAE2ETests(unittest.TestCase):
             self.assertTrue(target_before.is_enabled)
             self.assertTrue(target_before.is_keyboard_focusable)
             self.assertFalse(target_before.is_offscreen)
+            self.assertIsInstance(target_before.automation_id, str)
+            self.assertLessEqual(len(target_before.automation_id), 256)
+            self.assertFalse(hasattr(target_before, "name"))
             self.assertFalse(fixture.target_checked())
 
             with tempfile.TemporaryDirectory() as tmp:
@@ -416,6 +419,8 @@ class WindowsInteractivePointerUiAE2ETests(unittest.TestCase):
                                 "kind": "focused_automation_element_at_pointer",
                                 "process_name": foreground.process_name,
                                 "title_equals": fixture.TITLE,
+                                "control_type": target_before.control_type,
+                                "class_name_equals": target_before.class_name,
                             },
                             "action_precondition": {
                                 "kind": "foreground_window_matches",
@@ -460,9 +465,12 @@ class WindowsInteractivePointerUiAE2ETests(unittest.TestCase):
                     self.assertTrue(result.success, result)
                     self.assertEqual(result.execution_path, ExecutionPath.BODY)
                     self.assertIn("exact opaque element", result.reason)
+                    self.assertIn("typed target scope", result.reason)
 
                     focused_after = automation.probe_focused()
                     self.assertEqual(focused_after.runtime_id, target_before.runtime_id)
+                    self.assertEqual(focused_after.control_type, target_before.control_type)
+                    self.assertEqual(focused_after.class_name, target_before.class_name)
                     self.assertTrue(focused_after.has_keyboard_focus)
                     focused_native_after = NativeFocusedControlSense().probe()
                     self.assertEqual(focused_native_after.control_id, fixture.TARGET_CONTROL_ID)
