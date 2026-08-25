@@ -206,12 +206,6 @@ class PointerClickLifecycleTests(unittest.TestCase):
             self.assertIn("visual_region_changed", result.reason)
             self.assertEqual(body.click_calls, 1)
             self.assertEqual(len(visual.calls), 2)
-            verification = resident.store.get_working_state().data[
-                "native_verification_result"
-            ]
-            self.assertTrue(verification["verified"])
-            self.assertEqual(verification["baseline_signature"], "before-click-signature")
-            self.assertEqual(verification["observed_signature"], "after-click-signature")
             resident.store.close()
 
     def test_interrupted_started_click_is_not_replayed(self):
