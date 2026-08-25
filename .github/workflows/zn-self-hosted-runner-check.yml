@@ -126,7 +126,7 @@ jobs:
               public static extern uint GetConsoleProcessList(uint[] processList, uint processCount);
           }
           '@
-          $consolePids = New-Object uint[] 64
+          [uint[]]$consolePids = New-Object 'System.UInt32[]' 64
           $consoleCount = [ZNConsoleProbe]::GetConsoleProcessList($consolePids, $consolePids.Length)
           Write-Host "console.process_count=$consoleCount"
           $limit = [Math]::Min([int]$consoleCount, $consolePids.Length)
