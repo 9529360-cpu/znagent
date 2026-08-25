@@ -18,11 +18,11 @@ Development branch: `dev/zn-agent`. Canonical source/release branch: `main`.
 
 The active repository remains physically ZN-only. M10 canonical source promotion is complete; `main` is canonical source/release and `dev/zn-agent` is the normal development branch.
 
-The current Windows x64 steady-state CI path has recovered on the repository self-hosted runner and the latest reviewed code head has real exact-head evidence:
+Current Windows x64 steady-state CI is healthy on the repository self-hosted runner. The latest verified implementation head before this ledger sync is:
 
 ```text
-head  7fe0444a6633536a3678074776c006f41b4dd7b2
-run   32826260973
+head  9ec67267216665a7d62d1baa68f59cfa02eb3073
+run   32829830325
 
 ZN Kernel / Python / Windows        success
 ZN Source Boundary / Windows        success
@@ -30,15 +30,15 @@ Electron / TypeScript / Windows     success
 Publish Windows CI statuses         success
 ```
 
-The kernel job installed the isolated `znagent` runtime, booted ZN with no model, compiled the resident core, and ran the full Windows working-tree suite: **389 tests passed with 5 platform-appropriate skips**.
+The kernel job installed the isolated `znagent` runtime, booted ZN with no model, compiled the resident core, and ran the full Windows working-tree suite: **389 tests passed with 5 platform-appropriate skips**. The repository manifest self-check and the `test_verified_experience` semantics tests both passed in this run.
 
-The preceding exact-head attempt exposed a test-isolation bug rather than a production Body bug: the CI host had less than ten percent disk free, so ZN correctly reported `body_health = constrained` and focused on `body resources`, while several tests incorrectly assumed every host was nominal. The repair keeps production low-disk sensing intact, gives unrelated cognition tests an explicit healthy-disk fixture, adds a low-disk regression, and closes stores in `finally` paths so Windows temporary-directory cleanup is not masked by SQLite handles.
+The earlier host-pressure failure was test-isolation debt rather than a production Body defect: the CI host had less than ten percent disk free, so ZN correctly formed `body_health = constrained` and focused on `body resources`, while several unrelated tests had assumed a nominal host. The test repair preserved production low-disk sensing, added a direct low-disk regression, isolated unrelated cognition tests from host disk pressure, and closes stores on failure paths before Windows temporary-directory cleanup.
 
 ## 2. Resident ownership — VERIFIED
 
 The resident owns persistent Self/life state, Situation/Thought/Will, durable WorkingState, Investigation, native Body actions and senses, bounded cognition resources, provider settings, nervous memory/reconsolidation, verified experience/procedural tendencies, channel lifecycle and resident work/progress state.
 
-Zero-model boot remains a hard CI contract and passed in run `32826260973`.
+Zero-model boot remains a hard CI contract and passed at exact head `9ec67267216665a7d62d1baa68f59cfa02eb3073`.
 
 ## 3. Engineering competence — VERIFIED NARROW SLICES
 
@@ -46,7 +46,7 @@ Current resident-owned engineering behavior includes structured Git state/diff e
 
 The current Windows PowerShell kernel verifier contract is recognized strictly and fails closed on shell/runtime/PYTHONPATH/test-suite drift.
 
-Repository-owned verifier selection now includes the bounded manifest:
+Repository-owned non-canonical verifier selection is bounded by:
 
 ```text
 .agent/zn-engineering-verifiers.json
@@ -62,11 +62,14 @@ runtime/python/zn_agent/core/repo_test_semantics.py
 
 runtime/python/zn_agent/core/git_semantics.py
 → tests/zn_agent/core/test_git_staging_semantics.py
+
+runtime/python/zn_agent/core/result_semantics.py
+→ tests/zn_agent/core/test_verified_experience.py
 ```
 
-The repository manifest self-check verifies every declared relation. Run `32826260973` is the first exact-head Windows CI evidence covering the current manifest, both mappings and the current PowerShell verifier contract.
+The third relation is intentionally non-canonical and evidence-based: no `test_result_semantics.py` exists; `test_verified_experience.py` directly imports `detect_masked_success` and `normalize_action_result`, includes dedicated masked-success/negative-evidence assertions, and the production verification/learning chain consumes `result_semantics` through resident completion and `verified_experience` construction.
 
-This remains a narrow engineering competence slice, not an arbitrary-command equivalence engine or unrestricted planner/mutation engine.
+Run `32829830325` verified all three manifest relations with the live repository self-check and passed the complete Windows kernel suite. This remains a narrow engineering competence slice, not an arbitrary-command equivalence engine or unrestricted planner/mutation engine.
 
 ## 4. Memory and learning — VERIFIED FOUNDATION, MATURITY PARTIAL
 
@@ -93,7 +96,7 @@ ZN Electron main
 
 Ownership tests protect window/protocol lifecycle, preload surface, `zn://` deep links, resident-backed work/provider/progress surfaces, packaged runtime identity, update/application gates and the single formal builder configuration.
 
-Electron development/runtime tooling is pinned to `41.10.5` after the 2026-08-24 security cleanup. Run `32826260973` passed locked install, high-severity npm audit, typecheck, bundle, desktop ownership/runtime/update tests and release/runtime artifact verifier tests.
+Electron development/runtime tooling remains pinned to `41.10.5`. Run `32829830325` passed locked install, high-severity npm audit, typecheck, bundle, desktop ownership/runtime/update tests and release/runtime artifact verifier tests.
 
 ## 7. Runtime and artifact ownership — VERIFIED FOR EXERCISED TARGETS
 
@@ -134,14 +137,14 @@ Key evidence:
 32669071891   physically reduced ZN-only tree verification
 32671245421   exact reviewed pre-M10 PR CI success
 32671589664   final canonical main push CI success
-32826260973   current dev exact-head Windows source-boundary success
+32829830325   current verifier-head Windows source-boundary success
 ```
 
 ## 10. Dependency security state — HIGH-SEVERITY DEBT CLOSED
 
 Electron is on the patched `41.10.5` line. The old `extract-zip` chain is absent from the active Electron dependency path and steady-state CI uses locked install plus `npm audit --audit-level=high`.
 
-The current Windows runner reports Node-action deprecation warnings for actions that still target Node 20 while GitHub forces Node 24. This did not fail run `32826260973`; it is tooling maintenance debt to resolve with verified stable action upgrades, not a reason to weaken CI.
+The Windows runner still reports Node-action deprecation warnings for actions that target Node 20 while GitHub forces Node 24. This did not fail run `32829830325`; it remains tooling maintenance debt to address only through stable, verified action upgrades.
 
 ## 11. Self-maintenance — SM0 COMPLETE, SM1+ OPEN
 
@@ -159,7 +162,7 @@ The 2026-08-24 M10 review passed and canonical source promotion was executed by 
 
 - M8 Windows clean-install/login, installed N→N+1, rollback and signing evidence;
 - browser/computer-use Body/Senses;
-- broader resident engineering verifier selection where a real repository-owned relation exists;
+- broader resident engineering verifier selection only where another real repository-owned relation exists;
 - mature procedural competence/growth benchmarks;
 - SM1+ autonomous self-maintenance;
 - Node-action/deprecation warnings and other non-security third-party tooling warnings should be reduced through stable verified upgrades, without blind forced upgrades.
@@ -168,8 +171,8 @@ The 2026-08-24 M10 review passed and canonical source promotion was executed by 
 
 ```text
 1. keep automatic Windows x64 self-hosted CI green on each exact dev HEAD
-2. continue resident-owned engineering competence only from real repo-owned structured evidence; do not turn the verifier manifest into a command catalog
-3. strengthen browser/computer Body/Senses behind ZN ownership when the next bounded engineering relation is not justified by current evidence
+2. continue resident-owned engineering competence only when a real non-canonical repo-owned structured relation adds capability; do not grow the manifest for count
+3. otherwise move to the browser/computer Body/Senses investigation defined by the current priority
 4. close Windows M8 clean-install / N→N+1 / rollback / signing evidence
 5. advance SM1+ behind the existing approval and verification boundaries
 ```
