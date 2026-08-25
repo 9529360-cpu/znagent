@@ -17,77 +17,35 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 5
     steps:
-      - name: Identify scheduler task near listener launch
+      - name: Inspect watchdog task without exposing arguments
         shell: powershell
         run: |
-          if ($env:RUNNER_OS -ne 'Windows') {
-            Write-Host "runner.scheduler=non-windows"
-            exit 0
-          }
+          if ($env:RUNNER_OS -ne 'Windows') { exit 0 }
+          $task = Get-ScheduledTask -TaskPath '\' -TaskName 'ZN GitHub Actions Interactive Runner Watchdog' -ErrorAction Stop
+          $info = Get-ScheduledTaskInfo -TaskPath '\' -TaskName $task.TaskName -ErrorAction Stop
+          Write-Host "runner.scheduler.task.name=$($task.TaskName)"
+          Write-Host "runner.scheduler.task.state=$($task.State)"
+          Write-Host "runner.scheduler.task.last_run=$($info.LastRunTime)"
+          Write-Host "runner.scheduler.task.last_result=$($info.LastTaskResult)"
+          Write-Host "runner.scheduler.task.execution_time_limit=$($task.Settings.ExecutionTimeLimit)"
+          Write-Host "runner.scheduler.task.restart_count=$($task.Settings.RestartCount)"
+          Write-Host "runner.scheduler.task.restart_interval=$($task.Settings.RestartInterval)"
 
-          $listener = Get-CimInstance Win32_Process -Filter "Name = 'Runner.Listener.exe'" |
-            Sort-Object CreationDate -Descending |
-            Select-Object -First 1
-          if ($null -eq $listener) {
-            throw 'Runner.Listener.exe is not running'
-          }
-
-          $cursor = $listener
-          $launcher = $null
-          for ($depth = 0; $depth -lt 12 -and $null -ne $cursor; $depth++) {
-            if ($cursor.Name -eq 'powershell.exe') {
-              $launcher = $cursor
-              break
+          $keywords = @('run.cmd','Runner.Listener','Start-Process','Stop-Process','taskkill','Wait-Process','timeout','Start-Sleep','sleep','120','Ctrl')
+          $index = 0
+          foreach ($action in $task.Actions) {
+            $arguments = [string]$action.Arguments
+            Write-Host "runner.scheduler.action[$index].execute=$($action.Execute)"
+            Write-Host "runner.scheduler.action[$index].working_directory=$($action.WorkingDirectory)"
+            Write-Host "runner.scheduler.action[$index].arguments_length=$($arguments.Length)"
+            foreach ($keyword in $keywords) {
+              $found = $arguments.IndexOf($keyword, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+              Write-Host "runner.scheduler.action[$index].contains.$keyword=$found"
             }
-            if (-not $cursor.ParentProcessId) { break }
-            $cursor = Get-CimInstance Win32_Process -Filter "ProcessId = $($cursor.ParentProcessId)"
-          }
-          if ($null -eq $launcher) {
-            throw 'No PowerShell launcher ancestor found for Runner.Listener.exe'
-          }
-
-          $launcherTime = [datetime]$launcher.CreationDate
-          Write-Host "runner.launcher.pid=$($launcher.ProcessId)"
-          Write-Host "runner.launcher.created=$launcherTime"
-
-          $matches = @()
-          foreach ($task in Get-ScheduledTask -ErrorAction Stop) {
-            $info = $null
-            try {
-              $info = Get-ScheduledTaskInfo -TaskName $task.TaskName -TaskPath $task.TaskPath -ErrorAction Stop
-            } catch {
-              continue
+            $scriptMatches = [regex]::Matches($arguments, '(?i)(?:"|''|\s|^)([^"''\s]+\.ps1)(?:"|''|\s|$)')
+            Write-Host "runner.scheduler.action[$index].ps1_reference_count=$($scriptMatches.Count)"
+            foreach ($match in $scriptMatches) {
+              Write-Host "runner.scheduler.action[$index].ps1_reference=$($match.Groups[1].Value)"
             }
-            if ($null -eq $info.LastRunTime -or $info.LastRunTime -eq [datetime]::MinValue) {
-              continue
-            }
-            $delta = [Math]::Abs(($info.LastRunTime - $launcherTime).TotalSeconds)
-            if ($delta -le 180) {
-              $matches += [pscustomobject]@{
-                DeltaSeconds = [Math]::Round($delta, 3)
-                Task = $task
-                Info = $info
-              }
-            }
-          }
-
-          $matches = @($matches | Sort-Object DeltaSeconds)
-          Write-Host "runner.scheduler.match_count=$($matches.Count)"
-          foreach ($match in $matches) {
-            $task = $match.Task
-            $info = $match.Info
-            Write-Host "runner.scheduler.task.path=$($task.TaskPath)"
-            Write-Host "runner.scheduler.task.name=$($task.TaskName)"
-            Write-Host "runner.scheduler.task.state=$($task.State)"
-            Write-Host "runner.scheduler.task.delta_seconds=$($match.DeltaSeconds)"
-            Write-Host "runner.scheduler.task.last_run=$($info.LastRunTime)"
-            Write-Host "runner.scheduler.task.last_result=$($info.LastTaskResult)"
-            Write-Host "runner.scheduler.task.next_run=$($info.NextRunTime)"
-            Write-Host "runner.scheduler.task.execution_time_limit=$($task.Settings.ExecutionTimeLimit)"
-            Write-Host "runner.scheduler.task.multiple_instances=$($task.Settings.MultipleInstances)"
-            Write-Host "runner.scheduler.task.restart_count=$($task.Settings.RestartCount)"
-            Write-Host "runner.scheduler.task.restart_interval=$($task.Settings.RestartInterval)"
-            Write-Host "runner.scheduler.task.stop_if_batteries=$($task.Settings.StopIfGoingOnBatteries)"
-            Write-Host "runner.scheduler.task.wake_to_run=$($task.Settings.WakeToRun)"
-            Write-Host "runner.scheduler.task.allow_demand_start=$($task.Settings.AllowDemandStart)"
+            $index++
           }
