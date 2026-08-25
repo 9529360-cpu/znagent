@@ -21,8 +21,8 @@ The active repository remains physically ZN-only. M10 canonical source promotion
 Current Windows x64 steady-state CI is healthy on the repository self-hosted runner. The latest verified implementation head before this ledger sync is:
 
 ```text
-head  9ec67267216665a7d62d1baa68f59cfa02eb3073
-run   32829830325
+head  58aee1ea4331264fcc0abcf73843b91ca6dc0879
+run   32831968178
 
 ZN Kernel / Python / Windows        success
 ZN Source Boundary / Windows        success
@@ -30,15 +30,15 @@ Electron / TypeScript / Windows     success
 Publish Windows CI statuses         success
 ```
 
-The kernel job installed the isolated `znagent` runtime, booted ZN with no model, compiled the resident core, and ran the full Windows working-tree suite: **389 tests passed with 5 platform-appropriate skips**. The repository manifest self-check and the `test_verified_experience` semantics tests both passed in this run.
+The kernel job created a fresh isolated Python 3.12 environment, installed the `znagent` runtime from `runtime/python`, explicitly downloaded and installed `pillow==12.3.0`, booted ZN with no model, compiled the resident core, and ran the full Windows working-tree suite: **390 tests passed with 5 platform-appropriate skips**. The installed-environment regression `test_default_visual_capture_dependency_is_installed` passed in that isolated runtime.
 
-The earlier host-pressure failure was test-isolation debt rather than a production Body defect: the CI host had less than ten percent disk free, so ZN correctly formed `body_health = constrained` and focused on `body resources`, while several unrelated tests had assumed a nominal host. The test repair preserved production low-disk sensing, added a direct low-disk regression, isolated unrelated cognition tests from host disk pressure, and closes stores on failure paths before Windows temporary-directory cleanup.
+The earlier host-pressure failure was test-isolation debt rather than a production Body defect: the CI host had less than ten percent disk free, so ZN correctly formed `body_health = constrained` and focused on `body resources`, while several unrelated tests had assumed a nominal host. The repair preserved production low-disk sensing, added a direct low-disk regression, isolated unrelated cognition tests from host disk pressure, and closes stores on failure paths before Windows temporary-directory cleanup.
 
 ## 2. Resident ownership — VERIFIED
 
 The resident owns persistent Self/life state, Situation/Thought/Will, durable WorkingState, Investigation, native Body actions and senses, bounded cognition resources, provider settings, nervous memory/reconsolidation, verified experience/procedural tendencies, channel lifecycle and resident work/progress state.
 
-Zero-model boot remains a hard CI contract and passed at exact head `9ec67267216665a7d62d1baa68f59cfa02eb3073`.
+Zero-model boot remains a hard CI contract and passed at exact head `58aee1ea4331264fcc0abcf73843b91ca6dc0879`.
 
 ## 3. Engineering competence — VERIFIED NARROW SLICES
 
@@ -69,7 +69,7 @@ runtime/python/zn_agent/core/result_semantics.py
 
 The third relation is intentionally non-canonical and evidence-based: no `test_result_semantics.py` exists; `test_verified_experience.py` directly imports `detect_masked_success` and `normalize_action_result`, includes dedicated masked-success/negative-evidence assertions, and the production verification/learning chain consumes `result_semantics` through resident completion and `verified_experience` construction.
 
-Run `32829830325` verified all three manifest relations with the live repository self-check and passed the complete Windows kernel suite. This remains a narrow engineering competence slice, not an arbitrary-command equivalence engine or unrestricted planner/mutation engine.
+Run `32829830325` verified all three manifest relations with the live repository self-check and complete Windows kernel suite. Later exact-head runs, including `32831968178`, kept those contracts green. This remains a narrow engineering competence slice, not an arbitrary-command equivalence engine or unrestricted planner/mutation engine.
 
 ## 4. Memory and learning — VERIFIED FOUNDATION, MATURITY PARTIAL
 
@@ -81,7 +81,11 @@ General procedural competence, mature computer use, broad local training and lon
 
 Supported model providers are bounded ZN-owned cognitive resources. Provider replacement does not replace resident identity, store or life state.
 
-ZN owns URL/network safety and web resource boundaries. Channel lifecycle is resident-owned. Browser/computer-use Body/Senses remain a future ZN-owned capability seam.
+ZN owns URL/network safety and web resource boundaries. Channel lifecycle is resident-owned.
+
+Resident-owned visual sensing is now a verified foundation: `ResidentSocketService` owns a persistent `NativeVisualSense`, default capture uses local Pillow `ImageGrab`, raw pixels are discarded inside capture, and only compact frame/region/luminance structure enters the resident nervous system. The formal runtime now declares and installs Pillow rather than relying on an undeclared host package.
+
+This does **not** yet prove mature computer use. CI verifies the packaged visual dependency and injected-capture visual semantics, but does not claim that every Windows service/session has screen-capture permission or an unlocked interactive desktop. Typed, bounded computer interaction/action with independent current-world verification remains open.
 
 ## 6. Desktop ownership — VERIFIED
 
@@ -96,7 +100,7 @@ ZN Electron main
 
 Ownership tests protect window/protocol lifecycle, preload surface, `zn://` deep links, resident-backed work/provider/progress surfaces, packaged runtime identity, update/application gates and the single formal builder configuration.
 
-Electron development/runtime tooling remains pinned to `41.10.5`. Run `32829830325` passed locked install, high-severity npm audit, typecheck, bundle, desktop ownership/runtime/update tests and release/runtime artifact verifier tests.
+Electron development/runtime tooling remains pinned to `41.10.5`. Run `32831968178` passed locked install, high-severity npm audit, typecheck, bundle, desktop ownership/runtime/update tests and release/runtime artifact verifier tests.
 
 ## 7. Runtime and artifact ownership — VERIFIED FOR EXERCISED TARGETS
 
@@ -107,6 +111,14 @@ Python distribution: znagent
 Python package:      zn_agent
 entrypoint:          zn-resident
 ```
+
+The runtime project now explicitly owns its default visual-capture dependency:
+
+```text
+Pillow==12.3.0
+```
+
+Run `32831968178` proved a fresh isolated Windows runtime install resolved 29 packages including `pillow==12.3.0`; the installed-environment ownership test then found `PIL` successfully. This closes the packaging defect where `visual_sense.py` could call `PIL.ImageGrab` while the formal runtime distribution did not declare Pillow.
 
 Historical artifact evidence includes Linux packages, Windows installers, macOS artifacts, fresh Ubuntu installation and installed Linux resident lifecycle evidence. Current steady-state development verification is Windows x64.
 
@@ -137,14 +149,14 @@ Key evidence:
 32669071891   physically reduced ZN-only tree verification
 32671245421   exact reviewed pre-M10 PR CI success
 32671589664   final canonical main push CI success
-32829830325   current verifier-head Windows source-boundary success
+32831968178   current dev exact-head Windows source-boundary success
 ```
 
 ## 10. Dependency security state — HIGH-SEVERITY DEBT CLOSED
 
 Electron is on the patched `41.10.5` line. The old `extract-zip` chain is absent from the active Electron dependency path and steady-state CI uses locked install plus `npm audit --audit-level=high`.
 
-The Windows runner still reports Node-action deprecation warnings for actions that target Node 20 while GitHub forces Node 24. This did not fail run `32829830325`; it remains tooling maintenance debt to address only through stable, verified action upgrades.
+The Windows runner still reports Node-action deprecation warnings for actions that target Node 20 while GitHub forces Node 24. This did not fail run `32831968178`; it remains tooling maintenance debt to address only through stable, verified action upgrades.
 
 ## 11. Self-maintenance — SM0 COMPLETE, SM1+ OPEN
 
@@ -161,7 +173,8 @@ The 2026-08-24 M10 review passed and canonical source promotion was executed by 
 ## 13. Current known debts
 
 - M8 Windows clean-install/login, installed N→N+1, rollback and signing evidence;
-- browser/computer-use Body/Senses;
+- bounded browser/computer interaction/action and independent post-action verification;
+- real-session screen-capture permission/availability evidence beyond dependency installation and injected-capture tests;
 - broader resident engineering verifier selection only where another real repository-owned relation exists;
 - mature procedural competence/growth benchmarks;
 - SM1+ autonomous self-maintenance;
@@ -171,8 +184,8 @@ The 2026-08-24 M10 review passed and canonical source promotion was executed by 
 
 ```text
 1. keep automatic Windows x64 self-hosted CI green on each exact dev HEAD
-2. continue resident-owned engineering competence only when a real non-canonical repo-owned structured relation adds capability; do not grow the manifest for count
-3. otherwise move to the browser/computer Body/Senses investigation defined by the current priority
+2. stop expanding the verifier manifest unless another genuinely non-canonical repo-owned structured relation adds capability
+3. advance browser/computer Body/Senses from the existing resident visual organ toward typed bounded computer interaction with current-world verification
 4. close Windows M8 clean-install / N→N+1 / rollback / signing evidence
 5. advance SM1+ behind the existing approval and verification boundaries
 ```

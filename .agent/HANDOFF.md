@@ -4,9 +4,7 @@
 
 ## 当前目标
 
-当前主线是 **ZN resident-owned engineering competence**。Windows x64 是 intended product / steady-state CI target；Linux/macOS 仅 optional/on-demand。M8 Windows clean install / N→N+1 / rollback / signing 仍是独立 partial milestone。
-
-本阶段已把 bounded repo-owned verifier manifest 扩到三条真实 relation，并在 exact-head Windows CI 验证。下一步不能为了数量继续加 mapping：先调查是否还有真正非-canonical、结构明确、active caller 有意义的 verifier relation；如果没有，按 `ZN.md` 优先级进入 browser/computer Body/Senses。
+当前主线已从 verifier manifest 的第三条真实 relation 转入 **browser/computer Body/Senses**。Windows x64 是 intended product / steady-state CI target；Linux/macOS 仅 optional/on-demand。M8 Windows clean install / N→N+1 / rollback / signing 仍是独立 partial milestone。
 
 核心原则：
 
@@ -16,24 +14,15 @@
 
 - 固定开发分支：`dev/zn-agent`
 - canonical source/release branch：`main`
-- 本 HANDOFF 写入前开发 HEAD：`9ec67267216665a7d62d1baa68f59cfa02eb3073`
+- 本 HANDOFF 写入前开发 HEAD：`58aee1ea4331264fcc0abcf73843b91ca6dc0879`
 - canonical `main`：`8234a835dea604783cea0bd9d28a40de654ec03d`
-- `dev/zn-agent` 相对 `main`：ahead 65、behind 0；本状态同步 commit 会再前进一次
-- PR #6：draft/open，base `main`，head `dev/zn-agent`，未合并
+- `dev/zn-agent` 相对 `main`：ahead 67、behind 0；本状态同步 commit 会再前进一次
+- PR #6：draft/open，base `main`，head `dev/zn-agent`，mergeable，未合并
 - `main` 未修改；没有 force push/history rewrite
 
 ## 已完成事项
 
-### 1. Current Windows verifier contract
-
-```text
-d302421385409d205183031d4a1726ad3d2f419f  fix: recognize current Windows kernel verifier contract
-dd237947a5122e2577ef75fd3556fa63b9a5e595  test: cover current Windows kernel verifier semantics
-```
-
-resident 严格识别当前 Windows PowerShell kernel unittest contract；shell、runtime Python、PYTHONPATH、test target/pattern 或额外 executable line 漂移均 fail closed。
-
-### 2. Bounded repo-owned verifier manifest
+### 1. Bounded repo-owned verifier manifest — three real relations
 
 关键提交：
 
@@ -46,8 +35,6 @@ b344d477f8d21540816b7f8c7d3b8c089d3bf71f  feat: map git semantics to owned verif
 3289f3d418a8f63e318433b46501eebf03fefcc3  test: validate declared verifier mappings
 9ec67267216665a7d62d1baa68f59cfa02eb3073  feat: map result semantics to owned verifier
 ```
-
-`.agent/zn-engineering-verifiers.json` 只能声明 literal `target` + `test`。它不能携带 command/shell/workdir/timeout，也不能把模型建议或 task prose 变成执行 authority。
 
 当前三条真实 relation：
 
@@ -62,11 +49,9 @@ runtime/python/zn_agent/core/result_semantics.py
 → tests/zn_agent/core/test_verified_experience.py
 ```
 
-第三条不是文件名猜测：不存在 canonical `test_result_semantics.py`；`test_verified_experience.py` 顶层直接 import `detect_masked_success` / `normalize_action_result`，有专门 masked-success/negative-evidence 断言；生产 resident completion/learning path 和 `verified_experience.py` 实际消费该语义。
+manifest 只能声明 literal `target` + `test`，不能携带 command/shell/workdir/timeout，也不能把模型建议或 task prose 变成执行 authority。第三 relation 已由 run `32829830325` exact-head Windows CI 验证。
 
-runtime 仍要求 manifest/test/CI tracked + clean + same HEAD、安全路径、top-level direct import、discoverable unittest、current CI suite proof、execution anti-replay 和 fresh post-action verification。
-
-### 3. Windows host-pressure test isolation
+### 2. Windows host-pressure test isolation
 
 ```text
 40e1ae4f0d0043a9a2205f8b4299855f427de847  test: isolate life semantics from host disk pressure
@@ -75,114 +60,125 @@ d44e454fd3aa559c4c8e4445ba10224cd70e130a  test: isolate cognition rpc from host 
 7fe0444a6633536a3678074776c006f41b4dd7b2  test: isolate visual attention from host disk pressure
 ```
 
-生产 low-disk Body 语义没有改。测试对与 Body health 无关的场景固定健康磁盘，并保留 `disk_free_ratio < 0.10 → constrained → body resources` 直接回归；失败路径关闭 store，避免 Windows 临时目录清理被 SQLite handle 干扰。
+生产 low-disk Body 语义保留；测试隔离与 Body health 无关的宿主资源偶发状态，并保留 `<10% free → constrained → body resources` 回归。
 
-### 4. Status/HANDOFF recovery sync
+### 3. Resident visual runtime packaging repair
 
 ```text
-2d37df8fb100b8117e47345381fe13ec5a0569ec  docs: record exact-head Windows CI recovery
+58aee1ea4331264fcc0abcf73843b91ca6dc0879  fix: package resident visual capture dependency
 ```
 
-该 docs head 自身 run `32827685146` 四个 Windows job 全绿后，才继续第三 relation。
+调查 browser/computer Body/Senses 时发现：`NativeVisualSense._capture_primary_screen()` 默认调用 `PIL.ImageGrab`，但正式 `runtime/python/pyproject.toml` 没声明 Pillow。测试可通过 injected `capture_fn`，正式 runtime 却可能因 `ImportError` 静默失去视觉。
+
+修复：
+
+- runtime 明确声明 `Pillow==12.3.0`；
+- `test_runtime_ownership.py` 增加 installed-environment `PIL` 可导入回归；
+- 未改变 visual ownership、采样语义或 raw-pixel persistence 边界。
+
+真实 CI run `32831968178` 证明 fresh isolated Python 3.12 runtime 实际下载并安装 `pillow==12.3.0`，随后 installed-environment regression 通过。
 
 ## 真实调用链
+
+### Verifier path
 
 ```text
 provider_bridge.build_resident_runtime()
 → RepositoryVerifyingResidentRuntime
 → _repo_targeted_test_spec()
 → canonical mirrored identity OR tracked/clean manifest mapping
-→ observe selected test + optional manifest + .github/workflows/zn-ci.yml
-→ direct-import proof + discoverable unittest proof + current CI suite proof
-→ persist resident_repo_evidence identity
-→ native action
-→ existing typed python_unittest lifecycle
-→ execution-start anti-replay
-→ command execution
-→ fresh target/test/CI/manifest current-world snapshot
+→ direct-import + discoverable unittest + current CI proof
+→ typed python_unittest lifecycle
+→ execution anti-replay
+→ fresh post-action repository snapshot
 → completion only if evidence still matches
 ```
 
-`result_semantics` active relation：
+### Resident visual path
 
 ```text
-Body action / command verification result
-→ result_semantics.normalize_action_result()
-→ resident completion / contradiction semantics
-→ verified_experience safe causal record
-→ procedural learning evidence
+ResidentSocketService
+→ owns NativeVisualSense for the same resident
+→ _visual_loop()
+→ maybe_sample()
+→ _capture_primary_screen()
+→ Pillow ImageGrab local capture
+→ compact frame hash / coarse regions / luminance
+→ raw image discarded
+→ resident.perceive_visual(...)
+→ nervous traces / Situation / Thought / Will attention
 ```
 
-manifest 没有独立 executor，也不能绕过 existing typed `python_unittest` lifecycle。
+Electron does not own the visual organ. Closing the UI does not define resident visual lifecycle.
 
 ## 真实测试 / CI
 
-最新权威 verifier-head Windows 证据：
+最新权威 implementation-head Windows evidence：
 
 ```text
-run  32829830325
-head 9ec67267216665a7d62d1baa68f59cfa02eb3073
+run  32831968178
+head 58aee1ea4331264fcc0abcf73843b91ca6dc0879
 
 ZN Kernel / Python / Windows        success
-  isolated znagent install          success
+  fresh isolated Python 3.12        success
+  znagent install                   success
+  pillow==12.3.0 install            success
   zero-model resident boot          success
   resident core compile             success
-  full core unittest discovery      389 tests passed, 5 skipped
-  repository manifest self-check    success
-  test_verified_experience          success
+  full core unittest discovery      390 tests passed, 5 skipped
+  PIL installed-environment test    success
 
 ZN Source Boundary / Windows        success
 Electron / TypeScript / Windows     success
 Publish Windows CI statuses         success
 ```
 
-上一 docs/HANDOFF head：
-
-```text
-run  32827685146
-head 2d37df8fb100b8117e47345381fe13ec5a0569ec
-all four Windows jobs                 success
-```
+CI verifies dependency packaging and injected-capture visual semantics. It does **not** yet prove that every installed Windows service/session has interactive desktop screen-capture permission; do not overstate this as real-session visual E2E.
 
 当前环境没有私有仓库本地 checkout；没有把未执行的本地 suite 伪装成验证。以上结论来自真实 GitHub Actions。
 
 ## Diff / ownership 对账
 
 - `main` 仍是 `8234a835dea604783cea0bd9d28a40de654ec03d`，未修改。
-- `dev/zn-agent` 在本 HANDOFF 写入前相对 `main` ahead 65 / behind 0。
-- 本轮第三 relation 只修改 `.agent/zn-engineering-verifiers.json`；没有修改 executor、production semantics、workflow、release、identity、memory 或 updater。
-- `terminal.py → test_terminal.py` 已确认是 canonical mirror，所以没有冗余加入 manifest。
-- `body.py → test_native_body.py` 未满足当前 direct-module relation 的干净证据，因此没有硬加。
-- 没有外部产品 runtime/control-plane 回流。
+- `dev/zn-agent` 在本 HANDOFF 写入前相对 `main` ahead 67 / behind 0。
+- PR #6 draft/open、mergeable、未合并。
+- `58aee1...` 只修改 runtime dependency declaration 和 runtime ownership regression；没有引入外部 control plane。
+- `terminal.py → test_terminal.py` 是 canonical mirror，不冗余加入 manifest。
+- 当前没有继续为数量扩 verifier manifest。
 
 ## 风险 / 边界
 
-- 不修改 `main`，除非用户明确要求且 promotion 条件真实满足。
+- 不修改 `main`，除非用户明确要求且重新核验 promotion 条件。
 - 禁止 force push / history rewrite。
-- manifest 不是 command catalog；不得加入 shell command、模型建议命令或 task-prose-derived authority。
-- dirty/stale/ambiguous manifest 必须 fail closed。
-- manifest 不能绕过 Git clean/HEAD proof、test structure proof、CI proof、post-action verification 或 anti-replay。
-- 当前 Windows runner 主机曾真实处于低磁盘状态；这是 Body 可感知现实，不通过削弱生产感知来修 CI。
-- Actions 仍有 Node 20 action runtime deprecation warning；只能通过稳定、验证过的 action 升级处理。
+- manifest 不是 command catalog；不得加入 shell/model/task-prose authority。
+- computer interaction 必须是 ZN-owned typed Body action，不允许模型文字直接获得鼠标/键盘执行权。
+- movement success 不是 task completion；computer action 必须有独立 current-world verification。
+- 真实 Windows screen capture 仍可能受 session/desktop/permission 状态影响；dependency installed 不等于所有 session 都可 capture。
+- Windows runner 曾有真实低磁盘状态；不通过削弱 Body sensing 隐藏现实。
+- Actions 仍有 Node 20 action runtime deprecation warning；仅通过稳定、验证过的 action upgrade 处理。
 - M8 updater/rollback/signing 仍是高风险 release boundary。
 
 ## Task Queue
 
 ### P0 — exact-head Windows CI
-Status: **GREEN THROUGH `9ec672...` / RUN `32829830325`**
+Status: **GREEN THROUGH `58aee1...` / RUN `32831968178`**
 
-本 HANDOFF/status 同步产生的新 exact HEAD 仍需自动 Windows CI 再确认。
+本 HANDOFF/status 同步产生的新 docs HEAD 仍需自动 Windows CI 再确认。
 
 ### P1 — bounded verifier manifest
-Status: **VERIFIED NARROW SLICE / THREE REAL RELATIONS / EXACT WINDOWS CI GREEN**
+Status: **VERIFIED NARROW SLICE / THREE REAL RELATIONS**
 
-### P2 — broader resident-owned engineering competence
-Status: **PARTIAL / ACTIVE**
+不为数量继续扩张。
 
-只在新的 relation 真正非-canonical、结构可证明、对 active caller 有意义时继续 manifest；禁止为了数量扩张。
+### P2 — resident visual foundation
+Status: **VERIFIED PACKAGING + SEMANTICS FOUNDATION**
 
-### P3 — browser/computer Body/Senses
-Status: **NEXT IF NO STRONGER VERIFIER RELATION**
+正式 runtime 已拥有默认 Pillow capture dependency；real-session permission/E2E 仍未验证。
+
+### P3 — bounded computer interaction Body
+Status: **ACTIVE / INVESTIGATION**
+
+目标是从现有 `NativeBody` + resident verification lifecycle 增加最小 typed computer action seam，并要求 fresh visual/current-world proof；先追真实 caller/state/lifecycle/tests，再修改。
 
 ### P4 — M8 Windows continuity / rollback / signing
 Status: **PENDING / PARTIAL**
@@ -192,8 +188,8 @@ Status: **PENDING**
 
 ## 下一真实目标
 
-1. 确认包含本状态同步的最终 `dev/zn-agent` HEAD 自动 Windows x64 CI 全绿；
-2. 只读调查下一条真正非-canonical verifier relation；若没有明确增益，不再扩 manifest；
-3. 没有合适 relation 时进入 browser/computer Body/Senses，先追当前 visual/world/body seam 和 active caller，再做最小 ZN-owned capability；
-4. 保持 M8 Windows clean-install / installed N→N+1 / rollback / signing 为 partial；
-5. 不触碰 `main`，除非用户明确要求并重新核验 promotion 条件。
+1. 确认包含本状态同步的最终 docs HEAD 自动 Windows x64 CI；
+2. 同时只读追 computer interaction 的 entry → owner → state → lifecycle → dependency → tests → active caller；
+3. 只实现最小 typed bounded action，不建立 browser agent/control plane，不让模型 prose 产生 action authority；
+4. 为 side effect 增加 fresh visual/current-world verification 和 failure→Investigation 行为；
+5. 保持 M8 partial；不触碰 `main`。
