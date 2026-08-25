@@ -4,7 +4,7 @@ Updated: 2026-08-25
 
 ## Current goal
 
-The active lane remains browser/computer Body/Senses. The immediate goal is to get the current exact dev HEAD through real Windows x64 CI before expanding semantic UI state. The current implementation closes a stale-foreground timing gap at the final pointer-input boundary.
+The active lane remains browser/computer Body/Senses. The final foreground-aware pointer-click hardening is now verified on the real Windows x64 self-hosted CI runner. The next engineering target is the smallest useful read-only internal UI/application-state evidence beyond foreground-window identity, but only if it has a real typed active caller.
 
 Core principle:
 
@@ -14,56 +14,117 @@ Core principle:
 
 - fixed development branch: `dev/zn-agent`
 - canonical source/release branch: `main`
-- current implementation HEAD before this handoff sync: `a4a6d98e4139fd9a527474e007c378ccc52ba77f`
+- latest fully verified implementation head before this handoff sync: `1e325926149f4df00ac7f7f83ba3d82c6611b7e6`
 - canonical `main`: `8234a835dea604783cea0bd9d28a40de654ec03d`
 - PR #6 remains draft/open/unmerged, base `main`, head `dev/zn-agent`
+- before docs sync, dev is ahead 86 / behind 0 relative to main
 - main was not modified
 - no force push or history rewrite was used
 
 ## Completed in current stage
 
-### 1. Restored real repository state
+### 1. Restored the real repository and CI state
 
-The required architecture/status/handoff documents, dev/main refs, PR #6, recent commits, current CI, active builder, foreground Sense, pointer-click lifecycle, semantic layer, and semantic tests were re-read from the repository.
+The required architecture/status/handoff documents, current dev/main history, PR #6, main-to-dev compare, current pointer-click tests, resident completion lifecycle, and exact-head Windows CI were re-read from GitHub.
 
-Before the current implementation commit, real dev was `70790cfc...`, main remained `8234a835...`, and dev was ahead 83 / behind 0.
-
-### 2. CI remains infrastructure blocked
-
-The prior exact-head run `32873438614` for `70790cfc...` still returned zero jobs. The new implementation run is:
+Repository truth before this docs sync:
 
 ```text
-run  32875414203
-head a4a6d98e4139fd9a527474e007c378ccc52ba77f
+dev  1e325926149f4df00ac7f7f83ba3d82c6611b7e6
+main 8234a835dea604783cea0bd9d28a40de654ec03d
+PR #6 open / draft / mergeable / unmerged
 ```
 
-At latest inspection:
+### 2. Windows self-hosted runner recovered and executed real jobs
+
+The previous infrastructure condition (`jobs=[]`) is no longer present. The runner accepted actual Windows jobs and completed the exact-head workflow.
+
+The first recovered run at `abbacede34e...` was useful evidence rather than a false green:
 
 ```text
-workflow jobs returned: 0
+run 32875624835
+ZN Source Boundary / Windows       success
+Electron / TypeScript / Windows   success
+ZN Kernel / Python / Windows       failure
+Publish Windows CI statuses       success
 ```
 
-Per `docs/ZN-SELF-HOSTED-CI.md`, no self-hosted Windows runner has accepted the workflow. This is **INFRASTRUCTURE BLOCKED / NOT EXECUTED**, not a passing or failing code-test result.
+Kernel executed the full suite and exposed exactly one test error. This proved the infrastructure was functioning and moved the blocker from runner availability to a real test failure.
 
-### 3. Closed the final pre-input stale-foreground interval
+### 3. Root-caused the single Kernel failure
 
-Previous implementation `9b11b30c...` added exact typed source-window authority:
+The failing test was:
 
 ```text
-action_precondition.kind = foreground_window_matches
-action_precondition.process_name = exact source process
-action_precondition.title_equals = exact source title
+test_pointer_click_semantic_completion.PointerClickSemanticCompletionTests.
+test_ui_state_transition_needs_fresh_semantic_match_after_click
 ```
 
-That version proved the source foreground before movement and again after pointer preparation, but call-chain review showed the second check still happened before the lower lifecycle's fresh pointer-state check, visual baseline capture, durable started marker, and actual input delivery.
-
-Current implementation commit:
+The semantic runtime behavior had succeeded. The failure was a `KeyError` because the test attempted to read:
 
 ```text
-a4a6d98e4139fd9a527474e007c378ccc52ba77f  fix: verify foreground at click boundary
+native_pointer_click_semantic_precondition
 ```
 
-Real call chain:
+after successful completion. The real resident lifecycle intentionally runs `_complete_result()`, persists the outcome, observes the action, then replaces WorkingState with `WorkingState(stage="idle")`.
+
+The subsequent Windows `kernel.db` file-lock error was secondary cleanup fallout after the assertion error prevented the test from reaching `resident.store.close()`.
+
+### 4. Applied the smallest correct fix
+
+Commit:
+
+```text
+1e325926149f4df00ac7f7f83ba3d82c6611b7e6
+test: assert click admission before completion reset
+```
+
+The commit changes exactly one test file. It moves the semantic admission assertions to the preceding `native_verification` state, where that durable execution evidence is intentionally present, before the successful terminal result resets WorkingState to idle.
+
+No runtime/product code changed in this correction.
+
+### 5. Exact-head real Windows CI is fully green
+
+Workflow:
+
+```text
+run 32882987054
+head 1e325926149f4df00ac7f7f83ba3d82c6611b7e6
+```
+
+Results:
+
+```text
+ZN Source Boundary / Windows       success
+ZN Kernel / Python / Windows       success
+Electron / TypeScript / Windows   success
+Publish Windows CI statuses       success
+```
+
+Kernel evidence:
+
+```text
+CPython 3.12.13
+formal runtime installed from runtime/python
+zero-model isolated resident boot success
+resident core compile success
+Ran 423 tests in 351.803s
+OK (skipped=5)
+```
+
+The semantic click tests, including both final-boundary drift tests and the successful `reverified_phase="final_before_pointer_input"` case, all passed in that real Windows run.
+
+Published commit contexts for the verified implementation head are success:
+
+```text
+ZN Source Boundary
+ZN Kernel / Python
+Electron / TypeScript
+```
+
+### 6. Final foreground-aware click lifecycle is now verified
+
+Real active chain:
 
 ```text
 provider_bridge.build_resident_runtime()
@@ -71,99 +132,49 @@ provider_bridge.build_resident_runtime()
 -> EffectScopedPointerClickResidentRuntime
 -> VerifiedPointerClickResidentRuntime
 -> NativeBody pointer_click
--> Windows SendInput
+-> Windows input boundary
 ```
 
-New final boundary:
+Verified semantic lifecycle includes:
 
 ```text
-initial fresh foreground source proof
--> bounded pointer move/preparation
--> reject admitted authority drift
--> fresh pointer-state check
+initial source foreground proof
+-> zero-input completion if destination already matches
+-> exact source action_precondition for mutation
+-> bounded pointer movement
+-> fresh pointer-state verification
 -> fresh target-local visual baseline
--> persist baseline + durable execution status="started"
--> _pointer_click_final_input_precondition()
-   -> semantic layer probes foreground again
-   -> exact action_precondition match required
-   -> mismatch/unavailable/drift: status="aborted", input_sent=false, Investigation
--> only then body.act("pointer_click") / SendInput
+-> durable execution status="started"
+-> FINAL fresh source foreground recheck after visual baseline
+   -> mismatch/unavailable: status="aborted", input_sent=false, Investigation
+-> one left click only when source authority still matches
+-> fresh visual effect proof
+-> post-input authority-drift checks
+-> fresh exact destination foreground proof
+-> ui_state_transition completion
 ```
 
-The base lifecycle owns a default no-op final-input hook, so ordinary effect-only pointer clicks keep their previous semantics. The semantic runtime overrides the hook with the foreground source check.
-
-The durable `started` marker remains before the final check. A crash in that narrow danger zone still produces conservative anti-replay behavior. A deliberate final-precondition rejection records that input was not sent.
-
-No new mutation primitive, dependency, model authority, OCR, keyboard, drag, right-click, double-click, or generic browser control plane was added.
-
-### 4. Regression coverage expanded
-
-`tests/zn_agent/core/test_pointer_click_semantic_completion.py` now also covers:
-
-- foreground drift after pointer movement rejected at the final input boundary;
-- foreground drift specifically after visual baseline capture rejected before input;
-- final rejection persists execution `status="aborted"` and `input_sent=false`;
-- successful input records semantic re-verification phase `final_before_pointer_input`.
-
-Existing coverage for missing/mismatched source preconditions, unsupported authority fields, admission drift, post-input scope/precondition drift, semantic mismatch, and zero-input already-satisfied completion remains present.
-
-Generated candidate versions of these files passed local static compile:
-
-```text
-runtime/python/zn_agent/core/pointer_click_resident.py
-runtime/python/zn_agent/core/pointer_click_semantic_resident.py
-tests/zn_agent/core/test_pointer_click_semantic_completion.py
-```
-
-All three passed `python -m py_compile`. There is no authoritative local private checkout, so no unit tests are counted as passed for this head until GitHub Actions executes.
-
-### 5. Diff reviewed
-
-Parent `70790cfc...` -> `a4a6d98e...` contains exactly three files:
-
-```text
-runtime/python/zn_agent/core/pointer_click_resident.py               +44 / -0
-runtime/python/zn_agent/core/pointer_click_semantic_resident.py      +53 / -29
-tests/zn_agent/core/test_pointer_click_semantic_completion.py        +48 / -3
-```
-
-The branch was advanced by non-forced fast-forward.
-
-## Last fully verified CI
-
-The latest fully verified implementation remains:
-
-```text
-head 6f25b30c46d2f1bcafdd8f62e0968c2a4d05623e
-run  32866088556
-
-ZN Kernel / Python / Windows        success
-ZN Source Boundary / Windows       success
-Electron / TypeScript / Windows    success
-Publish Windows CI statuses        success
-full core discovery                 416 passed, 5 skipped
-```
-
-Do not extend that verification claim to `a4a6d98e...` until a self-hosted Windows runner actually executes the latest exact-head jobs.
+The final hook remains a no-op in the generic base and is overridden only by the semantic layer; effect-only pointer clicks were not widened.
 
 ## Risks / boundaries
 
 - Do not modify main through ordinary development.
 - No force push/history rewrite.
 - Do not weaken source-boundary scanning.
-- Exact process/title matching remains intentionally strict.
+- Exact process/title foreground matching remains intentionally strict.
 - Foreground identity is not internal application/business semantic proof.
-- Current hardening is committed but not CI verified because no self-hosted runner accepted the workflow.
-- Real interactive-desktop E2E remains absent.
+- Real interactive-desktop E2E is still absent even though simulated resident behavior is CI verified.
 - Broader input authority remains intentionally absent.
 - M8 updater/rollback/signing remains partial and high risk.
+- SM1+ remains open.
+- GitHub Actions JavaScript runtime deprecation warnings are tooling debt, not a current functional failure.
 
 ## Task queue
 
 ### P0 - exact-head Windows CI
-Status: **BLOCKED BY SELF-HOSTED RUNNER AVAILABILITY**
+Status: **VERIFIED / GREEN**
 
-Current implementation run: `32875414203` for `a4a6d98e...`. No jobs have been accepted yet.
+Verified run `32882987054` at `1e325926...`; all four required Windows jobs succeeded and Kernel completed **423 passed / 5 skipped**.
 
 ### P1 - bounded verifier manifest
 Status: **VERIFIED NARROW SLICE / THREE REAL RELATIONS**
@@ -177,12 +188,12 @@ Real interactive-desktop capture evidence remains open.
 Status: **VERIFIED**
 
 ### P4 - narrow pointer click lifecycle
-Status: **VERIFIED NARROW SLICE / FINAL-INPUT HOOK PRESENT BUT CURRENT HEAD CI UNVERIFIED**
+Status: **VERIFIED NARROW SLICE INCLUDING FINAL INPUT BOUNDARY**
 
 ### P5 - semantic/current-world UI verification
-Status: **FOREGROUND COMPLETION VERIFIED THROUGH `6f25b30c...` / SOURCE-CONTEXT AND FINAL-INPUT HARDENING PRESENT BUT CI UNVERIFIED**
+Status: **FOREGROUND SOURCE + DESTINATION SEMANTICS VERIFIED**
 
-Deeper internal UI/application-state semantics remain open. Do not resume mutation expansion while the current exact head lacks real Windows execution.
+Source action precondition, final pre-input foreground recheck, visual effect proof, and exact destination foreground completion are now real-Windows-CI verified. Deeper internal UI/application-state semantics remain open.
 
 ### P6 - M8 Windows continuity / rollback / signing
 Status: **PENDING / PARTIAL**
@@ -192,10 +203,10 @@ Status: **PENDING**
 
 ## Next real target
 
-1. get a replaceable Windows x64 self-hosted runner online/available so the latest exact-head workflow is accepted;
-2. inspect real Kernel / Source Boundary / Electron / publisher results;
-3. fix any executed failure rather than assuming success;
-4. once green, synchronize the final-input hardening as verified without creating an infinite docs-only loop;
-5. then resume the smallest useful read-only internal UI/application-state Sense beyond foreground identity;
-6. keep real interactive-desktop E2E, M8, and SM1+ explicitly open;
+1. inspect the smallest useful read-only internal UI/application-state Sense beyond foreground identity;
+2. trace entry -> owner -> state -> lifecycle -> dependency -> tests -> active caller first;
+3. add nothing if it would be unused telemetry;
+4. prefer bounded resident-owned native evidence that can feed a real typed completion/precondition/investigation boundary;
+5. keep interactive-desktop E2E, M8, and SM1+ explicitly open;
+6. keep exact-head Windows CI green;
 7. keep `main` untouched.
