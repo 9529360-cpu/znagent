@@ -91,11 +91,32 @@ class _WindowsUiAutomationReader:
 
     def _run(self) -> None:
         try:
-            import comtypes
-            import comtypes.client as com_client
-            from comtypes.client import CreateObject, GetModule
+            # comtypes initializes COM automatically on the thread that first
+            # imports it. Its default is STA, so a fresh UIA worker must select
+            # MTA before that first import rather than trying to change the
+            # apartment afterward. If another owner already imported comtypes,
+            # this new worker still needs its own explicit MTA initialization.
+            import sys
 
-            comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
+            comtypes_was_loaded = "comtypes" in sys.modules
+            had_coinitialize_flag = hasattr(sys, "coinit_flags")
+            previous_coinitialize_flag = getattr(sys, "coinit_flags", None)
+            if not comtypes_was_loaded:
+                sys.coinit_flags = 0  # COINIT_MULTITHREADED
+            try:
+                import comtypes
+                import comtypes.client as com_client
+                from comtypes.client import CreateObject, GetModule
+            finally:
+                if not comtypes_was_loaded:
+                    if had_coinitialize_flag:
+                        sys.coinit_flags = previous_coinitialize_flag
+                    else:
+                        del sys.coinit_flags
+
+            if comtypes_was_loaded:
+                comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
+
             # Keep generated type-library wrappers memory-only. This Sense is
             # evidence, not durable product state, and should not need to write
             # generated COM modules into site-packages or a user cache.
