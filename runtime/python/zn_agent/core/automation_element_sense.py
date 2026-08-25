@@ -49,6 +49,7 @@ class _WindowsUiAutomationReader:
     _PROBE_TIMEOUT_SECONDS = 6.0
     _CONNECTION_TIMEOUT_MS = 1500
     _TRANSACTION_TIMEOUT_MS = 2500
+    _CUIAUTOMATION8_CLSID = "{e22ad333-b25f-460c-83d0-0581107395c9}"
 
     def __init__(self):
         self._requests: queue.Queue[_AutomationRequest] = queue.Queue(maxsize=1)
@@ -122,13 +123,18 @@ class _WindowsUiAutomationReader:
             # generated COM modules into site-packages or a user cache.
             com_client.gen_dir = None
             client = GetModule("UIAutomationCore.dll")
+
+            # CUIAutomation implements only IUIAutomation. The timeout controls
+            # belong to IUIAutomation2, whose Windows 8+ coclass is
+            # CUIAutomation8. Instantiate that coclass directly instead of
+            # creating the older object and asking it for an unsupported
+            # interface.
             automation = CreateObject(
-                "{ff48dba4-60ef-4201-aa87-54103eef594e}",
-                interface=client.IUIAutomation,
+                self._CUIAUTOMATION8_CLSID,
+                interface=client.IUIAutomation2,
             )
-            automation2 = automation.QueryInterface(client.IUIAutomation2)
-            automation2.ConnectionTimeout = self._CONNECTION_TIMEOUT_MS
-            automation2.TransactionTimeout = self._TRANSACTION_TIMEOUT_MS
+            automation.ConnectionTimeout = self._CONNECTION_TIMEOUT_MS
+            automation.TransactionTimeout = self._TRANSACTION_TIMEOUT_MS
 
             cache = automation.CreateCacheRequest()
             cache.AutomationElementMode = client.AutomationElementMode_None
