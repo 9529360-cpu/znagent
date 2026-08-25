@@ -19,19 +19,19 @@ M10 canonical source promotion remains complete. `main` is canonical source/rele
 Current development implementation head before this status sync:
 
 ```text
-9b11b30cbd943e7b1cf4a0c24bff023d4d76098b
-fix: bind click input to foreground context
+a4a6d98e4139fd9a527474e007c378ccc52ba77f
+fix: verify foreground at click boundary
 ```
 
-Status of that implementation: **CODE PRESENT / LOCAL STATIC COMPILE PASSED / EXACT-HEAD WINDOWS CI NOT YET EXECUTED**.
+Status: **CODE PRESENT / LOCAL STATIC COMPILE PASSED / EXACT-HEAD WINDOWS CI NOT EXECUTED**.
 
-The automatic run for that head is:
+Automatic exact-head run:
 
 ```text
-run 32873121911
+run 32875414203
 ```
 
-At the latest inspection, the workflow had no jobs returned and the commit had zero published commit-status contexts. Per `ZN-SELF-HOSTED-CI.md`, this means no self-hosted runner had accepted the workflow yet. This is infrastructure availability evidence, not a code-test result. Do not report `9b11b30c...` as CI verified until real Windows jobs execute.
+At latest inspection the run existed but `fetch_workflow_run_jobs` returned zero jobs. The self-hosted Windows runner had not accepted the workflow. Per `docs/ZN-SELF-HOSTED-CI.md`, this is infrastructure availability evidence, not a passing or failing code-test result.
 
 The latest fully verified implementation head remains:
 
@@ -45,7 +45,7 @@ Electron / TypeScript / Windows    success
 Publish Windows CI statuses        success
 ```
 
-That verified Windows kernel run used fresh CPython 3.12.13, installed the formal runtime, booted the resident with zero external models, compiled the resident core, and completed full discovery with **416 tests passed and 5 platform-appropriate skips**.
+That verified Windows kernel run used fresh CPython 3.12.13, installed the formal runtime, booted with zero external models, compiled the resident core, and completed full discovery with **416 tests passed and 5 platform-appropriate skips**.
 
 ## 2. Resident ownership
 
@@ -61,102 +61,99 @@ provider_bridge.build_resident_runtime()
 -> resident-owned lower runtime chain
 ```
 
-No external model owns resident identity, execution authority, truth, or completion.
+External models do not own identity, execution authority, current-world truth, or completion.
 
 ## 3. Body / Senses / computer interaction
 
 ### Verified foundation through `6f25b30c...`
 
-The verified narrow UI chain still includes:
+The verified narrow UI chain includes structured `pointer_click` authority, `visual_region_changed` local effect verification, durable click-start anti-replay, exact typed `ui_state_transition` completion, read-only `NativeForegroundWindowSense`, exact `foreground_window_matches(process_name, title_equals)` completion scope, target-already-satisfied zero-input completion, and fresh post-click foreground proof.
 
-- structured `pointer_click` authority;
-- `visual_region_changed` local effect verification;
-- durable click-start marker and no blind replay;
-- exact typed `ui_state_transition` completion;
-- read-only `NativeForegroundWindowSense`;
-- exact `foreground_window_matches(process_name, title_equals)` completion scope;
-- target-already-satisfied no-input completion;
-- fresh post-click foreground-window proof;
-- no generic task-prose ability credit.
+Foreground process/title proves only application/window identity. It does not prove internal application state, transaction completion, message delivery, network success, or arbitrary task prose.
 
-Foreground-window identity proves only application/window identity. It does not prove internal application state, transaction completion, message delivery, network success, or arbitrary natural-language task semantics.
+### Current unverified source-context hardening
 
-### Current unverified safety hardening at `9b11b30c...`
-
-Investigation found a pre-input stale-context gap: after the initial foreground probe, the lower click lifecycle rechecked pointer position and captured a fresh local visual baseline, but did not independently prove that the same intended source application/window still owned the foreground immediately before click delivery.
-
-The current implementation adds a separate typed mutation precondition without widening input authority:
+Commit `9b11b30cbd943e7b1cf4a0c24bff023d4d76098b` introduced an explicit typed mutation source precondition:
 
 ```text
-completion target:
-completion_scope.kind = foreground_window_matches
-completion_scope.process_name = exact target process
-completion_scope.title_equals = exact target title
-
-action source context when input is required:
 action_precondition.kind = foreground_window_matches
 action_precondition.process_name = exact source process
 action_precondition.title_equals = exact source title
 ```
 
-Lifecycle now intended by the code:
+It required a fresh source foreground match before pointer movement and persisted the admitted event kind, intent, completion scope, and source precondition.
+
+Further call-chain review found that its second foreground check still happened too early. The lower click lifecycle subsequently performed a fresh cursor check, captured the target-local visual baseline, persisted the non-replayable `started` marker, and only then delivered input. Foreground ownership could therefore drift during that remaining pre-input interval.
+
+Commit `a4a6d98e4139fd9a527474e007c378ccc52ba77f` closes that timing gap without widening mutation authority.
+
+Current intended lifecycle in code:
 
 ```text
 fresh foreground observation
 -> if completion target already matches: complete with zero input
 -> otherwise require exact action_precondition
 -> source foreground must match before pointer movement
--> persist admitted event kind + intent id + completion scope + action precondition
--> prepare/move pointer through existing bounded lifecycle
--> validate admission has not drifted
--> fresh source foreground must still match after pointer preparation
--> mismatch/unavailable/drift: Investigation, no click
--> existing pointer + local visual baseline checks
--> durable started marker
+-> persist admitted event kind + intent + completion scope + action precondition
+-> existing bounded pointer movement/preparation
+-> reject admitted authority drift
+-> fresh pointer-state check
+-> capture fresh target-local visual baseline
+-> persist baseline + durable execution status="started"
+-> FINAL fresh source-foreground check immediately before pointer input
+   -> exact match: continue
+   -> mismatch/unavailable/drift: mark execution status="aborted", input_sent=false; Investigation
 -> exactly one left click
--> existing fresh local visual effect verification
+-> fresh local visual effect verification
 -> verify admitted event/scope/precondition still match
 -> fresh target foreground must match completion scope
 -> only then close typed ui_state_transition
 ```
 
-The target-already-satisfied path intentionally does not require an action precondition because it sends no input.
+The base `VerifiedPointerClickResidentRuntime` now owns a default no-op `_pointer_click_final_input_precondition()` hook at the final input boundary. `SemanticPointerClickResidentRuntime` overrides it with resident-owned foreground evidence. Ordinary effect-only clicks retain their existing behavior.
 
-No keyboard, right-click, double-click, drag, browser automation catalog, OCR, model-derived fact, or new mutation primitive was added.
+The final hook runs after the durable `started` marker is saved. If the process crashes in that narrow interval, restart still sees an uncertain started click and refuses blind replay. When the hook explicitly rejects input, the resident records `status="aborted"` and `input_sent=false` before entering Investigation.
 
-Files changed by `9b11b30c...`:
+No keyboard, right-click, double-click, drag, generic browser automation catalog, OCR, model-derived fact, new dependency, or new mutation primitive was added.
+
+Files changed by `a4a6d98e...`:
 
 ```text
+runtime/python/zn_agent/core/pointer_click_resident.py
 runtime/python/zn_agent/core/pointer_click_semantic_resident.py
 tests/zn_agent/core/test_pointer_click_semantic_completion.py
 ```
 
-Parent-to-implementation diff was reviewed and contains exactly those two files. Generated candidate versions of both files passed `python -m py_compile`. No authoritative local private checkout exists, so unit execution still depends on repository CI.
+Parent `70790cfc...` -> `a4a6d98e...` was reviewed and contains exactly those three files: 44 additions in the base lifecycle, 53 additions / 29 deletions in semantic timing, and 48 additions / 3 deletions in semantic tests.
 
-New/expanded test coverage in that commit includes:
+Generated candidate versions of all three Python files passed `python -m py_compile`. No authoritative local private checkout exists, so no unit test is counted as passed for this head until repository CI actually executes.
+
+Expanded regression coverage now includes:
 
 - mutation requires explicit action precondition before movement;
-- unsupported precondition authority fields fail closed;
-- source foreground mismatch fails before movement;
-- foreground drift after pointer movement fails before click and before visual baseline capture;
-- pre-input admitted precondition drift fails before click;
-- post-input precondition drift fails without replay;
-- target-already-satisfied zero-input behavior remains allowed;
-- existing semantic mismatch and completion-scope drift behavior remains covered.
+- unsupported source-precondition authority fields fail closed;
+- initial source foreground mismatch fails before movement;
+- admitted authority drift fails before input;
+- foreground drift after pointer movement is rejected at the final input boundary;
+- foreground drift after visual baseline capture is rejected before input;
+- an explicit final-boundary rejection persists `aborted` and `input_sent=false`;
+- successful semantic transition records re-verification phase `final_before_pointer_input`;
+- post-input precondition/scope drift still returns to Investigation without replay;
+- target-already-satisfied zero-input completion remains allowed.
 
-These tests are **not yet counted as passed** until exact-head CI executes.
+These tests are **present but not yet CI-executed**.
 
 ## 4. Repository source boundary
 
-The active tree remains intended to be ZN-only and the scanner remains unchanged. A prior docs-sync run exposed a forbidden retired marker in HANDOFF prose; that wording was corrected in `40186a21c64e5dc1116dd79bc0ae2a1111040948` without weakening the verifier or adding an exemption.
+The active tree remains intended to be ZN-only and the scanner remains unchanged. The last fully executed Source Boundary success remains run `32866088556` at `6f25b30c...`. Current later heads require a real self-hosted Windows execution before their boundary status is called verified.
 
-Because the self-hosted runner did not accept the follow-up run, the correction and the later safety hardening do not yet have fresh exact-head Source Boundary execution evidence. The last fully verified Source Boundary result remains run `32866088556` at `6f25b30c...`.
+No source-boundary rule or exemption was weakened by the current safety hardening.
 
 ## 5. Desktop / runtime / release
 
-Desktop ownership and runtime packaging remain unchanged by the current safety hardening. The last fully verified desktop/runtime evidence remains run `32866088556`.
+Desktop ownership and runtime packaging are unchanged by this slice. The last fully verified desktop/runtime evidence remains run `32866088556`.
 
-M8 remains **PARTIAL**. Still open for the Windows x64 product target:
+M8 remains **PARTIAL**. Still open for Windows x64:
 
 1. clean Windows install/login evidence;
 2. installed Windows N->N+1 continuity evidence;
@@ -165,15 +162,15 @@ M8 remains **PARTIAL**. Still open for the Windows x64 product target:
 
 ## 6. Self-maintenance
 
-SM0 remains complete. SM1+ remains open. No self-maintenance architecture changed in the current slice.
+SM0 remains complete. SM1+ remains open. No self-maintenance architecture changed in this slice.
 
 ## 7. Current known debts / blockers
 
-- self-hosted Windows x64 runner currently has not accepted the latest development workflow;
-- `9b11b30c...` requires real exact-head Kernel, Source Boundary, Electron and status-publisher execution before verification;
+- self-hosted Windows x64 runner has not accepted the current exact-head workflow;
+- `a4a6d98e...` requires real Kernel, Source Boundary, Electron and publisher execution before verification;
 - real interactive-desktop foreground-window/screen-capture/click E2E evidence remains absent;
 - semantic verification deeper than application/window identity remains open;
-- structured read-only internal UI/application state evidence remains open;
+- structured read-only internal UI/application-state evidence remains open;
 - broader input primitives remain intentionally absent until matching typed authority and verification exist;
 - M8 Windows install/upgrade/rollback/signing evidence remains open;
 - mature procedural competence/growth benchmarks remain partial;
@@ -183,11 +180,11 @@ SM0 remains complete. SM1+ remains open. No self-maintenance architecture change
 ## 8. Next real targets
 
 ```text
-1. restore/observe a replaceable Windows x64 self-hosted runner accepting the current workflow
-2. require exact-head run 32873121911 or its latest-head successor to execute real jobs
-3. fix any real failure; do not treat queued/no-status state as a passing test
-4. only after green CI, mark the foreground action-precondition hardening VERIFIED
-5. then resume P5: smallest useful read-only internal UI/application-state evidence beyond foreground identity
-6. keep real interactive-desktop E2E, M8, and SM1+ explicitly open
+1. restore/observe a replaceable Windows x64 self-hosted runner accepting the latest exact dev HEAD
+2. inspect real Kernel / Source Boundary / Electron / publisher results
+3. fix any executed failure; queued/no-job state is not a passing test
+4. only after green CI mark the source-context/final-input hardening VERIFIED
+5. then resume P5 read-only internal UI/application-state evidence beyond foreground identity
+6. keep interactive-desktop E2E, M8, and SM1+ explicitly open
 7. leave main untouched through ordinary development
 ```
