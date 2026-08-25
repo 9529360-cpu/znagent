@@ -4,7 +4,7 @@
 
 ## 当前目标
 
-当前主线是 **browser/computer Body/Senses**。第一块 typed pointer movement 与第一块 target-local visual region sense 都已通过 exact-head Windows x64 CI。下一步不是把 input API 返回值包装成“会点击”，而是把最小 click 生命周期设计成：显式结构化 authority → side-effect 前 fresh 局部视觉 baseline → bounded click → fresh 局部视觉观察 → contradiction / narrow effect verification；若局部变化不足以证明请求的语义结果，则必须继续增强 Senses/verification，而不能宣称任务完成。
+当前主线仍是 **browser/computer Body/Senses**，但施工点已经从“click 生命周期调查”前进到：**最小 typed pointer click 已通过 exact-head Windows x64 CI；下一步是把 local effect 与更高层 semantic/current-world outcome 严格分开，并在扩大任何 browser/input authority 之前增强验证。**
 
 核心原则：
 
@@ -16,15 +16,17 @@ Windows x64 仍是 intended product / steady-state CI target；Linux/macOS 仅 o
 
 - 固定开发分支：`dev/zn-agent`
 - canonical source/release branch：`main`
-- 本 HANDOFF 写入前开发 HEAD：`f437ab85be63972005d8d7fb6a78f3f204d57dc4`
+- 本 HANDOFF 写入前开发 HEAD：`a32c0f0dfd34e47371530e0ded2368401d3a8efb`
 - canonical `main`：`8234a835dea604783cea0bd9d28a40de654ec03d`
-- 本 HANDOFF 写入前 `dev/zn-agent` 相对 `main`：ahead 71、behind 0；本状态同步 commit 会再前进一次
+- `dev/zn-agent` 相对 `main`：ahead 75、behind 0；本状态同步 commit 会再前进一次
 - PR #6：draft/open，base `main`，head `dev/zn-agent`，未合并
 - `main` 未修改；没有 force push/history rewrite
 
 ## 已完成事项
 
-### 1. Bounded repo-owned verifier manifest — three real relations
+### 1. Repository-owned verifier / Windows engineering slices
+
+Verifier manifest 保持三条真实 relation，不为数量扩张：
 
 ```text
 runtime/python/zn_agent/core/repo_test_semantics.py
@@ -37,88 +39,79 @@ runtime/python/zn_agent/core/result_semantics.py
 → tests/zn_agent/core/test_verified_experience.py
 ```
 
-manifest 只能声明 literal `target` + `test`，不能携带 command/shell/workdir/timeout，也不能把模型建议或 task prose 变成执行 authority。Run `32829830325` 验证三条 relation；后续 exact-head runs 持续保持 green。不为数量继续扩张。
+Manifest 只能提供 literal target/test relation，不能创建 command/shell/model/task-prose authority。
 
-### 2. Windows host-pressure test isolation
+### 2. Resident visual foundation
 
-关键提交：
+Formal runtime owns `Pillow==12.3.0`. `ResidentSocketService` owns persistent `NativeVisualSense` and on-demand read-only `NativeVisualRegionSense`。Region probe only returns compact local signature/luminance/bounds; raw pixels are discarded and the probe does not create mutation authority or another agent.
 
-```text
-40e1ae4f0d0043a9a2205f8b4299855f427de847  test: isolate life semantics from host disk pressure
-a7d8e91985da62831d6ea95994d22d9b1d914a95  test: isolate endogenous attention from host disk pressure
-d44e454fd3aa559c4c8e4445ba10224cd70e130a  test: isolate cognition rpc from host disk pressure
-7fe0444a6633536a3678074776c006f41b4dd7b2  test: isolate visual attention from host disk pressure
-```
+Exact run `32847172662` verified the target-local visual probe foundation with 397 passed / 5 skipped.
 
-生产 low-disk Body 语义保留；测试不再让与 Body health 无关的宿主资源状态污染 cognition assertions，并保留 `<10% free → constrained → body resources` 回归。
-
-### 3. Resident visual runtime packaging repair
-
-```text
-58aee1ea4331264fcc0abcf73843b91ca6dc0879  fix: package resident visual capture dependency
-```
-
-正式 runtime 明确声明 `Pillow==12.3.0`，不再依赖宿主机器碰巧已有 Pillow。Exact run `32831968178` 证明 fresh isolated runtime 安装、zero-model boot 和完整 suite 成功。
-
-### 4. Verified bounded pointer movement
+### 3. Verified bounded pointer movement
 
 ```text
 83f45fd922ebc216933987d269b3c797d3875f2b  feat: add verified pointer movement
 ```
 
-实现边界：
+Typed `pointer_move` accepts only finite normalized coordinates; side-effect success is followed by fresh `pointer_state`; cursor drift contradicts completion. Exact run `32844167956` passed with 393 tests / 5 skipped.
 
-- `NativeBody` 拥有 Windows primary-screen `pointer_move` / `pointer_state`；
-- `pointer_move` 只接受 finite normalized `[0,1]` 坐标；
-- structured `body_action` / `native_action` 是 authority；模型 prose、普通 task text、procedural memory 不产生坐标 authority；
-- side-effect 成功后进入 durable `native_verification`，不会直接完成任务；
-- fresh `pointer_state` 独立读取 cursor；
-- drift/contradiction 进入 Investigation 并形成 negative evidence；
-- active procedural inheritance 只同步 verification result passthrough，没有扩大 procedural authority。
+### 4. Verified narrow pointer click lifecycle
 
-Exact run `32844167956`：四个 Windows jobs success，**393 tests passed / 5 skipped**。三条 pointer tests 全绿。
-
-### 5. Verified resident-owned local visual region sense
+Key commits:
 
 ```text
-f437ab85be63972005d8d7fb6a78f3f204d57dc4  feat: add resident visual region sense
+44ecb72d4c58f2c75a8e5c5d65d1820e64ceeed4  feat: add verified pointer click lifecycle
+e2ab7600cafd18ca0956932af43fe6ae83f82449  refactor: minimize pointer body diff
+a32c0f0dfd34e47371530e0ded2368401d3a8efb  test: align click success assertion with terminal lifecycle
 ```
 
-新增 `NativeVisualRegionSense`，由 `ResidentSocketService` 与 persistent retina 一起拥有，但用途刻意不同：background retina 继续形成 lived visual structure；region sense 只提供明确请求时的 fresh、read-only、target-local evidence。
-
-真实调用链：
+Active builder/call chain:
 
 ```text
-ResidentSocketService
-→ NativeVisualRegionSense
-→ probe(explicit bounded normalized region)
-→ lazy Pillow ImageGrab
-→ bounded primary-screen crop
-→ grayscale + 16x16 quantized local derivative
-→ compact SHA-256 signature + luminance + pixel bounds + capture metadata
-→ all Pillow image objects closed
-→ raw pixels discarded
-→ VisualRegionObservation
+provider_bridge.build_resident_runtime()
+→ VerifiedPointerClickResidentRuntime
+→ RepositoryVerifyingResidentRuntime inheritance chain remains active
+→ NativeActionIntent(kind="pointer_click")
+→ require explicit expected_outcome.kind="visual_region_changed"
+→ pointer_move(explicit normalized target)
+→ fresh pointer_state confirms target
+→ persist prepared click state
+→ fresh target-local visual baseline
+→ persist execution-start marker before input
+→ NativeBody.act("pointer_click")
+→ one left click only if cursor still matches target
+→ native_verification
+→ fresh target-local visual probe
+→ changed signature: narrow visual_region_changed completion
+→ unchanged/unavailable: contradiction → Investigation
 ```
 
-边界：
+Body primitive boundary:
 
-- service 构造不会触发 screenshot；只有 `probe()` 才 lazy `ImageGrab`；
-- center 必须是 finite normalized `[0,1]`；
-- width/height fraction 限制为 `0.01..0.50`；
-- raw-frame persistence 声明为 true 会被拒绝；
-- probe 不写 visual SQLite state；
-- probe 不创建 nervous trace；
-- probe 不推进 background retina sample_count/hash/rhythm；
-- probe 不调用任何模型；
-- region sense 是 Sense，不是 Body action authority，不是另一个 agent；
-- 它当前没有被开放成 generic RPC/desktop control surface。
+- `pointer_click` never moves the cursor implicitly;
+- only left button is accepted;
+- current cursor must still match explicit target within one pixel;
+- Windows `SendInput` delivery result is only Body evidence, never completion proof.
 
-Exact Windows x64 CI：
+Resident lifecycle boundary:
+
+- missing/invalid `visual_region_changed` expected outcome fails before input;
+- missing resident-owned visual region Sense fails before input;
+- pointer is freshly re-observed after positioning;
+- local baseline is captured after hover/position effects and before click;
+- execution `started` marker is durable before input;
+- an interrupted `started` click is treated as unknowable delivery and is not replayed blindly;
+- post-click fresh local visual observation is required;
+- unchanged region returns to Investigation and negative evidence;
+- changed region proves only the explicitly typed local visual effect, not a broader UI/business goal.
+
+### 5. Exact-head CI for click slice
+
+Authoritative implementation-head evidence:
 
 ```text
-run  32847172662
-head f437ab85be63972005d8d7fb6a78f3f204d57dc4
+run  32854445588
+head a32c0f0dfd34e47371530e0ded2368401d3a8efb
 
 ZN Kernel / Python / Windows        success
 ZN Source Boundary / Windows        success
@@ -126,61 +119,60 @@ Electron / TypeScript / Windows     success
 Publish Windows CI statuses         success
 ```
 
-Kernel 真实证据：
+Kernel evidence:
 
 ```text
 fresh isolated Python 3.12.13       success
-znagent formal runtime install       success
-29 runtime packages resolved         success
+formal znagent runtime install       success
+29 runtime packages installed        success
 pillow==12.3.0                       installed
 zero-model resident boot             success
 resident core compile                success
-full core unittest discovery         397 tests passed, 5 skipped
+full core unittest discovery         402 tests passed, 5 skipped
 ```
 
-新增四条 visual-region tests 全绿：
+Five new click tests all passed:
 
 ```text
-test_invalid_region_never_reaches_capture_authority
-test_probe_is_bounded_fresh_read_only_local_evidence
-test_probe_rejects_raw_pixel_persistence_claim
-test_resident_service_owns_region_sense_without_writing_retina_or_memory
+test_pointer_click_body_never_moves_implicitly
+test_click_waits_for_position_baseline_and_fresh_effect_verification
+test_interrupted_started_click_is_not_replayed
+test_unchanged_local_region_contradicts_click_completion
+test_click_without_narrow_visual_postcondition_fails_before_input
 ```
 
-测试通过 injected region probe 验证语义/ownership，没有在 CI runner 上把真实 interactive-desktop screenshot 当成 E2E 证明。因此 real-session capture/desktop availability 仍是环境证据缺口。
+The immediately prior run `32853366923` had one test error only: after successful terminal completion the test tried to read `native_verification_result` from WorkingState that the existing lifecycle had already cleared. Other click tests and product behavior passed. The assertion was corrected in `a32c0f0...`; exact-head run `32854445588` then passed the whole suite.
 
 ## 当前真实调用链
 
-### Verifier path
+### Active resident construction
 
 ```text
 provider_bridge.build_resident_runtime()
-→ RepositoryVerifyingResidentRuntime
-→ _repo_targeted_test_spec()
-→ canonical mirrored identity OR tracked/clean manifest mapping
-→ direct-import + discoverable unittest + current CI proof
-→ typed python_unittest lifecycle
-→ execution anti-replay
-→ fresh post-action repository snapshot
-→ completion only if evidence still matches
+→ build_runtime() / KernelStore / ZN-owned cognitive resources
+→ CognitiveBudgetManager
+→ VerifiedPointerClickResidentRuntime(kernel, budget)
 ```
 
-### Persistent resident visual path
+This keeps the existing repository-verifying/procedural/world-aware inheritance chain active; click is an additional narrow lifecycle, not a replacement runtime.
+
+### Pointer click
 
 ```text
-ResidentSocketService
-→ persistent NativeVisualSense
-→ _visual_loop()
-→ maybe_sample()
-→ _capture_primary_screen()
-→ Pillow ImageGrab local capture
-→ compact frame hash / coarse 4x3 regions / luminance
-→ raw image discarded
-→ resident.perceive_visual(...)
-→ nervous traces / Situation / Thought / Will attention
+structured body_action/native_action
+→ NativeActionIntent(kind="pointer_click")
+→ VerifiedPointerClickResidentRuntime._native_action_step()
+→ explicit visual_region_changed contract
+→ position + fresh pointer verification
+→ fresh local baseline
+→ durable non-replayable start marker
+→ NativeBody.pointer_click
+→ native_verification
+→ fresh local region observation
+→ local effect success OR contradiction
 ```
 
-### Target-local visual path
+### Target-local visual Sense
 
 ```text
 ResidentSocketService
@@ -190,126 +182,85 @@ ResidentSocketService
 → VisualRegionObservation
 ```
 
-This path is synchronous and read-only relative to resident memory/lived retina state.
-
-### Pointer movement path
-
-```text
-structured body_action/native_action
-→ NativeActionIntent(kind="pointer_move")
-→ durable native action cycle
-→ NativeBody.act("pointer_move")
-→ persist result
-→ native_verification
-→ NativeBody.act("pointer_state")
-→ fresh current cursor position
-→ match: verified completion
-→ mismatch/unavailable: contradiction → Investigation
-```
+It remains synchronous/read-only relative to persistent retina/nervous memory.
 
 ## 真实测试 / CI
 
-Latest authoritative implementation-head evidence:
+Latest authoritative implementation-head evidence is run `32854445588` at `a32c0f0...`: all four Windows jobs success; kernel full discovery ran 402 tests with 5 skips and no failures.
 
-```text
-run  32847172662
-head f437ab85be63972005d8d7fb6a78f3f204d57dc4
+Current environment does not have a private-repository local checkout. No unexecuted local suite is presented as validation; authoritative evidence comes from GitHub Actions on the exact commit.
 
-ZN Kernel / Python / Windows        success
-  fresh isolated runtime            success
-  zero-model boot                   success
-  compile                           success
-  full core suite                   397 passed, 5 skipped
-  visual-region bounded probe       success
-  invalid-region fail-closed        success
-  raw-pixel persistence rejection   success
-  service ownership/no-memory-write success
+## Diff / PR / ownership 对账
 
-ZN Source Boundary / Windows        success
-Electron / TypeScript / Windows     success
-Publish Windows CI statuses         success
-```
-
-Previous docs-head `93eae04fc436c0df15de3173629927bab238c78e` also had all four Windows jobs green in run `32846248288`.
-
-当前环境没有私有仓库本地 checkout；没有把未执行的本地 suite 伪装成验证。以上结论来自真实 GitHub Actions。
-
-## Diff / ownership 对账
-
-- `main` 仍是 `8234a835dea604783cea0bd9d28a40de654ec03d`，未修改。
-- `dev/zn-agent` 在本 HANDOFF 写入前相对 `main` ahead 71 / behind 0。
-- PR #6 draft/open、未合并。
-- region-sense commit 仅新增 `visual_region_sense.py`、新增对应测试、并在 `resident_server.py` 接入 ownership；没有新增 external control plane。
-- `resident_server.py` 没有移除 service lifecycle 逻辑；diff 中 deletion 仅是注释文字/空格调整。
-- region probe 不是 `body_action`，不创造新的 mutation authority。
-- 当前没有继续扩 verifier manifest。
+- `main` remains `8234a835dea604783cea0bd9d28a40de654ec03d`, unchanged.
+- `dev/zn-agent` is ahead 75 / behind 0 before this docs sync.
+- PR #6 remains draft/open and unmerged; its head is `a32c0f0...` before this docs sync.
+- Active tree is still ZN-only; exact-head Source Boundary passed.
+- `provider_bridge` now constructs `VerifiedPointerClickResidentRuntime`; no historical product runtime/control plane was restored.
+- Click implementation is isolated in `pointer_click_resident.py` plus the bounded Body primitive and tests.
+- No keyboard/right-click/double-click/drag/browser mutation catalog was added.
 
 ## 风险 / 边界
 
-- 不修改 `main`，除非用户明确要求且重新核验 promotion 条件。
-- 禁止 force push / history rewrite。
-- manifest 不是 command catalog；不得加入 shell/model/task-prose authority。
-- computer interaction 必须是 ZN-owned typed Body action；模型文字不能直接获得鼠标/键盘执行权。
-- `pointer_move` 的 cursor-position postcondition足以验证“指针到了哪里”，但不足以验证应用/UI 语义。
-- local visual signature change 最多证明“目标局部视觉结构发生变化”；它本身仍不等于“点击完成了业务目标”。
-- 未来 click 必须在 side effect 前持久化 fresh baseline/intent evidence，并在 side effect 后重新观察；不能用 input API success 直接完成。
-- click 发生后如果 resident 中断，必须有 anti-replay 策略；不能在不知道 click 是否已发生时盲目重放。
-- 真实 Windows screen capture / interactive desktop 可能受 session/desktop/permission 状态影响；CI 当前不宣称 real-screen E2E。
-- Windows runner 曾有真实低磁盘状态；不通过削弱 Body sensing 隐藏现实。
-- Actions 仍有 Node 20 action runtime deprecation warning；仅通过稳定、验证过的 action upgrade 处理。
-- M8 updater/rollback/signing 仍是高风险 release boundary。
+- Do not modify `main` through ordinary development.
+- No force push/history rewrite.
+- `visual_region_changed` proves a local visual effect only. It must not silently become proof that a broader task such as “submitted form”, “purchase completed”, “message sent”, or other semantic/world outcome succeeded.
+- Higher-level completion needs stronger current-world evidence bound to the requested semantics.
+- Do not expand pointer/button/browser authority merely because one local click slice is green.
+- Real Windows screen capture / interactive desktop availability remains an environment evidence gap; injected tests are not real-session E2E.
+- An interrupted click with a persisted `started` marker remains intentionally non-replayable without additional evidence.
+- Node-action runtime deprecation warnings are non-blocking maintenance debt; upgrade only through stable verified action versions.
+- M8 updater/rollback/signing remains a high-risk release boundary.
 
 ## Task Queue
 
 ### P0 — exact-head Windows CI
-Status: **GREEN THROUGH `f437ab85...` / RUN `32847172662`**
+Status: **GREEN THROUGH `a32c0f0...` / RUN `32854445588`**
 
-本 HANDOFF/status 同步会产生新的 docs HEAD；允许其自动 CI 跑完，但不要为了记录那个 run ID 再产生无限 docs commit。
+This STATUS/HANDOFF sync creates a later docs HEAD. Let automatic CI verify it; do not create an infinite docs-only loop merely to record its own run ID.
 
 ### P1 — bounded verifier manifest
 Status: **VERIFIED NARROW SLICE / THREE REAL RELATIONS**
 
-不为数量继续扩张。
+Do not expand for count.
 
 ### P2 — resident visual foundation
 Status: **VERIFIED PACKAGING + BACKGROUND RETINA + TARGET-LOCAL READ-ONLY PROBE**
 
-formal runtime owns Pillow；real-session capture permission/E2E 仍未验证。
+Real-session capture permission/E2E remains open.
 
-### P3 — bounded computer interaction Body
-Status: **VERIFIED FIRST SLICE / POINTER MOVE**
+### P3 — bounded pointer movement
+Status: **VERIFIED**
 
-`pointer_move` + fresh `pointer_state` verification 已通过 exact-head Windows CI。Click/keyboard/browser mutation 未实现。
+### P4 — narrow pointer click lifecycle
+Status: **VERIFIED NARROW SLICE**
 
-### P4 — click/browser current-world verification
-Status: **ACTIVE / INVESTIGATION**
+Only one explicit left click + explicit `visual_region_changed` effect is verified. No broader semantic claim.
 
-已有 local pre/post visual evidence primitive，但尚未实现 click。下一步必须追完整 entry → owner → state → lifecycle → dependency → tests → active caller，并定义：
+### P5 — semantic/current-world UI verification
+Status: **ACTIVE / NEXT INVESTIGATION**
+
+Next work must trace how a higher-level requested outcome can be represented and independently observed without allowing task prose/model output to create side-effect authority. The key boundary is:
 
 ```text
-explicit structured click authority
-→ fresh local visual baseline
-→ durable execution-start marker / anti-replay
-→ bounded click
-→ fresh local visual re-observation
-→ narrow effect evidence
-→ stronger semantic evidence where required
-→ only then completion
+explicit action authority
++ explicit semantic/effect contract
++ fresh current-world evidence appropriate to that contract
+→ only matching scope may complete
 ```
 
-若当前 evidence 只能证明 local change，就只能宣称 local effect，不可宣称更高层 task success。
+If available evidence proves only local change, completion scope must remain local change.
 
-### P5 — M8 Windows continuity / rollback / signing
+### P6 — M8 Windows continuity / rollback / signing
 Status: **PENDING / PARTIAL**
 
-### P6 — SM1+ self-maintenance
+### P7 — SM1+ self-maintenance
 Status: **PENDING**
 
 ## 下一真实目标
 
-1. 确认本 STATUS/HANDOFF 同步 commit 的 automatic Windows x64 CI；
-2. 只读追 click 的真实 active runtime inheritance/call chain；
-3. 定义 click 的 pre-action baseline、execution anti-replay 和 post-action fresh observation contract；
-4. 仅在 typed authority + verifiable postcondition 都成立时增加最小 click Body primitive；
-5. local visual change 不足时先加强 semantic/current-world evidence，而不是扩大 action authority；
-6. 保持 M8 partial；不触碰 `main`。
+1. verify the STATUS/HANDOFF sync on automatic Windows x64 CI;
+2. trace existing result/postcondition semantics and event completion scope before adding new input primitives;
+3. design the smallest stronger semantic/current-world verifier that does not rely on model prose as fact/authority;
+4. keep click authority unchanged until that verifier has a real typed contract and tests;
+5. retain M8 as partial and leave `main` untouched.
