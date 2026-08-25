@@ -136,6 +136,7 @@ class _AutomationElementSense:
             is_offscreen=False,
             native_window_handle=0,
             captured_at=utc_now(),
+            automation_id="editor-1",
             source="test-uia",
         )
 
@@ -226,6 +227,7 @@ class PointerClickAutomationFocusCompletionTests(unittest.TestCase):
             self.assertEqual(body.click_calls, 1)
             target = state.data[resident._AUTOMATION_TARGET_KEY]
             self.assertEqual(tuple(target["runtime_id"]), _AutomationElementSense.TARGET_RUNTIME)
+            self.assertEqual(target["observation"]["automation_id"], "editor-1")
             admission = state.data[resident._SEMANTIC_PRECONDITION_KEY]
             self.assertTrue(admission["reverified"])
 
@@ -239,6 +241,61 @@ class PointerClickAutomationFocusCompletionTests(unittest.TestCase):
             self.assertEqual(resident.visual_region.calls, 2)
             self.assertIn("exact opaque element", result.reason)
             self.assertIn("no UI Automation control pattern", result.reason)
+            self.assertIn("automation_id='editor-1'", result.response)
+            resident.store.close()
+
+    def test_typed_control_scope_is_reverified_after_click(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, body = self._resident(tmp)
+            self._event(
+                resident,
+                completion_scope={
+                    "kind": "focused_automation_element_at_pointer",
+                    "process_name": "notepad.exe",
+                    "title_equals": "Untitled - Notepad",
+                    "control_type": 50004,
+                    "class_name_equals": "TestEdit",
+                },
+            )
+            self._advance_until_stage(resident, "native_action")
+
+            self.assertIsNone(resident.live_once())
+            self.assertIsNone(resident.live_once())
+            self.assertEqual(body.click_calls, 1)
+
+            result = resident.live_once()
+            self.assertIsNotNone(result)
+            self.assertTrue(result.success)
+            self.assertEqual(result.execution_path, ExecutionPath.BODY)
+            self.assertIn("typed target scope", result.reason)
+            self.assertIn("control_type=50004", result.response)
+            self.assertIn("class='TestEdit'", result.response)
+            resident.store.close()
+
+    def test_typed_control_scope_mismatch_aborts_before_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, body = self._resident(tmp)
+            self._event(
+                resident,
+                completion_scope={
+                    "kind": "focused_automation_element_at_pointer",
+                    "process_name": "notepad.exe",
+                    "title_equals": "Untitled - Notepad",
+                    "control_type": 50000,
+                    "class_name_equals": "TestEdit",
+                },
+            )
+            self._advance_until_stage(resident, "native_action")
+
+            self.assertIsNone(resident.live_once())
+            self.assertIsNone(resident.live_once())
+            state = resident.store.get_working_state()
+            self.assertEqual(state.stage, "native_investigation")
+            self.assertEqual(body.click_calls, 0)
+            execution = state.data[resident._POINTER_CLICK_EXECUTION_KEY]
+            self.assertEqual(execution["status"], "aborted")
+            self.assertFalse(execution["input_sent"])
+            self.assertIn("typed completion scope", state.data["local_failure"])
             resident.store.close()
 
     def test_already_focused_exact_target_completes_without_movement_or_input(self):
@@ -324,6 +381,29 @@ class PointerClickAutomationFocusCompletionTests(unittest.TestCase):
                     "process_name": "notepad.exe",
                     "title_equals": "Untitled - Notepad",
                     "name_equals": "unsafe authority",
+                },
+            )
+            self._advance_until_stage(resident, "native_action")
+
+            self.assertIsNone(resident.live_once())
+            state = resident.store.get_working_state()
+            self.assertEqual(state.stage, "native_investigation")
+            self.assertEqual(body.move_calls, [])
+            self.assertEqual(body.click_calls, 0)
+            self.assertEqual(resident.automation_element.point_calls, [])
+            self.assertIn("unsupported authority fields", state.data["local_failure"])
+            resident.store.close()
+
+    def test_automation_id_cannot_be_completion_authority(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, body = self._resident(tmp)
+            self._event(
+                resident,
+                completion_scope={
+                    "kind": "focused_automation_element_at_pointer",
+                    "process_name": "notepad.exe",
+                    "title_equals": "Untitled - Notepad",
+                    "automation_id_equals": "editor-1",
                 },
             )
             self._advance_until_stage(resident, "native_action")
