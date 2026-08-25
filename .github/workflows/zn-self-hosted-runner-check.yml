@@ -53,6 +53,66 @@ jobs:
             core.info(`runner.arch=${process.env.RUNNER_ARCH ?? process.arch}`)
             core.info(`workspace=${process.env.GITHUB_WORKSPACE ?? process.cwd()}`)
 
+      - name: Report runner lifecycle evidence
+        shell: powershell
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows') {
+            Write-Host "runner.lifecycle=non-windows"
+            exit 0
+          }
+
+          $current = Get-Process -Id $PID
+          Write-Host "job.shell.pid=$PID"
+          Write-Host "job.shell.session_id=$($current.SessionId)"
+
+          $listener = Get-CimInstance Win32_Process -Filter "Name = 'Runner.Listener.exe'" |
+            Sort-Object CreationDate -Descending |
+            Select-Object -First 1
+          $worker = Get-CimInstance Win32_Process -Filter "Name = 'Runner.Worker.exe'" |
+            Sort-Object CreationDate -Descending |
+            Select-Object -First 1
+
+          function Report-Process([string]$label, $process) {
+            if ($null -eq $process) {
+              Write-Host "$label.present=false"
+              return
+            }
+            Write-Host "$label.present=true"
+            Write-Host "$label.pid=$($process.ProcessId)"
+            Write-Host "$label.ppid=$($process.ParentProcessId)"
+            Write-Host "$label.created=$($process.CreationDate)"
+            Write-Host "$label.path=$($process.ExecutablePath)"
+            try {
+              $native = Get-Process -Id $process.ProcessId -ErrorAction Stop
+              Write-Host "$label.session_id=$($native.SessionId)"
+            } catch {
+              Write-Host "$label.session_id=unavailable"
+            }
+            if ($process.ParentProcessId) {
+              $parent = Get-CimInstance Win32_Process -Filter "ProcessId = $($process.ParentProcessId)"
+              if ($null -ne $parent) {
+                Write-Host "$label.parent.name=$($parent.Name)"
+                Write-Host "$label.parent.pid=$($parent.ProcessId)"
+                Write-Host "$label.parent.ppid=$($parent.ParentProcessId)"
+                Write-Host "$label.parent.created=$($parent.CreationDate)"
+              } else {
+                Write-Host "$label.parent.name=unavailable"
+              }
+            }
+          }
+
+          Report-Process 'runner.listener' $listener
+          Report-Process 'runner.worker' $worker
+
+          $services = @(Get-Service -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like 'actions.runner*' })
+          Write-Host "runner.services.count=$($services.Count)"
+          foreach ($service in $services) {
+            Write-Host "runner.service.name=$($service.Name)"
+            Write-Host "runner.service.status=$($service.Status)"
+            Write-Host "runner.service.start_type=$($service.StartType)"
+          }
+
       - name: Publish runner check terminal status
         if: ${{ always() }}
         uses: actions/github-script@v7
