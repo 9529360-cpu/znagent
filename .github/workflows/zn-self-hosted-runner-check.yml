@@ -88,21 +88,62 @@ jobs:
             } catch {
               Write-Host "$label.session_id=unavailable"
             }
-            if ($process.ParentProcessId) {
-              $parent = Get-CimInstance Win32_Process -Filter "ProcessId = $($process.ParentProcessId)"
-              if ($null -ne $parent) {
-                Write-Host "$label.parent.name=$($parent.Name)"
-                Write-Host "$label.parent.pid=$($parent.ProcessId)"
-                Write-Host "$label.parent.ppid=$($parent.ParentProcessId)"
-                Write-Host "$label.parent.created=$($parent.CreationDate)"
-              } else {
-                Write-Host "$label.parent.name=unavailable"
-              }
+          }
+
+          function Report-Ancestry([string]$label, $process) {
+            Write-Host "$label.ancestry.begin"
+            $seen = @{}
+            $cursor = $process
+            for ($depth = 0; $depth -lt 12 -and $null -ne $cursor; $depth++) {
+              $pidValue = [int]$cursor.ProcessId
+              if ($seen.ContainsKey($pidValue)) { break }
+              $seen[$pidValue] = $true
+              $session = 'unavailable'
+              try {
+                $session = (Get-Process -Id $pidValue -ErrorAction Stop).SessionId
+              } catch {}
+              Write-Host "$label.ancestor[$depth].name=$($cursor.Name)"
+              Write-Host "$label.ancestor[$depth].pid=$pidValue"
+              Write-Host "$label.ancestor[$depth].ppid=$($cursor.ParentProcessId)"
+              Write-Host "$label.ancestor[$depth].created=$($cursor.CreationDate)"
+              Write-Host "$label.ancestor[$depth].session_id=$session"
+              if (-not $cursor.ParentProcessId) { break }
+              $cursor = Get-CimInstance Win32_Process -Filter "ProcessId = $($cursor.ParentProcessId)"
             }
+            Write-Host "$label.ancestry.end"
           }
 
           Report-Process 'runner.listener' $listener
           Report-Process 'runner.worker' $worker
+          if ($null -ne $listener) { Report-Ancestry 'runner.listener' $listener }
+          if ($null -ne $worker) { Report-Ancestry 'runner.worker' $worker }
+
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.Runtime.InteropServices;
+          public static class ZNConsoleProbe {
+              [DllImport("kernel32.dll", SetLastError = true)]
+              public static extern uint GetConsoleProcessList(uint[] processList, uint processCount);
+          }
+          '@
+          $consolePids = New-Object uint[] 64
+          $consoleCount = [ZNConsoleProbe]::GetConsoleProcessList($consolePids, $consolePids.Length)
+          Write-Host "console.process_count=$consoleCount"
+          $limit = [Math]::Min([int]$consoleCount, $consolePids.Length)
+          for ($index = 0; $index -lt $limit; $index++) {
+            $consolePid = [int]$consolePids[$index]
+            if ($consolePid -le 0) { continue }
+            $consoleProcess = Get-CimInstance Win32_Process -Filter "ProcessId = $consolePid"
+            if ($null -eq $consoleProcess) {
+              Write-Host "console.process[$index].pid=$consolePid"
+              Write-Host "console.process[$index].name=unavailable"
+              continue
+            }
+            Write-Host "console.process[$index].pid=$consolePid"
+            Write-Host "console.process[$index].name=$($consoleProcess.Name)"
+            Write-Host "console.process[$index].ppid=$($consoleProcess.ParentProcessId)"
+            Write-Host "console.process[$index].created=$($consoleProcess.CreationDate)"
+          }
 
           $services = @(Get-Service -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -like 'actions.runner*' })
