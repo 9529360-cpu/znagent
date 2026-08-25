@@ -10,7 +10,7 @@ from .foreground_window_sense import (
     ForegroundWindowObservation,
     NativeForegroundWindowSense,
 )
-from .models import ExecutionPath, ResidentRunResult
+from .models import ExecutionPath, ResidentRunResult, utc_now
 from .pointer_click_completion_resident import EffectScopedPointerClickResidentRuntime
 from .pointer_click_resident import VerifiedPointerClickResidentRuntime
 
@@ -66,10 +66,14 @@ class SemanticPointerClickResidentRuntime(EffectScopedPointerClickResidentRuntim
                 "ui_state_transition pointer_click requires the resident-owned foreground "
                 "window Sense before any pointer movement or input"
             )
+        action_precondition, precondition_error = self._ui_action_precondition(event)
+        if precondition_error:
+            return None, precondition_error
         return {
             **contract,
             "completion_scope": scope,
             "completion_event_kind": event_kind,
+            "action_precondition": action_precondition,
         }, None
 
     def _pointer_click_action_step(
@@ -91,13 +95,23 @@ class SemanticPointerClickResidentRuntime(EffectScopedPointerClickResidentRuntim
             )
         assert contract is not None
         scope = contract.get("completion_scope")
+        if not isinstance(scope, dict) or scope.get("kind") != self._UI_SCOPE_KIND:
+            return super()._pointer_click_action_step(
+                event,
+                state,
+                intent,
+                thought=thought,
+            )
+
+        action_precondition = contract.get("action_precondition")
         prepared = state.data.get(self._POINTER_CLICK_PRECONDITION_KEY)
-        semantic_preflight_due = not isinstance(prepared, dict)
-        if (
-            isinstance(scope, dict)
-            and scope.get("kind") == self._UI_SCOPE_KIND
-            and semantic_preflight_due
-        ):
+        same_preparation = (
+            isinstance(prepared, dict)
+            and str(prepared.get("intent_id") or "") == intent.intent_id
+            and bool(prepared.get("position_verified"))
+        )
+
+        if not same_preparation:
             observed, probe_error = self._probe_foreground_window()
             if observed is None:
                 return self._fail_pointer_click_precondition(
@@ -108,7 +122,6 @@ class SemanticPointerClickResidentRuntime(EffectScopedPointerClickResidentRuntim
                     + str(probe_error or "unknown foreground-window error"),
                     thought=thought,
                 )
-            state.data[self._SEMANTIC_PRECONDITION_KEY] = asdict(observed)
             if self._foreground_window_matches(observed, scope):
                 state.data[self._SEMANTIC_VERIFICATION_KEY] = self._verification(
                     observed,
@@ -126,6 +139,80 @@ class SemanticPointerClickResidentRuntime(EffectScopedPointerClickResidentRuntim
                         "evidence already matched the exact structured completion scope; no "
                         "pointer input was sent"
                     ),
+                )
+            if not isinstance(action_precondition, dict):
+                return self._fail_pointer_click_precondition(
+                    event,
+                    state,
+                    intent,
+                    "ui_state_transition pointer input requires an explicit exact "
+                    "action_precondition.kind=foreground_window_matches",
+                    thought=thought,
+                )
+
+            admitted = self._semantic_admission(
+                event,
+                intent,
+                scope,
+                action_precondition,
+                observed,
+                verified=self._foreground_window_matches(observed, action_precondition),
+            )
+            state.data[self._SEMANTIC_PRECONDITION_KEY] = admitted
+            if not admitted["verified"]:
+                return self._fail_pointer_click_precondition(
+                    event,
+                    state,
+                    intent,
+                    "fresh foreground-window evidence did not match the exact structured "
+                    "action_precondition before pointer movement: "
+                    + self._response(observed),
+                    thought=thought,
+                )
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+        else:
+            admission_error = self._semantic_admission_error(
+                event,
+                state,
+                intent,
+                scope,
+                action_precondition,
+            )
+            if admission_error:
+                return self._fail_pointer_click_precondition(
+                    event,
+                    state,
+                    intent,
+                    admission_error,
+                    thought=thought,
+                )
+            assert isinstance(action_precondition, dict)
+            observed, probe_error = self._probe_foreground_window()
+            if observed is None:
+                return self._fail_pointer_click_precondition(
+                    event,
+                    state,
+                    intent,
+                    "fresh foreground-window recheck before pointer input was unavailable: "
+                    + str(probe_error or "unknown foreground-window error"),
+                    thought=thought,
+                )
+            verified = self._foreground_window_matches(observed, action_precondition)
+            admission = dict(state.data[self._SEMANTIC_PRECONDITION_KEY])
+            admission["reverified"] = bool(verified)
+            admission["reverified_observation"] = asdict(observed)
+            admission["reverified_at"] = utc_now()
+            state.data[self._SEMANTIC_PRECONDITION_KEY] = admission
+            if not verified:
+                return self._fail_pointer_click_precondition(
+                    event,
+                    state,
+                    intent,
+                    "foreground window drifted after pointer preparation; refusing to send "
+                    "input because fresh evidence no longer matches action_precondition: "
+                    + self._response(observed),
+                    thought=thought,
                 )
             self._sync_execution_context(event, state)
             self.store.save_working_state(state)
@@ -168,6 +255,15 @@ class SemanticPointerClickResidentRuntime(EffectScopedPointerClickResidentRuntim
                 intent,
                 str(scope_error or "unknown completion-scope error"),
             )
+        action_precondition, precondition_error = self._ui_action_precondition(event)
+        if precondition_error:
+            return self._fail_ui_completion(
+                event,
+                state,
+                intent,
+                precondition_error,
+            )
+
         admitted = state.data.get("native_verification")
         admitted_scope = admitted.get("completion_scope") if isinstance(admitted, dict) else None
         admitted_kind = (
@@ -175,16 +271,57 @@ class SemanticPointerClickResidentRuntime(EffectScopedPointerClickResidentRuntim
             if isinstance(admitted, dict)
             else ""
         )
+        admitted_precondition = (
+            admitted.get("action_precondition") if isinstance(admitted, dict) else None
+        )
+        semantic_admission = state.data.get(self._SEMANTIC_PRECONDITION_KEY)
+        semantic_scope = (
+            semantic_admission.get("completion_scope")
+            if isinstance(semantic_admission, dict)
+            else None
+        )
+        semantic_precondition = (
+            semantic_admission.get("action_precondition")
+            if isinstance(semantic_admission, dict)
+            else None
+        )
+        semantic_kind = (
+            str(semantic_admission.get("completion_event_kind") or "").strip().lower()
+            if isinstance(semantic_admission, dict)
+            else ""
+        )
+        semantic_intent_id = (
+            str(semantic_admission.get("intent_id") or "")
+            if isinstance(semantic_admission, dict)
+            else ""
+        )
+        semantic_reverified = bool(
+            semantic_admission.get("reverified")
+            if isinstance(semantic_admission, dict)
+            else False
+        )
+        current_event_kind = str(event.kind or "").strip().lower()
         if (
-            not isinstance(admitted_scope, dict)
+            not isinstance(action_precondition, dict)
+            or not isinstance(admitted_scope, dict)
             or dict(admitted_scope) != scope
-            or admitted_kind != str(event.kind or "").strip().lower()
+            or admitted_kind != current_event_kind
+            or not isinstance(admitted_precondition, dict)
+            or dict(admitted_precondition) != action_precondition
+            or semantic_intent_id != intent.intent_id
+            or not isinstance(semantic_scope, dict)
+            or dict(semantic_scope) != scope
+            or semantic_kind != current_event_kind
+            or not isinstance(semantic_precondition, dict)
+            or dict(semantic_precondition) != action_precondition
+            or not semantic_reverified
         ):
             return self._fail_ui_completion(
                 event,
                 state,
                 intent,
-                "the admitted event kind/completion_scope drifted after pointer input",
+                "the admitted event kind/completion_scope/action_precondition drifted after "
+                "pointer input",
             )
 
         observed, probe_error = self._probe_foreground_window()
@@ -268,8 +405,32 @@ class SemanticPointerClickResidentRuntime(EffectScopedPointerClickResidentRuntim
         event,
     ) -> tuple[dict[str, str] | None, str | None]:
         raw = event.payload.get("completion_scope")
+        return self._foreground_window_scope(raw, field_name="completion_scope")
+
+    def _ui_action_precondition(
+        self,
+        event,
+    ) -> tuple[dict[str, str] | None, str | None]:
+        if "action_precondition" not in event.payload or event.payload.get("action_precondition") is None:
+            return None, None
+        raw = event.payload.get("action_precondition")
+        return self._foreground_window_scope(raw, field_name="action_precondition")
+
+    def _foreground_window_scope(
+        self,
+        raw: Any,
+        *,
+        field_name: str,
+    ) -> tuple[dict[str, str] | None, str | None]:
         if not isinstance(raw, dict) or str(raw.get("kind") or "").strip().lower() != self._UI_SCOPE_KIND:
-            return None, "ui_state_transition requires completion_scope.kind=foreground_window_matches"
+            if field_name == "completion_scope":
+                return None, (
+                    "ui_state_transition requires completion_scope.kind=foreground_window_matches"
+                )
+            return None, (
+                "ui_state_transition action_precondition must use "
+                "kind=foreground_window_matches"
+            )
         unknown = sorted(
             str(key)
             for key in raw
@@ -277,20 +438,74 @@ class SemanticPointerClickResidentRuntime(EffectScopedPointerClickResidentRuntim
         )
         if unknown:
             return None, (
-                "foreground_window_matches completion_scope contains unsupported authority fields: "
+                f"foreground_window_matches {field_name} contains unsupported authority fields: "
                 + ", ".join(unknown)
             )
         process_name = str(raw.get("process_name") or "").strip().lower()
         title = str(raw.get("title_equals") or "").strip()
         if not process_name or not title:
             return None, (
-                "foreground_window_matches requires exact non-empty process_name and title_equals"
+                f"foreground_window_matches {field_name} requires exact non-empty "
+                "process_name and title_equals"
             )
         return {
             "kind": self._UI_SCOPE_KIND,
             "process_name": process_name,
             "title_equals": title,
         }, None
+
+    def _semantic_admission(
+        self,
+        event,
+        intent: NativeActionIntent,
+        scope: dict[str, str],
+        action_precondition: dict[str, str],
+        observed: ForegroundWindowObservation,
+        *,
+        verified: bool,
+    ) -> dict[str, Any]:
+        return {
+            "intent_id": intent.intent_id,
+            "verified": bool(verified),
+            "completion_event_kind": str(event.kind or "").strip().lower(),
+            "completion_scope": dict(scope),
+            "action_precondition": dict(action_precondition),
+            "initial_observation": asdict(observed),
+            "admitted_at": utc_now(),
+        }
+
+    def _semantic_admission_error(
+        self,
+        event,
+        state,
+        intent: NativeActionIntent,
+        scope: dict[str, str],
+        action_precondition: Any,
+    ) -> str | None:
+        if not isinstance(action_precondition, dict):
+            return (
+                "ui_state_transition pointer input lost its explicit exact "
+                "action_precondition before click delivery"
+            )
+        admitted = state.data.get(self._SEMANTIC_PRECONDITION_KEY)
+        if not isinstance(admitted, dict) or not bool(admitted.get("verified")):
+            return "pointer click lost its admitted foreground action precondition"
+        admitted_scope = admitted.get("completion_scope")
+        admitted_precondition = admitted.get("action_precondition")
+        admitted_kind = str(admitted.get("completion_event_kind") or "").strip().lower()
+        if (
+            str(admitted.get("intent_id") or "") != intent.intent_id
+            or not isinstance(admitted_scope, dict)
+            or dict(admitted_scope) != scope
+            or not isinstance(admitted_precondition, dict)
+            or dict(admitted_precondition) != action_precondition
+            or admitted_kind != str(event.kind or "").strip().lower()
+        ):
+            return (
+                "the admitted event kind/completion_scope/action_precondition drifted after "
+                "pointer preparation; refusing input"
+            )
+        return None
 
     def _probe_foreground_window(
         self,

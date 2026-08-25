@@ -15,6 +15,9 @@ from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_s
 from zn_agent.core.visual_region_sense import VisualRegionObservation
 
 
+_DEFAULT_ACTION_PRECONDITION = object()
+
+
 class _SemanticClickBody(NativeBody):
     def __init__(self, *, resident=None):
         super().__init__(resident=resident)
@@ -89,29 +92,22 @@ class _SemanticForegroundWindow:
         *,
         target_before_click: bool = False,
         target_after_click: bool = True,
+        drift_after_move: bool = False,
     ):
         self.body = body
         self.target_before_click = bool(target_before_click)
         self.target_after_click = bool(target_after_click)
+        self.drift_after_move = bool(drift_after_move)
         self.calls = 0
 
-    def probe(self) -> ForegroundWindowObservation:
-        self.calls += 1
-        matches = (
-            self.target_after_click
-            if self.body.click_calls > 0
-            else self.target_before_click
-        )
-        if matches:
-            process_name = "notepad.exe"
-            title = "Untitled - Notepad"
-            process_id = 200
-            class_name = "Notepad"
-        else:
-            process_name = "explorer.exe"
-            title = "Desktop"
-            process_id = 100
-            class_name = "Progman"
+    @staticmethod
+    def _observation(
+        *,
+        process_id: int,
+        process_name: str,
+        title: str,
+        class_name: str,
+    ) -> ForegroundWindowObservation:
         return ForegroundWindowObservation(
             process_id=process_id,
             title=title,
@@ -119,6 +115,43 @@ class _SemanticForegroundWindow:
             class_name=class_name,
             captured_at=utc_now(),
             source="test-foreground-window",
+        )
+
+    def probe(self) -> ForegroundWindowObservation:
+        self.calls += 1
+        if self.body.click_calls > 0:
+            if self.target_after_click:
+                return self._observation(
+                    process_id=200,
+                    process_name="notepad.exe",
+                    title="Untitled - Notepad",
+                    class_name="Notepad",
+                )
+            return self._observation(
+                process_id=100,
+                process_name="explorer.exe",
+                title="Desktop",
+                class_name="Progman",
+            )
+        if self.drift_after_move and self.body.move_calls:
+            return self._observation(
+                process_id=300,
+                process_name="calc.exe",
+                title="Calculator",
+                class_name="ApplicationFrameWindow",
+            )
+        if self.target_before_click:
+            return self._observation(
+                process_id=200,
+                process_name="notepad.exe",
+                title="Untitled - Notepad",
+                class_name="Notepad",
+            )
+        return self._observation(
+            process_id=100,
+            process_name="explorer.exe",
+            title="Desktop",
+            class_name="Progman",
         )
 
 
@@ -139,32 +172,47 @@ class PointerClickSemanticCompletionTests(unittest.TestCase):
         )
 
     @staticmethod
-    def _event(resident, *, completion_scope=None, kind="ui_state_transition"):
+    def _event(
+        resident,
+        *,
+        completion_scope=None,
+        action_precondition=_DEFAULT_ACTION_PRECONDITION,
+        kind="ui_state_transition",
+    ):
         scope = completion_scope or {
             "kind": "foreground_window_matches",
             "process_name": "notepad.exe",
             "title_equals": "Untitled - Notepad",
         }
+        payload = {
+            "body_action": {
+                "kind": "pointer_click",
+                "args": {
+                    "x_fraction": 0.5,
+                    "y_fraction": 0.4,
+                    "button": "left",
+                },
+            },
+            "expected_outcome": {
+                "kind": "visual_region_changed",
+                "width_fraction": 0.08,
+                "height_fraction": 0.08,
+            },
+            "completion_scope": scope,
+            "model_policy": "never",
+        }
+        if action_precondition is _DEFAULT_ACTION_PRECONDITION:
+            payload["action_precondition"] = {
+                "kind": "foreground_window_matches",
+                "process_name": "explorer.exe",
+                "title_equals": "Desktop",
+            }
+        elif action_precondition is not None:
+            payload["action_precondition"] = action_precondition
         return resident.enqueue(
             "reach the explicitly typed foreground window state",
             kind=kind,
-            payload={
-                "body_action": {
-                    "kind": "pointer_click",
-                    "args": {
-                        "x_fraction": 0.5,
-                        "y_fraction": 0.4,
-                        "button": "left",
-                    },
-                },
-                "expected_outcome": {
-                    "kind": "visual_region_changed",
-                    "width_fraction": 0.08,
-                    "height_fraction": 0.08,
-                },
-                "completion_scope": scope,
-                "model_policy": "never",
-            },
+            payload=payload,
         )
 
     @staticmethod
@@ -221,7 +269,7 @@ class PointerClickSemanticCompletionTests(unittest.TestCase):
             resident, body = self._resident(tmp)
             foreground = _SemanticForegroundWindow(body, target_before_click=True)
             resident.foreground_window = foreground
-            self._event(resident)
+            self._event(resident, action_precondition=None)
             self._advance_until_stage(resident, "native_action")
 
             result = resident.live_once()
@@ -233,6 +281,72 @@ class PointerClickSemanticCompletionTests(unittest.TestCase):
             self.assertEqual(resident.visual_region.calls, 0)
             self.assertEqual(foreground.calls, 1)
             self.assertIn("no pointer input was sent", result.reason)
+            resident.store.close()
+
+    def test_mutating_ui_transition_requires_action_precondition_before_pointer_movement(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, body = self._resident(tmp)
+            foreground = _SemanticForegroundWindow(body)
+            resident.foreground_window = foreground
+            self._event(resident, action_precondition=None)
+            self._advance_until_stage(resident, "native_action")
+
+            self.assertIsNone(resident.live_once())
+            state = resident.store.get_working_state()
+            self.assertEqual(state.stage, "native_investigation")
+            self.assertEqual(body.move_calls, [])
+            self.assertEqual(body.click_calls, 0)
+            self.assertEqual(foreground.calls, 1)
+            self.assertIn("action_precondition", state.data["local_failure"])
+            resident.store.close()
+
+    def test_action_precondition_rejects_unknown_authority_fields_before_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, body = self._resident(tmp)
+            foreground = _SemanticForegroundWindow(body)
+            resident.foreground_window = foreground
+            self._event(
+                resident,
+                action_precondition={
+                    "kind": "foreground_window_matches",
+                    "process_name": "explorer.exe",
+                    "title_equals": "Desktop",
+                    "title_contains": "Desk",
+                },
+            )
+            self._advance_until_stage(resident, "native_action")
+
+            self.assertIsNone(resident.live_once())
+            state = resident.store.get_working_state()
+            self.assertEqual(state.stage, "native_investigation")
+            self.assertEqual(body.move_calls, [])
+            self.assertEqual(body.click_calls, 0)
+            self.assertEqual(foreground.calls, 0)
+            self.assertIn("unsupported authority fields", state.data["local_failure"])
+            resident.store.close()
+
+    def test_action_precondition_must_match_fresh_foreground_before_pointer_movement(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, body = self._resident(tmp)
+            foreground = _SemanticForegroundWindow(body)
+            resident.foreground_window = foreground
+            self._event(
+                resident,
+                action_precondition={
+                    "kind": "foreground_window_matches",
+                    "process_name": "calc.exe",
+                    "title_equals": "Calculator",
+                },
+            )
+            self._advance_until_stage(resident, "native_action")
+
+            self.assertIsNone(resident.live_once())
+            state = resident.store.get_working_state()
+            self.assertEqual(state.stage, "native_investigation")
+            self.assertEqual(body.move_calls, [])
+            self.assertEqual(body.click_calls, 0)
+            self.assertEqual(foreground.calls, 1)
+            self.assertIn("before pointer movement", state.data["local_failure"])
             resident.store.close()
 
     def test_ui_state_transition_needs_fresh_semantic_match_after_click(self):
@@ -256,10 +370,62 @@ class PointerClickSemanticCompletionTests(unittest.TestCase):
             self.assertTrue(result.success)
             self.assertEqual(result.execution_path, ExecutionPath.BODY)
             self.assertEqual(body.click_calls, 1)
-            self.assertEqual(foreground.calls, 2)
+            self.assertEqual(foreground.calls, 3)
             self.assertEqual(resident.visual_region.calls, 2)
+            admission = resident.store.get_working_state().data[
+                resident._SEMANTIC_PRECONDITION_KEY
+            ]
+            self.assertTrue(admission["verified"])
+            self.assertTrue(admission["reverified"])
             self.assertIn("foreground-window Sense exactly matched", result.reason)
             self.assertIn("task prose was not used", result.reason)
+            resident.store.close()
+
+    def test_foreground_drift_after_pointer_move_fails_before_click(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, body = self._resident(tmp)
+            foreground = _SemanticForegroundWindow(body, drift_after_move=True)
+            resident.foreground_window = foreground
+            self._event(resident)
+            self._advance_until_stage(resident, "native_action")
+
+            self.assertIsNone(resident.live_once())
+            self.assertEqual(body.move_calls, [(50, 20)])
+            self.assertEqual(body.click_calls, 0)
+
+            self.assertIsNone(resident.live_once())
+            state = resident.store.get_working_state()
+            self.assertEqual(state.stage, "native_investigation")
+            self.assertEqual(body.click_calls, 0)
+            self.assertEqual(foreground.calls, 2)
+            self.assertEqual(resident.visual_region.calls, 0)
+            self.assertIn("drifted after pointer preparation", state.data["local_failure"])
+            resident.store.close()
+
+    def test_pre_input_action_precondition_admission_drift_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, body = self._resident(tmp)
+            foreground = _SemanticForegroundWindow(body)
+            resident.foreground_window = foreground
+            self._event(resident)
+            self._advance_until_stage(resident, "native_action")
+
+            self.assertIsNone(resident.live_once())
+            state = resident.store.get_working_state()
+            self.assertEqual(body.click_calls, 0)
+            state.data[resident._SEMANTIC_PRECONDITION_KEY]["action_precondition"] = {
+                "kind": "foreground_window_matches",
+                "process_name": "calc.exe",
+                "title_equals": "Calculator",
+            }
+            resident.store.save_working_state(state)
+
+            self.assertIsNone(resident.live_once())
+            state = resident.store.get_working_state()
+            self.assertEqual(state.stage, "native_investigation")
+            self.assertEqual(body.click_calls, 0)
+            self.assertEqual(foreground.calls, 1)
+            self.assertIn("drifted after pointer preparation", state.data["local_failure"])
             resident.store.close()
 
     def test_semantic_mismatch_after_click_returns_to_investigation_without_replay(self):
@@ -308,6 +474,33 @@ class PointerClickSemanticCompletionTests(unittest.TestCase):
             self.assertEqual(state.stage, "native_investigation")
             self.assertEqual(body.click_calls, 1)
             self.assertIn("drifted", state.data["local_failure"])
+            self.assertIn("without replaying pointer input", state.next_action)
+            resident.store.close()
+
+    def test_post_input_action_precondition_drift_is_rejected_without_replay(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, body = self._resident(tmp)
+            resident.foreground_window = _SemanticForegroundWindow(body)
+            self._event(resident)
+            self._advance_until_stage(resident, "native_action")
+
+            self.assertIsNone(resident.live_once())
+            self.assertIsNone(resident.live_once())
+            self.assertEqual(body.click_calls, 1)
+            state = resident.store.get_working_state()
+            self.assertEqual(state.stage, "native_verification")
+            state.data["native_verification"]["action_precondition"] = {
+                "kind": "foreground_window_matches",
+                "process_name": "calc.exe",
+                "title_equals": "Calculator",
+            }
+            resident.store.save_working_state(state)
+
+            self.assertIsNone(resident.live_once())
+            state = resident.store.get_working_state()
+            self.assertEqual(state.stage, "native_investigation")
+            self.assertEqual(body.click_calls, 1)
+            self.assertIn("action_precondition drifted", state.data["local_failure"])
             self.assertIn("without replaying pointer input", state.next_action)
             resident.store.close()
 
