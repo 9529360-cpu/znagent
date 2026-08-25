@@ -231,7 +231,7 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         state.data["native_action_result"] = asdict(result)
 
         if result.success:
-            verification = self._verification_contract(event, intent)
+            verification = self._verification_contract(event, intent, result=result)
             if verification is not None:
                 # A successful movement is evidence, not proof that the user's
                 # requested state now exists. Persist the postcondition and let
@@ -349,6 +349,50 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
                 failure = (
                     f"postcondition verification failed for {path}: "
                     f"{observed.error or 'current text state could not be observed'}"
+                )
+
+        elif kind == "pointer_position":
+            expected_x = int(raw_contract.get("expected_x"))
+            expected_y = int(raw_contract.get("expected_y"))
+            tolerance = max(0, min(8, int(raw_contract.get("tolerance_pixels", 1))))
+            observed = self.body.act(
+                "pointer_state",
+                event_id=event.event_id,
+            )
+            observed_x = observed.data.get("x") if observed.success else None
+            observed_y = observed.data.get("y") if observed.success else None
+            verified = bool(
+                observed.success
+                and observed_x is not None
+                and observed_y is not None
+                and abs(int(observed_x) - expected_x) <= tolerance
+                and abs(int(observed_y) - expected_y) <= tolerance
+            )
+            verification_result = {
+                "verified": verified,
+                "kind": kind,
+                "expected_x": expected_x,
+                "expected_y": expected_y,
+                "observed_x": int(observed_x) if observed_x is not None else None,
+                "observed_y": int(observed_y) if observed_y is not None else None,
+                "tolerance_pixels": tolerance,
+                "observation": asdict(observed),
+            }
+            response = (
+                f"pointer at ({int(observed_x)},{int(observed_y)})"
+                if observed.success and observed_x is not None and observed_y is not None
+                else ""
+            )
+            if observed.success:
+                failure = (
+                    "pointer postcondition verification failed: current cursor position "
+                    f"({observed_x},{observed_y}) does not match expected "
+                    f"({expected_x},{expected_y}) within {tolerance}px"
+                )
+            else:
+                failure = (
+                    "pointer postcondition verification failed: "
+                    f"{observed.error or 'current pointer position could not be observed'}"
                 )
 
         elif kind == "command":
@@ -674,6 +718,9 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
             summary["expected_exit_code"] = raw.get("expected_exit_code")
         elif raw.get("exit_code") is not None:
             summary["expected_exit_code"] = raw.get("exit_code")
+        for key in ("expected_x", "expected_y", "tolerance_pixels"):
+            if raw.get(key) is not None:
+                summary[key] = raw.get(key)
         output = raw.get("output_contains")
         if isinstance(output, str):
             summary["output_contains"] = [output]
@@ -697,6 +744,11 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
             "observed_chars",
             "expected_exit_code",
             "observed_exit_code",
+            "expected_x",
+            "expected_y",
+            "observed_x",
+            "observed_y",
+            "tolerance_pixels",
             "requested_kind",
         ):
             if raw.get(key) is not None:
@@ -713,6 +765,8 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
     def _verification_contract(
         event: AgentEvent,
         intent: NativeActionIntent,
+        *,
+        result=None,
     ) -> dict[str, Any] | None:
         explicit = event.payload.get("expected_outcome")
         if explicit is not None:
@@ -791,6 +845,30 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
                     "unsupported expected_outcome kind: "
                     f"{requested_kind or '<empty>'}"
                 ),
+                "intent_id": intent.intent_id,
+                "action_signature": EmbodiedResidentRuntime._intent_signature(intent),
+            }
+
+        if intent.kind == "pointer_move":
+            data = getattr(result, "data", None)
+            if not isinstance(data, dict):
+                data = {}
+            try:
+                expected_x = int(data["target_x"])
+                expected_y = int(data["target_y"])
+            except (KeyError, TypeError, ValueError):
+                return {
+                    "kind": "unsupported",
+                    "requested_kind": "pointer_position",
+                    "error": "pointer movement did not produce a verifiable target position",
+                    "intent_id": intent.intent_id,
+                    "action_signature": EmbodiedResidentRuntime._intent_signature(intent),
+                }
+            return {
+                "kind": "pointer_position",
+                "expected_x": expected_x,
+                "expected_y": expected_y,
+                "tolerance_pixels": 1,
                 "intent_id": intent.intent_id,
                 "action_signature": EmbodiedResidentRuntime._intent_signature(intent),
             }

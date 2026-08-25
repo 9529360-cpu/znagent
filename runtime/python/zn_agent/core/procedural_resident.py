@@ -656,7 +656,7 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
             self.store.save_working_state(state)
         return True
 
-    def _verification_contract(self, event, intent):
+    def _verification_contract(self, event, intent, *, result=None):
         """Verify current exact-text and bounded resident Git goals."""
 
         explicit = event.payload.get("expected_outcome")
@@ -712,7 +712,7 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
                     "action_signature": self._intent_signature(intent),
                 }
             else:
-                contract = super()._verification_contract(event, intent)
+                contract = super()._verification_contract(event, intent, result=result)
         else:
             raw_goal = intent.expected_outcome
             if isinstance(raw_goal, dict) and str(
@@ -741,7 +741,7 @@ class ProcedurallyInfluencedResidentRuntime(WorldAwareTransferResidentRuntime):
                     "action_signature": self._intent_signature(intent),
                 }
             else:
-                contract = super()._verification_contract(event, intent)
+                contract = super()._verification_contract(event, intent, result=result)
 
         if (
             isinstance(contract, dict)

@@ -140,6 +140,10 @@ class NativeBody:
             return self._list_directory(action, started)
         if kind in {"process_state", "process"}:
             return self._process_state(action, started)
+        if kind == "pointer_state":
+            return self._pointer_state(action, started)
+        if kind == "pointer_move":
+            return self._pointer_move(action, started)
         if kind in {"git_state", "git"}:
             return self._git_state(action, started)
         if kind == "git_diff":
@@ -281,6 +285,111 @@ class NativeBody:
             except Exception:
                 pass
         return self._ok(action, started, data=data)
+
+    def _pointer_state(self, action: BodyAction, started: str) -> BodyActionResult:
+        return self._ok(
+            action,
+            started,
+            data=self._read_primary_pointer_state(),
+        )
+
+    def _pointer_move(self, action: BodyAction, started: str) -> BodyActionResult:
+        """Move the primary-screen pointer from explicit normalized coordinates.
+
+        This is intentionally only a movement primitive. It does not click,
+        select an element, interpret a screen, or infer coordinates from task
+        prose. The resident verification lifecycle must re-observe pointer state
+        before the event can be completed.
+        """
+
+        x_fraction = self._unit_fraction_arg(action.args, "x_fraction")
+        y_fraction = self._unit_fraction_arg(action.args, "y_fraction")
+        before = self._read_primary_pointer_state()
+        width = int(before.get("screen_width") or 0)
+        height = int(before.get("screen_height") or 0)
+        if width <= 0 or height <= 0:
+            raise RuntimeError("primary screen dimensions are unavailable")
+
+        target_x = int(round(x_fraction * max(0, width - 1)))
+        target_y = int(round(y_fraction * max(0, height - 1)))
+        moved = self._set_primary_pointer_position(target_x, target_y)
+        data = {
+            "coordinate_space": "primary_screen_fraction",
+            "x_fraction": x_fraction,
+            "y_fraction": y_fraction,
+            "target_x": target_x,
+            "target_y": target_y,
+            "screen_width": width,
+            "screen_height": height,
+            "before_x": int(before.get("x") or 0),
+            "before_y": int(before.get("y") or 0),
+        }
+        if not moved:
+            return BodyActionResult(
+                action_id=action.action_id,
+                kind=action.kind,
+                success=False,
+                data=data,
+                error="Windows pointer movement was rejected by the current desktop session",
+                event_id=action.event_id,
+                started_at=started,
+                completed_at=utc_now(),
+            )
+        return self._ok(
+            action,
+            started,
+            output=f"{target_x},{target_y}",
+            data=data,
+        )
+
+    def _read_primary_pointer_state(self) -> dict[str, Any]:
+        if platform.system() != "Windows":
+            raise RuntimeError("primary pointer body is currently supported only on Windows")
+
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        width = int(user32.GetSystemMetrics(0))
+        height = int(user32.GetSystemMetrics(1))
+        if width <= 0 or height <= 0:
+            raise RuntimeError("Windows primary screen dimensions are unavailable")
+
+        point = wintypes.POINT()
+        if not bool(user32.GetCursorPos(ctypes.byref(point))):
+            raise OSError("Windows GetCursorPos failed")
+        x = int(point.x)
+        y = int(point.y)
+        return {
+            "coordinate_space": "primary_screen_fraction",
+            "x": x,
+            "y": y,
+            "x_fraction": round(x / max(1, width - 1), 6),
+            "y_fraction": round(y / max(1, height - 1), 6),
+            "screen_width": width,
+            "screen_height": height,
+            "captured_at": utc_now(),
+        }
+
+    def _set_primary_pointer_position(self, x: int, y: int) -> bool:
+        if platform.system() != "Windows":
+            raise RuntimeError("primary pointer body is currently supported only on Windows")
+
+        import ctypes
+
+        return bool(ctypes.windll.user32.SetCursorPos(int(x), int(y)))
+
+    @staticmethod
+    def _unit_fraction_arg(args: dict[str, Any], key: str) -> float:
+        if key not in args:
+            raise ValueError(f"pointer_move body action requires {key}")
+        try:
+            value = float(args[key])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"pointer_move {key} must be numeric") from exc
+        if not 0.0 <= value <= 1.0:
+            raise ValueError(f"pointer_move {key} must be between 0 and 1")
+        return round(value, 6)
 
     def _git_state(self, action: BodyAction, started: str) -> BodyActionResult:
         workspace = self._path_arg(action.args, default=os.getcwd())
