@@ -8,6 +8,10 @@
     {
       "target": "runtime/python/zn_agent/core/git_semantics.py",
       "test": "tests/zn_agent/core/test_git_staging_semantics.py"
+    },
+    {
+      "target": "runtime/python/zn_agent/core/result_semantics.py",
+      "test": "tests/zn_agent/core/test_verified_experience.py"
     }
   ]
 }
