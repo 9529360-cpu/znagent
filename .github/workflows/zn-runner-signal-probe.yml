@@ -1,0 +1,33 @@
+name: ZN Runner Signal Probe
+
+on:
+  push:
+    branches:
+      - dev/zn-agent
+    paths:
+      - .github/workflows/zn-runner-signal-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  signal-probe:
+    name: Runner 150 second signal isolation
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Survive beyond observed interrupt window
+        shell: powershell
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows') {
+            throw "Windows runner required"
+          }
+          $started = Get-Date
+          Write-Host "signal_probe.started=$started"
+          for ($i = 1; $i -le 15; $i++) {
+            Start-Sleep -Seconds 10
+            $elapsed = [Math]::Round(((Get-Date) - $started).TotalSeconds, 3)
+            Write-Host "signal_probe.elapsed_seconds=$elapsed"
+          }
+          Write-Host "signal_probe.completed=true"
