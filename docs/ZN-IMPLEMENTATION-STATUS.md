@@ -14,53 +14,59 @@
 
 Development branch: `dev/zn-agent`. Canonical source/release branch: `main`.
 
-## 1. Current checkpoint — 2026-08-24
+## 1. Current checkpoint — 2026-08-25
 
-The active repository is physically ZN-only. M10 canonical source promotion is complete, and post-M10 branch/governance language has been normalized so future maintainers do not treat `main` promotion as an unfinished migration.
+The active repository remains physically ZN-only. M10 canonical source promotion is complete; `main` is canonical source/release and `dev/zn-agent` is the normal development branch.
 
-Current topology:
-
-```text
-runtime/python/zn_agent/core/   resident implementation
-runtime/python/zn_agent/        installed Python package
-tests/zn_agent/core/            core verification
-apps/desktop/electron/          ZN Electron control plane
-apps/desktop/src/zn/            ZN renderer
-apps/desktop/scripts/           ZN build/runtime/release tooling
-.github/workflows/              ZN CI/update/release automation
-```
-
-Bulk source evacuation commit:
+The current Windows x64 steady-state CI path has recovered on the repository self-hosted runner and the latest reviewed code head has real exact-head evidence:
 
 ```text
-6d5f78d22883857fcc99aff5cfd4ba1b9a2d3e6b
+head  7fe0444a6633536a3678074776c006f41b4dd7b2
+run   32826260973
+
+ZN Kernel / Python / Windows        success
+ZN Source Boundary / Windows        success
+Electron / TypeScript / Windows     success
+Publish Windows CI statuses         success
 ```
 
-One-shot run `32669071891` proved the reduced tree before the migration machinery was retired:
+The kernel job installed the isolated `znagent` runtime, booted ZN with no model, compiled the resident core, and ran the full Windows working-tree suite: **389 tests passed with 5 platform-appropriate skips**.
 
-```text
-fresh ZN-only Node lock/install          success
-isolated ZN Python install               success
-zero-model resident boot                 success
-Python core unittest discovery           382 passed
-desktop typecheck/bundle                 success
-desktop vitest                           37 passed
-retained Node release/runtime tests      8 passed
-ZN-only Docker build + zero-model boot   success
-verified deletion commit/push            success
-```
+The preceding exact-head attempt exposed a test-isolation bug rather than a production Body bug: the CI host had less than ten percent disk free, so ZN correctly reported `body_health = constrained` and focused on `body resources`, while several tests incorrectly assumed every host was nominal. The repair keeps production low-disk sensing intact, gives unrelated cognition tests an explicit healthy-disk fixture, adds a low-disk regression, and closes stores in `finally` paths so Windows temporary-directory cleanup is not masked by SQLite handles.
 
 ## 2. Resident ownership — VERIFIED
 
 The resident owns persistent Self/life state, Situation/Thought/Will, durable WorkingState, Investigation, native Body actions and senses, bounded cognition resources, provider settings, nervous memory/reconsolidation, verified experience/procedural tendencies, channel lifecycle and resident work/progress state.
 
-Zero-model boot remains a hard CI contract.
+Zero-model boot remains a hard CI contract and passed in run `32826260973`.
 
 ## 3. Engineering competence — VERIFIED NARROW SLICES
 
 Current resident-owned engineering behavior includes structured Git state/diff evidence, bounded file/process/terminal/PTTY actions, exact text and command postcondition verification, tracked pre/post Git proof, evidence-bound anti-replay, current-reality-gated alternatives, bounded staging choices, targeted unittest verification and restart-safe side-effect verification.
 
-This is not a general arbitrary-command equivalence engine or unrestricted planner/mutation engine.
+The current Windows PowerShell kernel verifier contract is recognized strictly and fails closed on shell/runtime/PYTHONPATH/test-suite drift.
+
+Repository-owned verifier selection now includes the bounded manifest:
+
+```text
+.agent/zn-engineering-verifiers.json
+```
+
+The manifest may declare only literal `target` + `test` relations. It cannot declare command, shell, workdir, timeout or model/task-prose authority. Runtime selection still requires tracked/clean same-HEAD evidence, safe paths, a direct top-level import relation, a discoverable unittest case, the current CI suite contract, execution anti-replay and fresh post-action verification.
+
+Current real manifest relations:
+
+```text
+runtime/python/zn_agent/core/repo_test_semantics.py
+→ tests/zn_agent/core/test_repo_test_semantics_authority.py
+
+runtime/python/zn_agent/core/git_semantics.py
+→ tests/zn_agent/core/test_git_staging_semantics.py
+```
+
+The repository manifest self-check verifies every declared relation. Run `32826260973` is the first exact-head Windows CI evidence covering the current manifest, both mappings and the current PowerShell verifier contract.
+
+This remains a narrow engineering competence slice, not an arbitrary-command equivalence engine or unrestricted planner/mutation engine.
 
 ## 4. Memory and learning — VERIFIED FOUNDATION, MATURITY PARTIAL
 
@@ -87,7 +93,7 @@ ZN Electron main
 
 Ownership tests protect window/protocol lifecycle, preload surface, `zn://` deep links, resident-backed work/provider/progress surfaces, packaged runtime identity, update/application gates and the single formal builder configuration.
 
-Electron development/runtime tooling is pinned to `41.10.5` after the 2026-08-24 security cleanup.
+Electron development/runtime tooling is pinned to `41.10.5` after the 2026-08-24 security cleanup. Run `32826260973` passed locked install, high-severity npm audit, typecheck, bundle, desktop ownership/runtime/update tests and release/runtime artifact verifier tests.
 
 ## 7. Runtime and artifact ownership — VERIFIED FOR EXERCISED TARGETS
 
@@ -99,20 +105,20 @@ Python package:      zn_agent
 entrypoint:          zn-resident
 ```
 
-Historical artifact evidence includes Linux packages, Windows installers, macOS artifacts, fresh Ubuntu installation and installed Linux resident lifecycle evidence.
+Historical artifact evidence includes Linux packages, Windows installers, macOS artifacts, fresh Ubuntu installation and installed Linux resident lifecycle evidence. Current steady-state development verification is Windows x64.
 
 ## 8. Release/update state — M8 PARTIAL
 
-ZN owns release/update automation. Verified foundations include versioned runtime staging, immutable runtime identity metadata, package verification, channel preparation, `stable.json` last-write ordering, resident update gates and Linux installed/update smoke infrastructure.
+ZN owns release/update automation. Verified foundations include versioned runtime staging, immutable runtime identity metadata, package verification, channel preparation, `stable.json` last-write ordering and resident update gates.
 
-Still open for M8:
+Still open for the current Windows x64 M8 target:
 
-1. intended Windows/macOS clean-install/login continuity where those remain formal targets;
-2. real secure signing/notarization evidence;
-3. rollback validation across a real version transition;
-4. remaining release-matrix evidence required before formal release-complete claims.
+1. clean Windows install/login evidence;
+2. installed Windows N→N+1 continuity evidence;
+3. rollback validation across a real Windows version transition;
+4. applicable secure Windows signing evidence.
 
-M8 must not be reported complete until these are exercised. M10 canonical source promotion does not change this status.
+M8 must not be reported complete until those items are exercised. M10 canonical source promotion does not change this status.
 
 ## 9. Repository source boundary — COMPLETE AND CI-ENFORCED
 
@@ -120,36 +126,22 @@ Status: **COMPLETE**.
 
 `.agent/verify_zn_source_boundary.py` scans tracked paths and tracked non-binary text to reject retired product identifiers, package namespaces and old physical paths from the active tree. `LICENSE` text is the only explicit scan exception because original legal attribution must remain verbatim.
 
-The historical source quarry is preserved outside the active tree in a dedicated reference branch at the old baseline. It is read-only reference material and is not an active runtime/build/test/package/release dependency.
+The historical source quarry remains outside the active tree in the dedicated reference branch/Git history and is not an active runtime/build/test/package/release dependency.
 
 Key evidence:
 
 ```text
+32669071891   physically reduced ZN-only tree verification
 32671245421   exact reviewed pre-M10 PR CI success
 32671589664   final canonical main push CI success
+32826260973   current dev exact-head Windows source-boundary success
 ```
 
 ## 10. Dependency security state — HIGH-SEVERITY DEBT CLOSED
 
-The post-evacuation install originally exposed two high-severity development/tooling findings:
+Electron is on the patched `41.10.5` line. The old `extract-zip` chain is absent from the active Electron dependency path and steady-state CI uses locked install plus `npm audit --audit-level=high`.
 
-- Electron sandboxed iframe popup restriction bypass (`GHSA-9f4c-93c8-jc8g`);
-- legacy `extract-zip` symlink traversal (`GHSA-jmr9-qjv8-65gv`) through Electron's old download/extraction chain.
-
-Investigation proved `electron 40.10.6` removed the legacy `extract-zip` chain but remained inside the iframe advisory's affected range. The stable patched branch begins at Electron `41.10.3`; ZN moved to the current patched 41 line, `41.10.5`.
-
-The regenerated lock now uses Electron's hardened internal extractor and current `@electron/get` chain; the old `extract-zip` package and its obsolete transitive chain are removed from the Electron dependency path.
-
-Steady-state CI now uses:
-
-```text
-npm ci --ignore-scripts
-npm audit --audit-level=high
-```
-
-This is intentionally stricter than the previous production-only audit: any future high/critical npm finding in either production or development/tooling dependencies fails the Electron CI job.
-
-The one-shot lock-refresh workflow write permission was removed immediately after the verified lock was committed. Steady-state `zn-ci.yml` has repository contents read-only permission again.
+The current Windows runner reports Node-action deprecation warnings for actions that still target Node 20 while GitHub forces Node 24. This did not fail run `32826260973`; it is tooling maintenance debt to resolve with verified stable action upgrades, not a reason to weaken CI.
 
 ## 11. Self-maintenance — SM0 COMPLETE, SM1+ OPEN
 
@@ -161,28 +153,25 @@ High-risk identity/memory/credential/updater/rollback/signing/self-approval chan
 
 The 2026-08-24 M10 review passed and canonical source promotion was executed by non-forced fast-forward with no history rewrite.
 
-`main` is canonical source/release; `dev/zn-agent` remains the normal development branch. Future work must not treat M10 as a pending migration gate.
-
-Canonical promotion did not declare M8 complete. Release continuity/signing/rollback remain evidence-based milestones.
+`main` is canonical source/release; `dev/zn-agent` remains the normal development branch. Canonical promotion did not declare M8 complete.
 
 ## 13. Current known debts
 
-- M8 intended-platform continuity/signing/rollback gaps;
+- M8 Windows clean-install/login, installed N→N+1, rollback and signing evidence;
 - browser/computer-use Body/Senses;
-- broader resident engineering verifier selection;
+- broader resident engineering verifier selection where a real repository-owned relation exists;
 - mature procedural competence/growth benchmarks;
 - SM1+ autonomous self-maintenance;
-- remaining non-security deprecation warnings in third-party packaging tooling should be reduced when a stable, verified dependency update is available, without blind forced upgrades.
+- Node-action/deprecation warnings and other non-security third-party tooling warnings should be reduced through stable verified upgrades, without blind forced upgrades.
 
 ## 14. Next real targets
 
 ```text
-1. verify the exact post-cleanup dev HEAD with Source Boundary + Python + Electron + Container CI
-2. promote the verified cleanup to canonical main through normal non-forced flow
-3. recheck canonical main CI and resynchronize dev/main
-4. resume resident-owned engineering competence
-5. close remaining M8 continuity/signing/rollback evidence
-6. advance SM1+ behind existing safety boundaries
+1. keep automatic Windows x64 self-hosted CI green on each exact dev HEAD
+2. continue resident-owned engineering competence only from real repo-owned structured evidence; do not turn the verifier manifest into a command catalog
+3. strengthen browser/computer Body/Senses behind ZN ownership when the next bounded engineering relation is not justified by current evidence
+4. close Windows M8 clean-install / N→N+1 / rollback / signing evidence
+5. advance SM1+ behind the existing approval and verification boundaries
 ```
 
-Any later status change must be reflected here only after real code/Git/CI evidence exists.
+Do not modify `main` through ordinary development. Any later status change must be reflected here only after real code/Git/CI evidence exists.
