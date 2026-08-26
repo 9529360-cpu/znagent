@@ -4,13 +4,13 @@ Updated: 2026-08-27
 
 ## Current goal
 
-Durable terminal `EventOutcome` now has an event-identity-safe secondary nervous perception path. One completed event cannot be neurally reinforced twice merely because restart repair revisits the same durable outcome. Trace mutation, co-active link mutation, affect update, and the event receipt commit in one transaction; a pre-commit failure rolls them all back.
+Close the Windows NetworkService DOS-8.3 versus long-path identity family that keeps exact-head ordinary CI red. The low-risk completion journal ownership cleanup is complete: `EmbodiedResidentRuntime` is the single richer-resident birth/lifecycle owner; `FocusedModernTextResidentRuntime` no longer reconstructs or re-repairs the same journal and still projects sanitized completion-observation health through `status()`.
 
 `EventOutcome` remains terminal truth. Nervous plasticity remains secondary. A nervous failure after terminal completion does not reclassify the event and does not replay the action. `NativeWill` keeps its existing durable outcome reconciliation authority.
 
 Generic nervous `perceive()` remains intentionally plastic and non-idempotent. Do not generalize the event-ID guarantee into a global exactly-once claim.
 
-The next real target is the low-risk ownership cleanup: remove the redundant second `CompletionObservationJournal` construction in `FocusedModernTextResidentRuntime` while preserving its resident-owned `status()` projection. The available GitHub write path replaces whole files, so preserve unrelated FocusedModern behavior and diff-review the result.
+The next real target is now the Windows NetworkService DOS-8.3 versus long-path identity family because exact-head ordinary CI remains red. The repair must cover the full identity call chain and preserve fail-closed symlink/reparse-point semantics; do not restore the prior partial `path_context.py`-only attempt.
 
 Founding boundary remains:
 
@@ -23,6 +23,7 @@ Founding boundary remains:
 - canonical source/release branch: `main`
 - canonical `main`: `8234a835dea604783cea0bd9d28a40de654ec03d`
 - nervous code/test checkpoint: `ba06e08561cc73bcd8afc61b444b860c45bfb376`
+- completion journal owner cleanup: `c54bb8c37385d98fc9688b6e89839d7a5cba6df6`
 - implementation-status sync: `d7f940651bc3896853dff91acfcb0b9e04f511c6`
 - PR #6: draft/open/unmerged, base `main`, head `dev/zn-agent`
 - `main` was not modified
@@ -127,58 +128,60 @@ c72f9348f0a0485483f5cc35554b0bc2c3060f00  active nervous operation refactor
 ba06e08561cc73bcd8afc61b444b860c45bfb376  final focused test fix/checkpoint
 ```
 
+### 6. Completion journal ownership cleanup completed
+
+`FocusedModernTextResidentRuntime` no longer imports or constructs `CompletionObservationJournal`. The Embodied birth root installs and repairs the organ once. The final product layer continues to expose `status()["completion_observations"]`.
+
+`test_modern_text_resident_ownership` now proves the product construction calls `repair_life()` exactly once and preserves the status projection. The Work Recovery workflow triggers on and executes this regression.
+
 ## Real test / CI truth
 
 ### Focused nervous/Work proof
 
 ```text
-ZN Work Recovery E2E run 33022486241
-head ba06e08561cc73bcd8afc61b444b860c45bfb376
+ZN Work Recovery E2E run 33023392867
+head c54bb8c37385d98fc9688b6e89839d7a5cba6df6
 Windows resident Work restart recovery             success
 Prepare isolated runtime                            success
 Compile Work recovery path                          success
 Verify durable Work progress and restart recovery  success
-Ran 42 tests in 15.226s                             OK
+Ran 44 tests in 9.798s                              OK
 ```
 
-The 42 tests include the existing Work progress/restart/side-effect/cancellation and completion-observation suites plus:
+The 44 tests include the existing Work progress/restart/side-effect/cancellation and completion-observation suites plus:
 
 ```text
+tests.zn_agent.core.test_modern_text_resident_ownership
 tests.zn_agent.core.test_event_outcome_nervous
 tests.zn_agent.core.test_event_outcome_nervous_recovery
 ```
 
 ### Ordinary CI
 
-The last completed ordinary code checkpoint before this stage remains:
+The current exact-head result is:
 
 ```text
-ZN CI run 33020344789
-head 43142de23196b4e5fb3912bc177a8f25b95189e3
+ZN CI run 33023392907
+head c54bb8c37385d98fc9688b6e89839d7a5cba6df6
 Electron / TypeScript / Windows    success
 ZN Source Boundary / Windows       success
 ZN Kernel / Python / Windows       failure
-Kernel                             585 tests / 16 errors / 5 skipped
+Kernel                             592 tests / 16 errors / 5 skipped
 ```
 
-Those 16 errors were the known/deferred Windows NetworkService DOS-8.3 versus long-path identity family. The partial path fix remains reverted in `db647cb49c3de014aa82bc28ec87c1c4e5b02c15`.
+Those 16 errors are the known Windows NetworkService DOS-8.3 versus long-path identity family. The partial path fix remains reverted in `db647cb49c3de014aa82bc28ec87c1c4e5b02c15`.
 
-An old documentation-head run also hit a runner-local uv CPython standard-library corruption before Kernel tests began. That was not classified as a repository regression.
-
-Current nervous code checkpoint ordinary run:
+Additional exact-head evidence:
 
 ```text
-ZN CI run 33022486250
-head ba06e08561cc73bcd8afc61b444b860c45bfb376
-status pending at this HANDOFF update
-jobs not yet assigned
+ZN Managed Browser E2E run 33023392889             success
+ZN Windows Interactive Desktop E2E run 33023392801 success on attempt 2 / 4 tests
 ```
 
-Do not infer ordinary-CI success from the focused workflow.
+Interactive attempt 1 lost foreground ownership to `warp.exe`; the clean rerun passed. Do not infer ordinary-CI success from the focused and E2E workflows.
 
 ## Current risks / incomplete work
 
-- `FocusedModernTextResidentRuntime` still redundantly constructs `CompletionObservationJournal` after the Embodied birth root already installed it. Status projection must remain after cleanup.
 - Several explanatory comments in `intentional_resident.py` were accidentally lost during the whole-file owner replacement. Diff review found no corresponding behavioral deletion; restoring those comments remains cleanup.
 - Event receipts currently point to trace IDs. If future neural pruning/compaction deliberately removes a referenced outcome trace, receipt/trace lifecycle semantics need an explicit policy rather than silent guessing.
 - Generic nervous `perceive()` remains intentionally plastic and is not safe for blind replay. Only the durable terminal EventOutcome path has event-ID dedupe semantics.
@@ -198,11 +201,9 @@ Do not broaden the guarantee beyond durable terminal EventOutcome perception.
 
 ### P0.1 - completion journal ownership cleanup
 
-Status: **NEXT / NON-BLOCKING BUT READY**
+Status: **COMPLETE / FOCUSED CI VERIFIED**
 
-Remove the redundant second `CompletionObservationJournal` initialization from `FocusedModernTextResidentRuntime` while retaining `status()["completion_observations"]`.
-
-Because repository writes replace the whole file, diff-review the edit for unrelated side-effect recovery, cancellation, browser, body, and text behavior.
+Single richer birth-root owner; final status projection retained; regression runs in focused CI.
 
 ### P0.2 - nervous receipt lifecycle robustness
 
@@ -216,11 +217,11 @@ Status: **OPEN**
 
 Continue beyond the proven cancellation/Life/nervous secondary-observation slices without replaying uncertain outside-world effects.
 
-### P1.1 - deferred Windows path identity
+### P1.1 - Windows path identity
 
-Status: **KNOWN / DEFERRED**
+Status: **NEXT / ORDINARY-CI BLOCKER**
 
-Resume only if explicitly reprioritized or materially blocking the current product objective.
+Trace repository entry, owner, stored workspace/path state, lifecycle, Git/terminal dependencies, failing tests and active callers. Fix the full identity boundary without weakening alias/symlink safety.
 
 ### P2 - browser follow-ons
 
@@ -257,4 +258,4 @@ docs/ZN-IMPLEMENTATION-STATUS.md
 
 ## Next real target
 
-Remove the redundant FocusedModern completion-journal construction without changing status visibility or any unrelated product behavior. Keep `main` untouched.
+Close the Windows NetworkService DOS-8.3 versus long-path identity family and obtain a genuinely green ordinary CI run. Keep `main` untouched.
