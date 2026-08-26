@@ -19,15 +19,15 @@ M10 canonical source promotion remains complete. Ordinary development remains on
 Latest fully verified implementation/test head before this status-document update:
 
 ```text
-0002accb359351ec07761b3d017d13040d35c941
-feat: add verified managed browser text entry
+a6cc5619fee9d9e41d2fa0e885af0ba58db84f6c
+feat: add verified managed browser check
 ```
 
-Status: **VERIFIED NARROW MANAGED-BROWSER TARGET SENSING + FOCUS + ARIA-PRESSED TOGGLE CLICK + EMPTY-TEXTBOX TYPE_TEXT; FINAL DOCUMENTATION-HEAD NORMAL WINDOWS CI REQUIRED**.
+Status: **VERIFIED NARROW MANAGED-BROWSER TARGET SENSING + FOCUS + ARIA-PRESSED TOGGLE CLICK + EMPTY-TEXTBOX TYPE_TEXT + NATIVE CHECK; UNCHECK OPEN; FINAL DOCUMENTATION-HEAD NORMAL WINDOWS CI REQUIRED**.
 
-## 1. Narrow verified managed-browser TYPE_TEXT lifecycle
+## 1. Narrow verified managed-browser CHECK lifecycle
 
-The first managed text-entry slice is deliberately narrower than a generic browser typing API.
+The first CHECK slice is deliberately limited to a real native checkbox. It does not generalize checkbox semantics from ARIA roles and it does not implement `UNCHECK`.
 
 Current call chain:
 
@@ -36,125 +36,125 @@ BrowserTargetQuery(DOM_ID, main frame)
 -> PlaywrightManagedBrowser.observe_target()
 -> bounded ZN BrowserTarget + transient provider-local exact element handle
 -> BrowserActionAuthority from the exact current observation
-   requiring allow_page_interaction + allow_text_entry
+   requiring allow_page_interaction
 -> execution-time exact-node revalidation
--> bounded current text-state read
--> require empty writable non-password textbox
--> BrowserActionKind.TYPE_TEXT
--> provider fill(text)
+-> native checkbox-state read
+-> require input[type=checkbox], enabled, checked=false
+-> BrowserActionKind.CHECK
+-> provider check()
 -> fresh target acquisition
 -> exact JS-node continuity check
--> fresh text-state read
--> requested length + SHA-256 match
--> BrowserEffectEvidence(postcondition="same_exact_target_text_equals_requested")
+-> fresh native checked-state read
+-> require same ZN target identity + checked=true
+-> BrowserEffectEvidence(postcondition="same_exact_target_checked")
 ```
 
 Current guarantees and limits:
 
 - current page/target/permission/freshness authority is required before dispatch;
-- `TYPE_TEXT` authority requires both `allow_page_interaction` and `allow_text_entry`;
-- provider-local element handles are disposable execution resources, never ZN identity;
-- the first slice accepts only an exact current textbox target backed by `input[type=text]` or `textarea`;
-- disabled and read-only targets fail closed;
-- password targets are refused even when `allow_sensitive_fields=True`; password entry is not enabled by this slice;
-- the current target must be empty; replacing/editing existing non-empty text is not enabled;
-- input must be an explicit non-empty string with no control characters and at most 512 UTF-16 code units;
+- provider-local element handles remain disposable execution resources and never become ZN identity;
+- target role must be `checkbox`, then provider state independently confirms the actual element is a connected native `input[type=checkbox]`;
+- disabled and non-native checkbox targets fail closed;
+- an already-checked target is refused before provider dispatch rather than being reported as a new successful CHECK;
 - provider dispatch alone is never success;
-- success requires a fresh target observation, the same exact JS node, unchanged ZN target identity, and fresh text length + SHA-256 matching the requested text;
-- same-shape DOM replacement during input fails closed even if the replacement copies the requested value;
-- provider dispatch with no observed text change fails closed;
-- raw target/request text exists only in the transient provider/action execution path needed to perform and verify the mutation; normal `BrowserEffectEvidence` stores only bounded lengths/digests and never the raw text;
-- target observation still exports no raw input value, HTML, or uncontrolled page dump;
-- exact DOM-id targeting remains main-frame only in this slice.
+- success requires fresh same-exact-node evidence, unchanged ZN target identity, and `checked=true` from current browser reality;
+- provider no-effect fails closed;
+- a page that replaces the checkbox with a same-shape node during the action fails exact-node continuity even if the replacement preserves `checked=true`;
+- target observation continues to export bounded target metadata rather than raw page content;
+- `UNCHECK` remains explicitly unimplemented and separately test-guarded;
+- exact DOM-id targeting remains main-frame only.
 
-This is **VERIFIED NARROW empty-textbox TYPE_TEXT**, not arbitrary text replacement, contenteditable editing, password entry, generic keyboard input, or authenticated user-browser typing.
+This is **VERIFIED NARROW native CHECK**, not generic click/toggle semantics, ARIA checkbox control, or `UNCHECK`.
 
-## 2. Exact-head real verification for TYPE_TEXT
+## 2. Exact-head real verification for CHECK
 
 ### Dedicated real local Chromium workflow
 
 ```text
-run 32969877355
-head 0002accb359351ec07761b3d017d13040d35c941
+run 32973414369
+head a6cc5619fee9d9e41d2fa0e885af0ba58db84f6c
 Windows local managed Chromium E2E   success
 
-47 browser/core tests   OK
+55 browser/core tests   OK
 2 real Chromium E2E     OK
 ```
 
-The dedicated suite includes seven TYPE_TEXT contract tests covering:
+All eight new CHECK contract tests passed, covering:
 
-- `allow_text_entry` permission at the authority boundary;
-- explicit non-empty text requirement;
-- non-empty target refusal before dispatch;
-- success only from fresh same-node length/digest evidence;
+- page-interaction permission at the authority boundary;
+- native checkbox requirement;
+- already-checked refusal before dispatch;
+- success only from fresh same-node `checked=true` evidence;
 - provider no-effect failure;
-- same-shape target replacement failure;
-- password refusal even with sensitive-field permission.
+- same-shape replacement failure;
+- disabled checkbox refusal;
+- `UNCHECK` remains unimplemented and does not dispatch CHECK.
 
 The real Chromium fixture additionally proves:
 
-- navigation, bounded target sensing, exact-node `FOCUS`, and verified `aria-pressed` toggle click remain working;
-- real Unicode text is entered into an empty browser textbox;
-- success evidence contains the requested length/digest, not the raw typed text;
-- a page that replaces the textbox during input is rejected by exact-node continuity even when the replacement copies the typed value;
+- navigation, bounded target sensing, exact-node `FOCUS`, verified `aria-pressed` toggle click, and verified empty-textbox `TYPE_TEXT` remain working;
+- a real native checkbox transitions from unchecked to checked under the CHECK lifecycle;
+- the postcondition is observed from current native `checked` state rather than inferred from provider return;
+- a same-shape replacement during checking is not accepted as the same exact target;
+- a following `UNCHECK` probe is still refused;
 - existing target/privacy/network safety boundaries remain intact.
 
 ### Exact-head interactive Windows regression
 
 ```text
-run 32969877468
-head 0002accb359351ec07761b3d017d13040d35c941
+run 32973418964
+head a6cc5619fee9d9e41d2fa0e885af0ba58db84f6c
 Windows interactive computer-use E2E   success
-
-Ran 4 tests in 11.183s
-OK
 ```
 
-The real pointer/UIA focus proof, native Unicode text-entry proof, WPF UIA text-capability proof, and isolated-profile real Edge browser-provider proof all remained green. The Edge proof again used the installed browser without forced renderer accessibility and without copying a user browser profile.
+The existing real pointer/UIA, native Unicode text-entry, WPF UIA text-capability, and isolated-profile installed-browser provider regressions all completed successfully on the exact CHECK head.
 
 ### Exact-head normal Windows CI
 
 ```text
-run 32969877380
-head 0002accb359351ec07761b3d017d13040d35c941
+run 32973414561
+head a6cc5619fee9d9e41d2fa0e885af0ba58db84f6c
 
 ZN Source Boundary / Windows      success
 ZN Kernel / Python / Windows      success
 Electron / TypeScript / Windows   success
 Publish Windows CI statuses       success
-
-CPython 3.12.13
-formal runtime install success
-zero-model resident boot success
-resident core compile success
-Ran 529 tests in 571.144s
-OK (skipped=5)
 ```
 
-The full Kernel suite includes all seven new managed-browser TYPE_TEXT contract tests.
+The normal Kernel path completed formal runtime installation, zero-model resident boot, resident core compilation, and the full core test suite successfully. The exact normal-suite count is intentionally not copied here because the completed job log did not expose a stable bounded count through the maintenance connector; the completed job result is the authority.
 
-## 3. Previously verified managed-browser mutations remain narrow
+## 3. Previous TYPE_TEXT documentation P0 was closed first
+
+Before CHECK was pushed, the previous documentation head:
+
+```text
+04e48948bca64b8c9d179333ddd4498b61681dad
+docs: record verified managed browser text entry
+```
+
+completed exact-head normal Windows run `32971420718` with Source Boundary, Kernel, Electron, and status publisher all `success`. CHECK therefore did not cancel or substitute for the prior documentation-head P0.
+
+## 4. Previously verified managed-browser mutations remain narrow
 
 Earlier verified managed slices remain:
 
 - real local headless Chromium navigation with fresh authority and observed final URL;
 - exact `DOM_ID` / main-frame target sensing with bounded metadata and freshness;
-- provider-local exact-node continuity at the mutation boundary;
-- `FOCUS` with execution-time revalidation and independent `document.activeElement` postcondition;
-- `CLICK` only for explicit boolean `aria-pressed` transitions, with fresh pre/post state and same-node continuity;
+- provider-local exact-node continuity at mutation boundaries;
+- `FOCUS` with execution-time revalidation and independent `document.activeElement` evidence;
+- `CLICK` only for explicit boolean `aria-pressed` transitions, with fresh pre/post state and exact-node continuity;
+- `TYPE_TEXT` only for an empty writable non-password `input[type=text]`/`textarea`, requiring `allow_page_interaction + allow_text_entry`, bounded Unicode input, exact-node continuity, and fresh text length + SHA-256 completion evidence;
 - process-monotonic resident timestamps preventing same-process observation-freshness collisions;
 - stale authority/target rejection;
-- password target fail-closed behavior without explicit sensitive-field sensing permission;
-- no raw input value/HTML/uncontrolled page dump in target observation evidence.
+- password target fail-closed boundaries and no raw input value/HTML/uncontrolled page dump in normal target evidence.
 
-The verified click implementation remains deliberately non-generic. Arbitrary links/buttons are not considered successfully clicked merely because Playwright dispatch returns without error.
+`TYPE_TEXT` raw current/request text exists only in transient execution/provider state required to perform and verify the mutation; normal effect evidence stores bounded lengths/digests rather than raw text.
 
-## 4. User Browser Bridge proof remains narrow
+## 5. User Browser Bridge proof remains narrow
 
 The real Windows interactive Edge proof still establishes only a provider fact:
 
-- installed stable Edge/Chrome can be discovered on the real runner;
+- an installed stable Edge/Chrome can be discovered on the real runner;
 - the proof uses an isolated temporary browser profile;
 - no user cookies/password/profile database is copied;
 - renderer accessibility is not forced;
@@ -163,7 +163,7 @@ The real Windows interactive Edge proof still establishes only a provider fact:
 
 This does **not** prove attachment to or mutation of the user's existing authenticated browser session.
 
-## 5. Current browser product truth
+## 6. Current browser product truth
 
 Browser is not complete.
 
@@ -174,17 +174,20 @@ Verified narrow/foundation slices now include:
 - managed exact DOM-id/main-frame target sensing;
 - managed exact-node `FOCUS`;
 - managed exact-node `CLICK` only for explicit boolean `aria-pressed` transitions;
-- managed exact-node `TYPE_TEXT` only for an empty writable non-password text input/textarea with privacy-safe length/digest completion evidence;
-- real local Chromium proof for all of those managed slices;
+- managed exact-node `TYPE_TEXT` only for an empty writable non-password text input/textarea;
+- managed exact-node native `CHECK` only for an enabled unchecked `input[type=checkbox]`;
+- real local Chromium proof for all managed slices above;
 - isolated-profile real Edge UIA focused-input sensing proof.
 
 Still incomplete:
 
+- `UNCHECK`;
 - generic managed-browser click semantics without an action-specific independent postcondition;
 - editing/replacing non-empty text;
 - password/sensitive-field typing;
 - contenteditable/rich-text entry;
-- `CHECK` / `UNCHECK`, `SELECT_OPTION`, `PRESS`, and other browser mutations;
+- ARIA checkbox mutation;
+- `SELECT_OPTION`, `PRESS`, and other browser mutations;
 - iframe/child-frame and generic accessibility target sensing;
 - multiple-target/disambiguation UX;
 - multi-tab/popup/frame lifecycle;
@@ -199,33 +202,33 @@ Still incomplete:
 - authenticated User Browser Bridge attachment/session/tab/permission/mutation lifecycle;
 - browser permission UX and MFA/sensitive-field handoff.
 
-## 6. Development-history audit notes
+## 7. Development-history audit notes
 
 The earlier accidental empty root `noop` commit remains visible in history and was removed by a later normal fast-forward commit; no history rewrite was used.
 
 A preceding maintenance pass also accidentally created `docs/.tmp` in `e3eb38cce090c6c268866f911cffc0d5ce288636` and removed it immediately with normal fast-forward commit `37fe40556caafb9113a08c1e22d2beb519fc64b5`. It is absent from the product tree. No force push or history rewrite was used to hide either mistake.
 
-## 7. Next implementation order
+## 8. Next implementation order
 
 First require exact-head normal Windows CI for the final documentation HEAD created from this update.
 
-The next narrow managed-browser action should be `CHECK` first, followed by `UNCHECK`, because the boolean current `checked` state provides a strong independently observable postcondition. This is a target for investigation, not a claim that checkbox mutation already exists.
+The next narrow managed-browser action is `UNCHECK`, kept separate from CHECK so its own precondition, dispatch, replacement behavior, and fresh postcondition are independently proven.
 
 Preferred order:
 
 ```text
-1. finish final docs exact-head normal Windows CI
-2. trace CHECK's real permission/target/state/effect call chain
-3. require current exact-node authority and an actual checkbox target
-4. observe boolean checked pre-state before mutation
-5. reject already-satisfied transitions rather than claiming a new action
-6. dispatch CHECK only
-7. fresh re-observe same exact node + checked=true
+1. finish final CHECK docs exact-head normal Windows CI
+2. trace UNCHECK's current permission/target/state/effect call chain
+3. require current exact-node native checkbox authority
+4. observe checked=true before mutation
+5. refuse already-unchecked state rather than claiming a new transition
+6. dispatch UNCHECK only
+7. fresh re-observe same exact node + checked=false
 8. reject replacement/detach/identity drift/provider no-effect
 9. add unit + real Chromium evidence
-10. add UNCHECK only after CHECK is independently verified
+10. only then move to SELECT_OPTION / PRESS / broader click semantics
 ```
 
-After that, `SELECT_OPTION`, `PRESS`, broader click semantics, richer target sensing/lifecycle, authenticated User Browser Bridge, isolated parallel Work/Investigation, connectors, scheduling, M8 continuity, and SM1+ remain open according to dependency and risk.
+After that, richer target sensing/lifecycle, authenticated User Browser Bridge, isolated parallel Work/Investigation, connectors, scheduling, M8 continuity, and SM1+ remain open according to dependency and risk.
 
 M8 Windows continuity remains PARTIAL. SM0 remains verified foundation; SM1+ remains open. High-risk identity, long-term memory, credential/permission, updater/signing, and destructive self-maintenance changes continue to require human approval.
