@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: zn-interactive-runner-watchdog
+  group: zn-interactive-runner-hidden-watchdog
   cancel-in-progress: true
 
 jobs:
