@@ -1,0 +1,74 @@
+name: ZN Managed Browser E2E
+
+on:
+  push:
+    branches:
+      - dev/zn-agent
+    paths:
+      - .github/workflows/zn-managed-browser-e2e.yml
+      - runtime/python/pyproject.toml
+      - runtime/python/zn_agent/core/browser.py
+      - runtime/python/zn_agent/core/managed_browser.py
+      - runtime/python/zn_agent/core/url_safety.py
+      - tests/zn_agent/core/test_browser_contract.py
+      - tests/zn_agent/core/test_managed_browser.py
+      - tests/zn_agent/e2e/test_windows_managed_browser.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zn-managed-browser-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  managed-browser-e2e:
+    name: Windows local managed Chromium E2E
+    runs-on: self-hosted
+    timeout-minutes: 20
+    env:
+      CI: 'true'
+      TZ: UTC
+      PYTHONUTF8: '1'
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - name: Require Windows x64 runner
+        shell: powershell
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "ZN managed browser E2E requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare isolated browser runtime
+        shell: powershell
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/managed-browser-venv -ErrorAction SilentlyContinue
+          uv venv .ci/managed-browser-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
+          Push-Location runtime/python
+          try {
+            uv pip install --python $python '.[browser]'
+          } finally {
+            Pop-Location
+          }
+          & $python -m playwright install chromium
+      - name: Run managed browser contract tests
+        shell: powershell
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
+          & $python -m unittest tests.zn_agent.core.test_browser_contract tests.zn_agent.core.test_managed_browser -v
+      - name: Run real local Chromium E2E
+        shell: powershell
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
+          & $python -m unittest tests.zn_agent.e2e.test_windows_managed_browser -v
