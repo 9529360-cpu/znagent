@@ -122,7 +122,7 @@ if ($env:RUNNER_NAME) {
     }
 }
 
-$healthyWorkers = Get-HealthyWorkers -Inventory $existing
+$healthyWorkers = @(Get-HealthyWorkers -Inventory $existing)
 if ($healthyWorkers.Count -ge $WorkerCount) {
     Write-Host "ZN runner pool already healthy: $($healthyWorkers.Count) zn-ci workers online."
     exit 0
@@ -173,7 +173,7 @@ do {
     Start-Sleep -Seconds 3
     $inventory = Get-RepositoryRunners
     $workers = @($inventory.runners | Where-Object { $_.name -match ('^' + [regex]::Escape($WorkerPrefix) + '-\d{2}$') })
-    $onlineWorkers = Get-HealthyWorkers -Inventory $inventory
+    $onlineWorkers = @(Get-HealthyWorkers -Inventory $inventory)
     if ($onlineWorkers.Count -ge $WorkerCount) {
         break
     }
