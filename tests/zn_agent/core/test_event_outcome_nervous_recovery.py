@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from zn_agent.core.event_outcome_nervous import has_event_outcome
 from zn_agent.core.models import ExecutionPath, ResidentRunResult
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
 
@@ -38,19 +39,19 @@ class EventOutcomeNervousRecoveryTests(unittest.TestCase):
             def fail_before_commit(*args, **kwargs):
                 raise RuntimeError("forced nervous crash before commit")
 
-            resident.nervous._before_event_outcome_commit = fail_before_commit
+            resident._before_nervous_outcome_commit = fail_before_commit
             completed = self._complete(resident, event)
 
             self.assertTrue(completed.success)
             self.assertIsNotNone(resident.store.get_event_outcome(event.event_id))
-            self.assertFalse(resident.nervous.has_event_outcome(event.event_id))
+            self.assertFalse(has_event_outcome(resident.nervous, event.event_id))
             resident.store.close()
 
             restored = build_resident_runtime_from_existing_stack(
                 config={"model": {}},
                 store_path=db,
             )
-            self.assertTrue(restored.nervous.has_event_outcome(event.event_id))
+            self.assertTrue(has_event_outcome(restored.nervous, event.event_id))
             outcome_traces = [
                 trace
                 for trace in restored.nervous.recent_traces(100)
@@ -69,7 +70,7 @@ class EventOutcomeNervousRecoveryTests(unittest.TestCase):
             same_trace = restarted_again.nervous._get_trace(trace_id)
             self.assertIsNotNone(same_trace)
             self.assertEqual(same_trace.repetitions, 1)
-            self.assertTrue(restarted_again.nervous.has_event_outcome(event.event_id))
+            self.assertTrue(has_event_outcome(restarted_again.nervous, event.event_id))
             restarted_again.store.close()
 
     def test_successful_completion_receives_nervous_receipt_without_restart(self):
@@ -86,7 +87,7 @@ class EventOutcomeNervousRecoveryTests(unittest.TestCase):
             completed = self._complete(resident, event)
 
             self.assertTrue(completed.success)
-            self.assertTrue(resident.nervous.has_event_outcome(event.event_id))
+            self.assertTrue(has_event_outcome(resident.nervous, event.event_id))
             matching = [
                 trace
                 for trace in resident.nervous.recent_traces(100)
