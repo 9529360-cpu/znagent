@@ -4,11 +4,11 @@ Updated: 2026-08-26
 
 ## Current goal
 
-Recovery-only cancellation remains reachable and verified. Post-completion Life observation recovery is implemented and verified. A sanitized completion-observation health projection primitive now exists and is tested, but it is **not yet wired into resident `status` / RPC / desktop health**.
+Recovery-only cancellation remains reachable and verified. Durable post-completion Life observation recovery remains intact. The active product resident now exposes sanitized completion-observation health through its resident-owned `status` response, and the existing daemon/RPC status path passes that projection through without raw repair errors.
 
-The IntentionalResident post-completion audit found an important constraint: `NativeWill` already has durable outcome reconciliation, while nervous-system `outcome` perception is not safely replayable as-is because repeated `PersistentNervousSystem.perceive()` calls intentionally increment repetitions, strengthen traces, blend affect, and strengthen links.
+A real full-Kernel regression was found and fixed in this stage: the richer resident birth sequence (`EmbodiedResidentRuntime` and descendants) intentionally skips `ZNResidentRuntime.__init__`, so it had not installed `CompletionObservationJournal`. That caused completed richer events to fail in post-completion observation and produced cascading Intentional/Will/transfer failures. The journal is now owned by the richer birth root after `EmbodiedLifeCore.wake()`.
 
-Next real target: **wire the sanitized health projection into the real resident status chain, then design event-identity-safe semantics for nervous outcome perception without duplicating lived reinforcement.**
+The next real target is **event-identity-safe nervous outcome perception**. Do not add a naive retry queue: one nervous `perceive()` currently writes trace, links, and affect in separate transactions, and a duplicate perception intentionally reinforces memory.
 
 Do not broaden cancellation into arbitrary in-flight cancellation. Do not treat cancellation as evidence about an uncertain outside-world effect. Do not weaken durable `EventOutcome` truth to repair secondary perception.
 
@@ -22,9 +22,8 @@ Founding boundary remains:
 - development branch: `dev/zn-agent`
 - canonical source/release branch: `main`
 - canonical `main`: `8234a835dea604783cea0bd9d28a40de654ec03d`
-- latest health implementation checkpoint before this HANDOFF update: `83ca2179bf1f836469687dac61310b016f482ca8`
-- latest health regression checkpoint: `503edf31ce676810117a6e52d945f9d50cbb935d`
-- implementation-status sync before this HANDOFF update: `9c490717c6bd595aa21f71643be49fc8c400f0cd`
+- code/workflow checkpoint before documentation sync: `43142de23196b4e5fb3912bc177a8f25b95189e3`
+- implementation-status sync before this HANDOFF update: `4b38f49b015030efbe1dd6f58f1fe8f8142d99a7`
 - Life observation recovery checkpoint: `86895eda3397cf71d7f24b2d7d84d0c73c5e7220`
 - cancellation UI checkpoint: `5c679ea742a2c83578c85c215cf582ce8c22a8cf`
 - PR #6: draft/open/unmerged, base `main`, head `dev/zn-agent`
@@ -33,67 +32,61 @@ Founding boundary remains:
 
 A HANDOFF commit cannot contain its own resulting SHA. Re-read `dev/zn-agent` after this file is committed and use that exact head externally.
 
-## Completed
+## Completed in this stage
 
-### 1. Recovery-only uncertain-effect cancellation
+### 1. Found the new full-Kernel regression instead of hiding it as the old path issue
 
-The active chain remains:
-
-```text
-KernelStore.cancel_uncertain_event
--> Resident cancellation authority
--> NativeWill / ResidentWorkControl reconciliation
--> work_cancel RPC
--> Electron / preload / renderer client
--> Workbench Stop work only for replayBlocked recovery
-```
-
-Cancellation remains a control/lifecycle result, not ordinary failure learning and not evidence that an outside-world effect did or did not happen.
-
-Key checkpoints:
+At earlier head `59af7bd050595682e3c0354d67d73187c6db7829`, ordinary Kernel CI reported 581 tests / 29 errors / 5 skipped. The log contained a new failure:
 
 ```text
-6c655c761099cc6a206028285cc228d65f3e7734  atomic uncertain Work cancellation
-0be9340e2db305be7134d403a1ecdf392a7f36b4  focused cancellation workflow coverage
-5c679ea742a2c83578c85c215cf582ce8c22a8cf  recovery-only desktop control
+AttributeError: 'FocusedModernTextResidentRuntime' object has no attribute 'completion_observations'
 ```
 
-### 2. Durable post-completion Life observation recovery
+That was separate from the known NetworkService DOS-8.3 path family and caused cascading failures where Intentional/transfer state did not finish normally.
 
-The authoritative boundary is now:
+### 2. Corrected completion-observation ownership for both legitimate resident births
+
+The ordinary resident birth already has:
 
 ```text
-action result
--> KernelStore.complete_event
--> durable terminal EventOutcome
--> secondary observation
+ZNResidentRuntime.__init__
+-> ZNLifeCore.wake()
+-> CompletionObservationJournal
+-> repair pending Life observation
 ```
 
-`CompletionObservationJournal` durably receipts Life observation. A Life write failure remains pending and cannot reclassify the already-durable event. Restart reconstructs the result from `EventOutcome` and retries only Life observation; it does not rerun the event/action.
-
-`run_once()` also checks for an existing durable outcome before ordinary exception handling, so later post-completion hook failures return terminal truth rather than manufacturing another failure completion.
-
-Key checkpoints:
+The richer resident deliberately has a different birth:
 
 ```text
-baf5d5f3fcb9cad3c485d5ae4a05c7d937c5dbe8  completion observation journal
-86895eda3397cf71d7f24b2d7d84d0c73c5e7220  preserve terminal truth across Life observation failure
-f942bc07e4965af7f347c6659207328f92695e41  recovery regressions
-6ac3dba5191aa5469bac0093bab15ca3e25b5d95  focused workflow coverage
+EmbodiedResidentRuntime.__init__
+-> does not call ZNResidentRuntime.__init__
+-> EmbodiedLifeCore from the first durable load
 ```
 
-This remains at-least-once observation repair, not an exactly-once claim.
+Calling the base constructor would temporarily birth the wrong LifeCore and is not an acceptable compatibility fix.
 
-### 3. Sanitized health projection primitive
+`EmbodiedResidentRuntime` now installs the same journal only after `EmbodiedLifeCore.wake()`, then repairs pending Life observation from durable `EventOutcome` truth. Direct `EmbodiedResidentRuntime`, `IntentionalResidentRuntime`, and later richer descendants therefore own the organ without relying on a product builder shim.
 
-New checkpoints:
+Relevant repair sequence:
 
 ```text
-83ca2179bf1f836469687dac61310b016f482ca8  feat: add sanitized completion observation health
-503edf31ce676810117a6e52d945f9d50cbb935d  test: keep completion observation health sanitized
+1058f7c5401db44c156c7a40c41317d327178a5b  initial product-builder repair
+9303b257c12f324ed07fc095149e095dc4346b5d  product resident regression
+ ef4d68b363fb381ac74ca83d6623a024651575a7 product resident health/status ownership
+ e934431f57c1ba59fb97223dda4fe389b6a4c210 provider bridge restored to pure assembly
+ a2428564b30556f3a33ea1556b47c0829f1c99e3 richer resident journal installation
+ a395897e79c060e09b9aa2b0e67f206d4b841db8 restore unrelated embodied documentation after diff review
+08891757291954963c974504079137d5ca268a24  direct Embodied/Intentional regression
+43142de23196b4e5fb3912bc177a8f25b95189e3  focused workflow coverage
 ```
 
-`CompletionObservationJournal.health()` returns only:
+The initial builder-specific install was removed. `provider_bridge.py` is assembly-only again.
+
+The `a2428564` full-file edit was explicitly diff-reviewed. It had unintentionally removed explanatory comments/docstrings; `a395897e` restored them immediately. Net behavioral change in `embodied_resident.py` is only journal import + installation/repair after richer Life wake.
+
+### 3. Sanitized health is now reachable through product status and RPC
+
+`CompletionObservationJournal.health()` continues to return only:
 
 ```text
 healthy
@@ -103,122 +96,152 @@ running_count
 stages
 ```
 
-It does not expose event IDs, raw `last_error`, exception messages, internal paths, or repair payloads.
+`FocusedModernTextResidentRuntime.status()` exposes that object as `completion_observations`.
 
-The test creates a pending Life observation containing deliberately sensitive-looking internal error text and verifies that neither that text nor `last_error` appears in the health projection. It also verifies repaired state reports healthy with zero pending observations.
+Regression coverage verifies both healthy and pending states and asserts that raw exception text and `last_error` are absent. `ResidentRpcServer` status regression verifies the same sanitized object passes through the existing resident status RPC without becoming daemon/renderer-owned state.
 
-This is a primitive only. It is not yet connected to `ZNResidentRuntime.status`, daemon/RPC status, or desktop health.
+The desktop snapshot already transports resident status opaquely. No new UI warning, permission, or cancellation authority was added.
 
-### 4. IntentionalResident post-completion audit result
+Relevant checkpoints:
 
-Real call chain:
+```text
+83ca2179bf1f836469687dac61310b016f482ca8  sanitized health primitive
+ ef4d68b363fb381ac74ca83d6623a024651575a7 product status projection
+81dc10bff548eaaaa7a3dba95524f10107a5a855  product status sanitization regressions
+d589e3aaf1ad276867926f33a814395630c59bdc  status RPC pass-through regression
+```
+
+### 4. Focused workflow now covers the previously missed richer birth path
+
+`.github/workflows/zn-work-recovery-e2e.yml` now:
+
+- triggers on `embodied_resident.py`;
+- compiles `embodied_resident.py` with the Work recovery path;
+- includes `test_completion_observation_embodied.py`;
+- directly completes events through both `EmbodiedResidentRuntime` and `IntentionalResidentRuntime`.
+
+This prevents the focused suite from proving only the plain resident while the product/richer resident is broken.
+
+### 5. Nervous post-completion audit reached a concrete transaction boundary
+
+Real chain:
 
 ```text
 ZNResidentRuntime._complete_result
--> durable EventOutcome + Life observation receipt
+-> durable EventOutcome + Life observation journal
 -> IntentionalResident._complete_result
--> nervous.perceive("outcome", ... event_id metadata ...)
--> NativeWill.observe_event_outcome when intention_id exists
+-> nervous.perceive("outcome")
+-> NativeWill.observe_event_outcome when applicable
 ```
 
-Will already calls `reconcile_outcomes()` during `IntentionalResident` construction, so Will should keep using durable outcome reconciliation rather than gain a duplicate completion authority.
+`NativeWill` already runs durable outcome reconciliation on construction. Keep that authority.
 
-Nervous outcome perception is different. `PersistentNervousSystem.perceive()` fingerprints matching perceptions, but a repeated call intentionally does:
+`PersistentNervousSystem.perceive()` is not safe for blind replay. A single perception currently performs independent durable writes for:
 
 ```text
-repetitions += 1
-strength increases
-salience / valence / arousal blend again
-recent links strengthen again
-affect integrates again
+trace
+links
+nervous affect/state
 ```
 
-Therefore blind at-least-once replay of the nervous outcome perception would distort lived memory after an ambiguous commit/receipt boundary. Before adding nervous repair, introduce or choose an event-identity-safe semantic instead of copying the Life receipt behavior.
+and a repeated matching perception intentionally increments repetitions, strengthens the trace, changes salience/valence/arousal, strengthens links, and integrates affect again.
+
+A separate receipt without changing the plasticity transaction boundary would therefore be false safety: crash after a partial write could either leave incomplete perception or cause duplicate reinforcement on retry.
+
+No nervous exactly-once claim has been made and no naive repair queue was added.
 
 ## Real test / CI truth
 
-### Completion observation recovery proof
+### Current focused proof
 
 ```text
-ZN Work Recovery E2E run 33018036694
-head 6ac3dba5191aa5469bac0093bab15ca3e25b5d95
-conclusion success
-```
-
-### Sanitized health proof
-
-```text
-ZN Work Recovery E2E run 33018371392
-head 503edf31ce676810117a6e52d945f9d50cbb935d
-Compile Work recovery path                         success
+ZN Work Recovery E2E run 33020344769
+head 43142de23196b4e5fb3912bc177a8f25b95189e3
+Windows resident Work restart recovery            success
+Compile Work recovery path                        success
 Verify durable Work progress and restart recovery success
-job conclusion                                     success
+job conclusion                                    success
 ```
 
-This focused suite includes the existing Work progress/restart/side-effect/cancellation tests plus `test_completion_observation_recovery`.
-
-### Ordinary CI truth
-
-At code/workflow checkpoint `6ac3dba...`, `ZN CI` run `33018036687` had:
+Focused modules include:
 
 ```text
+test_work_progress
+test_work_recovery
+test_work_side_effect_recovery
+test_work_cancellation
+test_work_cancel_control
+test_completion_observation_recovery
+test_completion_observation_embodied
+```
+
+### Current ordinary code-head CI
+
+```text
+ZN CI run 33020344789
+head 43142de23196b4e5fb3912bc177a8f25b95189e3
 Electron / TypeScript / Windows    success
 ZN Source Boundary / Windows       success
-ZN Kernel / Python / Windows       still running at prior documentation sync
+ZN Kernel / Python / Windows       failure
+Kernel                             585 tests / 16 errors / 5 skipped
 ```
 
-A current-head ordinary CI will be triggered/superseded by later commits; re-read Actions before reporting final status.
+The missing `completion_observations` AttributeError and associated Intentional/transfer cascade are gone. The formerly affected richer tests execute successfully.
 
-Known separate ordinary Kernel issue remains the Windows NetworkService DOS-8.3 versus long-path identity family. Prior exact evidence:
+The remaining 16 errors are the known Windows NetworkService DOS-8.3 versus long-path identity family around repository targeted-test/text-delta verification and terminal/Work artifact cwd identity, with cleanup `PermissionError` fallout.
 
-```text
-ZN CI run 33014912300
-head 6c655c761099cc6a206028285cc228d65f3e7734
-Kernel 573 tests / 16 errors / 5 skipped
-```
-
-The partial attempted path fix was reverted normally in `db647cb49c3de014aa82bc28ec87c1c4e5b02c15`; no half-fix remains. Keep this **KNOWN / DEFERRED** unless it blocks the active product objective or is explicitly reprioritized.
+The prior partial path fix remains normally reverted in `db647cb49c3de014aa82bc28ec87c1c4e5b02c15`; no half-fix remains. Ordinary CI is not green.
 
 ## Current risks / incomplete work
 
-- Sanitized completion-observation health is not yet reachable through resident `status` / RPC / desktop.
-- Nervous outcome perception still lacks event-identity-safe durable repair semantics; blind retry is unsafe because it reinforces memory again.
+- Nervous outcome perception still lacks an event-identity-safe atomic/deduplicated plasticity boundary; blind retry is unsafe.
+- `FocusedModernTextResidentRuntime` currently performs a redundant second construction of the same completion-observation journal after the Embodied root already installed it. It is functionally harmless and not a correctness blocker, but should be cleaned when an edit can be made without another risky large-file replacement.
 - Broader Work durability remains partial outside the proven cancellation and Life-observation slices.
-- Ordinary Windows Kernel CI may still report the known/deferred path-identity family.
+- Ordinary Windows Kernel CI remains red on the known/deferred path-identity family.
 - Browser PRESS/broader click/editing/multi-select/lifecycle, authenticated User Browser Bridge control, M8 continuity, and SM1+ remain incomplete.
 - High-risk identity, long-term memory, credentials/permissions, updater/signing, rollback, and destructive self-maintenance changes still require human approval.
 - `main` remains untouched.
 
 ## Task queue
 
-### P0 - wire sanitized observation health
+### P0 - event-identity-safe nervous outcome perception
 
 Status: **NEXT REAL TARGET**
 
-Trace/modify the real chain, preserving resident ownership:
+Design a resident-owned boundary where one durable event outcome can influence neural plasticity once without ambiguity across crash/restart.
+
+Do not simply add a receipt around the current `perceive()` call. The design must account atomically or equivalently for:
 
 ```text
-CompletionObservationJournal.health()
--> ZNResidentRuntime.status (or the narrowest resident-owned status projection)
--> ResidentRpcServer status
--> renderer snapshot only if useful
+outcome event identity
+trace mutation
+link mutation
+affect mutation
+completion marker / dedupe identity
 ```
 
-Required output must remain sanitized counts/stages only. Do not expose raw `last_error` or per-event repair internals to the control plane.
+Required invariants:
 
-### P0.1 - nervous outcome event identity
+```text
+EventOutcome remains terminal authority
+one completed event is not reinforced twice by recovery
+partial nervous writes cannot masquerade as a complete perception
+restart cannot replay the completed action
+Will continues its existing durable outcome reconciliation
+models never become recovery authority
+```
 
-Status: **DESIGN/IMPLEMENT AFTER STATUS WIRING**
+### P0.1 - low-risk cleanup
 
-Choose a mechanism where the outcome neural perception can be recognized by durable event identity without repeated reinforcement. Verify crash/restart ambiguity explicitly before adding a retry queue.
+Status: **OPEN / NON-BLOCKING**
 
-`NativeWill` should continue using its existing durable outcome reconciliation.
+Remove the redundant second `CompletionObservationJournal` initialization from `FocusedModernTextResidentRuntime` once a safe narrow edit path is available. Keep its product `status()` projection.
 
 ### P1 - deferred Windows path identity
 
 Status: **KNOWN / DEFERRED**
 
-Resume only if reprioritized or materially blocking the current product target.
+Resume only if explicitly reprioritized or materially blocking the current product objective.
 
 ### P2 - browser follow-ons
 
@@ -237,12 +260,15 @@ Preserve human approval for high-risk identity, memory, credentials, updater/sig
 ```text
 runtime/python/zn_agent/core/completion_observation.py
 runtime/python/zn_agent/core/resident.py
-runtime/python/zn_agent/core/life.py
+runtime/python/zn_agent/core/embodied_resident.py
 runtime/python/zn_agent/core/intentional_resident.py
+runtime/python/zn_agent/core/focused_modern_text_resident.py
 runtime/python/zn_agent/core/nervous_system.py
 runtime/python/zn_agent/core/will.py
 runtime/python/zn_agent/core/daemon.py
+runtime/python/zn_agent/core/provider_bridge.py
 tests/zn_agent/core/test_completion_observation_recovery.py
+tests/zn_agent/core/test_completion_observation_embodied.py
 .github/workflows/zn-work-recovery-e2e.yml
 docs/ZN-IMPLEMENTATION-STATUS.md
 .agent/HANDOFF.md
@@ -250,4 +276,4 @@ docs/ZN-IMPLEMENTATION-STATUS.md
 
 ## Next real target
 
-Wire sanitized pending completion-observation health into the real resident status chain. Then design event-identity-safe nervous outcome perception semantics. Keep `main` untouched.
+Design and implement event-identity-safe nervous outcome perception without duplicating lived reinforcement or weakening durable event truth. Keep `main` untouched.
