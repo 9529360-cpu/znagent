@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import http.server
 import json
 import threading
@@ -19,6 +20,8 @@ from zn_agent.core.managed_browser import ManagedBrowserError, PlaywrightManaged
 
 
 _RAW_TARGET_VALUE = "ZN managed browser raw target value must stay private"
+_TYPED_TARGET_TEXT = "ZN managed browser typed Unicode ✓"
+_TYPED_TARGET_DIGEST = hashlib.sha256(_TYPED_TARGET_TEXT.encode("utf-8")).hexdigest()
 
 
 class _FixtureHandler(http.server.BaseHTTPRequestHandler):
@@ -35,6 +38,8 @@ class _FixtureHandler(http.server.BaseHTTPRequestHandler):
                 f'<input id="zn-target" type="text" aria-label="ZN Search Target" '
                 f'value="{_RAW_TARGET_VALUE}">'
                 '<input id="zn-churn" type="text" aria-label="ZN Churn Target">'
+                '<input id="zn-type-target" type="text" aria-label="ZN Type Target">'
+                '<input id="zn-type-churn" type="text" aria-label="ZN Type Churn">'
                 '<button id="zn-toggle" type="button" aria-label="ZN Toggle" aria-pressed="false">Toggle</button>'
                 '<button id="zn-toggle-churn" type="button" aria-label="ZN Toggle Churn" aria-pressed="false">Toggle churn</button>'
                 '<input id="zn-password" type="password" aria-label="Secret Password" value="hidden">'
@@ -46,6 +51,13 @@ class _FixtureHandler(http.server.BaseHTTPRequestHandler):
                 "churn.addEventListener('focus',(event)=>{"
                 "const current=event.currentTarget;"
                 "const replacement=current.cloneNode(true);"
+                "current.replaceWith(replacement);"
+                "},{once:true});"
+                "const typeChurn=document.getElementById('zn-type-churn');"
+                "typeChurn.addEventListener('input',(event)=>{"
+                "const current=event.currentTarget;"
+                "const replacement=current.cloneNode(true);"
+                "replacement.value=current.value;"
                 "current.replaceWith(replacement);"
                 "},{once:true});"
                 "const toggle=document.getElementById('zn-toggle');"
@@ -93,10 +105,11 @@ class ManagedBrowserWindowsE2E(unittest.TestCase):
         cls.server.server_close()
         cls.thread.join(timeout=5)
 
-    def test_local_headless_chromium_observes_targets_focuses_exact_node_clicks_verified_toggle_and_verifies_navigation(self):
+    def test_local_headless_chromium_observes_targets_focuses_clicks_types_and_verifies_navigation(self):
         permission = BrowserPermissionContext(
             allow_navigation=True,
             allow_page_interaction=True,
+            allow_text_entry=True,
             allow_private_network=True,
             allowed_origins=(self.origin,),
         )
@@ -298,6 +311,91 @@ class ManagedBrowserWindowsE2E(unittest.TestCase):
             self.assertIn("replaced target node", toggle_churn_effect.error or "")
             self.assertFalse(toggle_churn_effect.data["exact_node_continuity"])
             self.assertTrue(toggle_churn_effect.data["aria_pressed_after"])
+
+            type_query = BrowserTargetQuery(
+                kind=BrowserTargetQueryKind.DOM_ID,
+                value="zn-type-target",
+            )
+            type_observation = browser.observe_target(
+                session.session_id,
+                type_query,
+                page_id=observed.page_id,
+            )
+            self.assertEqual(type_observation.target.role, "textbox")
+            self.assertEqual(type_observation.target.name, "ZN Type Target")
+            type_action = BrowserAction.create(
+                session_id=session.session_id,
+                page_id=type_observation.page_id,
+                kind=BrowserActionKind.TYPE_TEXT,
+                target=type_observation.target,
+                args={"text": _TYPED_TARGET_TEXT},
+            )
+            type_authority = BrowserActionAuthority.from_observation(
+                type_action,
+                type_observation,
+                permission,
+            )
+            type_effect = browser.act(type_action, type_authority)
+            self.assertTrue(type_effect.success, type_effect.error)
+            self.assertEqual(
+                type_effect.postcondition,
+                "same_exact_target_text_equals_requested",
+            )
+            self.assertTrue(type_effect.data["exact_node_continuity"])
+            self.assertEqual(type_effect.data["text_length_before"], 0)
+            self.assertEqual(type_effect.data["text_length_after"], len(_TYPED_TARGET_TEXT))
+            self.assertEqual(type_effect.data["text_sha256_after"], _TYPED_TARGET_DIGEST)
+            self.assertEqual(type_effect.data["expected_text_sha256"], _TYPED_TARGET_DIGEST)
+            self.assertTrue(type_effect.data["input_sent"])
+            self.assertNotEqual(type_effect.observed_at, type_observation.captured_at)
+            self.assertNotIn(
+                _TYPED_TARGET_TEXT,
+                json.dumps(type_effect.data, sort_keys=True),
+            )
+
+            type_post_observation = browser.observe_target(
+                session.session_id,
+                type_query,
+                page_id=observed.page_id,
+            )
+            self.assertEqual(
+                type_post_observation.target.target_id,
+                type_observation.target.target_id,
+            )
+
+            type_churn_query = BrowserTargetQuery(
+                kind=BrowserTargetQueryKind.DOM_ID,
+                value="zn-type-churn",
+            )
+            type_churn_observation = browser.observe_target(
+                session.session_id,
+                type_churn_query,
+                page_id=observed.page_id,
+            )
+            type_churn_action = BrowserAction.create(
+                session_id=session.session_id,
+                page_id=type_churn_observation.page_id,
+                kind=BrowserActionKind.TYPE_TEXT,
+                target=type_churn_observation.target,
+                args={"text": _TYPED_TARGET_TEXT},
+            )
+            type_churn_authority = BrowserActionAuthority.from_observation(
+                type_churn_action,
+                type_churn_observation,
+                permission,
+            )
+            type_churn_effect = browser.act(type_churn_action, type_churn_authority)
+            self.assertFalse(type_churn_effect.success)
+            self.assertIn("replaced target node", type_churn_effect.error or "")
+            self.assertFalse(type_churn_effect.data["exact_node_continuity"])
+            self.assertEqual(
+                type_churn_effect.data["text_sha256_after"],
+                _TYPED_TARGET_DIGEST,
+            )
+            self.assertNotIn(
+                _TYPED_TARGET_TEXT,
+                json.dumps(type_churn_effect.data, sort_keys=True),
+            )
 
             churn_query = BrowserTargetQuery(
                 kind=BrowserTargetQueryKind.DOM_ID,
