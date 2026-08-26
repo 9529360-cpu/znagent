@@ -7,6 +7,7 @@ from typing import Any
 
 from .budget import CognitiveBudgetManager
 from .capabilities import CapabilityRegistry
+from .completion_observation import CompletionObservationJournal
 from .investigation import InvestigationResult, NativeInvestigator
 from .memory import StructuredMemory
 from .models import (
@@ -63,6 +64,8 @@ class ZNResidentRuntime:
 
         self.life = ZNLifeCore(self)
         self.life.wake()
+        self.completion_observations = CompletionObservationJournal(self.store)
+        self.completion_observations.repair_life(self)
         self.investigator = NativeInvestigator(self)
 
     def enqueue(
@@ -101,6 +104,10 @@ class ZNResidentRuntime:
             reason=outcome.reason,
             kernel_result=None,
         )
+
+    def repair_completion_observations(self, *, limit: int = 128) -> int:
+        """Retry resident self-observation without reopening completed Work."""
+        return self.completion_observations.repair_life(self, limit=limit)
 
     def submit(
         self,
@@ -243,6 +250,9 @@ class ZNResidentRuntime:
                 )
                 self.store.save_working_state(state)
         except Exception as exc:
+            completed = self.result_for(event.event_id)
+            if completed is not None:
+                return completed
             message = f"{type(exc).__name__}: {exc}"
             self.life.mark_impasse_unresolved(event, message)
             self.store.record_runtime_task(model_invocations=0)
@@ -330,7 +340,7 @@ class ZNResidentRuntime:
             outcome,
             error=None if result.success else (result.reason or "event failed"),
         )
-        self.life.observe_action(result)
+        self.completion_observations.observe_life(self, result)
         return result
 
     def run_forever(
