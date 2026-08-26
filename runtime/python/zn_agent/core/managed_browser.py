@@ -9,6 +9,7 @@ WebSocket endpoint through ZN URL safety, and returns resident-owned effect
 evidence after navigation instead of treating dispatch as completion.
 """
 
+import hashlib
 from dataclasses import dataclass, field
 from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
@@ -22,6 +23,10 @@ from .browser import (
     BrowserPermissionContext,
     BrowserPlane,
     BrowserSessionIdentity,
+    BrowserTarget,
+    BrowserTargetKind,
+    BrowserTargetQuery,
+    BrowserTargetQueryKind,
 )
 from .models import utc_now
 from .url_safety import is_safe_url
@@ -36,6 +41,93 @@ class ManagedBrowserUnavailable(ManagedBrowserError):
 
 
 UrlChecker = Callable[..., bool]
+
+
+_TARGET_BY_DOM_ID_SCRIPT = r"""
+(domId) => {
+  const matches = Array.from(document.querySelectorAll("[id]")).filter(
+    (element) => element.id === domId
+  );
+  if (matches.length !== 1) {
+    return {count: matches.length};
+  }
+
+  const element = matches[0];
+  const connected = Boolean(element.isConnected);
+  const style = connected ? window.getComputedStyle(element) : null;
+  const rect = connected ? element.getBoundingClientRect() : null;
+  const visible = Boolean(
+    connected &&
+    !element.hidden &&
+    style &&
+    style.display !== "none" &&
+    style.visibility !== "hidden" &&
+    rect &&
+    rect.width > 0 &&
+    rect.height > 0
+  );
+
+  const tag = String(element.tagName || "").toLowerCase().slice(0, 32);
+  const inputType = String(element.getAttribute("type") || "")
+    .trim()
+    .toLowerCase()
+    .slice(0, 32);
+  const isPassword = tag === "input" && inputType === "password";
+
+  let role = String(element.getAttribute("role") || "")
+    .trim()
+    .toLowerCase()
+    .slice(0, 64);
+  if (!role) {
+    if (tag === "textarea") {
+      role = "textbox";
+    } else if (tag === "select") {
+      role = "combobox";
+    } else if (tag === "button") {
+      role = "button";
+    } else if (tag === "a" && element.hasAttribute("href")) {
+      role = "link";
+    } else if (tag === "input") {
+      if (inputType === "checkbox") {
+        role = "checkbox";
+      } else if (inputType === "radio") {
+        role = "radio";
+      } else if (inputType === "button" || inputType === "submit" || inputType === "reset") {
+        role = "button";
+      } else if (inputType !== "hidden") {
+        role = "textbox";
+      }
+    }
+  }
+
+  let name = "";
+  if (!isPassword) {
+    const ariaLabel = String(element.getAttribute("aria-label") || "").trim();
+    if (ariaLabel) {
+      name = ariaLabel;
+    } else if (element.labels && element.labels.length) {
+      name = Array.from(element.labels)
+        .map((label) => String(label.innerText || "").trim())
+        .filter(Boolean)
+        .join(" ");
+    } else {
+      name = String(element.getAttribute("title") || "").trim();
+    }
+  }
+
+  return {
+    count: 1,
+    connected,
+    visible,
+    dom_id: String(element.id || "").slice(0, 256),
+    tag,
+    role: role.slice(0, 64),
+    name: name.slice(0, 160),
+    input_type: inputType,
+    is_password: isPassword,
+  };
+}
+"""
 
 
 @dataclass(slots=True)
@@ -139,6 +231,29 @@ class PlaywrightManagedBrowser:
         resolved_page_id = page_id or self._default_page_id(session)
         return self._capture(session, resolved_page_id)
 
+    def observe_target(
+        self,
+        session_id: str,
+        query: BrowserTargetQuery,
+        *,
+        page_id: str = "",
+    ) -> BrowserObservation:
+        session = self._session(session_id)
+        resolved_page_id = page_id or self._default_page_id(session)
+        captured_at = utc_now()
+        target = self._resolve_target(
+            session,
+            resolved_page_id,
+            query,
+            observed_at=captured_at,
+        )
+        return self._capture(
+            session,
+            resolved_page_id,
+            target=target,
+            captured_at=captured_at,
+        )
+
     def act(
         self,
         action: BrowserAction,
@@ -209,7 +324,14 @@ class PlaywrightManagedBrowser:
             },
         )
 
-    def _capture(self, session: _ManagedSession, page_id: str) -> BrowserObservation:
+    def _capture(
+        self,
+        session: _ManagedSession,
+        page_id: str,
+        *,
+        target: BrowserTarget | None = None,
+        captured_at: str | None = None,
+    ) -> BrowserObservation:
         page = self._page(session, page_id)
         url = str(getattr(page, "url", "") or "")
         title = str(page.title() or "")
@@ -227,10 +349,11 @@ class PlaywrightManagedBrowser:
         observation = BrowserObservation(
             session=session.identity,
             page_id=page_id,
-            captured_at=utc_now(),
+            captured_at=captured_at or utc_now(),
             url=url,
             title=title[:1024],
             load_state=load_state[:64],
+            target=target,
             viewport=viewport,
             metadata={
                 "provider": session.identity.provider,
@@ -241,6 +364,91 @@ class PlaywrightManagedBrowser:
         )
         session.last_observation[page_id] = observation
         return observation
+
+    def _resolve_target(
+        self,
+        session: _ManagedSession,
+        page_id: str,
+        query: BrowserTargetQuery,
+        *,
+        observed_at: str,
+    ) -> BrowserTarget:
+        if query.frame_id != "main":
+            raise ManagedBrowserError(
+                "managed browser target sensing currently supports only the main frame"
+            )
+        if query.kind is not BrowserTargetQueryKind.DOM_ID:
+            raise ManagedBrowserError(
+                f"managed browser target query is not implemented: {query.kind.value}"
+            )
+
+        page = self._page(session, page_id)
+        try:
+            raw = page.evaluate(_TARGET_BY_DOM_ID_SCRIPT, query.value)
+        except Exception as exc:
+            raise ManagedBrowserError(
+                f"failed to observe managed browser target: {type(exc).__name__}: {exc}"
+            ) from exc
+        if not isinstance(raw, dict):
+            raise ManagedBrowserError("managed browser target provider returned invalid evidence")
+
+        try:
+            count = int(raw.get("count") or 0)
+        except (TypeError, ValueError) as exc:
+            raise ManagedBrowserError(
+                "managed browser target provider returned invalid match count"
+            ) from exc
+        if count == 0:
+            raise ManagedBrowserError("managed browser target was not found")
+        if count != 1:
+            raise ManagedBrowserError("managed browser target is ambiguous")
+        if not bool(raw.get("connected")):
+            raise ManagedBrowserError("managed browser target is detached")
+        if not bool(raw.get("visible")):
+            raise ManagedBrowserError("managed browser target is not visible")
+
+        dom_id = str(raw.get("dom_id") or "")
+        if dom_id != query.value:
+            raise ManagedBrowserError("managed browser target identity changed while sensing")
+        is_password = bool(raw.get("is_password"))
+        if is_password and not session.permission.allow_sensitive_fields:
+            raise ManagedBrowserError(
+                "managed browser sensitive target requires explicit sensitive-field permission"
+            )
+
+        tag = str(raw.get("tag") or "")[:32]
+        role = str(raw.get("role") or "")[:64]
+        name = "" if is_password else str(raw.get("name") or "")[:160]
+        input_type = str(raw.get("input_type") or "")[:32]
+        current_url = str(getattr(page, "url", "") or "")
+        identity_material = "\x1f".join(
+            (
+                session.identity.session_id,
+                page_id,
+                query.frame_id,
+                current_url,
+                dom_id,
+                tag,
+                role,
+                input_type,
+            )
+        )
+        target_id = "dom-" + hashlib.sha256(
+            identity_material.encode("utf-8")
+        ).hexdigest()[:24]
+
+        return BrowserTarget(
+            session_id=session.identity.session_id,
+            page_id=page_id,
+            kind=BrowserTargetKind.ELEMENT,
+            target_id=target_id,
+            observed_at=observed_at,
+            url=current_url,
+            frame_id=query.frame_id,
+            role=role,
+            name=name,
+            selector_hint=f"dom_id:{dom_id}",
+        )
 
     def _validate_authority(
         self,

@@ -45,6 +45,10 @@ class BrowserTargetKind(str, Enum):
     DESKTOP_ELEMENT = "desktop_element"
 
 
+class BrowserTargetQueryKind(str, Enum):
+    DOM_ID = "dom_id"
+
+
 _NAVIGATION_ACTIONS = frozenset(
     {
         BrowserActionKind.NAVIGATE,
@@ -152,6 +156,27 @@ class BrowserPermissionContext:
 
 
 @dataclass(frozen=True, slots=True)
+class BrowserTargetQuery:
+    kind: BrowserTargetQueryKind
+    value: str
+    frame_id: str = "main"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.kind, BrowserTargetQueryKind):
+            raise ValueError("unsupported browser target query kind")
+        if not self.value:
+            raise ValueError("browser target query value must not be empty")
+        if len(self.value) > 256:
+            raise ValueError("browser target query value is too long")
+        if any(ord(char) < 32 or ord(char) == 127 for char in self.value):
+            raise ValueError("browser target query value contains control characters")
+        if not self.frame_id.strip():
+            raise ValueError("browser target query frame_id must not be empty")
+        if len(self.frame_id) > 128:
+            raise ValueError("browser target query frame_id is too long")
+
+
+@dataclass(frozen=True, slots=True)
 class BrowserTarget:
     session_id: str
     page_id: str
@@ -171,6 +196,16 @@ class BrowserTarget:
             raise ValueError("browser target_id must not be empty")
         if not self.observed_at.strip():
             raise ValueError("browser target observed_at must not be empty")
+        if len(self.target_id) > 256:
+            raise ValueError("browser target_id is too long")
+        if len(self.frame_id) > 128:
+            raise ValueError("browser target frame_id is too long")
+        if len(self.role) > 128:
+            raise ValueError("browser target role is too long")
+        if len(self.name) > 256:
+            raise ValueError("browser target name is too long")
+        if len(self.selector_hint) > 512:
+            raise ValueError("browser target selector_hint is too long")
 
 
 @dataclass(frozen=True, slots=True)
@@ -340,6 +375,14 @@ class BrowserAdapter(Protocol):
     def close_session(self, session_id: str) -> None: ...
 
     def observe(self, session_id: str, *, page_id: str = "") -> BrowserObservation: ...
+
+    def observe_target(
+        self,
+        session_id: str,
+        query: BrowserTargetQuery,
+        *,
+        page_id: str = "",
+    ) -> BrowserObservation: ...
 
     def act(
         self,
