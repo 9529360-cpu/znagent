@@ -29,6 +29,10 @@ class AutomationElementObservation:
     native_window_handle: int
     captured_at: str
     automation_id: str = ""
+    is_password: bool = False
+    is_value_pattern_available: bool = False
+    is_text_pattern_available: bool = False
+    value_is_read_only: bool | None = None
     source: str = "windows-uia-cache"
 
 
@@ -155,6 +159,10 @@ class _WindowsUiAutomationReader:
                 client.UIA_HasKeyboardFocusPropertyId,
                 client.UIA_IsOffscreenPropertyId,
                 client.UIA_NativeWindowHandlePropertyId,
+                client.UIA_IsPasswordPropertyId,
+                client.UIA_IsValuePatternAvailablePropertyId,
+                client.UIA_IsTextPatternAvailablePropertyId,
+                client.UIA_ValueIsReadOnlyPropertyId,
             ):
                 cache.AddProperty(property_id)
         except Exception as exc:
@@ -185,6 +193,10 @@ class _WindowsUiAutomationReader:
                     element,
                     runtime_id_property_id=client.UIA_RuntimeIdPropertyId,
                     automation_id_property_id=client.UIA_AutomationIdPropertyId,
+                    is_password_property_id=client.UIA_IsPasswordPropertyId,
+                    is_value_pattern_available_property_id=client.UIA_IsValuePatternAvailablePropertyId,
+                    is_text_pattern_available_property_id=client.UIA_IsTextPatternAvailablePropertyId,
+                    value_is_read_only_property_id=client.UIA_ValueIsReadOnlyPropertyId,
                 )
             except Exception as exc:
                 request.error = f"Windows UI Automation read probe failed: {type(exc).__name__}: {exc}"
@@ -193,25 +205,71 @@ class _WindowsUiAutomationReader:
                     request.done.set()
 
     @staticmethod
+    def _cached_bool(element, property_id: int, *, field_name: str) -> bool:
+        value = element.GetCachedPropertyValue(int(property_id))
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int):
+            return bool(value)
+        raise RuntimeError(f"cached UI Automation {field_name} is not boolean")
+
+    @staticmethod
     def _snapshot(
         element,
         *,
         runtime_id_property_id: int,
         automation_id_property_id: int,
+        is_password_property_id: int | None = None,
+        is_value_pattern_available_property_id: int | None = None,
+        is_text_pattern_available_property_id: int | None = None,
+        value_is_read_only_property_id: int | None = None,
     ) -> AutomationElementObservation:
-        # RuntimeId and AutomationId are normal cached UIA properties, but
-        # generated COM wrappers do not consistently expose convenience
-        # accessors for every cached property. Read both through the standard
-        # cached-property method so the Sense keeps AutomationElementMode_None
-        # and never falls back to a current/full read. AutomationId is bounded
-        # application-provided evidence only; it is not durable identity or
-        # execution authority, and dynamic Name/text remains intentionally out
-        # of this narrow Sense.
+        # RuntimeId, AutomationId and the capability flags are cached UIA
+        # properties. Keep AutomationElementMode_None and use only the standard
+        # cached-property method; never fall back to current/full reads.
+        # Capability evidence intentionally excludes Value.Value and dynamic
+        # Name/text so this Sense can classify modern text controls without
+        # turning their current user content into a general observation surface.
         runtime_value = element.GetCachedPropertyValue(int(runtime_id_property_id))
         runtime_id = tuple(int(value) for value in runtime_value)
         automation_id = str(
             element.GetCachedPropertyValue(int(automation_id_property_id)) or ""
         ).strip()[:_MAX_AUTOMATION_ID_CHARS]
+        is_password = (
+            _WindowsUiAutomationReader._cached_bool(
+                element,
+                int(is_password_property_id),
+                field_name="is_password",
+            )
+            if is_password_property_id is not None
+            else False
+        )
+        is_value_pattern_available = (
+            _WindowsUiAutomationReader._cached_bool(
+                element,
+                int(is_value_pattern_available_property_id),
+                field_name="is_value_pattern_available",
+            )
+            if is_value_pattern_available_property_id is not None
+            else False
+        )
+        is_text_pattern_available = (
+            _WindowsUiAutomationReader._cached_bool(
+                element,
+                int(is_text_pattern_available_property_id),
+                field_name="is_text_pattern_available",
+            )
+            if is_text_pattern_available_property_id is not None
+            else False
+        )
+        value_is_read_only = None
+        if is_value_pattern_available and value_is_read_only_property_id is not None:
+            value_is_read_only = _WindowsUiAutomationReader._cached_bool(
+                element,
+                int(value_is_read_only_property_id),
+                field_name="value_is_read_only",
+            )
+
         process_id = int(element.CachedProcessId)
         try:
             import psutil
@@ -236,6 +294,10 @@ class _WindowsUiAutomationReader:
             native_window_handle=int(element.CachedNativeWindowHandle or 0),
             captured_at=utc_now(),
             automation_id=automation_id,
+            is_password=is_password,
+            is_value_pattern_available=is_value_pattern_available,
+            is_text_pattern_available=is_text_pattern_available,
+            value_is_read_only=value_is_read_only,
             source="windows-uia-cache",
         )
 
@@ -244,11 +306,14 @@ class NativeAutomationElementSense:
     """Read one UIA element from a point or the current focused UIA element.
 
     The native reader starts lazily on first use, runs on a separate MTA daemon
-    thread, requests cached properties only, and never requests a control pattern,
-    walks the UIA tree, subscribes to an event, or calls a UIA mutation method.
-    AutomationId is short-lived bounded evidence about the current application
-    element; it does not replace opaque RuntimeId inside an action cycle and is
-    not durable semantic identity or mutation authority.
+    thread, and requests cached properties only. Besides structural identity it
+    may report whether the element is a password control and whether the read-only
+    UIA Value/Text capabilities are available (plus Value read-only state). It
+    never requests Value.Value, dynamic Name/text, a control-pattern object, a
+    tree walk, an event subscription or a UIA mutation method. AutomationId and
+    capability flags are short-lived
+    application evidence; they do not replace opaque RuntimeId inside an action
+    cycle and are not durable semantic identity or mutation authority.
     """
 
     def __init__(
@@ -302,4 +367,21 @@ class NativeAutomationElementSense:
             raise ValueError("automation element probe returned no control type")
         if len(str(observation.automation_id or "")) > _MAX_AUTOMATION_ID_CHARS:
             raise ValueError("automation element probe returned an oversized automation id")
+        if not isinstance(observation.is_password, bool):
+            raise ValueError("automation element probe returned invalid password capability evidence")
+        if not isinstance(observation.is_value_pattern_available, bool):
+            raise ValueError("automation element probe returned invalid Value capability evidence")
+        if not isinstance(observation.is_text_pattern_available, bool):
+            raise ValueError("automation element probe returned invalid Text capability evidence")
+        if observation.value_is_read_only is not None and not isinstance(
+            observation.value_is_read_only, bool
+        ):
+            raise ValueError("automation element probe returned invalid Value read-only evidence")
+        if (
+            not observation.is_value_pattern_available
+            and observation.value_is_read_only is not None
+        ):
+            raise ValueError(
+                "automation element probe returned Value read-only evidence without Value capability"
+            )
         return observation
