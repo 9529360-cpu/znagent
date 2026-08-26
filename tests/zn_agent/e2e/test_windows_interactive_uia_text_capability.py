@@ -120,6 +120,10 @@ $window.Add_ContentRendered({{
                         self.process.kill()
                         self.process.wait(timeout=2.0)
         finally:
+            if self.process is not None:
+                for stream in (self.process.stdout, self.process.stderr):
+                    if stream is not None:
+                        stream.close()
             self._tmp.cleanup()
 
 
