@@ -23,7 +23,9 @@ f1ed2326e7536120ac0b8d362c2604f72a020e53
 ci: verify hidden interactive runner handoff
 ```
 
-Status: **NORMAL HEADLESS WINDOWS CI POOL OPERATIONAL; INTERACTIVE RUNNER RECOVERY/HIDDEN-WATCHDOG MIGRATION IMPLEMENTED BUT NOT YET VERIFIED BECAUSE `zn-interactive` IS NOT ACCEPTING JOBS. MANAGED-BROWSER PRODUCT WORK REMAINS AT VERIFIED UNCHECK AND MUST NOT ADVANCE UNTIL THE INTERACTIVE TEST PLANE IS RECOVERED.**
+Status: **INTERACTIVE RUNNER RECOVERED AND VERIFIED: `zn-interactive` is online with the required labels, and the visible logon-task workflow passed. Three `zn-ci` service runners remain online.**
+
+Recovery evidence on 2026-08-26: the local registration was migrated from `ah-windows`/`znagent` (runner id 21) to one `zn-interactive` registration; the stale offline registration was removed only after matching it to the same directory's failed replacement. The runner is configured at `C:\actions-runner-znagent`, runs as a visible `cmd.exe`/`run.cmd` task in the logged-on user session, and the task uses an interactive logon trigger with duplicate instances ignored. GitHub inventory showed `zn-interactive` online with `self-hosted`, `Windows`, `X64`, `zn-interactive`; the visible watchdog workflow passed as run `32999383631`.
 
 ## 1. Previously verified managed-browser product slice
 
