@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import unittest
 
 from zn_agent.core.browser import (
@@ -9,6 +10,8 @@ from zn_agent.core.browser import (
     BrowserPermissionContext,
     BrowserTarget,
     BrowserTargetKind,
+    BrowserTargetQuery,
+    BrowserTargetQueryKind,
 )
 from zn_agent.core.managed_browser import ManagedBrowserError, PlaywrightManagedBrowser
 
@@ -57,14 +60,20 @@ class _FakePage:
         self.viewport_size = {"width": 1280, "height": 720}
         self.closed = False
         self.goto_calls = []
+        self.target_snapshots = {}
 
     def title(self):
         return self._title
 
-    def evaluate(self, expression):
-        if expression != "document.readyState":
-            raise AssertionError("unexpected evaluate expression")
-        return self._ready
+    def evaluate(self, expression, arg=None):
+        if expression == "document.readyState" and arg is None:
+            return self._ready
+        if arg is not None and "document.querySelectorAll" in expression:
+            snapshot = self.target_snapshots.get(arg)
+            if snapshot is None:
+                return {"count": 0}
+            return dict(snapshot)
+        raise AssertionError("unexpected evaluate expression")
 
     def goto(self, url, *, wait_until):
         self.goto_calls.append((url, wait_until))
@@ -150,6 +159,31 @@ class _FakeStarter:
         return self.playwright
 
 
+def _target_snapshot(
+    *,
+    dom_id="search-input",
+    tag="input",
+    role="textbox",
+    name="Search",
+    input_type="text",
+    connected=True,
+    visible=True,
+    is_password=False,
+    count=1,
+):
+    return {
+        "count": count,
+        "connected": connected,
+        "visible": visible,
+        "dom_id": dom_id,
+        "tag": tag,
+        "role": role,
+        "name": name,
+        "input_type": input_type,
+        "is_password": is_password,
+    }
+
+
 class ManagedBrowserTests(unittest.TestCase):
     def _build(self, *, permission=None, checker=None):
         playwright = _FakePlaywright()
@@ -191,6 +225,182 @@ class ManagedBrowserTests(unittest.TestCase):
             adapter.open_session(permission=BrowserPermissionContext(allow_downloads=True))
         with self.assertRaises(ManagedBrowserError):
             adapter.open_session(permission=BrowserPermissionContext(allow_uploads=True))
+
+    def test_dom_id_target_observation_is_bounded_fresh_and_authority_ready(self):
+        permission = BrowserPermissionContext(allow_page_interaction=True)
+        adapter, playwright, identity = self._build(permission=permission)
+        page = playwright.browser.context.page
+        page.url = "https://example.com/form"
+        page._title = "Form"
+        page.target_snapshots["search-input"] = _target_snapshot()
+        query = BrowserTargetQuery(
+            kind=BrowserTargetQueryKind.DOM_ID,
+            value="search-input",
+        )
+        try:
+            first = adapter.observe_target(identity.session_id, query)
+            self.assertIsNotNone(first.target)
+            self.assertEqual(first.target.kind, BrowserTargetKind.ELEMENT)
+            self.assertEqual(first.target.frame_id, "main")
+            self.assertEqual(first.target.role, "textbox")
+            self.assertEqual(first.target.name, "Search")
+            self.assertEqual(first.target.selector_hint, "dom_id:search-input")
+            self.assertEqual(first.target.observed_at, first.captured_at)
+            self.assertFalse(hasattr(first.target, "value"))
+            self.assertFalse(hasattr(first.target, "text"))
+
+            time.sleep(0.001)
+            refreshed = adapter.observe_target(
+                identity.session_id,
+                query,
+                page_id=first.page_id,
+            )
+            self.assertEqual(refreshed.target.target_id, first.target.target_id)
+            self.assertNotEqual(refreshed.target.observed_at, first.target.observed_at)
+
+            stale_action = BrowserAction.create(
+                session_id=identity.session_id,
+                page_id=first.page_id,
+                kind=BrowserActionKind.CLICK,
+                target=first.target,
+            )
+            with self.assertRaisesRegex(ValueError, "stale"):
+                BrowserActionAuthority.from_observation(
+                    stale_action,
+                    refreshed,
+                    permission,
+                )
+
+            current_action = BrowserAction.create(
+                session_id=identity.session_id,
+                page_id=refreshed.page_id,
+                kind=BrowserActionKind.CLICK,
+                target=refreshed.target,
+            )
+            authority = BrowserActionAuthority.from_observation(
+                current_action,
+                refreshed,
+                permission,
+            )
+            effect = adapter.act(current_action, authority)
+            self.assertFalse(effect.success)
+            self.assertIn("not implemented", effect.error or "")
+        finally:
+            adapter.close()
+
+    def test_dom_id_target_observation_fails_closed_for_missing_ambiguous_hidden_or_frame(self):
+        adapter, playwright, identity = self._build()
+        page = playwright.browser.context.page
+        page.target_snapshots["duplicate"] = _target_snapshot(
+            dom_id="duplicate",
+            count=2,
+        )
+        page.target_snapshots["hidden"] = _target_snapshot(
+            dom_id="hidden",
+            visible=False,
+        )
+        try:
+            with self.assertRaisesRegex(ManagedBrowserError, "not found"):
+                adapter.observe_target(
+                    identity.session_id,
+                    BrowserTargetQuery(
+                        kind=BrowserTargetQueryKind.DOM_ID,
+                        value="missing",
+                    ),
+                )
+            with self.assertRaisesRegex(ManagedBrowserError, "ambiguous"):
+                adapter.observe_target(
+                    identity.session_id,
+                    BrowserTargetQuery(
+                        kind=BrowserTargetQueryKind.DOM_ID,
+                        value="duplicate",
+                    ),
+                )
+            with self.assertRaisesRegex(ManagedBrowserError, "not visible"):
+                adapter.observe_target(
+                    identity.session_id,
+                    BrowserTargetQuery(
+                        kind=BrowserTargetQueryKind.DOM_ID,
+                        value="hidden",
+                    ),
+                )
+            with self.assertRaisesRegex(ManagedBrowserError, "only the main frame"):
+                adapter.observe_target(
+                    identity.session_id,
+                    BrowserTargetQuery(
+                        kind=BrowserTargetQueryKind.DOM_ID,
+                        value="missing",
+                        frame_id="child-frame",
+                    ),
+                )
+        finally:
+            adapter.close()
+
+    def test_password_target_requires_sensitive_permission_and_does_not_export_name(self):
+        denied, denied_playwright, denied_identity = self._build()
+        denied_playwright.browser.context.page.target_snapshots["password"] = _target_snapshot(
+            dom_id="password",
+            name="Password",
+            input_type="password",
+            is_password=True,
+        )
+        query = BrowserTargetQuery(
+            kind=BrowserTargetQueryKind.DOM_ID,
+            value="password",
+        )
+        try:
+            with self.assertRaisesRegex(ManagedBrowserError, "sensitive-field"):
+                denied.observe_target(denied_identity.session_id, query)
+        finally:
+            denied.close()
+
+        allowed, allowed_playwright, allowed_identity = self._build(
+            permission=BrowserPermissionContext(allow_sensitive_fields=True)
+        )
+        allowed_playwright.browser.context.page.target_snapshots["password"] = _target_snapshot(
+            dom_id="password",
+            name="Password",
+            input_type="password",
+            is_password=True,
+        )
+        try:
+            observed = allowed.observe_target(allowed_identity.session_id, query)
+            self.assertEqual(observed.target.name, "")
+            self.assertEqual(observed.target.role, "textbox")
+        finally:
+            allowed.close()
+
+    def test_target_identity_changes_when_page_or_semantic_shape_changes(self):
+        adapter, playwright, identity = self._build()
+        page = playwright.browser.context.page
+        page.url = "https://example.com/one"
+        page.target_snapshots["shared"] = _target_snapshot(
+            dom_id="shared",
+            tag="input",
+            role="textbox",
+        )
+        query = BrowserTargetQuery(
+            kind=BrowserTargetQueryKind.DOM_ID,
+            value="shared",
+        )
+        try:
+            first = adapter.observe_target(identity.session_id, query)
+            page.url = "https://example.com/two"
+            page.target_snapshots["shared"] = _target_snapshot(
+                dom_id="shared",
+                tag="button",
+                role="button",
+                input_type="",
+            )
+            second = adapter.observe_target(
+                identity.session_id,
+                query,
+                page_id=first.page_id,
+            )
+            self.assertNotEqual(first.target.target_id, second.target.target_id)
+            self.assertEqual(second.target.role, "button")
+        finally:
+            adapter.close()
 
     def test_navigation_requires_fresh_authority_and_returns_observed_effect(self):
         permission = BrowserPermissionContext(

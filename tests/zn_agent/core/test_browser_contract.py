@@ -13,6 +13,8 @@ from zn_agent.core.browser import (
     BrowserSessionIdentity,
     BrowserTarget,
     BrowserTargetKind,
+    BrowserTargetQuery,
+    BrowserTargetQueryKind,
 )
 
 
@@ -82,6 +84,40 @@ class BrowserContractTests(unittest.TestCase):
                 allow_text_entry=True,
             ).allows_action(BrowserActionKind.TYPE_TEXT)
         )
+
+    def test_target_query_rejects_empty_oversized_or_control_values(self):
+        query = BrowserTargetQuery(
+            kind=BrowserTargetQueryKind.DOM_ID,
+            value="search-input",
+        )
+        self.assertEqual(query.frame_id, "main")
+        with self.assertRaises(ValueError):
+            BrowserTargetQuery(kind=BrowserTargetQueryKind.DOM_ID, value="")
+        with self.assertRaises(ValueError):
+            BrowserTargetQuery(kind=BrowserTargetQueryKind.DOM_ID, value="x" * 257)
+        with self.assertRaises(ValueError):
+            BrowserTargetQuery(kind=BrowserTargetQueryKind.DOM_ID, value="bad\nid")
+        with self.assertRaises(ValueError):
+            BrowserTargetQuery(
+                kind=BrowserTargetQueryKind.DOM_ID,
+                value="ok",
+                frame_id="",
+            )
+
+    def test_target_metadata_fields_are_bounded_by_contract(self):
+        common = dict(
+            session_id="session-1",
+            page_id="page-1",
+            kind=BrowserTargetKind.ELEMENT,
+            target_id="element-1",
+            observed_at="now",
+        )
+        with self.assertRaises(ValueError):
+            BrowserTarget(**common, role="r" * 129)
+        with self.assertRaises(ValueError):
+            BrowserTarget(**common, name="n" * 257)
+        with self.assertRaises(ValueError):
+            BrowserTarget(**common, selector_hint="s" * 513)
 
     def _target_observation(self):
         session = BrowserSessionIdentity.create(
@@ -236,6 +272,7 @@ class BrowserContractTests(unittest.TestCase):
             kind=BrowserActionKind.CLICK,
             target=target,
         )
+        permission = BrowserPermissionContext(allow_page_interaction=True)
         refreshed_target = BrowserTarget(
             session_id=session.session_id,
             page_id=observation.page_id,
@@ -259,7 +296,7 @@ class BrowserContractTests(unittest.TestCase):
             BrowserActionAuthority.from_observation(
                 action,
                 refreshed,
-                BrowserPermissionContext(allow_page_interaction=True),
+                permission,
             )
 
     def test_cross_session_target_is_rejected(self):
