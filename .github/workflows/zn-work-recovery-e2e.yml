@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/zn-work-recovery-e2e.yml
       - runtime/python/pyproject.toml
+      - runtime/python/zn_agent/core/models.py
       - runtime/python/zn_agent/core/work.py
       - runtime/python/zn_agent/core/store.py
       - runtime/python/zn_agent/core/resident.py
@@ -17,6 +18,7 @@ on:
       - tests/zn_agent/core/test_work_progress.py
       - tests/zn_agent/core/test_work_recovery.py
       - tests/zn_agent/core/test_work_side_effect_recovery.py
+      - tests/zn_agent/core/test_work_cancellation.py
   workflow_dispatch:
 
 permissions:
@@ -66,9 +68,9 @@ jobs:
       - name: Compile Work recovery path
         run: |
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\work-recovery-venv\Scripts\python.exe'
-          & $python -m py_compile runtime/python/zn_agent/core/work.py runtime/python/zn_agent/core/store.py runtime/python/zn_agent/core/resident.py runtime/python/zn_agent/core/daemon.py runtime/python/zn_agent/core/focused_modern_text_resident.py runtime/python/zn_agent/core/side_effect_body.py
+          & $python -m py_compile runtime/python/zn_agent/core/models.py runtime/python/zn_agent/core/work.py runtime/python/zn_agent/core/store.py runtime/python/zn_agent/core/resident.py runtime/python/zn_agent/core/daemon.py runtime/python/zn_agent/core/focused_modern_text_resident.py runtime/python/zn_agent/core/side_effect_body.py
       - name: Verify durable Work progress and restart recovery
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\work-recovery-venv\Scripts\python.exe'
-          & $python -m unittest tests.zn_agent.core.test_work_progress tests.zn_agent.core.test_work_recovery tests.zn_agent.core.test_work_side_effect_recovery -v
+          & $python -m unittest tests.zn_agent.core.test_work_progress tests.zn_agent.core.test_work_recovery tests.zn_agent.core.test_work_side_effect_recovery tests.zn_agent.core.test_work_cancellation -v

@@ -57,6 +57,7 @@ class ExecutionPath(str, Enum):
     BODY = "body"
     MODEL = "model"
     BUDGET_BLOCKED = "budget_blocked"
+    CONTROL = "control"
 
 
 @dataclass(slots=True)
@@ -256,6 +257,7 @@ class EventOutcome:
     capability_name: str | None = None
     reason: str = ""
     completed_at: str = field(default_factory=utc_now)
+    cancelled: bool = False
 
 
 @dataclass(slots=True)
@@ -268,3 +270,4 @@ class ResidentRunResult:
     capability_name: str | None = None
     reason: str = ""
     kernel_result: KernelRunResult | None = None
+    cancelled: bool = False

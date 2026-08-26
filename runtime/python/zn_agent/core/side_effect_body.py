@@ -33,7 +33,7 @@ class SideEffectAwareBody(KeyboardTextBody):
     _MAX_COMPLETED_ATTEMPTS = 4096
     _COMMAND_KINDS = frozenset({"command", "terminal", "shell"})
     _APPEND_KINDS = frozenset({"write_text", "write_file"})
-    _RECOVERY_STATUSES = frozenset({"verified_effect", "verified_absent", "cancelled"})
+    _RECOVERY_STATUSES = frozenset({"verified_effect", "verified_absent"})
 
     def act(
         self,
@@ -207,9 +207,9 @@ class SideEffectAwareBody(KeyboardTextBody):
         This method grants no mutation authority and stores no action arguments.
         ``verified_effect`` means current reality independently satisfies the
         intended effect; ``verified_absent`` means an action-specific recovery
-        check proved the pre-dispatch baseline still exists; ``cancelled`` is
-        reserved for a future explicit cancellation path. A stale/mismatched
-        attempt stays unresolved and therefore remains non-replayable.
+        check proved the pre-dispatch baseline still exists. Lifecycle cancellation
+        is intentionally not accepted here because it must be committed atomically
+        with the resident event and WorkingState transition.
         """
 
         normalized_attempt = str(attempt_id or "").strip()
