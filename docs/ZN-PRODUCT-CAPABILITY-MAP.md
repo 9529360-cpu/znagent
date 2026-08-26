@@ -73,19 +73,21 @@ Resident Managed Browser + User Browser Bridge
 | Product need | ZN owner | Status | Current evidence / open work |
 | --- | --- | --- | --- |
 | HTTP web search/extract | Web Senses / external resources | VERIFIED/PARTIAL | Tavily/Exa/Firecrawl provider resources exist with resident-owned normalization/failover |
-| ZN-owned browser session/action/evidence contracts | Browser Body/Senses | FOUNDATION | `BrowserSessionIdentity`, target/observation/action/authority/effect contracts implemented |
-| Local managed Chromium, headless | Browser Body | FOUNDATION | Playwright adapter and dedicated real Windows Chromium E2E added; exact-head CI must still prove it |
+| ZN-owned browser session/action/evidence contracts | Browser Body/Senses | FOUNDATION | `BrowserSessionIdentity`, target/observation/action/authority/effect contracts implemented and hardened |
+| Local managed Chromium, headless | Browser Body | FOUNDATION | Playwright adapter + dedicated real Windows Chromium navigation E2E exist; lifecycle cleanup is resident-owned |
 | Local managed Chromium, headed | Browser Body | OPEN | same ZN contracts, separate real UX/evidence |
-| DOM/accessibility target sensing | Browser Senses | OPEN | must provide bounded target identity and freshness, not raw uncontrolled page dumps |
-| Managed-browser click/focus/type/select | Browser Body | OPEN | mutation waits for target authority + independent postconditions |
+| DOM/accessibility target sensing | Browser Senses | OPEN | `BrowserTarget` contracts exist but adapter still produces page-only observations; bounded target producer/freshness proof is next |
+| Managed-browser click/focus/type/select | Browser Body | OPEN | mutation remains blocked until target authority + independent postconditions are real |
 | Multi-tab/popup/frame lifecycle | Browser Body/Senses | OPEN | needs stable page/frame identities and stale-target handling |
-| Downloads/uploads | Browser Body + File authority | OPEN | adapter currently refuses these until explicit file authority exists |
+| Downloads/uploads | Browser Body + File authority | OPEN | adapter refuses these until explicit file authority exists |
 | Screenshots/visual browser sensing | Browser Senses | OPEN | must integrate with visual evidence rather than become completion authority by itself |
 | Persistent ZN-managed browser profile | Browser state | OPEN | must be explicitly separated from user browser profiles and credentials |
 | Optional cloud browser backend | Browser resource adapter | OPEN | provider may be replaceable; local browsing must not depend on it |
-| Operate user's existing Edge/Chrome login session | User Browser Bridge | OPEN/RESEARCH | Windows UIA text-state foundations exist; real browser provider proof still required |
-| Companion extension/native messaging bridge | User Browser Bridge | OPEN | candidate path for richer authenticated browser state; user permission required |
+| Operate user's existing Edge/Chrome login session | User Browser Bridge | FOUNDATION | real Windows interactive proof shows isolated-profile Edge exposes a focused HTML input through the default UIA provider without forced renderer accessibility; actual authenticated existing-session attachment, lifecycle, permission and mutation remain open |
+| Companion extension/native messaging bridge | User Browser Bridge | OPEN | candidate path for richer authenticated browser state; add only if provider evidence shows it is needed and user permission is explicit |
 | MFA/sensitive-field handling | Permission / Body | OPEN | never silently replay or extract secrets; explicit high-risk boundaries required |
+
+The User Browser Bridge provider proof is deliberately narrow: it validates real browser UIA sensing, not authenticated user-browser control. The fixture uses a temporary isolated profile and exports only bounded focused-element/current-text evidence, including text length and digest rather than raw text.
 
 ## 6. Desktop computer use
 
@@ -95,8 +97,8 @@ Resident Managed Browser + User Browser Bridge
 | Foreground/focused control sensing | Senses | VERIFIED | native foreground/focus evidence exists |
 | Pointer movement/click with verification | Body + Senses | VERIFIED NARROW | real Windows interactive E2E exists |
 | Native Win32 text entry | Body + Senses | VERIFIED NARROW | real Unicode Edit E2E, empty focused native Edit only |
-| Modern UI text current-state evidence | Senses | VERIFIED NARROW | WPF read-only digest proof; raw text not exported |
-| Modern app/browser text mutation | Body | OPEN | do not infer from WPF read evidence |
+| Modern UI text current-state evidence | Senses | VERIFIED NARROW | WPF read-only digest proof and real Edge focused HTML-input provider proof exist; raw text is not exported |
+| Modern app/browser text mutation | Body | OPEN | do not infer mutation authority from WPF/Edge read evidence |
 | Generic keyboard shortcuts/navigation | Body | OPEN | requires typed authority and effect verification |
 | Robust window/app lifecycle | Body/Senses | OPEN/PARTIAL | process/window foundations exist; product-grade cross-app lifecycle incomplete |
 
@@ -143,7 +145,7 @@ Mainstream systems increasingly expose MCP/plugins/connectors. ZN should support
 | Use specialist models for bounded gaps | Investigation / Thought | PARTIAL | architecture supports bounded cognition; broader orchestration can improve |
 | Parallel independent investigations | Investigation / Work | OPEN | should be resident-owned concurrent work, not a society of agent identities |
 | Merge competing hypotheses by evidence | Thought / Investigation | PARTIAL | contradiction/evidence principles exist; explicit parallel merge lifecycle open |
-| Human/Codex/other maintainer collaboration | engineering workflow | PARTIAL | Git/PR/HANDOFF make maintainers replaceable; explicit work-domain handoff can improve |
+| Human/model maintainer collaboration | engineering workflow | PARTIAL | Git/PR/HANDOFF make maintainers replaceable; project work must not depend on any single model/provider being available |
 
 ## 11. Security / permission / trust
 
@@ -186,19 +188,21 @@ This is a dependency order, not a promise that all work is sequential:
 
 ```text
 A. keep resident continuity + CI trustworthy
-B. finish Managed Browser foundation and real local Chromium proof
-C. establish User Browser Bridge proof on real Edge/Chrome
-D. add browser target sensing, then narrow click/type with independent effects
-E. build unified permission/audit semantics across browser/connectors/computer use
-F. add isolated parallel Work/Investigation + checkpoints
-G. add connector protocol/MCP interoperability behind ZN ownership
-H. add scheduled/event-driven resident work
-I. expand communication/personal-work connectors
-J. close Windows install/update/rollback/signing continuity
-K. advance SM1+ self-maintenance
+B. preserve Managed Browser foundation and real local Chromium proof
+C. preserve the verified narrow real Edge UIA provider sensing proof
+D. add bounded managed-browser target sensing and prove freshness in real Chromium
+E. add browser click/focus/type one lifecycle at a time with independent effects
+F. design authenticated User Browser Bridge lifecycle from real provider evidence
+G. build unified permission/audit semantics across browser/connectors/computer use
+H. add isolated parallel Work/Investigation + checkpoints
+I. add connector protocol/MCP interoperability behind ZN ownership
+J. add scheduled/event-driven resident work
+K. expand communication/personal-work connectors
+L. close Windows install/update/rollback/signing continuity
+M. advance SM1+ self-maintenance
 ```
 
-Parallel maintainers may own different rows/domains as long as they share the same ZN contracts, work on isolated branches when appropriate, keep `dev/zn-agent` integration evidence current, and never create a second product control plane.
+Parallel maintainers may own different rows/domains as long as they share the same ZN contracts, work on isolated branches when appropriate, keep `dev/zn-agent` integration evidence current, and never create a second product control plane. No development or release capability may depend on one current model, chat session or machine.
 
 ## 15. Completion rule
 
