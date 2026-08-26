@@ -4,6 +4,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from zn_agent.core.keyboard_text_body import KeyboardTextBody
@@ -48,7 +49,7 @@ class KeyboardTextBodyTests(unittest.TestCase):
                 result = body.act("keyboard_text", text="private keyboard text")
                 self.assertTrue(result.success, result.error)
 
-                with sqlite3.connect(store.path) as conn:
+                with closing(sqlite3.connect(store.path)) as conn:
                     row = conn.execute(
                         "SELECT action_json FROM native_body_actions WHERE action_id = ?",
                         (result.action_id,),
