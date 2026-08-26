@@ -59,7 +59,7 @@ Status vocabulary:
 | Terminal/process execution | Body | VERIFIED | bounded terminal/process mechanisms and tests exist |
 | Git repository sensing and actions | Body/Senses | VERIFIED/PARTIAL | repository evidence and guarded actions exist; broader collaboration flows can expand |
 | Code investigation/test/fix loop | Investigation / Action | VERIFIED/PARTIAL | repo-test semantics and evidence-based completion exist |
-| Isolated parallel worktrees/tasks | Work / Investigation | OPEN | required for mainstream multi-task parity; must be ZN-owned work isolation, not multiple agent identities |
+| Isolated parallel worktrees/tasks | Work / Investigation | OPEN | required for mainstream multi-task parity; must be ZN-owned work isolation, not multiple identities |
 | Checkpoints / restore / rollback for work | Work / Body safety | OPEN | needed for long-running edits and destructive recovery |
 
 ## 5. Web and browser
@@ -72,26 +72,28 @@ Resident Managed Browser + User Browser Bridge
 
 | Product need | ZN owner | Status | Current evidence / open work |
 | --- | --- | --- | --- |
-| HTTP web search/extract | Web Senses / external resources | VERIFIED/PARTIAL | Tavily/Exa/Firecrawl provider resources exist with resident-owned normalization/failover |
-| ZN-owned browser session/action/evidence contracts | Browser Body/Senses | FOUNDATION | `BrowserSessionIdentity`, query/target/observation/action/authority/effect contracts are implemented and hardened |
-| Local managed Chromium, headless | Browser Body | FOUNDATION | Playwright adapter + dedicated real Windows Chromium navigation/target/focus/toggle-click E2E exist; lifecycle cleanup is resident-owned |
+| HTTP web search/extract | Web Senses / external resources | VERIFIED/PARTIAL | Tavily/Exa/Firecrawl resources exist with resident-owned normalization/failover |
+| ZN-owned browser session/action/evidence contracts | Browser Body/Senses | FOUNDATION | session, permission, query, target, observation, action, authority and effect contracts are ZN-owned and hardened |
+| Local managed Chromium, headless | Browser Body | FOUNDATION | Playwright adapter + dedicated real Windows Chromium navigation/target/focus/toggle-click/type-text E2E exist; lifecycle cleanup is resident-owned |
 | Local managed Chromium, headed | Browser Body | OPEN | same ZN contracts, separate real UX/evidence |
-| DOM/accessibility target sensing | Browser Senses | PARTIAL / VERIFIED NARROW | exact `DOM_ID` query for one unique visible main-frame element is real-Chromium verified with bounded role/name/hint and freshness; iframe, generic accessibility queries, multi-target/disambiguation and visual fusion remain open |
-| Managed-browser focus | Browser Body | VERIFIED NARROW | exact current target authority, provider-local exact-node revalidation, `FOCUS`, fresh exact-node continuity and independent `document.activeElement` postcondition are proven on real local Chromium |
-| Managed-browser aria-pressed toggle click | Browser Body | VERIFIED NARROW | explicit boolean expected `aria_pressed`, exact current node, pre-state transition requirement, fresh same-node post-state evidence and replacement rejection are proven on real local Chromium |
-| Generic managed-browser click/type/select/check/keyboard | Browser Body | OPEN | generic click remains unavailable without a bounded independent postcondition; `TYPE_TEXT` is next and must establish privacy-safe current-text evidence, exact-node authority and fresh verification |
+| DOM/accessibility target sensing | Browser Senses | PARTIAL / VERIFIED NARROW | exact `DOM_ID` for one unique visible main-frame element is real-Chromium verified; iframe, generic accessibility, multi-target/disambiguation and visual fusion remain open |
+| Managed-browser focus | Browser Body | VERIFIED NARROW | exact current target authority, execution-time exact-node revalidation, `FOCUS`, and fresh `document.activeElement` evidence are real-Chromium verified |
+| Managed-browser aria-pressed toggle click | Browser Body | VERIFIED NARROW | explicit boolean expected state, exact-node continuity, fresh pre/post `aria-pressed`, and replacement rejection are real-Chromium verified |
+| Managed-browser empty-textbox TYPE_TEXT | Browser Body | VERIFIED NARROW | `allow_page_interaction + allow_text_entry`, empty writable non-password text input/textarea, <=512 UTF-16 units, same-node continuity, and fresh length+SHA-256 completion evidence are real-Chromium verified |
+| CHECK / UNCHECK | Browser Body | OPEN | next action-specific lifecycle candidate; must bind exact checkbox state and independently verify fresh boolean `checked` transition |
+| Generic click / text replacement / SELECT_OPTION / PRESS | Browser Body | OPEN | no generic provider success surface; each action requires a bounded independent postcondition |
 | Multi-tab/popup/frame lifecycle | Browser Body/Senses | OPEN | needs stable page/frame identities and stale-target handling |
 | Downloads/uploads | Browser Body + File authority | OPEN | adapter refuses these until explicit file authority exists |
-| Screenshots/visual browser sensing | Browser Senses | OPEN | must integrate with visual evidence rather than become completion authority by itself |
-| Persistent ZN-managed browser profile | Browser state | OPEN | must be explicitly separated from user browser profiles and credentials |
+| Screenshots/visual browser sensing | Browser Senses | OPEN | integrate with visual evidence rather than making pixels completion authority by themselves |
+| Persistent ZN-managed browser profile | Browser state | OPEN | explicitly separate from user profiles/credentials |
 | Optional cloud browser backend | Browser resource adapter | OPEN | provider may be replaceable; local browsing must not depend on it |
-| Operate user's existing Edge/Chrome login session | User Browser Bridge | FOUNDATION | real Windows interactive proof shows isolated-profile Edge exposes a focused HTML input through the default UIA provider without forced renderer accessibility; actual authenticated existing-session attachment, lifecycle, permission and mutation remain open |
-| Companion extension/native messaging bridge | User Browser Bridge | OPEN | candidate path for richer authenticated browser state; add only if provider evidence shows it is needed and user permission is explicit |
-| MFA/sensitive-field handling | Permission / Body | OPEN | never silently replay or extract secrets; explicit high-risk boundaries required |
+| Operate user's existing Edge/Chrome login session | User Browser Bridge | FOUNDATION | real Windows interactive proof shows isolated-profile Edge exposes a focused HTML input through default UIA without forced renderer accessibility; authenticated existing-session attachment/permission/mutation remain open |
+| Companion extension/native messaging bridge | User Browser Bridge | OPEN | add only if real provider evidence shows it is needed and permission is explicit |
+| MFA/sensitive-field handling | Permission / Body | OPEN | never silently replay/extract secrets; explicit high-risk boundaries required |
 
-The managed-browser mutation proof remains deliberately narrow. Targeting is exact main-frame DOM id. `FOCUS` proves exact-node continuity and fresh focused state. `CLICK` currently proves only explicit boolean `aria-pressed` transitions. Provider handles remain disposable execution resources and do not become ZN identity. Generic click, type/select/check and arbitrary provider methods remain unavailable. Raw input values, HTML and uncontrolled page content are not exported by target evidence; password targets fail closed without explicit sensitive-field permission.
+Managed mutation evidence is deliberately narrow. Provider handles remain disposable execution resources and never become ZN identity. `FOCUS` requires exact-node continuity plus fresh focus evidence. `CLICK` is limited to explicit boolean `aria-pressed` transitions. `TYPE_TEXT` is limited to an empty writable non-password textbox with bounded Unicode input; normal effect evidence stores only text length/digest rather than raw text. Generic click, text replacement, password entry, contenteditable, check/select/press and arbitrary provider methods remain unavailable until independently verified.
 
-The User Browser Bridge provider proof is also deliberately narrow: it validates real browser UIA sensing, not authenticated user-browser control. The fixture uses a temporary isolated profile and exports only bounded focused-element/current-text evidence, including text length and digest rather than raw text.
+The User Browser Bridge provider proof remains sensing-only: it uses a temporary isolated profile and bounded focused-element/current-text evidence, not authenticated browser control.
 
 ## 6. Desktop computer use
 
@@ -102,18 +104,16 @@ The User Browser Bridge provider proof is also deliberately narrow: it validates
 | Pointer movement/click with verification | Body + Senses | VERIFIED NARROW | real Windows interactive E2E exists |
 | Native Win32 text entry | Body + Senses | VERIFIED NARROW | real Unicode Edit E2E, empty focused native Edit only |
 | Modern UI text current-state evidence | Senses | VERIFIED NARROW | WPF read-only digest proof and real Edge focused HTML-input provider proof exist; raw text is not exported |
-| Modern app/browser text mutation | Body | OPEN/PARTIAL | managed-browser focus and narrow verified toggle click exist, but browser `TYPE_TEXT`, user-browser mutation and general modern text mutation remain open |
+| Modern app/browser text mutation | Body | PARTIAL | managed browser now has narrow focus, toggle click, and empty-textbox type; authenticated user-browser/general modern-app mutation remains open |
 | Generic keyboard shortcuts/navigation | Body | OPEN | requires typed authority and effect verification |
 | Robust window/app lifecycle | Body/Senses | OPEN/PARTIAL | process/window foundations exist; product-grade cross-app lifecycle incomplete |
 
 ## 7. Connectors / protocols / external systems
 
-Mainstream systems increasingly expose MCP/plugins/connectors. ZN should support useful interoperability without making an external registry its brain.
-
 | Product need | ZN owner | Status | Current evidence / open work |
 | --- | --- | --- | --- |
 | Typed external resource protocol | Resource/Channel boundary | PARTIAL | provider-specific resources exist; generic protocol surface is not complete |
-| MCP client interoperability | Body/Channel adapter | OPEN | expose bounded resources/actions behind ZN permission and evidence semantics |
+| MCP client interoperability | Body/Channel adapter | OPEN | expose bounded resources/actions behind ZN permission/evidence semantics |
 | Plugin/connector discovery | Resource registry | OPEN | provider metadata cannot create execution authority |
 | Credential-reference management | credential boundary | VERIFIED/PARTIAL | secrets live outside normal config/memory; more connector UX remains |
 | Connector permission scopes/revocation | permission system | OPEN | needed before broad third-party integration |
@@ -123,11 +123,11 @@ Mainstream systems increasingly expose MCP/plugins/connectors. ZN should support
 | Product need | ZN owner | Status | Current evidence / open work |
 | --- | --- | --- | --- |
 | User conversation channels | Communication organs | PARTIAL | channel mechanisms exist; product breadth incomplete |
-| Email read/draft/send | Communication/Body | OPEN | should use account connector + explicit send authority |
+| Email read/draft/send | Communication/Body | OPEN | account connector + explicit send authority required |
 | Calendar read/schedule/respond | Communication/Body | OPEN | current-time/conflict evidence required |
-| Contacts/people resolution | Senses / connector | OPEN | identity ambiguity must fail closed for side effects |
+| Contacts/people resolution | Senses / connector | OPEN | side-effect ambiguity must fail closed |
 | Team chat/work systems | Communication/Body | OPEN | replaceable connectors, not product identity |
-| Notifications/follow-up | Will / automation | OPEN/PARTIAL | resident work/progress exists; general user automation engine remains open |
+| Notifications/follow-up | Will / automation | OPEN/PARTIAL | resident work/progress exists; general user automation remains open |
 
 ## 9. Long-running work / automation / recovery
 
@@ -149,18 +149,18 @@ Mainstream systems increasingly expose MCP/plugins/connectors. ZN should support
 | Use specialist models for bounded gaps | Investigation / Thought | PARTIAL | architecture supports bounded cognition; broader orchestration can improve |
 | Parallel independent investigations | Investigation / Work | OPEN | resident-owned concurrent work, not multiple product identities |
 | Merge competing hypotheses by evidence | Thought / Investigation | PARTIAL | contradiction/evidence principles exist; explicit merge lifecycle open |
-| Human/model maintainer collaboration | engineering workflow | PARTIAL | Git/PR/HANDOFF make maintainers replaceable; project work must not depend on any single model/provider being available |
+| Human/model maintainer collaboration | engineering workflow | PARTIAL | Git/PR/HANDOFF make maintainers replaceable; work must not depend on any single model/provider |
 
 ## 11. Security / permission / trust
 
 | Product need | ZN owner | Status | Current evidence / open work |
 | --- | --- | --- | --- |
 | Secret storage outside source/log/memory | credential boundary | VERIFIED | keyring/project secret boundaries exist |
-| URL/private-network safety | network Body policy | VERIFIED/PARTIAL | strong URL checks exist; browser DNS-rebinding/network-sandbox hardening remains open |
-| Action-specific authority | Body/Action | VERIFIED/PARTIAL | strong typed authority exists in several lifecycles; needs consistent expansion |
-| Independent post-action evidence | Senses / Action | VERIFIED/PARTIAL | core principle and several real lifecycles verified, including managed-browser focus and narrow toggle click |
+| URL/private-network safety | network Body policy | VERIFIED/PARTIAL | strong URL checks exist; DNS-rebinding/network-sandbox hardening remains open |
+| Action-specific authority | Body/Action | VERIFIED/PARTIAL | strong typed authority exists in several lifecycles; expansion remains action-specific |
+| Independent post-action evidence | Senses / Action | VERIFIED/PARTIAL | verified lifecycles now include managed navigation, focus, toggle click, and empty-textbox type |
 | Global permission center | Self/user boundary | OPEN | inspectable grants/revocation by capability/site/account |
-| Sensitive action escalation | Will / permission | OPEN/PARTIAL | release/self-maintenance high-risk rules exist; general product policy engine open |
+| Sensitive action escalation | Will / permission | OPEN/PARTIAL | release/self-maintenance rules exist; general product policy remains open |
 | Sandboxed untrusted code/content | Body | OPEN/PARTIAL | some boundaries exist; browser/code/plugin sandboxing needs unified policy |
 | Audit trail without secret leakage | Memory/observability | OPEN/PARTIAL | evidence records exist; product-level audit UX incomplete |
 
@@ -190,9 +190,9 @@ Mainstream systems increasingly expose MCP/plugins/connectors. ZN should support
 
 ```text
 A. keep resident continuity + CI trustworthy
-B. preserve Managed Browser navigation/target/focus/toggle-click real Chromium evidence
-C. add managed-browser TYPE_TEXT with current exact-node authority + privacy-safe independent text-state evidence
-D. add broader click/select/check/keyboard mutations one lifecycle at a time
+B. preserve Managed Browser navigation/target/focus/toggle-click/type-text real Chromium evidence
+C. add CHECK, then UNCHECK, with exact-node authority + fresh boolean checked-state evidence
+D. add SELECT_OPTION / PRESS / broader click semantics one lifecycle at a time
 E. expand target sensing to frames/accessibility/multiple targets behind bounded evidence
 F. design authenticated User Browser Bridge lifecycle from real provider evidence
 G. build unified permission/audit semantics across browser/connectors/computer use
@@ -204,7 +204,7 @@ L. close Windows install/update/rollback/signing continuity
 M. advance SM1+ self-maintenance
 ```
 
-No development or release capability may depend on one current model, chat session or machine.
+No development or release capability may depend on one current model, chat session, or machine.
 
 ## 15. Completion rule
 
