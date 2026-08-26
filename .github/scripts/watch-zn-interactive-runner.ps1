@@ -52,19 +52,21 @@ while ($true) {
         throw "Interactive runner watchdog found duplicate listeners in session $currentSessionId."
     }
 
-    if ($listeners.Count -eq 0) {
-        $commandProcessor = [string]$env:ComSpec
-        if ([string]::IsNullOrWhiteSpace($commandProcessor)) {
-            $commandProcessor = Join-Path $env:SystemRoot 'System32\cmd.exe'
-        }
-        Write-Output "ZN interactive runner listener absent; starting hidden listener in session $currentSessionId."
-        Start-Process `
-            -FilePath $commandProcessor `
-            -ArgumentList @('/d', '/c', 'run.cmd') `
-            -WorkingDirectory $resolvedRoot `
-            -WindowStyle Hidden | Out-Null
-        Start-Sleep -Seconds 15
+    if ($listeners.Count -eq 1) {
+        Start-Sleep -Seconds 10
+        continue
     }
 
-    Start-Sleep -Seconds 10
+    Write-Output "ZN interactive runner listener absent; starting visible run.cmd in session $currentSessionId."
+    Push-Location $resolvedRoot
+    try {
+        & $runCommand
+        $exitCode = $LASTEXITCODE
+        Write-Output "ZN interactive runner run.cmd exited with code $exitCode; restarting in 5 seconds."
+    } catch {
+        Write-Warning "ZN interactive runner run.cmd failed: $($_.Exception.Message)"
+    } finally {
+        Pop-Location
+    }
+    Start-Sleep -Seconds 5
 }

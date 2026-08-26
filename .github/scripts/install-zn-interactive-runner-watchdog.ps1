@@ -16,20 +16,7 @@ function Get-CurrentRunnerListener {
         if (-not $cursor.ParentProcessId) { break }
         $cursor = Get-CimInstance Win32_Process -Filter "ProcessId = $($cursor.ParentProcessId)" -ErrorAction SilentlyContinue
     }
-
-    $sessionId = (Get-Process -Id $PID -ErrorAction Stop).SessionId
-    $candidates = @()
-    foreach ($candidate in @(Get-CimInstance Win32_Process -Filter "Name = 'Runner.Listener.exe'" -ErrorAction SilentlyContinue)) {
-        try {
-            if ((Get-Process -Id ([int]$candidate.ProcessId) -ErrorAction Stop).SessionId -eq $sessionId) {
-                $candidates += $candidate
-            }
-        } catch {}
-    }
-    if ($candidates.Count -ne 1) {
-        throw "Could not uniquely resolve the current interactive Runner.Listener.exe in session $sessionId."
-    }
-    return $candidates[0]
+    throw 'Could not resolve current Runner.Listener.exe from worker ancestry.'
 }
 
 if ($env:RUNNER_OS -and $env:RUNNER_OS -ne 'Windows') {
@@ -38,6 +25,12 @@ if ($env:RUNNER_OS -and $env:RUNNER_OS -ne 'Windows') {
 if ($env:RUNNER_NAME -and $env:RUNNER_NAME -ne $ExpectedRunnerName) {
     throw "Interactive runner watchdog installer expected '$ExpectedRunnerName'; got '$env:RUNNER_NAME'."
 }
+
+$currentSessionId = (Get-Process -Id $PID -ErrorAction Stop).SessionId
+if ($currentSessionId -eq 0) {
+    throw 'Interactive watchdog must be installed from a logged-on interactive session, not Session 0.'
+}
+$currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 
 $listener = Get-CurrentRunnerListener
 $listenerPath = [string]$listener.ExecutablePath
@@ -61,17 +54,7 @@ if (-not (Test-Path -LiteralPath $sourceWatchdog -PathType Leaf)) {
 $installedWatchdog = Join-Path $runnerRoot 'watch-zn-interactive-runner.ps1'
 Copy-Item -LiteralPath $sourceWatchdog -Destination $installedWatchdog -Force
 
-$currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-$currentSessionId = (Get-Process -Id $PID -ErrorAction Stop).SessionId
-if ($currentSessionId -eq 0) {
-    throw 'Interactive watchdog must be installed from a logged-on interactive session, not Session 0.'
-}
-
-$existingTask = Get-ScheduledTask -TaskPath '\' -TaskName $TaskName -ErrorAction SilentlyContinue
-if ($null -eq $existingTask) {
-    throw "Expected existing interactive watchdog task '$TaskName' was not found. Refusing to invent a new login principal from CI."
-}
-
+$existingTask = Get-ScheduledTask -TaskPath '\' -TaskName $TaskName -ErrorAction Stop
 $principal = $existingTask.Principal
 if ($principal.LogonType -notin @('Interactive','InteractiveToken')) {
     throw "Existing watchdog task does not use an interactive logon type: $($principal.LogonType)"
@@ -83,11 +66,11 @@ if (-not [string]::IsNullOrWhiteSpace([string]$principal.UserId) -and [string]$p
 $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $quotedWatchdog = '"' + $installedWatchdog + '"'
 $quotedRoot = '"' + $runnerRoot + '"'
-$arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File $quotedWatchdog -RunnerRoot $quotedRoot -ExpectedRunnerName $ExpectedRunnerName"
+$arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File $quotedWatchdog -RunnerRoot $quotedRoot -ExpectedRunnerName $ExpectedRunnerName"
 $newAction = New-ScheduledTaskAction -Execute $powershell -Argument $arguments -WorkingDirectory $runnerRoot
-
+$newTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentIdentity
 $settings = $existingTask.Settings
-$settings.Hidden = $true
+$settings.Hidden = $false
 $settings.ExecutionTimeLimit = 'PT0S'
 $settings.RestartCount = 999
 $settings.RestartInterval = 'PT1M'
@@ -97,7 +80,7 @@ Set-ScheduledTask `
     -TaskPath '\' `
     -TaskName $TaskName `
     -Action $newAction `
-    -Trigger $existingTask.Triggers `
+    -Trigger $newTrigger `
     -Principal $existingTask.Principal `
     -Settings $settings | Out-Null
 
@@ -110,18 +93,23 @@ if ([string]$updatedAction[0].Execute -ne $powershell) {
     throw 'Updated watchdog task does not execute Windows PowerShell.'
 }
 $updatedArguments = [string]$updatedAction[0].Arguments
-foreach ($required in @('-WindowStyle Hidden', '-ExecutionPolicy Bypass', 'watch-zn-interactive-runner.ps1')) {
+foreach ($required in @('-ExecutionPolicy Bypass', 'watch-zn-interactive-runner.ps1')) {
     if ($updatedArguments.IndexOf($required, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
         throw "Updated watchdog action is missing required argument fragment: $required"
     }
 }
-if (-not $updatedTask.Settings.Hidden) {
-    throw 'Updated watchdog task is not marked hidden.'
+if ($updatedArguments.IndexOf('-WindowStyle Hidden', [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+    throw 'Updated watchdog action still requests a hidden window.'
+}
+if ($updatedTask.Settings.Hidden) {
+    throw 'Updated watchdog task is still marked hidden.'
+}
+if (@($updatedTask.Triggers).Count -ne 1 -or [string]$updatedTask.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskLogonTrigger') {
+    throw 'Updated watchdog task does not have exactly one logon trigger.'
 }
 
-Write-Host "ZN interactive watchdog installed for runner=$ExpectedRunnerName"
+Write-Host "ZN interactive watchdog configured as visible logon task for runner=$ExpectedRunnerName"
 Write-Host "runner.root=$runnerRoot"
 Write-Host "runner.session_id=$currentSessionId"
 Write-Host "runner.task=$TaskName"
-Write-Host "runner.task.hidden=$($updatedTask.Settings.Hidden)"
-Write-Host 'The currently running listener/watchdog is intentionally left intact; the hidden action applies on the next watchdog launch.'
+Write-Host 'The current listener remains intact. Future user logons start the visible watchdog automatically.'
