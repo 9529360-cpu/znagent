@@ -248,25 +248,14 @@ class PlaywrightManagedBrowser:
         action: BrowserAction,
         authority: BrowserActionAuthority,
     ) -> None:
-        if authority.action_id != action.action_id:
-            raise ManagedBrowserError("browser authority belongs to a different action")
-        if authority.session_id != action.session_id:
-            raise ManagedBrowserError("browser authority belongs to a different session")
-        if authority.permission != session.permission:
-            raise ManagedBrowserError("browser authority permission does not match session permission")
         page_id = action.page_id or authority.page_id or self._default_page_id(session)
-        if authority.page_id and authority.page_id != page_id:
-            raise ManagedBrowserError("browser authority belongs to a different page")
         observed = session.last_observation.get(page_id)
         if observed is None:
             raise ManagedBrowserError("browser action requires a current page observation")
-        if observed.captured_at != authority.observation_captured_at:
-            raise ManagedBrowserError("browser action authority is stale")
-        if action.target is not None:
-            if action.target.page_id != page_id:
-                raise ManagedBrowserError("browser target belongs to a different page")
-            if authority.target_id != action.target.target_id:
-                raise ManagedBrowserError("browser authority target does not match action target")
+        try:
+            authority.validate_current(action, observed, session.permission)
+        except ValueError as exc:
+            raise ManagedBrowserError(str(exc)) from exc
 
     def _install_network_boundary(self, session: _ManagedSession) -> None:
         def handle_route(route: Any) -> None:

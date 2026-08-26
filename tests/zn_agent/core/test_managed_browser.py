@@ -7,6 +7,8 @@ from zn_agent.core.browser import (
     BrowserActionAuthority,
     BrowserActionKind,
     BrowserPermissionContext,
+    BrowserTarget,
+    BrowserTargetKind,
 )
 from zn_agent.core.managed_browser import ManagedBrowserError, PlaywrightManagedBrowser
 
@@ -191,7 +193,10 @@ class ManagedBrowserTests(unittest.TestCase):
             adapter.open_session(permission=BrowserPermissionContext(allow_uploads=True))
 
     def test_navigation_requires_fresh_authority_and_returns_observed_effect(self):
-        permission = BrowserPermissionContext(allowed_origins=("https://example.com",))
+        permission = BrowserPermissionContext(
+            allow_navigation=True,
+            allowed_origins=("https://example.com",),
+        )
         adapter, playwright, identity = self._build(permission=permission)
         try:
             observation = adapter.observe(identity.session_id)
@@ -216,7 +221,10 @@ class ManagedBrowserTests(unittest.TestCase):
             adapter.close()
 
     def test_stale_authority_fails_before_navigation(self):
-        permission = BrowserPermissionContext(allowed_origins=("https://example.com",))
+        permission = BrowserPermissionContext(
+            allow_navigation=True,
+            allowed_origins=("https://example.com",),
+        )
         adapter, playwright, identity = self._build(permission=permission)
         try:
             observation = adapter.observe(identity.session_id)
@@ -268,7 +276,10 @@ class ManagedBrowserTests(unittest.TestCase):
             adapter.close()
 
     def test_origin_policy_blocks_navigation_before_browser_dispatch(self):
-        permission = BrowserPermissionContext(allowed_origins=("https://allowed.example",))
+        permission = BrowserPermissionContext(
+            allow_navigation=True,
+            allowed_origins=("https://allowed.example",),
+        )
         adapter, playwright, identity = self._build(permission=permission)
         try:
             observation = adapter.observe(identity.session_id)
@@ -285,8 +296,42 @@ class ManagedBrowserTests(unittest.TestCase):
         finally:
             adapter.close()
 
+    def test_forged_target_authority_is_rechecked_at_execution_boundary(self):
+        permission = BrowserPermissionContext(allow_page_interaction=True)
+        adapter, _playwright, identity = self._build(permission=permission)
+        try:
+            observation = adapter.observe(identity.session_id)
+            stale_target = BrowserTarget(
+                session_id=identity.session_id,
+                page_id=observation.page_id,
+                kind=BrowserTargetKind.ELEMENT,
+                target_id="reused-element-id",
+                observed_at="stale-target-evidence",
+            )
+            action = BrowserAction.create(
+                session_id=identity.session_id,
+                page_id=observation.page_id,
+                kind=BrowserActionKind.CLICK,
+                target=stale_target,
+            )
+            forged = BrowserActionAuthority(
+                action_id=action.action_id,
+                session_id=identity.session_id,
+                issued_at="now",
+                observation_captured_at=observation.captured_at,
+                permission=permission,
+                target_id=stale_target.target_id,
+                page_id=observation.page_id,
+            )
+            effect = adapter.act(action, forged)
+            self.assertFalse(effect.success)
+            self.assertIn("current target observation", effect.error or "")
+        finally:
+            adapter.close()
+
     def test_unimplemented_mutation_returns_failure_evidence_without_dispatch(self):
-        adapter, _playwright, identity = self._build()
+        permission = BrowserPermissionContext(allow_page_interaction=True)
+        adapter, _playwright, identity = self._build(permission=permission)
         try:
             observation = adapter.observe(identity.session_id)
             action = BrowserAction.create(
@@ -297,7 +342,7 @@ class ManagedBrowserTests(unittest.TestCase):
             authority = BrowserActionAuthority.from_observation(
                 action,
                 observation,
-                BrowserPermissionContext(),
+                permission,
             )
             effect = adapter.act(action, authority)
             self.assertFalse(effect.success)

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import http.server
-import socket
 import threading
 import unittest
 
@@ -56,6 +55,7 @@ class ManagedBrowserWindowsE2E(unittest.TestCase):
 
     def test_local_headless_chromium_observes_and_verifies_navigation(self):
         permission = BrowserPermissionContext(
+            allow_navigation=True,
             allow_private_network=True,
             allowed_origins=(self.origin,),
         )
@@ -109,8 +109,18 @@ class ManagedBrowserWindowsE2E(unittest.TestCase):
                 browser.observe(session.session_id, page_id=observed.page_id).title,
                 "ZN Browser Next",
             )
+        finally:
+            browser.close_session(session.session_id)
 
-            current = browser.observe(session.session_id, page_id=observed.page_id)
+    def test_metadata_floor_survives_private_network_permission(self):
+        permission = BrowserPermissionContext(
+            allow_navigation=True,
+            allow_private_network=True,
+        )
+        browser = PlaywrightManagedBrowser()
+        session = browser.open_session(permission=permission, headless=True)
+        try:
+            current = browser.observe(session.session_id)
             metadata_probe = BrowserAction.create(
                 session_id=session.session_id,
                 page_id=current.page_id,
@@ -125,6 +135,10 @@ class ManagedBrowserWindowsE2E(unittest.TestCase):
             metadata_effect = browser.act(metadata_probe, metadata_authority)
             self.assertFalse(metadata_effect.success)
             self.assertIn("network boundary", metadata_effect.error or "")
+            self.assertEqual(
+                browser.observe(session.session_id, page_id=current.page_id).url,
+                "about:blank",
+            )
         finally:
             browser.close_session(session.session_id)
 

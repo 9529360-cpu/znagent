@@ -45,6 +45,26 @@ class BrowserTargetKind(str, Enum):
     DESKTOP_ELEMENT = "desktop_element"
 
 
+_NAVIGATION_ACTIONS = frozenset(
+    {
+        BrowserActionKind.NAVIGATE,
+        BrowserActionKind.BACK,
+        BrowserActionKind.FORWARD,
+        BrowserActionKind.RELOAD,
+    }
+)
+_PAGE_INTERACTION_ACTIONS = frozenset(
+    {
+        BrowserActionKind.CLICK,
+        BrowserActionKind.FOCUS,
+        BrowserActionKind.PRESS,
+        BrowserActionKind.SELECT_OPTION,
+        BrowserActionKind.CHECK,
+        BrowserActionKind.UNCHECK,
+    }
+)
+
+
 @dataclass(frozen=True, slots=True)
 class BrowserSessionIdentity:
     session_id: str
@@ -92,9 +112,9 @@ class BrowserSessionIdentity:
 
 @dataclass(frozen=True, slots=True)
 class BrowserPermissionContext:
-    allow_navigation: bool = True
-    allow_page_interaction: bool = True
-    allow_text_entry: bool = True
+    allow_navigation: bool = False
+    allow_page_interaction: bool = False
+    allow_text_entry: bool = False
     allow_downloads: bool = False
     allow_uploads: bool = False
     allow_clipboard: bool = False
@@ -118,6 +138,17 @@ class BrowserPermissionContext:
             return True
         origin = _normalize_origin(url)
         return bool(origin and origin in self.allowed_origins)
+
+    def allows_action(self, kind: BrowserActionKind) -> bool:
+        if kind in _NAVIGATION_ACTIONS:
+            return bool(self.allow_navigation)
+        if kind is BrowserActionKind.TYPE_TEXT:
+            return bool(self.allow_page_interaction and self.allow_text_entry)
+        if kind in _PAGE_INTERACTION_ACTIONS:
+            return bool(self.allow_page_interaction)
+        if kind is BrowserActionKind.WAIT:
+            return True
+        return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,20 +264,7 @@ class BrowserActionAuthority:
         observation: BrowserObservation,
         permission: BrowserPermissionContext,
     ) -> "BrowserActionAuthority":
-        if action.session_id != observation.session.session_id:
-            raise ValueError("browser action and observation sessions do not match")
-        if action.page_id and action.page_id != observation.page_id:
-            raise ValueError("browser action and observation pages do not match")
-        if action.target is not None:
-            if observation.target is None:
-                raise ValueError("browser target action requires a current target observation")
-            if action.target.target_id != observation.target.target_id:
-                raise ValueError("browser target changed before authority was formed")
-            if action.target.kind is not observation.target.kind:
-                raise ValueError("browser target kind changed before authority was formed")
-            if action.target.frame_id != observation.target.frame_id:
-                raise ValueError("browser target frame changed before authority was formed")
-        return cls(
+        authority = cls(
             action_id=action.action_id,
             session_id=action.session_id,
             issued_at=utc_now(),
@@ -255,6 +273,34 @@ class BrowserActionAuthority:
             target_id=action.target.target_id if action.target is not None else "",
             page_id=action.page_id or observation.page_id,
         )
+        authority.validate_current(action, observation, permission)
+        return authority
+
+    def validate_current(
+        self,
+        action: BrowserAction,
+        observation: BrowserObservation,
+        permission: BrowserPermissionContext,
+    ) -> None:
+        if self.action_id != action.action_id:
+            raise ValueError("browser authority belongs to a different action")
+        if self.session_id != action.session_id:
+            raise ValueError("browser authority belongs to a different session")
+        if self.permission != permission:
+            raise ValueError("browser authority permission does not match current permission")
+        if not permission.allows_action(action.kind):
+            raise ValueError(f"browser action is not permitted: {action.kind.value}")
+        if self.observation_captured_at != observation.captured_at:
+            raise ValueError("browser action authority is stale")
+
+        _require_action_matches_observation(action, observation)
+
+        expected_page_id = action.page_id or observation.page_id
+        if self.page_id != expected_page_id:
+            raise ValueError("browser authority belongs to a different page")
+        expected_target_id = action.target.target_id if action.target is not None else ""
+        if self.target_id != expected_target_id:
+            raise ValueError("browser authority target does not match current action target")
 
 
 @dataclass(frozen=True, slots=True)
@@ -300,6 +346,32 @@ class BrowserAdapter(Protocol):
         action: BrowserAction,
         authority: BrowserActionAuthority,
     ) -> BrowserEffectEvidence: ...
+
+
+def _require_action_matches_observation(
+    action: BrowserAction,
+    observation: BrowserObservation,
+) -> None:
+    if action.session_id != observation.session.session_id:
+        raise ValueError("browser action and observation sessions do not match")
+    if action.page_id and action.page_id != observation.page_id:
+        raise ValueError("browser action and observation pages do not match")
+    if action.target is None:
+        return
+
+    current = observation.target
+    if current is None:
+        raise ValueError("browser target action requires a current target observation")
+    if action.target.page_id != observation.page_id:
+        raise ValueError("browser action target belongs to a different observed page")
+    if action.target.target_id != current.target_id:
+        raise ValueError("browser target changed before authority was formed")
+    if action.target.kind is not current.kind:
+        raise ValueError("browser target kind changed before authority was formed")
+    if action.target.frame_id != current.frame_id:
+        raise ValueError("browser target frame changed before authority was formed")
+    if action.target.observed_at != current.observed_at:
+        raise ValueError("browser target evidence is stale")
 
 
 def _normalize_origin(value: str) -> str:

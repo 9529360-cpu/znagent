@@ -65,6 +65,24 @@ class BrowserContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             BrowserPermissionContext(allowed_origins=("https://example.com:bad",))
 
+    def test_action_permissions_default_deny_side_effects(self):
+        permission = BrowserPermissionContext()
+        self.assertFalse(permission.allows_action(BrowserActionKind.NAVIGATE))
+        self.assertFalse(permission.allows_action(BrowserActionKind.CLICK))
+        self.assertFalse(permission.allows_action(BrowserActionKind.TYPE_TEXT))
+        self.assertTrue(permission.allows_action(BrowserActionKind.WAIT))
+        self.assertFalse(
+            BrowserPermissionContext(allow_text_entry=True).allows_action(
+                BrowserActionKind.TYPE_TEXT
+            )
+        )
+        self.assertTrue(
+            BrowserPermissionContext(
+                allow_page_interaction=True,
+                allow_text_entry=True,
+            ).allows_action(BrowserActionKind.TYPE_TEXT)
+        )
+
     def _target_observation(self):
         session = BrowserSessionIdentity.create(
             plane=BrowserPlane.MANAGED,
@@ -102,13 +120,36 @@ class BrowserContractTests(unittest.TestCase):
         authority = BrowserActionAuthority.from_observation(
             action,
             observation,
-            BrowserPermissionContext(),
+            BrowserPermissionContext(allow_page_interaction=True),
         )
         self.assertEqual(authority.action_id, action.action_id)
         self.assertEqual(authority.session_id, session.session_id)
         self.assertEqual(authority.page_id, "page-1")
         self.assertEqual(authority.target_id, "element-1")
         self.assertEqual(authority.observation_captured_at, observation.captured_at)
+
+    def test_default_permission_refuses_navigation_authority(self):
+        session, _target, observation = self._target_observation()
+        page_observation = BrowserObservation(
+            session=session,
+            page_id=observation.page_id,
+            captured_at=observation.captured_at,
+            url=observation.url,
+            title=observation.title,
+            load_state=observation.load_state,
+        )
+        action = BrowserAction.create(
+            session_id=session.session_id,
+            page_id=observation.page_id,
+            kind=BrowserActionKind.NAVIGATE,
+            args={"url": "https://example.com/next"},
+        )
+        with self.assertRaisesRegex(ValueError, "not permitted"):
+            BrowserActionAuthority.from_observation(
+                action,
+                page_observation,
+                BrowserPermissionContext(),
+            )
 
     def test_target_action_requires_current_target_observation(self):
         session, target, observation = self._target_observation()
@@ -130,7 +171,7 @@ class BrowserContractTests(unittest.TestCase):
             BrowserActionAuthority.from_observation(
                 action,
                 observation_without_target,
-                BrowserPermissionContext(),
+                BrowserPermissionContext(allow_page_interaction=True),
             )
 
     def test_target_action_rejects_kind_or_frame_drift(self):
@@ -141,12 +182,13 @@ class BrowserContractTests(unittest.TestCase):
             kind=BrowserActionKind.CLICK,
             target=target,
         )
+        permission = BrowserPermissionContext(allow_page_interaction=True)
         kind_drift = BrowserTarget(
             session_id=session.session_id,
             page_id=observation.page_id,
             kind=BrowserTargetKind.ACCESSIBILITY_NODE,
             target_id=target.target_id,
-            observed_at=observation.captured_at,
+            observed_at=target.observed_at,
             frame_id=target.frame_id,
         )
         with self.assertRaises(ValueError):
@@ -161,14 +203,14 @@ class BrowserContractTests(unittest.TestCase):
                     load_state=observation.load_state,
                     target=kind_drift,
                 ),
-                BrowserPermissionContext(),
+                permission,
             )
         frame_drift = BrowserTarget(
             session_id=session.session_id,
             page_id=observation.page_id,
             kind=target.kind,
             target_id=target.target_id,
-            observed_at=observation.captured_at,
+            observed_at=target.observed_at,
             frame_id="frame-other",
         )
         with self.assertRaises(ValueError):
@@ -183,7 +225,41 @@ class BrowserContractTests(unittest.TestCase):
                     load_state=observation.load_state,
                     target=frame_drift,
                 ),
-                BrowserPermissionContext(),
+                permission,
+            )
+
+    def test_target_action_rejects_reused_id_with_stale_target_evidence(self):
+        session, target, observation = self._target_observation()
+        action = BrowserAction.create(
+            session_id=session.session_id,
+            page_id=observation.page_id,
+            kind=BrowserActionKind.CLICK,
+            target=target,
+        )
+        refreshed_target = BrowserTarget(
+            session_id=session.session_id,
+            page_id=observation.page_id,
+            kind=target.kind,
+            target_id=target.target_id,
+            observed_at="2026-08-26T00:00:02+00:00",
+            url=target.url,
+            frame_id=target.frame_id,
+            role=target.role,
+        )
+        refreshed = BrowserObservation(
+            session=session,
+            page_id=observation.page_id,
+            captured_at="2026-08-26T00:00:03+00:00",
+            url=observation.url,
+            title=observation.title,
+            load_state=observation.load_state,
+            target=refreshed_target,
+        )
+        with self.assertRaisesRegex(ValueError, "stale"):
+            BrowserActionAuthority.from_observation(
+                action,
+                refreshed,
+                BrowserPermissionContext(allow_page_interaction=True),
             )
 
     def test_cross_session_target_is_rejected(self):
