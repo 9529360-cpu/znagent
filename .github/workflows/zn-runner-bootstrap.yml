@@ -16,7 +16,7 @@ permissions:
 
 concurrency:
   group: zn-runner-bootstrap-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   bootstrap:
@@ -39,7 +39,7 @@ jobs:
           }
       - name: Checkout
         uses: actions/checkout@v7
-      - name: Normalize interactive runner watchdog to hidden launch
+      - name: Configure visible interactive runner watchdog
         shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         run: .\.github\scripts\install-zn-interactive-runner-watchdog.ps1
       - name: Register three isolated headless CI workers
