@@ -8,7 +8,6 @@ from typing import Any
 
 from .action import NativeActionIntent
 from .automation_text_state_sense import NativeFocusedAutomationTextSense
-from .completion_observation import CompletionObservationJournal
 from .focused_text_entry_resident import FocusedTextEntryResidentRuntime
 from .managed_browser import PlaywrightManagedBrowser
 from .models import ExecutionPath
@@ -47,12 +46,6 @@ class FocusedModernTextResidentRuntime(FocusedTextEntryResidentRuntime):
         self.body = SideEffectAwareBody(resident=self)
         self.automation_text_state = NativeFocusedAutomationTextSense()
         self.managed_browser = PlaywrightManagedBrowser()
-        # This product runtime inherits the richer embodied birth sequence, which
-        # intentionally skips ZNResidentRuntime.__init__. Completion observation is
-        # therefore installed here, after the real Life organism is born, so both
-        # direct construction and provider-bridge construction own the same organ.
-        self.completion_observations = CompletionObservationJournal(self.store)
-        self.completion_observations.repair_life(self)
 
     def status(self) -> dict[str, Any]:
         data = super().status()
