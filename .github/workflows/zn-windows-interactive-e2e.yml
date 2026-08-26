@@ -14,12 +14,14 @@ on:
       - runtime/python/zn_agent/core/focused_control_sense.py
       - runtime/python/zn_agent/core/focused_text_sense.py
       - runtime/python/zn_agent/core/automation_element_sense.py
+      - runtime/python/zn_agent/core/automation_text_state_sense.py
       - runtime/python/zn_agent/core/pointer_click_resident.py
       - runtime/python/zn_agent/core/pointer_click_completion_resident.py
       - runtime/python/zn_agent/core/pointer_click_semantic_resident.py
       - runtime/python/zn_agent/core/pointer_click_focused_control_resident.py
       - runtime/python/zn_agent/core/pointer_click_automation_focus_resident.py
       - runtime/python/zn_agent/core/focused_text_entry_resident.py
+      - runtime/python/zn_agent/core/focused_modern_text_resident.py
       - runtime/python/zn_agent/core/provider_bridge.py
   workflow_dispatch:
 
