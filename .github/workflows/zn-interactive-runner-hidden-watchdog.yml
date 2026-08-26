@@ -1,6 +1,14 @@
 name: ZN Interactive Runner Hidden Watchdog
 
 on:
+  push:
+    branches:
+      - dev/zn-agent
+    paths:
+      - .github/workflows/zn-interactive-runner-hidden-watchdog.yml
+      - .github/scripts/watch-zn-interactive-runner.ps1
+      - .github/scripts/install-zn-interactive-runner-watchdog.ps1
+      - .github/scripts/handoff-zn-interactive-runner-watchdog.ps1
   workflow_dispatch:
 
 permissions:
@@ -51,7 +59,123 @@ jobs:
             throw "watchdog task left interactive desktop boundary: $($task.Principal.LogonType)"
           }
           if (-not $task.Settings.Hidden) { throw 'watchdog task is not marked hidden' }
-          Write-Host "watchdog.task=$taskName"
-          Write-Host "watchdog.logon_type=$($task.Principal.LogonType)"
-          Write-Host "watchdog.hidden=$($task.Settings.Hidden)"
-          Write-Host 'watchdog.next_launch_window_style=Hidden'
+      - name: Arm post-job hidden runner handoff
+        shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+        run: |
+          function Get-CurrentRunnerListener {
+            $cursor = Get-CimInstance Win32_Process -Filter "ProcessId = $PID" -ErrorAction Stop
+            for ($depth = 0; $depth -lt 16 -and $null -ne $cursor; $depth++) {
+              if ($cursor.Name -eq 'Runner.Listener.exe') { return $cursor }
+              if (-not $cursor.ParentProcessId) { break }
+              $cursor = Get-CimInstance Win32_Process -Filter "ProcessId = $($cursor.ParentProcessId)" -ErrorAction SilentlyContinue
+            }
+            throw 'Could not resolve Runner.Listener.exe from the current worker ancestry.'
+          }
+
+          $listener = Get-CurrentRunnerListener
+          $runnerRoot = Split-Path (Split-Path ([string]$listener.ExecutablePath) -Parent) -Parent
+          $handoffId = "run-$env:GITHUB_RUN_ID-attempt-$env:GITHUB_RUN_ATTEMPT"
+          $sourceHandoff = Join-Path $env:GITHUB_WORKSPACE '.github\scripts\handoff-zn-interactive-runner-watchdog.ps1'
+          $installedHandoff = Join-Path $runnerRoot 'handoff-zn-interactive-runner-watchdog.ps1'
+          Copy-Item -LiteralPath $sourceHandoff -Destination $installedHandoff -Force
+
+          $marker = Join-Path $runnerRoot ("_diag\zn-hidden-watchdog-handoff-{0}.ok" -f $handoffId)
+          Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+
+          $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          $arguments = @(
+            '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
+            '-File', ('"' + $installedHandoff + '"'),
+            '-RunnerRoot', ('"' + $runnerRoot + '"'),
+            '-HandoffId', $handoffId
+          ) -join ' '
+
+          $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+          $startInfo.FileName = $powershell
+          $startInfo.Arguments = $arguments
+          $startInfo.WorkingDirectory = $runnerRoot
+          $startInfo.UseShellExecute = $false
+          $startInfo.CreateNoWindow = $true
+          $startInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+          $startInfo.EnvironmentVariables['RUNNER_TRACKING_ID'] = ''
+          $process = [System.Diagnostics.Process]::Start($startInfo)
+          if ($null -eq $process) { throw 'Failed to start detached hidden runner handoff process.' }
+          Write-Host "handoff.id=$handoffId"
+          Write-Host "handoff.pid=$($process.Id)"
+          Write-Host "handoff.runner_root=$runnerRoot"
+          Write-Host 'The detached handoff waits for this Worker to drain before restarting the listener through the hidden watchdog.'
+
+  handoff-window:
+    name: Leave isolated handoff window
+    needs: migrate
+    runs-on: [self-hosted, Windows, X64, zn-ci]
+    timeout-minutes: 5
+    steps:
+      - name: Keep verification ineligible while interactive listener restarts
+        shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+        run: Start-Sleep -Seconds 30
+
+  verify:
+    name: Verify hidden interactive runner handoff
+    needs: handoff-window
+    runs-on: [self-hosted, Windows, X64, zn-interactive]
+    timeout-minutes: 10
+    steps:
+      - name: Verify current runner came back through hidden watchdog
+        shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+        run: |
+          if ($env:RUNNER_NAME -ne 'zn-interactive') {
+            throw "hidden handoff verification requires zn-interactive; got $env:RUNNER_NAME"
+          }
+          $sessionId = (Get-Process -Id $PID -ErrorAction Stop).SessionId
+          if ($sessionId -eq 0) { throw 'hidden handoff verification left the interactive desktop session' }
+
+          $cursor = Get-CimInstance Win32_Process -Filter "ProcessId = $PID" -ErrorAction Stop
+          $listener = $null
+          for ($depth = 0; $depth -lt 16 -and $null -ne $cursor; $depth++) {
+            if ($cursor.Name -eq 'Runner.Listener.exe') { $listener = $cursor; break }
+            if (-not $cursor.ParentProcessId) { break }
+            $cursor = Get-CimInstance Win32_Process -Filter "ProcessId = $($cursor.ParentProcessId)" -ErrorAction SilentlyContinue
+          }
+          if ($null -eq $listener) { throw 'could not resolve current Runner.Listener.exe' }
+          $runnerRoot = Split-Path (Split-Path ([string]$listener.ExecutablePath) -Parent) -Parent
+          $handoffId = "run-$env:GITHUB_RUN_ID-attempt-$env:GITHUB_RUN_ATTEMPT"
+          $marker = Join-Path $runnerRoot ("_diag\zn-hidden-watchdog-handoff-{0}.ok" -f $handoffId)
+          if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
+            throw "exact handoff marker is missing: $marker"
+          }
+          $markerText = Get-Content -LiteralPath $marker -Raw -ErrorAction Stop
+          if ($markerText -notmatch ('(?m)^handoff_id=' + [regex]::Escape($handoffId) + '$')) {
+            throw 'handoff marker does not belong to this workflow run/attempt'
+          }
+          if ($markerText -notmatch '(?m)^runner=zn-interactive$') {
+            throw 'handoff marker does not identify zn-interactive'
+          }
+
+          $cmd = Get-CimInstance Win32_Process -Filter "ProcessId = $($listener.ParentProcessId)" -ErrorAction Stop
+          if ($cmd.Name -ne 'cmd.exe') { throw "listener parent is not watchdog run.cmd host: $($cmd.Name)" }
+          $cmdLine = [string]$cmd.CommandLine
+          if ($cmdLine.IndexOf('run.cmd', [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+            throw 'listener cmd parent is not executing run.cmd'
+          }
+          $watchdog = Get-CimInstance Win32_Process -Filter "ProcessId = $($cmd.ParentProcessId)" -ErrorAction Stop
+          if ($watchdog.Name -notin @('powershell.exe','pwsh.exe')) {
+            throw "run.cmd parent is not the watchdog PowerShell process: $($watchdog.Name)"
+          }
+          $watchdogLine = [string]$watchdog.CommandLine
+          foreach ($required in @('watch-zn-interactive-runner.ps1','-WindowStyle Hidden','-ExecutionPolicy Bypass')) {
+            if ($watchdogLine.IndexOf($required, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+              throw "watchdog process command line is missing: $required"
+            }
+          }
+
+          $task = Get-ScheduledTask -TaskPath '\' -TaskName 'ZN GitHub Actions Interactive Runner Watchdog' -ErrorAction Stop
+          if (-not $task.Settings.Hidden) { throw 'watchdog scheduled task is not hidden after handoff' }
+          if ($task.Principal.LogonType -notin @('Interactive','InteractiveToken')) {
+            throw "watchdog scheduled task left interactive logon boundary: $($task.Principal.LogonType)"
+          }
+          Write-Host "handoff.id=$handoffId"
+          Write-Host "runner.root=$runnerRoot"
+          Write-Host "runner.listener_pid=$($listener.ProcessId)"
+          Write-Host "runner.watchdog_pid=$($watchdog.ProcessId)"
+          Write-Host 'Hidden interactive runner handoff verified from exact marker and live process ancestry.'
