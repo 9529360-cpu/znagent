@@ -15,7 +15,6 @@ from .cognitive_factory import (
     ZNCognitiveResourceWorkerFactory,
     resolve_zn_cognitive_route,
 )
-from .completion_observation import CompletionObservationJournal
 from .config import load_zn_config
 from .credentials import CredentialStore, materialize_zn_credentials
 from .home import get_zn_home
@@ -258,15 +257,7 @@ def build_resident_runtime(
             0.0, min(1.0, float(resident_cfg.get("high_risk_threshold", 0.8)))
         ),
     )
-    resident = FocusedModernTextResidentRuntime(kernel=kernel, budget=budget)
-    # The product resident owns a richer birth sequence that intentionally skips
-    # ZNResidentRuntime.__init__. Install the same resident-owned completion
-    # observation organ only after that richer organism is fully born, then repair
-    # secondary Life observation from durable EventOutcome truth without replaying
-    # completed work.
-    resident.completion_observations = CompletionObservationJournal(resident.store)
-    resident.completion_observations.repair_life(resident)
-    return resident
+    return FocusedModernTextResidentRuntime(kernel=kernel, budget=budget)
 
 
 # Transitional source-level aliases only. They preserve existing ZN callers
