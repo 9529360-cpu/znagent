@@ -86,12 +86,21 @@ function Expand-FreshRunner {
     }
 }
 
+function Get-HealthyWorkers {
+    param([Parameter(Mandatory = $true)][psobject]$Inventory)
+    return @($Inventory.runners | Where-Object {
+        $_.name -match ('^' + [regex]::Escape($WorkerPrefix) + '-\d{2}$') -and
+        $_.status -eq 'online' -and
+        ($_.labels.name -contains 'zn-ci')
+    })
+}
+
 if ($env:RUNNER_OS -and $env:RUNNER_OS -ne 'Windows') {
     throw "ZN Windows runner bootstrap requires Windows; got $env:RUNNER_OS"
 }
 
 if ($null -eq (Get-Command gh -ErrorAction SilentlyContinue)) {
-    throw 'GitHub CLI (gh) is required on the bootstrap runner.'
+    throw 'GitHub CLI (gh) is required on the bootstrap host.'
 }
 
 & gh auth status --hostname github.com *> $null
@@ -103,16 +112,24 @@ if ($probe.full_name -ne $Repository) {
 }
 
 $existing = Get-RepositoryRunners
-$interactive = @($existing.runners | Where-Object { $_.name -eq $env:RUNNER_NAME })
-if ($interactive.Count -ne 1) {
-    throw "Cannot uniquely resolve current runner '$env:RUNNER_NAME' in repository runner inventory."
+if ($env:RUNNER_NAME) {
+    $interactive = @($existing.runners | Where-Object { $_.name -eq $env:RUNNER_NAME })
+    if ($interactive.Count -ne 1) {
+        throw "Cannot uniquely resolve current runner '$env:RUNNER_NAME' in repository runner inventory."
+    }
+    if (-not ($interactive[0].labels.name -contains 'zn-interactive')) {
+        throw "Bootstrap runner '$env:RUNNER_NAME' is missing required zn-interactive label."
+    }
 }
-if (-not ($interactive[0].labels.name -contains 'zn-interactive')) {
-    throw "Bootstrap runner '$env:RUNNER_NAME' is missing required zn-interactive label."
+
+$healthyWorkers = Get-HealthyWorkers -Inventory $existing
+if ($healthyWorkers.Count -ge $WorkerCount) {
+    Write-Host "ZN runner pool already healthy: $($healthyWorkers.Count) zn-ci workers online."
+    exit 0
 }
 
 if (-not (Test-Administrator)) {
-    throw 'Runner bootstrap needs an elevated Windows account to install additional runners as services. No worker runner was configured.'
+    throw "Runner bootstrap needs an elevated Windows account because only $($healthyWorkers.Count)/$WorkerCount zn-ci workers are online. No worker runner was modified."
 }
 
 New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
@@ -142,9 +159,7 @@ for ($index = 1; $index -le $WorkerCount; $index++) {
     try {
         $registrationToken = Get-RegistrationToken
         & .\config.cmd --unattended --url "https://github.com/$Repository" --token $registrationToken --name $name --labels zn-ci --work _work --runasservice --windowslogonaccount 'NT AUTHORITY\NETWORK SERVICE' --disableupdate
-        Assert-NativeSuccess "configure runner $name"
-        & .\svc.cmd start
-        Assert-NativeSuccess "start runner service $name"
+        Assert-NativeSuccess "configure and start runner service $name"
     } finally {
         $registrationToken = $null
         Pop-Location
@@ -158,7 +173,7 @@ do {
     Start-Sleep -Seconds 3
     $inventory = Get-RepositoryRunners
     $workers = @($inventory.runners | Where-Object { $_.name -match ('^' + [regex]::Escape($WorkerPrefix) + '-\d{2}$') })
-    $onlineWorkers = @($workers | Where-Object { $_.status -eq 'online' -and ($_.labels.name -contains 'zn-ci') })
+    $onlineWorkers = Get-HealthyWorkers -Inventory $inventory
     if ($onlineWorkers.Count -ge $WorkerCount) {
         break
     }
@@ -169,4 +184,4 @@ if ($onlineWorkers.Count -lt $WorkerCount) {
     throw "Only $($onlineWorkers.Count)/$WorkerCount zn-ci workers became online before timeout. Inventory: $($summary -join ', ')"
 }
 
-Write-Host "ZN runner pool ready: $WorkerCount zn-ci workers online; interactive runner '$env:RUNNER_NAME' remains isolated by label zn-interactive."
+Write-Host "ZN runner pool ready: $WorkerCount zn-ci workers online; interactive runner remains isolated by label zn-interactive."
