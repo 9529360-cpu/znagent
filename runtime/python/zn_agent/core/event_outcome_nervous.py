@@ -21,6 +21,7 @@ class EventOutcomeNervousSystem(PersistentNervousSystem):
     """
 
     _OUTCOME_RECEIPT_TABLE = "neural_event_outcomes"
+    _OUTCOME_STATE_TABLE = "neural_event_outcome_state"
 
     def __init__(self, store):
         super().__init__(store)
@@ -171,6 +172,23 @@ class EventOutcomeNervousSystem(PersistentNervousSystem):
                 (normalized,),
             ).fetchone()
         return row is not None
+
+    def repair_from(self) -> str:
+        """Return the durable activation cutoff for safe restart reconciliation.
+
+        Existing databases may already contain outcomes that the legacy nervous
+        path perceived without event receipts. The first installation records a
+        cutoff instead of guessing whether those historical outcomes were seen;
+        restart repair is therefore limited to terminal outcomes created after
+        event-identity-safe perception became active.
+        """
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                f"SELECT repair_from FROM {self._OUTCOME_STATE_TABLE} WHERE id=1"
+            ).fetchone()
+        if not row:
+            raise RuntimeError("event outcome nervous activation state is missing")
+        return str(row["repair_from"])
 
     def _build_outcome_trace(
         self,
@@ -342,6 +360,7 @@ class EventOutcomeNervousSystem(PersistentNervousSystem):
         """Fault-injection seam used to verify rollback of the whole plasticity unit."""
 
     def _init_outcome_schema(self) -> None:
+        activation = utc_now()
         with closing(self._connect()) as conn:
             conn.executescript(
                 f"""
@@ -352,6 +371,15 @@ class EventOutcomeNervousSystem(PersistentNervousSystem):
                 );
                 CREATE INDEX IF NOT EXISTS idx_neural_event_outcomes_trace
                     ON {self._OUTCOME_RECEIPT_TABLE}(trace_id);
+                CREATE TABLE IF NOT EXISTS {self._OUTCOME_STATE_TABLE}(
+                    id INTEGER PRIMARY KEY CHECK(id=1),
+                    repair_from TEXT NOT NULL
+                );
                 """
+            )
+            conn.execute(
+                f"INSERT OR IGNORE INTO {self._OUTCOME_STATE_TABLE}(id,repair_from) "
+                "VALUES(1,?)",
+                (activation,),
             )
             conn.commit()
