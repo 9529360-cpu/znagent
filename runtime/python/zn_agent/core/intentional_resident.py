@@ -5,7 +5,12 @@ from typing import Any, Iterable
 
 from .adaptive_guidance import schema_attention_focus, schema_reality_score
 from .embodied_resident import EmbodiedResidentRuntime
-from .event_outcome_nervous import EventOutcomeNervousSystem
+from .event_outcome_nervous import (
+    EventOutcomeNervousSystem,
+    event_outcome_repair_from,
+    has_event_outcome,
+    perceive_event_outcome,
+)
 from .models import EventStatus, ResidentRunResult
 from .will import NativeWill, ResidentIntention
 from .world_sense import NativeWorldSense, WorldObservation
@@ -230,9 +235,6 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
             "test whether this consolidated pattern applies to my current "
             f"intention: {schema.summary[:420]}"
         )
-        # Do not keep repeating the exact same self-initiated probe after it has
-        # already produced an outcome. New lived evidence must first change the
-        # candidate before Will will choose another step.
         if primary.current_step == step and primary.last_outcome:
             return False
 
@@ -813,7 +815,8 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
 
     def _perceive_event_outcome(self, event, outcome):
         summary = self._event_outcome_summary(outcome)
-        return self.nervous.perceive_event_outcome(
+        return perceive_event_outcome(
+            self.nervous,
             event.event_id,
             f"{event.task}: {summary[:1000]}",
             features=(
@@ -832,21 +835,21 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
                 "event_id": event.event_id,
                 "model_invocations": outcome.model_invocations,
             },
+            before_commit=self._before_nervous_outcome_commit,
         )
 
+    def _before_nervous_outcome_commit(self, conn, *, event_id, trace) -> None:
+        """Fault-injection seam; production behavior deliberately does nothing."""
+
     def _repair_nervous_event_outcomes(self) -> None:
-        repair_from = self.nervous.repair_from()
-        # list_event_outcomes is newest-first. Apply missing perceptions in lived
-        # order so affect evolves in the same order it would have without a
-        # process interruption. The activation cutoff prevents legacy outcomes
-        # from being guessed/reinforced during an upgrade.
+        repair_from = event_outcome_repair_from(self.nervous)
         outcomes = [
             outcome
             for outcome in self.store.list_event_outcomes(limit=100000)
             if outcome.completed_at >= repair_from and not outcome.cancelled
         ]
         for outcome in reversed(outcomes):
-            if self.nervous.has_event_outcome(outcome.event_id):
+            if has_event_outcome(self.nervous, outcome.event_id):
                 continue
             event = self.store.get_event(outcome.event_id)
             if event is None:
@@ -854,9 +857,6 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
             try:
                 self._perceive_event_outcome(event, outcome)
             except Exception:
-                # Nervous plasticity is secondary to the durable EventOutcome.
-                # A missing receipt remains repairable on a later resident birth;
-                # the completed action itself is never replayed.
                 continue
 
     def _complete_result(self, event, result):
@@ -865,9 +865,6 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
         try:
             self._perceive_event_outcome(event, completed)
         except Exception:
-            # EventOutcome is already terminal truth. Do not reclassify or replay
-            # the action because secondary nervous plasticity failed; restart
-            # reconciliation will retry only the idempotent perception.
             pass
 
         intention_id = str(event.payload.get("intention_id") or "").strip()
@@ -880,8 +877,6 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
                     summary=summary,
                 )
             except KeyError:
-                # The event remains valid if an imported/manual payload points
-                # at an intention that is not present in this resident.
                 pass
         return completed
 
