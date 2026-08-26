@@ -12,7 +12,7 @@ Resident Managed Browser
 = complete browser capability
 ```
 
-The managed-browser foundation now includes a verified narrow exact-node `FOCUS` lifecycle on real local Chromium. The next browser mutation is `CLICK`, but only after the final documentation HEAD completes exact-head normal Windows CI. Do not skip directly to generic click/type or expose a generic Playwright method surface.
+The managed-browser foundation now includes verified narrow navigation, exact-DOM-id/main-frame target sensing, exact-node `FOCUS`, and an exact-node `CLICK` slice for explicit boolean `aria-pressed` transitions. Generic click remains unavailable. The next browser mutation is `TYPE_TEXT`, but only after this final documentation HEAD completes exact-head normal Windows CI.
 
 Core principle:
 
@@ -24,117 +24,168 @@ Current maintainers/models are replaceable. Codex is currently unavailable becau
 
 - fixed development branch: `dev/zn-agent`
 - canonical source/release branch: `main`
+- latest fully verified implementation/test head before this documentation commit: `a6a014d836ad3f61d14b4c6a25221957a5dca9a1`
 - canonical `main`: `8234a835dea604783cea0bd9d28a40de654ec03d`
 - PR #6 remains draft/open/unmerged, base `main`, head `dev/zn-agent`
 - `main` was not modified
 - no force push or history rewrite was used
 
-A HANDOFF commit cannot contain its own resulting SHA. Re-read resulting `dev/zn-agent` HEAD and require its exact-head normal Windows CI before calling this handoff fully synchronized.
+A HANDOFF commit cannot contain its own resulting SHA. Re-read the resulting `dev/zn-agent` HEAD and require exact-head normal Windows CI before calling this documentation handoff fully synchronized.
 
 ## Completed in this stage
 
-### 1. Real state was restored before modifying code
+### 1. Real state was restored before continuing CLICK
 
-The prior HANDOFF still listed exact-node continuity + `FOCUS` as next, but real `dev/zn-agent` had already advanced to:
+The stage began at:
 
 ```text
-61d3bc36b4f18697f5ab5f68da9d52c17c9da97f
-feat: add exact managed browser focus lifecycle
+9c360e02bd5730c32f0bd84a281e5a515f28c9b8
+feat: add verified managed browser toggle click
 ```
 
-That commit was reviewed instead of reimplementing it.
-
-Its real CI state was not green:
-
-- interactive Windows E2E: success;
-- normal Windows CI: Kernel failure;
-- managed-browser E2E: browser contract step failure and real Chromium step skipped.
-
-Both failures came from the same focus freshness assertion.
-
-### 2. Exact-node managed-browser FOCUS implementation was audited
-
-Current lifecycle:
+The real call chain was traced before changing anything:
 
 ```text
-bounded current BrowserTarget
--> provider-local transient exact element handle
--> BrowserActionAuthority
--> execution-time current-node revalidation
--> FOCUS dispatch
+BrowserActionKind.CLICK
+-> BrowserPermissionContext.allows_action()
+-> BrowserActionAuthority current observation/target/freshness binding
+-> PlaywrightManagedBrowser.act()
+-> _click()
+-> _revalidate_target_binding()
+-> provider click dispatch
 -> fresh target acquisition
--> exact JS node equality check
--> independent document.activeElement check
--> BrowserEffectEvidence(postcondition="same_exact_target_focused")
+-> exact-node continuity check
+-> fresh aria-pressed state
+-> BrowserEffectEvidence
 ```
 
-Safety behavior verified in unit tests:
+Provider-local element handles remain disposable execution resources and never become ZN identity.
 
-- same-shape target replacement before dispatch fails closed;
-- replacement during focus fails closed;
-- focus blocked by the page fails the independent postcondition;
-- target handle is disposable provider state, not ZN identity;
-- observation replacement/session close disposes old handles;
-- click remains unimplemented.
+### 2. First CLICK implementation failures were reconciled instead of hidden
 
-### 3. Freshness collision was fixed in production code
-
-At `61d3bc36`, pre- and post-focus observations could receive the same microsecond UTC string. Authority currently uses `observation_captured_at` equality as freshness identity, so this was a real correctness defect rather than merely a brittle test.
-
-Fix:
+At `9c360e02`:
 
 ```text
-7fd6f191f2f099b86d3573fca4be06fc64783211
-fix: make resident timestamps freshness-safe
+managed-browser workflow run 32965439542   failed
+normal Windows CI run 32965439522          Kernel failed
 ```
 
-`runtime/python/zn_agent/core/models.py` now emits thread-safe, process-monotonic ISO UTC timestamps: if wall clock output repeats or moves backward relative to the previous emitted value, the next value advances by one microsecond.
+Source Boundary and Electron were green. All five new click-specific contract tests passed. The two failures were pre-existing generic-click tests that still expected the old refusal text to contain `not implemented`.
 
-The focus freshness assertion was preserved; it was not weakened or removed.
-
-### 4. Browser CI trigger coverage was corrected
-
-Commit:
+The click lifecycle itself was not removed and the new tests were not weakened. The final implementation keeps the generic boundary explicit:
 
 ```text
-37f273a43a07d3d316055a47019da4fffe4bb9a3
-ci: cover browser freshness clock changes
+generic browser click is not implemented;
+verified toggle click requires explicit boolean expected aria_pressed postcondition
 ```
 
-`runtime/python/zn_agent/core/models.py` is now included in `.github/workflows/zn-managed-browser-e2e.yml` path filters because that shared clock directly affects browser authority/freshness semantics.
+### 3. Narrow verified toggle CLICK is implemented
 
-### 5. Exact-head real managed Chromium proof is green
+CLICK is deliberately limited to a state transition ZN can independently verify.
+
+Required path:
 
 ```text
-run 32963487090
-head 37f273a43a07d3d316055a47019da4fffe4bb9a3
+current exact target observation
+-> allow_page_interaction authority
+-> provider-local exact-node revalidation
+-> explicit expected={"aria_pressed": <bool>}
+-> current boolean aria-pressed pre-state
+-> require requested state to differ from current state
+-> provider click
+-> fresh target re-observation
+-> same exact node
+-> same ZN target identity
+-> fresh aria-pressed == expected
+-> success evidence
+```
+
+Safety behavior:
+
+- generic arbitrary click is unavailable;
+- non-boolean/missing `aria_pressed` expected state fails before provider dispatch;
+- a target without boolean `aria-pressed` fails before provider dispatch;
+- if the requested state is already present, ZN refuses to claim a transition and does not click;
+- provider dispatch without the requested observed state fails;
+- same-shape node replacement during click fails exact-node continuity even if the replacement reports the requested state;
+- success never comes from Playwright returning without error.
+
+Implementation/test chain:
+
+```text
+c888128608aeef6b04daa1bf8fb1c46ab4b4f711
+test: define managed browser toggle click contract
+
+9c360e02bd5730c32f0bd84a281e5a515f28c9b8
+feat: add verified managed browser toggle click
+
+a6a014d836ad3f61d14b4c6a25221957a5dca9a1
+test: prove verified managed browser toggle click
+```
+
+`a6a014d8` also makes the generic-click refusal boundary explicit and adds the real Chromium fixture/evidence.
+
+### 4. Exact-head dedicated real Chromium proof is green
+
+```text
+run 32967137365
+head a6a014d836ad3f61d14b4c6a25221957a5dca9a1
 Windows local managed Chromium E2E   success
-```
 
-Real log evidence:
-
-```text
-35 browser/core tests   OK
+40 browser/core tests   OK
 2 real Chromium E2E     OK
 ```
 
-The real Chromium test explicitly passed:
+Real Chromium proves:
+
+- navigation and bounded target sensing still work;
+- exact-node `FOCUS` still works;
+- generic click without explicit independent postcondition remains refused;
+- toggle `false -> true` succeeds from fresh same-node evidence;
+- a fresh second action proves `true -> false`;
+- same-shape replacement during click fails with `exact_node_continuity=false` even though the replacement has the requested `aria-pressed` state;
+- the metadata/private-network safety floor remains intact.
+
+### 5. Exact-head interactive Windows regression is green
 
 ```text
-test_local_headless_chromium_observes_targets_focuses_exact_node_and_verifies_navigation ... ok
+run 32967137348
+head a6a014d836ad3f61d14b4c6a25221957a5dca9a1
+Windows interactive computer-use E2E   success
+
+Ran 4 tests in 16.337s
+OK
 ```
 
-So the narrow real provider path is now proven:
+The four real interactive tests cover:
+
+- pointer/UIA focus;
+- native Unicode text entry;
+- WPF UIA text capability;
+- installed Edge/Chrome user-browser provider sensing.
+
+The browser provider proof again selected real Edge on the runner, used an isolated temporary profile, did not force renderer accessibility, and exported bounded text length/digest rather than raw browser text.
+
+### 6. Exact-head normal Windows CI is green
 
 ```text
-target sensing
--> current exact-node authority
--> FOCUS
--> exact-node continuity
--> independent activeElement evidence
+run 32967137328
+head a6a014d836ad3f61d14b4c6a25221957a5dca9a1
+
+ZN Source Boundary / Windows      success
+ZN Kernel / Python / Windows      success
+Electron / TypeScript / Windows   success
+Publish Windows CI statuses       success
+
+CPython 3.12.13
+formal runtime install success
+zero-model resident boot success
+resident core compile success
+Ran 522 tests in 552.760s
+OK (skipped=5)
 ```
 
-The second real Chromium E2E also preserved the private-network metadata safety floor.
+The full Kernel suite includes the five click contract tests and all passed.
 
 ## Current implementation truth
 
@@ -144,15 +195,17 @@ Verified/foundation browser slices now include:
 - lazy resident ownership and shutdown cleanup of local managed Chromium;
 - real headless Chromium navigation with fresh authority and observed postcondition;
 - bounded exact-DOM-id/main-frame target sensing;
-- provider-local exact-node continuity at the first mutation boundary;
+- provider-local exact-node continuity at mutation boundaries;
 - narrow managed-browser `FOCUS` with execution-time revalidation and independent focused-element evidence;
-- real local Chromium evidence for navigation, target sensing and focus;
+- narrow managed-browser `CLICK` for explicit boolean `aria-pressed` transitions with independent fresh state evidence;
+- real local Chromium evidence for navigation, target sensing, focus and toggle click;
 - real Windows Edge default-UIA focused-input sensing in an isolated profile without forced renderer accessibility.
 
 Do not overstate this stage. Still unavailable/incomplete:
 
-- managed-browser `CLICK`;
-- `TYPE_TEXT`, select/check/keyboard and other target mutations;
+- generic managed-browser click semantics without a bounded independent postcondition;
+- `TYPE_TEXT`;
+- select/check/keyboard and other target mutations;
 - iframe/child-frame and generic accessibility target sensing;
 - multiple-target/disambiguation lifecycle;
 - tabs/popups/frames lifecycle;
@@ -166,72 +219,34 @@ Do not overstate this stage. Still unavailable/incomplete:
 - authenticated User Browser Bridge control of the user's existing session;
 - browser permission UX and MFA/sensitive-field handoff.
 
-## CI truth
-
-### Failed implementation-head runs that must remain visible
-
-At `61d3bc36`:
-
-- normal Windows CI failed one focus freshness assertion;
-- managed-browser workflow failed the same assertion before real Chromium E2E;
-- interactive Windows E2E succeeded.
-
-These failures led to the real freshness fix; they were not hidden.
-
-### Corrected real managed-browser evidence
-
-```text
-run 32963487090
-head 37f273a43a07d3d316055a47019da4fffe4bb9a3
-conclusion: success
-```
-
-All 35 browser/core tests and both real Chromium E2Es passed.
-
-### Final documentation-head normal CI
-
-Status: **REQUIRED AFTER THIS HANDOFF COMMIT**.
-
-The final `dev/zn-agent` documentation HEAD must complete `ZN CI` with Source Boundary, Kernel, Electron and published status jobs green before this stage is called synchronized.
-
-## Development-history audit
-
-Earlier history contains the already-recorded accidental empty root `noop` commit; it was removed by a later normal fast-forward commit and remains auditable.
-
-This maintenance pass also accidentally created `docs/.tmp` in:
-
-```text
-e3eb38cce090c6c268866f911cffc0d5ce288636
-tmp
-```
-
-It was immediately removed by normal fast-forward commit:
-
-```text
-37fe40556caafb9113a08c1e22d2beb519fc64b5
-chore: remove accidental temp file
-```
-
-`docs/.tmp` is absent from the final tree. No force push, reset or history rewrite was used to hide the mistake.
-
 ## Task queue
 
 ### P0 - final documentation-head normal CI
-Status: **REQUIRED**
+Status: **REQUIRED AFTER THIS HANDOFF COMMIT**
 
-Require exact final `dev/zn-agent` HEAD normal Windows CI success.
+Re-read final `dev/zn-agent` HEAD and require its exact-head normal Windows CI success. The implementation/test head `a6a014d8` is already green in normal CI, dedicated real Chromium E2E and interactive Windows E2E.
 
-### P1 - managed-browser CLICK
+### P1 - managed-browser TYPE_TEXT
 Status: **NEXT / BLOCKED ON P0**
 
-Trace the real click call chain before coding. Reuse the existing ZN target authority and provider-local exact-node revalidation boundary, but define a click-specific independent postcondition instead of treating provider dispatch as success.
+Trace the real text-entry call chain before coding. Current contract support already includes `BrowserPermissionContext.allow_text_entry`, but the managed adapter must not infer text mutation authority from focus/click.
 
-Do not make a generic Playwright click tool. Add one narrow lifecycle and real Chromium evidence.
+Required design constraints:
 
-### P2 - managed-browser TYPE_TEXT
-Status: **OPEN / BLOCKED ON P1**
+1. require `allow_text_entry` plus the normal current page/target/permission/freshness authority;
+2. require provider-local exact-node revalidation immediately before mutation;
+3. define a privacy-safe current-text pre-state and post-state contract before provider dispatch;
+4. avoid raw input values/text in normal observation/effect logs and persisted evidence;
+5. independently verify the postcondition from fresh current reality, likely using bounded length + digest or an equally privacy-safe state identity;
+6. treat password/sensitive targets more strictly and require explicit `allow_sensitive_fields` where appropriate;
+7. fail closed on same-shape replacement, detach, identity drift, provider dispatch without observed effect, or unobservable current state;
+8. add unit tests + real Chromium E2E;
+9. keep Playwright a provider resource, not a generic tool surface.
 
-Requires explicit text-entry permission, current exact-node authority, sensitive-field policy, and fresh independent value/state evidence. Do not infer support from focus/click.
+### P2 - broader managed-browser click/select/check/keyboard
+Status: **OPEN / BLOCKED ON P1 OR ACTION-SPECIFIC EVIDENCE**
+
+The verified toggle click must not be generalized into arbitrary click success. Add each action only when it has a bounded independent postcondition and current exact-node authority.
 
 ### P3 - broader target sensing and browser lifecycle
 Status: **OPEN**
@@ -260,13 +275,34 @@ Status: **PARTIAL**
 ### P9 - SM1+ self-maintenance
 Status: **OPEN**
 
+## Development-history audit
+
+Earlier history contains the already-recorded accidental empty root `noop` commit; it was removed by a later normal fast-forward commit and remains auditable.
+
+A preceding maintenance pass also accidentally created `docs/.tmp` in:
+
+```text
+e3eb38cce090c6c268866f911cffc0d5ce288636
+tmp
+```
+
+It was immediately removed by normal fast-forward commit:
+
+```text
+37fe40556caafb9113a08c1e22d2beb519fc64b5
+chore: remove accidental temp file
+```
+
+`docs/.tmp` is absent from the product tree. No force push, reset or history rewrite was used to hide either mistake.
+
 ## Risks / boundaries
 
 - `main` remains untouched.
 - no force push/history rewrite.
 - provider handles are disposable execution resources, not ZN identity.
-- timestamp freshness is process-monotonic, but broader authority should continue moving toward explicit evidence identities rather than assuming wall-clock time alone proves reality.
-- focus support does not imply click/type support.
+- process-monotonic timestamp freshness reduces collision risk, but action authority remains tied to current observations and must continue to prefer explicit reality identities where needed.
+- verified toggle click does not imply generic click/type/select/check support.
+- text mutation must not leak raw user/browser text into normal evidence.
 - real Edge UIA sensing does not imply authenticated user-browser control.
 - downloads/uploads remain disabled until file authority exists.
 - one Windows self-hosted runner can serialize jobs; completed exact-head evidence is authoritative.
@@ -284,8 +320,11 @@ docs/ZN-SELF-MAINTENANCE.md
 runtime/python/zn_agent/core/models.py
 runtime/python/zn_agent/core/browser.py
 runtime/python/zn_agent/core/managed_browser.py
+tests/zn_agent/core/test_browser_contract.py
 tests/zn_agent/core/test_managed_browser.py
+tests/zn_agent/core/test_managed_browser_click.py
 tests/zn_agent/e2e/test_windows_managed_browser.py
+tests/zn_agent/e2e/test_windows_interactive_user_browser_bridge.py
 .github/workflows/zn-managed-browser-e2e.yml
 .github/workflows/zn-windows-interactive-e2e.yml
 .github/workflows/zn-ci.yml
@@ -293,4 +332,4 @@ tests/zn_agent/e2e/test_windows_managed_browser.py
 
 ## Next real target
 
-Finish exact-head normal Windows CI for this documentation HEAD. Then implement one narrow managed-browser `CLICK` lifecycle with current exact-node authority and independent fresh effect evidence. Keep `main` untouched.
+Finish exact-head normal Windows CI for this documentation HEAD. Then implement one narrow managed-browser `TYPE_TEXT` lifecycle with current exact-node authority, privacy-safe current-text evidence and independent fresh post-action verification. Keep `main` untouched.

@@ -74,11 +74,12 @@ Resident Managed Browser + User Browser Bridge
 | --- | --- | --- | --- |
 | HTTP web search/extract | Web Senses / external resources | VERIFIED/PARTIAL | Tavily/Exa/Firecrawl provider resources exist with resident-owned normalization/failover |
 | ZN-owned browser session/action/evidence contracts | Browser Body/Senses | FOUNDATION | `BrowserSessionIdentity`, query/target/observation/action/authority/effect contracts are implemented and hardened |
-| Local managed Chromium, headless | Browser Body | FOUNDATION | Playwright adapter + dedicated real Windows Chromium navigation/target/focus E2E exist; lifecycle cleanup is resident-owned |
+| Local managed Chromium, headless | Browser Body | FOUNDATION | Playwright adapter + dedicated real Windows Chromium navigation/target/focus/toggle-click E2E exist; lifecycle cleanup is resident-owned |
 | Local managed Chromium, headed | Browser Body | OPEN | same ZN contracts, separate real UX/evidence |
 | DOM/accessibility target sensing | Browser Senses | PARTIAL / VERIFIED NARROW | exact `DOM_ID` query for one unique visible main-frame element is real-Chromium verified with bounded role/name/hint and freshness; iframe, generic accessibility queries, multi-target/disambiguation and visual fusion remain open |
 | Managed-browser focus | Browser Body | VERIFIED NARROW | exact current target authority, provider-local exact-node revalidation, `FOCUS`, fresh exact-node continuity and independent `document.activeElement` postcondition are proven on real local Chromium |
-| Managed-browser click/type/select | Browser Body | OPEN | focus does not imply these mutations; each requires its own permission, exact-node revalidation and independent fresh effect evidence |
+| Managed-browser aria-pressed toggle click | Browser Body | VERIFIED NARROW | explicit boolean expected `aria_pressed`, exact current node, pre-state transition requirement, fresh same-node post-state evidence and replacement rejection are proven on real local Chromium |
+| Generic managed-browser click/type/select/check/keyboard | Browser Body | OPEN | generic click remains unavailable without a bounded independent postcondition; `TYPE_TEXT` is next and must establish privacy-safe current-text evidence, exact-node authority and fresh verification |
 | Multi-tab/popup/frame lifecycle | Browser Body/Senses | OPEN | needs stable page/frame identities and stale-target handling |
 | Downloads/uploads | Browser Body + File authority | OPEN | adapter refuses these until explicit file authority exists |
 | Screenshots/visual browser sensing | Browser Senses | OPEN | must integrate with visual evidence rather than become completion authority by itself |
@@ -88,7 +89,7 @@ Resident Managed Browser + User Browser Bridge
 | Companion extension/native messaging bridge | User Browser Bridge | OPEN | candidate path for richer authenticated browser state; add only if provider evidence shows it is needed and user permission is explicit |
 | MFA/sensitive-field handling | Permission / Body | OPEN | never silently replay or extract secrets; explicit high-risk boundaries required |
 
-The managed-browser target/focus proof is deliberately narrow: exact main-frame DOM-id targeting and focus of one exact current node, not arbitrary DOM querying or generic accessibility-tree control. Provider handles remain disposable execution resources and do not become ZN identity. Raw input values, HTML and uncontrolled page content are not exported by target evidence; password targets fail closed without explicit sensitive-field permission.
+The managed-browser mutation proof remains deliberately narrow. Targeting is exact main-frame DOM id. `FOCUS` proves exact-node continuity and fresh focused state. `CLICK` currently proves only explicit boolean `aria-pressed` transitions. Provider handles remain disposable execution resources and do not become ZN identity. Generic click, type/select/check and arbitrary provider methods remain unavailable. Raw input values, HTML and uncontrolled page content are not exported by target evidence; password targets fail closed without explicit sensitive-field permission.
 
 The User Browser Bridge provider proof is also deliberately narrow: it validates real browser UIA sensing, not authenticated user-browser control. The fixture uses a temporary isolated profile and exports only bounded focused-element/current-text evidence, including text length and digest rather than raw text.
 
@@ -101,7 +102,7 @@ The User Browser Bridge provider proof is also deliberately narrow: it validates
 | Pointer movement/click with verification | Body + Senses | VERIFIED NARROW | real Windows interactive E2E exists |
 | Native Win32 text entry | Body + Senses | VERIFIED NARROW | real Unicode Edit E2E, empty focused native Edit only |
 | Modern UI text current-state evidence | Senses | VERIFIED NARROW | WPF read-only digest proof and real Edge focused HTML-input provider proof exist; raw text is not exported |
-| Modern app/browser text mutation | Body | OPEN/PARTIAL | managed-browser focus is verified narrow, but user-browser and general modern text mutation remain open; do not infer type support from focus |
+| Modern app/browser text mutation | Body | OPEN/PARTIAL | managed-browser focus and narrow verified toggle click exist, but browser `TYPE_TEXT`, user-browser mutation and general modern text mutation remain open |
 | Generic keyboard shortcuts/navigation | Body | OPEN | requires typed authority and effect verification |
 | Robust window/app lifecycle | Body/Senses | OPEN/PARTIAL | process/window foundations exist; product-grade cross-app lifecycle incomplete |
 
@@ -157,7 +158,7 @@ Mainstream systems increasingly expose MCP/plugins/connectors. ZN should support
 | Secret storage outside source/log/memory | credential boundary | VERIFIED | keyring/project secret boundaries exist |
 | URL/private-network safety | network Body policy | VERIFIED/PARTIAL | strong URL checks exist; browser DNS-rebinding/network-sandbox hardening remains open |
 | Action-specific authority | Body/Action | VERIFIED/PARTIAL | strong typed authority exists in several lifecycles; needs consistent expansion |
-| Independent post-action evidence | Senses / Action | VERIFIED/PARTIAL | core principle and several real lifecycles verified, now including managed-browser focus |
+| Independent post-action evidence | Senses / Action | VERIFIED/PARTIAL | core principle and several real lifecycles verified, including managed-browser focus and narrow toggle click |
 | Global permission center | Self/user boundary | OPEN | inspectable grants/revocation by capability/site/account |
 | Sensitive action escalation | Will / permission | OPEN/PARTIAL | release/self-maintenance high-risk rules exist; general product policy engine open |
 | Sandboxed untrusted code/content | Body | OPEN/PARTIAL | some boundaries exist; browser/code/plugin sandboxing needs unified policy |
@@ -189,9 +190,9 @@ Mainstream systems increasingly expose MCP/plugins/connectors. ZN should support
 
 ```text
 A. keep resident continuity + CI trustworthy
-B. preserve Managed Browser navigation/target/focus real Chromium evidence
-C. add managed-browser CLICK with current exact-node authority + independent effect evidence
-D. add TYPE_TEXT and other browser mutations one lifecycle at a time
+B. preserve Managed Browser navigation/target/focus/toggle-click real Chromium evidence
+C. add managed-browser TYPE_TEXT with current exact-node authority + privacy-safe independent text-state evidence
+D. add broader click/select/check/keyboard mutations one lifecycle at a time
 E. expand target sensing to frames/accessibility/multiple targets behind bounded evidence
 F. design authenticated User Browser Bridge lifecycle from real provider evidence
 G. build unified permission/audit semantics across browser/connectors/computer use
