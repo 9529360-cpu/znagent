@@ -10,6 +10,7 @@ import unittest
 from ctypes import wintypes
 from pathlib import Path
 
+from zn_agent.core.automation_text_state_sense import NativeFocusedAutomationTextSense
 from zn_agent.core.focused_text_sense import NativeFocusedTextSense
 from zn_agent.core.provider_bridge import build_resident_runtime
 
@@ -17,6 +18,7 @@ from zn_agent.core.provider_bridge import build_resident_runtime
 class _WpfTextFixture:
     TITLE = "ZN UIA Text Capability E2E"
     AUTOMATION_ID = "zn-wpf-text-target"
+    TEXT = "ZN WPF capability marker"
 
     def __init__(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -37,7 +39,7 @@ $window.Width = 760
 $window.Height = 320
 $window.WindowStartupLocation = 'CenterScreen'
 $text = New-Object System.Windows.Controls.TextBox
-$text.Text = 'ZN WPF capability marker'
+$text.Text = '{self.TEXT}'
 $text.FontSize = 22
 $text.MinWidth = 520
 $text.MinHeight = 56
@@ -169,29 +171,37 @@ class WindowsInteractiveUiATextCapabilityE2ETests(unittest.TestCase):
                     store_path=Path(tmp) / "kernel.db",
                 )
                 try:
+                    self.assertTrue(hasattr(resident, "automation_text_state"))
                     deadline = time.monotonic() + 6.0
                     focused = None
+                    text_state = None
                     last_error = None
                     while time.monotonic() < deadline:
                         try:
                             foreground = resident.foreground_window.probe()
                             candidate = resident.automation_element.probe_focused()
+                            state_candidate = resident.automation_text_state.probe()
                             if (
                                 foreground.title == fixture.TITLE
                                 and fixture.process is not None
                                 and foreground.process_id == fixture.process.pid
                                 and candidate.process_id == fixture.process.pid
+                                and state_candidate.process_id == fixture.process.pid
                                 and candidate.automation_id == fixture.AUTOMATION_ID
+                                and state_candidate.automation_id == fixture.AUTOMATION_ID
                                 and candidate.has_keyboard_focus
+                                and state_candidate.has_keyboard_focus
+                                and tuple(candidate.runtime_id) == tuple(state_candidate.runtime_id)
                             ):
                                 focused = candidate
+                                text_state = state_candidate
                                 break
                         except Exception as exc:
                             last_error = exc
                         time.sleep(0.05)
-                    if focused is None:
+                    if focused is None or text_state is None:
                         raise AssertionError(
-                            "resident did not observe the focused WPF TextBox in time; "
+                            "resident did not observe the focused WPF TextBox current state in time; "
                             f"last_error={last_error!r}"
                         )
 
@@ -207,6 +217,19 @@ class WindowsInteractiveUiATextCapabilityE2ETests(unittest.TestCase):
                     self.assertFalse(hasattr(focused, "value"))
                     self.assertFalse(hasattr(focused, "text"))
                     self.assertFalse(hasattr(focused, "name"))
+
+                    self.assertEqual(text_state.control_type, 50004)
+                    self.assertEqual(text_state.native_window_handle, 0)
+                    self.assertFalse(text_state.is_password)
+                    self.assertTrue(text_state.is_value_pattern_available)
+                    self.assertFalse(text_state.value_is_read_only)
+                    self.assertEqual(text_state.text_length, len(fixture.TEXT))
+                    self.assertEqual(
+                        text_state.text_sha256,
+                        NativeFocusedAutomationTextSense.digest_text(fixture.TEXT),
+                    )
+                    self.assertFalse(hasattr(text_state, "text"))
+                    self.assertFalse(hasattr(text_state, "value"))
 
                     with self.assertRaises((RuntimeError, ValueError)):
                         NativeFocusedTextSense().probe()
