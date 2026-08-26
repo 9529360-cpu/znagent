@@ -15,7 +15,7 @@ class FailingEventOutcomeNervousSystem(EventOutcomeNervousSystem):
 
 class EventOutcomeNervousSystemTests(unittest.TestCase):
     @staticmethod
-    def _outcome(nervous, event_id: str, *, summary: str = "deploy: completed"):
+    def _perceive_outcome(nervous, event_id: str, *, summary: str = "deploy: completed"):
         return nervous.perceive_event_outcome(
             event_id,
             summary,
@@ -37,12 +37,12 @@ class EventOutcomeNervousSystemTests(unittest.TestCase):
                 salience=0.55,
             )
 
-            first = self._outcome(nervous, "event-1")
+            first = self._perceive_outcome(nervous, "event-1")
             first_state = nervous.snapshot()
             first_link = nervous.link_strength(first.trace_id, anchor.trace_id)
             first_repetitions = first.repetitions
 
-            second = self._outcome(nervous, "event-1")
+            second = self._perceive_outcome(nervous, "event-1")
             second_state = nervous.snapshot()
             second_link = nervous.link_strength(second.trace_id, anchor.trace_id)
 
@@ -58,8 +58,8 @@ class EventOutcomeNervousSystemTests(unittest.TestCase):
             store = KernelStore(Path(tmp) / "kernel.db")
             nervous = EventOutcomeNervousSystem(store)
 
-            first = self._outcome(nervous, "event-1")
-            second = self._outcome(nervous, "event-2")
+            first = self._perceive_outcome(nervous, "event-1")
+            second = self._perceive_outcome(nervous, "event-2")
 
             self.assertEqual(second.trace_id, first.trace_id)
             self.assertEqual(second.repetitions, first.repetitions + 1)
@@ -84,7 +84,7 @@ class EventOutcomeNervousSystemTests(unittest.TestCase):
 
             failing = FailingEventOutcomeNervousSystem(store)
             with self.assertRaisesRegex(RuntimeError, "forced failure"):
-                self._outcome(failing, "event-crash")
+                self._perceive_outcome(failing, "event-crash")
 
             restored = EventOutcomeNervousSystem(store)
             after_failure = restored.recent_traces(20)
@@ -96,7 +96,7 @@ class EventOutcomeNervousSystemTests(unittest.TestCase):
                 any(trace.channel == "outcome" for trace in after_failure)
             )
 
-            committed = self._outcome(restored, "event-crash")
+            committed = self._perceive_outcome(restored, "event-crash")
             self.assertTrue(restored.has_event_outcome("event-crash"))
             self.assertGreater(
                 restored.link_strength(committed.trace_id, anchor.trace_id),
@@ -110,14 +110,14 @@ class EventOutcomeNervousSystemTests(unittest.TestCase):
             db = Path(tmp) / "kernel.db"
             first_store = KernelStore(db)
             first = EventOutcomeNervousSystem(first_store)
-            trace = self._outcome(first, "event-restart")
+            trace = self._perceive_outcome(first, "event-restart")
             before = first.snapshot()
             cutoff = first.repair_from()
             first_store.close()
 
             second_store = KernelStore(db)
             second = EventOutcomeNervousSystem(second_store)
-            retried = self._outcome(second, "event-restart")
+            retried = self._perceive_outcome(second, "event-restart")
 
             self.assertEqual(retried.trace_id, trace.trace_id)
             self.assertEqual(retried.repetitions, trace.repetitions)
