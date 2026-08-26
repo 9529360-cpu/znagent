@@ -35,6 +35,8 @@ class _FixtureHandler(http.server.BaseHTTPRequestHandler):
                 f'<input id="zn-target" type="text" aria-label="ZN Search Target" '
                 f'value="{_RAW_TARGET_VALUE}">'
                 '<input id="zn-churn" type="text" aria-label="ZN Churn Target">'
+                '<button id="zn-toggle" type="button" aria-label="ZN Toggle" aria-pressed="false">Toggle</button>'
+                '<button id="zn-toggle-churn" type="button" aria-label="ZN Toggle Churn" aria-pressed="false">Toggle churn</button>'
                 '<input id="zn-password" type="password" aria-label="Secret Password" value="hidden">'
                 '<div id="zn-hidden" style="display:none">hidden target</div>'
                 '<span id="zn-duplicate">one</span><span id="zn-duplicate">two</span>'
@@ -43,6 +45,17 @@ class _FixtureHandler(http.server.BaseHTTPRequestHandler):
                 "const churn=document.getElementById('zn-churn');"
                 "churn.addEventListener('focus',(event)=>{"
                 "const current=event.currentTarget;"
+                "const replacement=current.cloneNode(true);"
+                "current.replaceWith(replacement);"
+                "},{once:true});"
+                "const toggle=document.getElementById('zn-toggle');"
+                "toggle.addEventListener('click',()=>{"
+                "toggle.setAttribute('aria-pressed',toggle.getAttribute('aria-pressed')==='true'?'false':'true');"
+                "});"
+                "const toggleChurn=document.getElementById('zn-toggle-churn');"
+                "toggleChurn.addEventListener('click',(event)=>{"
+                "const current=event.currentTarget;"
+                "current.setAttribute('aria-pressed','true');"
                 "const replacement=current.cloneNode(true);"
                 "current.replaceWith(replacement);"
                 "},{once:true});"
@@ -80,7 +93,7 @@ class ManagedBrowserWindowsE2E(unittest.TestCase):
         cls.server.server_close()
         cls.thread.join(timeout=5)
 
-    def test_local_headless_chromium_observes_targets_focuses_exact_node_and_verifies_navigation(self):
+    def test_local_headless_chromium_observes_targets_focuses_exact_node_clicks_verified_toggle_and_verifies_navigation(self):
         permission = BrowserPermissionContext(
             allow_navigation=True,
             allow_page_interaction=True,
@@ -203,6 +216,88 @@ class ManagedBrowserWindowsE2E(unittest.TestCase):
             click_effect = browser.act(click_probe, click_authority)
             self.assertFalse(click_effect.success)
             self.assertIn("not implemented", click_effect.error or "")
+
+            toggle_query = BrowserTargetQuery(
+                kind=BrowserTargetQueryKind.DOM_ID,
+                value="zn-toggle",
+            )
+            toggle_observation = browser.observe_target(
+                session.session_id,
+                toggle_query,
+                page_id=observed.page_id,
+            )
+            self.assertEqual(toggle_observation.target.role, "button")
+            self.assertEqual(toggle_observation.target.name, "ZN Toggle")
+            toggle_action = BrowserAction.create(
+                session_id=session.session_id,
+                page_id=toggle_observation.page_id,
+                kind=BrowserActionKind.CLICK,
+                target=toggle_observation.target,
+                expected={"aria_pressed": True},
+            )
+            toggle_authority = BrowserActionAuthority.from_observation(
+                toggle_action,
+                toggle_observation,
+                permission,
+            )
+            toggle_effect = browser.act(toggle_action, toggle_authority)
+            self.assertTrue(toggle_effect.success, toggle_effect.error)
+            self.assertEqual(toggle_effect.postcondition, "same_exact_target_aria_pressed")
+            self.assertEqual(toggle_effect.target_id, toggle_observation.target.target_id)
+            self.assertTrue(toggle_effect.data["exact_node_continuity"])
+            self.assertFalse(toggle_effect.data["aria_pressed_before"])
+            self.assertTrue(toggle_effect.data["aria_pressed_after"])
+            self.assertNotEqual(toggle_effect.observed_at, toggle_observation.captured_at)
+
+            toggle_back_observation = browser.observe_target(
+                session.session_id,
+                toggle_query,
+                page_id=observed.page_id,
+            )
+            toggle_back_action = BrowserAction.create(
+                session_id=session.session_id,
+                page_id=toggle_back_observation.page_id,
+                kind=BrowserActionKind.CLICK,
+                target=toggle_back_observation.target,
+                expected={"aria_pressed": False},
+            )
+            toggle_back_authority = BrowserActionAuthority.from_observation(
+                toggle_back_action,
+                toggle_back_observation,
+                permission,
+            )
+            toggle_back_effect = browser.act(toggle_back_action, toggle_back_authority)
+            self.assertTrue(toggle_back_effect.success, toggle_back_effect.error)
+            self.assertTrue(toggle_back_effect.data["aria_pressed_before"])
+            self.assertFalse(toggle_back_effect.data["aria_pressed_after"])
+            self.assertTrue(toggle_back_effect.data["exact_node_continuity"])
+
+            toggle_churn_query = BrowserTargetQuery(
+                kind=BrowserTargetQueryKind.DOM_ID,
+                value="zn-toggle-churn",
+            )
+            toggle_churn_observation = browser.observe_target(
+                session.session_id,
+                toggle_churn_query,
+                page_id=observed.page_id,
+            )
+            toggle_churn_action = BrowserAction.create(
+                session_id=session.session_id,
+                page_id=toggle_churn_observation.page_id,
+                kind=BrowserActionKind.CLICK,
+                target=toggle_churn_observation.target,
+                expected={"aria_pressed": True},
+            )
+            toggle_churn_authority = BrowserActionAuthority.from_observation(
+                toggle_churn_action,
+                toggle_churn_observation,
+                permission,
+            )
+            toggle_churn_effect = browser.act(toggle_churn_action, toggle_churn_authority)
+            self.assertFalse(toggle_churn_effect.success)
+            self.assertIn("replaced target node", toggle_churn_effect.error or "")
+            self.assertFalse(toggle_churn_effect.data["exact_node_continuity"])
+            self.assertTrue(toggle_churn_effect.data["aria_pressed_after"])
 
             churn_query = BrowserTargetQuery(
                 kind=BrowserTargetQueryKind.DOM_ID,
