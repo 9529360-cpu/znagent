@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import json
+import sqlite3
+import tempfile
 import unittest
+from pathlib import Path
 
 from zn_agent.core.keyboard_text_body import KeyboardTextBody
+from zn_agent.core.store import KernelStore
 
 
 class _KeyboardBody(KeyboardTextBody):
-    def __init__(self, *, partial: bool = False):
-        super().__init__()
+    def __init__(self, *, partial: bool = False, store=None):
+        super().__init__(store=store)
         self.partial = bool(partial)
         self.sent: list[str] = []
 
@@ -34,6 +39,31 @@ class KeyboardTextBodyTests(unittest.TestCase):
         )
         self.assertNotIn("text", result.data)
         self.assertNotIn("ZN 文本", result.output)
+
+    def test_body_ledger_persists_only_redacted_keyboard_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = KernelStore(Path(tmp) / "kernel.db")
+            try:
+                body = _KeyboardBody(store=store)
+                result = body.act("keyboard_text", text="private keyboard text")
+                self.assertTrue(result.success, result.error)
+
+                with sqlite3.connect(store.path) as conn:
+                    row = conn.execute(
+                        "SELECT action_json FROM native_body_actions WHERE action_id = ?",
+                        (result.action_id,),
+                    ).fetchone()
+                self.assertIsNotNone(row)
+                serialized = str(row[0])
+                self.assertNotIn("private keyboard text", serialized)
+                action = json.loads(serialized)
+                self.assertEqual(action["args"]["redacted"], True)
+                self.assertEqual(action["args"]["text_chars"], 21)
+                self.assertEqual(len(action["args"]["text_sha256"]), 64)
+                self.assertNotIn("text", action["args"])
+                self.assertNotIn("content", action["args"])
+            finally:
+                store.close()
 
     def test_empty_control_and_oversized_text_fail_before_send(self) -> None:
         body = _KeyboardBody()
