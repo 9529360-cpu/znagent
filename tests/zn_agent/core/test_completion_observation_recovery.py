@@ -47,6 +47,24 @@ def resident_for(db: Path, runtime_cls=ZNResidentRuntime) -> ZNResidentRuntime:
     return resident
 
 
+def product_resident_for(db: Path):
+    resident = build_resident_runtime_from_existing_stack(
+        config={"model": {}},
+        store_path=db,
+    )
+    resident.capabilities.register(
+        ExactTaskCapability(
+            name="product-local-completion",
+            triggers=("product completion", "product pending observation"),
+            handler=lambda event, state: CapabilityResult(
+                success=True,
+                response="product durable success",
+            ),
+        )
+    )
+    return resident
+
+
 class ExplodingPostCompletionResident(ZNResidentRuntime):
     def _complete_result(self, event, result):
         completed = super()._complete_result(event, result)
@@ -56,20 +74,7 @@ class ExplodingPostCompletionResident(ZNResidentRuntime):
 class CompletionObservationRecoveryTests(unittest.TestCase):
     def test_product_resident_installs_completion_observation_organ(self):
         with tempfile.TemporaryDirectory() as tmp:
-            resident = build_resident_runtime_from_existing_stack(
-                config={"model": {}},
-                store_path=Path(tmp) / "kernel.db",
-            )
-            resident.capabilities.register(
-                ExactTaskCapability(
-                    name="product-local-completion",
-                    triggers=("product completion",),
-                    handler=lambda event, state: CapabilityResult(
-                        success=True,
-                        response="product durable success",
-                    ),
-                )
-            )
+            resident = product_resident_for(Path(tmp) / "kernel.db")
 
             result = resident.submit("product completion")
             observation = resident.completion_observations.state(result.event.event_id)
@@ -79,6 +84,38 @@ class CompletionObservationRecoveryTests(unittest.TestCase):
             self.assertIsNotNone(observation)
             self.assertEqual(observation["status"], "completed")
             self.assertEqual(resident.life.snapshot().last_event_id, result.event.event_id)
+            self.assertEqual(
+                resident.status()["completion_observations"],
+                {
+                    "healthy": True,
+                    "pending_count": 0,
+                    "waiting_count": 0,
+                    "running_count": 0,
+                    "stages": {},
+                },
+            )
+            resident.store.close()
+
+    def test_product_status_exposes_pending_observation_health_without_raw_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = product_resident_for(Path(tmp) / "kernel.db")
+
+            def fail_observation(run):
+                raise RuntimeError("private product observation detail")
+
+            resident.life.observe_action = fail_observation
+            result = resident.submit("product pending observation")
+            health = resident.status()["completion_observations"]
+            rendered = repr(health)
+
+            self.assertTrue(result.success)
+            self.assertFalse(health["healthy"])
+            self.assertEqual(health["pending_count"], 1)
+            self.assertEqual(health["waiting_count"], 1)
+            self.assertEqual(health["running_count"], 0)
+            self.assertEqual(health["stages"], {"life": 1})
+            self.assertNotIn("private product observation detail", rendered)
+            self.assertNotIn("last_error", rendered)
             resident.store.close()
 
     def test_life_observation_failure_does_not_reclassify_durable_success(self):
