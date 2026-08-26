@@ -202,6 +202,23 @@ _TARGET_TEXT_STATE_SCRIPT = r"""
 }
 """
 
+_TARGET_CHECKED_STATE_SCRIPT = r"""
+(element) => {
+  const connected = Boolean(element && element.isConnected);
+  const tag = String(element && element.tagName || "").toLowerCase();
+  const inputType = String(element && element.getAttribute("type") || "")
+    .trim()
+    .toLowerCase();
+  const supported = Boolean(tag === "input" && inputType === "checkbox");
+  return {
+    connected,
+    supported,
+    disabled: Boolean(element && element.disabled),
+    checked: connected && supported ? Boolean(element.checked) : null,
+  };
+}
+"""
+
 
 @dataclass(slots=True)
 class _ManagedTargetBinding:
@@ -357,6 +374,8 @@ class PlaywrightManagedBrowser:
                 return self._click(session, action)
             if action.kind is BrowserActionKind.TYPE_TEXT:
                 return self._type_text(session, action)
+            if action.kind is BrowserActionKind.CHECK:
+                return self._check(session, action)
             return self._failure(
                 action,
                 error=f"managed browser action is not implemented yet: {action.kind.value}",
@@ -883,6 +902,156 @@ class PlaywrightManagedBrowser:
             data=data,
         )
 
+    def _check(
+        self,
+        session: _ManagedSession,
+        action: BrowserAction,
+    ) -> BrowserEffectEvidence:
+        if action.target is None:
+            raise ManagedBrowserError("browser check requires a current target")
+        if action.target.role != "checkbox":
+            raise ManagedBrowserError(
+                "browser check currently requires a native checkbox target"
+            )
+
+        page_id = action.page_id or action.target.page_id or self._default_page_id(session)
+        page = self._page(session, page_id)
+        binding = self._revalidate_target_binding(session, page_id, action.target)
+        before_url = str(getattr(page, "url", "") or "")
+        checked_before = self._read_target_checked_state(binding.handle)
+        if checked_before:
+            raise ManagedBrowserError(
+                "browser check target is already checked before dispatch"
+            )
+
+        try:
+            binding.handle.check()
+        except Exception as exc:
+            self._refresh_page_observation_after_failed_mutation(session, page_id)
+            raise ManagedBrowserError(
+                f"managed browser check dispatch failed: {type(exc).__name__}: {exc}"
+            ) from exc
+
+        post_captured_at = utc_now()
+        try:
+            fresh_binding = self._acquire_target_binding(
+                session,
+                page_id,
+                binding.query,
+                observed_at=post_captured_at,
+            )
+        except Exception as exc:
+            self._refresh_page_observation_after_failed_mutation(session, page_id)
+            raise ManagedBrowserError(
+                f"managed browser check target could not be re-observed: {exc}"
+            ) from exc
+
+        try:
+            same_exact_node = bool(
+                binding.handle.evaluate(_EXACT_NODE_EQUAL_SCRIPT, fresh_binding.handle)
+            )
+        except Exception:
+            same_exact_node = False
+        try:
+            checked_after = self._read_target_checked_state(fresh_binding.handle)
+        except Exception as exc:
+            self._dispose_target_binding(fresh_binding)
+            self._refresh_page_observation_after_failed_mutation(session, page_id)
+            raise ManagedBrowserError(
+                f"browser check postcondition could not be observed: {exc}"
+            ) from exc
+
+        try:
+            post_observation = self._capture(
+                session,
+                page_id,
+                target=fresh_binding.target,
+                captured_at=post_captured_at,
+                target_binding=fresh_binding,
+            )
+        except Exception:
+            self._dispose_target_binding(fresh_binding)
+            self._refresh_page_observation_after_failed_mutation(session, page_id)
+            raise
+
+        after_url = post_observation.url
+        post_target = post_observation.target
+        data = {
+            "provider": session.identity.provider,
+            "exact_node_continuity": same_exact_node,
+            "checked_before": checked_before,
+            "checked_after": checked_after,
+        }
+        if post_target is None:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=post_observation.captured_at,
+                success=False,
+                page_id=page_id,
+                url_before=before_url,
+                url_after=after_url,
+                target_id=action.target.target_id,
+                postcondition="same_exact_target_checked",
+                data=data,
+                error="browser check postcondition lost the current target",
+            )
+        if not same_exact_node:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=post_observation.captured_at,
+                success=False,
+                page_id=page_id,
+                url_before=before_url,
+                url_after=after_url,
+                target_id=post_target.target_id,
+                postcondition="same_exact_target_checked",
+                data=data,
+                error="browser check postcondition observed a replaced target node",
+            )
+        if post_target.target_id != action.target.target_id:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=post_observation.captured_at,
+                success=False,
+                page_id=page_id,
+                url_before=before_url,
+                url_after=after_url,
+                target_id=post_target.target_id,
+                postcondition="same_exact_target_checked",
+                data=data,
+                error="browser check postcondition observed changed target identity",
+            )
+        if not checked_after:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=post_observation.captured_at,
+                success=False,
+                page_id=page_id,
+                url_before=before_url,
+                url_after=after_url,
+                target_id=post_target.target_id,
+                postcondition="same_exact_target_checked",
+                data=data,
+                error="browser check postcondition was not observed",
+            )
+
+        return BrowserEffectEvidence(
+            action_id=action.action_id,
+            session_id=action.session_id,
+            observed_at=post_observation.captured_at,
+            success=True,
+            page_id=page_id,
+            url_before=before_url,
+            url_after=after_url,
+            target_id=post_target.target_id,
+            postcondition="same_exact_target_checked",
+            data=data,
+        )
+
     @staticmethod
     def _validate_managed_text(value: Any) -> tuple[str, dict[str, Any]]:
         if not isinstance(value, str):
@@ -950,6 +1119,33 @@ class PlaywrightManagedBrowser:
         }
         value = ""
         return state
+
+    @staticmethod
+    def _read_target_checked_state(handle: Any) -> bool:
+        try:
+            raw = handle.evaluate(_TARGET_CHECKED_STATE_SCRIPT)
+        except Exception as exc:
+            raise ManagedBrowserError(
+                f"managed browser checkbox state provider failed: {type(exc).__name__}: {exc}"
+            ) from exc
+        if not isinstance(raw, dict):
+            raise ManagedBrowserError(
+                "managed browser checkbox state provider returned invalid evidence"
+            )
+        if not bool(raw.get("connected")):
+            raise ManagedBrowserError("managed browser checkbox target is detached")
+        if not bool(raw.get("supported")):
+            raise ManagedBrowserError(
+                "managed browser check currently supports only native input[type=checkbox] targets"
+            )
+        if bool(raw.get("disabled")):
+            raise ManagedBrowserError("managed browser checkbox target is disabled")
+        checked = raw.get("checked")
+        if type(checked) is not bool:
+            raise ManagedBrowserError(
+                "managed browser checkbox checked state is unavailable"
+            )
+        return checked
 
     def _capture(
         self,
