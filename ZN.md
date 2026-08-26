@@ -42,7 +42,7 @@ ZN is the only product and the only resident subject.
 
 **ZN uses models. Models do not own ZN.**
 
-Models, browsers, search systems, code interpreters and future cognitive systems are replaceable resources. They do not own ZN identity, memory, Will, continuity or the resident life loop.
+Models, browser engines/providers, search systems, code interpreters and future cognitive systems are replaceable resources. They do not own ZN identity, memory, Will, continuity or the resident life loop. ZN owns the semantics, state, authority and evidence contracts around those resources.
 
 ZN owns:
 
@@ -159,6 +159,105 @@ Engineering competence must preserve:
 - familiar execution never makes current evidence optional;
 - model suggestions do not create execution authority.
 
+### 4.1 Browser is a first-class resident Body/Senses subsystem
+
+Browser capability is not a late tool attachment and must not be reduced to "a model controlling Playwright". Product-grade ZN needs two distinct browser planes from the architecture level:
+
+```text
+Resident Managed Browser
++ User Browser Bridge
+= complete browser capability
+```
+
+They serve different realities and neither can replace the other.
+
+The browser subsystem must be ZN-owned at the contract/lifecycle/evidence layer even when the underlying engine or provider is replaceable.
+
+### 4.2 Resident Managed Browser
+
+ZN needs a managed browser for autonomous web work that should not require a visible user browser or an already logged-in personal session.
+
+The default design target is a locally available Chromium-class browser controlled through a ZN-owned adapter, with both headless and headed execution when the platform supports them. A remote/cloud browser may be an optional provider, but basic resident web ability must not depend on a cloud browser account.
+
+The managed browser is responsible for product capabilities such as:
+
+- page/session lifecycle and bounded profile storage;
+- navigation, redirects and URL safety;
+- DOM/accessibility/page-state sensing;
+- screenshots and visual evidence where needed;
+- click, focus, form entry and bounded script-driven page interaction;
+- downloads/uploads with explicit file authority;
+- multi-page/tab state where justified;
+- current page URL/title/load/error evidence;
+- post-action verification and recovery from stale targets;
+- explicit network/proxy/provider configuration;
+- deterministic cleanup of ephemeral sessions.
+
+Managed browser profiles are isolated from the user's ordinary browser profiles by default. ZN must not silently copy Chrome/Edge cookies, password stores, browser databases, profile directories or authentication secrets into its managed browser.
+
+Search/extract APIs such as Tavily, Exa or Firecrawl remain useful WebResources, but they complement rather than replace a real managed browser. API extraction cannot prove interactive page state, JavaScript behavior, authenticated UI flows or browser-side effects.
+
+### 4.3 User Browser Bridge
+
+Many important tasks depend on state that already exists in the user's real browser: authenticated applications, enterprise SSO, remembered MFA, local certificates, site grants, extensions, open tabs or data that the user should not have to log into again inside a second ZN-managed profile.
+
+ZN therefore also needs a separate bridge to the user's existing browser session.
+
+The user browser remains the user's application and profile; it does not become ZN runtime or identity storage. ZN may sense and act through bounded adapters such as:
+
+```text
+Windows UIA / accessibility / desktop evidence
++ optional ZN browser companion extension
++ optional native-messaging or similarly bounded local bridge
+```
+
+A companion extension/bridge may provide higher-fidelity semantic page evidence when installed and explicitly permitted, while UIA/desktop control remains an independent path and fallback for visible user interaction.
+
+The user must not be forced to reproduce every login inside the managed browser merely because ZN needs data from an authenticated user session. Conversely, ZN must not solve this by extracting raw cookies, saved passwords or browser credential databases. Authentication material stays in the browser/OS security boundary whenever possible; ZN acts through the already-authorized session.
+
+Per-site/page/session permission, sensitive-field handling and user-visible control must be explicit. Password fields, payment secrets, recovery codes and other sensitive inputs require conservative handling and must never become ordinary observation or learned-memory content.
+
+### 4.4 Shared browser action and evidence contract
+
+Managed-browser and user-browser paths may use different providers, but they should converge on ZN-owned semantic contracts rather than create two unrelated automation stacks.
+
+Common concepts should include:
+
+```text
+BrowserTarget
+BrowserObservation
+BrowserAction
+BrowserActionAuthority
+BrowserEffectEvidence
+BrowserSessionIdentity
+BrowserPermissionContext
+```
+
+Actions must bind to fresh target/session evidence. Successful dispatch is not successful completion. Navigation, form submission, downloads, uploads and state-changing page actions require appropriate postconditions.
+
+DOM identity, accessibility identity, UIA RuntimeId, coordinates and visual regions are all scoped evidence, not permanent truth. The resident must be able to reject stale targets and re-sense after page/process/frame changes.
+
+Cloud browser providers, local Chromium, browser extensions and desktop automation are implementations behind ZN ownership. No provider may become the browser control plane or own resident intention, permission, memory or completion semantics.
+
+### 4.5 Product-level browser requirements
+
+The browser subsystem should be designed for the eventual real product rather than a CI-demo minimum. Important requirements include:
+
+- local-first managed browsing with optional cloud capacity;
+- use of the user's existing authenticated browser when task reality lives there;
+- no hidden credential/profile copying between browser planes;
+- first-class privacy boundaries for text, screenshots, downloads and page metadata;
+- explicit MFA/user-presence handoff where automation cannot or should not continue alone;
+- robust handling of popups, new tabs, redirects, downloads, file pickers and browser crashes;
+- bounded persistence and cleanup for managed sessions;
+- observable provider/session health and actionable failure reasons;
+- anti-stale target checks and independent post-action evidence;
+- replaceable providers without changing ZN identity or resident semantics;
+- real-browser E2E evidence for supported user-browser integrations;
+- managed-browser E2E evidence for supported autonomous browser integrations.
+
+A product slice may implement only part of this at one time, but status documents must name the missing product requirements explicitly. Passing a narrow test is evidence for that slice, not evidence that the browser product is complete.
+
 ## 5. Memory and learning
 
 Memory is lived resident change, not merely transcript/context retrieval.
@@ -250,7 +349,9 @@ At minimum protect:
 - runtime package ownership;
 - active ZN renderer/main/preload/protocol ownership;
 - release/runtime staging integrity;
-- repository-boundary scans that prevent historical/reference product paths, package namespaces or control planes from becoming active dependencies again.
+- repository-boundary scans that prevent historical/reference product paths, package namespaces or control planes from becoming active dependencies again;
+- managed-browser lifecycle/evidence contracts once implemented;
+- real user-browser integration and privacy/permission boundaries once implemented.
 
 Tests retained in the active tree must describe ZN behavior or guard ZN ownership boundaries. Optional Linux/macOS checks must not be presented as required evidence while those platforms are not intended targets.
 
@@ -281,9 +382,13 @@ The repository-boundary evacuation and M10 canonical promotion are complete. Eng
 ```text
 keep automatic Windows x64 self-hosted CI green on push / PR
 → keep ZN-only ownership guards green
+→ build the product-grade browser foundation as two explicit planes
+   → Resident Managed Browser for autonomous local/headless/headed web work
+   → User Browser Bridge for existing authenticated user sessions
+→ preserve common ZN-owned browser action/evidence/privacy semantics across both planes
+→ continue real Windows desktop/UIA computer-use evidence without confusing it with managed-browser automation
 → remove remaining development/tooling security debt where safely possible
 → advance resident-owned engineering competence
-→ strengthen browser/computer Body/Senses only behind ZN ownership
 → close Windows M8 install / N→N+1 / rollback / signing gaps
 → maintain self-maintenance/release automation
 ```
