@@ -136,6 +136,16 @@ class KeyboardTextBody(NativeBody):
             else ctypes.c_ulong
         )
 
+        class MouseInput(ctypes.Structure):
+            _fields_ = [
+                ("dx", wintypes.LONG),
+                ("dy", wintypes.LONG),
+                ("mouseData", wintypes.DWORD),
+                ("dwFlags", wintypes.DWORD),
+                ("time", wintypes.DWORD),
+                ("dwExtraInfo", ulong_ptr),
+            ]
+
         class KeyboardInput(ctypes.Structure):
             _fields_ = [
                 ("wVk", wintypes.WORD),
@@ -145,8 +155,23 @@ class KeyboardTextBody(NativeBody):
                 ("dwExtraInfo", ulong_ptr),
             ]
 
+        class HardwareInput(ctypes.Structure):
+            _fields_ = [
+                ("uMsg", wintypes.DWORD),
+                ("wParamL", wintypes.WORD),
+                ("wParamH", wintypes.WORD),
+            ]
+
         class InputUnion(ctypes.Union):
-            _fields_ = [("ki", KeyboardInput)]
+            # INPUT's size is defined by its largest union member. Including the
+            # real MOUSEINPUT and HARDWAREINPUT members is required on Win64;
+            # a keyboard-only union would make ctypes.sizeof(INPUT) too small
+            # and Windows SendInput rejects the cbSize argument.
+            _fields_ = [
+                ("mi", MouseInput),
+                ("ki", KeyboardInput),
+                ("hi", HardwareInput),
+            ]
 
         class Input(ctypes.Structure):
             _anonymous_ = ("union",)
