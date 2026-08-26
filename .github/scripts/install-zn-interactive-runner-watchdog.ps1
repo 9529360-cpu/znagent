@@ -31,6 +31,7 @@ if ($currentSessionId -eq 0) {
     throw 'Interactive watchdog must be installed from a logged-on interactive session, not Session 0.'
 }
 $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+$currentAccount = ($currentIdentity -split '\\')[-1]
 
 $listener = Get-CurrentRunnerListener
 $listenerPath = [string]$listener.ExecutablePath
@@ -60,16 +61,15 @@ if ($null -ne $existingTask) {
     if ($principal.LogonType -notin @('Interactive','InteractiveToken')) {
         throw "Existing watchdog task does not use an interactive logon type: $($principal.LogonType)"
     }
-    if (-not [string]::IsNullOrWhiteSpace([string]$principal.UserId) -and [string]$principal.UserId -ne $currentIdentity) {
+    $taskAccount = ([string]$principal.UserId -split '\\')[-1]
+    if (-not [string]::IsNullOrWhiteSpace([string]$principal.UserId) -and $taskAccount -ne $currentAccount) {
         throw "Existing watchdog task is owned by '$($principal.UserId)', but current runner session is '$currentIdentity'."
     }
 }
 
-$powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-$quotedWatchdog = '"' + $installedWatchdog + '"'
-$quotedRoot = '"' + $runnerRoot + '"'
-$arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File $quotedWatchdog -RunnerRoot $quotedRoot -ExpectedRunnerName $ExpectedRunnerName"
-$newAction = New-ScheduledTaskAction -Execute $powershell -Argument $arguments -WorkingDirectory $runnerRoot
+$cmd = Join-Path $env:SystemRoot 'System32\cmd.exe'
+$arguments = "/d /c `"cd /d $runnerRoot && run.cmd`""
+$newAction = New-ScheduledTaskAction -Execute $cmd -Argument $arguments -WorkingDirectory $runnerRoot
 $newTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentIdentity
 
 if ($null -eq $existingTask) {
@@ -110,11 +110,11 @@ $updatedAction = @($updatedTask.Actions)
 if ($updatedAction.Count -ne 1) {
     throw "Updated watchdog task has unexpected action count: $($updatedAction.Count)"
 }
-if ([string]$updatedAction[0].Execute -ne $powershell) {
-    throw 'Updated watchdog task does not execute Windows PowerShell.'
+if ([string]$updatedAction[0].Execute -ne $cmd) {
+    throw 'Updated interactive task does not execute cmd.exe.'
 }
 $updatedArguments = [string]$updatedAction[0].Arguments
-foreach ($required in @('-ExecutionPolicy Bypass', 'watch-zn-interactive-runner.ps1')) {
+foreach ($required in @('/d /c', 'run.cmd')) {
     if ($updatedArguments.IndexOf($required, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
         throw "Updated watchdog action is missing required argument fragment: $required"
     }
@@ -128,7 +128,7 @@ if ($updatedTask.Settings.Hidden) {
 if ($updatedTask.Principal.LogonType -notin @('Interactive','InteractiveToken')) {
     throw "Updated watchdog task left interactive desktop boundary: $($updatedTask.Principal.LogonType)"
 }
-if (-not [string]::IsNullOrWhiteSpace([string]$updatedTask.Principal.UserId) -and [string]$updatedTask.Principal.UserId -ne $currentIdentity) {
+if (-not [string]::IsNullOrWhiteSpace([string]$updatedTask.Principal.UserId) -and ([string]$updatedTask.Principal.UserId -split '\\')[-1] -ne $currentAccount) {
     throw "Updated watchdog task belongs to '$($updatedTask.Principal.UserId)', not current interactive identity '$currentIdentity'."
 }
 if (@($updatedTask.Triggers).Count -ne 1 -or [string]$updatedTask.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskLogonTrigger') {
