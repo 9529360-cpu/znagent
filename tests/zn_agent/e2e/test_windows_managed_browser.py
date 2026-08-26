@@ -40,6 +40,8 @@ class _FixtureHandler(http.server.BaseHTTPRequestHandler):
                 '<input id="zn-churn" type="text" aria-label="ZN Churn Target">'
                 '<input id="zn-type-target" type="text" aria-label="ZN Type Target">'
                 '<input id="zn-type-churn" type="text" aria-label="ZN Type Churn">'
+                '<input id="zn-check" type="checkbox" aria-label="ZN Check">'
+                '<input id="zn-check-churn" type="checkbox" aria-label="ZN Check Churn">'
                 '<button id="zn-toggle" type="button" aria-label="ZN Toggle" aria-pressed="false">Toggle</button>'
                 '<button id="zn-toggle-churn" type="button" aria-label="ZN Toggle Churn" aria-pressed="false">Toggle churn</button>'
                 '<input id="zn-password" type="password" aria-label="Secret Password" value="hidden">'
@@ -58,6 +60,13 @@ class _FixtureHandler(http.server.BaseHTTPRequestHandler):
                 "const current=event.currentTarget;"
                 "const replacement=current.cloneNode(true);"
                 "replacement.value=current.value;"
+                "current.replaceWith(replacement);"
+                "},{once:true});"
+                "const checkChurn=document.getElementById('zn-check-churn');"
+                "checkChurn.addEventListener('input',(event)=>{"
+                "const current=event.currentTarget;"
+                "const replacement=current.cloneNode(true);"
+                "replacement.checked=current.checked;"
                 "current.replaceWith(replacement);"
                 "},{once:true});"
                 "const toggle=document.getElementById('zn-toggle');"
@@ -105,7 +114,7 @@ class ManagedBrowserWindowsE2E(unittest.TestCase):
         cls.server.server_close()
         cls.thread.join(timeout=5)
 
-    def test_local_headless_chromium_observes_targets_focuses_clicks_types_and_verifies_navigation(self):
+    def test_local_headless_chromium_observes_targets_focuses_clicks_types_checks_and_verifies_navigation(self):
         permission = BrowserPermissionContext(
             allow_navigation=True,
             allow_page_interaction=True,
@@ -396,6 +405,90 @@ class ManagedBrowserWindowsE2E(unittest.TestCase):
                 _TYPED_TARGET_TEXT,
                 json.dumps(type_churn_effect.data, sort_keys=True),
             )
+
+            check_query = BrowserTargetQuery(
+                kind=BrowserTargetQueryKind.DOM_ID,
+                value="zn-check",
+            )
+            check_observation = browser.observe_target(
+                session.session_id,
+                check_query,
+                page_id=observed.page_id,
+            )
+            self.assertEqual(check_observation.target.role, "checkbox")
+            self.assertEqual(check_observation.target.name, "ZN Check")
+            check_action = BrowserAction.create(
+                session_id=session.session_id,
+                page_id=check_observation.page_id,
+                kind=BrowserActionKind.CHECK,
+                target=check_observation.target,
+            )
+            check_authority = BrowserActionAuthority.from_observation(
+                check_action,
+                check_observation,
+                permission,
+            )
+            check_effect = browser.act(check_action, check_authority)
+            self.assertTrue(check_effect.success, check_effect.error)
+            self.assertEqual(check_effect.postcondition, "same_exact_target_checked")
+            self.assertEqual(check_effect.target_id, check_observation.target.target_id)
+            self.assertTrue(check_effect.data["exact_node_continuity"])
+            self.assertFalse(check_effect.data["checked_before"])
+            self.assertTrue(check_effect.data["checked_after"])
+            self.assertNotEqual(check_effect.observed_at, check_observation.captured_at)
+
+            checked_observation = browser.observe_target(
+                session.session_id,
+                check_query,
+                page_id=observed.page_id,
+            )
+            self.assertEqual(
+                checked_observation.target.target_id,
+                check_observation.target.target_id,
+            )
+            uncheck_probe = BrowserAction.create(
+                session_id=session.session_id,
+                page_id=checked_observation.page_id,
+                kind=BrowserActionKind.UNCHECK,
+                target=checked_observation.target,
+            )
+            uncheck_authority = BrowserActionAuthority.from_observation(
+                uncheck_probe,
+                checked_observation,
+                permission,
+            )
+            uncheck_effect = browser.act(uncheck_probe, uncheck_authority)
+            self.assertFalse(uncheck_effect.success)
+            self.assertIn("not implemented", uncheck_effect.error or "")
+
+            check_churn_query = BrowserTargetQuery(
+                kind=BrowserTargetQueryKind.DOM_ID,
+                value="zn-check-churn",
+            )
+            check_churn_observation = browser.observe_target(
+                session.session_id,
+                check_churn_query,
+                page_id=observed.page_id,
+            )
+            check_churn_action = BrowserAction.create(
+                session_id=session.session_id,
+                page_id=check_churn_observation.page_id,
+                kind=BrowserActionKind.CHECK,
+                target=check_churn_observation.target,
+            )
+            check_churn_authority = BrowserActionAuthority.from_observation(
+                check_churn_action,
+                check_churn_observation,
+                permission,
+            )
+            check_churn_effect = browser.act(check_churn_action, check_churn_authority)
+            self.assertFalse(check_churn_effect.success)
+            self.assertTrue(
+                "replaced target node" in (check_churn_effect.error or "")
+                or "dispatch failed" in (check_churn_effect.error or "")
+            )
+            if "exact_node_continuity" in check_churn_effect.data:
+                self.assertFalse(check_churn_effect.data["exact_node_continuity"])
 
             churn_query = BrowserTargetQuery(
                 kind=BrowserTargetQueryKind.DOM_ID,
