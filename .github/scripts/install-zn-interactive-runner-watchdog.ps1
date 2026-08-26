@@ -54,13 +54,15 @@ if (-not (Test-Path -LiteralPath $sourceWatchdog -PathType Leaf)) {
 $installedWatchdog = Join-Path $runnerRoot 'watch-zn-interactive-runner.ps1'
 Copy-Item -LiteralPath $sourceWatchdog -Destination $installedWatchdog -Force
 
-$existingTask = Get-ScheduledTask -TaskPath '\' -TaskName $TaskName -ErrorAction Stop
-$principal = $existingTask.Principal
-if ($principal.LogonType -notin @('Interactive','InteractiveToken')) {
-    throw "Existing watchdog task does not use an interactive logon type: $($principal.LogonType)"
-}
-if (-not [string]::IsNullOrWhiteSpace([string]$principal.UserId) -and [string]$principal.UserId -ne $currentIdentity) {
-    throw "Existing watchdog task is owned by '$($principal.UserId)', but current runner session is '$currentIdentity'."
+$existingTask = Get-ScheduledTask -TaskPath '\' -TaskName $TaskName -ErrorAction SilentlyContinue
+if ($null -ne $existingTask) {
+    $principal = $existingTask.Principal
+    if ($principal.LogonType -notin @('Interactive','InteractiveToken')) {
+        throw "Existing watchdog task does not use an interactive logon type: $($principal.LogonType)"
+    }
+    if (-not [string]::IsNullOrWhiteSpace([string]$principal.UserId) -and [string]$principal.UserId -ne $currentIdentity) {
+        throw "Existing watchdog task is owned by '$($principal.UserId)', but current runner session is '$currentIdentity'."
+    }
 }
 
 $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -69,20 +71,39 @@ $quotedRoot = '"' + $runnerRoot + '"'
 $arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File $quotedWatchdog -RunnerRoot $quotedRoot -ExpectedRunnerName $ExpectedRunnerName"
 $newAction = New-ScheduledTaskAction -Execute $powershell -Argument $arguments -WorkingDirectory $runnerRoot
 $newTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentIdentity
-$settings = $existingTask.Settings
-$settings.Hidden = $false
-$settings.ExecutionTimeLimit = 'PT0S'
-$settings.RestartCount = 999
-$settings.RestartInterval = 'PT1M'
-$settings.MultipleInstances = 'IgnoreNew'
 
-Set-ScheduledTask `
-    -TaskPath '\' `
-    -TaskName $TaskName `
-    -Action $newAction `
-    -Trigger $newTrigger `
-    -Principal $existingTask.Principal `
-    -Settings $settings | Out-Null
+if ($null -eq $existingTask) {
+    $principal = New-ScheduledTaskPrincipal -UserId $currentIdentity -LogonType Interactive -RunLevel Limited
+    $settings = New-ScheduledTaskSettingsSet `
+        -ExecutionTimeLimit ([TimeSpan]::Zero) `
+        -RestartCount 999 `
+        -RestartInterval (New-TimeSpan -Minutes 1) `
+        -MultipleInstances IgnoreNew
+    $settings.Hidden = $false
+    Register-ScheduledTask `
+        -TaskPath '\' `
+        -TaskName $TaskName `
+        -Action $newAction `
+        -Trigger $newTrigger `
+        -Principal $principal `
+        -Settings $settings | Out-Null
+    Write-Host "Created visible watchdog task for current interactive identity '$currentIdentity'."
+} else {
+    $settings = $existingTask.Settings
+    $settings.Hidden = $false
+    $settings.ExecutionTimeLimit = 'PT0S'
+    $settings.RestartCount = 999
+    $settings.RestartInterval = 'PT1M'
+    $settings.MultipleInstances = 'IgnoreNew'
+
+    Set-ScheduledTask `
+        -TaskPath '\' `
+        -TaskName $TaskName `
+        -Action $newAction `
+        -Trigger $newTrigger `
+        -Principal $existingTask.Principal `
+        -Settings $settings | Out-Null
+}
 
 $updatedTask = Get-ScheduledTask -TaskPath '\' -TaskName $TaskName -ErrorAction Stop
 $updatedAction = @($updatedTask.Actions)
@@ -103,6 +124,12 @@ if ($updatedArguments.IndexOf('-WindowStyle Hidden', [StringComparison]::Ordinal
 }
 if ($updatedTask.Settings.Hidden) {
     throw 'Updated watchdog task is still marked hidden.'
+}
+if ($updatedTask.Principal.LogonType -notin @('Interactive','InteractiveToken')) {
+    throw "Updated watchdog task left interactive desktop boundary: $($updatedTask.Principal.LogonType)"
+}
+if (-not [string]::IsNullOrWhiteSpace([string]$updatedTask.Principal.UserId) -and [string]$updatedTask.Principal.UserId -ne $currentIdentity) {
+    throw "Updated watchdog task belongs to '$($updatedTask.Principal.UserId)', not current interactive identity '$currentIdentity'."
 }
 if (@($updatedTask.Triggers).Count -ne 1 -or [string]$updatedTask.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskLogonTrigger') {
     throw 'Updated watchdog task does not have exactly one logon trigger.'
