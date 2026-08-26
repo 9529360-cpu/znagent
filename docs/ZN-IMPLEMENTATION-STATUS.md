@@ -18,63 +18,40 @@ Development branch: `dev/zn-agent`. Canonical source/release branch: `main`.
 
 M10 canonical source promotion remains complete. Ordinary development remains on `dev/zn-agent`; `main` was not modified in this stage.
 
-Latest verified implementation/test head for the managed-browser foundation:
+Latest implementation/test head before this status-document update:
 
 ```text
-86753e29d318272970f258e3c1691312f3a0685c
-test: reject unobserved browser target authority
+2e5a328e35a75e65ed1c3cedfc7b79d8f5bdf3ee
+fix: close browser proof store before cleanup
 ```
 
-Status: **VERIFIED FOUNDATION ON WINDOWS X64 NORMAL CI + REAL LOCAL HEADLESS CHROMIUM E2E**.
+Status: **VERIFIED MANAGED-BROWSER FOUNDATION + VERIFIED NARROW REAL EDGE UIA PROVIDER SENSING**.
 
-Exact-head normal workflow:
+Exact-head normal Windows x64 CI:
 
 ```text
-run 32948299745
-head 86753e29d318272970f258e3c1691312f3a0685c
+run 32953911506
+head 2e5a328e35a75e65ed1c3cedfc7b79d8f5bdf3ee
 
-Electron / TypeScript / Windows   success
 ZN Source Boundary / Windows      success
 ZN Kernel / Python / Windows      success
+Electron / TypeScript / Windows   success
 Publish Windows CI statuses       success
 ```
 
-Kernel evidence:
+The same head also has exact real interactive Windows evidence:
 
 ```text
-CPython 3.12.13
-formal runtime installed from runtime/python
-zero-model isolated resident boot success
-resident core compile success
-Ran 500 tests in 654.485s
-OK (skipped=5)
+run 32953911536
+head 2e5a328e35a75e65ed1c3cedfc7b79d8f5bdf3ee
+ZN Windows Interactive Desktop E2E   success
 ```
 
-Dedicated real managed-browser workflow:
+The interactive lane ran the existing pointer/UIA, native Win32 text-entry and WPF current-text tests plus the new real browser provider proof.
 
-```text
-run 32948299721
-head 86753e29d318272970f258e3c1691312f3a0685c
-job Windows local managed Chromium E2E
-success
-```
+## 2. Browser remains a two-plane ZN subsystem
 
-That workflow installs `znagent[browser]`, installs Playwright Chromium on the real Windows x64 runner, passes the browser contract/lifecycle tests and passes the real local Chromium navigation E2E.
-
-Existing desktop interaction regression evidence after browser ownership:
-
-```text
-run 32947957948
-head 4dd03d2ee79d8a078ea0fa8cf18217b33c193891
-Windows interactive computer-use E2E
-success
-```
-
-The previous pointer/UIA, native Win32 text-entry and WPF current-text evidence therefore remained green after the resident began owning the lazy managed-browser resource.
-
-## 2. Browser is a first-class product subsystem
-
-`ZN.md` requires two complementary planes:
+`ZN.md` requires:
 
 ```text
 Resident Managed Browser
@@ -82,15 +59,13 @@ Resident Managed Browser
 = complete browser capability
 ```
 
-The managed plane serves ZN's own web work. The user-browser plane serves task reality that already exists inside the user's authenticated Edge/Chrome session. Neither replaces the other.
+The managed plane serves ZN-owned web work. The user-browser plane serves task reality already present in the user's browser. Browser engines, accessibility providers, extensions and cloud services remain replaceable resources; they do not own ZN intent, identity, memory or completion truth.
 
-Both must converge on ZN-owned session/target/observation/action/authority/effect/permission semantics. Browser engines, cloud services, extensions and desktop providers remain replaceable resources rather than owners of resident intent, identity, memory or completion truth.
+Managed browsing must not solve login by copying browser cookies, password stores, profile databases or other credentials. Richer access to a user's existing browser must preserve browser/OS boundaries and explicit permission.
 
-The managed browser must not solve user authentication by silently copying cookies, password stores, profile databases or other browser credentials. The user-browser bridge must preserve the user's browser/OS security boundary and require explicit permission for richer integrations.
+## 3. Managed-browser foundation
 
-## 3. Managed-browser foundation now implemented
-
-Key commits:
+Key commits include:
 
 ```text
 0ffe253fa57f1da003a28cdec200d304a7bbe71f
@@ -107,148 +82,139 @@ fix: require observed browser target authority
 
 86753e29d318272970f258e3c1691312f3a0685c
 test: reject unobserved browser target authority
+
+a06d85a726cf6cc0eeb4b6c4cad4618435df0ef1
+fix: harden browser authority after independent review
+
+a62cf5a6ff3b8bacf19d12cf0fe4dfba3e5a2f4d
+fix: close managed browser with resident service
 ```
 
-### 3.1 ZN-owned browser semantics
+`runtime/python/zn_agent/core/browser.py` owns browser session, permission, target, observation, action, authority and effect semantics. Targeted authority fails closed when current observation lacks the target or target ID/kind/frame/freshness has drifted.
 
-`runtime/python/zn_agent/core/browser.py` defines resident-owned concepts for:
+`runtime/python/zn_agent/core/managed_browser.py` provides the first adapter, `PlaywrightManagedBrowser`:
 
-- managed vs user browser plane;
-- browser session identity and profile scope;
-- permission context and allowed-origin scope;
-- page/element/accessibility/visual/desktop targets;
-- observations;
-- typed actions;
-- action authority bound to fresh observation/session/page/target evidence;
-- effect evidence whose success/failure semantics are explicit;
-- replaceable browser-adapter protocol.
+- Playwright is lazy/optional and does not own resident life;
+- managed sessions are ephemeral Chromium contexts;
+- service workers are blocked and downloads/uploads remain disabled in this slice;
+- HTTP(S) and supported WebSocket routes use ZN URL/private-network/origin policy;
+- observation exports bounded URL/title/load-state/viewport/provider metadata, not uncontrolled raw page dumps;
+- only `NAVIGATE` is implemented as browser mutation;
+- navigation requires current observation + permission + fresh authority;
+- success is formed only from fresh post-navigation observation and safe final URL;
+- unimplemented actions return explicit failure evidence.
 
-Managed sessions cannot claim a `user_existing` profile, and user-browser sessions cannot masquerade as ephemeral managed sessions.
+Resident service shutdown now closes the resident-owned managed-browser resource rather than relying on process teardown.
 
-Targeted actions fail closed if the current observation has no target or if target ID, kind or frame identity drifted before authority formation.
-
-### 3.2 Local Playwright Chromium adapter
-
-`runtime/python/zn_agent/core/managed_browser.py` provides the first adapter: `PlaywrightManagedBrowser`.
-
-Current verified behavior:
-
-- Playwright is lazy and optional; zero-model resident construction does not import/start Chromium;
-- managed sessions use an ephemeral Chromium context;
-- downloads are disabled and service workers are blocked in this first slice;
-- HTTP(S) requests pass through ZN URL/private-network/origin policy;
-- WebSocket routes use the same ZN policy where the installed Playwright API supports routing;
-- observation exports bounded URL/title/load state/viewport/provider/session metadata, not uncontrolled raw HTML/page dumps;
-- only `NAVIGATE` is implemented as a browser mutation;
-- navigation requires matching permission + fresh authority;
-- navigation success is formed only after a fresh observed current page and safe final URL;
-- optional exact expected-URL postcondition can contradict success;
-- other browser action kinds return explicit failure evidence instead of silently dispatching.
-
-The optional runtime dependency is currently:
+Dedicated managed Chromium proof remains valid:
 
 ```text
-znagent[browser] -> playwright==1.62.0
+run 32948299721
+head 86753e29d318272970f258e3c1691312f3a0685c
+Windows local managed Chromium E2E   success
 ```
 
-This optional dependency and CI-installed Chromium are not yet formal proof that the packaged ZN desktop release ships a browser runtime. Release bundling remains open.
+Formal release packaging of Playwright/Chromium is still open.
 
-### 3.3 Real local Chromium proof
+## 4. User Browser Bridge provider proof now exists
 
-`tests/zn_agent/e2e/test_windows_managed_browser.py` starts a local HTTP fixture and a real headless Chromium session, then proves:
-
-- a real ephemeral managed browser session exists;
-- navigation from `about:blank` to the exact local origin succeeds only through a fresh ZN action authority;
-- current URL/title/load state are re-observed after navigation;
-- a second navigation requires a new current observation/authority;
-- raw page text/content/HTML are not exported in observation metadata;
-- the link-local metadata endpoint remains blocked even when the test explicitly permits normal private-network access.
-
-Dedicated workflow `.github/workflows/zn-managed-browser-e2e.yml` installs the optional browser runtime and real Chromium before running browser contracts and the real E2E.
-
-## 4. Resident ownership and zero-model continuity
-
-The active runtime remains `FocusedModernTextResidentRuntime`, and now owns:
+Commits:
 
 ```text
-automation_text_state
-managed_browser
+4f811ef49dea9c9d2ccc7cb436145eb9f2d925f3
+test: prove real user browser UIA provider
+
+4ef025bc2ef9ba5f67102cddfe863252393058b9
+fix: define Windows enum callback type
+
+2e5a328e35a75e65ed1c3cedfc7b79d8f5bdf3ee
+fix: close browser proof store before cleanup
 ```
 
-`managed_browser` is lazy. Constructing or booting the resident does not open a browser and does not require Playwright in the base runtime install. Exact-head normal CI independently proves the zero-model resident still boots without the browser optional dependency.
+`tests/zn_agent/e2e/test_windows_interactive_user_browser_bridge.py` now proves a narrow but real provider fact on the self-hosted interactive Windows runner:
 
-This is intentionally a transitional composition point. The feature-specific resident inheritance chain is now a known architecture debt: future product growth should converge on stable product-resident composition rather than creating a new resident subclass name for each organ/capability.
+- stable Edge and Chrome are discovered from the actual machine;
+- the proof selects installed Edge when available;
+- the browser is launched with a temporary isolated `--user-data-dir`;
+- no user profile, cookies, password store or authentication material is copied;
+- `--force-renderer-accessibility` is deliberately not passed;
+- a real focused HTML `<input>` is observed through the resident's existing Windows UIA Senses;
+- foreground window, focused automation element and focused text-state evidence are aligned;
+- Edge exposed the HTML input as `UIA_EditControlTypeId` (`50004`), framework `Chrome`, with the fixture AutomationId;
+- Value Pattern and Text Pattern were available and the Value was writable;
+- resident text-state exported only bounded `text_length` + SHA-256 digest, not raw text/value/name;
+- the test performs no browser mutation.
 
-## 5. Interactive Windows reliability fix
+The first run proved the provider path but exposed a Windows test-cleanup bug because SQLite was still open when the temporary directory was removed. That test lifecycle was fixed; the exact-head interactive rerun `32953911536` then completed successfully.
 
-Commit:
+This evidence means **the default Edge Windows accessibility provider is sufficient for this isolated focused-input sensing slice**. It does **not** prove that ZN can operate the user's existing authenticated session.
+
+Not yet proven by this test:
+
+- attaching to or controlling a user's already-running authenticated Edge/Chrome profile;
+- cookies/login/session access;
+- tabs, popups, iframes or stale-page lifecycle;
+- browser click/focus/type mutation;
+- extension/native-messaging integration;
+- per-site/session permission UX;
+- MFA or sensitive-field handoff.
+
+## 5. Current browser target gap
+
+The next managed-browser dependency is now explicit in the real call chain:
 
 ```text
-921c979b6de14e4c24d506827dca291b0092594f
-ci: cover modern text interactive changes
+PlaywrightManagedBrowser.observe()
+-> _capture()
+-> BrowserObservation(target=None)
 ```
 
-The interactive E2E workflow path filters now include both:
+`BrowserTarget` and freshness/authority contracts already exist, but the managed adapter still has no bounded DOM/accessibility target producer. Therefore click/type must remain unavailable.
 
-```text
-runtime/python/zn_agent/core/automation_text_state_sense.py
-runtime/python/zn_agent/core/focused_modern_text_resident.py
-```
+The next implementation slice should establish a target observation API that:
 
-Future changes to those product files therefore cannot silently bypass the real interactive lane merely because the workflow path filter was stale.
+- resolves one explicit page target rather than dumping uncontrolled page content;
+- produces stable-enough ZN-owned target identity for the current observation;
+- records frame identity and freshness;
+- bounds role/name/selector hints and avoids secret/raw-page leakage;
+- can be re-observed independently before mutation;
+- fails closed when a target is absent, ambiguous, detached or changed.
 
-## 6. Product completeness ledger
+Only after that evidence exists should narrow click/focus/type action lifecycles be added one at a time with independent effect verification.
 
-Commit:
+## 6. Product completeness truth
 
-```text
-77b524e799af8f1f14a08cff14f7f98dd45992e9
-docs: add product capability map
-```
+Browser is not complete.
 
-`docs/ZN-PRODUCT-CAPABILITY-MAP.md` now tracks product needs separately from implementation/test status across:
+Verified/foundation slices now include:
 
-- Self/continuity;
-- memory/learning/competence;
-- files/workspace/terminal/code;
-- web/browser;
-- desktop computer use;
-- connectors/MCP;
-- communication/personal work;
-- long-running work/automation/recovery;
-- parallel Work/Investigation;
-- security/permission/trust;
-- product UI/observability;
-- self-maintenance/release.
+- resident-owned browser contracts and authority/effect semantics;
+- lazy resident ownership of managed browser;
+- real local headless Chromium navigation;
+- managed browser resource cleanup with resident service lifecycle;
+- real Windows interactive Edge UIA focused-input sensing without forced renderer accessibility.
 
-Mainstream agent capabilities are treated as evidence of useful user needs, then mapped into ZN-owned organs/resources/lifecycles. They are not copied as an LLM-planner/tool control plane.
-
-## 7. What remains incomplete
-
-The managed browser is a verified **foundation**, not a complete browser product.
-
-Still open:
+Still incomplete:
 
 - headed managed-browser UX/evidence;
-- bounded DOM/accessibility target sensing;
-- click/focus/type/select/check/keyboard browser actions;
-- multi-tab, popup, frame and stale-page lifecycle;
+- bounded managed DOM/accessibility target sensing;
+- managed browser click/focus/type/select/check/keyboard actions;
+- multi-tab/popup/frame lifecycle;
 - screenshots/visual browser evidence integration;
-- explicit download/upload/file-picker authority;
+- explicit downloads/uploads/file-picker authority;
 - managed persistent profile policy and cleanup;
 - cloud browser adapter;
-- browser health/crash/recovery lifecycle;
+- browser crash/health/recovery lifecycle;
 - complete DNS-rebinding/network-sandbox hardening;
-- formal release packaging of Playwright/Chromium;
-- the User Browser Bridge;
-- actual authenticated Edge/Chrome session integration;
-- browser companion extension/native messaging if real evidence shows it is needed;
-- per-site/session browser permission UX;
-- sensitive/MFA browser handoff lifecycle.
+- formal release packaging of browser runtime;
+- authenticated User Browser Bridge lifecycle;
+- extension/native messaging if real evidence shows it is needed;
+- site/session browser permission UX;
+- MFA/sensitive-field browser handoff.
 
-Desktop text mutation remains limited to an already-focused empty native Win32 `Edit`. WPF text-state evidence remains read-only and is not modern/browser mutation authority.
+Desktop text mutation remains limited to an already-focused empty native Win32 `Edit`. WPF and browser UIA current-text evidence are read-only sensing evidence, not modern/browser mutation authority.
 
-## 8. Other product debts
+## 7. Other product debts
 
 M8 remains **PARTIAL** for Windows x64:
 
@@ -259,17 +225,17 @@ M8 remains **PARTIAL** for Windows x64:
 
 SM0 remains complete; SM1+ remains open.
 
-GitHub Actions JavaScript runtime deprecation warnings remain non-blocking tooling debt. Pillow `Image.getdata` deprecation remains non-blocking visual-code debt.
+GitHub Actions JavaScript runtime deprecation warnings and Pillow `Image.getdata` deprecation remain non-blocking tooling debt.
 
-## 9. Next real targets
+## 8. Next real targets
 
 ```text
-1. preserve exact-head managed-browser + normal Windows CI evidence
-2. investigate actual Edge/Chrome availability and UIA/accessibility behavior on the real interactive Windows runner
-3. prove a focused real browser text field through resident Senses without inferring browser support from WPF
-4. establish bounded managed-browser DOM/accessibility target identity before adding click/type mutation
-5. converge managed-browser and user-browser paths on shared ZN-owned authority/effect semantics
-6. design authenticated User Browser Bridge without copying user credentials/profile data
+1. keep exact-head normal Windows CI and real interactive browser sensing trustworthy
+2. add bounded managed-browser DOM/accessibility target sensing and freshness
+3. prove target identity in a real local Chromium E2E before adding mutation
+4. add one narrow browser action at a time with permission + authority + independent effect evidence
+5. design authenticated User Browser Bridge from real provider evidence without copying credentials/profile data
+6. converge managed-browser and user-browser paths on shared ZN-owned target/authority/effect semantics
 7. then advance isolated parallel Work/Investigation + checkpoints and MCP/connectors from the product capability map
 8. keep M8 and SM1+ explicitly partial/open
 9. leave main untouched through ordinary development
