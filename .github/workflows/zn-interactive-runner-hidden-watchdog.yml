@@ -32,11 +32,15 @@ jobs:
           if ($env:RUNNER_NAME -notmatch '^zn-ci-') {
             throw "ZN interactive recovery requires a zn-ci service runner; got $env:RUNNER_NAME"
           }
-      - name: Start existing interactive watchdog task
+      - name: Start existing interactive watchdog task when present
         shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         run: |
           $taskName = 'ZN GitHub Actions Interactive Runner Watchdog'
-          $task = Get-ScheduledTask -TaskPath '\' -TaskName $taskName -ErrorAction Stop
+          $task = Get-ScheduledTask -TaskPath '\' -TaskName $taskName -ErrorAction SilentlyContinue
+          if ($null -eq $task) {
+            Write-Host 'No interactive watchdog task exists yet. Repository recovery cannot create an interactive desktop principal from Session 0; configure will create it once zn-interactive is manually started in the logged-on desktop session.'
+            exit 0
+          }
           if ($task.Principal.LogonType -notin @('Interactive','InteractiveToken')) {
             throw "Refusing to start watchdog outside interactive logon boundary: $($task.Principal.LogonType)"
           }
