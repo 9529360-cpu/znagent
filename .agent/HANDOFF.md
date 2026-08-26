@@ -4,295 +4,196 @@ Updated: 2026-08-26
 
 ## Current goal
 
-Develop ZN as a complete product-grade resident system while preserving the founding boundary:
+Keep ZN's Windows CI and real interactive verification planes repository-owned and recoverable, then resume bounded managed-browser product work.
+
+Founding boundary remains:
 
 > **ZN uses models. Models do not own ZN.**
 
-Browser remains a two-plane ZN subsystem:
-
-```text
-Resident Managed Browser
-+ User Browser Bridge
-= complete browser capability
-```
-
-The managed plane now has verified narrow navigation, exact-DOM-id/main-frame target sensing, exact-node `FOCUS`, exact-node `CLICK` for explicit boolean `aria-pressed` transitions, exact-node `TYPE_TEXT` for an empty writable non-password textbox, and exact-node native `CHECK` + `UNCHECK`.
-
-Do not optimize for feature count. New capabilities must remain resident-owned, permission-bound, independently verified against current reality, recoverable where applicable, and provider/model replaceable.
+Do not trade away the real Windows interactive-session boundary merely to make CI green.
 
 ## Branch / repository truth
 
+- repository: `9529360-cpu/znagent`
 - fixed development branch: `dev/zn-agent`
 - canonical source/release branch: `main`
-- latest fully verified implementation/test head before this documentation commit: `73257f8c728778054faf74869243b356383fede1`
-- implementation commit: `feat: add verified managed browser uncheck`
+- implementation head before this HANDOFF update: `f1ed2326e7536120ac0b8d362c2604f72a020e53`
+- implementation commit: `ci: verify hidden interactive runner handoff`
 - canonical `main`: `8234a835dea604783cea0bd9d28a40de654ec03d`
-- PR #6 remains draft/open/unmerged, base `main`, head `dev/zn-agent`
+- PR #6: draft/open/unmerged, base `main`, head `dev/zn-agent`
 - `main` was not modified
 - no force push or history rewrite was used
 
-A HANDOFF commit cannot contain its own resulting SHA. Re-read the resulting `dev/zn-agent` HEAD and require exact-head normal Windows CI before calling this handoff fully synchronized.
+A HANDOFF commit cannot contain its own resulting SHA. Re-read `dev/zn-agent` after this file is committed and record/report the resulting exact head externally; do not pretend this file can self-reference its own commit.
 
 ## Completed in current stage
 
-### 1. Previous CHECK documentation P0 was closed first
+### 1. Restored repository truth instead of following stale handoff state
 
-CHECK documentation head:
+The prior HANDOFF still pointed at browser UNCHECK/documentation work, but the real branch had advanced through a Windows self-hosted runner/CI maintenance sequence. The real code/Git/Actions state was used as authority.
 
-```text
-abbea793359a032ded8f8d753ff0b4e2e8bc0a07
-docs: record verified managed browser check
-```
-
-Exact-head normal run `32975379772` completed with Source Boundary, Kernel, Electron and status publisher all `success`. UNCHECK did not substitute for or cancel that P0.
-
-### 2. UNCHECK real call chain was traced before editing
-
-Existing ZN contracts already contained `BrowserActionKind.UNCHECK` and already mapped it to `allow_page_interaction`, so no new permission field or model-owned planner path was introduced.
-
-The real implementation chain is:
-
-```text
-BrowserTargetQuery(DOM_ID, main frame)
--> PlaywrightManagedBrowser.observe_target()
--> bounded BrowserTarget + transient provider-local exact element handle
--> BrowserActionAuthority from the exact current observation
--> execution-time exact-node revalidation
--> native checkbox-state evidence
--> require connected enabled input[type=checkbox] + checked=true
--> BrowserActionKind.UNCHECK
--> provider uncheck()
--> fresh target acquisition
--> exact JS-node continuity
--> unchanged ZN target identity
--> fresh checked=false
--> BrowserEffectEvidence(postcondition="same_exact_target_unchecked")
-```
-
-CHECK remains a separate inverse lifecycle requiring fresh `checked=false` before provider `check()` and fresh `checked=true` after it.
-
-### 3. Narrow managed-browser UNCHECK implemented
-
-Implementation commit:
+The previous browser implementation remains verified at:
 
 ```text
 73257f8c728778054faf74869243b356383fede1
 feat: add verified managed browser uncheck
 ```
 
-The commit changes only:
+Its recorded exact-head normal CI, managed Chromium E2E, and interactive Windows E2E remain green. `SELECT_OPTION` has not been implemented and must not be reported as started or complete.
+
+### 2. Headless and interactive Windows runner responsibilities are separated
+
+Normal CI now targets:
 
 ```text
-runtime/python/zn_agent/core/managed_browser.py
-tests/zn_agent/core/test_managed_browser_check.py
-tests/zn_agent/e2e/test_windows_managed_browser.py
+[self-hosted, Windows, X64, zn-ci]
 ```
 
-Safety/effect behavior:
-
-- target must still be the exact current ZN target at execution time;
-- provider independently proves a connected enabled native checkbox;
-- already-unchecked state is refused before dispatch;
-- provider `uncheck()` is the only dispatch for UNCHECK;
-- provider return alone is never accepted as success;
-- fresh post-state must prove the same exact JS node, same ZN target identity and `checked=false`;
-- provider no-effect fails closed;
-- same-shape replacement fails even if replacement state is false;
-- provider exceptions remain failure evidence;
-- CHECK and UNCHECK fake-provider tests prove they do not dispatch each other;
-- unsupported checkbox state error text is now action-neutral rather than CHECK-specific;
-- no generic Playwright action surface or ARIA-checkbox claim was added.
-
-### 4. Exact-head dedicated real Chromium proof is green
+Interactive desktop/browser proof targets:
 
 ```text
-run 32979312465
-head 73257f8c728778054faf74869243b356383fede1
-Windows local managed Chromium E2E   success
-
-62 browser/core tests   OK
-2 real Chromium E2E     OK
+[self-hosted, Windows, X64, zn-interactive]
 ```
 
-The real Chromium fixture proves:
+Repository bootstrap targets three isolated `zn-ci` workers. `zn-ci` service workers are not substitutes for a logged-on desktop session.
 
-- native unchecked -> checked via CHECK;
-- fresh same-target checked -> unchecked via UNCHECK;
-- fresh `checked=false` is observed rather than inferred from provider return;
-- same-shape replacement during UNCHECK is rejected;
-- navigation, target sensing, FOCUS, verified aria-pressed CLICK, TYPE_TEXT, CHECK, privacy metadata and network-safety regressions remain green.
+### 3. Hidden interactive-runner handoff now has a real active caller
 
-### 5. Exact-head interactive Windows regression is green
+Implementation commit:
 
 ```text
-run 32979312447
-head 73257f8c728778054faf74869243b356383fede1
-Windows interactive computer-use E2E   success
+f1ed2326e7536120ac0b8d362c2604f72a020e53
+ci: verify hidden interactive runner handoff
 ```
 
-Existing real pointer/UIA, native Unicode text-entry, WPF UIA text-capability and isolated-profile installed-browser provider regressions remained green.
-
-### 6. Exact-head normal Windows CI is green
+Changed files:
 
 ```text
-run 32979312548
-head 73257f8c728778054faf74869243b356383fede1
-
-ZN Source Boundary / Windows      success
-ZN Kernel / Python / Windows      success
-Electron / TypeScript / Windows   success
-Publish Windows CI statuses       success
+.github/scripts/handoff-zn-interactive-runner-watchdog.ps1
+.github/workflows/zn-interactive-runner-hidden-watchdog.yml
 ```
 
-Kernel completed isolated runtime setup, zero-model resident boot, resident core compilation and the full core suite. Source Boundary independently verified the active tree remains ZN-only.
+The workflow now launches a detached repository-owned handoff process from `zn-interactive`, waits until the current GitHub Worker drains, performs a second fail-closed drain check, restarts the matching listener through the hidden scheduled watchdog, writes a marker unique to the exact workflow run/attempt only after a listener returns, then verifies on a later `zn-interactive` job that the exact marker exists and live process ancestry is:
 
-## Current implementation truth
+```text
+Runner.Listener.exe
+-> cmd.exe / run.cmd
+-> hidden PowerShell watchdog
+```
 
-Verified/foundation browser slices now exist for:
+It also keeps verification off the interactive label for a short `zn-ci` handoff window. Merely spawning the handoff process is not success.
 
-- resident-owned browser session/permission/query/target/observation/action/authority/effect semantics;
-- resident ownership/shutdown of local managed Chromium;
-- managed navigation with fresh observed result;
-- bounded exact-DOM-id/main-frame target sensing;
-- provider-local exact-node continuity at mutation boundaries;
-- managed `FOCUS` with fresh independent focus evidence;
-- managed `CLICK` only for explicit boolean `aria-pressed` transitions;
-- managed `TYPE_TEXT` only for an empty writable non-password `input[type=text]`/`textarea`, with fresh length+SHA-256 completion evidence;
-- managed native `CHECK` with fresh same-node `checked=true` evidence;
-- managed native `UNCHECK` with fresh same-node `checked=false` evidence;
-- real local Chromium proof for all managed slices above;
-- real Windows Edge default-UIA focused-input sensing in an isolated profile.
+## Real test / CI truth
 
-Do not overstate this stage. Still unavailable/incomplete:
+### Exact implementation-head normal CI
 
-- `SELECT_OPTION`, `PRESS` and other action-specific browser mutations;
-- generic browser click without a bounded independently observable postcondition;
-- editing/replacing non-empty text;
-- password/sensitive text entry;
-- contenteditable/rich-text mutation;
-- ARIA checkbox mutation;
-- iframe/child-frame/generic accessibility target sensing;
-- multiple-target/disambiguation lifecycle;
-- tab/popup/frame lifecycle;
-- headed managed-browser UX and visual fusion;
-- download/upload/file-picker authority;
-- persistent managed profile policy;
-- cloud browser adapter;
-- browser crash/health/recovery and complete network-sandbox hardening;
-- formal Chromium/Playwright release packaging;
-- authenticated User Browser Bridge control of the user's existing browser session;
-- browser permission UX and MFA/sensitive-field handoff.
+```text
+run 32992305928
+head f1ed2326e7536120ac0b8d362c2604f72a020e53
 
-Broader high-leverage product gaps also remain: durable Work checkpoints/recovery, isolated parallel Investigation, MCP/connectors, scheduled/event-driven work, unified permission/audit controls, M8 continuity and SM1+ self-maintenance.
+ZN Source Boundary / Windows       success
+Electron / TypeScript / Windows    success
+ZN Kernel / Python / Windows       in progress at last inspection
+```
+
+Kernel had completed isolated setup, zero-model resident boot and resident compilation, and was still running the full core suite. Do not call this run green until Kernel and the final status job complete successfully.
+
+### Exact implementation-head hidden migration
+
+```text
+run 32992305981
+head f1ed2326e7536120ac0b8d362c2604f72a020e53
+
+Migrate interactive runner watchdog to hidden launch   queued
+runner assignment                                     none at last inspection
+```
+
+### Independent evidence of interactive-plane outage
+
+An older bootstrap workflow is also queued on the same label:
+
+```text
+run 32991717258
+Bootstrap parallel Windows runners   queued
+runs-on                              [self-hosted, Windows, X64, zn-interactive]
+```
+
+This makes the current blocker broader than the new hidden migration workflow: `zn-interactive` is not accepting jobs.
+
+The available GitHub connector cannot read the repository self-hosted-runner administration endpoint, so do not claim a direct online/offline flag from that API.
+
+## Current risks / blockers
+
+- `zn-interactive` is unavailable to Actions at the current checkpoint.
+- Hidden-watchdog migration code is implemented but **not verified** until run `32992305981` executes through its final verify job.
+- Real interactive Windows/UIA/browser regression cannot be rerun while `zn-interactive` is unavailable.
+- Do not move interactive tests onto Session-0 `zn-ci` workers.
+- Do not introduce auto-logon, expose credentials, broaden secret permissions, or weaken runner labels to bypass the blocker.
+- The exact implementation-head normal CI is still incomplete while Kernel is running.
+- Documentation/HANDOFF synchronization after this update will itself create a new head requiring exact-head normal CI.
+- `main` remains untouched.
 
 ## Task queue
 
-### P0 - final UNCHECK documentation-head normal CI
-Status: **REQUIRED AFTER THIS HANDOFF COMMIT**
+### P0 - finish current normal CI
 
-Re-read final `dev/zn-agent` HEAD and require exact-head normal Windows CI success. Implementation head `73257f8c` is already green in normal CI, dedicated real Chromium E2E and interactive Windows E2E.
+Status: **IN PROGRESS**
 
-### P1 - managed-browser SELECT_OPTION
-Status: **NEXT CANDIDATE / BLOCKED ON P0 + CALL-CHAIN TRACE**
+Require exact-head normal CI for `f1ed2326`. If Kernel fails, inspect the real failure and fix it before proceeding.
 
-Implement only if a narrow native-select lifecycle can satisfy product-grade evidence:
+### P1 - restore `zn-interactive`
 
-1. current exact target + `allow_page_interaction` authority;
-2. execution-time exact-node revalidation;
-3. native/select capability validation;
-4. explicit bounded option/value request;
-5. refuse pre-existing requested state when no new transition can be claimed;
-6. provider dispatch;
-7. fresh exact-node re-observation;
-8. unchanged ZN target identity;
-9. independent fresh selected-value/index evidence;
-10. replacement/no-effect/provider-failure coverage;
-11. unit + real Chromium E2E.
+Status: **BLOCKED ON REAL INTERACTIVE RUNNER AVAILABILITY**
 
-Do not expose arbitrary provider methods to gain breadth.
+Exhaust repository-controlled recovery paths first. Preserve the logged-on interactive-session requirement. If the machine-side interactive listener is stopped and repository automation has no running interactive control plane, that is a genuine external bootstrap boundary rather than a reason to fake interactive proof.
 
-### P2 - managed-browser PRESS / next action-specific mutations
-Status: **OPEN / REQUIRES BOUNDED EFFECT SEMANTICS**
+### P2 - verify hidden watchdog migration
 
-PRESS must not be added as “send arbitrary key and trust dispatch”. Decide only after tracing a concrete product need and independently observable postcondition.
+Status: **IMPLEMENTED / NOT VERIFIED**
 
-### P3 - browser checkpoint / broader sensing lifecycle
-Status: **OPEN**
+Require run `32992305981` (or a later exact-head equivalent) to complete migration, handoff window, and exact-marker/live-ancestry verification successfully.
 
-After enough useful action coverage, stop adding isolated actions and reassess frames/accessibility/multi-targets/tabs/popups/recovery as a browser lifecycle checkpoint.
+### P3 - synchronize docs/HANDOFF exact head
 
-### P4 - durable Work / checkpoint / recovery
-Status: **OPEN / NEXT MAJOR FOUNDATION**
+Status: **REQUIRED AFTER RUNNER STATE IS SETTLED**
 
-This is the highest-leverage post-browser foundation. Work must be resident-owned, persist across restarts, support cancellation/recovery and not depend on one model/chat/provider.
+Keep `docs/ZN-IMPLEMENTATION-STATUS.md` and `.agent/HANDOFF.md` aligned with code, branch and CI reality; require normal CI on the resulting exact head.
 
-### P5 - isolated parallel Work / Investigation
-Status: **OPEN / HIGH PRODUCT PRIORITY**
+### P4 - managed-browser `SELECT_OPTION`
 
-One ZN may own multiple isolated investigations/workspaces. Do not model them as multiple product identities.
+Status: **NEXT PRODUCT CANDIDATE / DEFERRED**
 
-### P6 - MCP/connectors
-Status: **OPEN**
+Only after interactive verification is restored, trace the real contract/provider/effect call chain. Any implementation must use exact current target authority, native-select capability validation, bounded option/value request, provider dispatch, fresh exact-node re-observation, unchanged ZN target identity and independent selected-state evidence. Provider return alone is not success.
 
-Build ZN-owned resource/action/credential-reference/permission/effect contracts first; MCP is an adapter, not execution authority or identity.
+### P5 - durable Work / checkpoint / recovery
 
-### P7 - scheduled/event-driven resident work
-Status: **OPEN**
+Status: **NEXT MAJOR FOUNDATION AFTER USEFUL BROWSER CHECKPOINT**
 
-### P8 - authenticated User Browser Bridge + permission/control UX
-Status: **FOUNDATION / OPEN**
-
-Never copy user cookies/password/profile stores. Add extension/native messaging only if real provider evidence shows it is needed and user permission is explicit.
-
-### P9 - M8 Windows continuity / rollback / signing
-Status: **PARTIAL**
-
-### P10 - SM1+ self-maintenance
-Status: **OPEN**
-
-## Development-history audit
-
-Earlier history contains the already-recorded accidental root `noop` commit; it was removed by a later normal fast-forward commit and remains auditable.
-
-The preceding accidental `docs/.tmp` file was created in `e3eb38cce090c6c268866f911cffc0d5ce288636` and removed in normal fast-forward commit `37fe40556caafb9113a08c1e22d2beb519fc64b5`. It is absent from the product tree. No force push, reset or history rewrite was used to hide either mistake.
-
-## Risks / boundaries
-
-- `main` remains untouched.
-- no force push/history rewrite.
-- ZN remains the only product subject; models/providers are replaceable resources.
-- provider browser handles are disposable execution resources, not ZN identity.
-- native CHECK/UNCHECK do not imply ARIA-checkbox or generic click support.
-- TYPE_TEXT raw content remains transient execution data; do not add raw input/current text to durable evidence/logging.
-- current TYPE_TEXT refuses non-empty and password targets.
-- real Edge UIA sensing does not imply authenticated user-browser control.
-- downloads/uploads remain disabled until file authority exists.
-- one self-hosted Windows runner serializes many jobs; completed exact-head runs are the authority.
-- M8 remains partial; SM1+ remains open.
+Work must remain resident-owned, restart-safe, cancellable/recoverable and independent of one model/chat/provider.
 
 ## Related files
 
 ```text
 ZN.md
-docs/ZN-PRODUCT-CAPABILITY-MAP.md
+AGENTS.md
 docs/ZN-IMPLEMENTATION-STATUS.md
 docs/ZN-SOURCE-EXTRACTION.md
 docs/ZN-SELF-MAINTENANCE.md
 .agent/HANDOFF.md
-runtime/python/zn_agent/core/browser.py
-runtime/python/zn_agent/core/managed_browser.py
-tests/zn_agent/core/test_browser_contract.py
-tests/zn_agent/core/test_managed_browser.py
-tests/zn_agent/core/test_managed_browser_click.py
-tests/zn_agent/core/test_managed_browser_type_text.py
-tests/zn_agent/core/test_managed_browser_check.py
-tests/zn_agent/e2e/test_windows_managed_browser.py
-tests/zn_agent/e2e/test_windows_interactive_user_browser_bridge.py
+.github/workflows/zn-ci.yml
+.github/workflows/zn-runner-bootstrap.yml
+.github/workflows/zn-interactive-runner-hidden-watchdog.yml
 .github/workflows/zn-managed-browser-e2e.yml
 .github/workflows/zn-windows-interactive-e2e.yml
-.github/workflows/zn-ci.yml
+.github/scripts/bootstrap-zn-windows-runners.ps1
+.github/scripts/install-zn-interactive-runner-watchdog.ps1
+.github/scripts/watch-zn-interactive-runner.ps1
+.github/scripts/handoff-zn-interactive-runner-watchdog.ps1
+runtime/python/zn_agent/core/managed_browser.py
+tests/zn_agent/core/test_managed_browser_check.py
+tests/zn_agent/e2e/test_windows_managed_browser.py
 ```
 
 ## Next real target
 
-Finish exact-head normal Windows CI for this documentation HEAD. Then trace and, if the evidence contract is sound, implement one narrow native `SELECT_OPTION` lifecycle. After a useful browser action checkpoint, move the next major foundation to durable resident-owned Work/checkpoint/recovery. Keep `main` untouched.
+Finish the exact implementation-head normal CI and recover the real `zn-interactive` execution plane without weakening its session boundary. Then require the hidden-watchdog migration's exact-marker/live-process verification. Only after that return to `SELECT_OPTION`. Keep `main` untouched.
