@@ -16,8 +16,11 @@ env:
   TZ: UTC
   PYTHONUTF8: '1'
   PYTHONUNBUFFERED: '1'
-  PSExecutionPolicyPreference: Bypass
   ZN_AGENT_HOME: ${{ github.workspace }}/.ci/zn-home
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
 
 concurrency:
   group: zn-ci-${{ github.ref }}
@@ -43,7 +46,6 @@ jobs:
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             })
       - name: Require Windows x64 headless CI runner
-        shell: powershell
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
             throw "ZN steady-state CI requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
@@ -57,13 +59,11 @@ jobs:
           version: '0.11.6'
           enable-cache: false
       - name: Prepare unprivileged Python 3.12
-        shell: powershell
         run: |
           uv python install 3.12
           Remove-Item -Recurse -Force .ci/source-venv -ErrorAction SilentlyContinue
           uv venv .ci/source-venv --python 3.12
       - name: Verify active tree is ZN-only
-        shell: powershell
         run: .\.ci\source-venv\Scripts\python.exe .agent/verify_zn_source_boundary.py
 
   kernel:
@@ -85,7 +85,6 @@ jobs:
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             })
       - name: Require Windows x64 headless CI runner
-        shell: powershell
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
             throw "ZN steady-state CI requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
@@ -99,7 +98,6 @@ jobs:
           version: '0.11.6'
           enable-cache: false
       - name: Prepare ZN home and isolated runtime
-        shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path $env:ZN_AGENT_HOME | Out-Null
           uv python install 3.12
@@ -108,7 +106,6 @@ jobs:
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\runtime-venv\Scripts\python.exe'
           uv pip install --python $python runtime/python
       - name: Boot isolated ZN distribution without a model
-        shell: powershell
         run: |
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\runtime-venv\Scripts\python.exe'
           @'
@@ -127,10 +124,8 @@ jobs:
           resident.store.close()
           '@ | & $python -I -
       - name: Compile resident core
-        shell: powershell
         run: .\.ci\runtime-venv\Scripts\python.exe -m compileall -q runtime/python/zn_agent/core
       - name: Run ZN core tests against working tree
-        shell: powershell
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           & .\.ci\runtime-venv\Scripts\python.exe -m unittest discover -s tests/zn_agent/core -p 'test_*.py' -v
@@ -156,7 +151,6 @@ jobs:
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             })
       - name: Require Windows x64 headless CI runner
-        shell: powershell
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
             throw "ZN steady-state CI requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
@@ -169,22 +163,16 @@ jobs:
         with:
           node-version: '22.22.0'
       - name: Install locked workspace dependencies
-        shell: powershell
         run: npm ci --ignore-scripts
       - name: Reject high-severity npm advisories
-        shell: powershell
         run: npm audit --audit-level=high
       - name: Typecheck Electron desktop
-        shell: powershell
         run: npm run typecheck --workspace apps/desktop
       - name: Bundle independent ZN desktop control plane
-        shell: powershell
         run: node apps/desktop/scripts/bundle-electron-main.mjs --dev
       - name: Test ZN desktop ownership, packaged runtime, update and handoff contracts
-        shell: powershell
         run: npm run test --workspace apps/desktop -- electron/zn-desktop-ownership.test.ts electron/zn-packaged-runtime.test.ts electron/zn-release-channel.test.ts electron/zn-resident-runtime-state.test.ts electron/zn-resident-application-handoff.test.ts electron/zn-resident-update-readiness.test.ts electron/zn-release-application-gate.test.ts
       - name: Test release-channel, runtime staging and packaged-artifact verifiers
-        shell: powershell
         run: node --test apps/desktop/scripts/prepare-zn-public-channel.test.mjs apps/desktop/scripts/stage-zn-runtime.test.mjs apps/desktop/scripts/verify-zn-packaged-runtime.test.mjs
 
   publish-status:
