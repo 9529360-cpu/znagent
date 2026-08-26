@@ -267,6 +267,123 @@ class KernelStore:
                 (outcome.event_id, outcome.completed_at, self._dump(data)),
             )
 
+    def complete_event(
+        self,
+        outcome: EventOutcome,
+        *,
+        error: str | None = None,
+    ) -> AgentEvent:
+        """Atomically publish one resident terminal result and clear its checkpoint.
+
+        The event terminal status, durable outcome and singleton idle WorkingState
+        become visible together. Any SQLite error rolls the whole transition back,
+        so restart recovery never sees a terminal event whose outcome was not
+        durably committed by this path.
+        """
+
+        event_id = str(outcome.event_id or "").strip()
+        if not event_id:
+            raise ValueError("event outcome requires event_id")
+
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT data FROM events WHERE event_id=?",
+                (event_id,),
+            ).fetchone()
+            if not row:
+                raise ValueError(f"unknown resident event: {event_id}")
+            event = self._event_from_data(row["data"])
+            if event.status != EventStatus.PROCESSING:
+                raise RuntimeError(
+                    "resident terminal transition requires a processing event"
+                )
+
+            existing_outcome = self._conn.execute(
+                "SELECT 1 FROM event_outcomes WHERE event_id=?",
+                (event_id,),
+            ).fetchone()
+            if existing_outcome:
+                raise RuntimeError(
+                    "processing resident event already has a durable outcome"
+                )
+
+            state_row = self._conn.execute(
+                "SELECT data FROM working_state WHERE id=1"
+            ).fetchone()
+            if not state_row:
+                raise RuntimeError(
+                    "resident terminal transition requires a working checkpoint"
+                )
+            working = json.loads(state_row["data"])
+            if str(working.get("current_event_id") or "").strip() != event_id:
+                raise RuntimeError(
+                    "resident terminal transition does not own the active checkpoint"
+                )
+
+            event.status = (
+                EventStatus.COMPLETED if outcome.success else EventStatus.FAILED
+            )
+            event.last_error = (
+                None
+                if outcome.success
+                else (str(error or outcome.reason or "event failed"))
+            )
+            event.updated_at = utc_now()
+            event_data = {
+                "event_id": event.event_id,
+                "task": event.task,
+                "kind": event.kind,
+                "priority": event.priority,
+                "payload": event.payload,
+                "status": event.status.value,
+                "attempts": event.attempts,
+                "last_error": event.last_error,
+                "created_at": event.created_at,
+                "updated_at": event.updated_at,
+            }
+            outcome_data = {
+                "event_id": outcome.event_id,
+                "success": outcome.success,
+                "execution_path": outcome.execution_path.value,
+                "response": outcome.response,
+                "model_invocations": outcome.model_invocations,
+                "capability_name": outcome.capability_name,
+                "reason": outcome.reason,
+                "completed_at": outcome.completed_at,
+            }
+            idle = WorkingState(stage="idle")
+            idle.updated_at = utc_now()
+            idle_data = {
+                "current_event_id": idle.current_event_id,
+                "current_goal_id": idle.current_goal_id,
+                "stage": idle.stage,
+                "next_action": idle.next_action,
+                "blocked_by": idle.blocked_by,
+                "data": idle.data,
+                "updated_at": idle.updated_at,
+            }
+
+            self._conn.execute(
+                "INSERT OR REPLACE INTO events(event_id,status,priority,created_at,data) "
+                "VALUES(?,?,?,?,?)",
+                (
+                    event.event_id,
+                    event.status.value,
+                    event.priority,
+                    event.created_at,
+                    self._dump(event_data),
+                ),
+            )
+            self._conn.execute(
+                "INSERT INTO event_outcomes(event_id,created_at,data) VALUES(?,?,?)",
+                (outcome.event_id, outcome.completed_at, self._dump(outcome_data)),
+            )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO working_state(id,data) VALUES(1,?)",
+                (self._dump(idle_data),),
+            )
+        return event
+
     def get_event_outcome(self, event_id: str) -> EventOutcome | None:
         with self._lock:
             row = self._conn.execute(

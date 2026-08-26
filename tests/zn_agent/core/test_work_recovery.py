@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 
-from zn_agent.core.models import EventStatus
+from zn_agent.core.models import (
+    EventOutcome,
+    EventStatus,
+    ExecutionPath,
+    WorkingState,
+)
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
 from zn_agent.core.work import ResidentWorkLedger
 
@@ -120,6 +126,119 @@ class ResidentWorkRecoveryTests(unittest.TestCase):
                 self.assertEqual([message.role for message in messages], ["user"])
             finally:
                 restored.store.close()
+
+    def test_terminal_completion_is_durable_with_outcome_and_idle_checkpoint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "kernel.db"
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=store_path,
+            )
+            ledger = ResidentWorkLedger(resident)
+            resident.memory.remember("atomic terminal work", "durable atomic result")
+            _, event = ledger.start("work-atomic-terminal", "atomic terminal work")
+
+            result = resident.live_once()
+            self.assertIsNotNone(result)
+            assert result is not None
+            self.assertTrue(result.success)
+
+            terminal = resident.store.get_event(event.event_id)
+            outcome = resident.store.get_event_outcome(event.event_id)
+            idle = resident.store.get_working_state()
+            self.assertIsNotNone(terminal)
+            self.assertIsNotNone(outcome)
+            assert terminal is not None
+            assert outcome is not None
+            self.assertEqual(terminal.status, EventStatus.COMPLETED)
+            self.assertTrue(outcome.success)
+            self.assertEqual(outcome.response, "durable atomic result")
+            self.assertEqual(idle.stage, "idle")
+            self.assertIsNone(idle.current_event_id)
+            resident.store.close()
+
+            restored = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=store_path,
+            )
+            restored_ledger = ResidentWorkLedger(restored)
+            try:
+                reconstructed = restored.result_for(event.event_id)
+                self.assertIsNotNone(reconstructed)
+                assert reconstructed is not None
+                self.assertTrue(reconstructed.success)
+                self.assertEqual(reconstructed.response, "durable atomic result")
+                persisted = restored.store.get_event(event.event_id)
+                self.assertIsNotNone(persisted)
+                assert persisted is not None
+                self.assertEqual(persisted.status, EventStatus.COMPLETED)
+                self.assertEqual(restored.store.get_working_state().stage, "idle")
+
+                progress = restored_ledger.progress("work-atomic-terminal", event.event_id)
+                self.assertTrue(progress["terminal"])
+                self.assertTrue(progress["finalized"])
+            finally:
+                restored.store.close()
+
+    def test_atomic_terminal_transition_rolls_back_all_three_records_on_outcome_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            try:
+                event = resident.enqueue("force atomic completion rollback")
+                claimed = resident.store.claim_event(event.event_id)
+                self.assertIsNotNone(claimed)
+                resident.store.save_working_state(
+                    WorkingState(
+                        current_event_id=event.event_id,
+                        stage="native_memory",
+                        next_action="complete",
+                        data={"sentinel": "keep-checkpoint"},
+                    )
+                )
+                before = resident.store.get_working_state()
+
+                with resident.store._lock, resident.store._conn:
+                    resident.store._conn.execute(
+                        """
+                        CREATE TRIGGER fail_atomic_outcome_insert
+                        BEFORE INSERT ON event_outcomes
+                        BEGIN
+                            SELECT RAISE(ABORT, 'forced outcome insert failure');
+                        END
+                        """
+                    )
+
+                with self.assertRaises(sqlite3.IntegrityError):
+                    resident.store.complete_event(
+                        EventOutcome(
+                            event_id=event.event_id,
+                            success=True,
+                            execution_path=ExecutionPath.MEMORY,
+                            response="must roll back",
+                        )
+                    )
+
+                persisted = resident.store.get_event(event.event_id)
+                self.assertIsNotNone(persisted)
+                assert persisted is not None
+                self.assertEqual(persisted.status, EventStatus.PROCESSING)
+                self.assertIsNone(resident.store.get_event_outcome(event.event_id))
+                after = resident.store.get_working_state()
+                self.assertEqual(after.current_event_id, before.current_event_id)
+                self.assertEqual(after.stage, before.stage)
+                self.assertEqual(after.next_action, before.next_action)
+                self.assertEqual(after.data, before.data)
+            finally:
+                try:
+                    with resident.store._lock, resident.store._conn:
+                        resident.store._conn.execute(
+                            "DROP TRIGGER IF EXISTS fail_atomic_outcome_insert"
+                        )
+                finally:
+                    resident.store.close()
 
 
 if __name__ == "__main__":

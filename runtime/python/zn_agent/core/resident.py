@@ -317,31 +317,21 @@ class ZNResidentRuntime:
         event: AgentEvent,
         result: ResidentRunResult,
     ) -> ResidentRunResult:
-        self.store.finish_event(
-            event.event_id,
+        outcome = EventOutcome(
+            event_id=event.event_id,
             success=result.success,
+            execution_path=result.execution_path,
+            response=result.response,
+            model_invocations=result.model_invocations,
+            capability_name=result.capability_name,
+            reason=result.reason,
+        )
+        result.event = self.store.complete_event(
+            outcome,
             error=None if result.success else (result.reason or "event failed"),
         )
-        persisted = self.store.get_event(event.event_id)
-        if persisted is not None:
-            result.event = persisted
-        self._persist_outcome(result)
         self.life.observe_action(result)
-        self.store.save_working_state(WorkingState(stage="idle"))
         return result
-
-    def _persist_outcome(self, run: ResidentRunResult) -> None:
-        self.store.save_event_outcome(
-            EventOutcome(
-                event_id=run.event.event_id,
-                success=run.success,
-                execution_path=run.execution_path,
-                response=run.response,
-                model_invocations=run.model_invocations,
-                capability_name=run.capability_name,
-                reason=run.reason,
-            )
-        )
 
     def run_forever(
         self,
