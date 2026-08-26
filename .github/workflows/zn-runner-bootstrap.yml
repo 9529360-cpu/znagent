@@ -19,10 +19,10 @@ concurrency:
 jobs:
   bootstrap:
     name: Bootstrap parallel Windows runners
-    runs-on: [self-hosted, Windows, X64]
-    timeout-minutes: 15
+    runs-on: zn-interactive
+    timeout-minutes: 20
     steps:
-      - name: Require existing Windows x64 runner
+      - name: Require dedicated interactive bootstrap runner
         shell: powershell
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
@@ -30,6 +30,6 @@ jobs:
           }
       - name: Checkout
         uses: actions/checkout@v7
-      - name: Register three headless CI workers and reserve interactive runner
+      - name: Register three isolated headless CI workers
         shell: powershell
         run: .\.github\scripts\bootstrap-zn-windows-runners.ps1 -WorkerCount 3
