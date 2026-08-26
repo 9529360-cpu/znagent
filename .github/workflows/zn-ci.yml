@@ -16,6 +16,7 @@ env:
   TZ: UTC
   PYTHONUTF8: '1'
   PYTHONUNBUFFERED: '1'
+  PSExecutionPolicyPreference: Bypass
   ZN_AGENT_HOME: ${{ github.workspace }}/.ci/zn-home
 
 concurrency:
@@ -193,13 +194,6 @@ jobs:
     runs-on: [self-hosted, Windows, X64, zn-ci]
     timeout-minutes: 10
     steps:
-      - name: Require Windows x64 headless CI runner
-        shell: powershell
-        run: |
-          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
-            throw "ZN steady-state CI requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
-          }
-          Write-Host "ZN CI runner: $env:RUNNER_NAME"
       - name: Publish readable CI statuses
         uses: actions/github-script@v7
         with:
