@@ -12,7 +12,7 @@ Resident Managed Browser
 = complete browser capability
 ```
 
-The managed-browser foundation is implemented and verified. A real Windows interactive Edge provider proof now also exists for a narrow User Browser Bridge sensing slice. The next real target is bounded managed-browser DOM/accessibility target sensing and freshness; browser mutation must remain blocked until a current ZN-owned target observation can support authority and independent effect verification.
+The managed-browser foundation, real local Chromium navigation, narrow exact-DOM-id/main-frame target sensing, and a narrow real Edge UIA provider sensing slice are now verified. The next real target is mutation-safe exact-node continuity followed by the first narrow managed-browser action lifecycle. Do not skip directly to generic click/type or expose a generic Playwright tool surface.
 
 Core principle:
 
@@ -24,9 +24,9 @@ Current maintainers/models are replaceable. Project development/release capabili
 
 - fixed development branch: `dev/zn-agent`
 - canonical source/release branch: `main`
-- latest fully verified implementation/test head before this documentation commit: `2e5a328e35a75e65ed1c3cedfc7b79d8f5bdf3ee`
+- latest fully verified implementation/test head before this documentation commit: `1c37dc1914b5fca7a6b8bd901cce55983d36429f`
 - canonical `main`: `8234a835dea604783cea0bd9d28a40de654ec03d`
-- PR #6 remains open/unmerged, base `main`, head `dev/zn-agent`
+- PR #6 remains draft/open/unmerged, base `main`, head `dev/zn-agent`
 - `main` was not modified
 - no force push or history rewrite was used
 
@@ -34,86 +34,13 @@ A HANDOFF commit cannot contain its own resulting SHA. Re-read the resulting `de
 
 ## Completed in current stage
 
-### 1. Restored the real post-HANDOFF repository state
+### 1. Prior documentation-head CI was closed first
 
-The previous HANDOFF was stale. Two implementation commits existed after it:
-
-```text
-a06d85a726cf6cc0eeb4b6c4cad4618435df0ef1
-fix: harden browser authority after independent review
-
-a62cf5a6ff3b8bacf19d12cf0fe4dfba3e5a2f4d
-fix: close managed browser with resident service
-```
-
-`a06d85a` had real interactive evidence. The ordinary CI for `a62cf5a` was cancelled by a later push, so it was not treated as exact-head green evidence.
-
-### 2. Traced the real User Browser Bridge sensing call chain
-
-Active resident ownership is:
+Before new code was pushed, the previous documentation head was allowed to finish its own normal Windows CI instead of being cancelled by another push:
 
 ```text
-provider_bridge.build_resident_runtime()
--> FocusedModernTextResidentRuntime
--> foreground_window
--> automation_element = NativeAutomationElementSense
--> automation_text_state = NativeFocusedAutomationTextSense
--> managed_browser = PlaywrightManagedBrowser
-```
-
-The UIA Senses are resident-owned and bounded. `NativeAutomationElementSense` exports identity/capability metadata without raw value/name/text. `NativeFocusedAutomationTextSense` performs safety checks and exports only current text length + SHA-256 digest for the focused writable Edit.
-
-### 3. Real installed Edge/Chrome provider proof added
-
-Commits:
-
-```text
-4f811ef49dea9c9d2ccc7cb436145eb9f2d925f3
-test: prove real user browser UIA provider
-
-4ef025bc2ef9ba5f67102cddfe863252393058b9
-fix: define Windows enum callback type
-
-2e5a328e35a75e65ed1c3cedfc7b79d8f5bdf3ee
-fix: close browser proof store before cleanup
-```
-
-New test:
-
-```text
-tests/zn_agent/e2e/test_windows_interactive_user_browser_bridge.py
-```
-
-The fixture:
-
-- discovers installed stable Edge/Chrome on the actual self-hosted Windows runner;
-- launches an installed browser against a local HTML fixture using a temporary isolated `--user-data-dir`;
-- never reads/copies the user's real profile, cookies, password stores or authentication material;
-- deliberately does not pass `--force-renderer-accessibility`;
-- requires an unlocked input desktop;
-- aligns resident foreground-window, focused UIA-element and current-text evidence;
-- performs no browser mutation;
-- cleans up only processes belonging to the isolated temporary profile.
-
-Real provider evidence on the runner showed Edge (`msedge.exe`, UIA framework `Chrome`) exposing the focused HTML input as `UIA_EditControlTypeId` (`50004`) with fixture AutomationId `zn-user-browser-text-target`, Value Pattern available/writable and Text Pattern available. Current-text evidence was exported only as length + digest.
-
-The first proof run reached and printed valid Edge UIA evidence but then failed cleanup because the temporary SQLite store was still open. `2e5a328e` fixed the test resource lifecycle; no product behavior was broadened.
-
-### 4. Exact-head real interactive E2E is green
-
-```text
-run 32953911536
-head 2e5a328e35a75e65ed1c3cedfc7b79d8f5bdf3ee
-ZN Windows Interactive Desktop E2E   success
-```
-
-This run includes all existing interactive tests plus the new real Edge User Browser Bridge provider proof.
-
-### 5. Exact-head normal Windows CI is green
-
-```text
-run 32953911506
-head 2e5a328e35a75e65ed1c3cedfc7b79d8f5bdf3ee
+head 23af35b76b5f065b48a898c71c93015f80243b53
+run 32955217313
 
 ZN Source Boundary / Windows      success
 ZN Kernel / Python / Windows      success
@@ -121,95 +48,228 @@ Electron / TypeScript / Windows   success
 Publish Windows CI statuses       success
 ```
 
-Kernel zero-model boot and compile succeeded; full working-tree core tests succeeded. Electron dependency install/audit/typecheck/bundle and desktop ownership/update/handoff tests succeeded.
+This closed the prior P0 exactly rather than relying on an older implementation head.
+
+### 2. Real managed-browser target call chain was traced
+
+Before this stage the managed adapter had:
+
+```text
+PlaywrightManagedBrowser.observe()
+-> _capture()
+-> BrowserObservation(target=None)
+```
+
+`BrowserTarget` and freshness/authority semantics already existed in `browser.py`, but no real managed-browser target producer existed. Mutation therefore remained correctly unavailable.
+
+### 3. Bounded managed-browser target sensing added
+
+Implementation commit:
+
+```text
+1c37dc1914b5fca7a6b8bd901cce55983d36429f
+feat: add bounded managed browser target sensing
+```
+
+Changed implementation/test files:
+
+```text
+runtime/python/zn_agent/core/browser.py
+runtime/python/zn_agent/core/managed_browser.py
+tests/zn_agent/core/test_browser_contract.py
+tests/zn_agent/core/test_managed_browser.py
+tests/zn_agent/e2e/test_windows_managed_browser.py
+```
+
+The new ZN-owned query contract is deliberately narrow:
+
+```text
+BrowserTargetQuery(
+    kind=BrowserTargetQueryKind.DOM_ID,
+    value=<exact DOM id>,
+    frame_id="main",
+)
+```
+
+Current sensing semantics:
+
+- exact DOM-id only; no arbitrary CSS or generic provider method surface;
+- main frame only;
+- one unique, connected, visible element required;
+- missing, ambiguous/duplicate, detached, hidden and unsupported-frame cases fail closed;
+- bounded role/name/frame/selector-hint evidence;
+- no raw input value, `textContent`, inner/outer HTML or uncontrolled page dump;
+- password target requires explicit `allow_sensitive_fields` and does not export the target name on this path;
+- ZN derives an opaque target ID rather than using a provider locator as product identity;
+- each observation has current freshness;
+- stale target evidence is rejected by existing authority rules;
+- current target evidence can form action authority, but target mutations still return explicit `not implemented` failure evidence.
+
+### 4. Real local Chromium target proof is green
+
+Dedicated workflow:
+
+```text
+run 32956974100
+head 1c37dc1914b5fca7a6b8bd901cce55983d36429f
+Windows local managed Chromium E2E   success
+```
+
+Job log evidence:
+
+```text
+29 browser/core tests   OK
+2 real Chromium E2E     OK
+```
+
+The real Chromium E2E proves:
+
+- real local headless Chromium session/navigation;
+- exact DOM-id/main-frame target sensing;
+- bounded target role/name/frame/selector hint;
+- raw fixture input value is absent from serialized observation evidence;
+- fresh re-observation keeps stable current target identity while freshness changes;
+- current click authority can form but actual click remains refused;
+- missing/duplicate/hidden/password target safety boundaries;
+- target semantic change from textbox to button after navigation changes target identity;
+- stale/changed target evidence fails authority;
+- metadata endpoint floor remains blocked even with normal private-network permission.
+
+### 5. Exact-head normal Windows CI is green
+
+```text
+run 32956974160
+head 1c37dc1914b5fca7a6b8bd901cce55983d36429f
+
+ZN Source Boundary / Windows      success
+ZN Kernel / Python / Windows      success
+Electron / TypeScript / Windows   success
+Publish Windows CI statuses       success
+
+CPython 3.12.13
+formal runtime install success
+zero-model resident boot success
+resident core compile success
+Ran 511 tests in 575.382s
+OK (skipped=5)
+```
+
+### 6. Exact-head interactive Windows regression is green after same-head rerun
+
+Workflow:
+
+```text
+run 32956974135
+head 1c37dc1914b5fca7a6b8bd901cce55983d36429f
+```
+
+Attempt 1 failed only the pre-existing pointer checkbox E2E because the real `SendInput` click did not toggle the fixture checkbox. In that same attempt, the native text, WPF current-text and real Edge provider tests passed. The feature net diff does not touch pointer/input/visual/UIA implementation.
+
+The exact same-head interactive job was rerun. Attempt 2 completed `success` with all four substantive real interactive E2Es passing. No product or test change was made to mask the first failure. Treat attempt 1 as a transient self-hosted GUI/SendInput flake, not as a product bug fixed by this stage.
+
+### 7. Development-history accident was kept auditable
+
+An empty root file was accidentally committed as:
+
+```text
+0347f30ef4934ffe2713595ba6c6e17c967e9372
+noop
+```
+
+No force push, reset or history rewrite was used to erase it. `1c37dc19` normally fast-forwards from that commit and deletes the `noop` file from the final tree. The net compare from the clean pre-feature baseline `23af35b7` to `1c37dc19` contains only the five intended browser implementation/test files. There is no `noop` file in the current product tree.
 
 ## Current implementation truth
 
 Verified/foundation browser slices now exist for:
 
-- resident-owned browser session/permission/target/observation/action/authority/effect semantics;
-- lazy resident ownership and shutdown cleanup of local managed browser;
+- resident-owned browser session/permission/query/target/observation/action/authority/effect semantics;
+- lazy resident ownership and shutdown cleanup of the local managed-browser resource;
 - real local headless Chromium navigation with fresh authority and post-action observation;
-- browser network/origin/private-network boundaries for the current managed adapter;
+- real local Chromium exact-DOM-id/main-frame target sensing with bounded privacy-safe evidence and freshness;
+- browser network/origin/private-network boundaries for the current adapter;
 - real Windows interactive Edge default-UIA provider sensing of a focused HTML input without forced renderer accessibility.
 
-Do not overstate this stage. The User Browser Bridge is **not** complete.
+Do not overstate this stage. Browser mutation beyond managed `NAVIGATE` is still unavailable. Generic DOM/accessibility targeting and authenticated User Browser Bridge are also incomplete.
 
-The real Edge proof does not prove:
+## Mutation-safety dependency found during review
 
-- attaching to or operating the user's existing authenticated browser profile/session;
-- cookies/login/session access;
-- tabs/popups/frames lifecycle;
-- browser click/focus/type mutation;
-- extension/native messaging;
-- site/session permission UX;
-- MFA/sensitive-field handling.
+The current target ID intentionally changes when page URL or target semantic shape changes. However, a page could replace a DOM node with a new node that has the same DOM id and the same semantic shape; the current hash alone does not prove those are the same exact node.
 
-## Real next dependency found in code
+This is acceptable for the current read-only sensing slice because no target mutation is dispatched. It must be fixed before first mutation.
 
-`BrowserTarget` and target freshness/authority contracts exist, but `PlaywrightManagedBrowser._capture()` still produces only page-level `BrowserObservation(target=None)`.
-
-Therefore the next dependency is target sensing, not generic actions:
+The execution boundary should therefore use a provider-local transient current node/element handle or equivalent exact-node evidence behind ZN-owned target authority:
 
 ```text
-PlaywrightManagedBrowser.observe()
--> _capture()
--> bounded DOM/accessibility target producer
--> BrowserObservation(target=current BrowserTarget)
--> fresh BrowserActionAuthority
--> only then narrow mutation
+fresh BrowserTarget observation
+-> provider-local transient exact-node evidence
+-> action authority
+-> immediately revalidate same current node at dispatch
+-> execute one narrow action
+-> independently sense fresh postcondition
+-> BrowserEffectEvidence
 ```
 
-Target identity must remain ZN-owned evidence. A Playwright selector or locator handle must not become long-lived truth by itself.
+The provider-local handle is a disposable Body resource. It must never become ZN identity or a long-lived completion authority.
 
 ## Task queue
 
 ### P0 - final documentation-head normal CI
 Status: **REQUIRED AFTER THIS HANDOFF COMMIT**
 
-Re-read final `dev/zn-agent` HEAD and require its exact-head normal Windows CI before calling repository state synchronized.
+Re-read final `dev/zn-agent` HEAD and require its exact-head normal Windows CI before calling repository state synchronized. The feature head itself is already green in normal CI, real Chromium E2E and same-head interactive rerun.
 
-### P1 - managed-browser target sensing
+### P1 - exact-node continuity + managed-browser FOCUS
 Status: **NEXT / OPEN**
 
-Implement a bounded explicit target observation slice that:
+Implement the first narrow target mutation without widening provider authority:
 
-1. resolves one intended target rather than dumping arbitrary page content;
-2. records ZN-owned target identity, target kind, frame identity and observation freshness;
-3. bounds role/name/selector hints and avoids secret/raw-page leakage;
-4. re-observes target state independently before authority/mutation;
-5. fails closed for missing, ambiguous, detached or changed targets;
-6. adds unit/contract tests and a real local Chromium E2E before any click/type implementation.
+1. bind current ZN target evidence to a provider-local transient exact node/element handle or equivalent;
+2. revalidate at execution time that the handle still represents the same connected/current target;
+3. implement `BrowserActionKind.FOCUS` only;
+4. require current page/target/permission authority;
+5. focus the exact current target;
+6. independently verify a fresh focused-element postcondition, such as `document.activeElement` matching the same current target;
+7. return success only from that fresh postcondition;
+8. fail closed on replacement/detach/identity drift;
+9. add unit tests + real Chromium E2E;
+10. do not expose generic Playwright methods.
 
-### P2 - managed-browser actions
+`FOCUS` is preferred before click because it has a narrower side effect and a clean independent postcondition.
+
+### P2 - managed-browser CLICK then TYPE_TEXT
 Status: **OPEN / BLOCKED ON P1**
 
-Add one action lifecycle at a time, starting with a narrow low-risk interaction. Require explicit permission, current target authority and independent effect evidence. Do not expose all Playwright methods as generic tools.
+Add one lifecycle at a time. Each must re-establish current exact-node authority immediately before dispatch and independently observe its own effect. Do not infer click/type support from target sensing or focus support.
 
-### P3 - authenticated User Browser Bridge lifecycle
+### P3 - broader target sensing
+Status: **OPEN**
+
+Expand only as needed to iframe/child-frame targets, generic accessibility semantics and multi-target disambiguation. Preserve bounded evidence and stale-target handling.
+
+### P4 - authenticated User Browser Bridge lifecycle
 Status: **FOUNDATION / OPEN**
 
-Use the real Edge UIA provider result as one evidence input. Design attachment/session/tab/permission/mutation lifecycle for the user's existing browser without copying authentication/profile data. Add an extension/native-messaging bridge only if evidence shows it is needed.
+Use the real Edge UIA provider result as one evidence input. Design attachment/session/tab/permission/mutation lifecycle for the user's existing browser without copying authentication/profile data. Add extension/native messaging only if real evidence shows it is required.
 
-### P4 - isolated parallel Work / Investigation + checkpoints
+### P5 - isolated parallel Work / Investigation + checkpoints
 Status: **OPEN / HIGH PRODUCT PRIORITY**
 
 Must be resident-owned work isolation, not multiple autonomous product identities. Do not make progress depend on Codex or any one model/provider.
 
-### P5 - MCP/connectors / external systems
+### P6 - MCP/connectors / external systems
 Status: **OPEN**
 
 Treat MCP/connectors as bounded Body/Channel adapters behind ZN permission/evidence semantics.
 
-### P6 - scheduled/event-driven resident work
+### P7 - scheduled/event-driven resident work
 Status: **OPEN**
 
 Persist independently of any chat/model session.
 
-### P7 - M8 Windows continuity / rollback / signing
+### P8 - M8 Windows continuity / rollback / signing
 Status: **PARTIAL**
 
-### P8 - SM1+ self-maintenance
+### P9 - SM1+ self-maintenance
 Status: **OPEN**
 
 ## Risks / boundaries
@@ -217,6 +277,8 @@ Status: **OPEN**
 - `main` remains untouched through ordinary development.
 - no force push/history rewrite.
 - browser providers are replaceable resources; ZN owns resident semantics.
+- target ID/freshness is evidence, but exact-node continuity must be strengthened before mutation.
+- a Playwright locator/element handle must not become product identity.
 - real browser UIA sensing is not authenticated browser control.
 - managed/user browser profiles must remain distinct.
 - do not copy browser credentials/profile state as login integration.
@@ -224,7 +286,8 @@ Status: **OPEN**
 - downloads/uploads remain disabled until file authority exists.
 - browser network policy is not yet a complete network sandbox/DNS-rebinding solution.
 - current desktop text mutation remains native-empty-Edit-only.
-- one self-hosted Windows runner means normal and interactive jobs can serialize; concurrency cancellation means only exact-head completed runs count.
+- one self-hosted Windows runner means normal and interactive jobs can serialize; exact-head completed runs are the authority.
+- the first interactive attempt for `1c37dc19` had one transient pointer failure; only the same-head successful rerun should be used as the regression result.
 - M8 remains partial; SM1+ remains open.
 
 ## Related files
@@ -241,11 +304,9 @@ runtime/python/zn_agent/core/managed_browser.py
 runtime/python/zn_agent/core/provider_bridge.py
 runtime/python/zn_agent/core/automation_element_sense.py
 runtime/python/zn_agent/core/automation_text_state_sense.py
-runtime/python/zn_agent/core/focused_modern_text_resident.py
 tests/zn_agent/core/test_browser_contract.py
 tests/zn_agent/core/test_managed_browser.py
 tests/zn_agent/e2e/test_windows_managed_browser.py
-tests/zn_agent/e2e/test_windows_interactive_uia_text_capability.py
 tests/zn_agent/e2e/test_windows_interactive_user_browser_bridge.py
 .github/workflows/zn-managed-browser-e2e.yml
 .github/workflows/zn-windows-interactive-e2e.yml
@@ -254,4 +315,4 @@ tests/zn_agent/e2e/test_windows_interactive_user_browser_bridge.py
 
 ## Next real target
 
-Finish exact-head normal CI for this documentation commit, then implement and prove bounded managed-browser target sensing/freshness before introducing any browser click/type mutation. Keep `main` untouched.
+Finish exact-head normal CI for this documentation commit. Then implement exact-node continuity plus a narrow managed-browser `FOCUS` lifecycle with execution-time revalidation and independent fresh focus evidence. Keep `main` untouched.
