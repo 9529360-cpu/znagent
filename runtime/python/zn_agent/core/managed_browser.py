@@ -542,7 +542,7 @@ class PlaywrightManagedBrowser:
         expected_pressed = action.expected.get("aria_pressed")
         if type(expected_pressed) is not bool:
             raise ManagedBrowserError(
-                "browser click requires explicit boolean expected aria_pressed postcondition"
+                "generic browser click is not implemented; verified toggle click requires explicit boolean expected aria_pressed postcondition"
             )
 
         page_id = action.page_id or action.target.page_id or self._default_page_id(session)
