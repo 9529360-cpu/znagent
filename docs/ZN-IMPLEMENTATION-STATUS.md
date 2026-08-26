@@ -14,195 +14,165 @@ Development branch: `dev/zn-agent`. Canonical source/release branch: `main`.
 
 ## 1. Current checkpoint - 2026-08-26
 
-M10 canonical source promotion remains complete. `main` is canonical source/release; ordinary development remains on `dev/zn-agent`.
+M10 canonical source promotion remains complete. `main` remains the canonical source/release branch; ordinary development remains on `dev/zn-agent`.
 
-Latest fully verified implementation/test head:
-
-```text
-ecf258122cda0f96c6bbdca09834242e72a6daed
-test: assert text verification before terminal cleanup
-```
-
-The product implementation that changed real Windows keyboard behavior is:
+Latest fully verified implementation/test head for the current P3 slice:
 
 ```text
-c0e3dcdf3f9dbc15cfe16b20c6bae9d53a047cf1
-fix: use full Win32 INPUT layout for keyboard text
+1e531658036ea2267191af0a2d4bb418e25a14eb
+test: close WPF fixture process pipes
 ```
 
 Status: **VERIFIED ON REAL WINDOWS X64 CI AND REAL INTERACTIVE WINDOWS E2E**.
 
-Exact-head normal workflow evidence for `ecf25812...`:
+Exact-head normal workflow evidence:
 
 ```text
-run 32914801495
-head ecf258122cda0f96c6bbdca09834242e72a6daed
+run 32939109838
+head 1e531658036ea2267191af0a2d4bb418e25a14eb
 
-ZN Source Boundary / Windows       success
-ZN Kernel / Python / Windows       success
 Electron / TypeScript / Windows   success
-Publish Windows CI statuses       success
+ZN Source Boundary / Windows      success
+ZN Kernel / Python / Windows      success
 ```
 
-The Kernel job checked out exact SHA `ecf25812...`, used CPython 3.12.13, installed the formal `znagent` runtime from `runtime/python`, booted an isolated zero-model resident, compiled the resident core and ran full discovery:
+The Kernel job checked out exact SHA `1e531658...`, used CPython 3.12.13, installed the formal `znagent` runtime from `runtime/python`, booted an isolated zero-model resident, compiled the resident core, and ran full discovery:
 
 ```text
-Ran 470 tests in 609.436s
+Ran 474 tests in 593.000s
 OK (skipped=5)
 ```
 
-The real Windows Kernel log includes the new keyboard/text regressions as `ok`, including:
+The four new read-only UIA capability regressions all passed, including guards that the Sense does not request dynamic Value text, dynamic Name, or control patterns.
+
+Exact-head interactive evidence:
 
 ```text
-test_empty_exact_target_types_once_then_verifies_fresh_digest ... ok
-test_already_matching_text_completes_without_input ... ok
-test_nonempty_different_text_fails_before_input ... ok
-test_started_marker_refuses_blind_replay ... ok
-test_partial_send_returns_to_investigation_without_retry ... ok
-test_uia_and_native_text_hwnd_mismatch_fails_before_input ... ok
-test_unknown_scope_authority_fails_closed_before_sensing_or_input ... ok
-test_digest_evidence_never_exposes_dynamic_text ... ok
-test_password_read_only_and_non_edit_controls_fail_closed ... ok
-test_body_ledger_persists_only_redacted_keyboard_metadata ... ok
-test_partial_send_is_failure_and_never_claims_completion ... ok
+run 32939109842
+head 1e531658036ea2267191af0a2d4bb418e25a14eb
+job Windows interactive computer-use E2E
 ```
 
-Exact product-implementation interactive evidence:
+The real input-desktop suite passed all three tests:
 
 ```text
-run 32913591334
-head c0e3dcdf3f9dbc15cfe16b20c6bae9d53a047cf1
-job Windows interactive computer-use E2E
-conclusion success
-
 test_real_resident_click_proves_visual_foreground_and_uia_focus ... ok
 test_real_resident_types_unicode_into_exact_focused_native_edit ... ok
-Ran 2 tests in 6.924s
-OK
+test_real_resident_identifies_non_native_wpf_text_capability ... ok
 ```
 
-The later `c46c013...` / `ecf25812...` commits change only core tests, so the path-filtered interactive workflow correctly did not rerun for them. The actual product implementation SHA `c0e3dcdf...` is the exact SHA that passed the real interactive input-desktop proof.
+The WPF proof uses a real focused `System.Windows.Controls.TextBox`, not a mock. ZN observes it as a UIA Edit element with no native child HWND, identifies Value/Text capabilities and writable/read-only/password metadata, and still refuses it through the legacy native Win32 text Sense. Therefore this slice proves modern non-native text-control classification without widening mutation authority.
 
 ## 2. Resident ownership
 
-The resident continues to own persistent Self/life state, Situation/Thought/Will, durable WorkingState, Investigation, native Body actions and Senses, bounded cognition resources, memory/reconsolidation, verified experience/procedural tendencies, channels, and resident work/progress state.
+The resident continues to own Self/life state, Situation/Thought/Will, durable WorkingState, Investigation, native Body actions and Senses, bounded cognition resources, memory/reconsolidation, verified experience/procedural tendencies, channels, and resident work/progress state.
 
 External models do not own identity, target selection, execution authority, current-world truth or completion.
 
-The active product runtime now constructs `FocusedTextEntryResidentRuntime`, which extends the already verified pointer/UIA resident rather than replacing its architecture. It installs `KeyboardTextBody` as the resident Body and owns a `NativeFocusedTextSense` alongside the existing foreground, native focused-control and read-only UI Automation Senses.
-
-Zero-model isolated boot passed at exact head `ecf25812...`; the new input competence does not make an external model a runtime prerequisite.
+The active product runtime remains `FocusedTextEntryResidentRuntime`, extending the verified pointer/UIA resident. The previously verified `KeyboardTextBody` and native Win32 `NativeFocusedTextSense` remain unchanged by the current P3 slice.
 
 ## 3. Body / Senses / computer interaction
 
-### 3.1 Bounded Unicode keyboard Body movement
+### 3.1 Existing typed text-entry competence remains narrow
 
-`KeyboardTextBody` adds one narrow Body action:
+ZN still has one real resident-owned typed text-entry competence for an already-focused, empty native Win32 `Edit` control. Its bounded Unicode Body movement, redacted durable ledger, digest-only native text Sense, non-replayable started marker, fresh target rechecks and independent postcondition remain intact.
 
-```text
-keyboard_text
-```
+Still true:
 
-Current authority is intentionally much narrower than a generic keyboard API:
+- no generic keyboard API;
+- no Enter/Tab/Escape or modifier shortcuts;
+- no selection/deletion/replacement lifecycle;
+- non-empty different text is refused;
+- password/read-only native controls are refused;
+- completion requires fresh independent digest/target evidence.
 
-- Windows only;
-- explicit non-empty string only;
-- maximum 512 UTF-16 code units;
-- plain text characters only;
-- no Enter, Tab, Escape, control characters, shortcuts or modifier chords;
-- no selection, deletion or replacement primitive;
-- one Unicode `SendInput` down/up pair per UTF-16 code unit;
-- partial Windows input acceptance is a failure, never completion evidence.
+The prior exact product-head interactive proof for this mutation competence remains valid, and the current three-test interactive run re-proved it alongside the new P3 read-only capability test.
 
-The Body result records only lengths, event counts and SHA-256. Its durable native-body ledger explicitly redacts the action text and persists only bounded metadata/digest rather than duplicating dynamic typed text into the action ledger.
+### 3.2 UI Automation Sense now exposes bounded text-control capability metadata
 
-### 3.2 Focused native text Sense keeps raw dynamic text private
-
-`NativeFocusedTextSense` is a dedicated read-only native Win32 text-state Sense. It does not widen the existing UI Automation Sense and does not add dynamic UIA `Name` or Value text.
-
-The first slice is deliberately limited to the exact focused native Win32 `Edit` child control. It requires:
-
-- focused child of the current foreground GUI thread;
-- same foreground process;
-- native class `Edit`;
-- positive control id;
-- enabled and visible;
-- not password style;
-- not read-only style;
-- bounded text length.
-
-The native text is read transiently through bounded `WM_GETTEXTLENGTH` / `WM_GETTEXT` with `SendMessageTimeoutW`. The observation exported to the resident contains only text length + SHA-256 plus target identity; it contains no raw text field.
-
-### 3.3 Typed text-entry lifecycle
-
-The supported completion contract is intentionally specific:
+Key product commit:
 
 ```text
-event.kind = ui_state_transition
-body_action.kind = keyboard_text
-expected_outcome.kind = focused_text_equals_action_text
-completion_scope.kind = focused_native_edit_text
+3880f5e54fabf79ebc92e2f0db98b6ca3cee6ce3
+feat: sense UI automation text capabilities
 ```
 
-The scope requires exact foreground process/title, native `Edit` class/control id, UIA control type and exact UIA class name. Unknown fields fail closed. AutomationId remains non-authoritative.
-
-The resident requires this sequence:
+`NativeAutomationElementSense` remains a read-only, lazy, bounded Windows UIA Sense. Its cached element observation now additionally carries:
 
 ```text
-fresh foreground evidence
--> fresh native focused-control evidence
--> fresh focused UIA RuntimeId/type/class evidence
--> fresh native text length/digest evidence
--> exact HWND agreement between UIA and native text Sense
--> typed completion/precondition admission
--> if already equal: complete with zero input
--> if non-empty and different: refuse mutation
--> if empty: persist preparation
--> persist non-replayable started marker
--> final fresh target + empty-text recheck
--> one bounded Unicode Body input
--> fresh target + text digest re-observation
--> complete only if exact requested digest/length is independently proven
+is_password
+is_value_pattern_available
+is_text_pattern_available
+value_is_read_only
 ```
 
-An interrupted `started` marker never causes blind keyboard replay. Partial input or failed postcondition returns to Investigation rather than repeating input.
+These are capability/classification facts, not content and not mutation authority.
 
-### 3.4 Real Windows failure exposed and fixed a Win64 ABI bug
+The UIA cache request may read the corresponding cached properties, but this Sense intentionally does **not** request:
 
-The first real text-entry interactive run (`32913418213`) reached the new E2E but the native Edit remained empty. The failure was not hidden with sleeps or retries.
+- `Value.Value` / current dynamic text;
+- dynamic `Name`;
+- any control-pattern object;
+- arbitrary UIA tree walking;
+- event subscriptions;
+- UIA mutation methods.
 
-Root cause was the first ctypes definition of Win32 `INPUT`: its union contained only `KEYBDINPUT`, making `sizeof(INPUT)` too small on Win64. `SendInput` therefore rejected the supplied `cbSize`.
+`ValueIsReadOnly` is only requested from the cached observation path when Value capability is actually available. Invalid or internally inconsistent injected observations fail closed.
 
-Commit `c0e3dcdf...` defines the full Win32 union, including `MOUSEINPUT`, `KEYBDINPUT` and `HARDWAREINPUT`, so the structure has the correct Win64 layout. Exact-head interactive run `32913591334` then passed both the pre-existing real pointer/UIA E2E and the new Unicode text-entry E2E.
+AutomationId remains bounded and non-authoritative. Opaque RuntimeId remains action-cycle scoped evidence rather than durable semantic identity.
 
-The real text test creates a native Win32 `Edit`, obtains target identity from ZN's own Senses, executes with `model_policy=never`, observes the real control containing `ZN native 世界`, and requires fresh resident-owned digest/UIA/native-focus proof before success.
+### 3.3 Real non-native WPF proof
 
-### 3.5 Explicit non-goals of this slice
+Key test commits:
 
-This does **not** establish generic keyboard authority.
+```text
+7d409ec577d8a307b5cd9330873dcd434060e466
+test: prove non-native text capability on Windows
 
-Still unsupported:
+97665ac03c388a7e5ec5896b3eff8c7094b7d31c
+test: close UIA capability resident before temp cleanup
 
-- typing into arbitrary browser/Chromium/WinUI/custom text widgets;
-- replacing arbitrary existing text;
-- password fields;
-- read-only fields;
-- Enter/Tab/navigation keys;
-- Ctrl/Alt/Win shortcuts;
-- right-click/double-click/drag;
-- arbitrary UIA tree search or control-pattern mutation.
+1e531658036ea2267191af0a2d4bb418e25a14eb
+test: close WPF fixture process pipes
+```
 
-These require their own concrete typed caller and independent verification design.
+The real E2E launches a WPF `TextBox` on the interactive desktop, focuses it, and observes it using the resident-owned foreground and UI Automation Senses. It proves:
+
+- UIA Edit control type;
+- no native child HWND (`native_window_handle == 0`);
+- enabled, keyboard-focusable and on-screen;
+- not a password field;
+- ValuePattern available;
+- TextPattern available;
+- Value is not read-only;
+- no raw `value`, `text` or dynamic `name` field exists in the observation;
+- `NativeFocusedTextSense` still refuses the non-native control.
+
+The first E2E attempt exposed a fixture lifecycle defect: SQLite remained open while the temporary directory was being removed. That was fixed by closing the resident store inside the temporary-directory lifetime. A later successful run exposed an unclosed subprocess-pipe warning; the final fixture closes those streams too. Product behavior was not weakened to make the test pass.
+
+### 3.4 What this slice does not establish
+
+This slice does **not** yet expose the current text content or digest of a WPF/Chromium/WinUI/custom text field.
+
+It therefore does not establish:
+
+- browser/Chromium text-value sensing;
+- generic modern-app text verification;
+- typing into WPF/Chromium/WinUI/custom widgets;
+- replacement/editing of existing text;
+- UIA control-pattern mutation.
+
+The new capability metadata is evidence that ZN can identify a promising modern text control and its safety-relevant capability shape. Mutation must remain closed until a concrete read-only current-state verifier exists.
 
 ## 4. Repository source boundary
 
 The active tree remains ZN-only by contract and exact-head CI evidence.
 
-Run `32914801495` completed `ZN Source Boundary / Windows` successfully at `ecf25812...`. No ownership rule or scanner exemption was weakened. No reference-product runtime/control plane was restored.
+Run `32939109838` completed `ZN Source Boundary / Windows` successfully at `1e531658...`. No ownership rule or scanner exemption was weakened. No reference-product runtime/control plane was restored.
 
 ## 5. Desktop / runtime / release
 
-Run `32914801495` completed `Electron / TypeScript / Windows` successfully at `ecf25812...`, including locked dependency installation, high-severity advisory rejection, typecheck, bundle, desktop ownership/runtime/update/handoff contract tests, and release-channel/runtime-staging/artifact-verifier tests.
+Run `32939109838` completed `Electron / TypeScript / Windows` successfully at `1e531658...`, including locked dependency installation, high-severity advisory rejection, typecheck, bundle, desktop ownership/runtime/update/handoff contracts, and release/runtime/artifact verifiers.
 
 M8 remains **PARTIAL**. Still open for Windows x64:
 
@@ -221,25 +191,25 @@ There is no current Windows CI infrastructure blocker.
 
 Still open:
 
-- text-entry/application-state support beyond native Win32 `Edit`;
-- browser/Chromium/modern application text-field evidence from a concrete ZN-owned caller;
-- any replacement/editing lifecycle for non-empty controls;
-- keyboard navigation/shortcuts and other input primitives until matching typed authority and independent verification exist;
-- broader interactive E2E coverage across real applications and environments;
+- current-value/digest sensing for non-native modern text controls;
+- concrete browser/Chromium text-field evidence;
+- any mutation lifecycle beyond already-focused empty native Win32 `Edit`;
+- replacement/editing, navigation keys and shortcuts;
+- broader real-application interactive coverage;
 - mature procedural competence/growth benchmarks across repeated real tasks;
 - M8 Windows install/upgrade/rollback/signing evidence;
 - SM1+;
 - non-blocking GitHub Actions JavaScript runtime deprecation warnings;
-- a non-blocking Pillow `Image.getdata` deprecation warning in the visual interactive fixture.
+- a non-blocking Pillow `Image.getdata` deprecation warning in visual interactive code.
 
 ## 8. Next real targets
 
 ```text
-1. keep exact-head Windows x64 CI and the two-test real interactive lane green
-2. preserve the native Edit text-entry privacy, non-replay and fresh-verification boundaries
-3. investigate the next concrete read-only application/browser text-field state needed to support mainstream modern apps
-4. only widen text mutation after ZN can independently identify and verify that target/state
-5. do not turn keyboard or UI Automation into generic model-owned tool/control planes
+1. preserve exact-head Windows x64 CI and the three-test real interactive lane
+2. design a separate read-only focused modern-text state Sense that can transiently read only safe controls and export privacy-safe length/digest evidence
+3. prove that read-only state path first on a concrete non-native control, then on Chromium/browser input if the actual provider supports it
+4. keep password fields fail-closed and never persist raw dynamic text
+5. do not widen keyboard/UIA mutation until current target/state can be independently verified
 6. keep M8 and SM1+ explicitly partial/open
 7. leave main untouched through ordinary development
 ```
