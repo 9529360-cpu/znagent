@@ -1,0 +1,149 @@
+from __future__ import annotations
+
+import unittest
+
+from zn_agent.core.browser import (
+    BrowserAction,
+    BrowserActionAuthority,
+    BrowserActionKind,
+    BrowserEffectEvidence,
+    BrowserObservation,
+    BrowserPermissionContext,
+    BrowserPlane,
+    BrowserSessionIdentity,
+    BrowserTarget,
+    BrowserTargetKind,
+)
+
+
+class BrowserContractTests(unittest.TestCase):
+    def test_managed_session_defaults_to_ephemeral_profile(self):
+        session = BrowserSessionIdentity.create(
+            plane=BrowserPlane.MANAGED,
+            provider="playwright",
+            browser_name="chromium",
+        )
+        self.assertEqual(session.profile_scope, "ephemeral")
+        self.assertTrue(session.session_id.startswith("browser-"))
+
+    def test_user_session_cannot_claim_managed_profile(self):
+        with self.assertRaises(ValueError):
+            BrowserSessionIdentity(
+                session_id="user-1",
+                plane=BrowserPlane.USER,
+                provider="uia",
+                profile_scope="ephemeral",
+            )
+
+    def test_managed_session_cannot_claim_existing_user_profile(self):
+        with self.assertRaises(ValueError):
+            BrowserSessionIdentity(
+                session_id="managed-1",
+                plane=BrowserPlane.MANAGED,
+                provider="playwright",
+                profile_scope="user_existing",
+            )
+
+    def test_allowed_origins_are_normalized_and_scoped(self):
+        permission = BrowserPermissionContext(
+            allowed_origins=("HTTPS://Example.COM:443/path", "http://example.net:8080/a"),
+        )
+        self.assertEqual(
+            permission.allowed_origins,
+            ("https://example.com", "http://example.net:8080"),
+        )
+        self.assertTrue(permission.allows_origin("https://example.com/ok"))
+        self.assertFalse(permission.allows_origin("https://other.example/"))
+
+    def test_duplicate_allowed_origins_fail_closed_after_normalization(self):
+        with self.assertRaises(ValueError):
+            BrowserPermissionContext(
+                allowed_origins=("https://example.com", "https://EXAMPLE.com:443/path"),
+            )
+
+    def test_action_authority_binds_to_current_session_page_and_target(self):
+        session = BrowserSessionIdentity.create(
+            plane=BrowserPlane.MANAGED,
+            provider="playwright",
+        )
+        target = BrowserTarget(
+            session_id=session.session_id,
+            page_id="page-1",
+            kind=BrowserTargetKind.ELEMENT,
+            target_id="element-1",
+            observed_at="2026-08-26T00:00:00+00:00",
+            url="https://example.com/",
+            role="textbox",
+        )
+        observation = BrowserObservation(
+            session=session,
+            page_id="page-1",
+            captured_at="2026-08-26T00:00:01+00:00",
+            url="https://example.com/",
+            title="Example",
+            load_state="complete",
+            target=target,
+        )
+        action = BrowserAction.create(
+            session_id=session.session_id,
+            page_id="page-1",
+            kind=BrowserActionKind.FOCUS,
+            target=target,
+        )
+        authority = BrowserActionAuthority.from_observation(
+            action,
+            observation,
+            BrowserPermissionContext(),
+        )
+        self.assertEqual(authority.action_id, action.action_id)
+        self.assertEqual(authority.session_id, session.session_id)
+        self.assertEqual(authority.page_id, "page-1")
+        self.assertEqual(authority.target_id, "element-1")
+        self.assertEqual(authority.observation_captured_at, observation.captured_at)
+
+    def test_cross_session_target_is_rejected(self):
+        target = BrowserTarget(
+            session_id="session-a",
+            page_id="page-1",
+            kind=BrowserTargetKind.ELEMENT,
+            target_id="element-1",
+            observed_at="now",
+        )
+        with self.assertRaises(ValueError):
+            BrowserAction.create(
+                session_id="session-b",
+                page_id="page-1",
+                kind=BrowserActionKind.CLICK,
+                target=target,
+            )
+
+    def test_success_and_failure_evidence_are_unambiguous(self):
+        success = BrowserEffectEvidence(
+            action_id="action-1",
+            session_id="session-1",
+            observed_at="now",
+            success=True,
+            postcondition="url_changed",
+        )
+        self.assertIsNone(success.error)
+
+        failure = BrowserEffectEvidence(
+            action_id="action-2",
+            session_id="session-1",
+            observed_at="now",
+            success=False,
+            error="target became stale",
+        )
+        self.assertFalse(failure.success)
+
+        with self.assertRaises(ValueError):
+            BrowserEffectEvidence(
+                action_id="action-3",
+                session_id="session-1",
+                observed_at="now",
+                success=False,
+            )
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
