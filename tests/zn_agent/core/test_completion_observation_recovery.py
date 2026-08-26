@@ -79,6 +79,27 @@ class CompletionObservationRecoveryTests(unittest.TestCase):
             self.assertIn("living-state write unavailable", observation["last_error"])
             resident.store.close()
 
+    def test_health_summary_is_sanitized_and_counts_pending_stages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = resident_for(Path(tmp) / "kernel.db")
+
+            def fail_observation(run):
+                raise RuntimeError("secret internal repair detail")
+
+            resident.life.observe_action = fail_observation
+            resident.submit("complete locally")
+
+            health = resident.completion_observations.health()
+            rendered = repr(health)
+            self.assertFalse(health["healthy"])
+            self.assertEqual(health["pending_count"], 1)
+            self.assertEqual(health["waiting_count"], 1)
+            self.assertEqual(health["running_count"], 0)
+            self.assertEqual(health["stages"], {"life": 1})
+            self.assertNotIn("secret internal repair detail", rendered)
+            self.assertNotIn("last_error", rendered)
+            resident.store.close()
+
     def test_pending_life_observation_repairs_on_resident_restart_without_replay(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "kernel.db"
@@ -108,6 +129,16 @@ class CompletionObservationRecoveryTests(unittest.TestCase):
             self.assertIsNotNone(outcome)
             self.assertTrue(outcome.success)
             self.assertEqual(second.life.snapshot().last_event_id, event_id)
+            self.assertEqual(
+                second.completion_observations.health(),
+                {
+                    "healthy": True,
+                    "pending_count": 0,
+                    "waiting_count": 0,
+                    "running_count": 0,
+                    "stages": {},
+                },
+            )
             second.store.close()
 
     def test_exception_after_completion_returns_existing_outcome_instead_of_failing_again(self):
