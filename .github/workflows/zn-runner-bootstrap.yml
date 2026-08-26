@@ -1,0 +1,35 @@
+name: ZN Windows Runner Bootstrap
+
+on:
+  push:
+    branches:
+      - dev/zn-agent
+    paths:
+      - .github/workflows/zn-runner-bootstrap.yml
+      - .github/scripts/bootstrap-zn-windows-runners.ps1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zn-runner-bootstrap-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    name: Bootstrap parallel Windows runners
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 15
+    steps:
+      - name: Require existing Windows x64 runner
+        shell: powershell
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "ZN runner bootstrap requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Register three headless CI workers and reserve interactive runner
+        shell: powershell
+        run: .\.github\scripts\bootstrap-zn-windows-runners.ps1 -WorkerCount 3
