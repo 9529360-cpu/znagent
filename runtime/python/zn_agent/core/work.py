@@ -216,6 +216,60 @@ class ResidentWorkLedger:
         return values
 
     @staticmethod
+    def _public_recovery(raw: Any) -> dict[str, Any] | None:
+        """Project resident recovery state without exporting action arguments.
+
+        The durable resident state may carry internal intent/signature material
+        needed to reason about replay. Work is a control-plane face, so it gets a
+        stable allowlist only and never raw command/text/environment authority.
+        """
+        if not isinstance(raw, dict):
+            return None
+
+        def text(key: str, limit: int = 128) -> str | None:
+            value = raw.get(key)
+            if value is None:
+                return None
+            normalized = " ".join(str(value).strip().split())
+            return normalized[:limit] if normalized else None
+
+        replay = raw.get("replay_blocked")
+        recovery: dict[str, Any] = {
+            "status": text("status", 64),
+            "kind": text("kind", 64),
+            "attempt_id": text("attempt_id", 128),
+            "replay_blocked": replay if isinstance(replay, bool) else None,
+            "verification_kind": text("verification_kind", 64),
+            "decision": text("decision", 96),
+            "reason": text("reason", 500),
+            "verification": None,
+        }
+
+        verification = raw.get("verification")
+        if isinstance(verification, dict):
+            action_id = verification.get("action_id")
+            success = verification.get("success")
+            truncated = verification.get("truncated")
+            observed_chars = verification.get("observed_chars")
+            if isinstance(observed_chars, bool) or not isinstance(observed_chars, int):
+                observed_chars = None
+            elif observed_chars < 0:
+                observed_chars = 0
+            else:
+                observed_chars = min(observed_chars, 10_000_000)
+            recovery["verification"] = {
+                "action_id": (
+                    " ".join(str(action_id).strip().split())[:128]
+                    if action_id is not None and str(action_id).strip()
+                    else None
+                ),
+                "success": success if isinstance(success, bool) else None,
+                "truncated": truncated if isinstance(truncated, bool) else None,
+                "observed_chars": observed_chars,
+            }
+        return recovery
+
+    @staticmethod
     def _thread_from_row(row: sqlite3.Row) -> WorkThread:
         raw_metadata = json.loads(row["metadata_json"] or "{}")
         metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
@@ -612,6 +666,14 @@ class ResidentWorkLedger:
             stage = "processing"
             next_action = "continue resident work"
 
+        recovery_data = None
+        if active and stage == "side_effect_recovery":
+            recovery_data = self._public_recovery(
+                working.data.get("side_effect_recovery")
+                if isinstance(working.data, dict)
+                else None
+            )
+
         thought_data: dict[str, Any] | None = None
         try:
             thought = self.resident.life.snapshot().current_thought
@@ -676,6 +738,7 @@ class ResidentWorkLedger:
             "terminal": terminal,
             "finalized": finalized,
             "updated_at": event.updated_at,
+            "recovery": recovery_data,
             "thought": thought_data,
             "investigation": investigation_data,
             "body_actions": body_actions,
