@@ -7,6 +7,8 @@ on:
     paths:
       - .github/workflows/zn-runner-bootstrap.yml
       - .github/scripts/bootstrap-zn-windows-runners.ps1
+      - .github/scripts/watch-zn-interactive-runner.ps1
+      - .github/scripts/install-zn-interactive-runner-watchdog.ps1
   workflow_dispatch:
 
 permissions:
@@ -19,17 +21,27 @@ concurrency:
 jobs:
   bootstrap:
     name: Bootstrap parallel Windows runners
-    runs-on: zn-interactive
+    runs-on: [self-hosted, Windows, X64, zn-interactive]
     timeout-minutes: 20
     steps:
       - name: Require dedicated interactive bootstrap runner
-        shell: powershell
+        shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
             throw "ZN runner bootstrap requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
           }
+          if ($env:RUNNER_NAME -ne 'zn-interactive') {
+            throw "ZN runner bootstrap requires the dedicated zn-interactive runner; got $env:RUNNER_NAME"
+          }
+          $sessionId = (Get-Process -Id $PID -ErrorAction Stop).SessionId
+          if ($sessionId -eq 0) {
+            throw 'ZN runner bootstrap requires a logged-on interactive session, not Session 0.'
+          }
       - name: Checkout
         uses: actions/checkout@v7
+      - name: Normalize interactive runner watchdog to hidden launch
+        shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+        run: .\.github\scripts\install-zn-interactive-runner-watchdog.ps1
       - name: Register three isolated headless CI workers
-        shell: powershell
+        shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         run: .\.github\scripts\bootstrap-zn-windows-runners.ps1 -WorkerCount 3
