@@ -28,6 +28,7 @@ from .browser import (
     BrowserTargetQuery,
     BrowserTargetQueryKind,
 )
+from .managed_browser_select import perform_select_option
 from .models import utc_now
 from .url_safety import is_safe_url
 
@@ -374,6 +375,8 @@ class PlaywrightManagedBrowser:
                 return self._click(session, action)
             if action.kind is BrowserActionKind.TYPE_TEXT:
                 return self._type_text(session, action)
+            if action.kind is BrowserActionKind.SELECT_OPTION:
+                return perform_select_option(self, session, action)
             if action.kind is BrowserActionKind.CHECK:
                 return self._check(session, action)
             if action.kind is BrowserActionKind.UNCHECK:
