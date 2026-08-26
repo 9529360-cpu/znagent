@@ -52,6 +52,123 @@ class _FakeWebSocketRoute:
         self.close_reason = reason
 
 
+class _FakeValueHandle:
+    def __init__(self, value):
+        self.value = value
+        self.disposed = False
+
+    def json_value(self):
+        return self.value
+
+    def dispose(self):
+        self.disposed = True
+
+
+class _FakeElementHandle:
+    def __init__(self, page, node):
+        self.page = page
+        self.node = node
+        self.disposed = False
+        page.created_element_handles.append(self)
+
+    def as_element(self):
+        return self if self.node is not None else None
+
+    def evaluate(self, expression, arg=None):
+        if self.disposed:
+            raise RuntimeError("disposed fake element handle")
+        if "element === other" in expression:
+            return bool(
+                self.node is not None
+                and isinstance(arg, _FakeElementHandle)
+                and arg.node is self.node
+            )
+        if "document.activeElement === element" in expression:
+            return bool(
+                self.node is not None
+                and self.node.get("connected", True)
+                and self.page.active_node is self.node
+            )
+        if "document.querySelectorAll" in expression and "element.isConnected" in expression:
+            expected_id = str(arg or "")
+            current = self.page.target_snapshots.get(expected_id)
+            count = 0 if current is None else int(current.get("count", 1))
+            node = self.node or {}
+            connected = bool(node.get("connected", True))
+            return {
+                "count": count,
+                "current": bool(
+                    connected
+                    and count == 1
+                    and current is self.node
+                    and node.get("dom_id") == expected_id
+                ),
+                "connected": connected,
+                "visible": bool(connected and node.get("visible", True)),
+                "dom_id": str(node.get("dom_id") or ""),
+                "tag": str(node.get("tag") or ""),
+                "role": str(node.get("role") or ""),
+                "name": str(node.get("name") or ""),
+                "input_type": str(node.get("input_type") or ""),
+                "is_password": bool(node.get("is_password", False)),
+            }
+        raise AssertionError("unexpected element evaluate expression")
+
+    def focus(self):
+        if self.disposed:
+            raise RuntimeError("disposed fake element handle")
+        if self.node is None or not self.node.get("connected", True):
+            raise RuntimeError("fake target is detached")
+        if self.node.get("focus_error"):
+            raise RuntimeError("fake provider focus error")
+
+        self.page.active_node = self.node
+        if self.node.get("replace_on_focus"):
+            dom_id = str(self.node.get("dom_id") or "")
+            replacement = dict(self.node)
+            replacement.pop("replace_on_focus", None)
+            self.node["connected"] = False
+            replacement["connected"] = True
+            self.page.target_snapshots[dom_id] = replacement
+            self.page.active_node = None
+        elif self.node.get("focus_blocked"):
+            self.page.active_node = None
+
+    def dispose(self):
+        self.disposed = True
+
+
+class _FakeNullHandle:
+    def __init__(self):
+        self.disposed = False
+
+    def as_element(self):
+        return None
+
+    def dispose(self):
+        self.disposed = True
+
+
+class _FakeBundleHandle:
+    def __init__(self, page, count, node):
+        self.page = page
+        self.count = count
+        self.node = node
+        self.disposed = False
+
+    def get_property(self, name):
+        if name == "count":
+            return _FakeValueHandle(self.count)
+        if name == "node":
+            if self.node is None:
+                return _FakeNullHandle()
+            return _FakeElementHandle(self.page, self.node)
+        raise AssertionError(f"unexpected fake bundle property: {name}")
+
+    def dispose(self):
+        self.disposed = True
+
+
 class _FakePage:
     def __init__(self):
         self.url = "about:blank"
@@ -61,6 +178,8 @@ class _FakePage:
         self.closed = False
         self.goto_calls = []
         self.target_snapshots = {}
+        self.active_node = None
+        self.created_element_handles = []
 
     def title(self):
         return self._title
@@ -68,18 +187,23 @@ class _FakePage:
     def evaluate(self, expression, arg=None):
         if expression == "document.readyState" and arg is None:
             return self._ready
-        if arg is not None and "document.querySelectorAll" in expression:
-            snapshot = self.target_snapshots.get(arg)
-            if snapshot is None:
-                return {"count": 0}
-            return dict(snapshot)
-        raise AssertionError("unexpected evaluate expression")
+        raise AssertionError("unexpected page evaluate expression")
+
+    def evaluate_handle(self, expression, arg=None):
+        if "document.querySelectorAll" not in expression:
+            raise AssertionError("unexpected evaluate_handle expression")
+        dom_id = str(arg or "")
+        current = self.target_snapshots.get(dom_id)
+        count = 0 if current is None else int(current.get("count", 1))
+        node = current if count == 1 else None
+        return _FakeBundleHandle(self, count, node)
 
     def goto(self, url, *, wait_until):
         self.goto_calls.append((url, wait_until))
         self.url = url
         self._title = "Fixture"
         self._ready = "interactive"
+        self.active_node = None
 
     def is_closed(self):
         return self.closed
@@ -170,6 +294,9 @@ def _target_snapshot(
     visible=True,
     is_password=False,
     count=1,
+    replace_on_focus=False,
+    focus_blocked=False,
+    focus_error=False,
 ):
     return {
         "count": count,
@@ -181,6 +308,9 @@ def _target_snapshot(
         "name": name,
         "input_type": input_type,
         "is_password": is_password,
+        "replace_on_focus": replace_on_focus,
+        "focus_blocked": focus_blocked,
+        "focus_error": focus_error,
     }
 
 
@@ -195,6 +325,16 @@ class ManagedBrowserTests(unittest.TestCase):
         )
         identity = adapter.open_session(permission=permission, headless=True)
         return adapter, playwright, identity
+
+    def _observe_target(self, adapter, playwright, identity, *, dom_id="search-input"):
+        page = playwright.browser.context.page
+        page.url = "https://example.com/form"
+        page._title = "Form"
+        query = BrowserTargetQuery(
+            kind=BrowserTargetQueryKind.DOM_ID,
+            value=dom_id,
+        )
+        return query, adapter.observe_target(identity.session_id, query)
 
     def test_open_session_is_ephemeral_and_blocks_service_workers_and_downloads(self):
         adapter, playwright, identity = self._build()
@@ -287,6 +427,151 @@ class ManagedBrowserTests(unittest.TestCase):
             self.assertIn("not implemented", effect.error or "")
         finally:
             adapter.close()
+
+    def test_observation_replacement_disposes_old_provider_target_handle(self):
+        adapter, playwright, identity = self._build()
+        page = playwright.browser.context.page
+        page.target_snapshots["search-input"] = _target_snapshot()
+        query = BrowserTargetQuery(
+            kind=BrowserTargetQueryKind.DOM_ID,
+            value="search-input",
+        )
+        try:
+            adapter.observe_target(identity.session_id, query)
+            first_handle = page.created_element_handles[-1]
+            self.assertFalse(first_handle.disposed)
+            adapter.observe(identity.session_id)
+            self.assertTrue(first_handle.disposed)
+        finally:
+            adapter.close()
+
+    def test_focus_requires_current_exact_node_and_returns_fresh_postcondition_evidence(self):
+        permission = BrowserPermissionContext(allow_page_interaction=True)
+        adapter, playwright, identity = self._build(permission=permission)
+        page = playwright.browser.context.page
+        page.target_snapshots["search-input"] = _target_snapshot()
+        try:
+            _query, observed = self._observe_target(adapter, playwright, identity)
+            action = BrowserAction.create(
+                session_id=identity.session_id,
+                page_id=observed.page_id,
+                kind=BrowserActionKind.FOCUS,
+                target=observed.target,
+            )
+            authority = BrowserActionAuthority.from_observation(
+                action,
+                observed,
+                permission,
+            )
+            effect = adapter.act(action, authority)
+            self.assertTrue(effect.success, effect.error)
+            self.assertEqual(effect.postcondition, "same_exact_target_focused")
+            self.assertEqual(effect.target_id, observed.target.target_id)
+            self.assertTrue(effect.data["exact_node_continuity"])
+            self.assertTrue(effect.data["focused"])
+            self.assertIs(page.active_node, page.target_snapshots["search-input"])
+            self.assertNotEqual(effect.observed_at, observed.captured_at)
+        finally:
+            adapter.close()
+
+    def test_focus_rejects_same_shape_replacement_before_dispatch(self):
+        permission = BrowserPermissionContext(allow_page_interaction=True)
+        adapter, playwright, identity = self._build(permission=permission)
+        page = playwright.browser.context.page
+        original = _target_snapshot()
+        page.target_snapshots["search-input"] = original
+        try:
+            _query, observed = self._observe_target(adapter, playwright, identity)
+            action = BrowserAction.create(
+                session_id=identity.session_id,
+                page_id=observed.page_id,
+                kind=BrowserActionKind.FOCUS,
+                target=observed.target,
+            )
+            authority = BrowserActionAuthority.from_observation(
+                action,
+                observed,
+                permission,
+            )
+
+            original["connected"] = False
+            replacement = _target_snapshot()
+            page.target_snapshots["search-input"] = replacement
+
+            effect = adapter.act(action, authority)
+            self.assertFalse(effect.success)
+            self.assertIn("changed before dispatch", effect.error or "")
+            self.assertIsNone(page.active_node)
+        finally:
+            adapter.close()
+
+    def test_focus_fails_if_exact_target_is_replaced_during_dispatch(self):
+        permission = BrowserPermissionContext(allow_page_interaction=True)
+        adapter, playwright, identity = self._build(permission=permission)
+        page = playwright.browser.context.page
+        original = _target_snapshot(replace_on_focus=True)
+        page.target_snapshots["search-input"] = original
+        try:
+            _query, observed = self._observe_target(adapter, playwright, identity)
+            action = BrowserAction.create(
+                session_id=identity.session_id,
+                page_id=observed.page_id,
+                kind=BrowserActionKind.FOCUS,
+                target=observed.target,
+            )
+            authority = BrowserActionAuthority.from_observation(
+                action,
+                observed,
+                permission,
+            )
+            effect = adapter.act(action, authority)
+            self.assertFalse(effect.success)
+            self.assertIn("replaced target node", effect.error or "")
+            self.assertFalse(effect.data["exact_node_continuity"])
+            self.assertIsNot(page.target_snapshots["search-input"], original)
+            self.assertIsNone(page.active_node)
+        finally:
+            adapter.close()
+
+    def test_focus_requires_independent_fresh_active_element_postcondition(self):
+        permission = BrowserPermissionContext(allow_page_interaction=True)
+        adapter, playwright, identity = self._build(permission=permission)
+        page = playwright.browser.context.page
+        page.target_snapshots["search-input"] = _target_snapshot(focus_blocked=True)
+        try:
+            _query, observed = self._observe_target(adapter, playwright, identity)
+            action = BrowserAction.create(
+                session_id=identity.session_id,
+                page_id=observed.page_id,
+                kind=BrowserActionKind.FOCUS,
+                target=observed.target,
+            )
+            authority = BrowserActionAuthority.from_observation(
+                action,
+                observed,
+                permission,
+            )
+            effect = adapter.act(action, authority)
+            self.assertFalse(effect.success)
+            self.assertIn("postcondition was not observed", effect.error or "")
+            self.assertTrue(effect.data["exact_node_continuity"])
+            self.assertFalse(effect.data["focused"])
+        finally:
+            adapter.close()
+
+    def test_target_handles_are_disposed_when_session_closes(self):
+        adapter, playwright, identity = self._build()
+        page = playwright.browser.context.page
+        page.target_snapshots["search-input"] = _target_snapshot()
+        query = BrowserTargetQuery(
+            kind=BrowserTargetQueryKind.DOM_ID,
+            value="search-input",
+        )
+        adapter.observe_target(identity.session_id, query)
+        target_handle = page.created_element_handles[-1]
+        self.assertFalse(target_handle.disposed)
+        adapter.close_session(identity.session_id)
+        self.assertTrue(target_handle.disposed)
 
     def test_dom_id_target_observation_fails_closed_for_missing_ambiguous_hidden_or_frame(self):
         adapter, playwright, identity = self._build()
@@ -539,15 +824,18 @@ class ManagedBrowserTests(unittest.TestCase):
         finally:
             adapter.close()
 
-    def test_unimplemented_mutation_returns_failure_evidence_without_dispatch(self):
+    def test_unimplemented_click_returns_failure_evidence_without_dispatch(self):
         permission = BrowserPermissionContext(allow_page_interaction=True)
-        adapter, _playwright, identity = self._build(permission=permission)
+        adapter, playwright, identity = self._build(permission=permission)
+        page = playwright.browser.context.page
+        page.target_snapshots["search-input"] = _target_snapshot()
         try:
-            observation = adapter.observe(identity.session_id)
+            _query, observation = self._observe_target(adapter, playwright, identity)
             action = BrowserAction.create(
                 session_id=identity.session_id,
                 page_id=observation.page_id,
                 kind=BrowserActionKind.CLICK,
+                target=observation.target,
             )
             authority = BrowserActionAuthority.from_observation(
                 action,
@@ -557,6 +845,7 @@ class ManagedBrowserTests(unittest.TestCase):
             effect = adapter.act(action, authority)
             self.assertFalse(effect.success)
             self.assertIn("not implemented", effect.error or "")
+            self.assertIsNone(page.active_node)
         finally:
             adapter.close()
 

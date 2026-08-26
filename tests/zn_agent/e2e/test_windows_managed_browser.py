@@ -34,10 +34,19 @@ class _FixtureHandler(http.server.BaseHTTPRequestHandler):
             body = (
                 f'<input id="zn-target" type="text" aria-label="ZN Search Target" '
                 f'value="{_RAW_TARGET_VALUE}">'
+                '<input id="zn-churn" type="text" aria-label="ZN Churn Target">'
                 '<input id="zn-password" type="password" aria-label="Secret Password" value="hidden">'
                 '<div id="zn-hidden" style="display:none">hidden target</div>'
                 '<span id="zn-duplicate">one</span><span id="zn-duplicate">two</span>'
                 "<main>ZN managed browser marker</main>"
+                "<script>"
+                "const churn=document.getElementById('zn-churn');"
+                "churn.addEventListener('focus',(event)=>{"
+                "const current=event.currentTarget;"
+                "const replacement=current.cloneNode(true);"
+                "current.replaceWith(replacement);"
+                "},{once:true});"
+                "</script>"
             )
         payload = (
             "<!doctype html><html><head>"
@@ -71,7 +80,7 @@ class ManagedBrowserWindowsE2E(unittest.TestCase):
         cls.server.server_close()
         cls.thread.join(timeout=5)
 
-    def test_local_headless_chromium_observes_targets_and_verifies_navigation(self):
+    def test_local_headless_chromium_observes_targets_focuses_exact_node_and_verifies_navigation(self):
         permission = BrowserPermissionContext(
             allow_navigation=True,
             allow_page_interaction=True,
@@ -145,20 +154,80 @@ class ManagedBrowserWindowsE2E(unittest.TestCase):
                 target.observed_at,
             )
 
-            click_probe = BrowserAction.create(
+            focus_action = BrowserAction.create(
                 session_id=session.session_id,
                 page_id=refreshed_target_observation.page_id,
-                kind=BrowserActionKind.CLICK,
+                kind=BrowserActionKind.FOCUS,
                 target=refreshed_target_observation.target,
+            )
+            focus_authority = BrowserActionAuthority.from_observation(
+                focus_action,
+                refreshed_target_observation,
+                permission,
+            )
+            focus_effect = browser.act(focus_action, focus_authority)
+            self.assertTrue(focus_effect.success, focus_effect.error)
+            self.assertEqual(focus_effect.postcondition, "same_exact_target_focused")
+            self.assertEqual(
+                focus_effect.target_id,
+                refreshed_target_observation.target.target_id,
+            )
+            self.assertTrue(focus_effect.data["exact_node_continuity"])
+            self.assertTrue(focus_effect.data["focused"])
+            self.assertNotEqual(
+                focus_effect.observed_at,
+                refreshed_target_observation.captured_at,
+            )
+
+            post_focus_target_observation = browser.observe_target(
+                session.session_id,
+                query,
+                page_id=observed.page_id,
+            )
+            self.assertEqual(
+                post_focus_target_observation.target.target_id,
+                target.target_id,
+            )
+
+            click_probe = BrowserAction.create(
+                session_id=session.session_id,
+                page_id=post_focus_target_observation.page_id,
+                kind=BrowserActionKind.CLICK,
+                target=post_focus_target_observation.target,
             )
             click_authority = BrowserActionAuthority.from_observation(
                 click_probe,
-                refreshed_target_observation,
+                post_focus_target_observation,
                 permission,
             )
             click_effect = browser.act(click_probe, click_authority)
             self.assertFalse(click_effect.success)
             self.assertIn("not implemented", click_effect.error or "")
+
+            churn_query = BrowserTargetQuery(
+                kind=BrowserTargetQueryKind.DOM_ID,
+                value="zn-churn",
+            )
+            churn_observation = browser.observe_target(
+                session.session_id,
+                churn_query,
+                page_id=observed.page_id,
+            )
+            churn_action = BrowserAction.create(
+                session_id=session.session_id,
+                page_id=churn_observation.page_id,
+                kind=BrowserActionKind.FOCUS,
+                target=churn_observation.target,
+            )
+            churn_authority = BrowserActionAuthority.from_observation(
+                churn_action,
+                churn_observation,
+                permission,
+            )
+            churn_effect = browser.act(churn_action, churn_authority)
+            self.assertFalse(churn_effect.success)
+            self.assertIn("replaced target node", churn_effect.error or "")
+            self.assertFalse(churn_effect.data["exact_node_continuity"])
 
             with self.assertRaisesRegex(ManagedBrowserError, "not found"):
                 browser.observe_target(
@@ -197,16 +266,20 @@ class ManagedBrowserWindowsE2E(unittest.TestCase):
                     page_id=observed.page_id,
                 )
 
+            before_second_navigation = browser.observe(
+                session.session_id,
+                page_id=observed.page_id,
+            )
             second = BrowserAction.create(
                 session_id=session.session_id,
-                page_id=refreshed_target_observation.page_id,
+                page_id=before_second_navigation.page_id,
                 kind=BrowserActionKind.NAVIGATE,
                 args={"url": self.origin + "/next"},
                 expected={"url_equals": self.origin + "/next"},
             )
             second_authority = BrowserActionAuthority.from_observation(
                 second,
-                refreshed_target_observation,
+                before_second_navigation,
                 permission,
             )
             second_effect = browser.act(second, second_authority)
@@ -221,7 +294,7 @@ class ManagedBrowserWindowsE2E(unittest.TestCase):
             self.assertEqual(changed_target_observation.target.role, "button")
             self.assertNotEqual(
                 changed_target_observation.target.target_id,
-                refreshed_target_observation.target.target_id,
+                post_focus_target_observation.target.target_id,
             )
             with self.assertRaisesRegex(ValueError, "target changed"):
                 BrowserActionAuthority.from_observation(

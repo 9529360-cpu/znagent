@@ -6,7 +6,7 @@ Playwright is an implementation resource, not the browser control plane. The
 adapter defaults to an ephemeral Chromium context, blocks service workers so
 request routing remains authoritative, checks every HTTP(S) request and
 WebSocket endpoint through ZN URL safety, and returns resident-owned effect
-evidence after navigation instead of treating dispatch as completion.
+evidence after actions instead of treating provider dispatch as completion.
 """
 
 import hashlib
@@ -43,17 +43,30 @@ class ManagedBrowserUnavailable(ManagedBrowserError):
 UrlChecker = Callable[..., bool]
 
 
-_TARGET_BY_DOM_ID_SCRIPT = r"""
+_TARGET_HANDLE_BUNDLE_SCRIPT = r"""
 (domId) => {
   const matches = Array.from(document.querySelectorAll("[id]")).filter(
     (element) => element.id === domId
   );
-  if (matches.length !== 1) {
-    return {count: matches.length};
-  }
+  return {
+    count: matches.length,
+    node: matches.length === 1 ? matches[0] : null,
+  };
+}
+"""
 
-  const element = matches[0];
-  const connected = Boolean(element.isConnected);
+_TARGET_HANDLE_EVIDENCE_SCRIPT = r"""
+(element, domId) => {
+  const matches = Array.from(document.querySelectorAll("[id]")).filter(
+    (candidate) => candidate.id === domId
+  );
+  const connected = Boolean(element && element.isConnected);
+  const current = Boolean(
+    connected &&
+    matches.length === 1 &&
+    matches[0] === element &&
+    element.id === domId
+  );
   const style = connected ? window.getComputedStyle(element) : null;
   const rect = connected ? element.getBoundingClientRect() : null;
   const visible = Boolean(
@@ -67,14 +80,14 @@ _TARGET_BY_DOM_ID_SCRIPT = r"""
     rect.height > 0
   );
 
-  const tag = String(element.tagName || "").toLowerCase().slice(0, 32);
-  const inputType = String(element.getAttribute("type") || "")
+  const tag = String(element && element.tagName || "").toLowerCase().slice(0, 32);
+  const inputType = String(element && element.getAttribute("type") || "")
     .trim()
     .toLowerCase()
     .slice(0, 32);
   const isPassword = tag === "input" && inputType === "password";
 
-  let role = String(element.getAttribute("role") || "")
+  let role = String(element && element.getAttribute("role") || "")
     .trim()
     .toLowerCase()
     .slice(0, 64);
@@ -101,7 +114,7 @@ _TARGET_BY_DOM_ID_SCRIPT = r"""
   }
 
   let name = "";
-  if (!isPassword) {
+  if (!isPassword && element) {
     const ariaLabel = String(element.getAttribute("aria-label") || "").trim();
     if (ariaLabel) {
       name = ariaLabel;
@@ -116,10 +129,11 @@ _TARGET_BY_DOM_ID_SCRIPT = r"""
   }
 
   return {
-    count: 1,
+    count: matches.length,
+    current,
     connected,
     visible,
-    dom_id: String(element.id || "").slice(0, 256),
+    dom_id: String(element && element.id || "").slice(0, 256),
     tag,
     role: role.slice(0, 64),
     name: name.slice(0, 160),
@@ -128,6 +142,23 @@ _TARGET_BY_DOM_ID_SCRIPT = r"""
   };
 }
 """
+
+_EXACT_NODE_EQUAL_SCRIPT = r"""
+(element, other) => Boolean(element && other && element === other)
+"""
+
+_TARGET_FOCUS_STATE_SCRIPT = r"""
+(element) => Boolean(
+  element && element.isConnected && document.activeElement === element
+)
+"""
+
+
+@dataclass(slots=True)
+class _ManagedTargetBinding:
+    target: BrowserTarget
+    query: BrowserTargetQuery
+    handle: Any
 
 
 @dataclass(slots=True)
@@ -139,6 +170,7 @@ class _ManagedSession:
     context: Any
     pages: dict[str, Any] = field(default_factory=dict)
     last_observation: dict[str, BrowserObservation] = field(default_factory=dict)
+    target_bindings: dict[str, _ManagedTargetBinding] = field(default_factory=dict)
 
 
 class PlaywrightManagedBrowser:
@@ -220,6 +252,7 @@ class PlaywrightManagedBrowser:
         session = self._sessions.pop(str(session_id or "").strip(), None)
         if session is None:
             return
+        self._dispose_all_target_bindings(session)
         self._best_effort_close(session.context, session.browser, session.playwright)
 
     def close(self) -> None:
@@ -241,18 +274,23 @@ class PlaywrightManagedBrowser:
         session = self._session(session_id)
         resolved_page_id = page_id or self._default_page_id(session)
         captured_at = utc_now()
-        target = self._resolve_target(
+        binding = self._acquire_target_binding(
             session,
             resolved_page_id,
             query,
             observed_at=captured_at,
         )
-        return self._capture(
-            session,
-            resolved_page_id,
-            target=target,
-            captured_at=captured_at,
-        )
+        try:
+            return self._capture(
+                session,
+                resolved_page_id,
+                target=binding.target,
+                captured_at=captured_at,
+                target_binding=binding,
+            )
+        except Exception:
+            self._dispose_target_binding(binding)
+            raise
 
     def act(
         self,
@@ -264,6 +302,8 @@ class PlaywrightManagedBrowser:
             self._validate_authority(session, action, authority)
             if action.kind is BrowserActionKind.NAVIGATE:
                 return self._navigate(session, action, authority)
+            if action.kind is BrowserActionKind.FOCUS:
+                return self._focus(session, action)
             return self._failure(
                 action,
                 error=f"managed browser action is not implemented yet: {action.kind.value}",
@@ -324,6 +364,154 @@ class PlaywrightManagedBrowser:
             },
         )
 
+    def _focus(
+        self,
+        session: _ManagedSession,
+        action: BrowserAction,
+    ) -> BrowserEffectEvidence:
+        if action.target is None:
+            raise ManagedBrowserError("browser focus requires a current target")
+        page_id = action.page_id or action.target.page_id or self._default_page_id(session)
+        page = self._page(session, page_id)
+        binding = self._revalidate_target_binding(session, page_id, action.target)
+        before_url = str(getattr(page, "url", "") or "")
+
+        try:
+            binding.handle.focus()
+        except Exception as exc:
+            self._refresh_page_observation_after_failed_mutation(session, page_id)
+            raise ManagedBrowserError(
+                f"managed browser focus dispatch failed: {type(exc).__name__}: {exc}"
+            ) from exc
+
+        post_captured_at = utc_now()
+        try:
+            fresh_binding = self._acquire_target_binding(
+                session,
+                page_id,
+                binding.query,
+                observed_at=post_captured_at,
+            )
+        except Exception as exc:
+            self._refresh_page_observation_after_failed_mutation(session, page_id)
+            raise ManagedBrowserError(
+                f"managed browser focus target could not be re-observed: {exc}"
+            ) from exc
+
+        try:
+            same_exact_node = bool(
+                binding.handle.evaluate(_EXACT_NODE_EQUAL_SCRIPT, fresh_binding.handle)
+            )
+        except Exception:
+            same_exact_node = False
+        try:
+            focused = bool(fresh_binding.handle.evaluate(_TARGET_FOCUS_STATE_SCRIPT))
+        except Exception:
+            focused = False
+
+        try:
+            post_observation = self._capture(
+                session,
+                page_id,
+                target=fresh_binding.target,
+                captured_at=post_captured_at,
+                target_binding=fresh_binding,
+            )
+        except Exception:
+            self._dispose_target_binding(fresh_binding)
+            self._refresh_page_observation_after_failed_mutation(session, page_id)
+            raise
+
+        after_url = post_observation.url
+        post_target = post_observation.target
+        if post_target is None:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=post_observation.captured_at,
+                success=False,
+                page_id=page_id,
+                url_before=before_url,
+                url_after=after_url,
+                target_id=action.target.target_id,
+                postcondition="same_exact_target_focused",
+                error="browser focus postcondition lost the current target",
+            )
+
+        if not same_exact_node:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=post_observation.captured_at,
+                success=False,
+                page_id=page_id,
+                url_before=before_url,
+                url_after=after_url,
+                target_id=post_target.target_id,
+                postcondition="same_exact_target_focused",
+                data={
+                    "provider": session.identity.provider,
+                    "exact_node_continuity": False,
+                    "focused": focused,
+                },
+                error="browser focus postcondition observed a replaced target node",
+            )
+
+        if post_target.target_id != action.target.target_id:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=post_observation.captured_at,
+                success=False,
+                page_id=page_id,
+                url_before=before_url,
+                url_after=after_url,
+                target_id=post_target.target_id,
+                postcondition="same_exact_target_focused",
+                data={
+                    "provider": session.identity.provider,
+                    "exact_node_continuity": True,
+                    "focused": focused,
+                },
+                error="browser focus postcondition observed changed target identity",
+            )
+
+        if not focused:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=post_observation.captured_at,
+                success=False,
+                page_id=page_id,
+                url_before=before_url,
+                url_after=after_url,
+                target_id=post_target.target_id,
+                postcondition="same_exact_target_focused",
+                data={
+                    "provider": session.identity.provider,
+                    "exact_node_continuity": True,
+                    "focused": False,
+                },
+                error="browser focus postcondition was not observed",
+            )
+
+        return BrowserEffectEvidence(
+            action_id=action.action_id,
+            session_id=action.session_id,
+            observed_at=post_observation.captured_at,
+            success=True,
+            page_id=page_id,
+            url_before=before_url,
+            url_after=after_url,
+            target_id=post_target.target_id,
+            postcondition="same_exact_target_focused",
+            data={
+                "provider": session.identity.provider,
+                "exact_node_continuity": True,
+                "focused": True,
+            },
+        )
+
     def _capture(
         self,
         session: _ManagedSession,
@@ -331,7 +519,17 @@ class PlaywrightManagedBrowser:
         *,
         target: BrowserTarget | None = None,
         captured_at: str | None = None,
+        target_binding: _ManagedTargetBinding | None = None,
     ) -> BrowserObservation:
+        if (target is None) != (target_binding is None):
+            raise ManagedBrowserError(
+                "managed browser observation target and provider binding must move together"
+            )
+        if target_binding is not None and target_binding.target != target:
+            raise ManagedBrowserError(
+                "managed browser provider binding does not match target evidence"
+            )
+
         page = self._page(session, page_id)
         url = str(getattr(page, "url", "") or "")
         title = str(page.title() or "")
@@ -362,17 +560,18 @@ class PlaywrightManagedBrowser:
                 "profile_scope": session.identity.profile_scope,
             },
         )
+        self._replace_target_binding(session, page_id, target_binding)
         session.last_observation[page_id] = observation
         return observation
 
-    def _resolve_target(
+    def _acquire_target_binding(
         self,
         session: _ManagedSession,
         page_id: str,
         query: BrowserTargetQuery,
         *,
         observed_at: str,
-    ) -> BrowserTarget:
+    ) -> _ManagedTargetBinding:
         if query.frame_id != "main":
             raise ManagedBrowserError(
                 "managed browser target sensing currently supports only the main frame"
@@ -383,15 +582,67 @@ class PlaywrightManagedBrowser:
             )
 
         page = self._page(session, page_id)
+        bundle = None
+        count_handle = None
+        node_handle = None
+        keep_node_handle = False
         try:
-            raw = page.evaluate(_TARGET_BY_DOM_ID_SCRIPT, query.value)
+            bundle = page.evaluate_handle(_TARGET_HANDLE_BUNDLE_SCRIPT, query.value)
+            count_handle = bundle.get_property("count")
+            try:
+                count = int(count_handle.json_value() or 0)
+            except (TypeError, ValueError) as exc:
+                raise ManagedBrowserError(
+                    "managed browser target provider returned invalid match count"
+                ) from exc
+            if count == 0:
+                raise ManagedBrowserError("managed browser target was not found")
+            if count != 1:
+                raise ManagedBrowserError("managed browser target is ambiguous")
+
+            node_handle = bundle.get_property("node")
+            element = node_handle.as_element()
+            if element is None:
+                raise ManagedBrowserError(
+                    "managed browser target changed while provider evidence was acquired"
+                )
+            raw = element.evaluate(_TARGET_HANDLE_EVIDENCE_SCRIPT, query.value)
+            target = self._target_from_evidence(
+                session,
+                page_id,
+                query,
+                raw,
+                observed_at=observed_at,
+            )
+            keep_node_handle = True
+            return _ManagedTargetBinding(
+                target=target,
+                query=query,
+                handle=element,
+            )
+        except ManagedBrowserError:
+            raise
         except Exception as exc:
             raise ManagedBrowserError(
                 f"failed to observe managed browser target: {type(exc).__name__}: {exc}"
             ) from exc
+        finally:
+            self._best_effort_dispose_handle(count_handle)
+            self._best_effort_dispose_handle(bundle)
+            if node_handle is not None and not keep_node_handle:
+                self._best_effort_dispose_handle(node_handle)
+
+    def _target_from_evidence(
+        self,
+        session: _ManagedSession,
+        page_id: str,
+        query: BrowserTargetQuery,
+        raw: Any,
+        *,
+        observed_at: str,
+    ) -> BrowserTarget:
         if not isinstance(raw, dict):
             raise ManagedBrowserError("managed browser target provider returned invalid evidence")
-
         try:
             count = int(raw.get("count") or 0)
         except (TypeError, ValueError) as exc:
@@ -404,6 +655,8 @@ class PlaywrightManagedBrowser:
             raise ManagedBrowserError("managed browser target is ambiguous")
         if not bool(raw.get("connected")):
             raise ManagedBrowserError("managed browser target is detached")
+        if not bool(raw.get("current")):
+            raise ManagedBrowserError("managed browser target identity changed while sensing")
         if not bool(raw.get("visible")):
             raise ManagedBrowserError("managed browser target is not visible")
 
@@ -420,6 +673,7 @@ class PlaywrightManagedBrowser:
         role = str(raw.get("role") or "")[:64]
         name = "" if is_password else str(raw.get("name") or "")[:160]
         input_type = str(raw.get("input_type") or "")[:32]
+        page = self._page(session, page_id)
         current_url = str(getattr(page, "url", "") or "")
         identity_material = "\x1f".join(
             (
@@ -450,6 +704,41 @@ class PlaywrightManagedBrowser:
             selector_hint=f"dom_id:{dom_id}",
         )
 
+    def _revalidate_target_binding(
+        self,
+        session: _ManagedSession,
+        page_id: str,
+        target: BrowserTarget,
+    ) -> _ManagedTargetBinding:
+        binding = session.target_bindings.get(page_id)
+        if binding is None:
+            raise ManagedBrowserError(
+                "browser target action requires provider evidence for the current target observation"
+            )
+        if binding.target != target:
+            raise ManagedBrowserError(
+                "browser target provider evidence does not match the current action target"
+            )
+        try:
+            raw = binding.handle.evaluate(
+                _TARGET_HANDLE_EVIDENCE_SCRIPT,
+                binding.query.value,
+            )
+            current = self._target_from_evidence(
+                session,
+                page_id,
+                binding.query,
+                raw,
+                observed_at=target.observed_at,
+            )
+        except Exception as exc:
+            raise ManagedBrowserError(
+                f"browser target changed before dispatch: {exc}"
+            ) from exc
+        if current.target_id != target.target_id:
+            raise ManagedBrowserError("browser target changed before dispatch")
+        return binding
+
     def _validate_authority(
         self,
         session: _ManagedSession,
@@ -464,6 +753,40 @@ class PlaywrightManagedBrowser:
             authority.validate_current(action, observed, session.permission)
         except ValueError as exc:
             raise ManagedBrowserError(str(exc)) from exc
+
+    def _refresh_page_observation_after_failed_mutation(
+        self,
+        session: _ManagedSession,
+        page_id: str,
+    ) -> None:
+        self._invalidate_target_binding(session, page_id)
+        try:
+            self._capture(session, page_id)
+        except Exception:
+            session.last_observation.pop(page_id, None)
+
+    def _replace_target_binding(
+        self,
+        session: _ManagedSession,
+        page_id: str,
+        binding: _ManagedTargetBinding | None,
+    ) -> None:
+        previous = session.target_bindings.pop(page_id, None)
+        if previous is not None and (binding is None or previous.handle is not binding.handle):
+            self._dispose_target_binding(previous)
+        if binding is not None:
+            session.target_bindings[page_id] = binding
+
+    def _invalidate_target_binding(self, session: _ManagedSession, page_id: str) -> None:
+        self._replace_target_binding(session, page_id, None)
+
+    def _dispose_all_target_bindings(self, session: _ManagedSession) -> None:
+        for binding in tuple(session.target_bindings.values()):
+            self._dispose_target_binding(binding)
+        session.target_bindings.clear()
+
+    def _dispose_target_binding(self, binding: _ManagedTargetBinding) -> None:
+        self._best_effort_dispose_handle(binding.handle)
 
     def _install_network_boundary(self, session: _ManagedSession) -> None:
         def handle_route(route: Any) -> None:
@@ -569,6 +892,15 @@ class PlaywrightManagedBrowser:
     def _looks_like_missing_playwright(exc: Exception) -> bool:
         text = f"{type(exc).__name__}: {exc}".lower()
         return "executable doesn't exist" in text or "playwright" in text and "install" in text
+
+    @staticmethod
+    def _best_effort_dispose_handle(handle: Any) -> None:
+        if handle is None:
+            return
+        try:
+            handle.dispose()
+        except Exception:
+            pass
 
     @staticmethod
     def _best_effort_close(context: Any, browser: Any, playwright: Any) -> None:
