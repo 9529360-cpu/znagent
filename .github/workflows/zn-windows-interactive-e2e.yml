@@ -6,7 +6,10 @@ on:
       - dev/zn-agent
     paths:
       - .github/workflows/zn-windows-interactive-e2e.yml
-      - tests/zn_agent/e2e/**
+      - tests/zn_agent/e2e/test_windows_interactive_pointer_uia.py
+      - tests/zn_agent/e2e/test_windows_interactive_text_entry.py
+      - tests/zn_agent/e2e/test_windows_interactive_uia_text_capability.py
+      - tests/zn_agent/e2e/test_windows_interactive_user_browser_bridge.py
       - runtime/python/zn_agent/core/body.py
       - runtime/python/zn_agent/core/keyboard_text_body.py
       - runtime/python/zn_agent/core/visual_region_sense.py
