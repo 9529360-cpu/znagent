@@ -17,7 +17,7 @@ Do not trade away the real Windows interactive-session boundary merely to make C
 - repository: `9529360-cpu/znagent`
 - fixed development branch: `dev/zn-agent`
 - canonical source/release branch: `main`
-- implementation head before this HANDOFF update: `f1ed2326e7536120ac0b8d362c2604f72a020e53`
+- implementation head before this HANDOFF update: `a59f812c83218cc0e8b6af80f628f2d42b1210a0`
 - implementation commit: `ci: verify hidden interactive runner handoff`
 - canonical `main`: `8234a835dea604783cea0bd9d28a40de654ec03d`
 - PR #6: draft/open/unmerged, base `main`, head `dev/zn-agent`
@@ -124,9 +124,11 @@ The available GitHub connector cannot read the repository self-hosted-runner adm
 
 ## Current risks / blockers
 
-- `zn-interactive` is unavailable to Actions at the current checkpoint.
-- Hidden-watchdog migration code is implemented but **not verified** until run `32992305981` executes through its final verify job.
-- Real interactive Windows/UIA/browser regression cannot be rerun while `zn-interactive` is unavailable.
+- `zn-interactive` is recovered: online with `self-hosted, Windows, X64, zn-interactive`.
+- The local registration was migrated from `ah-windows`/`znagent` to exactly one `zn-interactive`; the three `zn-ci` service runners remain online.
+- The visible logon task is `ZN GitHub Actions Interactive Runner Watchdog`, using interactive user context and direct visible `cmd.exe` -> `run.cmd`; duplicate instances are ignored.
+- Historical hidden-watchdog migration run `32992305981` is not a success criterion for the current visible design.
+- A fresh interactive product E2E remains to be run; runner availability is no longer the blocker.
 - Do not move interactive tests onto Session-0 `zn-ci` workers.
 - Do not introduce auto-logon, expose credentials, broaden secret permissions, or weaken runner labels to bypass the blocker.
 - The exact implementation-head normal CI is still incomplete while Kernel is running.
