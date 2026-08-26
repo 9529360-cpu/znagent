@@ -35,8 +35,8 @@ class FocusedModernTextResidentRuntime(FocusedTextEntryResidentRuntime):
 
     Generic side-effect uncertainty is a resident recovery state, not ordinary
     failure evidence. Exact append goals may be re-observed before any retry;
-    generic commands remain blocked until a future explicit recovery/cancel path
-    can establish what happened without replaying the command itself.
+    generic commands remain blocked until an explicit recovery/cancel path can
+    establish the Work lifecycle without guessing what happened outside ZN.
     """
 
     _SIDE_EFFECT_RECOVERY_KEY = "side_effect_recovery"
@@ -46,6 +46,73 @@ class FocusedModernTextResidentRuntime(FocusedTextEntryResidentRuntime):
         self.body = SideEffectAwareBody(resident=self)
         self.automation_text_state = NativeFocusedAutomationTextSense()
         self.managed_browser = PlaywrightManagedBrowser()
+
+    def result_for(self, event_id: str) -> ResidentRunResult | None:
+        """Reconstruct cancellation explicitly instead of collapsing it into failure."""
+        result = super().result_for(event_id)
+        if result is None:
+            return None
+        outcome = self.store.get_event_outcome(event_id)
+        if outcome is not None:
+            result.cancelled = bool(outcome.cancelled)
+        return result
+
+    def cancel_uncertain_event(
+        self,
+        event_id: str,
+        *,
+        reason: str = "user cancelled Work while outside-world effect remained uncertain",
+    ) -> ResidentRunResult:
+        """Stop one proven recovery Work without learning an action failure.
+
+        Store owns the atomic lifecycle transition. This resident method owns the
+        control decision and deliberately bypasses ``_complete_result`` and
+        ``life.observe_action``: cancellation says ZN will stop this Work, not
+        that the attempted outside-world action failed or succeeded.
+        """
+
+        normalized = str(event_id or "").strip()
+        if not normalized:
+            raise ValueError("resident cancellation requires event_id")
+        with self._cycle_lock:
+            event = self.store.get_event(normalized)
+            if event is None:
+                raise ValueError(f"unknown resident event: {normalized}")
+            terminal = self.store.cancel_uncertain_event(
+                normalized,
+                reason=reason,
+            )
+            outcome = self.store.get_event_outcome(normalized)
+            if outcome is None or not outcome.cancelled:
+                raise RuntimeError("resident cancellation did not publish a durable outcome")
+
+            result = ResidentRunResult(
+                event=terminal,
+                execution_path=outcome.execution_path,
+                success=outcome.success,
+                response=outcome.response,
+                model_invocations=outcome.model_invocations,
+                capability_name=outcome.capability_name,
+                reason=outcome.reason,
+                cancelled=True,
+            )
+
+            intention_id = str(event.payload.get("intention_id") or "").strip()
+            if intention_id:
+                try:
+                    self.will.observe_event_outcome(
+                        intention_id,
+                        event_id=normalized,
+                        success=False,
+                        summary=outcome.reason or "step cancelled",
+                        cancelled=True,
+                    )
+                except KeyError:
+                    # Imported/manual payloads may reference an intention that
+                    # does not exist in this resident. The durable Work/event
+                    # cancellation remains valid independently of that metadata.
+                    pass
+            return result
 
     @staticmethod
     def _generic_guarded_side_effect(intent: NativeActionIntent) -> bool:
