@@ -10,6 +10,7 @@ from .action import NativeActionIntent, derive_native_action_intent
 from .budget import CognitiveBudgetManager
 from .capabilities import CapabilityRegistry
 from .cognition import CognitiveIncrement
+from .completion_observation import CompletionObservationJournal
 from .memory import StructuredMemory
 from .models import (
     AgentEvent,
@@ -87,6 +88,12 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         self.investigator = EmbodiedInvestigator(self)
         self.life = EmbodiedLifeCore(self)
         self.life.wake()
+        # The richer resident has its own legitimate birth path and therefore
+        # installs the same completion-observation organ after EmbodiedLifeCore
+        # exists. Repair is secondary to durable EventOutcome truth and never
+        # replays the completed action.
+        self.completion_observations = CompletionObservationJournal(self.store)
+        self.completion_observations.repair_life(self)
 
     def _advance_event_step(
         self,
@@ -140,10 +147,6 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         intent = derive_native_action_intent(event, facts=facts)
 
         if intent is not None:
-            # A failed movement remains blocked while the Investigation facts
-            # describing current reality are unchanged. A different failure in
-            # between cannot erase it, and a merely repeated probe does not
-            # unlock it. Genuinely revised facts create a new evidence version.
             if not self._action_blocked_by_current_evidence(event, state, intent):
                 self._begin_native_action_cycle(event, state, intent)
                 self.store.save_working_state(state)
@@ -171,13 +174,6 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         state: WorkingState,
         intent: NativeActionIntent,
     ) -> None:
-        """Begin one new movement without carrying a stale verdict into it.
-
-        Prior failed verification remains available as bounded history, but the
-        active verification slot is cleared before a genuinely different action
-        becomes current. This keeps one compact task context instead of letting
-        old result fields silently masquerade as present reality.
-        """
         raw_context = state.data.get("execution_context")
         context = dict(raw_context) if isinstance(raw_context, dict) else {}
         raw_history = context.get("verification_history")
@@ -197,9 +193,6 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         state.data.pop("native_verification_result", None)
         state.data.pop("native_action_result", None)
         state.data.pop("local_failure", None)
-        # This field existed before evidence-bound records. Keep lazy read
-        # migration for old persisted state, but never carry the one-slot guard
-        # into a newly admitted action cycle.
         state.data.pop("native_action_failure_signature", None)
         state.data["native_action_intent"] = intent.to_dict()
         state.stage = "native_action"
@@ -233,9 +226,6 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         if result.success:
             verification = self._verification_contract(event, intent, result=result)
             if verification is not None:
-                # A successful movement is evidence, not proof that the user's
-                # requested state now exists. Persist the postcondition and let
-                # a later resident pulse re-observe reality before completion.
                 state.data["native_verification"] = verification
                 state.stage = "native_verification"
                 state.next_action = "verify the requested postcondition from current reality"
@@ -632,12 +622,6 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         event: AgentEvent,
         state: WorkingState,
     ) -> dict[str, Any]:
-        """Keep one bounded task-level execution view inside durable work state.
-
-        This is not a plan tree. It is the minimum current contract needed for
-        the same resident to remember what it is trying to achieve, what still
-        blocks it, what result it expects, and what reality most recently said.
-        """
         raw_context = state.data.get("execution_context")
         context = dict(raw_context) if isinstance(raw_context, dict) else {}
         context["goal"] = event.task
@@ -873,11 +857,6 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
                 "action_signature": EmbodiedResidentRuntime._intent_signature(intent),
             }
 
-        # Replace/create text mutations have a naturally observable exact
-        # postcondition, so they get verification without requiring callers to
-        # describe a second probe. Append and generic commands require an
-        # explicit task-level expected_outcome before action success can be
-        # distinguished from goal completion.
         if intent.kind != "write_text" or bool(intent.args.get("append", False)):
             return None
         path = str(intent.args.get("path") or "").strip()
@@ -896,7 +875,6 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         event: AgentEvent,
         state: WorkingState,
     ) -> ResidentRunResult | None:
-        """Borrow cognition without accepting or learning it yet."""
         raw = state.data.get("cognition_request")
         if not isinstance(raw, dict):
             raise RuntimeError("external cognition stage has no cognition request")
@@ -972,9 +950,6 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
             quality=kernel_result.assessment.quality,
             confidence=kernel_result.assessment.confidence,
         )
-        # The increment is durable working state, but the impasse remains open
-        # and SelfModel is not credited yet. Acceptance belongs to the next ZN
-        # Thought, not to the external worker's success flag.
         state.data["cognitive_increment"] = increment.to_dict()
         state.data["external_cognition_result"] = {
             "model_invocations": invocations,
@@ -1025,9 +1000,6 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         integration = state.data.get("cognition_integration")
         integration_data = integration if isinstance(integration, dict) else {}
         if not integration_data.get("accepted"):
-            # This is the point where ZN accepts the borrowed increment. Only
-            # now do we close the impasse, stage learning evidence, and update
-            # ZN's knowledge profile.
             accepted_run = ResidentRunResult(
                 event=event,
                 execution_path=ExecutionPath.MODEL,
@@ -1063,10 +1035,6 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
             self._sync_execution_context(event, state)
             self.store.save_working_state(state)
 
-        # Re-check whether the accepted increment accompanies a concrete native
-        # body intent. The action stays ZN-owned; external text is never passed
-        # straight through as a shell/tool instruction. Borrowed text is not new
-        # reality evidence, so it cannot by itself unlock a failed movement.
         investigation = self.investigator.current(event.event_id)
         facts = dict(investigation.facts) if investigation is not None else {}
         intent = derive_native_action_intent(event, facts=facts)
@@ -1173,9 +1141,6 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         ):
             return True
 
-        # Upgrade an interrupted resident that still has the previous one-slot
-        # anti-replay field. Once the evidence ledger exists, the old field is
-        # ignored and will be removed when a new action is admitted.
         legacy = str(state.data.get("native_action_failure_signature") or "")
         if not records and legacy and legacy == self._intent_signature(intent):
             self._record_failed_action(
