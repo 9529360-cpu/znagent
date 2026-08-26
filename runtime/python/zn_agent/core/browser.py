@@ -237,9 +237,15 @@ class BrowserActionAuthority:
             raise ValueError("browser action and observation sessions do not match")
         if action.page_id and action.page_id != observation.page_id:
             raise ValueError("browser action and observation pages do not match")
-        if action.target is not None and observation.target is not None:
+        if action.target is not None:
+            if observation.target is None:
+                raise ValueError("browser target action requires a current target observation")
             if action.target.target_id != observation.target.target_id:
                 raise ValueError("browser target changed before authority was formed")
+            if action.target.kind is not observation.target.kind:
+                raise ValueError("browser target kind changed before authority was formed")
+            if action.target.frame_id != observation.target.frame_id:
+                raise ValueError("browser target frame changed before authority was formed")
         return cls(
             action_id=action.action_id,
             session_id=action.session_id,
@@ -299,13 +305,13 @@ class BrowserAdapter(Protocol):
 def _normalize_origin(value: str) -> str:
     try:
         parsed = urlsplit(str(value or "").strip())
+        scheme = str(parsed.scheme or "").lower()
+        host = str(parsed.hostname or "").lower().rstrip(".")
+        port = parsed.port
     except (TypeError, ValueError):
         return ""
-    scheme = str(parsed.scheme or "").lower()
-    host = str(parsed.hostname or "").lower().rstrip(".")
     if scheme not in {"http", "https"} or not host:
         return ""
-    port = parsed.port
     default = (scheme == "http" and port in {None, 80}) or (
         scheme == "https" and port in {None, 443}
     )
