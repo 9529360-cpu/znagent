@@ -1,0 +1,57 @@
+name: ZN Interactive Runner Hidden Watchdog
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zn-interactive-runner-hidden-watchdog
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    name: Migrate interactive runner watchdog to hidden launch
+    runs-on: [self-hosted, Windows, X64, zn-interactive]
+    timeout-minutes: 10
+    steps:
+      - name: Require dedicated interactive runner
+        shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "ZN interactive watchdog migration requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+          if ($env:RUNNER_NAME -ne 'zn-interactive') {
+            throw "ZN interactive watchdog migration requires zn-interactive; got $env:RUNNER_NAME"
+          }
+          $sessionId = (Get-Process -Id $PID -ErrorAction Stop).SessionId
+          if ($sessionId -eq 0) {
+            throw 'ZN interactive watchdog migration requires a logged-on interactive session, not Session 0.'
+          }
+          Write-Host "runner.name=$env:RUNNER_NAME"
+          Write-Host "runner.session_id=$sessionId"
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install repository-owned hidden watchdog
+        shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+        run: .\.github\scripts\install-zn-interactive-runner-watchdog.ps1
+      - name: Verify scheduled task action is hidden and interactive
+        shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+        run: |
+          $taskName = 'ZN GitHub Actions Interactive Runner Watchdog'
+          $task = Get-ScheduledTask -TaskPath '\' -TaskName $taskName -ErrorAction Stop
+          $action = @($task.Actions)
+          if ($action.Count -ne 1) { throw "unexpected watchdog action count: $($action.Count)" }
+          $arguments = [string]$action[0].Arguments
+          if ($arguments -notmatch '(?i)-WindowStyle\s+Hidden') { throw 'watchdog task is missing hidden PowerShell launch' }
+          if ($arguments -notmatch '(?i)-ExecutionPolicy\s+Bypass') { throw 'watchdog task is missing process-scoped execution policy bypass' }
+          if ($arguments -notmatch '(?i)watch-zn-interactive-runner\.ps1') { throw 'watchdog task is not repository-owned' }
+          if ($task.Principal.LogonType -notin @('Interactive','InteractiveToken')) {
+            throw "watchdog task left interactive desktop boundary: $($task.Principal.LogonType)"
+          }
+          if (-not $task.Settings.Hidden) { throw 'watchdog task is not marked hidden' }
+          Write-Host "watchdog.task=$taskName"
+          Write-Host "watchdog.logon_type=$($task.Principal.LogonType)"
+          Write-Host "watchdog.hidden=$($task.Settings.Hidden)"
+          Write-Host 'watchdog.next_launch_window_style=Hidden'
