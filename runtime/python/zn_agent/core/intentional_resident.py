@@ -5,8 +5,8 @@ from typing import Any, Iterable
 
 from .adaptive_guidance import schema_attention_focus, schema_reality_score
 from .embodied_resident import EmbodiedResidentRuntime
+from .event_outcome_nervous import EventOutcomeNervousSystem
 from .models import EventStatus, ResidentRunResult
-from .nervous_system import PersistentNervousSystem
 from .will import NativeWill, ResidentIntention
 from .world_sense import NativeWorldSense, WorldObservation
 
@@ -51,7 +51,8 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
         )
         self.will = NativeWill(self.store)
         self.will.reconcile_outcomes()
-        self.nervous = PersistentNervousSystem(self.store)
+        self.nervous = EventOutcomeNervousSystem(self.store)
+        self._repair_nervous_event_outcomes()
         self.nervous.heartbeat(body=self.body.sense())
         self.world = NativeWorldSense(self)
 
@@ -802,33 +803,72 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
             },
         )
 
-    def _complete_result(self, event, result):
-        completed = super()._complete_result(event, result)
-        summary = (
-            completed.response
-            or completed.reason
-            or ("event succeeded" if completed.success else "event failed")
+    @staticmethod
+    def _event_outcome_summary(outcome) -> str:
+        return (
+            outcome.response
+            or outcome.reason
+            or ("event succeeded" if outcome.success else "event failed")
         )
-        self.nervous.perceive(
-            "outcome",
+
+    def _perceive_event_outcome(self, event, outcome):
+        summary = self._event_outcome_summary(outcome)
+        return self.nervous.perceive_event_outcome(
+            outcome.event_id,
             f"{event.task}: {summary[:1000]}",
             features=(
                 event.kind,
-                completed.execution_path.value,
-                "success" if completed.success else "failure",
+                outcome.execution_path.value,
+                "success" if outcome.success else "failure",
             ),
             source="self",
             salience=min(
                 1.0,
-                0.58 + (0.18 if not completed.success else 0.0),
+                0.58 + (0.18 if not outcome.success else 0.0),
             ),
-            valence=0.52 if completed.success else -0.78,
-            arousal=0.42 if completed.success else 0.82,
+            valence=0.52 if outcome.success else -0.78,
+            arousal=0.42 if outcome.success else 0.82,
             metadata={
-                "event_id": completed.event.event_id,
-                "model_invocations": completed.model_invocations,
+                "event_id": outcome.event_id,
+                "model_invocations": outcome.model_invocations,
             },
         )
+
+    def _repair_nervous_event_outcomes(self) -> None:
+        repair_from = self.nervous.repair_from()
+        # list_event_outcomes is newest-first. Apply missing perceptions in lived
+        # order so affect evolves in the same order it would have without a
+        # process interruption. The activation cutoff prevents legacy outcomes
+        # from being guessed/reinforced during an upgrade.
+        outcomes = [
+            outcome
+            for outcome in self.store.list_event_outcomes(limit=100000)
+            if outcome.completed_at >= repair_from and not outcome.cancelled
+        ]
+        for outcome in reversed(outcomes):
+            if self.nervous.has_event_outcome(outcome.event_id):
+                continue
+            event = self.store.get_event(outcome.event_id)
+            if event is None:
+                continue
+            try:
+                self._perceive_event_outcome(event, outcome)
+            except Exception:
+                # Nervous plasticity is secondary to the durable EventOutcome.
+                # A missing receipt remains repairable on a later resident birth;
+                # the completed action itself is never replayed.
+                continue
+
+    def _complete_result(self, event, result):
+        completed = super()._complete_result(event, result)
+        summary = self._event_outcome_summary(completed)
+        try:
+            self._perceive_event_outcome(event, completed)
+        except Exception:
+            # EventOutcome is already terminal truth. Do not reclassify or replay
+            # the action because secondary nervous plasticity failed; restart
+            # reconciliation will retry only the idempotent perception.
+            pass
 
         intention_id = str(event.payload.get("intention_id") or "").strip()
         if intention_id:
