@@ -1,0 +1,71 @@
+name: ZN Work Recovery E2E
+
+on:
+  push:
+    branches:
+      - dev/zn-agent
+    paths:
+      - .github/workflows/zn-work-recovery-e2e.yml
+      - runtime/python/pyproject.toml
+      - runtime/python/zn_agent/core/work.py
+      - runtime/python/zn_agent/core/store.py
+      - runtime/python/zn_agent/core/resident.py
+      - runtime/python/zn_agent/core/daemon.py
+      - runtime/python/zn_agent/core/provider_bridge.py
+      - tests/zn_agent/core/test_work_progress.py
+      - tests/zn_agent/core/test_work_recovery.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+concurrency:
+  group: zn-work-recovery-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  work-recovery:
+    name: Windows resident Work restart recovery
+    runs-on: [self-hosted, Windows, X64, zn-ci]
+    timeout-minutes: 15
+    env:
+      CI: 'true'
+      TZ: UTC
+      PYTHONUTF8: '1'
+      PYTHONUNBUFFERED: '1'
+      ZN_AGENT_HOME: ${{ github.workspace }}/.ci/work-recovery-home
+    steps:
+      - name: Require Windows x64 headless CI runner
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "ZN Work recovery E2E requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+          Write-Host "ZN Work recovery runner: $env:RUNNER_NAME"
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare isolated runtime
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:ZN_AGENT_HOME | Out-Null
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/work-recovery-venv -ErrorAction SilentlyContinue
+          uv venv .ci/work-recovery-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\work-recovery-venv\Scripts\python.exe'
+          uv pip install --python $python runtime/python
+      - name: Compile Work recovery path
+        run: |
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\work-recovery-venv\Scripts\python.exe'
+          & $python -m py_compile runtime/python/zn_agent/core/work.py runtime/python/zn_agent/core/store.py runtime/python/zn_agent/core/resident.py runtime/python/zn_agent/core/daemon.py
+      - name: Verify durable Work progress and restart recovery
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\work-recovery-venv\Scripts\python.exe'
+          & $python -m unittest tests.zn_agent.core.test_work_progress tests.zn_agent.core.test_work_recovery -v
