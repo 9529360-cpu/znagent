@@ -86,8 +86,8 @@ jobs:
           if ($actions.Count -ne 1) { throw "unexpected watchdog action count: $($actions.Count)" }
           $arguments = [string]$actions[0].Arguments
           if ($arguments -match '(?i)-WindowStyle\s+Hidden') { throw 'watchdog task still requests hidden PowerShell' }
-          if ($arguments -notmatch '(?i)-ExecutionPolicy\s+Bypass') { throw 'watchdog task is missing process-scoped execution policy bypass' }
-          if ($arguments -notmatch '(?i)watch-zn-interactive-runner\.ps1') { throw 'watchdog task is not repository-owned' }
+          if ($actions[0].Execute -notmatch '(?i)\\cmd\.exe$') { throw 'interactive task must launch cmd.exe visibly' }
+          if ($arguments -notmatch '(?i)/d\s+/c' -or $arguments -notmatch '(?i)run\.cmd') { throw 'interactive task must launch runner run.cmd' }
           if ($task.Settings.Hidden) { throw 'watchdog task is still marked hidden' }
           if ($task.Principal.LogonType -notin @('Interactive','InteractiveToken')) {
             throw "watchdog task left interactive desktop boundary: $($task.Principal.LogonType)"
