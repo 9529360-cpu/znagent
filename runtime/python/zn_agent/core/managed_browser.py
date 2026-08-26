@@ -42,6 +42,8 @@ class ManagedBrowserUnavailable(ManagedBrowserError):
 
 UrlChecker = Callable[..., bool]
 
+_MAX_MANAGED_TEXT_UTF16_UNITS = 512
+_MAX_OBSERVED_TEXT_CHARS = 4096
 
 _TARGET_HANDLE_BUNDLE_SCRIPT = r"""
 (domId) => {
@@ -168,6 +170,35 @@ _TARGET_ARIA_PRESSED_SCRIPT = r"""
     return false;
   }
   return null;
+}
+"""
+
+_TARGET_TEXT_STATE_SCRIPT = r"""
+(element) => {
+  const connected = Boolean(element && element.isConnected);
+  const tag = String(element && element.tagName || "").toLowerCase();
+  const inputType = String(element && element.getAttribute("type") || "")
+    .trim()
+    .toLowerCase();
+  const isPassword = tag === "input" && inputType === "password";
+  const supported = Boolean(
+    tag === "textarea" ||
+    (tag === "input" && (inputType === "" || inputType === "text"))
+  );
+  const disabled = Boolean(element && element.disabled);
+  const readOnly = Boolean(element && element.readOnly);
+  let value = null;
+  if (connected && supported && !isPassword) {
+    value = String(element.value || "");
+  }
+  return {
+    connected,
+    supported,
+    disabled,
+    read_only: readOnly,
+    is_password: isPassword,
+    value,
+  };
 }
 """
 
@@ -324,6 +355,8 @@ class PlaywrightManagedBrowser:
                 return self._focus(session, action)
             if action.kind is BrowserActionKind.CLICK:
                 return self._click(session, action)
+            if action.kind is BrowserActionKind.TYPE_TEXT:
+                return self._type_text(session, action)
             return self._failure(
                 action,
                 error=f"managed browser action is not implemented yet: {action.kind.value}",
@@ -687,6 +720,236 @@ class PlaywrightManagedBrowser:
             postcondition="same_exact_target_aria_pressed",
             data=data,
         )
+
+    def _type_text(
+        self,
+        session: _ManagedSession,
+        action: BrowserAction,
+    ) -> BrowserEffectEvidence:
+        if action.target is None:
+            raise ManagedBrowserError("browser type_text requires a current target")
+        if action.target.role != "textbox":
+            raise ManagedBrowserError(
+                "browser type_text currently requires a textbox target"
+            )
+        text, expected = self._validate_managed_text(action.args.get("text"))
+
+        page_id = action.page_id or action.target.page_id or self._default_page_id(session)
+        page = self._page(session, page_id)
+        binding = self._revalidate_target_binding(session, page_id, action.target)
+        before_url = str(getattr(page, "url", "") or "")
+        before_state = self._read_target_text_state(binding.handle)
+        if int(before_state["text_length"]) != 0:
+            raise ManagedBrowserError(
+                "browser type_text first slice refuses a non-empty current text target"
+            )
+
+        try:
+            binding.handle.fill(text)
+        except Exception as exc:
+            self._refresh_page_observation_after_failed_mutation(session, page_id)
+            raise ManagedBrowserError(
+                f"managed browser type_text dispatch failed: {type(exc).__name__}: {exc}"
+            ) from exc
+        finally:
+            text = ""
+
+        post_captured_at = utc_now()
+        try:
+            fresh_binding = self._acquire_target_binding(
+                session,
+                page_id,
+                binding.query,
+                observed_at=post_captured_at,
+            )
+        except Exception as exc:
+            self._refresh_page_observation_after_failed_mutation(session, page_id)
+            raise ManagedBrowserError(
+                f"managed browser type_text target could not be re-observed: {exc}"
+            ) from exc
+
+        try:
+            same_exact_node = bool(
+                binding.handle.evaluate(_EXACT_NODE_EQUAL_SCRIPT, fresh_binding.handle)
+            )
+        except Exception:
+            same_exact_node = False
+        try:
+            after_state = self._read_target_text_state(fresh_binding.handle)
+        except Exception as exc:
+            self._dispose_target_binding(fresh_binding)
+            self._refresh_page_observation_after_failed_mutation(session, page_id)
+            raise ManagedBrowserError(
+                f"browser type_text postcondition could not be observed: {exc}"
+            ) from exc
+
+        try:
+            post_observation = self._capture(
+                session,
+                page_id,
+                target=fresh_binding.target,
+                captured_at=post_captured_at,
+                target_binding=fresh_binding,
+            )
+        except Exception:
+            self._dispose_target_binding(fresh_binding)
+            self._refresh_page_observation_after_failed_mutation(session, page_id)
+            raise
+
+        after_url = post_observation.url
+        post_target = post_observation.target
+        data = {
+            "provider": session.identity.provider,
+            "exact_node_continuity": same_exact_node,
+            "input_sent": True,
+            "text_length_before": before_state["text_length"],
+            "text_sha256_before": before_state["text_sha256"],
+            "text_length_after": after_state["text_length"],
+            "text_sha256_after": after_state["text_sha256"],
+            "expected_text_length": expected["text_length"],
+            "expected_text_sha256": expected["text_sha256"],
+            "expected_utf16_units": expected["utf16_units"],
+        }
+        if post_target is None:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=post_observation.captured_at,
+                success=False,
+                page_id=page_id,
+                url_before=before_url,
+                url_after=after_url,
+                target_id=action.target.target_id,
+                postcondition="same_exact_target_text_equals_requested",
+                data=data,
+                error="browser type_text postcondition lost the current target",
+            )
+        if not same_exact_node:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=post_observation.captured_at,
+                success=False,
+                page_id=page_id,
+                url_before=before_url,
+                url_after=after_url,
+                target_id=post_target.target_id,
+                postcondition="same_exact_target_text_equals_requested",
+                data=data,
+                error="browser type_text postcondition observed a replaced target node",
+            )
+        if post_target.target_id != action.target.target_id:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=post_observation.captured_at,
+                success=False,
+                page_id=page_id,
+                url_before=before_url,
+                url_after=after_url,
+                target_id=post_target.target_id,
+                postcondition="same_exact_target_text_equals_requested",
+                data=data,
+                error="browser type_text postcondition observed changed target identity",
+            )
+        if (
+            int(after_state["text_length"]) != int(expected["text_length"])
+            or str(after_state["text_sha256"]) != str(expected["text_sha256"])
+        ):
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=post_observation.captured_at,
+                success=False,
+                page_id=page_id,
+                url_before=before_url,
+                url_after=after_url,
+                target_id=post_target.target_id,
+                postcondition="same_exact_target_text_equals_requested",
+                data=data,
+                error="browser type_text postcondition was not observed",
+            )
+
+        return BrowserEffectEvidence(
+            action_id=action.action_id,
+            session_id=action.session_id,
+            observed_at=post_observation.captured_at,
+            success=True,
+            page_id=page_id,
+            url_before=before_url,
+            url_after=after_url,
+            target_id=post_target.target_id,
+            postcondition="same_exact_target_text_equals_requested",
+            data=data,
+        )
+
+    @staticmethod
+    def _validate_managed_text(value: Any) -> tuple[str, dict[str, Any]]:
+        if not isinstance(value, str):
+            raise ManagedBrowserError(
+                "browser type_text requires an explicit string text argument"
+            )
+        text = value
+        if not text:
+            raise ManagedBrowserError("browser type_text text must not be empty")
+        if any(ord(char) < 0x20 or ord(char) == 0x7F for char in text):
+            raise ManagedBrowserError(
+                "browser type_text currently accepts text characters only; control keys are unsupported"
+            )
+        try:
+            encoded = text.encode("utf-16-le")
+        except UnicodeEncodeError as exc:
+            raise ManagedBrowserError(
+                "browser type_text contains an invalid Unicode scalar sequence"
+            ) from exc
+        units = len(encoded) // 2
+        if units <= 0 or units > _MAX_MANAGED_TEXT_UTF16_UNITS:
+            raise ManagedBrowserError(
+                f"browser type_text is limited to {_MAX_MANAGED_TEXT_UTF16_UNITS} UTF-16 code units"
+            )
+        return text, {
+            "text_length": len(text),
+            "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            "utf16_units": units,
+        }
+
+    @staticmethod
+    def _read_target_text_state(handle: Any) -> dict[str, Any]:
+        try:
+            raw = handle.evaluate(_TARGET_TEXT_STATE_SCRIPT)
+        except Exception as exc:
+            raise ManagedBrowserError(
+                f"managed browser text state provider failed: {type(exc).__name__}: {exc}"
+            ) from exc
+        if not isinstance(raw, dict):
+            raise ManagedBrowserError("managed browser text state provider returned invalid evidence")
+        if not bool(raw.get("connected")):
+            raise ManagedBrowserError("managed browser text target is detached")
+        if bool(raw.get("is_password")):
+            raise ManagedBrowserError(
+                "managed browser type_text first slice refuses password targets"
+            )
+        if not bool(raw.get("supported")):
+            raise ManagedBrowserError(
+                "managed browser type_text currently supports only input[type=text] and textarea targets"
+            )
+        if bool(raw.get("disabled")):
+            raise ManagedBrowserError("managed browser type_text target is disabled")
+        if bool(raw.get("read_only")):
+            raise ManagedBrowserError("managed browser type_text target is read-only")
+        value = raw.get("value")
+        if not isinstance(value, str):
+            raise ManagedBrowserError("managed browser text state value is unavailable")
+        if len(value) > _MAX_OBSERVED_TEXT_CHARS:
+            raise ManagedBrowserError(
+                f"managed browser text state exceeds the {_MAX_OBSERVED_TEXT_CHARS}-character evidence bound"
+            )
+        state = {
+            "text_length": len(value),
+            "text_sha256": hashlib.sha256(value.encode("utf-8")).hexdigest(),
+        }
+        value = ""
+        return state
 
     def _capture(
         self,
