@@ -153,6 +153,24 @@ _TARGET_FOCUS_STATE_SCRIPT = r"""
 )
 """
 
+_TARGET_ARIA_PRESSED_SCRIPT = r"""
+(element) => {
+  if (!element || !element.isConnected) {
+    return null;
+  }
+  const value = String(element.getAttribute("aria-pressed") || "")
+    .trim()
+    .toLowerCase();
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  return null;
+}
+"""
+
 
 @dataclass(slots=True)
 class _ManagedTargetBinding:
@@ -304,6 +322,8 @@ class PlaywrightManagedBrowser:
                 return self._navigate(session, action, authority)
             if action.kind is BrowserActionKind.FOCUS:
                 return self._focus(session, action)
+            if action.kind is BrowserActionKind.CLICK:
+                return self._click(session, action)
             return self._failure(
                 action,
                 error=f"managed browser action is not implemented yet: {action.kind.value}",
@@ -510,6 +530,162 @@ class PlaywrightManagedBrowser:
                 "exact_node_continuity": True,
                 "focused": True,
             },
+        )
+
+    def _click(
+        self,
+        session: _ManagedSession,
+        action: BrowserAction,
+    ) -> BrowserEffectEvidence:
+        if action.target is None:
+            raise ManagedBrowserError("browser click requires a current target")
+        expected_pressed = action.expected.get("aria_pressed")
+        if type(expected_pressed) is not bool:
+            raise ManagedBrowserError(
+                "browser click requires explicit boolean expected aria_pressed postcondition"
+            )
+
+        page_id = action.page_id or action.target.page_id or self._default_page_id(session)
+        page = self._page(session, page_id)
+        binding = self._revalidate_target_binding(session, page_id, action.target)
+        before_url = str(getattr(page, "url", "") or "")
+        try:
+            pressed_before = binding.handle.evaluate(_TARGET_ARIA_PRESSED_SCRIPT)
+        except Exception as exc:
+            raise ManagedBrowserError(
+                f"browser click precondition could not be observed: {type(exc).__name__}: {exc}"
+            ) from exc
+        if type(pressed_before) is not bool:
+            raise ManagedBrowserError(
+                "browser click currently requires a target with boolean aria-pressed state"
+            )
+        if pressed_before is expected_pressed:
+            raise ManagedBrowserError(
+                "browser click expected aria_pressed state is already observed before dispatch"
+            )
+
+        try:
+            binding.handle.click()
+        except Exception as exc:
+            self._refresh_page_observation_after_failed_mutation(session, page_id)
+            raise ManagedBrowserError(
+                f"managed browser click dispatch failed: {type(exc).__name__}: {exc}"
+            ) from exc
+
+        post_captured_at = utc_now()
+        try:
+            fresh_binding = self._acquire_target_binding(
+                session,
+                page_id,
+                binding.query,
+                observed_at=post_captured_at,
+            )
+        except Exception as exc:
+            self._refresh_page_observation_after_failed_mutation(session, page_id)
+            raise ManagedBrowserError(
+                f"managed browser click target could not be re-observed: {exc}"
+            ) from exc
+
+        try:
+            same_exact_node = bool(
+                binding.handle.evaluate(_EXACT_NODE_EQUAL_SCRIPT, fresh_binding.handle)
+            )
+        except Exception:
+            same_exact_node = False
+        try:
+            pressed_after = fresh_binding.handle.evaluate(_TARGET_ARIA_PRESSED_SCRIPT)
+        except Exception:
+            pressed_after = None
+
+        try:
+            post_observation = self._capture(
+                session,
+                page_id,
+                target=fresh_binding.target,
+                captured_at=post_captured_at,
+                target_binding=fresh_binding,
+            )
+        except Exception:
+            self._dispose_target_binding(fresh_binding)
+            self._refresh_page_observation_after_failed_mutation(session, page_id)
+            raise
+
+        after_url = post_observation.url
+        post_target = post_observation.target
+        data = {
+            "provider": session.identity.provider,
+            "exact_node_continuity": same_exact_node,
+            "aria_pressed_before": pressed_before,
+            "aria_pressed_after": pressed_after,
+        }
+        if post_target is None:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=post_observation.captured_at,
+                success=False,
+                page_id=page_id,
+                url_before=before_url,
+                url_after=after_url,
+                target_id=action.target.target_id,
+                postcondition="same_exact_target_aria_pressed",
+                data=data,
+                error="browser click postcondition lost the current target",
+            )
+        if not same_exact_node:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=post_observation.captured_at,
+                success=False,
+                page_id=page_id,
+                url_before=before_url,
+                url_after=after_url,
+                target_id=post_target.target_id,
+                postcondition="same_exact_target_aria_pressed",
+                data=data,
+                error="browser click postcondition observed a replaced target node",
+            )
+        if post_target.target_id != action.target.target_id:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=post_observation.captured_at,
+                success=False,
+                page_id=page_id,
+                url_before=before_url,
+                url_after=after_url,
+                target_id=post_target.target_id,
+                postcondition="same_exact_target_aria_pressed",
+                data=data,
+                error="browser click postcondition observed changed target identity",
+            )
+        if type(pressed_after) is not bool or pressed_after is not expected_pressed:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=post_observation.captured_at,
+                success=False,
+                page_id=page_id,
+                url_before=before_url,
+                url_after=after_url,
+                target_id=post_target.target_id,
+                postcondition="same_exact_target_aria_pressed",
+                data=data,
+                error="browser click postcondition was not observed",
+            )
+
+        return BrowserEffectEvidence(
+            action_id=action.action_id,
+            session_id=action.session_id,
+            observed_at=post_observation.captured_at,
+            success=True,
+            page_id=page_id,
+            url_before=before_url,
+            url_after=after_url,
+            target_id=post_target.target_id,
+            postcondition="same_exact_target_aria_pressed",
+            data=data,
         )
 
     def _capture(
