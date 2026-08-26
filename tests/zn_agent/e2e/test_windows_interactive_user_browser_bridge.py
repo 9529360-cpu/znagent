@@ -174,7 +174,12 @@ class _IsolatedUserBrowserFixture:
             return None
 
         user32 = ctypes.WinDLL("user32", use_last_error=True)
-        user32.EnumWindows.argtypes = [wintypes.WNDENUMPROC, wintypes.LPARAM]
+        window_enum_proc = ctypes.WINFUNCTYPE(
+            wintypes.BOOL,
+            wintypes.HWND,
+            wintypes.LPARAM,
+        )
+        user32.EnumWindows.argtypes = [window_enum_proc, wintypes.LPARAM]
         user32.EnumWindows.restype = wintypes.BOOL
         user32.IsWindowVisible.argtypes = [wintypes.HWND]
         user32.IsWindowVisible.restype = wintypes.BOOL
@@ -190,7 +195,7 @@ class _IsolatedUserBrowserFixture:
 
         matches: list[tuple[int, int, str]] = []
 
-        @wintypes.WNDENUMPROC
+        @window_enum_proc
         def callback(hwnd, _lparam):
             if not user32.IsWindowVisible(hwnd):
                 return True
