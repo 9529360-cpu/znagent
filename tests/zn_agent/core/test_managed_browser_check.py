@@ -80,6 +80,21 @@ class _ElementHandle:
             replacement["connected"] = True
             self.page.node = replacement
 
+    def uncheck(self):
+        if self.disposed or not self.node.get("connected", True):
+            raise RuntimeError("detached element")
+        self.page.uncheck_dispatches += 1
+        if self.node.get("uncheck_error"):
+            raise RuntimeError("provider uncheck error")
+        if not self.node.get("uncheck_blocked"):
+            self.node["checked"] = False
+        if self.node.get("replace_on_uncheck"):
+            replacement = dict(self.node)
+            replacement.pop("replace_on_uncheck", None)
+            self.node["connected"] = False
+            replacement["connected"] = True
+            self.page.node = replacement
+
     def dispose(self):
         self.disposed = True
 
@@ -105,6 +120,7 @@ class _Page:
         self.url = "https://example.com/check"
         self.viewport_size = {"width": 800, "height": 600}
         self.check_dispatches = 0
+        self.uncheck_dispatches = 0
 
     def title(self):
         return "Check"
@@ -200,7 +216,7 @@ def _build(node, *, permission=None):
     return browser, session, policy, page, observed
 
 
-def _check_action(session, observed, *, kind=BrowserActionKind.CHECK):
+def _checkbox_action(session, observed, *, kind=BrowserActionKind.CHECK):
     return BrowserAction.create(
         session_id=session.session_id,
         page_id=observed.page_id,
@@ -217,7 +233,7 @@ class ManagedBrowserCheckTests(unittest.TestCase):
             permission=permission,
         )
         try:
-            action = _check_action(session, observed)
+            action = _checkbox_action(session, observed)
             with self.assertRaisesRegex(ValueError, "not permitted"):
                 BrowserActionAuthority.from_observation(action, observed, permission)
             self.assertEqual(page.check_dispatches, 0)
@@ -229,7 +245,7 @@ class ManagedBrowserCheckTests(unittest.TestCase):
             {"connected": True, "checked": False, "checkbox": False, "supported": False}
         )
         try:
-            action = _check_action(session, observed)
+            action = _checkbox_action(session, observed)
             authority = BrowserActionAuthority.from_observation(action, observed, permission)
             effect = browser.act(action, authority)
             self.assertFalse(effect.success)
@@ -243,7 +259,7 @@ class ManagedBrowserCheckTests(unittest.TestCase):
             {"connected": True, "checked": True}
         )
         try:
-            action = _check_action(session, observed)
+            action = _checkbox_action(session, observed)
             authority = BrowserActionAuthority.from_observation(action, observed, permission)
             effect = browser.act(action, authority)
             self.assertFalse(effect.success)
@@ -257,7 +273,7 @@ class ManagedBrowserCheckTests(unittest.TestCase):
             {"connected": True, "checked": False}
         )
         try:
-            action = _check_action(session, observed)
+            action = _checkbox_action(session, observed)
             authority = BrowserActionAuthority.from_observation(action, observed, permission)
             effect = browser.act(action, authority)
             self.assertTrue(effect.success, effect.error)
@@ -266,6 +282,7 @@ class ManagedBrowserCheckTests(unittest.TestCase):
             self.assertFalse(effect.data["checked_before"])
             self.assertTrue(effect.data["checked_after"])
             self.assertEqual(page.check_dispatches, 1)
+            self.assertEqual(page.uncheck_dispatches, 0)
             self.assertNotEqual(effect.observed_at, observed.captured_at)
         finally:
             browser.close()
@@ -275,7 +292,7 @@ class ManagedBrowserCheckTests(unittest.TestCase):
             {"connected": True, "checked": False, "check_blocked": True}
         )
         try:
-            action = _check_action(session, observed)
+            action = _checkbox_action(session, observed)
             authority = BrowserActionAuthority.from_observation(action, observed, permission)
             effect = browser.act(action, authority)
             self.assertFalse(effect.success)
@@ -291,7 +308,7 @@ class ManagedBrowserCheckTests(unittest.TestCase):
             {"connected": True, "checked": False, "replace_on_check": True}
         )
         try:
-            action = _check_action(session, observed)
+            action = _checkbox_action(session, observed)
             authority = BrowserActionAuthority.from_observation(action, observed, permission)
             effect = browser.act(action, authority)
             self.assertFalse(effect.success)
@@ -307,7 +324,7 @@ class ManagedBrowserCheckTests(unittest.TestCase):
             {"connected": True, "checked": False, "disabled": True}
         )
         try:
-            action = _check_action(session, observed)
+            action = _checkbox_action(session, observed)
             authority = BrowserActionAuthority.from_observation(action, observed, permission)
             effect = browser.act(action, authority)
             self.assertFalse(effect.success)
@@ -316,17 +333,127 @@ class ManagedBrowserCheckTests(unittest.TestCase):
         finally:
             browser.close()
 
-    def test_uncheck_remains_unimplemented_and_does_not_dispatch_check(self):
+
+class ManagedBrowserUncheckTests(unittest.TestCase):
+    def test_uncheck_requires_page_interaction_permission_at_authority_boundary(self):
+        permission = BrowserPermissionContext()
+        browser, session, _permission, page, observed = _build(
+            {"connected": True, "checked": True},
+            permission=permission,
+        )
+        try:
+            action = _checkbox_action(session, observed, kind=BrowserActionKind.UNCHECK)
+            with self.assertRaisesRegex(ValueError, "not permitted"):
+                BrowserActionAuthority.from_observation(action, observed, permission)
+            self.assertEqual(page.uncheck_dispatches, 0)
+        finally:
+            browser.close()
+
+    def test_uncheck_requires_native_checkbox_target_before_dispatch(self):
+        browser, session, permission, page, observed = _build(
+            {"connected": True, "checked": True, "checkbox": False, "supported": False}
+        )
+        try:
+            action = _checkbox_action(session, observed, kind=BrowserActionKind.UNCHECK)
+            authority = BrowserActionAuthority.from_observation(action, observed, permission)
+            effect = browser.act(action, authority)
+            self.assertFalse(effect.success)
+            self.assertIn("checkbox", effect.error or "")
+            self.assertEqual(page.uncheck_dispatches, 0)
+        finally:
+            browser.close()
+
+    def test_uncheck_refuses_already_unchecked_target_before_dispatch(self):
+        browser, session, permission, page, observed = _build(
+            {"connected": True, "checked": False}
+        )
+        try:
+            action = _checkbox_action(session, observed, kind=BrowserActionKind.UNCHECK)
+            authority = BrowserActionAuthority.from_observation(action, observed, permission)
+            effect = browser.act(action, authority)
+            self.assertFalse(effect.success)
+            self.assertIn("already unchecked", effect.error or "")
+            self.assertEqual(page.uncheck_dispatches, 0)
+        finally:
+            browser.close()
+
+    def test_uncheck_returns_success_only_from_fresh_same_node_unchecked_state(self):
         browser, session, permission, page, observed = _build(
             {"connected": True, "checked": True}
         )
         try:
-            action = _check_action(session, observed, kind=BrowserActionKind.UNCHECK)
+            action = _checkbox_action(session, observed, kind=BrowserActionKind.UNCHECK)
+            authority = BrowserActionAuthority.from_observation(action, observed, permission)
+            effect = browser.act(action, authority)
+            self.assertTrue(effect.success, effect.error)
+            self.assertEqual(effect.postcondition, "same_exact_target_unchecked")
+            self.assertTrue(effect.data["exact_node_continuity"])
+            self.assertTrue(effect.data["checked_before"])
+            self.assertFalse(effect.data["checked_after"])
+            self.assertEqual(page.check_dispatches, 0)
+            self.assertEqual(page.uncheck_dispatches, 1)
+            self.assertNotEqual(effect.observed_at, observed.captured_at)
+        finally:
+            browser.close()
+
+    def test_uncheck_fails_if_provider_dispatch_does_not_change_checked_state(self):
+        browser, session, permission, page, observed = _build(
+            {"connected": True, "checked": True, "uncheck_blocked": True}
+        )
+        try:
+            action = _checkbox_action(session, observed, kind=BrowserActionKind.UNCHECK)
             authority = BrowserActionAuthority.from_observation(action, observed, permission)
             effect = browser.act(action, authority)
             self.assertFalse(effect.success)
-            self.assertIn("not implemented", effect.error or "")
+            self.assertIn("postcondition was not observed", effect.error or "")
+            self.assertTrue(effect.data["exact_node_continuity"])
+            self.assertTrue(effect.data["checked_after"])
+            self.assertEqual(page.uncheck_dispatches, 1)
+        finally:
+            browser.close()
+
+    def test_uncheck_fails_if_same_shape_target_is_replaced_during_dispatch(self):
+        browser, session, permission, page, observed = _build(
+            {"connected": True, "checked": True, "replace_on_uncheck": True}
+        )
+        try:
+            action = _checkbox_action(session, observed, kind=BrowserActionKind.UNCHECK)
+            authority = BrowserActionAuthority.from_observation(action, observed, permission)
+            effect = browser.act(action, authority)
+            self.assertFalse(effect.success)
+            self.assertIn("replaced target node", effect.error or "")
+            self.assertFalse(effect.data["exact_node_continuity"])
+            self.assertFalse(effect.data["checked_after"])
+            self.assertEqual(page.uncheck_dispatches, 1)
+        finally:
+            browser.close()
+
+    def test_uncheck_refuses_disabled_checkbox_before_dispatch(self):
+        browser, session, permission, page, observed = _build(
+            {"connected": True, "checked": True, "disabled": True}
+        )
+        try:
+            action = _checkbox_action(session, observed, kind=BrowserActionKind.UNCHECK)
+            authority = BrowserActionAuthority.from_observation(action, observed, permission)
+            effect = browser.act(action, authority)
+            self.assertFalse(effect.success)
+            self.assertIn("disabled", effect.error or "")
+            self.assertEqual(page.uncheck_dispatches, 0)
+        finally:
+            browser.close()
+
+    def test_uncheck_reports_provider_dispatch_failure_without_claiming_success(self):
+        browser, session, permission, page, observed = _build(
+            {"connected": True, "checked": True, "uncheck_error": True}
+        )
+        try:
+            action = _checkbox_action(session, observed, kind=BrowserActionKind.UNCHECK)
+            authority = BrowserActionAuthority.from_observation(action, observed, permission)
+            effect = browser.act(action, authority)
+            self.assertFalse(effect.success)
+            self.assertIn("uncheck dispatch failed", effect.error or "")
             self.assertEqual(page.check_dispatches, 0)
+            self.assertEqual(page.uncheck_dispatches, 1)
         finally:
             browser.close()
 
