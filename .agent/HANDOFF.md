@@ -4,9 +4,23 @@ Updated: 2026-08-26
 
 ## Current goal
 
-Continue durable resident-owned Work from the verified restart/resume, atomic terminal, generic anti-replay, append reverification, and sanitized Work recovery projection foundations.
+Wire the verified atomic uncertain-Work cancellation primitive through the real resident control path without turning a user cancellation into ordinary action failure or false outside-world evidence.
 
-The next real target is explicit resident-owned cancellation/recovery semantics for unverifiable `side_effect_recovery`. A user decision may stop Work, but it must not be misrepresented as proof that an outside-world effect happened or did not happen.
+The backend durability primitive is now implemented and verified. The next real target is the reachable chain:
+
+```text
+Resident explicit cancellation authority
+-> no Life ordinary failure observation
+-> Will explicit/restart cancellation semantics
+-> ResidentWorkLedger cancellation/finalization
+-> ResidentRpcServer work_cancel
+-> Electron IPC
+-> preload bridge
+-> resident-client typed recovery/cancel API
+-> Workbench recovery-only Cancel Work control
+```
+
+Do not broaden this into arbitrary in-flight action cancellation. The first user control must only cancel an active `side_effect_recovery` state whose ownership/attempt invariant the Store can prove.
 
 Do not spend the current stage on the deferred Windows NetworkService DOS-8.3 path-identity defect unless it materially blocks current Work development or is explicitly reprioritized.
 
@@ -19,222 +33,192 @@ Founding boundary remains:
 - repository: `9529360-cpu/znagent`
 - fixed development branch: `dev/zn-agent`
 - canonical source/release branch: `main`
-- latest implementation head before this HANDOFF update: `643e174bfc6dcdbe313df1a5434427319d5f068f`
+- latest implementation checkpoint before this HANDOFF update: `6c655c761099cc6a206028285cc228d65f3e7734`
+- status-document synchronization commit before this HANDOFF update: `5d284b437fe5a449c1e78ab75bb84dd83a94607c`
+- sanitized Work recovery projection checkpoint: `643e174bfc6dcdbe313df1a5434427319d5f068f`
 - append side-effect reverification checkpoint: `1bcbf410a401755d6037423ea677cb3db1c6217a`
-- atomic ownership regression fix: `e74679fee481898c6d4e9260f4134e2ae563e272`
-- prior atomic Work checkpoint: `f02582557a39f32273fb806929a6f64906fea547`
-- prior Work restart checkpoint: `2bce63a23252b7166244d0afd9dcac63b6b4fc26`
 - canonical `main`: `8234a835dea604783cea0bd9d28a40de654ec03d`
 - PR #6: draft/open/unmerged, base `main`, head `dev/zn-agent`
 - `main` was not modified
 - no force push or history rewrite was used
 
-Two normal commits `4ef74c320165e7a0908afc8a29b21489cbae6c90` and `f80407a377a70d6b346110fc77407eb1ede08558` created and then removed an accidental one-line temporary test file. The file is gone; history was not rewritten.
-
-A HANDOFF commit cannot contain its own resulting SHA. Re-read `dev/zn-agent` after this file is committed and report the resulting exact head externally.
+A HANDOFF commit cannot contain its own resulting SHA. Re-read `dev/zn-agent` after this file is committed and report/use the resulting exact head externally.
 
 ## Completed in current stage
 
-### 1. Side-effect uncertainty remains resident-owned recovery truth
-
-Generic non-replayable classes remain deliberately narrow:
-
-```text
-command / terminal / shell
-write_text / write_file with append=true
-```
-
-`SideEffectAwareBody` commits a durable `started` attempt before dispatch. An unresolved same event/action signature blocks duplicate dispatch. The ledger stores bounded metadata/signature only, not raw commands, appended text, environment values, or raw action arguments.
-
-The final resident intercepts generic `side_effect_uncertain` before ordinary failure handling and persists:
-
-```text
-stage      = side_effect_recovery
-blocked_by = outside_world_effect_uncertain
-```
-
-Uncertainty does not automatically become ordinary failure learning.
-
-### 2. Append recovery from current reality is verified
+### 1. Atomic uncertain-Work cancellation primitive
 
 Implementation:
 
 ```text
-1bcbf410a401755d6037423ea677cb3db1c6217a
-feat: recover uncertain append effects from reality
+6c655c761099cc6a206028285cc228d65f3e7734
+feat: add atomic uncertain Work cancellation
 ```
 
-For a trustworthy same-target exact append postcondition, recovery first performs read-only `read_text`:
+The durable model now distinguishes cancellation from ordinary execution failure:
 
 ```text
-exact final state present
--> verified_effect
--> complete without replay or causal success learning
-
-exact resident-derived pre-dispatch baseline present
--> verified_absent
--> authorize one fresh append
--> normal independent verification follows
-
-unreadable / truncated / divergent
--> remain blocked
--> user_decision_required
+ExecutionPath.CONTROL
+EventOutcome.cancelled = true
+success = false
 ```
 
-Generic command uncertainty remains blocked and is never automatically replayed.
+`cancelled` was appended compatibly to the existing result dataclasses, and old persisted outcomes default to `cancelled=false` when read.
 
-Focused proof:
+`KernelStore.cancel_uncertain_event()` is narrow and fail-closed. It accepts only unfinished work (`PROCESSING`, or `PENDING` after restart recovery) for which all of the following agree:
 
 ```text
-ZN Work Recovery E2E run 33009460955
-head 1bcbf410a401755d6037423ea677cb3db1c6217a
-runner zn-ci-01 / Windows X64
-18/18 passed
+same event owns WorkingState
+stage == side_effect_recovery
+blocked_by == outside_world_effect_uncertain
+replay_blocked == true
+checkpoint attempt_id exists
+same event owns that attempt
+attempt status == started
+no durable EventOutcome already exists
 ```
 
-### 3. `work_progress.recovery` is now a stable sanitized projection
-
-Implementation:
+One SQLite transaction then performs all durable lifecycle changes:
 
 ```text
-643e174bfc6dcdbe313df1a5434427319d5f068f
-feat: expose sanitized Work recovery progress
+side-effect attempt -> work_abandoned
+event -> terminal
+EventOutcome -> cancelled=true, execution_path=control
+WorkingState -> idle
 ```
 
-Real call chain:
+`work_abandoned` is deliberately non-epistemic. It means only that ZN will no longer continue this Work. It does **not** claim that the uncertain outside-world effect happened, and it does **not** claim that the effect was absent.
+
+The abandoned attempt therefore stores no `result_action_id` or `result_success` evidence.
+
+Normal `save_event_outcome()` / `complete_event()` reject cancelled outcomes, so callers cannot bypass the dedicated atomic cancellation transaction.
+
+### 2. Standalone side-effect cancellation path removed
+
+`SideEffectAwareBody.resolve_uncertain_attempt()` now accepts only evidence-bearing recovery statuses:
 
 ```text
-ResidentRpcServer.handle(work_progress)
--> ResidentWorkLedger.progress(thread_id, event_id)
--> daemon pass-through
+verified_effect
+verified_absent
 ```
 
-The projection therefore belongs to `ResidentWorkLedger.progress()`. No new control-plane owner was introduced.
+It no longer accepts `cancelled`. Lifecycle cancellation must pass through the Store transaction above so attempt/event/outcome/checkpoint cannot diverge after a crash.
 
-`work_progress` always includes `recovery`. It is non-null only for the requested event's active `side_effect_recovery` stage.
+### 3. Cancellation durability tests added
 
-Public allowlist:
+The focused Work workflow now includes `tests/zn_agent/core/test_work_cancellation.py`.
+
+Covered invariants:
 
 ```text
-status
-kind
-attempt_id
-replay_blocked
-verification_kind
-decision
-reason
-verification.action_id
-verification.success
-verification.truncated
-verification.observed_chars
+normal atomic cancellation
+restart PROCESSING -> PENDING then cancellation
+whole-transaction rollback when EventOutcome insertion fails
+wrong/non-recovery WorkingState rejection without mutation
+standalone side-effect `cancelled` resolution rejection
 ```
-
-Explicitly not exported:
-
-```text
-intent_id
-signature
-raw command
-raw appended text
-environment values
-internal verification path/output
-arbitrary WorkingState data
-```
-
-Queued, ordinary-processing, and terminal events return `recovery: null`. The projection survives resident reconstruction, and RPC passes it through unchanged.
 
 ## Real test / CI truth
 
 ### Exact focused Work recovery
 
 ```text
-ZN Work Recovery E2E run 33011631232
-head 643e174bfc6dcdbe313df1a5434427319d5f068f
-runner zn-ci-02 / Windows X64
+ZN Work Recovery E2E run 33014912312
+head 6c655c761099cc6a206028285cc228d65f3e7734
+runner zn-ci-01 / Windows X64
 conclusion success
-20/20 passed
 ```
 
-New cases that actually ran and passed:
-
-```text
-test_active_side_effect_recovery_is_sanitized_and_survives_reconstruction
-test_work_progress_rpc_passes_through_sanitized_recovery
-```
-
-All prior Work restart, atomic terminal, rollback, anti-replay, append reverification, and typed Body tests stayed green.
+Checkout, isolated runtime setup, compile, and the complete focused Work recovery unittest step all passed.
 
 ### Exact ordinary ZN CI
 
 ```text
-ZN CI run 33011631279
-head 643e174bfc6dcdbe313df1a5434427319d5f068f
+ZN CI run 33014912300
+head 6c655c761099cc6a206028285cc228d65f3e7734
 Electron / TypeScript / Windows    success
 ZN Source Boundary / Windows       success
 ZN Kernel / Python / Windows       failure
-Kernel                             569 tests / 16 errors / 5 skipped
+Kernel                             573 tests / 16 errors / 5 skipped
 ```
 
-The new Work recovery projection tests passed inside the full Kernel suite. The 16 errors remain in the known Windows NetworkService DOS-8.3 versus long-path identity family. Representative affected areas are repo targeted-test/text-delta verification and Work terminal artifact cwd identity. Cleanup `PermissionError` traces are secondary fallout after assertions fail.
+All four new cancellation durability test methods explicitly ran and returned `ok` in the Kernel job log:
 
-Do not call ordinary CI green. Do not confuse this deferred path-identity defect with Work recovery projection failures.
+```text
+test_cancel_uncertain_event_after_restart_does_not_resurrect_work
+test_cancel_uncertain_event_atomically_terminalizes_without_effect_claim
+test_cancel_uncertain_event_rejects_non_recovery_checkpoint_without_mutation
+test_cancel_uncertain_event_rolls_back_event_outcome_checkpoint_and_attempt
+```
+
+The 16 errors remain the known Windows NetworkService DOS-8.3 versus long-path identity family. Representative failures remain repository targeted-test/text-delta verification and terminal/Work artifact cwd identity. Cleanup `PermissionError` traces on test databases are secondary fallout after those path assertions fail.
+
+Do not call ordinary CI green. No new Work cancellation/recovery regression appeared.
 
 The prior partial path fix was reverted normally in `db647cb49c3de014aa82bc28ec87c1c4e5b02c15`; no half-fix remains.
 
-## Windows runner topology
+## Existing durable Work foundations that remain verified
+
+- resident Work survives restart with same-event `WorkingState` recovery;
+- normal event terminal state + `EventOutcome` + idle checkpoint commit atomically;
+- generic command/append side effects use a pre-dispatch durable `started` attempt and refuse blind replay;
+- trustworthy append recovery may prove `verified_effect` or `verified_absent` from fresh read-only reality;
+- `work_progress.recovery` is a sanitized allowlisted projection and survives reconstruction/RPC;
+- uncertainty is not routed into ordinary failure learning while it remains in recovery.
+
+Prior exact focused projection proof remains:
 
 ```text
-headless CI:       [self-hosted, Windows, X64, zn-ci]
-interactive proof: [self-hosted, Windows, X64, zn-interactive]
-```
-
-Keep the visible foreground `zn-interactive` design. Do not restore hidden launch, auto-logon, credential expansion, or Session-0 interactive claims.
-
-Previously verified real regressions remain:
-
-```text
-ZN Windows Interactive Desktop E2E run 33006103742   success, 4/4
-ZN Managed Browser E2E             run 33006103702   success, 71 contract + 4 Chromium
+ZN Work Recovery E2E run 33011631232
+head 643e174bfc6dcdbe313df1a5434427319d5f068f
+20/20 passed
 ```
 
 ## Current risks / blockers
 
-- Work reconstruction is verified.
-- Atomic event/outcome/idle terminalization is verified with corrected checkpoint ownership.
-- Generic command/append blind replay after an uncertain start is blocked.
-- Append effect-present and exact-baseline recovery are verified from fresh reality.
-- Uncertainty is not ordinary failure learning.
-- Sanitized recovery truth is visible through Work/RPC and survives reconstruction.
-- Work durability remains **PARTIAL** because unverifiable uncertainty has no explicit resident-owned cancel/recovery command yet.
-- A user cancellation decision is not evidence about whether the outside-world effect occurred.
-- Side-effect attempt resolution and event terminalization currently use separate durability boundaries; do not fake atomicity by changing both independently without a crash-recovery invariant.
-- Life self-observation after durable completion remains a separate consistency concern.
+- The atomic backend cancellation primitive is verified but not yet reachable through Resident/Work/RPC/UI.
+- `Resident._complete_result()` normally calls `life.observe_action(result)`; cancellation must bypass this path so it is not learned as an action failure.
+- `IntentionalResident._complete_result()` normally sends outcome feedback and calls `Will.observe_event_outcome()`; cancellation must use an explicit neutral/control path.
+- `NativeWill.reconcile_outcomes()` currently reconstructs outcomes from `success` only. Before cancellation becomes reachable it must consume `EventOutcome.cancelled` explicitly so restart does not convert cancellation into `step_failed`.
+- `ResidentWorkLedger._finalize_run()` currently maps all `success=false` outcomes to failed Work. It must gain explicit cancellation finalization semantics before RPC/UI exposure.
+- `ZnWorkProgress` in the desktop resident client does not yet type/normalize the already-sanitized backend `recovery` projection. This must be added before rendering a recovery-only button.
+- The first UI control must not claim to cancel arbitrary actions already executing outside ZN.
+- Workbench cancellation copy must state that stopping Work does not determine whether the uncertain outside-world effect occurred.
+- Life self-observation recovery after ordinary durable completion remains a separate consistency concern.
 - Windows NetworkService DOS-8.3 path identity remains known/deferred.
 - Browser PRESS/broader click/editing/multi-select/lifecycle, User Browser Bridge control, M8 continuity, and SM1+ remain incomplete.
 - `main` remains untouched.
 
 ## Task queue
 
-### P0 - explicit resident-owned recovery / cancellation decision
+### P0 - reachable explicit cancellation control
 
 Status: **NEXT REAL TARGET**
 
-Trace and define the truthful invariant before coding.
+Implement in dependency order:
 
-Requirements:
+```text
+1. Resident explicit cancel API that calls the Store primitive and bypasses life.observe_action
+2. IntentionalResident / NativeWill explicit cancelled semantics, including restart reconcile
+3. ResidentWorkLedger cancellation ownership + cancellation-aware finalization/progress
+4. ResidentRpcServer work_cancel
+5. Electron IPC + preload + desktop bridge typing
+6. resident-client typed recovery projection + cancelZnWork
+7. Workbench recovery-only Cancel Work button and truthful uncertainty language
+8. focused backend + desktop tests, then real Windows CI
+```
+
+Required invariant:
 
 ```text
 user decides to stop Work
--> event/work lifecycle may become terminal
--> do NOT claim uncertain external effect was absent or present
--> preserve unresolved effect evidence durably
--> restart must not resurrect cancelled Work into replay
--> no automatic generic-command retry
+-> Work/event lifecycle becomes terminal through resident-owned authority
+-> no ordinary failure learning
+-> no Will step_failed learning, including after restart
+-> uncertain side-effect attempt becomes work_abandoned
+-> no claim that external effect was present or absent
+-> restart never resurrects the cancelled Work into replay
 ```
-
-Determine whether unresolved side-effect attempts should remain historical unresolved records or move to a distinct non-epistemic work-cancelled state. If a new ledger status is added, its meaning must not imply effect truth. Keep retention bounded.
-
-Then add one bounded RPC authority owned by ZN, not UI/model/provider text, and prove restart/crash behavior on focused Windows CI.
 
 ### P1 - life observation recovery
 
@@ -263,18 +247,24 @@ Preserve human approval for high-risk identity, memory, credentials, updater/sig
 ## Related files
 
 ```text
+runtime/python/zn_agent/core/models.py
 runtime/python/zn_agent/core/store.py
-runtime/python/zn_agent/core/work.py
 runtime/python/zn_agent/core/side_effect_body.py
-runtime/python/zn_agent/core/focused_modern_text_resident.py
 runtime/python/zn_agent/core/resident.py
+runtime/python/zn_agent/core/intentional_resident.py
+runtime/python/zn_agent/core/will.py
+runtime/python/zn_agent/core/work.py
 runtime/python/zn_agent/core/daemon.py
-tests/zn_agent/core/test_work_progress.py
-tests/zn_agent/core/test_work_recovery.py
-tests/zn_agent/core/test_work_side_effect_recovery.py
+tests/zn_agent/core/test_work_cancellation.py
+tests/zn_agent/core/test_native_will.py
 .github/workflows/zn-work-recovery-e2e.yml
+apps/desktop/electron/zn-resident-ipc.ts
+apps/desktop/electron/zn-preload.ts
+apps/desktop/src/zn/desktop-env.d.ts
+apps/desktop/src/zn/resident-client.ts
+apps/desktop/src/zn/workbench.tsx
 ```
 
 ## Next real target
 
-Define and implement truthful explicit cancellation/recovery semantics for unverifiable side effects. Preserve uncertain external-effect evidence, keep replay blocked, make restart behavior deterministic, and keep `main` untouched.
+Make the verified Store cancellation primitive reachable through Resident and Will first, with cancellation remaining outside ordinary failure learning and restart reconciliation. Then carry the same bounded authority through Work/RPC/Electron/client to a recovery-only Workbench button. Keep `main` untouched.
