@@ -276,9 +276,9 @@ class KernelStore:
         """Atomically publish one resident terminal result and clear its checkpoint.
 
         The event terminal status, durable outcome and singleton idle WorkingState
-        become visible together. Any SQLite error rolls the whole transition back,
-        so restart recovery never sees a terminal event whose outcome was not
-        durably committed by this path.
+        become visible together. A claimed event may complete when no resident
+        checkpoint is active yet, but this transition must never erase another
+        event's live checkpoint. Any SQLite error rolls the whole transition back.
         """
 
         event_id = str(outcome.event_id or "").strip()
@@ -310,15 +310,28 @@ class KernelStore:
             state_row = self._conn.execute(
                 "SELECT data FROM working_state WHERE id=1"
             ).fetchone()
-            if not state_row:
-                raise RuntimeError(
-                    "resident terminal transition requires a working checkpoint"
-                )
-            working = json.loads(state_row["data"])
-            if str(working.get("current_event_id") or "").strip() != event_id:
-                raise RuntimeError(
-                    "resident terminal transition does not own the active checkpoint"
-                )
+            if state_row:
+                try:
+                    working = json.loads(state_row["data"])
+                except Exception as exc:
+                    raise RuntimeError(
+                        "resident terminal transition found a malformed working checkpoint"
+                    ) from exc
+                working_event_id = str(
+                    working.get("current_event_id") or ""
+                ).strip()
+                working_stage = str(working.get("stage") or "").strip().lower()
+                if working_event_id and working_event_id != event_id:
+                    raise RuntimeError(
+                        "resident terminal transition cannot clear another event checkpoint"
+                    )
+                if (
+                    not working_event_id
+                    and working_stage not in {"", "idle", "complete", "failed"}
+                ):
+                    raise RuntimeError(
+                        "resident terminal transition found an orphaned non-idle checkpoint"
+                    )
 
             event.status = (
                 EventStatus.COMPLETED if outcome.success else EventStatus.FAILED
