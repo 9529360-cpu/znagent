@@ -22,6 +22,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
 concurrency:
   group: zn-managed-browser-e2e-${{ github.ref }}
   cancel-in-progress: true
@@ -36,10 +40,8 @@ jobs:
       TZ: UTC
       PYTHONUTF8: '1'
       PYTHONUNBUFFERED: '1'
-      PSExecutionPolicyPreference: Bypass
     steps:
       - name: Require Windows x64 headless CI runner
-        shell: powershell
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
             throw "ZN managed browser E2E requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
@@ -53,7 +55,6 @@ jobs:
           version: '0.11.6'
           enable-cache: false
       - name: Prepare isolated browser runtime
-        shell: powershell
         run: |
           uv python install 3.12
           Remove-Item -Recurse -Force .ci/managed-browser-venv -ErrorAction SilentlyContinue
@@ -67,13 +68,11 @@ jobs:
           }
           & $python -m playwright install chromium
       - name: Run managed browser contract tests
-        shell: powershell
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
           & $python -m unittest discover -s tests/zn_agent/core -p 'test_*browser*.py' -v
       - name: Run real local Chromium E2E
-        shell: powershell
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
