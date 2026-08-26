@@ -21,14 +21,14 @@ class FocusedModernTextResidentRuntime(FocusedTextEntryResidentRuntime):
     Browser engines remain replaceable resources behind ZN-owned browser
     session/action/authority/effect contracts.
 
-    The final active Body is wrapped only after all lower resident constructors
-    have installed their native input organs. The wrapper adds a durable
+    The final active Body remains a ``KeyboardTextBody`` subtype so the typed
+    keyboard ownership contract stays intact. This subtype adds only a durable
     pre-dispatch uncertainty boundary for generic command and append side effects;
     richer pointer-click and keyboard-text non-replay contracts remain unchanged.
     """
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
-        self.body = SideEffectAwareBody(self.body, store=self.store)
+        self.body = SideEffectAwareBody(resident=self)
         self.automation_text_state = NativeFocusedAutomationTextSense()
         self.managed_browser = PlaywrightManagedBrowser()

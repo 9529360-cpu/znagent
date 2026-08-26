@@ -10,17 +10,17 @@ from contextlib import closing
 from typing import Any
 
 from .body import BodyActionResult
+from .keyboard_text_body import KeyboardTextBody
 from .models import utc_now
 
 
-class SideEffectAwareBody:
-    """Wrap the active ZN Body with a durable uncertainty boundary.
+class SideEffectAwareBody(KeyboardTextBody):
+    """Keep the real KeyboardTextBody contract while guarding generic side effects.
 
     Pointer clicks and focused keyboard text already own richer resident-level
-    non-replayable lifecycles. This wrapper deliberately does not replace those
-    contracts. It covers only generic command execution and append-style text
-    writes that reach the final active Body without a dedicated execution-start
-    marker.
+    non-replayable lifecycles. This body deliberately leaves those contracts
+    unchanged. It adds only a durable pre-dispatch boundary around generic
+    command execution and append-style text writes.
 
     A ``started`` attempt is committed before dispatch. If the process dies after
     that commit, the next resident refuses the same event/action signature rather
@@ -34,14 +34,6 @@ class SideEffectAwareBody:
     _COMMAND_KINDS = frozenset({"command", "terminal", "shell"})
     _APPEND_KINDS = frozenset({"write_text", "write_file"})
 
-    def __init__(self, body: Any, *, store):
-        self._body = body
-        self.store = store
-        self._init_schema()
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._body, name)
-
     def act(
         self,
         kind: str,
@@ -52,7 +44,7 @@ class SideEffectAwareBody:
         normalized_kind = str(kind or "").strip().lower()
         normalized_event = str(event_id or "").strip()
         if not normalized_event or not self._requires_guard(normalized_kind, args):
-            return self._body.act(kind, event_id=event_id, **args)
+            return super().act(kind, event_id=event_id, **args)
 
         signature_hash = self._signature_hash(normalized_kind, args)
         prior = self._started_attempt(normalized_event, signature_hash)
@@ -77,7 +69,7 @@ class SideEffectAwareBody:
         )
 
         try:
-            result = self._body.act(kind, event_id=event_id, **args)
+            result = super().act(kind, event_id=event_id, **args)
         except Exception as exc:
             # A normal exception cannot establish that a command/append produced
             # no side effect. Keep the durable attempt in ``started`` state and
@@ -138,6 +130,7 @@ class SideEffectAwareBody:
         return hashlib.sha256(encoded).hexdigest()
 
     def _init_schema(self) -> None:
+        super()._init_schema()
         with closing(self._connect()) as conn:
             conn.executescript(
                 f"""
