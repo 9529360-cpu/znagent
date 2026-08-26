@@ -74,6 +74,36 @@ class CompletionObservationJournal:
                 repaired += 1
         return repaired
 
+    def health(self) -> dict[str, Any]:
+        """Return a sanitized control-plane summary without raw repair errors."""
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT stage,status,COUNT(*) AS count "
+                "FROM resident_completion_observations "
+                "WHERE status != 'completed' GROUP BY stage,status "
+                "ORDER BY stage,status"
+            ).fetchall()
+        pending_by_stage: dict[str, int] = {}
+        running = 0
+        pending = 0
+        for row in rows:
+            stage = str(row["stage"] or "unknown")
+            status = str(row["status"] or "pending")
+            count = max(0, int(row["count"] or 0))
+            pending_by_stage[stage] = pending_by_stage.get(stage, 0) + count
+            if status == "running":
+                running += count
+            else:
+                pending += count
+        total = pending + running
+        return {
+            "healthy": total == 0,
+            "pending_count": total,
+            "waiting_count": pending,
+            "running_count": running,
+            "stages": pending_by_stage,
+        }
+
     def pending(self, *, stage: str | None = None, limit: int = 128) -> list[dict[str, Any]]:
         bounded = max(1, min(2048, int(limit)))
         with closing(self._connect()) as conn:
