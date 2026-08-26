@@ -814,7 +814,7 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
     def _perceive_event_outcome(self, event, outcome):
         summary = self._event_outcome_summary(outcome)
         return self.nervous.perceive_event_outcome(
-            outcome.event_id,
+            event.event_id,
             f"{event.task}: {summary[:1000]}",
             features=(
                 event.kind,
@@ -829,7 +829,7 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
             valence=0.52 if outcome.success else -0.78,
             arousal=0.42 if outcome.success else 0.82,
             metadata={
-                "event_id": outcome.event_id,
+                "event_id": event.event_id,
                 "model_invocations": outcome.model_invocations,
             },
         )
