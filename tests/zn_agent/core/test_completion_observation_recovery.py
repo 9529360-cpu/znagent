@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,6 +14,7 @@ from zn_agent.core import (
     ZNKernelRuntime,
     ZNResidentRuntime,
 )
+from zn_agent.core.daemon import ResidentRpcServer
 from zn_agent.core.models import EventStatus
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
 
@@ -115,6 +117,33 @@ class CompletionObservationRecoveryTests(unittest.TestCase):
             self.assertEqual(health["running_count"], 0)
             self.assertEqual(health["stages"], {"life": 1})
             self.assertNotIn("private product observation detail", rendered)
+            self.assertNotIn("last_error", rendered)
+            resident.store.close()
+
+    def test_status_rpc_passes_through_sanitized_completion_observation_health(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = product_resident_for(Path(tmp) / "kernel.db")
+
+            def fail_observation(run):
+                raise RuntimeError("rpc-private observation detail")
+
+            resident.life.observe_action = fail_observation
+            resident.submit("product pending observation")
+            server = ResidentRpcServer(
+                resident=resident,
+                input_stream=io.StringIO(),
+                output_stream=io.StringIO(),
+            )
+
+            response = server.handle({"id": "health", "method": "status", "params": {}})
+            health = response["result"]["completion_observations"]
+            rendered = repr(response)
+
+            self.assertTrue(response["ok"])
+            self.assertFalse(health["healthy"])
+            self.assertEqual(health["pending_count"], 1)
+            self.assertEqual(health["stages"], {"life": 1})
+            self.assertNotIn("rpc-private observation detail", rendered)
             self.assertNotIn("last_error", rendered)
             resident.store.close()
 
