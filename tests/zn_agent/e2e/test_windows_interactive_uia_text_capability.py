@@ -164,47 +164,51 @@ class WindowsInteractiveUiATextCapabilityE2ETests(unittest.TestCase):
                     config={"model": {}},
                     store_path=Path(tmp) / "kernel.db",
                 )
-                deadline = time.monotonic() + 6.0
-                focused = None
-                last_error = None
-                while time.monotonic() < deadline:
-                    try:
-                        foreground = resident.foreground_window.probe()
-                        candidate = resident.automation_element.probe_focused()
-                        if (
-                            foreground.title == fixture.TITLE
-                            and fixture.process is not None
-                            and foreground.process_id == fixture.process.pid
-                            and candidate.process_id == fixture.process.pid
-                            and candidate.automation_id == fixture.AUTOMATION_ID
-                            and candidate.has_keyboard_focus
-                        ):
-                            focused = candidate
-                            break
-                    except Exception as exc:
-                        last_error = exc
-                    time.sleep(0.05)
-                if focused is None:
-                    raise AssertionError(
-                        "resident did not observe the focused WPF TextBox in time; "
-                        f"last_error={last_error!r}"
-                    )
+                try:
+                    deadline = time.monotonic() + 6.0
+                    focused = None
+                    last_error = None
+                    while time.monotonic() < deadline:
+                        try:
+                            foreground = resident.foreground_window.probe()
+                            candidate = resident.automation_element.probe_focused()
+                            if (
+                                foreground.title == fixture.TITLE
+                                and fixture.process is not None
+                                and foreground.process_id == fixture.process.pid
+                                and candidate.process_id == fixture.process.pid
+                                and candidate.automation_id == fixture.AUTOMATION_ID
+                                and candidate.has_keyboard_focus
+                            ):
+                                focused = candidate
+                                break
+                        except Exception as exc:
+                            last_error = exc
+                        time.sleep(0.05)
+                    if focused is None:
+                        raise AssertionError(
+                            "resident did not observe the focused WPF TextBox in time; "
+                            f"last_error={last_error!r}"
+                        )
 
-                self.assertEqual(focused.control_type, 50004)  # UIA_EditControlTypeId
-                self.assertEqual(focused.native_window_handle, 0)
-                self.assertTrue(focused.is_enabled)
-                self.assertTrue(focused.is_keyboard_focusable)
-                self.assertFalse(focused.is_offscreen)
-                self.assertFalse(focused.is_password)
-                self.assertTrue(focused.is_value_pattern_available)
-                self.assertTrue(focused.is_text_pattern_available)
-                self.assertFalse(focused.value_is_read_only)
-                self.assertFalse(hasattr(focused, "value"))
-                self.assertFalse(hasattr(focused, "text"))
-                self.assertFalse(hasattr(focused, "name"))
+                    self.assertEqual(focused.control_type, 50004)  # UIA_EditControlTypeId
+                    self.assertEqual(focused.native_window_handle, 0)
+                    self.assertTrue(focused.is_enabled)
+                    self.assertTrue(focused.is_keyboard_focusable)
+                    self.assertFalse(focused.is_offscreen)
+                    self.assertFalse(focused.is_password)
+                    self.assertTrue(focused.is_value_pattern_available)
+                    self.assertTrue(focused.is_text_pattern_available)
+                    self.assertFalse(focused.value_is_read_only)
+                    self.assertFalse(hasattr(focused, "value"))
+                    self.assertFalse(hasattr(focused, "text"))
+                    self.assertFalse(hasattr(focused, "name"))
 
-                with self.assertRaises((RuntimeError, ValueError)):
-                    NativeFocusedTextSense().probe()
+                    with self.assertRaises((RuntimeError, ValueError)):
+                        NativeFocusedTextSense().probe()
+                finally:
+                    resident.store.close()
+                    resident = None
         finally:
             if resident is not None:
                 resident.store.close()
