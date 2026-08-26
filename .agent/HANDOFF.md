@@ -4,7 +4,9 @@ Updated: 2026-08-26
 
 ## Current goal
 
-Continue durable resident-owned Work from the verified restart/resume, atomic-terminal, and first generic side-effect anti-replay foundations. The next real target is first-class recovery from an uncertain side effect: observe a trustworthy postcondition before any retry when possible, otherwise keep replay blocked and expose explicit cancel/user-decision semantics.
+Continue durable resident-owned Work from the verified restart/resume, atomic-terminal, generic anti-replay, and first append reverification foundations.
+
+The next real target is the Work control plane: expose a stable sanitized recovery object through `work_progress`, then add explicit user/cancel/recovery decisions for unverifiable side effects. Do not make the UI, model, provider, or error strings the owner of recovery truth.
 
 Do not spend the current stage on the deferred Windows NetworkService DOS-8.3 path-identity defect unless it materially blocks current Work development.
 
@@ -17,7 +19,8 @@ Founding boundary remains:
 - repository: `9529360-cpu/znagent`
 - fixed development branch: `dev/zn-agent`
 - canonical source/release branch: `main`
-- side-effect recovery implementation head before documentation: `9502b96d94bc1a08d5f0b68a8c2359c51f11ea5a`
+- current recovery implementation head before documentation: `1bcbf410a401755d6037423ea677cb3db1c6217a`
+- atomic ownership regression fix: `e74679fee481898c6d4e9260f4134e2ae563e272`
 - atomic Work checkpoint: `f02582557a39f32273fb806929a6f64906fea547`
 - prior Work restart checkpoint: `2bce63a23252b7166244d0afd9dcac63b6b4fc26`
 - managed-browser checkpoint: `8c94f1ac9a3fdda2e704f45bdaf02efdc4d40271`
@@ -30,43 +33,45 @@ A HANDOFF commit cannot contain its own resulting SHA. Re-read `dev/zn-agent` af
 
 ## Completed in current stage
 
-### 1. Side-effect interruption call chain was traced
+### 1. Atomic terminal ownership invariant corrected
 
-The relevant active path is:
+Ordinary CI exposed a real regression from the first atomic terminalization slice: a claimed event could legitimately finish while singleton `WorkingState` remained idle/unowned, but `KernelStore.complete_event()` originally required that event to already own the checkpoint.
+
+Correct invariant now is:
 
 ```text
-WorkingState(stage=native_action)
--> EmbodiedResidentRuntime / procedural action step
--> final resident Body.act(...)
--> NativeBody dispatch
--> outside-world mutation
--> BodyActionResult persistence
--> verification / investigation
+idle/unowned checkpoint -> completion allowed
+same-event checkpoint    -> completion allowed
+foreign active checkpoint -> completion refused
 ```
 
-`NativeBody.act()` performs dispatch before recording the returned result. Therefore an interruption after a generic side effect but before durable result observation could previously leave Work at the same native action and allow blind replay after restart.
-
-Existing richer non-replayable paths were inspected and deliberately preserved:
-
-- pointer click already persists an execution-start marker before input and refuses blind replay;
-- focused keyboard text already persists an execution-start marker before SendInput and refuses blind replay;
-- targeted test execution owns its own execution lifecycle.
-
-The uncovered generic classes were command execution and append-style text/file writes.
-
-### 2. Generic pre-dispatch side-effect guard implemented
-
-Implementation sequence:
+Fix:
 
 ```text
-be594b0e2a9e827fa4d5b7aa849126edbd2afa10
-feat: refuse blind replay of generic side effects
+e74679fee481898c6d4e9260f4134e2ae563e272
+fix: allow atomic completion from idle checkpoint
+```
 
-5467951d4a71b21b594ed0d0b2b35c70a940bedf
-test: close side-effect recovery database handle
+Focused Windows proof:
 
-9502b96d94bc1a08d5f0b68a8c2359c51f11ea5a
-fix: preserve typed body ownership under side-effect guard
+```text
+ZN Work Recovery E2E run 33008119594
+head e74679fee481898c6d4e9260f4134e2ae563e272
+conclusion success
+14/14 tests passed
+```
+
+New tests explicitly cover claimed-event completion from idle and fail-closed refusal to erase a foreign active checkpoint. Existing atomic SQL rollback proof remains green.
+
+Ordinary run `33008119464` no longer contained the checkpoint-ownership RuntimeError. Its remaining Kernel errors were the known NetworkService long-path versus DOS-8.3 path family, which remains deferred.
+
+### 2. Side-effect uncertainty is now a resident recovery state
+
+Implementation:
+
+```text
+1bcbf410a401755d6037423ea677cb3db1c6217a
+feat: recover uncertain append effects from reality
 ```
 
 Relevant files:
@@ -75,94 +80,112 @@ Relevant files:
 runtime/python/zn_agent/core/side_effect_body.py
 runtime/python/zn_agent/core/focused_modern_text_resident.py
 tests/zn_agent/core/test_work_side_effect_recovery.py
-.github/workflows/zn-work-recovery-e2e.yml
 ```
 
-`SideEffectAwareBody` now guards only:
+The existing durable pre-dispatch guard remains narrow:
 
 ```text
 command / terminal / shell
 write_text / write_file with append=true
 ```
 
-Before dispatch, it writes a committed `started` attempt to `resident_side_effect_attempts` in the same resident SQLite DB. Stored fields are bounded execution metadata plus a SHA-256 signature. Raw commands, appended text, environment values and raw argument payloads are not copied into this recovery ledger.
+`SideEffectAwareBody` still commits a `started` attempt before dispatch and refuses duplicate dispatch while that exact event/action signature remains unresolved.
 
-If the same resident event/action signature is seen with an outstanding `started` attempt, the Body returns fail-closed uncertainty evidence:
+The attempt ledger stores bounded metadata and a SHA-256 signature only. It does not duplicate raw commands, appended text, environment values, or raw action arguments.
+
+The final resident now intercepts `side_effect_uncertain` before ordinary failure handling and persists:
 
 ```text
-side_effect_uncertain = true
-replay_blocked = true
+stage      = side_effect_recovery
+blocked_by = outside_world_effect_uncertain
 ```
 
-and does not call the underlying dispatch again.
+Uncertainty does not automatically become `local_failure`, failed-action evidence, negative self-model learning, or ordinary native investigation.
 
-If dispatch returns a Body result, the attempt becomes `observed` and links to the returned Body action id. A returned failure is still an observed dispatch, not evidence that replay is safe. A normal exception after the pre-dispatch boundary remains uncertain because the outside-world effect may already have happened.
+### 3. Interrupted append can now be resolved from current reality
 
-Exact replacement writes (`append=false`) are intentionally unchanged and outside this new guard.
+The resident uses only the existing trusted append postcondition path. A recoverable append requires an exact same-target `text_equals` contract. For safe retry, the baseline is accepted only when the goal was resident-derived from a full untruncated preview and the expected final text ends with the exact append suffix.
 
-### 3. Real interactive CI found a typed Body ownership regression and it was fixed correctly
+Recovery first performs read-only `read_text`.
 
-The first implementation used composition around the final Body. Real Windows interactive E2E failed because the active Body stopped satisfying the existing `KeyboardTextBody` type contract. That failure was treated as real architecture evidence; the test was not weakened.
+If the exact final text is already present:
 
-`9502b96d` changes `SideEffectAwareBody` into a real `KeyboardTextBody` subtype. The final resident Body therefore preserves keyboard ownership/type semantics while adding only the generic anti-replay boundary.
+```text
+attempt -> verified_effect
+complete without replay
+no causal success learning from the uncertain dispatch
+```
 
-The test-only `5467951d` commit fixes a Windows temporary-directory cleanup error caused by an unclosed SQLite test connection. It does not change product behavior.
+If the exact resident-derived pre-dispatch baseline is still present:
+
+```text
+attempt -> verified_absent
+retry authorized
+one fresh append dispatch
+normal independent postcondition verification
+```
+
+If current state is unreadable, truncated, or divergent:
+
+```text
+stage remains side_effect_recovery
+decision = user_decision_required
+replay remains blocked
+```
+
+### 4. Generic command uncertainty remains deliberately blocked
+
+Arbitrary commands usually have no trustworthy read-only verifier. Current behavior is therefore:
+
+```text
+decision = user_decision_required
+replay_blocked = true
+started attempt remains unresolved
+```
+
+No second command is run to infer whether the first command ran.
 
 ## Real test / CI truth
 
-### Exact implementation focused Work recovery
+### Current focused Work recovery
 
 ```text
-ZN Work Recovery E2E run 33006103725
-head 9502b96d94bc1a08d5f0b68a8c2359c51f11ea5a
-runner zn-ci-02 / Windows X64
+ZN Work Recovery E2E run 33009460955
+head 1bcbf410a401755d6037423ea677cb3db1c6217a
+runner zn-ci-01 / Windows X64
 conclusion success
-Ran 12 tests in 7.449s
+Ran 18 tests in 8.963s
 OK
 ```
 
-The suite explicitly passed:
+New cases that actually ran and passed:
 
 ```text
-test_active_product_resident_preserves_keyboard_body_type_and_side_effect_guard
-test_nonreplayable_command_and_append_persist_started_before_dispatch_and_block_after_reopen
-test_observed_nonreplayable_dispatch_closes_attempt_and_links_result
-test_exact_text_replace_is_not_broadened_into_nonreplayable_guard
+test_recovery_resolution_closes_only_matching_started_attempt
+test_interrupted_append_completes_from_verified_effect_without_replay_or_failure_learning
+test_interrupted_derived_append_retries_only_after_exact_baseline_is_reobserved
+test_interrupted_generic_command_enters_blocked_recovery_without_replay
 ```
 
-and all earlier Work restart + atomic terminal tests stayed green.
+This proves zero replay when the effect is already present, read-before-retry when the exact baseline is proven, exactly one fresh append after safe retry authorization, and zero command dispatch for unverifiable command uncertainty.
 
-### Exact implementation interactive desktop regression
+All prior Work restart, atomic terminalization, rollback, anti-replay, and typed Body tests stayed green in the same focused run.
+
+### Ordinary ZN CI on current implementation head
 
 ```text
-ZN Windows Interactive Desktop E2E run 33006103742
-head 9502b96d94bc1a08d5f0b68a8c2359c51f11ea5a
-runner zn-interactive
-conclusion success
-Ran 4 tests in 15.213s
-OK
+run 33009460950
+head 1bcbf410a401755d6037423ea677cb3db1c6217a
+Electron / TypeScript / Windows    success
+ZN Source Boundary / Windows       success
+ZN Kernel / Python / Windows       in progress at latest inspection
 ```
 
-Real interactive pointer click, Unicode focused text entry, UIA text capability, and installed Edge/Chrome User Browser Bridge state discovery all passed. This is the proof that the typed Body ownership fix restored real desktop behavior.
+Do not call ordinary CI green until Kernel actually finishes. If it fails only on the known NetworkService long-path/DOS-8.3 identity defect, keep that separate issue deferred unless it materially blocks current work.
 
-### Exact implementation managed-browser regression
+### Prior full-core evidence for atomic fix
 
-```text
-ZN Managed Browser E2E run 33006103702
-head 9502b96d94bc1a08d5f0b68a8c2359c51f11ea5a
-runner zn-ci-03 / Windows X64
-conclusion success
-browser contract tests 71 passed
-real Chromium E2E      4 passed
-```
-
-The previously verified SELECT_OPTION real Chromium behavior remains intact.
-
-### Ordinary ZN CI
-
-`ZN CI` run `33006103746` was still in progress at the latest implementation-head inspection. Do not call ordinary CI green until all jobs, especially Kernel, actually finish. Later documentation commits create newer heads and may cancel/replace older branch-concurrency runs.
-
-The known NetworkService long-path vs DOS-8.3 path-identity defect remains deferred. Partial work on it was reverted by `db647cb49c3de014aa82bc28ec87c1c4e5b02c15`; do not call it fixed or automatically reopen it.
+`ZN CI` run `33008119464` on `e74679f` showed the new atomic ownership regression was gone. Remaining Kernel errors were the already known path-identity family. This is important: do not confuse that deferred environmental/path identity defect with Work terminalization or side-effect recovery.
 
 ## Windows runner topology
 
@@ -171,68 +194,78 @@ headless CI:       [self-hosted, Windows, X64, zn-ci]
 interactive proof: [self-hosted, Windows, X64, zn-interactive]
 ```
 
-`zn-interactive` remains real and available: the exact implementation-head interactive run above completed successfully. Keep the visible foreground runner design; do not restore hidden launch, auto-logon, credentials, or Session-0 interactive claims.
+Keep the visible foreground `zn-interactive` design. Do not restore hidden launch, auto-logon, credential expansion, or Session-0 interactive claims.
+
+Previously verified real regressions remain:
+
+```text
+ZN Windows Interactive Desktop E2E run 33006103742   success, 4/4
+ZN Managed Browser E2E             run 33006103702   success, 71 contract + 4 Chromium
+```
 
 ## Current risks / blockers
 
 - Work reconstruction is verified.
-- Atomic event/outcome/idle terminalization is verified.
-- Generic command/append blind replay after an uncertain start is now blocked.
-- Pointer-click and keyboard-text dedicated anti-replay lifecycles remain intact.
-- Work recovery is still PARTIAL: a blocked uncertain side effect is currently surfaced as Body failure evidence and then falls into normal investigation; it is not yet a first-class recovery state.
-- There is not yet a resident-owned rule that proves an interrupted effect from fresh current reality before retry.
-- Unverifiable uncertain effects do not yet have explicit cancel/user-decision RPC/UI semantics.
-- Do not let uncertainty become ordinary failure learning merely because replay was blocked.
-- Life self-observation after durable event completion remains a separate consistency concern.
-- Ordinary Kernel CI may remain red on the deferred DOS-8.3 path issue.
+- Atomic event/outcome/idle terminalization is verified with corrected checkpoint ownership.
+- Generic command/append blind replay after an uncertain start is blocked.
+- Append effect-present and exact-baseline recovery are verified from fresh current reality.
+- Uncertainty is no longer treated as ordinary action failure learning.
+- Work durability remains **PARTIAL** because generic/unverifiable uncertainty has no explicit user/cancel/recovery command yet.
+- `work_progress` exposes `stage`/`next_action` but not a dedicated sanitized `recovery` object yet.
+- Life self-observation after durable completion remains a separate consistency concern.
+- The Windows NetworkService DOS-8.3 path-identity issue remains known/deferred; partial work was reverted by `db647cb49c3de014aa82bc28ec87c1c4e5b02c15`.
 - Browser PRESS/generic click/richer editing/multi-select/lifecycle remain open.
-- User Browser Bridge control, M8 continuity and SM1+ remain incomplete.
+- User Browser Bridge control, M8 continuity, and SM1+ remain incomplete.
 - `main` remains untouched.
 
 ## Task queue
 
-### P0 - first-class side-effect recovery / reverification
+### P0 - Work recovery projection
 
 Status: **NEXT REAL TARGET**
 
-Trace the current Body failure -> native investigation -> Work progress path for `side_effect_uncertain` evidence. Preserve the already-durable started attempt.
+Expose a stable resident-owned `recovery` object through `ResidentWorkLedger.progress()` / `work_progress`.
 
-Implement a resident-owned distinction:
+Whitelist only bounded fields such as:
 
 ```text
-trustworthy postcondition exists
--> observe current reality before any retry
--> effect proven present: continue without replay
--> effect proven absent and retry demonstrably safe: permit a new attempt
-
-no trustworthy postcondition
--> keep replay blocked
--> explicit recovery/cancel/user decision required
+status
+kind
+attempt_id
+replay_blocked
+verification_kind
+decision
+reason
+bounded verification metadata
 ```
 
-Append-style text/file mutation is the best first reverify candidate because a bounded exact postcondition can sometimes be checked without repeating the append. Arbitrary commands will often remain unverifiable and must not be guessed complete or automatically retried.
+Never export raw command text, appended text, environment values, or the full action signature.
 
-### P1 - expose uncertainty in Work progress / control plane
+The UI/control plane should render this truth, not infer it from error strings.
+
+### P1 - explicit recovery / cancellation decision
 
 Status: **OPEN**
 
-`work_progress` should eventually expose a stable resident-owned recovery state instead of making the UI infer it from an ordinary error string. Cancellation/recovery decisions must belong to ZN, with the UI only as a face/control surface.
+Add a resident-owned control path for unverifiable uncertainty. It must be explicit and fail closed. Do not silently turn a blocked command into retryable work, and do not claim an effect happened without evidence.
+
+Cancellation/recovery decisions should be durable and auditable. High-risk/destructive actions remain subject to existing human-approval boundaries.
 
 ### P2 - life observation recovery
 
 Status: **OPEN / SEPARATE FROM EVENT TERMINAL TRUTH**
 
-A durable completed event remains completed even if later self-observation needs repair.
+A durable completed event remains completed even if later self-observation requires repair.
 
 ### P3 - browser follow-ons
 
 Status: **OPEN / NOT CURRENT MAJOR TARGET**
 
-PRESS, generic click semantics, richer text editing, multi-select and broader target/page lifecycle remain bounded candidates.
+PRESS, generic click semantics, richer text editing, multi-select, and broader page/target lifecycle remain bounded candidates.
 
 ### P4 - deferred Windows DOS-8.3 path identity
 
-Status: **KNOWN / DEFERRED BY USER DECISION**
+Status: **KNOWN / DEFERRED**
 
 Resume only if explicitly reprioritized or materially blocking current product work.
 
@@ -240,8 +273,23 @@ Resume only if explicitly reprioritized or materially blocking current product w
 
 Status: **OPEN**
 
-Preserve existing human-approval boundaries for high-risk identity, memory, credentials, updater/signing and destructive self-maintenance changes.
+Preserve existing human-approval boundaries for high-risk identity, memory, credentials, updater/signing, and destructive self-maintenance changes.
+
+## Related files
+
+```text
+runtime/python/zn_agent/core/store.py
+runtime/python/zn_agent/core/work.py
+runtime/python/zn_agent/core/side_effect_body.py
+runtime/python/zn_agent/core/focused_modern_text_resident.py
+runtime/python/zn_agent/core/embodied_resident.py
+runtime/python/zn_agent/core/procedural_resident.py
+tests/zn_agent/core/test_work_progress.py
+tests/zn_agent/core/test_work_recovery.py
+tests/zn_agent/core/test_work_side_effect_recovery.py
+.github/workflows/zn-work-recovery-e2e.yml
+```
 
 ## Next real target
 
-Make side-effect uncertainty first-class in Work recovery and add fresh effect reverification before any retry where ZN can prove a trustworthy postcondition. Keep unverifiable actions blocked pending explicit recovery/cancel/user decision. Keep `main` untouched.
+Expose sanitized side-effect recovery state through Work progress, then implement explicit resident-owned recovery/cancel decisions for unverifiable effects. Keep `main` untouched.
