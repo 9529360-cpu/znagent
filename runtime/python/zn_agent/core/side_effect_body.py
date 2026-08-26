@@ -33,6 +33,7 @@ class SideEffectAwareBody(KeyboardTextBody):
     _MAX_COMPLETED_ATTEMPTS = 4096
     _COMMAND_KINDS = frozenset({"command", "terminal", "shell"})
     _APPEND_KINDS = frozenset({"write_text", "write_file"})
+    _RECOVERY_STATUSES = frozenset({"verified_effect", "verified_absent", "cancelled"})
 
     def act(
         self,
@@ -190,13 +191,62 @@ class SideEffectAwareBody(KeyboardTextBody):
             )
             if cursor.rowcount != 1:
                 raise RuntimeError("side-effect attempt lost its active started record")
-            conn.execute(
-                f"DELETE FROM {self._TABLE} WHERE attempt_id IN ("
-                f"SELECT attempt_id FROM {self._TABLE} WHERE status!='started' "
-                "ORDER BY completed_at DESC LIMIT -1 OFFSET ?)",
-                (self._MAX_COMPLETED_ATTEMPTS,),
-            )
+            self._prune_completed(conn)
             conn.commit()
+
+    def resolve_uncertain_attempt(
+        self,
+        attempt_id: str,
+        *,
+        event_id: str,
+        status: str,
+        evidence_action_id: str | None = None,
+    ) -> bool:
+        """Close one started attempt only after resident-owned recovery evidence.
+
+        This method grants no mutation authority and stores no action arguments.
+        ``verified_effect`` means current reality independently satisfies the
+        intended effect; ``verified_absent`` means an action-specific recovery
+        check proved the pre-dispatch baseline still exists; ``cancelled`` is
+        reserved for a future explicit cancellation path. A stale/mismatched
+        attempt stays unresolved and therefore remains non-replayable.
+        """
+
+        normalized_attempt = str(attempt_id or "").strip()
+        normalized_event = str(event_id or "").strip()
+        normalized_status = str(status or "").strip().lower()
+        if (
+            not normalized_attempt
+            or not normalized_event
+            or normalized_status not in self._RECOVERY_STATUSES
+        ):
+            return False
+        with closing(self._connect()) as conn:
+            cursor = conn.execute(
+                f"UPDATE {self._TABLE} SET status=?,completed_at=?,result_action_id=? "
+                "WHERE attempt_id=? AND event_id=? AND status='started'",
+                (
+                    normalized_status,
+                    utc_now(),
+                    str(evidence_action_id or "").strip() or None,
+                    normalized_attempt,
+                    normalized_event,
+                ),
+            )
+            if cursor.rowcount != 1:
+                conn.rollback()
+                return False
+            self._prune_completed(conn)
+            conn.commit()
+            return True
+
+    def _prune_completed(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            f"DELETE FROM {self._TABLE} WHERE attempt_id IN ("
+            f"SELECT attempt_id FROM {self._TABLE} WHERE status!='started' "
+            "ORDER BY completed_at DESC LIMIT -1 OFFSET ?)",
+            (self._MAX_COMPLETED_ATTEMPTS,),
+        )
 
     def _started_attempt(self, event_id: str, signature_hash: str):
         with closing(self._connect()) as conn:
