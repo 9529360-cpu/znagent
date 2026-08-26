@@ -14,6 +14,7 @@ from zn_agent.core import (
     ZNResidentRuntime,
 )
 from zn_agent.core.models import EventStatus
+from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
 
 
 class FakeWorker:
@@ -53,6 +54,33 @@ class ExplodingPostCompletionResident(ZNResidentRuntime):
 
 
 class CompletionObservationRecoveryTests(unittest.TestCase):
+    def test_product_resident_installs_completion_observation_organ(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            resident.capabilities.register(
+                ExactTaskCapability(
+                    name="product-local-completion",
+                    triggers=("product completion",),
+                    handler=lambda event, state: CapabilityResult(
+                        success=True,
+                        response="product durable success",
+                    ),
+                )
+            )
+
+            result = resident.submit("product completion")
+            observation = resident.completion_observations.state(result.event.event_id)
+
+            self.assertTrue(result.success)
+            self.assertEqual(result.response, "product durable success")
+            self.assertIsNotNone(observation)
+            self.assertEqual(observation["status"], "completed")
+            self.assertEqual(resident.life.snapshot().last_event_id, result.event.event_id)
+            resident.store.close()
+
     def test_life_observation_failure_does_not_reclassify_durable_success(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "kernel.db"
