@@ -61,7 +61,11 @@ class BrowserContractTests(unittest.TestCase):
                 allowed_origins=("https://example.com", "https://EXAMPLE.com:443/path"),
             )
 
-    def test_action_authority_binds_to_current_session_page_and_target(self):
+    def test_invalid_origin_port_fails_closed(self):
+        with self.assertRaises(ValueError):
+            BrowserPermissionContext(allowed_origins=("https://example.com:bad",))
+
+    def _target_observation(self):
         session = BrowserSessionIdentity.create(
             plane=BrowserPlane.MANAGED,
             provider="playwright",
@@ -73,6 +77,7 @@ class BrowserContractTests(unittest.TestCase):
             target_id="element-1",
             observed_at="2026-08-26T00:00:00+00:00",
             url="https://example.com/",
+            frame_id="frame-main",
             role="textbox",
         )
         observation = BrowserObservation(
@@ -84,6 +89,10 @@ class BrowserContractTests(unittest.TestCase):
             load_state="complete",
             target=target,
         )
+        return session, target, observation
+
+    def test_action_authority_binds_to_current_session_page_and_target(self):
+        session, target, observation = self._target_observation()
         action = BrowserAction.create(
             session_id=session.session_id,
             page_id="page-1",
@@ -100,6 +109,82 @@ class BrowserContractTests(unittest.TestCase):
         self.assertEqual(authority.page_id, "page-1")
         self.assertEqual(authority.target_id, "element-1")
         self.assertEqual(authority.observation_captured_at, observation.captured_at)
+
+    def test_target_action_requires_current_target_observation(self):
+        session, target, observation = self._target_observation()
+        observation_without_target = BrowserObservation(
+            session=session,
+            page_id=observation.page_id,
+            captured_at=observation.captured_at,
+            url=observation.url,
+            title=observation.title,
+            load_state=observation.load_state,
+        )
+        action = BrowserAction.create(
+            session_id=session.session_id,
+            page_id=observation.page_id,
+            kind=BrowserActionKind.CLICK,
+            target=target,
+        )
+        with self.assertRaises(ValueError):
+            BrowserActionAuthority.from_observation(
+                action,
+                observation_without_target,
+                BrowserPermissionContext(),
+            )
+
+    def test_target_action_rejects_kind_or_frame_drift(self):
+        session, target, observation = self._target_observation()
+        action = BrowserAction.create(
+            session_id=session.session_id,
+            page_id=observation.page_id,
+            kind=BrowserActionKind.CLICK,
+            target=target,
+        )
+        kind_drift = BrowserTarget(
+            session_id=session.session_id,
+            page_id=observation.page_id,
+            kind=BrowserTargetKind.ACCESSIBILITY_NODE,
+            target_id=target.target_id,
+            observed_at=observation.captured_at,
+            frame_id=target.frame_id,
+        )
+        with self.assertRaises(ValueError):
+            BrowserActionAuthority.from_observation(
+                action,
+                BrowserObservation(
+                    session=session,
+                    page_id=observation.page_id,
+                    captured_at=observation.captured_at,
+                    url=observation.url,
+                    title=observation.title,
+                    load_state=observation.load_state,
+                    target=kind_drift,
+                ),
+                BrowserPermissionContext(),
+            )
+        frame_drift = BrowserTarget(
+            session_id=session.session_id,
+            page_id=observation.page_id,
+            kind=target.kind,
+            target_id=target.target_id,
+            observed_at=observation.captured_at,
+            frame_id="frame-other",
+        )
+        with self.assertRaises(ValueError):
+            BrowserActionAuthority.from_observation(
+                action,
+                BrowserObservation(
+                    session=session,
+                    page_id=observation.page_id,
+                    captured_at=observation.captured_at,
+                    url=observation.url,
+                    title=observation.title,
+                    load_state=observation.load_state,
+                    target=frame_drift,
+                ),
+                BrowserPermissionContext(),
+            )
 
     def test_cross_session_target_is_rejected(self):
         target = BrowserTarget(
