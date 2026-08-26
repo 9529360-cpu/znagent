@@ -17,6 +17,15 @@ export type ZnWorkSubmitResult = {
   run: unknown
 }
 
+export type ZnWorkRecovery = {
+  status: string
+  kind: string
+  replayBlocked: boolean
+  decision: string
+  verificationKind?: string
+  reason?: string
+}
+
 export type ZnWorkProgress = {
   eventId: string
   threadId: string
@@ -27,6 +36,7 @@ export type ZnWorkProgress = {
   finalized: boolean
   updatedAt: number
   error?: string
+  recovery?: ZnWorkRecovery
   thought?: {
     at: number
     focus: string
@@ -196,6 +206,25 @@ function normalizeThread(value: unknown): ZnThread {
   }
 }
 
+function normalizeWorkRecovery(value: unknown): ZnWorkRecovery | undefined {
+  const item = record(value)
+  if (!item) return undefined
+  const status = String(item.status || '').trim()
+  const kind = String(item.kind || '').trim()
+  const decision = String(item.decision || '').trim()
+  if (!status || !kind || !decision) return undefined
+  const verificationKind = String(item.verification_kind || item.verificationKind || '').trim()
+  const reason = String(item.reason || '').trim()
+  return {
+    status,
+    kind,
+    replayBlocked: item.replay_blocked === true || item.replayBlocked === true,
+    decision,
+    ...(verificationKind ? { verificationKind } : {}),
+    ...(reason ? { reason } : {})
+  }
+}
+
 function normalizeWorkProgress(value: unknown): ZnWorkProgress {
   const item = record(value)
   if (!item) throw new Error('Resident returned invalid work progress')
@@ -203,6 +232,7 @@ function normalizeWorkProgress(value: unknown): ZnWorkProgress {
   const threadId = String(item.thread_id || item.threadId || '').trim()
   if (!eventId || !threadId) throw new Error('Resident work progress is missing identity')
 
+  const recovery = normalizeWorkRecovery(item.recovery)
   const rawThought = record(item.thought)
   const thought = rawThought
     ? {
@@ -247,6 +277,7 @@ function normalizeWorkProgress(value: unknown): ZnWorkProgress {
     finalized: item.finalized === true,
     updatedAt: timestamp(item.updated_at || item.updatedAt),
     ...(error ? { error } : {}),
+    ...(recovery ? { recovery } : {}),
     ...(thought ? { thought } : {}),
     ...(investigation ? { investigation } : {}),
     bodyActions
@@ -373,6 +404,22 @@ export async function loadZnWorkProgress(
     messageLimit: 120
   }))
   if (!result) throw new Error('Resident returned an invalid work progress result')
+  return {
+    progress: normalizeWorkProgress(result.progress),
+    ...(result.thread ? { thread: normalizeThread(result.thread) } : {})
+  }
+}
+
+export async function cancelZnWork(
+  threadId: string,
+  eventId: string
+): Promise<ZnWorkProgressResult> {
+  const result = record(await desktop().resident.workCancel({
+    threadId,
+    eventId,
+    messageLimit: 120
+  }))
+  if (!result) throw new Error('Resident returned an invalid Work cancellation result')
   return {
     progress: normalizeWorkProgress(result.progress),
     ...(result.thread ? { thread: normalizeThread(result.thread) } : {})
