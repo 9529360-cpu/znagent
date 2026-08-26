@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from zn_agent.core.body import BodyActionResult
@@ -98,7 +99,7 @@ class SideEffectAwareBodyTests(unittest.TestCase):
                 self.assertTrue(result.data["side_effect_dispatch_observed"])
                 attempt_id = result.data["side_effect_attempt_id"]
                 self.assertEqual(guard.uncertain_attempts("evt-observed"), [])
-                with sqlite3.connect(store.path) as conn:
+                with closing(sqlite3.connect(store.path)) as conn:
                     row = conn.execute(
                         "SELECT status,result_action_id,result_success "
                         "FROM resident_side_effect_attempts WHERE attempt_id=?",
