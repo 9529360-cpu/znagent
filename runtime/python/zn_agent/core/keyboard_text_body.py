@@ -25,6 +25,44 @@ class KeyboardTextBody(NativeBody):
             return self._keyboard_text(action, started)
         return super()._dispatch(action, started)
 
+    def _record(self, action: BodyAction, result: BodyActionResult) -> None:
+        if action.kind != "keyboard_text":
+            super()._record(action, result)
+            return
+
+        raw_text = (
+            action.args["text"]
+            if "text" in action.args
+            else action.args.get("content")
+        )
+        safe_args: dict[str, Any] = {"redacted": True}
+        if isinstance(raw_text, str):
+            safe_args["text_chars"] = len(raw_text)
+            try:
+                text, units = self.validate_text(raw_text)
+            except ValueError:
+                pass
+            else:
+                safe_args.update(
+                    {
+                        "utf16_units": len(units),
+                        "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                    }
+                )
+        elif raw_text is not None:
+            safe_args["text_type"] = type(raw_text).__name__
+
+        super()._record(
+            BodyAction(
+                action_id=action.action_id,
+                kind=action.kind,
+                args=safe_args,
+                event_id=action.event_id,
+                created_at=action.created_at,
+            ),
+            result,
+        )
+
     @classmethod
     def validate_text(cls, value: Any) -> tuple[str, tuple[int, ...]]:
         if not isinstance(value, str):
