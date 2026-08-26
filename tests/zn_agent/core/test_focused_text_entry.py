@@ -215,6 +215,19 @@ class FocusedTextEntryTests(unittest.TestCase):
                 action_result = state.data.get("native_action_result", {})
                 self.assertNotIn("text", action_result.get("data", {}))
                 self.assertEqual(len(action_result.get("data", {}).get("text_sha256", "")), 64)
+                admitted = state.data.get("native_verification", {})
+                self.assertEqual(admitted.get("kind"), resident._TEXT_OUTCOME_KIND)
+                self.assertEqual(
+                    admitted.get("expected_text_sha256"),
+                    NativeFocusedTextSense.digest_text("ZN native text"),
+                )
+                self.assertEqual(admitted.get("expected_text_chars"), len("ZN native text"))
+                self.assertEqual(
+                    tuple(admitted.get("target_runtime_id") or ()),
+                    _AutomationSense.RUNTIME_ID,
+                )
+                text_calls_before_verification = resident.focused_text.calls
+                uia_calls_before_verification = resident.automation_element.calls
 
                 result = resident.live_once()
                 self.assertIsNotNone(result)
@@ -222,11 +235,9 @@ class FocusedTextEntryTests(unittest.TestCase):
                 self.assertEqual(result.execution_path, ExecutionPath.BODY)
                 self.assertEqual(result.model_invocations, 0)
                 self.assertIn("text-digest", result.reason)
-                verified = resident.store.get_working_state().data[
-                    "native_verification_result"
-                ]
-                self.assertTrue(verified["verified"])
-                self.assertNotIn("text", verified["text_observation"])
+                self.assertEqual(body.current_text, "ZN native text")
+                self.assertGreater(resident.focused_text.calls, text_calls_before_verification)
+                self.assertGreater(resident.automation_element.calls, uia_calls_before_verification)
             finally:
                 resident.store.close()
 
