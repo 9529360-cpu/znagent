@@ -36,6 +36,7 @@ jobs:
       TZ: UTC
       PYTHONUTF8: '1'
       PYTHONUNBUFFERED: '1'
+      PSExecutionPolicyPreference: Bypass
     steps:
       - name: Require Windows x64 headless CI runner
         shell: powershell
