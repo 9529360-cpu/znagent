@@ -38,7 +38,7 @@ concurrency:
 jobs:
   interactive-desktop-e2e:
     name: Windows interactive computer-use E2E
-    runs-on: self-hosted
+    runs-on: [self-hosted, Windows, X64, zn-interactive]
     timeout-minutes: 15
     env:
       CI: 'true'
@@ -46,11 +46,14 @@ jobs:
       PYTHONUTF8: '1'
       PYTHONUNBUFFERED: '1'
     steps:
-      - name: Require Windows x64 runner
+      - name: Require Windows x64 interactive runner
         shell: powershell
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
             throw "ZN interactive desktop E2E requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+          if ($env:RUNNER_NAME -ne 'zn-interactive') {
+            throw "ZN interactive desktop E2E requires the dedicated zn-interactive runner; got $env:RUNNER_NAME"
           }
       - name: Checkout
         uses: actions/checkout@v7
