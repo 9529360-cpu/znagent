@@ -180,6 +180,77 @@ class ResidentWorkRecoveryTests(unittest.TestCase):
             finally:
                 restored.store.close()
 
+    def test_atomic_terminal_transition_allows_claimed_event_without_owned_checkpoint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            try:
+                event = resident.enqueue("complete directly from a claimed resident event")
+                claimed = resident.store.claim_event(event.event_id)
+                self.assertIsNotNone(claimed)
+                idle_before = resident.store.get_working_state()
+                self.assertEqual(idle_before.stage, "idle")
+                self.assertIsNone(idle_before.current_event_id)
+
+                completed = resident.store.complete_event(
+                    EventOutcome(
+                        event_id=event.event_id,
+                        success=True,
+                        execution_path=ExecutionPath.INVESTIGATION,
+                        response="claimed completion",
+                    )
+                )
+
+                self.assertEqual(completed.status, EventStatus.COMPLETED)
+                self.assertIsNotNone(resident.store.get_event_outcome(event.event_id))
+                idle_after = resident.store.get_working_state()
+                self.assertEqual(idle_after.stage, "idle")
+                self.assertIsNone(idle_after.current_event_id)
+            finally:
+                resident.store.close()
+
+    def test_atomic_terminal_transition_refuses_foreign_active_checkpoint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            try:
+                event = resident.enqueue("must not erase foreign checkpoint")
+                claimed = resident.store.claim_event(event.event_id)
+                self.assertIsNotNone(claimed)
+                resident.store.save_working_state(
+                    WorkingState(
+                        current_event_id="evt-foreign-active",
+                        stage="native_action",
+                        next_action="preserve foreign work",
+                        data={"sentinel": "foreign"},
+                    )
+                )
+
+                with self.assertRaisesRegex(RuntimeError, "another event checkpoint"):
+                    resident.store.complete_event(
+                        EventOutcome(
+                            event_id=event.event_id,
+                            success=True,
+                            execution_path=ExecutionPath.INVESTIGATION,
+                            response="must not commit",
+                        )
+                    )
+
+                persisted = resident.store.get_event(event.event_id)
+                self.assertIsNotNone(persisted)
+                assert persisted is not None
+                self.assertEqual(persisted.status, EventStatus.PROCESSING)
+                self.assertIsNone(resident.store.get_event_outcome(event.event_id))
+                foreign = resident.store.get_working_state()
+                self.assertEqual(foreign.current_event_id, "evt-foreign-active")
+                self.assertEqual(foreign.data, {"sentinel": "foreign"})
+            finally:
+                resident.store.close()
+
     def test_atomic_terminal_transition_rolls_back_all_three_records_on_outcome_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
             resident = build_resident_runtime_from_existing_stack(
