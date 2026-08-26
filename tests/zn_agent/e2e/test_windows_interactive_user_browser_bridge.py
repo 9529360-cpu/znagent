@@ -327,102 +327,106 @@ class WindowsInteractiveUserBrowserBridgeProviderE2ETests(unittest.TestCase):
         provider, executable = browsers[0]
         fixture = _IsolatedUserBrowserFixture(provider, executable)
         resident = None
+        runtime_tmp = None
         fixture.start()
         try:
-            with tempfile.TemporaryDirectory() as tmp:
-                resident = build_resident_runtime(
-                    config={"model": {}},
-                    store_path=Path(tmp) / "kernel.db",
+            runtime_tmp = tempfile.TemporaryDirectory()
+            resident = build_resident_runtime(
+                config={"model": {}},
+                store_path=Path(runtime_tmp.name) / "kernel.db",
+            )
+            expected_process = executable.name.lower()
+            deadline = time.monotonic() + 10.0
+            foreground = None
+            focused = None
+            text_state = None
+            last_error = None
+            while time.monotonic() < deadline:
+                fixture.activate()
+                try:
+                    foreground_candidate = resident.foreground_window.probe()
+                    focused_candidate = resident.automation_element.probe_focused()
+                    state_candidate = resident.automation_text_state.probe()
+                    if (
+                        _TITLE.lower() in foreground_candidate.title.lower()
+                        and foreground_candidate.process_name.lower() == expected_process
+                        and focused_candidate.process_name.lower() == expected_process
+                        and state_candidate.process_name.lower() == expected_process
+                        and focused_candidate.has_keyboard_focus
+                        and state_candidate.has_keyboard_focus
+                        and tuple(focused_candidate.runtime_id)
+                        == tuple(state_candidate.runtime_id)
+                    ):
+                        foreground = foreground_candidate
+                        focused = focused_candidate
+                        text_state = state_candidate
+                        break
+                except Exception as exc:
+                    last_error = exc
+                time.sleep(0.08)
+
+            if foreground is None or focused is None or text_state is None:
+                raise AssertionError(
+                    f"resident did not observe a focused HTML Edit through the default {provider} "
+                    "Windows accessibility provider in time; "
+                    f"window_title={fixture.window_title!r} last_error={last_error!r}"
                 )
-                expected_process = executable.name.lower()
-                deadline = time.monotonic() + 10.0
-                foreground = None
-                focused = None
-                text_state = None
-                last_error = None
-                while time.monotonic() < deadline:
-                    fixture.activate()
-                    try:
-                        foreground_candidate = resident.foreground_window.probe()
-                        focused_candidate = resident.automation_element.probe_focused()
-                        state_candidate = resident.automation_text_state.probe()
-                        if (
-                            _TITLE.lower() in foreground_candidate.title.lower()
-                            and foreground_candidate.process_name.lower() == expected_process
-                            and focused_candidate.process_name.lower() == expected_process
-                            and state_candidate.process_name.lower() == expected_process
-                            and focused_candidate.has_keyboard_focus
-                            and state_candidate.has_keyboard_focus
-                            and tuple(focused_candidate.runtime_id)
-                            == tuple(state_candidate.runtime_id)
-                        ):
-                            foreground = foreground_candidate
-                            focused = focused_candidate
-                            text_state = state_candidate
-                            break
-                    except Exception as exc:
-                        last_error = exc
-                    time.sleep(0.08)
 
-                if foreground is None or focused is None or text_state is None:
-                    raise AssertionError(
-                        f"resident did not observe a focused HTML Edit through the default {provider} "
-                        "Windows accessibility provider in time; "
-                        f"window_title={fixture.window_title!r} last_error={last_error!r}"
-                    )
+            self.assertEqual(focused.control_type, 50004)  # UIA_EditControlTypeId
+            self.assertTrue(focused.is_enabled)
+            self.assertTrue(focused.is_keyboard_focusable)
+            self.assertFalse(focused.is_offscreen)
+            self.assertFalse(focused.is_password)
+            self.assertTrue(focused.is_value_pattern_available)
+            self.assertFalse(focused.value_is_read_only)
+            self.assertFalse(hasattr(focused, "value"))
+            self.assertFalse(hasattr(focused, "text"))
+            self.assertFalse(hasattr(focused, "name"))
 
-                self.assertEqual(focused.control_type, 50004)  # UIA_EditControlTypeId
-                self.assertTrue(focused.is_enabled)
-                self.assertTrue(focused.is_keyboard_focusable)
-                self.assertFalse(focused.is_offscreen)
-                self.assertFalse(focused.is_password)
-                self.assertTrue(focused.is_value_pattern_available)
-                self.assertFalse(focused.value_is_read_only)
-                self.assertFalse(hasattr(focused, "value"))
-                self.assertFalse(hasattr(focused, "text"))
-                self.assertFalse(hasattr(focused, "name"))
+            self.assertEqual(text_state.control_type, 50004)
+            self.assertFalse(text_state.is_password)
+            self.assertTrue(text_state.is_value_pattern_available)
+            self.assertFalse(text_state.value_is_read_only)
+            self.assertEqual(text_state.text_length, len(_TEXT))
+            self.assertEqual(
+                text_state.text_sha256,
+                NativeFocusedAutomationTextSense.digest_text(_TEXT),
+            )
+            self.assertFalse(hasattr(text_state, "text"))
+            self.assertFalse(hasattr(text_state, "value"))
 
-                self.assertEqual(text_state.control_type, 50004)
-                self.assertFalse(text_state.is_password)
-                self.assertTrue(text_state.is_value_pattern_available)
-                self.assertFalse(text_state.value_is_read_only)
-                self.assertEqual(text_state.text_length, len(_TEXT))
-                self.assertEqual(
-                    text_state.text_sha256,
-                    NativeFocusedAutomationTextSense.digest_text(_TEXT),
+            print(
+                "ZN_USER_BROWSER_BRIDGE_EVIDENCE="
+                + json.dumps(
+                    {
+                        "provider": provider,
+                        "process_name": focused.process_name,
+                        "framework_id": focused.framework_id,
+                        "control_type": focused.control_type,
+                        "class_name": focused.class_name,
+                        "automation_id": focused.automation_id,
+                        "native_window_handle": focused.native_window_handle,
+                        "runtime_id": list(focused.runtime_id),
+                        "is_value_pattern_available": focused.is_value_pattern_available,
+                        "is_text_pattern_available": focused.is_text_pattern_available,
+                        "value_is_read_only": focused.value_is_read_only,
+                        "text_length": text_state.text_length,
+                        "text_sha256": text_state.text_sha256,
+                        "profile_scope": "isolated-temporary",
+                        "forced_renderer_accessibility": False,
+                    },
+                    sort_keys=True,
                 )
-                self.assertFalse(hasattr(text_state, "text"))
-                self.assertFalse(hasattr(text_state, "value"))
-
-                print(
-                    "ZN_USER_BROWSER_BRIDGE_EVIDENCE="
-                    + json.dumps(
-                        {
-                            "provider": provider,
-                            "process_name": focused.process_name,
-                            "framework_id": focused.framework_id,
-                            "control_type": focused.control_type,
-                            "class_name": focused.class_name,
-                            "automation_id": focused.automation_id,
-                            "native_window_handle": focused.native_window_handle,
-                            "runtime_id": list(focused.runtime_id),
-                            "is_value_pattern_available": focused.is_value_pattern_available,
-                            "is_text_pattern_available": focused.is_text_pattern_available,
-                            "value_is_read_only": focused.value_is_read_only,
-                            "text_length": text_state.text_length,
-                            "text_sha256": text_state.text_sha256,
-                            "profile_scope": "isolated-temporary",
-                            "forced_renderer_accessibility": False,
-                        },
-                        sort_keys=True,
-                    )
-                )
+            )
         finally:
             if resident is not None:
                 close_browser = getattr(getattr(resident, "managed_browser", None), "close", None)
                 if callable(close_browser):
                     close_browser()
                 resident.store.close()
+                resident = None
+            if runtime_tmp is not None:
+                runtime_tmp.cleanup()
             fixture.close()
 
 
