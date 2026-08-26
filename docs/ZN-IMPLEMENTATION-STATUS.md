@@ -16,74 +16,46 @@ Development branch: `dev/zn-agent`. Canonical source/release branch: `main`.
 
 M10 canonical source promotion remains complete. Ordinary development remains on `dev/zn-agent`; `main` remains unchanged at `8234a835dea604783cea0bd9d28a40de654ec03d`.
 
-Latest Work recovery implementation head before this status-document update:
+Latest Work implementation head before this status-document update:
 
 ```text
-2bce63a23252b7166244d0afd9dcac63b6b4fc26
-ci: verify durable work restart recovery
+f02582557a39f32273fb806929a6f64906fea547
+feat: atomically finalize resident work
 ```
 
-Status: **ZN NOW HAS REAL WINDOWS EVIDENCE THAT ACTIVE WORK SURVIVES RESIDENT PROCESS RECONSTRUCTION FROM ITS EXISTING DURABLE WORKING-STATE CHECKPOINT. MANAGED-BROWSER `SELECT_OPTION` REMAINS VERIFIED. WORK RECOVERY IS STILL PARTIAL BECAUSE TERMINAL EVENT + DURABLE OUTCOME + IDLE CHECKPOINT ARE NOT YET COMMITTED AS ONE ATOMIC STORE TRANSITION.**
+Status: **DURABLE WORK RESTART/RESUME AND ATOMIC TERMINALIZATION ARE NOW VERIFIED FOUNDATIONS. EVENT TERMINAL STATUS, DURABLE `EventOutcome`, AND THE IDLE `WorkingState` ARE PUBLISHED IN ONE SQLITE TRANSACTION. WORK DURABILITY IS STILL PARTIAL BECAUSE EXPLICIT CANCELLATION/RECOVERY AROUND SIDE EFFECTS REMAINS OPEN.**
 
-## 1. Durable Work / checkpoint / recovery foundation
+## 1. Durable Work checkpoint and restart recovery
 
-The real Work call chain was traced before modification:
+The real Work call chain is:
 
 ```text
 ResidentRpcServer work_start / work_progress
 -> ResidentWorkLedger
--> resident event
--> KernelStore events + working_state
--> ZNResidentRuntime life pulses
--> durable EventOutcome
+-> ZNResidentRuntime event lifecycle
+-> KernelStore events + singleton working_state
+-> resident life stages
+-> EventOutcome
 -> ResidentWorkLedger finalization
 ```
 
-The important finding is that ZN already had a resident-owned checkpoint mechanism; it did not need a second checkpoint subsystem:
+ZN's existing SQLite `WorkingState` remains the resident-owned checkpoint. No duplicate checkpoint subsystem was added. It persists the active event, stage, next action, blockers and stage data. On resident reconstruction, interrupted `PROCESSING` work returns to `PENDING` while the exact `WorkingState` is retained; the same event resumes from that checkpoint.
 
-- `WorkingState` is persisted in SQLite after resident stages;
-- it records `current_event_id`, `stage`, `next_action`, `blocked_by` and stage data;
-- runtime construction calls `recover_interrupted_events()`;
-- an interrupted `PROCESSING` event is returned to `PENDING` with a restart note;
-- the existing `WorkingState` is deliberately preserved;
-- `_state_for_event()` reuses that state when the same event resumes;
-- Work keeps the original event/run/message identity instead of creating replacement work after restart.
-
-New regression coverage:
+Verified restart checkpoint:
 
 ```text
-5a5b90f0f5b41872055015dabbcc8b10a5471d73
-test: prove resident work resumes after reconstruction
-
 2bce63a23252b7166244d0afd9dcac63b6b4fc26
 ci: verify durable work restart recovery
-```
-
-The focused Windows workflow is repository-owned:
-
-```text
-.github/workflows/zn-work-recovery-e2e.yml
-```
-
-Exact-head verification:
-
-```text
 ZN Work Recovery E2E run 33002232752   success
-head                                     2bce63a23252b7166244d0afd9dcac63b6b4fc26
 runner                                   zn-ci-03 / Windows X64
-Work progress + restart recovery tests   6 passed
+6/6 Work progress + restart tests        passed
 ```
 
-The two new restart cases prove:
+This proves an active Work item can cross resident/store reconstruction without replacement work stealing its thread or duplicating the user message.
 
-1. active Work advances beyond `orient`, is interrupted, resident/store are reconstructed from the same DB, the exact persisted `stage` and `next_action` remain, the same event continues to a durable outcome, and Work finalizes once as `[user, zn, activity]` without duplicating the user message;
-2. reconstruction does not let a second task replace the active thread checkpoint.
+## 2. Atomic terminal completion
 
-This makes restart recovery a **verified foundation**, not a new parallel architecture.
-
-### Remaining Work durability gap
-
-Resident terminalization is still split across multiple durable writes in `ZNResidentRuntime._complete_result()`:
+Before `f0258255`, resident completion wrote three durable records separately:
 
 ```text
 event -> COMPLETED/FAILED
@@ -91,67 +63,68 @@ then EventOutcome
 then working_state -> idle
 ```
 
-A process failure between those writes can theoretically leave a terminal event without its durable outcome; existing Work/submit code already treats that state as an error. The next Work slice should make terminal event status, EventOutcome and the idle checkpoint one atomic SQLite transition, then prove rollback/consistency behavior.
+A crash between those writes could leave a terminal event without its durable outcome. `KernelStore.complete_event()` now owns one fail-closed terminal transition. Under one SQLite transaction it:
 
-Do not mark durable Work/checkpoint/recovery complete until that terminal transition and subsequent recovery/cancellation semantics are verified.
+- requires the event to be the active `PROCESSING` event;
+- requires the singleton checkpoint to belong to that same event;
+- refuses a pre-existing outcome;
+- commits `COMPLETED`/`FAILED` event state;
+- inserts the exact `EventOutcome`;
+- replaces the active checkpoint with `WorkingState(stage="idle")`;
+- rolls all three writes back together on any SQLite failure.
 
-## 2. Verified managed-browser product slice
+`ZNResidentRuntime._complete_result()` is the active product caller and now uses this atomic API. The older low-level `finish_event()` and `save_event_outcome()` remain available for explicit low-level callers such as isolated channel tests; their semantics were not silently changed.
 
-The verified browser checkpoint remains:
+Exact implementation verification:
+
+```text
+ZN Work Recovery E2E run 33004561095   success
+head                                     f02582557a39f32273fb806929a6f64906fea547
+runner                                   zn-ci-02 / Windows X64
+Work progress + recovery tests           8 passed
+```
+
+New real Windows cases passed:
+
+```text
+test_terminal_completion_is_durable_with_outcome_and_idle_checkpoint ... ok
+test_atomic_terminal_transition_rolls_back_all_three_records_on_outcome_failure ... ok
+```
+
+The second test installs a deliberate SQLite trigger that aborts `event_outcomes` insertion. The transaction raises and the persisted event remains `PROCESSING`, no outcome exists, and the original active `WorkingState` survives unchanged. This is direct rollback evidence rather than a mock assertion.
+
+Life observation still occurs after the atomic durable terminal transition. It is resident self-observation, not part of the event/outcome/checkpoint commit contract.
+
+## 3. Verified managed-browser checkpoint
+
+Managed-browser `SELECT_OPTION` remains verified at:
 
 ```text
 8c94f1ac9a3fdda2e704f45bdaf02efdc4d40271
 ci: run managed select option E2E
-```
-
-Verified narrow behavior includes managed Chromium session/network policy, exact DOM-id main-frame target sensing, `FOCUS`, explicit boolean `aria-pressed` toggle `CLICK`, empty writable non-password `TYPE_TEXT`, native `CHECK`, native `UNCHECK`, and native single-select `SELECT_OPTION`, all requiring fresh action-specific evidence rather than provider return alone.
-
-`SELECT_OPTION` remains fail-closed: native single select only; bounded explicit string value; disabled/multi-select/already-selected refusal; fresh target reacquisition; exact DOM-node continuity; unchanged ZN target identity; independently observed selected-value digest/length; raw option values excluded from effect evidence.
-
-Exact browser evidence:
-
-```text
 ZN Managed Browser E2E run 33001748123   success
-runner                                     zn-ci-02 / Windows X64
-managed browser contract tests             71 passed
-real local Chromium E2E                    4 passed
-new SELECT_OPTION Chromium cases           2 passed
+71 browser contract tests + 4 real Chromium E2E tests passed
 ```
 
-Still incomplete browser scope includes `PRESS`, generic click, richer text editing, password/sensitive entry, contenteditable, ARIA checkbox mutation, multi-select, broader frame/tab/popup lifecycle, headed UX, file authority, persistent profile policy, cloud adapter and authenticated User Browser Bridge control.
+Verified browser scope remains narrow and evidence-driven: exact DOM-id main-frame sensing, `FOCUS`, explicit boolean `aria-pressed` toggle `CLICK`, empty writable non-password `TYPE_TEXT`, native `CHECK`, native `UNCHECK`, and native single-select `SELECT_OPTION`. Provider return alone is not completion truth.
 
-## 3. Windows runner topology
+Open browser work includes `PRESS`, generic click semantics, richer editing, password/sensitive entry, contenteditable, ARIA checkbox mutation, multi-select, broader frame/tab/popup lifecycle, headed UX, file authority, persistent profile policy, cloud adapter and authenticated User Browser Bridge control.
 
-Normal headless work remains on:
+## 4. Windows runner and ordinary CI truth
 
-```text
-[self-hosted, Windows, X64, zn-ci]
-```
-
-Interactive desktop proof remains on:
-
-```text
-[self-hosted, Windows, X64, zn-interactive]
-```
+Headless CI remains on `[self-hosted, Windows, X64, zn-ci]`. Interactive proof remains on `[self-hosted, Windows, X64, zn-interactive]`.
 
 Interactive recovery remains verified:
 
 ```text
-ZN Windows Runner Bootstrap            run 32999198210   success
-ZN Interactive Runner Visible Watchdog run 32999383631   success
-runner                                  zn-interactive
-session                                 SessionId 1
-root                                    C:\actions-runner-znagent
-startup                                 visible cmd.exe -> run.cmd
-trigger                                 interactive user logon
-hidden                                  false
+ZN Windows Runner Bootstrap             run 32999198210   success
+ZN Interactive Runner Visible Watchdog  run 32999383631   success
+runner                                   zn-interactive / SessionId 1
+root                                     C:\actions-runner-znagent
+startup                                  visible cmd.exe -> run.cmd
 ```
 
-The old hidden-watchdog migration is historical and not a current success criterion. Do not reintroduce hidden launch, Session-0 interactive claims, auto-logon, credential exposure or weakened labels.
-
-## 4. Current ordinary ZN CI truth
-
-For Work recovery head `2bce63a23252b7166244d0afd9dcac63b6b4fc26`, ordinary `ZN CI` run `33002232505` had at the latest inspection:
+For atomic Work implementation head `f0258255`, ordinary `ZN CI` run `33004560957` had at the latest inspection:
 
 ```text
 ZN Source Boundary / Windows       success
@@ -159,32 +132,33 @@ Electron / TypeScript / Windows    success
 ZN Kernel / Python / Windows       in progress - full core suite running
 ```
 
-A separate real Windows NetworkService path-identity defect remains deferred by current product priority: long-path and DOS 8.3 representations can make strict repo/terminal path checks disagree. A partial attempted canonicalization was reverted normally in `db647cb49c3de014aa82bc28ec87c1c4e5b02c15`; no half-fix remains active.
+A separate real NetworkService long-path vs DOS-8.3 path-identity defect remains deferred by current product priority. The partial attempted fix was reverted normally in `db647cb49c3de014aa82bc28ec87c1c4e5b02c15`; no half-fix remains. Do not report ordinary Kernel CI green unless an exact run actually succeeds, and do not automatically reopen that deferred issue.
 
-Do not report ordinary Kernel CI green unless an exact run actually succeeds. The focused Work recovery success is exact evidence for that product slice; it is not a claim that the unrelated full Kernel suite is green.
+## 5. Remaining Work durability work
 
-## 5. Broader product gaps
+The next real Work problem is explicit cancellation/recovery semantics, especially around non-idempotent body actions. Restart recovery must not blindly replay an action merely because its event was interrupted if the outside-world side effect may already have happened.
 
-High-leverage open foundations remain:
+The next slice should trace current action/evidence ownership and define a fail-closed distinction between at least:
 
-- atomic resident terminal checkpoint / outcome persistence;
-- explicit Work cancellation and recovery semantics after side effects;
-- isolated parallel Work/Investigation;
-- MCP/connectors behind ZN-owned permission/evidence contracts;
-- scheduled/event-driven resident work;
-- unified permission/audit controls;
-- M8 install/update/rollback/signing continuity;
-- authenticated User Browser Bridge control;
-- SM1+ isolated self-maintenance.
+```text
+safe to resume/retry
+needs fresh effect verification before retry
+requires explicit cancellation or user decision
+terminal / already observed complete
+```
+
+Do not make an LLM, UI thread, provider, or task planner the owner of continuation or cancellation truth.
+
+Broader open foundations remain isolated parallel Work/Investigation, ZN-owned connector/MCP permission/evidence substrate, scheduled/event-driven work, unified permission/audit controls, M8 install/update/rollback/signing continuity, authenticated User Browser Bridge control, and SM1+ self-maintenance.
 
 M8 Windows continuity remains PARTIAL. SM0 remains verified foundation; SM1+ remains open. High-risk identity, long-term memory, credential/permission, updater/signing and destructive self-maintenance changes continue to require human approval.
 
 ## 6. Next implementation order
 
 ```text
-1. keep verified Work restart recovery and SELECT_OPTION checkpoints intact
-2. make resident terminal event + EventOutcome + idle checkpoint atomic
-3. prove the atomic transition and restart consistency with focused Windows tests
-4. then add explicit Work cancellation/recovery semantics around resident-owned actions
+1. preserve verified restart recovery + atomic terminal completion
+2. trace body/action side-effect evidence through Work restart and recovery
+3. add explicit Work cancellation/recovery semantics without replaying uncertain side effects
+4. prove those semantics with focused Windows reconstruction tests
 5. keep browser PRESS and broader lifecycle as bounded follow-on work
 ```
