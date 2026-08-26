@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Resident-owned control plane for durable Work lifecycle decisions."""
 
+from contextlib import closing
 from typing import Any
 
 from .models import ResidentRunResult, utc_now
@@ -31,7 +32,7 @@ class ResidentWorkControl:
             sql += " AND thread_id=?"
             params.append(normalized_thread)
         sql += " ORDER BY created_at ASC LIMIT 64"
-        with self.ledger._lock, self.ledger._connect() as conn:
+        with self.ledger._lock, closing(self.ledger._connect()) as conn:
             rows = conn.execute(sql, params).fetchall()
 
         repaired = 0
