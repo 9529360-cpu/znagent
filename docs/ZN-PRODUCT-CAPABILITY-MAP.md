@@ -73,11 +73,11 @@ Resident Managed Browser + User Browser Bridge
 | Product need | ZN owner | Status | Current evidence / open work |
 | --- | --- | --- | --- |
 | HTTP web search/extract | Web Senses / external resources | VERIFIED/PARTIAL | Tavily/Exa/Firecrawl provider resources exist with resident-owned normalization/failover |
-| ZN-owned browser session/action/evidence contracts | Browser Body/Senses | FOUNDATION | `BrowserSessionIdentity`, target/observation/action/authority/effect contracts implemented and hardened |
-| Local managed Chromium, headless | Browser Body | FOUNDATION | Playwright adapter + dedicated real Windows Chromium navigation E2E exist; lifecycle cleanup is resident-owned |
+| ZN-owned browser session/action/evidence contracts | Browser Body/Senses | FOUNDATION | `BrowserSessionIdentity`, query/target/observation/action/authority/effect contracts are implemented and hardened |
+| Local managed Chromium, headless | Browser Body | FOUNDATION | Playwright adapter + dedicated real Windows Chromium navigation/target E2E exist; lifecycle cleanup is resident-owned |
 | Local managed Chromium, headed | Browser Body | OPEN | same ZN contracts, separate real UX/evidence |
-| DOM/accessibility target sensing | Browser Senses | OPEN | `BrowserTarget` contracts exist but adapter still produces page-only observations; bounded target producer/freshness proof is next |
-| Managed-browser click/focus/type/select | Browser Body | OPEN | mutation remains blocked until target authority + independent postconditions are real |
+| DOM/accessibility target sensing | Browser Senses | PARTIAL / VERIFIED NARROW | exact `DOM_ID` query for one unique visible main-frame element is real-CI/real-Chromium verified with bounded role/name/hint and freshness; iframe, generic accessibility queries, multi-target/disambiguation and visual fusion remain open |
+| Managed-browser focus/click/type/select | Browser Body | OPEN | target sensing now exists, but mutation still requires exact-node continuity at dispatch plus independent post-action evidence; `NAVIGATE` remains the only implemented mutation |
 | Multi-tab/popup/frame lifecycle | Browser Body/Senses | OPEN | needs stable page/frame identities and stale-target handling |
 | Downloads/uploads | Browser Body + File authority | OPEN | adapter refuses these until explicit file authority exists |
 | Screenshots/visual browser sensing | Browser Senses | OPEN | must integrate with visual evidence rather than become completion authority by itself |
@@ -87,7 +87,9 @@ Resident Managed Browser + User Browser Bridge
 | Companion extension/native messaging bridge | User Browser Bridge | OPEN | candidate path for richer authenticated browser state; add only if provider evidence shows it is needed and user permission is explicit |
 | MFA/sensitive-field handling | Permission / Body | OPEN | never silently replay or extract secrets; explicit high-risk boundaries required |
 
-The User Browser Bridge provider proof is deliberately narrow: it validates real browser UIA sensing, not authenticated user-browser control. The fixture uses a temporary isolated profile and exports only bounded focused-element/current-text evidence, including text length and digest rather than raw text.
+The managed-browser target proof is deliberately narrow: it validates an exact main-frame DOM-id target, not arbitrary DOM querying or generic accessibility-tree control. The provider does not export raw input values, HTML or uncontrolled page content, and password targets fail closed without explicit sensitive-field permission.
+
+The User Browser Bridge provider proof is also deliberately narrow: it validates real browser UIA sensing, not authenticated user-browser control. The fixture uses a temporary isolated profile and exports only bounded focused-element/current-text evidence, including text length and digest rather than raw text.
 
 ## 6. Desktop computer use
 
@@ -98,7 +100,7 @@ The User Browser Bridge provider proof is deliberately narrow: it validates real
 | Pointer movement/click with verification | Body + Senses | VERIFIED NARROW | real Windows interactive E2E exists |
 | Native Win32 text entry | Body + Senses | VERIFIED NARROW | real Unicode Edit E2E, empty focused native Edit only |
 | Modern UI text current-state evidence | Senses | VERIFIED NARROW | WPF read-only digest proof and real Edge focused HTML-input provider proof exist; raw text is not exported |
-| Modern app/browser text mutation | Body | OPEN | do not infer mutation authority from WPF/Edge read evidence |
+| Modern app/browser text mutation | Body | OPEN | do not infer mutation authority from WPF/Edge read evidence or managed target sensing |
 | Generic keyboard shortcuts/navigation | Body | OPEN | requires typed authority and effect verification |
 | Robust window/app lifecycle | Body/Senses | OPEN/PARTIAL | process/window foundations exist; product-grade cross-app lifecycle incomplete |
 
@@ -190,16 +192,18 @@ This is a dependency order, not a promise that all work is sequential:
 A. keep resident continuity + CI trustworthy
 B. preserve Managed Browser foundation and real local Chromium proof
 C. preserve the verified narrow real Edge UIA provider sensing proof
-D. add bounded managed-browser target sensing and prove freshness in real Chromium
-E. add browser click/focus/type one lifecycle at a time with independent effects
-F. design authenticated User Browser Bridge lifecycle from real provider evidence
-G. build unified permission/audit semantics across browser/connectors/computer use
-H. add isolated parallel Work/Investigation + checkpoints
-I. add connector protocol/MCP interoperability behind ZN ownership
-J. add scheduled/event-driven resident work
-K. expand communication/personal-work connectors
-L. close Windows install/update/rollback/signing continuity
-M. advance SM1+ self-maintenance
+D. harden managed-browser exact-node continuity at the execution boundary
+E. add managed-browser FOCUS with execution-time re-sensing + independent focused-element evidence
+F. add CLICK, TYPE_TEXT and other browser mutations one lifecycle at a time
+G. expand target sensing to frames/accessibility/multiple targets only behind ZN-owned bounded evidence
+H. design authenticated User Browser Bridge lifecycle from real provider evidence
+I. build unified permission/audit semantics across browser/connectors/computer use
+J. add isolated parallel Work/Investigation + checkpoints
+K. add connector protocol/MCP interoperability behind ZN ownership
+L. add scheduled/event-driven resident work
+M. expand communication/personal-work connectors
+N. close Windows install/update/rollback/signing continuity
+O. advance SM1+ self-maintenance
 ```
 
 Parallel maintainers may own different rows/domains as long as they share the same ZN contracts, work on isolated branches when appropriate, keep `dev/zn-agent` integration evidence current, and never create a second product control plane. No development or release capability may depend on one current model, chat session or machine.
