@@ -34,6 +34,7 @@ ba06e08561cc73bcd8afc61b444b860c45bfb376  focused nervous outcome proof checkpoi
 c54bb8c37385d98fc9688b6e89839d7a5cba6df6  single-owner completion journal cleanup and regression
 0c011a2473c581e6517a882343208d6efe47cac1  canonical Windows path identity at action/Git/terminal/Work owners
 e3fc20b7b4271e46868f408c258cab58ba014abb  carry canonical identity through evidence and procedural learning
+9207d3de534080ea62a9847a848cde3b0ba5b6b5  retain receipted nervous outcome traces across pruning
 ```
 
 Status: **RECOVERY-ONLY CANCELLATION REMAINS REACHABLE END TO END. `EventOutcome` REMAINS TERMINAL TRUTH. LIFE OBSERVATION REPAIR REMAINS SECONDARY AND NON-REPLAYING. DURABLE EVENT-OUTCOME NERVOUS PLASTICITY NOW HAS AN EVENT-IDENTITY-SAFE ATOMIC BOUNDARY FOR TRACE, LINKS, AFFECT, AND RECEIPT, INCLUDING CRASH/RESTART REPAIR WITHOUT DUPLICATE REINFORCEMENT. GENERIC NERVOUS `perceive()` REMAINS INTENTIONALLY PLASTIC AND IS NOT AN EXACTLY-ONCE API. BROADER WORK DURABILITY REMAINS PARTIAL.**
@@ -122,17 +123,29 @@ The final product later replaces the lower nervous implementation with `Integrat
 
 This is an event-identity-safe guarantee for the durable terminal EventOutcome path only. It is not a claim that all generic nervous perceptions are exactly once.
 
+The lifecycle trace found that pruning was already active, not merely future: resident heartbeat calls `PersistentNervousSystem.consolidate()`, which can call `_delete_trace()` for weak isolated non-schema traces. Before `9207d3de...`, that deletion could remove an `outcome` trace while leaving its `neural_event_outcomes` receipt behind. Restart repair then saw the event receipt and permanently skipped repair, while a direct retry dereferenced a missing trace.
+
+`ensure_event_outcome_schema()` now installs a database-level retention guard on receipted traces. It applies to the real final `IntegratedTransferNervousSystem`, not only the lower event-outcome nervous class. `_delete_trace()` reports the actual SQLite row result, preserves links when deletion is refused, and consolidation only counts a real deletion as pruning. Ordinary weak unreferenced traces remain prunable.
+
+The durable policy is now explicit:
+
+- an event receipt is the event-ID idempotence authority;
+- its referenced trace must remain dereferenceable while the receipt points to it;
+- automatic pruning fails closed rather than creating a dangling receipt;
+- a future deliberate outcome-trace compactor may replace a representation only by atomically retargeting every affected receipt to an existing canonical trace before deleting the old trace;
+- no such outcome-trace rewrite or destructive migration was introduced in this stage.
+
 ## 4. Focused Windows proof
 
 Current focused proof:
 
 ```text
-ZN Work Recovery E2E run 33023392867
-head c54bb8c37385d98fc9688b6e89839d7a5cba6df6
+ZN Work Recovery E2E run 33049868415
+head 9207d3de534080ea62a9847a848cde3b0ba5b6b5
 Windows resident Work restart recovery             success
 Compile Work recovery path                         success
 Verify durable Work progress and restart recovery  success
-44 tests                                             OK
+46 tests                                             OK
 ```
 
 The focused suite includes the established Work progress/restart/side-effect/cancellation and completion-observation modules plus:
@@ -151,6 +164,8 @@ The new proof covers:
 - the real final product nervous owner receives the immediate completion receipt;
 - forced nervous failure after terminal completion leaves the durable EventOutcome intact;
 - restart repairs only perception and a second restart remains a no-op.
+- consolidation cannot prune a receipted outcome trace or falsely count it as pruned;
+- the final product nervous owner retains the trace, and restart retry remains a no-op.
 
 ## 5. Ordinary CI truth
 
@@ -182,7 +197,7 @@ Kernel                             594 tests / 4 failures / 6 errors / 5 skipped
 
 The original 16 repository/terminal/Work errors were gone and the new short-path targeted-test regression passed. The remaining failures showed that Investigation facts and procedural fingerprints still retained the incoming DOS spelling while actions and verification carried the canonical long spelling. That evidence/action identity split was fixed at its owners rather than hidden in assertions.
 
-Current code-checkpoint ordinary evidence is genuinely green:
+The Windows path code-checkpoint ordinary evidence was genuinely green:
 
 ```text
 ZN CI run 33047823223
@@ -194,6 +209,19 @@ Kernel                             594 tests / 5 skipped / OK
 ```
 
 Exact-head `ZN Windows Interactive Desktop E2E` run `33047823208` also succeeded. `ZN Work Recovery E2E` run `33046424926` succeeded at the first path code checkpoint; the second evidence-only commit did not match that workflow's path trigger.
+
+Current exact-head ordinary evidence is also genuinely green:
+
+```text
+ZN CI run 33049868413
+head 9207d3de534080ea62a9847a848cde3b0ba5b6b5
+Electron / TypeScript / Windows    success
+ZN Source Boundary / Windows       success
+ZN Kernel / Python / Windows       success
+Kernel                             596 tests / 5 skipped / OK
+```
+
+Exact-head `ZN Work Recovery E2E` run `33049868415` succeeded with 46 tests. The only ordinary-run annotation is the existing Node 20 action-runtime deprecation notice; it did not fail a job.
 
 The final Windows identity chain is:
 
@@ -213,7 +241,7 @@ DOS 8.3 expansion is lexical: it expands the longest existing Windows prefix and
 
 Open work includes:
 
-- long-term robustness for event receipts whose referenced trace may later be deliberately pruned/compacted;
+- no deliberate outcome-trace rewrite/compactor exists; any future implementation must atomically retarget receipts and requires separate review before a destructive long-term-memory migration;
 - restore several explanatory comments accidentally lost during the whole-file Intentional owner edit; no behavioral deletion was found in diff review;
 - broader Work durability outside the proven cancellation/Life-observation/nervous-outcome slices;
 - Windows continuity M8;
@@ -225,8 +253,8 @@ High-risk identity, long-term memory, credential/permission, updater/signing, ro
 
 ## 7. Next real target
 
-Next: **trace and define nervous receipt/trace lifecycle robustness before any pruning or compaction implementation.**
+Next: **trace the first still-unproven broader Work durability crash window.**
 
-Determine how `neural_event_outcomes.trace_id` should behave if a future deliberate neural pruning/compaction pass removes or rewrites the referenced trace. Preserve event identity and restart idempotence without permanently pinning an accidental trace representation. This is investigation/specification first; any destructive long-term-memory migration still requires explicit human approval.
+Follow the active product chain from Work RPC ingress through event claim, stage/checkpoint ownership, outside-world side-effect admission, terminal `EventOutcome`, restart reconstruction, progress projection, and active callers. Select the first real ambiguity not already covered by cancellation, Life observation, nervous outcome perception, or the existing non-replayable action guard, then close it without replaying uncertain effects.
 
-Broader Work durability remains open immediately behind that target. Do not weaken cancellation semantics, replay completed actions, or move development to `main`.
+Do not weaken cancellation semantics, replay completed actions, or move development to `main`.
