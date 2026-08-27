@@ -820,6 +820,8 @@ class ZNResidentRuntime:
                 learning_evidence=learning_evidence,
                 thought=thought,
             )
+        if state.stage == "investigation_completion":
+            return self._resume_investigation_completion(event, state)
         if state.stage == "native_deliberation":
             return self._deliberation_step(
                 event,
@@ -947,18 +949,23 @@ class ZNResidentRuntime:
                 success=True,
                 quality=0.95,
             )
-            state.stage = "complete"
-            state.next_action = None
+            completion = {
+                "execution_path": ExecutionPath.INVESTIGATION.value,
+                "success": True,
+                "response": str(investigation.response or ""),
+                "model_invocations": 0,
+                "reason": "resolved from ZN's own body and environment evidence",
+            }
+            state.stage = "investigation_completion"
+            state.next_action = "publish terminal EventOutcome"
             state.data["native_domains"] = list(domains)
-            self.store.save_working_state(state)
+            state.data["investigation_completion"] = completion
             self.store.record_runtime_task(model_invocations=0)
-            return ResidentRunResult(
-                event=event,
-                execution_path=ExecutionPath.INVESTIGATION,
-                success=True,
-                response=investigation.response,
-                reason="resolved from ZN's own body and environment evidence",
-            )
+            # Once this checkpoint is durable, the investigation result is
+            # established. Restart must publish it without running another
+            # native probe or repeating ordinary task accounting.
+            self.store.save_working_state(state)
+            return self._investigation_completion_result(event, completion)
 
         if investigation.can_continue:
             state.stage = "native_investigation"
@@ -970,6 +977,60 @@ class ZNResidentRuntime:
         state.next_action = "integrate native evidence and identify remaining gap"
         self.store.save_working_state(state)
         return None
+
+    def _resume_investigation_completion(
+        self,
+        event: AgentEvent,
+        state: WorkingState,
+    ) -> ResidentRunResult:
+        raw = state.data.get("investigation_completion")
+        if not isinstance(raw, dict):
+            return self._invalid_investigation_completion(
+                event,
+                "durable investigation completion checkpoint is incomplete",
+            )
+        try:
+            return self._investigation_completion_result(event, raw)
+        except (TypeError, ValueError):
+            return self._invalid_investigation_completion(
+                event,
+                "durable investigation completion checkpoint is malformed",
+            )
+
+    @staticmethod
+    def _invalid_investigation_completion(
+        event: AgentEvent,
+        reason: str,
+    ) -> ResidentRunResult:
+        return ResidentRunResult(
+            event=event,
+            execution_path=ExecutionPath.INVESTIGATION,
+            success=False,
+            model_invocations=0,
+            reason=reason,
+        )
+
+    @staticmethod
+    def _investigation_completion_result(
+        event: AgentEvent,
+        raw: dict[str, Any],
+    ) -> ResidentRunResult:
+        if raw.get("success") is not True:
+            raise ValueError("investigation completion checkpoint must record success")
+        execution_path = ExecutionPath(str(raw.get("execution_path") or ""))
+        if execution_path is not ExecutionPath.INVESTIGATION:
+            raise ValueError("investigation completion checkpoint must use investigation path")
+        model_invocations = raw.get("model_invocations")
+        if isinstance(model_invocations, bool) or int(model_invocations) != 0:
+            raise ValueError("investigation completion checkpoint cannot claim model use")
+        return ResidentRunResult(
+            event=event,
+            execution_path=execution_path,
+            success=True,
+            response=str(raw.get("response") or ""),
+            model_invocations=0,
+            reason=str(raw.get("reason") or ""),
+        )
 
     def _deliberation_step(
         self,
