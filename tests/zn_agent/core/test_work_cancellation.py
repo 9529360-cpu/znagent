@@ -6,7 +6,9 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 
-from zn_agent.core.models import EventStatus, ExecutionPath, WorkingState
+from zn_agent.core.action import NativeActionIntent
+from zn_agent.core.body import BodyActionResult
+from zn_agent.core.models import EventStatus, ExecutionPath, WorkingState, utc_now
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
 
 
@@ -169,6 +171,134 @@ class ResidentWorkCancellationDurabilityTests(unittest.TestCase):
                     self._attempt_row(restarted_again, attempt_id)[0],
                     "work_abandoned",
                 )
+            finally:
+                restarted_again.store.close()
+
+    def test_observed_command_restart_blocks_replay_and_cancellation_preserves_dispatch_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "kernel.db"
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=store_path,
+            )
+            event = resident.enqueue(
+                "run one command exactly once",
+                kind="desktop_user_event",
+                payload={"required_capabilities": ["terminal"]},
+            )
+            claimed = resident.store.claim_event(event.event_id)
+            self.assertIsNotNone(claimed)
+            intent = NativeActionIntent(
+                intent_id=f"intent-{event.event_id}",
+                event_id=event.event_id,
+                kind="command",
+                args={"command": "echo already-observed"},
+                source="resident_choice",
+            )
+            resident.store.save_working_state(
+                WorkingState(
+                    current_event_id=event.event_id,
+                    stage="native_action",
+                    next_action="move body: command",
+                    data={"native_action_intent": intent.to_dict()},
+                )
+            )
+            attempt_id = f"sidefx-observed-{event.event_id}"
+            resident.body._start_attempt(
+                attempt_id=attempt_id,
+                event_id=event.event_id,
+                kind="command",
+                signature_hash=resident.body._signature_hash("command", dict(intent.args)),
+            )
+            resident.body._finish_attempt(
+                attempt_id,
+                BodyActionResult(
+                    action_id="command-observed-result",
+                    kind="command",
+                    success=True,
+                    output="already returned",
+                    event_id=event.event_id,
+                    started_at=utc_now(),
+                    completed_at=utc_now(),
+                ),
+            )
+            before = self._attempt_row(resident, attempt_id)
+            self.assertIsNotNone(before)
+            assert before is not None
+            self.assertEqual(before[0], "observed")
+            self.assertEqual(before[2], "command-observed-result")
+            self.assertEqual(before[3], 1)
+            resident.store.close()
+
+            restored = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=store_path,
+            )
+            try:
+                recovered = restored.store.get_event(event.event_id)
+                self.assertIsNotNone(recovered)
+                assert recovered is not None
+                self.assertEqual(recovered.status, EventStatus.PENDING)
+                claimed_again = restored.store.claim_event(event.event_id)
+                self.assertIsNotNone(claimed_again)
+                assert claimed_again is not None
+                stale = restored.store.get_working_state()
+                self.assertEqual(stale.stage, "native_action")
+
+                self.assertIsNone(
+                    restored._native_action_step(
+                        claimed_again,
+                        stale,
+                        readiness=None,
+                    )
+                )
+                recovery = restored.store.get_working_state()
+                self.assertEqual(recovery.stage, "side_effect_recovery")
+                details = recovery.data["side_effect_recovery"]
+                self.assertEqual(details["decision"], "user_decision_required")
+                self.assertTrue(details["replay_blocked"])
+                self.assertEqual(details["attempt_id"], attempt_id)
+                observed = self._attempt_row(restored, attempt_id)
+                self.assertEqual(observed[0], "observed")
+                self.assertEqual(observed[2], "command-observed-result")
+                self.assertEqual(observed[3], 1)
+
+                result = restored.cancel_uncertain_event(
+                    event.event_id,
+                    reason="user stopped observed command recovery",
+                )
+                self.assertTrue(result.cancelled)
+                outcome = restored.store.get_event_outcome(event.event_id)
+                self.assertIsNotNone(outcome)
+                assert outcome is not None
+                self.assertTrue(outcome.cancelled)
+                self.assertEqual(outcome.execution_path, ExecutionPath.CONTROL)
+                abandoned = self._attempt_row(restored, attempt_id)
+                self.assertEqual(abandoned[0], "work_abandoned")
+                self.assertEqual(abandoned[2], "command-observed-result")
+                self.assertEqual(abandoned[3], 1)
+                self.assertEqual(restored.store.get_working_state().stage, "idle")
+            finally:
+                restored.store.close()
+
+            restarted_again = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=store_path,
+            )
+            try:
+                terminal = restarted_again.store.get_event(event.event_id)
+                outcome = restarted_again.store.get_event_outcome(event.event_id)
+                self.assertIsNotNone(terminal)
+                self.assertIsNotNone(outcome)
+                assert terminal is not None
+                assert outcome is not None
+                self.assertEqual(terminal.status, EventStatus.FAILED)
+                self.assertTrue(outcome.cancelled)
+                self.assertEqual(restarted_again.store.get_working_state().stage, "idle")
+                preserved = self._attempt_row(restarted_again, attempt_id)
+                self.assertEqual(preserved[0], "work_abandoned")
+                self.assertEqual(preserved[2], "command-observed-result")
+                self.assertEqual(preserved[3], 1)
             finally:
                 restarted_again.store.close()
 

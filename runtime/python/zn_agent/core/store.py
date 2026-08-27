@@ -418,7 +418,9 @@ class KernelStore:
         longer continue the Work; it does not mean the outside-world effect was
         present or absent. The event, outcome, idle checkpoint, and side-effect
         attempt transition are one SQLite transaction so restart can never
-        publish only part of the cancellation decision.
+        publish only part of the cancellation decision. A replay-blocking attempt
+        may be ``started`` or ``observed``; observed dispatch metadata remains
+        durable because cancellation does not reinterpret what the command did.
         """
 
         normalized_event = str(event_id or "").strip()
@@ -500,10 +502,10 @@ class KernelStore:
             if (
                 not attempt
                 or str(attempt["event_id"]) != normalized_event
-                or str(attempt["status"]) != "started"
+                or str(attempt["status"]) not in {"started", "observed"}
             ):
                 raise RuntimeError(
-                    "side-effect recovery checkpoint does not own a started uncertain attempt"
+                    "side-effect recovery checkpoint does not own a replay-blocking uncertain attempt"
                 )
 
             now = utc_now()
@@ -555,8 +557,8 @@ class KernelStore:
 
             attempt_update = self._conn.execute(
                 f"UPDATE {self._SIDE_EFFECT_TABLE} "
-                "SET status='work_abandoned',completed_at=?,result_action_id=NULL,result_success=NULL "
-                "WHERE attempt_id=? AND event_id=? AND status='started'",
+                "SET status='work_abandoned',completed_at=COALESCE(completed_at,?) "
+                "WHERE attempt_id=? AND event_id=? AND status IN ('started','observed')",
                 (now, attempt_id, normalized_event),
             )
             if attempt_update.rowcount != 1:

@@ -24,12 +24,13 @@ class SideEffectAwareBody(KeyboardTextBody):
 
     A ``started`` attempt is committed before dispatch. If the process dies after
     that commit, the next resident refuses the same event/action signature rather
-    than guessing whether the outside-world side effect happened. For append
-    writes, an ``observed`` dispatch also remains replay-blocking until the
-    resident checkpoint has advanced or exact current reality resolves recovery.
-    No raw command, text, environment or other action arguments are copied into
-    this ledger; only a deterministic signature hash and bounded execution
-    metadata are persisted.
+    than guessing whether the outside-world side effect happened. For guarded
+    commands and append writes, an ``observed`` dispatch also remains replay-
+    blocking if a stale ``native_action`` checkpoint is reconstructed. Append
+    recovery may prove current reality; generic commands remain blocked for an
+    explicit lifecycle decision. No raw command, text, environment or other
+    action arguments are copied into this ledger; only a deterministic signature
+    hash and bounded execution metadata are persisted.
     """
 
     _TABLE = "resident_side_effect_attempts"
@@ -54,7 +55,7 @@ class SideEffectAwareBody(KeyboardTextBody):
         prior = self._replay_blocking_attempt(
             normalized_event,
             signature_hash,
-            include_observed=normalized_kind in self._APPEND_KINDS,
+            include_observed=True,
         )
         if prior is not None:
             prior_status = str(prior["status"] or "").strip().lower()
