@@ -127,12 +127,14 @@ class _JournaledCapability:
                 "compiled capability dispatch returned before interruption, but its durable result checkpoint is incomplete",
             )
 
+        fresh_attempt = False
         if attempt is None:
             prior = self._journal.replay_blocking_attempt(event.event_id, signature_hash)
             if prior is not None:
                 attempt = prior
                 attempt_id = str(prior.get("attempt_id") or "")
             else:
+                fresh_attempt = True
                 attempt_id = f"capfx-{uuid.uuid4().hex[:12]}"
                 checkpoint = {
                     "attempt_id": attempt_id,
@@ -153,19 +155,17 @@ class _JournaledCapability:
                 )
                 attempt = self._journal.attempt(attempt_id)
 
-        if attempt is not None and str(attempt.get("status") or "") == "started":
-            if not self.replay_safe and checkpoint.get("status") == "started":
-                # A freshly created attempt is allowed to enter the handler once.
-                # After restart the same durable marker is reconstructed with no
-                # in-memory admission token, so it must fail closed instead.
-                checkpoint["status"] = "admitted"
-                state.data[self._STATE_KEY] = checkpoint
-            elif not self.replay_safe:
-                return self._uncertain_result(
-                    attempt_id,
-                    signature_hash,
-                    "compiled capability may already have started before resident interruption; refusing blind replay until current reality proves what happened",
-                )
+        if (
+            attempt is not None
+            and str(attempt.get("status") or "") == "started"
+            and not self.replay_safe
+            and not fresh_attempt
+        ):
+            return self._uncertain_result(
+                attempt_id,
+                signature_hash,
+                "compiled capability may already have started before resident interruption; refusing blind replay until current reality proves what happened",
+            )
 
         try:
             result = self._capability.execute(event, state)
