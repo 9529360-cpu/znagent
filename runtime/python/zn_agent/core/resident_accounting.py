@@ -92,6 +92,33 @@ class ResidentAccountingJournal:
         )
         return normalized_domains
 
+    def record_native_body_task(self, *, event_id: str) -> bool:
+        """Count one durable Body task without inventing ability/knowledge credit.
+
+        Some narrow Body completion owners intentionally count a completed task
+        while refusing to generalize that local effect into resident competence.
+        This preserves that existing semantic distinction while still making the
+        task counter event-idempotent after the completion checkpoint is durable.
+        """
+
+        normalized_event = str(event_id or "").strip()
+        if not normalized_event:
+            raise ValueError("resident accounting requires event_id")
+        accounting_kind = "native_body_task"
+        now = utc_now()
+        with closing(self._connect()) as conn:
+            inserted = conn.execute(
+                f"INSERT OR IGNORE INTO {self.TABLE}(event_id,kind,created_at) VALUES(?,?,?)",
+                (normalized_event, accounting_kind, now),
+            )
+            if inserted.rowcount == 1:
+                conn.execute(
+                    "UPDATE runtime_metrics SET tasks_total=tasks_total+1, updated_at=? WHERE id=1",
+                    (now,),
+                )
+            conn.commit()
+        return inserted.rowcount == 1
+
     def record_native_body_failure(
         self,
         *,
