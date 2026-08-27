@@ -26,6 +26,10 @@ class RecoveryBoundedResidentRuntime(CapabilityRecoveryResidentRuntime):
         priority: int = 0,
         payload: dict | None = None,
     ):
+        current = self.store.get_working_state()
+        if current.current_event_id:
+            raise_if_synchronous_recovery_blocked(current.current_event_id, current)
+
         event = self.enqueue(task, kind=kind, priority=priority, payload=payload)
         while True:
             completed = self.result_for(event.event_id)
