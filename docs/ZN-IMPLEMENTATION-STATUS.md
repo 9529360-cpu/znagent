@@ -37,9 +37,10 @@ e3fc20b7b4271e46868f408c258cab58ba014abb  carry canonical identity through evide
 9207d3de534080ea62a9847a848cde3b0ba5b6b5  retain receipted nervous outcome traces across pruning
 8ebae2c43ba13349aa4aebdf8c84746783096c1b  repair missing Work ingress linkage after restart
 b41b65dd35ab652e6ed573e5d512778d7313db47  make side-effect recovery resolution restart-idempotent
+cf88774ba8c4c9b95adf2aeef5954da4d55ea14b  block observed append replay after restart
 ```
 
-Status: **RECOVERY-ONLY CANCELLATION REMAINS REACHABLE END TO END. `EventOutcome` REMAINS TERMINAL TRUTH. LIFE OBSERVATION REPAIR REMAINS SECONDARY AND NON-REPLAYING. DURABLE EVENT-OUTCOME NERVOUS PLASTICITY HAS AN EVENT-IDENTITY-SAFE ATOMIC BOUNDARY AND RECEIPTED TRACES ARE RETAINED ACROSS AUTOMATIC PRUNING. TWO BROADER WORK CRASH WINDOWS ARE NOW CLOSED: MISSING INGRESS LINKAGE, AND A COMMITTED SIDE-EFFECT RECOVERY DECISION FOLLOWED BY A CRASH BEFORE THE NEXT WORKINGSTATE CHECKPOINT. GENERIC NERVOUS `perceive()` REMAINS INTENTIONALLY PLASTIC AND IS NOT AN EXACTLY-ONCE API. BROADER WORK DURABILITY REMAINS PARTIAL.**
+Status: **RECOVERY-ONLY CANCELLATION REMAINS REACHABLE END TO END. `EventOutcome` REMAINS TERMINAL TRUTH. LIFE OBSERVATION REPAIR REMAINS SECONDARY AND NON-REPLAYING. DURABLE EVENT-OUTCOME NERVOUS PLASTICITY HAS AN EVENT-IDENTITY-SAFE ATOMIC BOUNDARY AND RECEIPTED TRACES ARE RETAINED ACROSS AUTOMATIC PRUNING. THREE BROADER WORK CRASH WINDOWS ARE NOW CLOSED: MISSING INGRESS LINKAGE; A COMMITTED SIDE-EFFECT RECOVERY DECISION FOLLOWED BY A CRASH BEFORE THE NEXT WORKINGSTATE CHECKPOINT; AND AN APPEND DISPATCH DURABLY MARKED `observed` FOLLOWED BY A CRASH BEFORE THE RESIDENT ADVANCES ITS WORKINGSTATE. GENERIC NERVOUS `perceive()` REMAINS INTENTIONALLY PLASTIC AND IS NOT AN EXACTLY-ONCE API. BROADER WORK DURABILITY REMAINS PARTIAL.**
 
 ## 1. Durable cancellation and terminal truth
 
@@ -179,20 +180,44 @@ The regression `test_work_side_effect_resolution_recovery` constructs the exact 
 
 This closes one recovery-decision/checkpoint crash window only. Broader Work durability remains partial.
 
-## 6. Focused Windows proof
+## 6. Third broader Work append observed/checkpoint crash window
+
+The next concrete ambiguity was one durable write earlier in the same append lifecycle:
+
+```text
+native_action checkpoint
+-> SideEffectAwareBody._start_attempt() commits `started`
+-> append mutates outside-world text
+-> SideEffectAwareBody._finish_attempt() commits `observed` + result metadata
+-> return BodyActionResult to resident
+-> resident advances WorkingState
+-> save_working_state()
+```
+
+Before `cf88774b...`, the replay guard only considered a matching attempt whose status remained `started`. If the append had already happened and `_finish_attempt()` had durably changed the row to `observed`, but the process died before the resident saved its next `WorkingState`, restart reconstructed the stale `native_action` checkpoint. The same append then looked replayable and could be dispatched a second time.
+
+Append actions now treat a matching `observed` attempt as replay-blocking at the body admission boundary. The resident receives explicit uncertainty, enters its existing `side_effect_recovery` stage, and performs fresh read-only exact-text verification instead of repeating the append. `resolve_uncertain_attempt()` can close that matching `observed` append attempt as `verified_effect` or `verified_absent` while preserving already-durable dispatch completion metadata.
+
+The change is intentionally narrow. Generic command attempts still use the established started-only replay guard. Their analogous `observed`-before-checkpoint crash window remains open because command recovery and cancellation semantics must be traced together; simply broadening `observed` command blocking would create a cancellation mismatch with the current lifecycle authority.
+
+The regression `test_work_side_effect_observed_recovery` constructs the exact append crash state: it commits a real append and an `observed` attempt while deliberately leaving the resident at `native_action`, reconstructs the final product resident, proves `_native_action_step()` does not dispatch again, verifies exact current text, and completes the same attempt as `verified_effect` without replay. Original result metadata remains attached to that attempt.
+
+This closes one append-dispatch/checkpoint crash window only. Broader Work durability remains partial.
+
+## 7. Focused Windows proof
 
 Current focused proof:
 
 ```text
-ZN Work Recovery E2E run 33053986871
-head b41b65dd35ab652e6ed573e5d512778d7313db47
+ZN Work Recovery E2E run 33056889651
+head cf88774ba8c4c9b95adf2aeef5954da4d55ea14b
 Windows resident Work restart recovery             success
 Compile Work recovery path                         success
 Verify durable Work progress and restart recovery  success
-48 tests                                             OK
+49 tests                                             OK
 ```
 
-The focused suite includes the established Work progress/restart/side-effect/cancellation and completion-observation modules, nervous outcome regressions, ingress recovery, and the new side-effect resolution restart regression.
+The focused suite includes the established Work progress/restart/side-effect/cancellation and completion-observation modules, nervous outcome regressions, ingress recovery, recovery-resolution restart coverage, and the observed-append/checkpoint restart regression.
 
 The current proof includes:
 
@@ -206,9 +231,10 @@ The current proof includes:
 - consolidation cannot prune a receipted outcome trace or falsely count it as pruned;
 - the final product nervous owner retains the trace, and restart retry remains a no-op;
 - a persisted Work event missing only its ledger linkage is repaired after restart without execution or replay;
-- a committed side-effect recovery decision followed by a crash before checkpoint save is restart-safe and does not replay the write.
+- a committed side-effect recovery decision followed by a crash before checkpoint save is restart-safe and does not replay the write;
+- an append already durably marked `observed` cannot be blindly replayed after a stale `native_action` checkpoint is reconstructed.
 
-## 7. Ordinary CI truth
+## 8. Ordinary CI truth
 
 The first full-boundary Windows path implementation checkpoint exposed one remaining split:
 
@@ -256,7 +282,7 @@ ZN Kernel / Python / Windows       success
 Kernel                             597 tests / 5 skipped / OK
 ```
 
-Current exact-head code evidence is genuinely green:
+The second broader Work recovery-resolution checkpoint was green:
 
 ```text
 ZN CI run 33053986879
@@ -268,7 +294,19 @@ Kernel                             598 tests / 5 skipped / OK
 Publish Windows CI statuses        success
 ```
 
-Exact-head `ZN Work Recovery E2E` run `33053986871` succeeded with 48 tests. The ordinary-run action-runtime deprecation notices did not fail a job.
+Current exact code-head evidence is genuinely green:
+
+```text
+ZN CI run 33056889657
+head cf88774ba8c4c9b95adf2aeef5954da4d55ea14b
+Electron / TypeScript / Windows    success
+ZN Source Boundary / Windows       success
+ZN Kernel / Python / Windows       success
+Kernel                             599 tests / 5 skipped / OK
+Publish Windows CI statuses        success
+```
+
+Exact-code-head `ZN Work Recovery E2E` run `33056889651` succeeded with 49 tests. The new observed-append restart regression passed in both focused CI and the full Kernel suite. No local test run is claimed for this web-maintainer slice; the exact code checkpoint was verified by repository self-hosted Windows CI. The ordinary-run action-runtime deprecation notices did not fail a job.
 
 The final Windows identity chain remains:
 
@@ -284,11 +322,12 @@ event payload / context path
 
 DOS 8.3 expansion is lexical: it expands the longest existing Windows prefix and reattaches a missing suffix without following symlinks or reparse points. Security containment still performs strict real-path resolution and rejects candidates outside the resolved root.
 
-## 8. What remains partial
+## 9. What remains partial
 
 Open work includes:
 
-- broader Work durability remains partial beyond the now-proven ingress linkage, recovery-resolution idempotence, cancellation, Life-observation, nervous-outcome and non-replayable side-effect slices;
+- broader Work durability remains partial beyond the now-proven ingress linkage, recovery-resolution idempotence, observed-append replay blocking, cancellation, Life-observation, nervous-outcome and other non-replayable side-effect slices;
+- the generic command counterpart remains unclosed when command dispatch is already durably `observed` but the resident crashes before advancing `WorkingState`; command replay blocking, recovery, and cancellation authority must be designed together rather than broadened independently;
 - no deliberate outcome-trace rewrite/compactor exists; any future implementation must atomically retarget receipts and requires separate review before a destructive long-term-memory migration;
 - restore several explanatory comments accidentally lost during the whole-file Intentional owner edit; no behavioral deletion was found in diff review;
 - Windows continuity M8;
@@ -298,10 +337,10 @@ Open work includes:
 
 High-risk identity, long-term memory, credential/permission, updater/signing, rollback, and destructive self-maintenance changes still require human approval.
 
-## 9. Next real target
+## 10. Next real target
 
-Next: **trace the next still-unproven broader Work durability crash window after the now-closed ingress-linkage and side-effect-recovery-resolution windows.**
+Next: **trace the generic command `observed` -> stale `WorkingState` crash window together with its recovery and cancellation authority, read-only first.**
 
-Continue the active product chain from event claim through durable stage/checkpoint ownership, outside-world side-effect admission, terminal `EventOutcome`, restart reconstruction, progress projection, and active callers. Select only the next real ambiguity not already covered by ingress linkage repair, recovery-resolution idempotence, cancellation, Life observation, nervous outcome perception, or the existing non-replayable action guard, then close it without replaying uncertain effects.
+Continue the active product chain from command admission through the durable side-effect attempt, process execution/result observation, resident checkpoint advancement, restart reconstruction, recovery projection, cancellation, terminal `EventOutcome`, and active callers. Do not simply add `observed` commands to the replay-blocking query until the cancellation lifecycle can safely close or preserve that exact state without inventing whether the command effect happened.
 
 Do not weaken cancellation semantics, replay completed actions, or move development to `main`.

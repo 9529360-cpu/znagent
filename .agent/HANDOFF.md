@@ -4,7 +4,9 @@ Updated: 2026-08-27
 
 ## Current goal
 
-Trace the **next** still-unproven broader Work durability crash window. Two concrete windows are now closed and CI verified: the enqueue-to-`work_runs` ingress linkage window, and the side-effect recovery decision commit -> next `WorkingState` checkpoint window. Nervous receipt/trace retention and the Windows NetworkService DOS-8.3 versus long-path identity family remain closed at their current active owner chains with ordinary CI green.
+Trace the **next** still-unproven broader Work durability crash window. Three concrete windows are now closed and CI verified: the enqueue-to-`work_runs` ingress linkage window; the side-effect recovery decision commit -> next `WorkingState` checkpoint window; and the append dispatch `observed` commit -> next `WorkingState` checkpoint window. Nervous receipt/trace retention and the Windows NetworkService DOS-8.3 versus long-path identity family remain closed at their current active owner chains with ordinary CI green.
+
+The next read-only target is the generic command counterpart: command dispatch has already returned and its side-effect attempt is durably `observed`, but the resident dies before advancing its `WorkingState`. Do **not** simply broaden observed-command replay blocking: current uncertain-effect cancellation authority is coupled to a `started` attempt, so command replay blocking, recovery, and cancellation semantics must be traced together.
 
 `EventOutcome` remains terminal truth. Nervous plasticity remains secondary. A nervous failure after terminal completion does not reclassify the event and does not replay the action. `NativeWill` keeps its existing durable outcome reconciliation authority.
 
@@ -29,8 +31,9 @@ Founding boundary remains:
 - nervous receipt lifecycle checkpoint: `9207d3de534080ea62a9847a848cde3b0ba5b6b5`
 - Work ingress linkage checkpoint: `8ebae2c43ba13349aa4aebdf8c84746783096c1b`
 - side-effect recovery resolution checkpoint: `b41b65dd35ab652e6ed573e5d512778d7313db47`
-- current code/test HEAD when this handoff was prepared: `b41b65dd35ab652e6ed573e5d512778d7313db47`
-- implementation-status sync immediately before this handoff: `297daef73067c110c6c6befee016331f00ab446f`
+- observed append replay checkpoint: `cf88774ba8c4c9b95adf2aeef5954da4d55ea14b`
+- current code/test HEAD when this handoff was prepared: `cf88774ba8c4c9b95adf2aeef5954da4d55ea14b`
+- implementation-status content is synchronized in the same documentation commit as this handoff
 - PR #6: draft/open/unmerged, base `main`, head `dev/zn-agent`
 - `main` was not modified
 - no force push or history rewrite was requested or performed by the maintainer
@@ -83,7 +86,7 @@ work_start RPC
 
 A hard exit between the event commit and `work_runs` commit left a durable resident event with valid Work thread/message identity but no Work ledger run. `ResidentWorkControl.reconcile_missing_ingress_runs()` repairs only this linkage from mutually agreeing durable evidence and does not claim, execute, requeue, terminalize, or replay the event.
 
-### 6. Side-effect recovery decision/checkpoint crash window closed
+### 6. Side-effect recovery decision/checkpoint crash window remains closed
 
 The active append recovery path contains two separate durable writes:
 
@@ -98,45 +101,68 @@ side_effect_recovery checkpoint
 
 Before `b41b65dd...`, a hard exit after the attempt had durably become `verified_effect` or `verified_absent`, but before the next `WorkingState` save, left the old `side_effect_recovery` checkpoint behind. On restart, fresh reality could prove the exact same recovery result again, but `resolve_uncertain_attempt()` returned false because it only accepted rows still in `started`, incorrectly converting an already-committed recovery decision into a mismatch/hold.
 
-`SideEffectAwareBody.resolve_uncertain_attempt()` now accepts only an exact idempotent acknowledgement of an already-committed recovery decision: same event, same attempt, same final recovery status. A wrong event or conflicting final status still fails closed. The method does not grant mutation authority and does not replay the outside-world action.
+`SideEffectAwareBody.resolve_uncertain_attempt()` accepts only an exact idempotent acknowledgement of an already-committed recovery decision: same event, same attempt, same final recovery status. A wrong event or conflicting final status still fails closed. The method does not grant mutation authority and does not replay the outside-world action.
 
-`tests/zn_agent/core/test_work_side_effect_resolution_recovery.py` constructs the exact crash state. It commits `verified_effect`, intentionally leaves the stale `side_effect_recovery` checkpoint, reconstructs the product resident, reclaims the event, re-verifies current reality, and completes without any `write_text` dispatch. The test also proves a conflicting `verified_absent` acknowledgement is rejected.
+`tests/zn_agent/core/test_work_side_effect_resolution_recovery.py` constructs the exact crash state and proves completion without any repeated `write_text` dispatch.
+
+### 7. Append `observed`/checkpoint crash window closed
+
+The active append dispatch path has another durability split before recovery begins:
+
+```text
+native_action checkpoint
+-> SideEffectAwareBody._start_attempt() commits started
+-> append mutates outside-world text
+-> SideEffectAwareBody._finish_attempt() commits observed + result metadata
+-> return result to resident
+-> resident advances WorkingState
+-> save_working_state()
+```
+
+Before `cf88774b...`, restart replay protection only considered a matching `started` attempt. A crash after `_finish_attempt()` had committed `observed` but before the resident saved its next checkpoint reconstructed stale `native_action`; the same append could then be dispatched again.
+
+`SideEffectAwareBody` now treats a matching `observed` attempt as replay-blocking **for append actions only**. The resident enters its existing `side_effect_recovery` path, independently re-reads exact current text, and can close the same attempt as `verified_effect` or `verified_absent` without replay while preserving durable result metadata.
+
+`tests/zn_agent/core/test_work_side_effect_observed_recovery.py` constructs the exact crash state. It performs one real append, commits the attempt as `observed`, deliberately leaves `WorkingState` at `native_action`, reconstructs the product resident, proves no second append occurs, and completes from exact fresh verification.
+
+Generic commands are deliberately not broadened by this checkpoint because their `observed` recovery state must be reconciled with lifecycle cancellation semantics first.
 
 ## Real test / CI truth
 
 ### Focused Work proof
 
 ```text
-ZN Work Recovery E2E run 33053986871
-head b41b65dd35ab652e6ed573e5d512778d7313db47
+ZN Work Recovery E2E run 33056889651
+head cf88774ba8c4c9b95adf2aeef5954da4d55ea14b
 Windows resident Work restart recovery             success
 Prepare isolated runtime                            success
 Compile Work recovery path                          success
 Verify durable Work progress and restart recovery  success
-Ran 48 tests                                        OK
+Ran 49 tests                                        OK
 ```
 
-The 48-test focused suite includes the new side-effect resolution restart regression together with existing Work progress/restart/ingress/side-effect/cancellation, completion-observation and nervous-outcome regressions.
+The 49-test focused suite includes the new observed-append restart regression together with Work progress/restart/ingress/side-effect/recovery-resolution/cancellation, completion-observation and nervous-outcome regressions. It ran on a self-hosted Windows X64 ZN CI runner.
 
 ### Ordinary CI
 
 ```text
-ZN CI run 33053986879
-head b41b65dd35ab652e6ed573e5d512778d7313db47
+ZN CI run 33056889657
+head cf88774ba8c4c9b95adf2aeef5954da4d55ea14b
 Electron / TypeScript / Windows    success
 ZN Source Boundary / Windows       success
 ZN Kernel / Python / Windows       success
-Kernel                             598 tests / 5 skipped / OK
+Kernel                             599 tests / 5 skipped / OK
 Publish Windows CI statuses        success
 ```
 
-The new `test_restart_after_verified_effect_before_checkpoint_save_completes_without_replay` passed in the full Kernel suite as well as focused CI.
+The new `test_restart_after_observed_append_before_checkpoint_save_recovers_without_replay` passed in the full Kernel suite as well as focused CI.
 
-No local test run is claimed for this web-maintainer slice; the exact code checkpoint was verified by repository self-hosted Windows CI.
+No local test run is claimed for this web-maintainer slice. The exact code checkpoint was verified by repository self-hosted Windows CI; the GitHub workflow checked out `cf88774b...` on the local/self-hosted runner and executed the repository test suites there.
 
 ## Current risks / incomplete work
 
-- Broader Work durability remains partial beyond the proven ingress linkage, recovery-resolution idempotence, cancellation, Life-observation, nervous-outcome and non-replayable side-effect slices.
+- Broader Work durability remains partial beyond the proven ingress linkage, recovery-resolution idempotence, append-observed replay blocking, cancellation, Life-observation, nervous-outcome and other non-replayable side-effect slices.
+- The generic command counterpart is still open: a command can become durably `observed` before the resident advances `WorkingState`. Current cancellation authority expects the narrow replay-blocked `started` state, so do not add observed commands to the replay guard without tracing and fixing recovery/cancellation ownership together.
 - Several explanatory comments in `intentional_resident.py` were accidentally lost during an earlier whole-file owner replacement; diff review found no corresponding behavioral deletion. Restoring them remains cleanup.
 - No deliberate outcome-trace rewrite/compactor exists. Any future implementation must atomically retarget receipts and receive separate review before a destructive long-term-memory migration.
 - Generic nervous `perceive()` remains intentionally plastic and is not safe for blind replay. Only the durable terminal EventOutcome path has event-ID dedupe semantics.
@@ -170,12 +196,13 @@ Automatic pruning preserves referential integrity and accurate pruning/link stat
 
 ### P1 - broader Work durability
 
-Status: **OPEN / TWO CRASH WINDOWS VERIFIED**
+Status: **OPEN / THREE CRASH WINDOWS VERIFIED**
 
 Closed without replay:
 
 1. resident event committed before missing `work_runs` linkage;
-2. side-effect recovery decision committed before the next `WorkingState` checkpoint.
+2. side-effect recovery decision committed before the next `WorkingState` checkpoint;
+3. append dispatch durably marked `observed` before the next `WorkingState` checkpoint.
 
 Continue tracing only the next real ambiguity. Do not mark broader Work durability complete.
 
@@ -217,6 +244,7 @@ tests/zn_agent/core/test_work_progress.py
 tests/zn_agent/core/test_work_recovery.py
 tests/zn_agent/core/test_work_side_effect_recovery.py
 tests/zn_agent/core/test_work_side_effect_resolution_recovery.py
+tests/zn_agent/core/test_work_side_effect_observed_recovery.py
 tests/zn_agent/core/test_work_cancellation.py
 tests/zn_agent/core/test_work_cancel_control.py
 tests/zn_agent/core/test_event_outcome_nervous.py
@@ -228,14 +256,15 @@ docs/ZN-IMPLEMENTATION-STATUS.md
 
 ## Next real target
 
-Trace the next unproven Work durability boundary after the two now-closed windows:
+Trace the generic command `observed` -> stale `WorkingState` durability boundary, read-only first:
 
 ```text
-event claim
--> durable stage/checkpoint ownership
--> outside-world side-effect admission
--> terminal outcome
--> restart reconstruction / progress
+command admission
+-> started side-effect attempt
+-> process dispatch / outside-world effect
+-> observed side-effect attempt
+-> resident WorkingState advance
+-> restart recovery / cancellation / terminal outcome
 ```
 
-Select only a real ambiguity not already covered by ingress repair, recovery-resolution idempotence, cancellation, Life observation, nervous outcome perception, or the existing non-replayable action guard. Do not replay uncertain effects. Keep `main` untouched.
+Determine which durable fact owns an `observed` command after restart and how the user-decision cancellation path can remain valid without claiming whether the outside-world command effect happened. Do not replay uncertain effects, do not invent cancellation authority, and keep `main` untouched.
