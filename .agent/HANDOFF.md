@@ -4,9 +4,9 @@ Updated: 2026-08-27
 
 ## Current goal
 
-Continue broader Work durability from the next real unproven crash window. Four concrete windows are now closed and verified: missing `work_runs` ingress linkage; a committed side-effect recovery decision before the next `WorkingState` checkpoint; append dispatch durably `observed` before checkpoint advancement; and generic command dispatch durably `observed` before checkpoint advancement.
+Continue broader Work durability from the next real unproven crash window. Five concrete windows are now closed and verified: missing `work_runs` ingress linkage; a committed side-effect recovery decision before the next `WorkingState` checkpoint; append dispatch durably `observed` before checkpoint advancement; generic command dispatch durably `observed` before checkpoint advancement; and verified append recovery returning success before terminal `EventOutcome` publication.
 
-Broader Work durability remains **PARTIAL**. Do not infer completion from these four slices. Re-enter the active call chain read-only and select only a concrete remaining ambiguity that is not already covered.
+Broader Work durability remains **PARTIAL**. Do not infer completion from these five slices.
 
 Founding boundary remains:
 
@@ -18,10 +18,10 @@ Founding boundary remains:
 - development branch: `dev/zn-agent`
 - canonical source/release branch: `main`
 - canonical `main`: `8234a835dea604783cea0bd9d28a40de654ec03d`
-- code/test checkpoint: `173e0d03fbf52cda68571eb5f22e4aabc3d08805`
-- observed append checkpoint: `cf88774ba8c4c9b95adf2aeef5954da4d55ea14b`
-- command observed/recovery checkpoint: `173e0d03fbf52cda68571eb5f22e4aabc3d08805`
-- branch baseline before this documentation sync: `4f9d0aa3c94da88fc07203f18284cbc6cd26295d`
+- verified implementation/test head: `f7d6cb64121e914e0250736c0089d58c4b7fea2b`
+- append terminal-boundary runtime checkpoint: `2ffb79c4bf11903d46f53dd9a7b8d1fcbd922642`
+- companion test-contract checkpoint: `f7d6cb64121e914e0250736c0089d58c4b7fea2b`
+- implementation-status documentation checkpoint before this HANDOFF sync: `c3b7e4b7a0c6dcfc0a053c4143666de46a2f3184`
 - PR #6: draft/open/unmerged, base `main`, head `dev/zn-agent`
 - `main` was not modified
 - no force push or history rewrite was requested or performed
@@ -30,35 +30,35 @@ A HANDOFF commit cannot contain its own resulting SHA. Re-read `dev/zn-agent` af
 
 ## Completed in this stage
 
-### Generic command `observed` / stale checkpoint crash window
+### Fifth crash window: verified append recovery success before EventOutcome
 
-The active guarded-command path can durably split here:
+The active append recovery path can durably split here:
 
 ```text
-native_action checkpoint
--> side-effect attempt `started`
--> command/process dispatch
--> side-effect attempt `observed` + result metadata
--> crash before resident advances WorkingState
+side_effect_recovery checkpoint (`reverify_effect`)
+-> exact read-only text verification succeeds
+-> side-effect attempt durably `verified_effect`
+-> recovery returns successful BODY result
+-> crash before outer `_complete_result()` publishes EventOutcome
 ```
 
-Before `173e0d03...`, command replay admission considered only a matching `started` attempt. Restart could reconstruct stale `native_action` and dispatch the same command again even though the previous dispatch had already returned and was durably `observed`.
+Before `2ffb79c4...`, the success path persisted `WorkingState.stage = complete` before terminal publication. On restart, `_state_for_event()` intentionally does not resume a `complete` checkpoint, so the still-nonterminal event could lose the durable recovery position and re-enter from `orient`.
 
-`SideEffectAwareBody` now treats matching `observed` attempts as replay-blocking for all guarded generic side effects, including `command`, `terminal`, `shell`, and append actions. A generic command has no invented exact verification contract: restart enters `side_effect_recovery` with `user_decision_required` and blocks replay.
+The effect-present append recovery path now keeps the last durable replay-safe `side_effect_recovery` checkpoint on disk until `KernelStore.complete_event()` atomically publishes terminal event state, exact `EventOutcome` and idle `WorkingState`. It may still return a success result in memory, but no intermediate terminal-looking checkpoint is persisted.
 
-`KernelStore.cancel_uncertain_event()` now accepts the recovery-owned attempt when its durable status is either `started` or `observed`. Cancellation still means only that ZN stops the Work; it does not claim whether the outside-world effect occurred. Event terminalization, cancelled `EventOutcome`, idle checkpoint and `work_abandoned` attempt transition remain one SQLite transaction.
+If the process dies after the recovery result but before `_complete_result()`, restart restores the same recovery checkpoint, re-runs only the exact read-only verification, idempotently acknowledges the already committed `verified_effect`, and does not replay `write_text`.
 
-For an already `observed` attempt, existing `completed_at`, `result_action_id` and `result_success` are preserved. Cancellation does not erase or reinterpret the durable dispatch observation.
+Regression `test_restart_after_verified_effect_before_checkpoint_save_completes_without_replay` now simulates both crash boundaries and reconstructs twice before final terminalization. The older `test_interrupted_append_completes_from_verified_effect_without_replay_or_failure_learning` was corrected to assert the same durable contract: pre-terminal state remains `side_effect_recovery`; only `_complete_result()` publishes `EventOutcome` + idle state.
 
-Regression `test_observed_command_restart_blocks_replay_and_cancellation_preserves_dispatch_metadata` constructs the exact crash state, reconstructs the final product resident, proves no command replay, enters explicit recovery, cancels the Work, preserves dispatch metadata and remains terminal after another restart.
+This closes only this concrete append-recovery terminalization window. It does not prove the broader family of resident success/failure completion paths.
 
 ## Real test / CI truth
 
 Focused Work proof:
 
 ```text
-ZN Work Recovery E2E run 33068588882
-head 173e0d03fbf52cda68571eb5f22e4aabc3d08805
+ZN Work Recovery E2E run 33071963811
+head f7d6cb64121e914e0250736c0089d58c4b7fea2b
 Windows resident Work restart recovery  success
 Ran 50 tests                            OK
 ```
@@ -66,8 +66,8 @@ Ran 50 tests                            OK
 Ordinary CI proof:
 
 ```text
-ZN CI run 33068588844
-head 173e0d03fbf52cda68571eb5f22e4aabc3d08805
+ZN CI run 33071963819
+head f7d6cb64121e914e0250736c0089d58c4b7fea2b
 Electron / TypeScript / Windows   success
 ZN Source Boundary / Windows      success
 ZN Kernel / Python / Windows      success
@@ -75,18 +75,20 @@ Kernel                            600 tests / 5 skipped / OK
 Publish Windows CI statuses       success
 ```
 
-The new observed-command regression passed in both focused and full Kernel CI. No local test run is claimed for this web-maintainer slice; repository self-hosted Windows CI is the verification authority.
+No local test run is claimed for this web-maintainer slice; repository self-hosted Windows CI is the verification authority.
 
 ## Housekeeping note
 
-During documentation preparation, an accidental one-byte placeholder `docs/.tmp-should-not-use` was created in commit `aafa7e6ae0c3784c63e931f5daf5fd0aec244c6a` and immediately removed normally in `4f9d0aa3c94da88fc07203f18284cbc6cd26295d`. The resulting tree is identical to the verified code checkpoint tree. No force push, history rewrite, `main` change or product behavior change occurred.
+Earlier in this workstream, accidental one-byte placeholder `docs/.tmp-should-not-use` was created in `aafa7e6ae0c3784c63e931f5daf5fd0aec244c6a` and removed normally in `4f9d0aa3c94da88fc07203f18284cbc6cd26295d`. No force push, history rewrite or `main` change occurred.
 
 ## Current risks / incomplete work
 
-- broader Work durability remains partial beyond the four verified crash windows;
-- the next remaining Work durability ambiguity has not yet been selected and must be established from the real active call chain rather than guessed;
-- explanatory-comment cleanup in `intentional_resident.py` remains non-behavioral debt;
+- broader Work durability remains partial beyond the five verified crash windows;
+- `EmbodiedResidentRuntime._complete_successful_body_action()` still persists `WorkingState.stage = complete` before outer `_complete_result()` publishes `EventOutcome`; this common verified-body success path is the next selected durability target;
+- semantic UI completion and base resident investigation completion have analogous pre-`EventOutcome` paths that remain unproven;
+- failure-side terminal-looking checkpoint paths remain unproven;
 - no deliberate outcome-trace rewrite/compactor exists; destructive long-term-memory migration still requires separate review and explicit approval;
+- explanatory-comment cleanup in `intentional_resident.py` remains non-behavioral debt;
 - Windows M8 continuity remains incomplete;
 - browser PRESS, broader click/editing/multi-select/page lifecycle remain incomplete;
 - authenticated User Browser Bridge control remains incomplete;
@@ -97,14 +99,19 @@ During documentation preparation, an accidental one-byte placeholder `docs/.tmp-
 
 ### P1 - broader Work durability
 
-Status: **OPEN / FOUR CRASH WINDOWS VERIFIED**
+Status: **OPEN / FIVE CRASH WINDOWS VERIFIED**
 
 Closed without blind replay:
 
 1. resident event committed before missing `work_runs` linkage;
 2. recovery decision committed before the next `WorkingState` checkpoint;
 3. append dispatch durably `observed` before the next `WorkingState` checkpoint;
-4. generic command dispatch durably `observed` before the next `WorkingState` checkpoint, with cancellation coherently accepting that recovery-owned state.
+4. generic command dispatch durably `observed` before the next `WorkingState` checkpoint, with cancellation coherently accepting that recovery-owned state;
+5. append recovery already durably `verified_effect`, then returns success before terminal `EventOutcome`; restart preserves replay-safe recovery, re-verifies exact text and completes without append replay.
+
+Next selected ambiguity:
+
+6. common verified body success persists `WorkingState.stage = complete` before terminal `EventOutcome` publication.
 
 ### P2 - browser follow-ons
 
@@ -121,14 +128,12 @@ Preserve human approval for high-risk identity, memory, credentials, updater/sig
 ## Related files
 
 ```text
-runtime/python/zn_agent/core/side_effect_body.py
-runtime/python/zn_agent/core/store.py
 runtime/python/zn_agent/core/focused_modern_text_resident.py
+runtime/python/zn_agent/core/embodied_resident.py
+runtime/python/zn_agent/core/resident.py
+runtime/python/zn_agent/core/store.py
 runtime/python/zn_agent/core/work.py
-runtime/python/zn_agent/core/work_control.py
-tests/zn_agent/core/test_work_cancellation.py
 tests/zn_agent/core/test_work_side_effect_recovery.py
-tests/zn_agent/core/test_work_side_effect_observed_recovery.py
 tests/zn_agent/core/test_work_side_effect_resolution_recovery.py
 docs/ZN-IMPLEMENTATION-STATUS.md
 .agent/HANDOFF.md
@@ -136,6 +141,16 @@ docs/ZN-IMPLEMENTATION-STATUS.md
 
 ## Next real target
 
-Read-only trace the next concrete Work durability ambiguity from durable event/checkpoint/side-effect state through active resident callers, recovery, Work progress/finalization, terminal `EventOutcome`, and restart. Select one narrow crash window only, then implement the smallest coherent ZN-owned fix with a regression.
+Read-only trace the exact restart semantics of the active common body-success chain:
+
+```text
+EmbodiedResidentRuntime._native_verification_step()
+-> _complete_successful_body_action()
+-> ZNResidentRuntime.run_once()
+-> _complete_result()
+-> KernelStore.complete_event()
+```
+
+Prove what durable evidence exists if the process dies after `_complete_successful_body_action()` persists `stage = complete` but before `_complete_result()` publishes `EventOutcome`. Compare active descendants and tests, then implement only one narrow coherent fix with a regression if the ambiguity is real.
 
 Keep `main` untouched during ordinary development.
