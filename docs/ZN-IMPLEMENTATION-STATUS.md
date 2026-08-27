@@ -23,9 +23,11 @@ Recent Work durability checkpoints:
 b41b65dd35ab652e6ed573e5d512778d7313db47  make side-effect recovery resolution restart-idempotent
 cf88774ba8c4c9b95adf2aeef5954da4d55ea14b  block observed append replay after restart
 173e0d03fbf52cda68571eb5f22e4aabc3d08805  block observed command replay after restart
+2ffb79c4bf11903d46f53dd9a7b8d1fcbd922642  keep verified append recovery replay-safe until terminal EventOutcome
+f7d6cb64121e914e0250736c0089d58c4b7fea2b  align regression contract with the terminal EventOutcome boundary
 ```
 
-Status: **BROADER WORK DURABILITY REMAINS PARTIAL. FOUR CONCRETE CRASH WINDOWS ARE NOW CLOSED AND VERIFIED: MISSING WORK INGRESS LINKAGE; COMMITTED RECOVERY DECISION BEFORE THE NEXT `WorkingState` CHECKPOINT; APPEND DISPATCH DURABLY `observed` BEFORE THE NEXT CHECKPOINT; AND GENERIC COMMAND DISPATCH DURABLY `observed` BEFORE THE NEXT CHECKPOINT. `EventOutcome` REMAINS TERMINAL TRUTH. CANCELLATION REMAINS LIFECYCLE AUTHORITY, NOT EVIDENCE THAT AN OUTSIDE-WORLD EFFECT DID OR DID NOT OCCUR.**
+Status: **BROADER WORK DURABILITY REMAINS PARTIAL. FIVE CONCRETE CRASH WINDOWS ARE NOW CLOSED AND VERIFIED: MISSING WORK INGRESS LINKAGE; COMMITTED RECOVERY DECISION BEFORE THE NEXT `WorkingState` CHECKPOINT; APPEND DISPATCH DURABLY `observed` BEFORE THE NEXT CHECKPOINT; GENERIC COMMAND DISPATCH DURABLY `observed` BEFORE THE NEXT CHECKPOINT; AND VERIFIED APPEND RECOVERY RETURNING SUCCESS BEFORE TERMINAL `EventOutcome` PUBLICATION. `EventOutcome` REMAINS TERMINAL TRUTH. CANCELLATION REMAINS LIFECYCLE AUTHORITY, NOT EVIDENCE THAT AN OUTSIDE-WORLD EFFECT DID OR DID NOT OCCUR.**
 
 ## 1. Existing durable foundations
 
@@ -39,7 +41,7 @@ The established durable boundaries remain:
 
 Generic nervous `perceive()` remains intentionally plastic and is not an exactly-once API.
 
-## 2. Four proven broader Work crash windows
+## 2. Five proven broader Work crash windows
 
 ### 2.1 Missing ingress linkage
 
@@ -73,22 +75,44 @@ Before `173e0d03...`, command replay admission considered only `started`. Restar
 
 Regression: `test_observed_command_restart_blocks_replay_and_cancellation_preserves_dispatch_metadata` constructs the exact stale-checkpoint state, reconstructs the product resident, proves no replay occurs, enters explicit recovery, cancels the Work, preserves the observed dispatch metadata and remains terminal after a second restart.
 
-## 3. Real Windows CI proof
+### 2.5 Verified append recovery success before terminal outcome
 
-Focused Work proof:
+A narrower second split remained after append recovery had already independently re-read the exact requested text and durably resolved the side-effect attempt as `verified_effect`:
 
 ```text
-ZN Work Recovery E2E run 33068588882
-head 173e0d03fbf52cda68571eb5f22e4aabc3d08805
+durable side_effect_recovery checkpoint (`reverify_effect`)
+-> fresh exact read-only text verification succeeds
+-> side-effect attempt durably `verified_effect`
+-> resident returns successful BODY result
+-> crash before `_complete_result()` publishes EventOutcome
+```
+
+Before `2ffb79c4...`, the recovery success path persisted `WorkingState.stage = complete` before terminal publication. After restart, `_state_for_event()` intentionally does not resume a durable `complete` checkpoint and would reconstruct the still-nonterminal event from `orient`, separating the resident's durable recovery proof from the event's missing terminal truth.
+
+The append effect-present recovery path now keeps the last replay-safe `side_effect_recovery` checkpoint on disk until `KernelStore.complete_event()` atomically publishes terminal event state, exact `EventOutcome` and idle `WorkingState`. The in-memory step may still return its success result immediately, but it does not persist an intermediate terminal-looking checkpoint.
+
+If the process dies after recovery returns success but before terminal publication, restart recovers the event to pending while preserving `side_effect_recovery`. The resident re-runs the same exact read-only text verification, the already-committed `verified_effect` acknowledgement is idempotent, and no append is dispatched again. Only `_complete_result()` / `complete_event()` creates durable terminal truth.
+
+`test_restart_after_verified_effect_before_checkpoint_save_completes_without_replay` now includes this second crash after the recovery result and before `_complete_result()`, reconstructs the final product resident again, proves another exact re-verification occurs without `write_text` replay, and then verifies terminal Work finalization. `test_interrupted_append_completes_from_verified_effect_without_replay_or_failure_learning` was aligned with the same contract: pre-terminal durable state remains replay-safe recovery, and successful terminal publication ends at `EventOutcome` + idle checkpoint rather than a durable intermediate `complete` marker.
+
+This closes only this concrete append-recovery terminalization window. It does **not** prove that every resident success/failure path is safe from a pre-`EventOutcome` terminal-looking checkpoint.
+
+## 3. Real Windows CI proof
+
+Focused Work proof for the fifth window and its companion contract update:
+
+```text
+ZN Work Recovery E2E run 33071963811
+head f7d6cb64121e914e0250736c0089d58c4b7fea2b
 Windows resident Work restart recovery  success
 Ran 50 tests                            OK
 ```
 
-Ordinary CI proof:
+Ordinary CI proof for the same verification head:
 
 ```text
-ZN CI run 33068588844
-head 173e0d03fbf52cda68571eb5f22e4aabc3d08805
+ZN CI run 33071963819
+head f7d6cb64121e914e0250736c0089d58c4b7fea2b
 Electron / TypeScript / Windows   success
 ZN Source Boundary / Windows      success
 ZN Kernel / Python / Windows      success
@@ -96,13 +120,16 @@ Kernel                            600 tests / 5 skipped / OK
 Publish Windows CI statuses       success
 ```
 
-The new observed-command regression passed in both the focused Work suite and the full Kernel suite. No local test run is claimed for this web-maintainer slice; repository self-hosted Windows CI is the verification authority.
+Runtime behavior for the fifth window was changed in `2ffb79c4...`. The following `f7d6cb64...` commit corrected an older regression that still required the dangerous durable intermediate `complete` checkpoint; it did not broaden product behavior. The fifth-window regression passed in both the focused Work suite and the full Kernel suite. No local test run is claimed for this web-maintainer slice; repository self-hosted Windows CI is the verification authority.
 
 ## 4. What remains partial
 
 Open work still includes:
 
-- broader Work durability beyond these four proven windows;
+- broader Work durability beyond these five proven windows;
+- active successful-body terminalization still has a broader unproven family: `EmbodiedResidentRuntime._complete_successful_body_action()` persists `WorkingState.stage = complete` before outer `_complete_result()` publishes `EventOutcome`;
+- semantic UI completion and base resident investigation completion have analogous pre-`EventOutcome` paths that still require separate call-chain proof rather than being inferred safe from the append recovery fix;
+- failure-side terminal-looking checkpoint paths remain unproven;
 - no deliberate outcome-trace rewrite/compactor; any future implementation must atomically retarget receipts before deleting old representation and requires separate review for destructive long-term-memory migration;
 - explanatory-comment cleanup in `intentional_resident.py` remains non-behavioral debt;
 - Windows continuity M8;
@@ -114,6 +141,6 @@ High-risk identity, long-term memory, credential/permission, updater/signing, ro
 
 ## 5. Next real target
 
-Re-enter the active Work call chain read-only and identify the **next real unproven durability ambiguity** after the four closed windows. Start from durable event/checkpoint/side-effect state and follow active callers through recovery, terminalization, Work progress/finalization and restart. Do not mark broader Work durability complete until a concrete remaining crash window is proven closed by code and tests.
+Re-enter the active common body-success call chain read-only, beginning at `EmbodiedResidentRuntime._native_verification_step()` -> `_complete_successful_body_action()` -> outer `ZNResidentRuntime.run_once()` -> `_complete_result()` -> `KernelStore.complete_event()`. Prove the exact restart behavior if the process dies after a verified body success persists `WorkingState.stage = complete` but before terminal `EventOutcome` publication. Compare this with semantic UI completion and other active descendants, but select only one concrete next crash window for the next implementation slice.
 
-Keep `main` untouched during ordinary development.
+Do not generalize the append-recovery fix to all completion paths without proving what durable evidence each path needs to resume safely. Keep `main` untouched during ordinary development.
