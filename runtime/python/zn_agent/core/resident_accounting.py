@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Event-idempotent resident accounting for crash-recoverable native results."""
+"""Event-idempotent resident accounting for crash-recoverable results."""
 
 import json
 import sqlite3
@@ -25,6 +25,148 @@ class ResidentAccountingJournal:
     def __init__(self, store):
         self.store = store
         self._init_schema()
+
+    @staticmethod
+    def _normalize_domains(domains: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+        ordered: list[str] = []
+        for item in domains:
+            normalized = SelfModel._normalize_path(str(item or ""))
+            if normalized and normalized not in ordered:
+                ordered.append(normalized)
+        return tuple(ordered or ("general",))
+
+    def record_memory_success(
+        self,
+        *,
+        event_id: str,
+        domains: tuple[str, ...] | list[str],
+        quality: float = 1.0,
+    ) -> tuple[str, ...]:
+        normalized_domains = self._normalize_domains(domains)
+        sample = max(0.0, min(1.0, float(quality)))
+        self._record_native_success(
+            event_id=event_id,
+            kind="memory_success",
+            domains=normalized_domains,
+            ability_sample=None,
+            knowledge_sample=sample,
+        )
+        return normalized_domains
+
+    def record_native_investigation_success(
+        self,
+        *,
+        event_id: str,
+        domains: tuple[str, ...] | list[str],
+        quality: float = 0.95,
+    ) -> tuple[str, ...]:
+        normalized_domains = self._normalize_domains(domains)
+        sample = max(0.0, min(1.0, float(quality)))
+        self._record_native_success(
+            event_id=event_id,
+            kind="native_investigation_success",
+            domains=normalized_domains,
+            ability_sample=sample,
+            knowledge_sample=sample,
+        )
+        return normalized_domains
+
+    def record_external_completion(
+        self,
+        *,
+        event_id: str,
+        domains: tuple[str, ...] | list[str],
+        success: bool,
+        learning_sample: float,
+        model_invocations: int,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+    ) -> tuple[str, ...]:
+        normalized_event = str(event_id or "").strip()
+        if not normalized_event:
+            raise ValueError("resident accounting requires event_id")
+        normalized_domains = self._normalize_domains(domains)
+        invocations = max(0, int(model_invocations))
+        prompt = max(0, int(prompt_tokens))
+        completion = max(0, int(completion_tokens))
+        sample = max(0.0, min(1.0, float(learning_sample)))
+        accounting_kind = "external_completion"
+        now = utc_now()
+
+        with closing(self._connect()) as conn:
+            inserted = conn.execute(
+                f"INSERT OR IGNORE INTO {self.TABLE}(event_id,kind,created_at) VALUES(?,?,?)",
+                (normalized_event, accounting_kind, now),
+            )
+            if inserted.rowcount == 1:
+                if bool(success):
+                    for domain in normalized_domains:
+                        self._update_capability_estimate(
+                            conn,
+                            SelfModel.knowledge_key(domain),
+                            sample,
+                            now,
+                        )
+                conn.execute(
+                    "UPDATE runtime_metrics SET "
+                    "tasks_total=tasks_total+1, "
+                    "tasks_model=tasks_model+?, "
+                    "model_invocations=model_invocations+?, "
+                    "prompt_tokens=prompt_tokens+?, "
+                    "completion_tokens=completion_tokens+?, "
+                    "updated_at=? WHERE id=1",
+                    (
+                        1 if invocations else 0,
+                        invocations,
+                        prompt,
+                        completion,
+                        now,
+                    ),
+                )
+            conn.commit()
+        return normalized_domains
+
+    def _record_native_success(
+        self,
+        *,
+        event_id: str,
+        kind: str,
+        domains: tuple[str, ...],
+        ability_sample: float | None,
+        knowledge_sample: float | None,
+    ) -> bool:
+        normalized_event = str(event_id or "").strip()
+        if not normalized_event:
+            raise ValueError("resident accounting requires event_id")
+        now = utc_now()
+
+        with closing(self._connect()) as conn:
+            inserted = conn.execute(
+                f"INSERT OR IGNORE INTO {self.TABLE}(event_id,kind,created_at) VALUES(?,?,?)",
+                (normalized_event, str(kind), now),
+            )
+            if inserted.rowcount == 1:
+                for domain in domains:
+                    if ability_sample is not None:
+                        self._update_capability_estimate(
+                            conn,
+                            SelfModel.agent_capability_key(domain),
+                            max(0.0, min(1.0, float(ability_sample))),
+                            now,
+                        )
+                    if knowledge_sample is not None:
+                        self._update_capability_estimate(
+                            conn,
+                            SelfModel.knowledge_key(domain),
+                            max(0.0, min(1.0, float(knowledge_sample))),
+                            now,
+                        )
+                conn.execute(
+                    "UPDATE runtime_metrics SET tasks_total=tasks_total+1, updated_at=? WHERE id=1",
+                    (now,),
+                )
+            conn.commit()
+        return inserted.rowcount == 1
 
     def record_native_capability_success(
         self,
