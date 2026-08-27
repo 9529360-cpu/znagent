@@ -83,24 +83,29 @@ class EffectScopedPointerClickResidentRuntime(VerifiedPointerClickResidentRuntim
             self.store.save_working_state(state)
             return None
 
-        state.stage = "complete"
-        state.next_action = None
-        state.data["native_completion_scope"] = dict(completion_scope)
-        self._sync_execution_context(event, state)
-        self.store.save_working_state(state)
-        self.store.record_runtime_task(model_invocations=0)
-        return ResidentRunResult(
-            event=event,
-            execution_path=ExecutionPath.BODY,
-            success=True,
-            response=response,
-            model_invocations=0,
-            reason=(
+        completion = {
+            "execution_path": ExecutionPath.BODY.value,
+            "success": True,
+            "response": str(response or ""),
+            "model_invocations": 0,
+            "reason": (
                 "ZN completed this effect_probe only because its explicit completion_scope "
                 "binds the whole event to the independently verified visual_region_changed "
                 "effect; no broader user-task semantic or native ability was credited"
             ),
-        )
+        }
+        state.stage = "native_completion"
+        state.next_action = "publish terminal EventOutcome"
+        state.data["native_completion_scope"] = dict(completion_scope)
+        state.data["native_completion"] = completion
+        self._sync_execution_context(event, state)
+        self.store.record_runtime_task(model_invocations=0)
+        # This is the same resumable pre-EventOutcome contract used by ordinary
+        # verified Body success, but this narrow effect probe deliberately skips
+        # native ability credit. Once durable, restart may publish terminal truth
+        # without re-entering pointer input or local-effect verification.
+        self.store.save_working_state(state)
+        return self._native_completion_result(event, completion)
 
     def _pointer_click_completion_scope(
         self,
