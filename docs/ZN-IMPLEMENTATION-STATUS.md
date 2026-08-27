@@ -19,14 +19,14 @@ Development branch: `dev/zn-agent`. Canonical source/release branch: `main`.
 Exact newest implementation/CI checkpoint before this documentation synchronization:
 
 ```text
+fffb0f4b84a76cef21a088167c9eb4faceb93afc  fix: reconcile managed browser page lifecycle
 f90610749d257d63e66dd2149d746d3ec4579535  docs: reconcile managed browser verified frontier
 f05b2934d1ca4bb1299b7f143bc029de5732f212  ci: trigger managed browser proof for checkbox tests
 f79d4f3c81b1d7c46dcfb55b6fc923acda77b39c  test: preserve effect probe accounting authority
 d0e6c3bde9f50274a9ad4c31fac6a042364c8f7f  fix: defer body accounting without stealing completion ownership
-d615241dc7fb0f95be1aa524ab2d27cf1bf1804b  fix: preserve body accounting semantics after checkpoints
 ```
 
-Status: **BROADER WORK DURABILITY REMAINS PARTIAL. EIGHTEEN CONCRETE CRASH/RESTART WINDOWS REMAIN CLOSED AND VERIFIED. THE SYNCHRONOUS RECOVERY LIFECYCLE, SHARED SIDE-EFFECT-ATTEMPT OWNER/PRUNING INVARIANT, ACTIVE BODY CUMULATIVE ACCOUNTING BOUNDARY, AND CURRENT MANAGED-BROWSER VERIFIED FRONTIER/CI COVERAGE ARE NOW RECONCILED WITH REAL CODE AND REAL WINDOWS EVIDENCE.**
+Status: **BROADER WORK DURABILITY REMAINS PARTIAL. EIGHTEEN CONCRETE CRASH/RESTART WINDOWS REMAIN CLOSED AND VERIFIED. THE SYNCHRONOUS RECOVERY LIFECYCLE, SHARED SIDE-EFFECT-ATTEMPT OWNER/PRUNING INVARIANT, ACTIVE BODY CUMULATIVE ACCOUNTING BOUNDARY, MANAGED-BROWSER MUTATION FRONTIER, AND A NARROW RESIDENT-OWNED LIVE-PAGE REGISTRY LIFECYCLE ARE VERIFIED BY REAL WINDOWS CI/E2E. FRAME/TAB CONTROL AND PRESS REMAIN OPEN.**
 
 ## 1. Durable foundations
 
@@ -69,7 +69,7 @@ The verified crash/restart windows remain:
 17. external kernel attempts persist stable goal/attempt identity, full worker result, deterministic experience/proposal identity and exactly-once route-quality accounting;
 18. crash after provider dispatch but before a returned result becomes explicit unknown-provider-outcome uncertainty: provider replay is blocked and no route learning or improvement proposal is invented from the unknown result.
 
-The crash-window count remains eighteen. The synchronous caller boundary, shared side-effect-attempt persistence/pruning proof, Body-accounting proof and browser frontier reconciliation are additional lifecycle/persistence/accounting/product-evidence invariants, not artificial new crash-window counts.
+The crash-window count remains eighteen. The synchronous caller boundary, shared side-effect-attempt persistence/pruning proof, Body-accounting proof and browser lifecycle/product proofs are additional lifecycle/persistence/accounting/product-evidence invariants, not artificial new crash-window counts.
 
 ## 3. Verified synchronous recovery lifecycle boundary
 
@@ -162,22 +162,37 @@ Ordinary verified Body success may count one task and update native ability/know
 
 The first wrapper exposed a real pointer completion ownership regression in focused CI. It was fixed rather than hidden; only the later green proof head is authoritative.
 
-## 6. Managed-browser frontier reconciliation
+## 6. Managed-browser verified frontier and page lifecycle
 
-This stage changed no browser runtime behavior. It reconciled the product ledger and dedicated CI trigger against already-existing code and provider evidence.
+### 6.1 P3 frontier reconciliation
 
-Repository truth now recorded in `docs/ZN-PRODUCT-CAPABILITY-MAP.md`:
+P3 changed no browser runtime behavior. It reconciled the product ledger and dedicated CI trigger against already-existing code and provider evidence.
 
-- native `SELECT_OPTION` is already implemented and is **VERIFIED NARROW**, not OPEN;
+Repository truth remains:
+
+- native `SELECT_OPTION` is implemented and **VERIFIED NARROW**;
 - active chain is `BrowserActionKind.SELECT_OPTION` -> `PlaywrightManagedBrowser.act()` -> `managed_browser_select.perform_select_option`;
-- the mutation is limited to an enabled single-select native combobox with one explicit bounded string value, current target authority, exact-node continuity and fresh privacy-safe selected-value evidence;
-- already-selected, multi-select, replacement and no-change cases fail closed, and raw requested value is not persisted;
 - native CHECK/UNCHECK remain **VERIFIED NARROW** with exact-node and fresh boolean state evidence;
-- `PRESS` remains genuinely OPEN: it exists in the typed action/permission contract, but managed-provider dispatch/postcondition ownership is not implemented.
+- `PRESS` remains genuinely OPEN: it exists in the typed action/permission contract, but managed-provider dispatch/postcondition ownership is not implemented;
+- no arbitrary provider method is completion authority.
 
-The dedicated browser workflow already dynamically executed `test_managed_browser_check.py`, but that test file was absent from `push.paths`. Commit `f05b2934d1ca4bb1299b7f143bc029de5732f212` adds the missing trigger so changes limited to the checkbox contract tests invoke the real Chromium proof lane.
+### 6.2 P4 resident-owned live-page registry
 
-No arbitrary provider method was added. Any future `PRESS` implementation must first define a bounded resident-owned authority and independently observable effect; provider `press()` return alone is not completion truth.
+The call-chain audit showed that `session.pages` previously contained only pages explicitly registered by ZN. Playwright-created additional pages were absent from ZN observation truth, closed pages could remain counted, and default-page selection was only the first dictionary key. That made `page_count` and page availability potentially stale before adding any further side-effect action.
+
+Commit `fffb0f4b84a76cef21a088167c9eb4faceb93afc` implements a bounded page-registry lifecycle slice:
+
+- `_ManagedSession` owns a monotonic `next_page_sequence` and explicit `default_page_id`;
+- exported page IDs are resident-owned `page-N` identities rather than Python provider object addresses;
+- reconciliation observes Playwright `context.pages`, registers newly live pages, evicts closed/disappeared pages, and fails closed when an available provider registry cannot be read;
+- page eviction disposes the page target binding and removes stale `last_observation` state;
+- if the default page disappears, the next still-live resident page becomes default deterministically;
+- evicted page IDs are not reused in the same live session;
+- observation metadata exposes `page_ids` and `default_page_id` in addition to current `page_count`.
+
+This is **VERIFIED NARROW page-registry lifecycle**, not complete tab/popup/frame ownership. It does not add popup intent/permission semantics, explicit tab-open/switch/close actions, child-frame identities, iframe target authority, persistent browser-session recovery, or PRESS.
+
+`tests/zn_agent/core/test_managed_browser_pages.py` covers provider-page discovery, stable IDs, default-page promotion, target-handle cleanup and fail-closed provider registry observation. `tests/zn_agent/e2e/test_windows_managed_browser_pages.py` verifies new-page discovery, closed-page eviction/default promotion and non-reuse against real local Chromium. The dedicated workflow trigger now includes both test files.
 
 ## 7. Real Windows CI proof
 
@@ -195,17 +210,22 @@ ZN Work Recovery E2E run 33119871079  success
 ZN CI run 33119871129                 success
 ```
 
-Current browser frontier reconciliation proof:
+P3 browser frontier reconciliation proof remains:
 
 ```text
-f05b2934d1ca4bb1299b7f143bc029de5732f212
-ZN Managed Browser E2E run 33120809421                success
+ZN Managed Browser E2E run 33120809421  success
+ZN CI run 33120848980                   success
+```
+
+P4 live-page registry proof head `fffb0f4b84a76cef21a088167c9eb4faceb93afc`:
+
+```text
+ZN Managed Browser E2E run 33122620361                success
   Prepare isolated browser runtime                    success
   Run managed browser contract tests                  success
   Run real local Chromium E2E                         success
 
-f90610749d257d63e66dd2149d746d3ec4579535
-ZN CI run 33120848980                                  success
+ZN CI run 33122620398                                  success
 ZN Kernel / Python / Windows                           success
   Boot isolated ZN distribution without a model       success
   Compile resident core                               success
@@ -215,7 +235,7 @@ Electron / TypeScript / Windows                        success
 Publish Windows CI statuses                            success
 ```
 
-Historical action-specific browser proof remains useful background evidence: SELECT_OPTION had dedicated real-Chromium success in run `33001748123`; CHECK/UNCHECK had real-Chromium success including run `32979312465`. Current run `33120809421` revalidates the present managed-browser working tree after the trigger repair.
+Historical action-specific browser proof remains useful background evidence: SELECT_OPTION had dedicated real-Chromium success in run `33001748123`; CHECK/UNCHECK had real-Chromium success including run `32979312465`.
 
 No local repository test run is claimed for this web-maintainer slice. Repository self-hosted Windows CI is the verification authority.
 
@@ -224,10 +244,11 @@ No local repository test run is claimed for this web-maintainer slice. Repositor
 Open work still includes:
 
 - broader Work durability beyond the eighteen proven crash/restart windows and the additional verified synchronous recovery, shared-attempt persistence/pruning and Body-accounting invariants;
+- durable per-task Work checkpoints / restore / rollback remain OPEN and are now the next major foundation;
 - no deliberate outcome-trace rewrite/compactor; any future implementation must atomically retarget receipts before deleting old representation and requires separate review for destructive long-term-memory migration;
 - explanatory-comment cleanup in `intentional_resident.py` remains non-behavioral debt;
 - Windows continuity M8;
-- browser `PRESS`, broader click/text replacement/ARIA checkbox mutation, multi-target/frame/tab/page lifecycle, headed managed browser and browser-session UX;
+- browser `PRESS`, broader click/text replacement/ARIA checkbox mutation, multi-target/frame lifecycle, explicit tab/popup control, headed managed browser and browser-session UX;
 - authenticated User Browser Bridge control;
 - SM1+ self-maintenance.
 
@@ -235,14 +256,15 @@ High-risk identity, long-term memory, credential/permission, updater/signing, ro
 
 ## 9. Next real target
 
-P1 shared-attempt persistence, P2 bounded cumulative accounting/learning durability, and P3 browser frontier reconciliation are complete and CI-verified. Do not continue any of those audits indefinitely without new evidence.
+P1 shared-attempt persistence, P2 bounded cumulative accounting/learning durability, P3 browser frontier reconciliation, and the bounded P4 resident-owned live-page registry are complete and CI-verified. Do not continue browser action expansion merely because additional enum members or Playwright methods exist.
 
-Next reassess the genuinely open managed-browser frontier from the real call chain:
+The bounded browser checkpoint is now sufficient to return to the higher-leverage broader Work foundation:
 
-1. compare `PRESS` against broader target/frame/tab lifecycle value and dependencies rather than implementing the thinnest enum member automatically;
-2. if `PRESS` is chosen, define exact key vocabulary, authority scope, replay/side-effect lifecycle and independent postcondition before provider dispatch;
-3. if target/frame/tab lifecycle is the higher-leverage prerequisite, establish stable page/frame identities and stale-target handling first;
-4. after that bounded browser checkpoint, return to the highest-leverage broader Work/checkpoint/restore foundation from current repository truth.
+1. trace the active Work checkpoint/restart call chain from ingress through durable owner, lifecycle state, side-effect ownership, recovery and terminal publication;
+2. define the smallest useful resident-owned per-task checkpoint/restore contract that survives process restart without creating replay permission for unknown outside-world effects;
+3. reuse existing durable semantic checkpoints and side-effect-attempt truth rather than building a second competing recovery store;
+4. prove at least one new concrete crash/restart window only when the implementation actually closes one; do not inflate the existing count by renaming invariants;
+5. keep PRESS, explicit tab/popup control and frame identity OPEN until dependency evidence makes browser work higher leverage again.
 
 Preserve `outside_world_effect_uncertain` and unknown external-provider outcomes as uncertainty, not replay permission or fabricated success/failure evidence.
 

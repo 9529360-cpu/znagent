@@ -74,7 +74,7 @@ Resident Managed Browser + User Browser Bridge
 | --- | --- | --- | --- |
 | HTTP web search/extract | Web Senses / external resources | VERIFIED/PARTIAL | Tavily/Exa/Firecrawl resources exist with resident-owned normalization/failover |
 | ZN-owned browser session/action/evidence contracts | Browser Body/Senses | FOUNDATION | session, permission, query, target, observation, action, authority and effect contracts are ZN-owned and hardened |
-| Local managed Chromium, headless | Browser Body | FOUNDATION | Playwright adapter + dedicated real Windows Chromium navigation/target/focus/toggle-click/type-text/check/uncheck/select-option E2E exist; lifecycle cleanup is resident-owned |
+| Local managed Chromium, headless | Browser Body | FOUNDATION | Playwright adapter + dedicated real Windows Chromium navigation/target/focus/toggle-click/type-text/check/uncheck/select-option and page-registry lifecycle E2E exist; lifecycle cleanup is resident-owned |
 | Local managed Chromium, headed | Browser Body | OPEN | same ZN contracts, separate real UX/evidence |
 | DOM/accessibility target sensing | Browser Senses | PARTIAL / VERIFIED NARROW | exact `DOM_ID` for one unique visible main-frame element is real-Chromium verified; iframe, generic accessibility, multi-target/disambiguation and visual fusion remain open |
 | Managed-browser focus | Browser Body | VERIFIED NARROW | exact current target authority, execution-time exact-node revalidation, `FOCUS`, and fresh `document.activeElement` evidence are real-Chromium verified |
@@ -84,7 +84,7 @@ Resident Managed Browser + User Browser Bridge
 | Managed-browser native UNCHECK | Browser Body | VERIFIED NARROW | enabled checked native `input[type=checkbox]`, current authority, provider `uncheck()`, exact-node continuity and fresh `checked=false` evidence are real-Chromium verified |
 | Managed-browser native SELECT_OPTION | Browser Body | VERIFIED NARROW | enabled single-select native `select`/combobox, one explicit bounded string value, current target authority, provider `select_option`, exact-node continuity and fresh selected-value length+SHA-256 evidence are real-Chromium verified; already-selected, multi-select, replacement and no-change cases fail closed and raw requested value is not persisted |
 | PRESS / broader click / text replacement / ARIA checkbox | Browser Body | OPEN | `PRESS` exists only in the action/permission contract today; managed-provider dispatch is not implemented. No arbitrary provider-success surface: each new mutation requires a bounded independent postcondition |
-| Multi-tab/popup/frame lifecycle | Browser Body/Senses | OPEN | needs stable page/frame identities and stale-target handling |
+| Multi-tab/popup/frame lifecycle | Browser Body/Senses | PARTIAL / VERIFIED NARROW | live Playwright pages are reconciled into stable monotonic ZN page IDs, provider-created pages are discovered, closed pages are evicted with stale observation/target-handle cleanup, default-page promotion is deterministic, and real Chromium E2E verifies non-reuse; popup intent/ownership, explicit tab actions, frame identities and iframe stale-target handling remain open |
 | Downloads/uploads | Browser Body + File authority | OPEN | adapter refuses these until explicit file authority exists |
 | Screenshots/visual browser sensing | Browser Senses | OPEN | integrate with visual evidence rather than making pixels completion authority by themselves |
 | Persistent ZN-managed browser profile | Browser state | OPEN | explicitly separate from user profiles/credentials |
@@ -94,6 +94,8 @@ Resident Managed Browser + User Browser Bridge
 | MFA/sensitive-field handling | Permission / Body | OPEN | never silently replay/extract secrets; explicit high-risk boundaries required |
 
 Managed mutation evidence remains deliberately narrow. Provider handles are disposable execution resources and never ZN identity. `FOCUS` requires exact-node continuity plus fresh focus evidence. `CLICK` is limited to explicit boolean `aria-pressed` transitions. `TYPE_TEXT` is limited to an empty writable non-password textbox with bounded Unicode input and privacy-safe length/digest evidence. Native `CHECK` and `UNCHECK` independently prove inverse boolean transitions on the same exact native checkbox. Native `SELECT_OPTION` is limited to an enabled single-select native combobox, one explicit bounded string value, exact-node continuity and privacy-safe fresh selected-value evidence. Generic click, text replacement, password entry, contenteditable, ARIA checkbox control, PRESS and arbitrary provider methods remain unavailable until independently verified.
+
+Managed page identity is now resident-owned within one live session rather than derived from Python provider object identity. The adapter reconciles the provider page registry before page selection/authority checks, never reuses an evicted page ID during that session, and disposes target bindings when a page disappears. This is page-registry lifecycle only: it does not imply popup permission semantics, explicit tab switching/closing APIs, child-frame identity, or persistent browser-session recovery.
 
 The User Browser Bridge provider proof remains sensing-only: it uses a temporary isolated profile and bounded focused-element/current-text evidence, not authenticated browser control.
 
@@ -136,7 +138,7 @@ The User Browser Bridge provider proof remains sensing-only: it uses a temporary
 | Product need | ZN owner | Status | Current evidence / open work |
 | --- | --- | --- | --- |
 | Persist work across restarts | Work / resident state | PARTIAL | resident work/progress state exists |
-| Durable per-task checkpoints / restore | Work / resident state | OPEN | next major foundation after the current browser checkpoint |
+| Durable per-task checkpoints / restore | Work / resident state | OPEN | next major foundation after the verified narrow browser page-lifecycle checkpoint |
 | Scheduled tasks | Will / resident scheduler | OPEN | must persist independently of chat/model provider |
 | Event-triggered tasks | Senses / Will | OPEN | external events become observations, not direct execution authority |
 | Conditional monitoring | Investigation / Will | OPEN | evidence-based notification lifecycle required |
@@ -197,9 +199,9 @@ The order is dependency- and leverage-driven, not “implement the thinnest row 
 
 ```text
 A. keep resident continuity + Windows CI trustworthy
-B. preserve Managed Browser navigation/target/focus/toggle-click/type-text/check/uncheck/select-option real Chromium evidence
-C. keep the dedicated browser proof lane aligned with every verified mutation test and correct capability-ledger drift before expanding behavior
-D. reassess PRESS and broader target/frame/tab lifecycle; stop arbitrary action expansion at a useful browser checkpoint
+B. preserve Managed Browser navigation/target/focus/toggle-click/type-text/check/uncheck/select-option and page-registry lifecycle real Chromium evidence
+C. keep the dedicated browser proof lane aligned with every verified narrow browser contract
+D. treat stable live-page registry/eviction as the bounded browser checkpoint; leave PRESS, explicit tab/popup control and frame identity OPEN until new dependency evidence justifies returning
 E. build durable resident-owned Work / checkpoint / restore / recovery
 F. build isolated parallel Work / Investigation + evidence merge without multiple ZN identities
 G. build ZN-owned connector/resource/permission/effect contracts, then MCP interoperability as an adapter
