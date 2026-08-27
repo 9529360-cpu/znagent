@@ -19,15 +19,14 @@ Development branch: `dev/zn-agent`. Canonical source/release branch: `main`.
 Current verified implementation/test/CI checkpoint before documentation synchronization:
 
 ```text
-79f7b07dec8e86576f7df66c588ca3b55b278922  test: fail closed on malformed capability observation
-08c74058061d612ba8d478d67f211a56edc50d20  fix: fail closed on malformed observed capability result
-e61a6749e4478af90cee63cdfa61291f58af7432  ci: cover capability failure restart recovery
-d71fd35ed0a1fb3de16d83035cef26c0407f13f0  test: prove observed capability failure recovery
-ce90a747eef4340d154db0e3ee24ad15bf226759  fix: resume observed capability failures safely
-861533bcf05b4f15289305452011721972fddf73  feat: make capability failure accounting idempotent
+20655834570a31dd4f59abcbc3502aab9e1d81f4  test: avoid slot-unsafe budget mocking
+4f16cebfa867edbf50ed1094c410d3e15e3f90c7  ci: cover terminal failure restart recovery
+c67d477397dbe02f12fb562aa7aece9ff941500a  test: prove terminal failure restart recovery
+076a611994d85aa76fcaf895142eb46acf93a4e4  fix: make terminal failure completion restart safe
+7fdeddc68c3828504931af24149092ddf824783f  feat: journal terminal failure task accounting
 ```
 
-Status: **BROADER WORK DURABILITY REMAINS PARTIAL. ELEVEN CONCRETE CRASH WINDOWS ARE CLOSED AND VERIFIED. `EventOutcome` REMAINS TERMINAL TRUTH. CANCELLATION REMAINS LIFECYCLE AUTHORITY, NOT EVIDENCE THAT AN OUTSIDE-WORLD EFFECT DID OR DID NOT OCCUR.**
+Status: **BROADER WORK DURABILITY REMAINS PARTIAL. THIRTEEN CONCRETE CRASH WINDOWS ARE CLOSED AND VERIFIED. `EventOutcome` REMAINS TERMINAL TRUTH. CANCELLATION REMAINS LIFECYCLE AUTHORITY, NOT EVIDENCE THAT AN OUTSIDE-WORLD EFFECT DID OR DID NOT OCCUR.**
 
 ## 1. Existing durable foundations
 
@@ -42,9 +41,9 @@ The established durable boundaries remain:
 
 Generic nervous `perceive()` remains intentionally plastic and is not an exactly-once API.
 
-## 2. Eleven proven broader Work crash windows
+## 2. Thirteen proven broader Work crash windows
 
-The first nine verified windows remain:
+The first eleven verified windows remain:
 
 1. missing Work ingress linkage after durable resident event creation;
 2. recovery decision committed before the next `WorkingState` save;
@@ -54,106 +53,103 @@ The first nine verified windows remain:
 6. common verified Body success resumes from `native_completion` without Body replay;
 7. base resident investigation success resumes from `investigation_completion` without native reprobe;
 8. verified semantic/focused/UI completion resumes from `native_completion` without resensing or input replay;
-9. already-established base resident MEMORY/CAPABILITY success resumes from `resident_completion` without re-recall/re-execution.
+9. already-established base resident MEMORY/CAPABILITY success resumes from `resident_completion` without re-recall/re-execution;
+10. compiled capability execution persists durable `started`/`observed` ownership, blocks blind replay by default, and uses event-idempotent successful capability accounting;
+11. durable observed compiled-capability failure resumes into native investigation without capability replay or duplicate failure evidence, while malformed observed truth fails closed.
 
-### 2.10 Compiled capability execution ownership before `resident_completion`
+The detailed tenth- and eleventh-window contracts remain implemented in `capabilities.py`, `capability_recovery_resident.py`, `resident_accounting.py`, `test_resident_native_completion_recovery.py`, and `test_capability_failure_recovery.py`.
 
-The adjacent ninth-window gap was earlier than `resident_completion`: compiled capability code is arbitrary resident-owned program code and may touch the outside world. The old chain could persist only `native_capability`, execute the handler, return success, update self-model/runtime accounting, and then crash before `resident_completion`. Restart could therefore execute the same opaque code again and could duplicate accounting.
+### 2.12 Terminal budget-blocked failure before `EventOutcome`
 
-The active product now owns an explicit durable compiled-capability execution protocol:
-
-```text
-resolve compiled capability
--> persist capability attempt `started` + WorkingState atomically
--> execute resident-owned capability code
--> persist serialized result as attempt `observed` + WorkingState atomically
--> event-idempotent native capability self-model/runtime accounting
--> persist `resident_completion`
--> `KernelStore.complete_event()` terminal transaction
-```
-
-Capability replay semantics are explicit rather than guessed:
-
-- `CallableCapability` / `ExactTaskCapability` default to `replay_safe=False`;
-- a default capability interrupted after durable `started` is never blindly executed again;
-- restart converts that durable ownership fact into the existing `side_effect_recovery` state with `blocked_by=outside_world_effect_uncertain` and `replay_blocked=True`;
-- cancellation remains lifecycle authority and atomically abandons the attempt without claiming whether an outside-world effect occurred;
-- only a capability explicitly declared `replay_safe=True` may retry after an interrupted durable `started`;
-- once a successful result is durably `observed`, restart can reconstruct it even if the capability is not re-registered and without memory recall, matching, resolution or handler execution.
-
-Successful capability accounting is event-idempotent for this path. `resident_event_accounting(event_id, kind)` gates the self-model evidence update and `runtime_metrics.tasks_total` increment in one SQLite transaction. A crash after accounting but before `resident_completion` can therefore resume from the durable observed result and re-enter the accounting method without duplicating evidence or task totals.
-
-Focused regressions in `test_resident_native_completion_recovery.py` prove:
-
-- interrupted default capability -> restart recovery with no replay and no false failure learning; cancellation closes only lifecycle/attempt ownership;
-- explicitly replay-safe capability -> restart may retry the same durable attempt and then complete;
-- observed successful capability -> restart completes without capability code being present and without duplicate self-model/runtime accounting;
-- the prior `resident_completion` restart case still publishes the exact capability result without re-execution.
-
-### 2.11 Observed compiled-capability failure before native investigation
-
-A returned compiled-capability failure is different from an interrupted opaque side effect. The capability wrapper already persists an ordinary returned failure as durable `capability_execution.status=observed`, so ZN has a reliable failure fact. Previously the active resident only resumed observed success. Restart could ignore the observed failure, re-enter memory/capability matching, execute code again, and duplicate `observe_native_outcome(... success=False)` evidence.
-
-The active product now treats observed capability failure as its own resumable fact:
+The active base resident previously reached a known terminal no-model failure through:
 
 ```text
-capability returns known failure
--> atomically persist result as `observed` + WorkingState
--> event-idempotent native capability failure evidence
--> persist `native_investigation` continuation
--> continue investigation without reloading/re-executing capability code
+native_deliberation
+-> Life impasse unresolved
+-> runtime_metrics.tasks_total++
+-> WorkingState failed
+-> return BUDGET_BLOCKED result
+-> KernelStore.complete_event()
 ```
 
-`ResidentAccountingJournal.record_native_capability_failure()` gates failure evidence by `(event_id, native_capability_failure)`. This path deliberately does **not** increment `runtime_metrics.tasks_total`, because a failed compiled capability is an intermediate observation and the resident task continues into native investigation.
+A crash after ordinary task accounting but before durable terminal publication could re-enter deliberation, increment the impasse attempt again, and count the same terminal task twice.
+
+The base owner now persists terminal failure truth before terminal accounting:
+
+```text
+known terminal no-model failure
+-> persist WorkingState stage=terminal_failure + exact failure payload
+-> ResidentAccountingJournal.record_terminal_failure(event_id)
+-> reconstruct BUDGET_BLOCKED result from durable checkpoint
+-> KernelStore.complete_event()
+```
+
+`record_terminal_failure()` is gated by `(event_id, terminal_failure)` and atomically increments runtime task metrics only on the first insert. It deliberately does not add native ability or knowledge evidence; this preserves the existing semantics rather than inventing failure learning.
 
 Restart semantics are explicit:
 
-- a durable observed failure is resumed before memory recall or capability resolution;
-- a crash after failure accounting but before the `native_investigation` WorkingState save re-enters the accounting method safely without duplicate evidence;
-- `outside_world_effect_uncertain` remains recovery/uncertainty and is rejected if any caller tries to convert it into known failure evidence;
-- malformed durable `observed` result data fails closed with `RuntimeError` rather than falling through to capability replay.
+- crash after the `terminal_failure` checkpoint but before accounting resumes the same checkpoint and performs accounting once;
+- crash after accounting but before `EventOutcome` resumes the same checkpoint without duplicate task count;
+- restart does not repeat native deliberation or add another impasse attempt;
+- the durable failure validator currently accepts only zero-model `BUDGET_BLOCKED` terminal failure. External cognition is not silently folded into this contract.
 
-Focused regressions in `test_capability_failure_recovery.py` prove:
+### 2.13 Outer `run_once()` deterministic exception before `EventOutcome`
 
-- `test_observed_failure_resumes_without_code_or_duplicate_failure_learning` simulates crash after durable failure accounting but before investigation checkpoint, restarts without capability code, makes memory recall/resolution fatal, and verifies exactly one failure-evidence update with no task-total increment;
-- `test_malformed_observed_result_fails_closed_without_replay` verifies corrupt observed result truth cannot reopen execution.
+The outer resident exception path had the same accounting-before-publication problem. It now uses the same durable terminal-failure checkpoint and event-idempotent task accounting before terminal publication.
 
-This closes the observed compiled-capability failure -> native-investigation restart interval for the tested ownership contract. It does **not** close terminal failure ownership in `_deliberation_step()`, the outer `run_once()` exception path, structured-memory pre-completion accounting, or external cognition completion boundaries.
+The exception boundary also now preserves stronger durable truth instead of overwriting it:
+
+- if an `EventOutcome` already exists, it remains authoritative and is returned;
+- if a success/completion checkpoint is already durable and `complete_event()` itself throws before publication, the exception is propagated and the success checkpoint remains intact for retry; it is not reclassified as failure;
+- if the current event is in `side_effect_recovery` or has `blocked_by=outside_world_effect_uncertain`, the exception is propagated without inventing known failure evidence, task completion, or an `EventOutcome`;
+- already-durable terminal/completion stages remain owned by their stage-specific recovery path rather than by the generic exception fallback.
+
+Focused regressions in `test_terminal_failure_recovery.py` prove five boundaries:
+
+```text
+test_budget_failure_accounting_survives_crash_before_outcome
+test_budget_failure_checkpoint_survives_crash_before_accounting
+test_outer_exception_failure_survives_restart_without_duplicate_accounting
+test_publish_exception_preserves_durable_success_checkpoint
+test_outer_exception_does_not_reclassify_outside_world_uncertainty
+```
+
+This closes the tested terminal no-model failure and deterministic outer-exception publication intervals. It does **not** claim that external cognition success/failure completion is durable, nor that structured-memory/investigation pre-checkpoint accounting is already idempotent.
 
 ## 3. Real Windows CI proof
 
-Exact implementation/test/CI head `79f7b07dec8e86576f7df66c588ca3b55b278922`:
+Exact implementation/test/CI head `20655834570a31dd4f59abcbc3502aab9e1d81f4`:
 
 ```text
-ZN Work Recovery E2E run 33103741459                success
+ZN Work Recovery E2E run 33108134821                success
 Windows resident Work restart recovery               success
 Compile Work recovery path                           success
 Verify durable Work progress and restart recovery    success
+  focused recovery suite                             66 tests / success
 
-ZN CI run 33103741461                                success
+ZN CI run 33108134767                                success
 ZN Kernel / Python / Windows                         success
   Boot isolated ZN distribution without a model      success
   Compile resident core                              success
   Run ZN core tests against working tree             success
 ZN Source Boundary / Windows                         success
 Electron / TypeScript / Windows                      success
-Publish Windows CI statuses                          success
 ```
 
-The focused recovery suite includes the existing capability interruption/success recovery regressions plus the new observed-failure/idempotency and malformed-observation fail-closed tests. The ordinary Kernel gate also passed the full working-tree core suite.
+The first focused attempt on superseded head `4f16cebfa867edbf50ed1094c410d3e15e3f90c7` failed only because two tests tried to patch the read-only slotted `CognitiveBudgetManager.decide` instance method. Code compiled and the other focused tests passed. Commit `20655834570a31dd4f59abcbc3502aab9e1d81f4` removed that slot-unsafe test instrumentation and the authoritative rerun passed.
 
-No local test run is claimed for this web-maintainer slice because there is no repository checkout in the available execution container. Repository self-hosted Windows CI is the verification authority.
+No local repository test run is claimed for this web-maintainer slice. Repository self-hosted Windows CI is the verification authority.
 
-Previous tenth-window implementation head `a5d95f1f2049f96e9ece0c4a1f0ccfa1883e884d` passed `ZN Work Recovery E2E` run `33101772085` and `ZN CI` run `33101772081`.
+Previous eleventh-window implementation head `79f7b07dec8e86576f7df66c588ca3b55b278922` passed `ZN Work Recovery E2E` run `33103741459` and `ZN CI` run `33103741461`.
 
 ## 4. What remains partial
 
 Open work still includes:
 
-- broader Work durability beyond these eleven proven windows;
-- terminal failure/checkpoint ownership remains unproven for `_deliberation_step()` impasse/budget failure and the outer `run_once()` exception path; those paths can still account failure before terminal publication without a dedicated resumable failure-completion contract;
-- structured-memory success still performs self-model/runtime accounting before its completion checkpoint; only the already-durable `resident_completion` restart interval is proven there;
-- external cognition success/failure completion boundaries still require direct crash/restart proof rather than analogy;
+- broader Work durability beyond these thirteen proven windows;
+- structured-memory success still performs self-model/runtime accounting before its `resident_completion` checkpoint; restart after an already-durable completion is proven, but the earlier accounting interval is not;
+- base native-investigation success likewise performs self-model/runtime accounting before its `investigation_completion` checkpoint; the later restart interval is proven, the earlier interval is not;
+- external cognition success/failure completion and learning/accounting boundaries still require direct crash/restart proof rather than analogy;
 - the shared `resident_side_effect_attempts` truth is used by Body and compiled capability recovery, but low-level helper implementation is not yet fully consolidated; do not treat helper duplication as a second truth model;
 - direct synchronous driving while a Work item is in unresolved `side_effect_recovery` still deserves separate lifecycle review; unresolved external truth must not be converted to automatic replay or failure merely to make synchronous callers terminate;
 - no deliberate outcome-trace rewrite/compactor; any future implementation must atomically retarget receipts before deleting old representation and requires separate review for destructive long-term-memory migration;
@@ -167,8 +163,12 @@ High-risk identity, long-term memory, credential/permission, updater/signing, ro
 
 ## 5. Next real target
 
-Continue from real call-chain evidence, not analogy. The strongest next Work durability target is terminal failure completion ownership: trace `_deliberation_step()` impasse/budget failure and the outer `run_once()` exception path through Life/self-model/runtime accounting, WorkingState persistence and terminal `EventOutcome`. Establish a durable resumable failure fact before non-idempotent learning/accounting, without converting uncertain outside-world effects into invented failure evidence.
+Run the bounded backward durability audit using the patterns now proven by the thirteen crash windows. Start with the nearest still-open accounting-before-checkpoint intervals:
 
-After that, prove structured-memory pre-completion accounting and external-cognition success/failure completion boundaries independently.
+1. structured-memory success: self-model/runtime accounting -> `resident_completion`;
+2. base native-investigation success: self-model/runtime accounting -> `investigation_completion`;
+3. external cognition success/failure: model execution/result, task accounting, learning, WorkingState and terminal `EventOutcome`.
+
+For each path, trace entry -> owner -> durable state -> lifecycle -> dependencies -> tests -> active caller, and add direct crash/restart proof instead of assuming similarity. Preserve `outside_world_effect_uncertain` as uncertainty rather than success/failure evidence.
 
 Keep `main` untouched during ordinary development.
