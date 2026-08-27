@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 import uuid
 from contextlib import closing
 from typing import Any
 
+from . import side_effect_attempts
 from .body import BodyActionResult
 from .keyboard_text_body import KeyboardTextBody
 from .models import utc_now
@@ -33,8 +33,8 @@ class SideEffectAwareBody(KeyboardTextBody):
     hash and bounded execution metadata are persisted.
     """
 
-    _TABLE = "resident_side_effect_attempts"
-    _MAX_COMPLETED_ATTEMPTS = 4096
+    _TABLE = side_effect_attempts.TABLE
+    _MAX_COMPLETED_ATTEMPTS = side_effect_attempts.MAX_COMPLETED_ATTEMPTS
     _COMMAND_KINDS = frozenset({"command", "terminal", "shell"})
     _APPEND_KINDS = frozenset({"write_text", "write_file"})
     _RECOVERY_STATUSES = frozenset({"verified_effect", "verified_absent"})
@@ -138,6 +138,8 @@ class SideEffectAwareBody(KeyboardTextBody):
 
     @staticmethod
     def _signature_hash(kind: str, args: dict[str, Any]) -> str:
+        # Historical Body identity. Do not normalize this to the compiled-
+        # capability signature format: persisted rows depend on these exact bytes.
         encoded = json.dumps(
             {"kind": kind, "args": args},
             ensure_ascii=False,
@@ -150,23 +152,7 @@ class SideEffectAwareBody(KeyboardTextBody):
     def _init_schema(self) -> None:
         super()._init_schema()
         with closing(self._connect()) as conn:
-            conn.executescript(
-                f"""
-                CREATE TABLE IF NOT EXISTS {self._TABLE}(
-                    attempt_id TEXT PRIMARY KEY,
-                    event_id TEXT NOT NULL,
-                    signature_hash TEXT NOT NULL,
-                    kind TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    started_at TEXT NOT NULL,
-                    completed_at TEXT,
-                    result_action_id TEXT,
-                    result_success INTEGER
-                );
-                CREATE INDEX IF NOT EXISTS idx_resident_side_effect_attempt
-                    ON {self._TABLE}(event_id, signature_hash, started_at DESC);
-                """
-            )
+            side_effect_attempts.ensure_schema(conn)
             conn.commit()
 
     def _start_attempt(
@@ -178,37 +164,30 @@ class SideEffectAwareBody(KeyboardTextBody):
         signature_hash: str,
     ) -> None:
         with closing(self._connect()) as conn:
-            conn.execute(
-                f"INSERT INTO {self._TABLE}"
-                "(attempt_id,event_id,signature_hash,kind,status,started_at) "
-                "VALUES(?,?,?,?,?,?)",
-                (
-                    attempt_id,
-                    event_id,
-                    signature_hash,
-                    kind,
-                    "started",
-                    utc_now(),
-                ),
+            side_effect_attempts.start_attempt(
+                conn,
+                attempt_id=attempt_id,
+                event_id=event_id,
+                kind=kind,
+                signature_hash=signature_hash,
             )
             conn.commit()
 
     def _finish_attempt(self, attempt_id: str, result: BodyActionResult) -> None:
         with closing(self._connect()) as conn:
-            cursor = conn.execute(
-                f"UPDATE {self._TABLE} SET status=?,completed_at=?,result_action_id=?,"
-                "result_success=? WHERE attempt_id=? AND status='started'",
-                (
-                    "observed",
-                    result.completed_at or utc_now(),
-                    result.action_id,
-                    1 if result.success else 0,
-                    attempt_id,
-                ),
+            changed = side_effect_attempts.observe_started_attempt(
+                conn,
+                attempt_id=attempt_id,
+                completed_at=result.completed_at or utc_now(),
+                result_action_id=result.action_id,
+                success=result.success,
             )
-            if cursor.rowcount != 1:
+            if changed != 1:
                 raise RuntimeError("side-effect attempt lost its active started record")
-            self._prune_completed(conn)
+            side_effect_attempts.prune_terminal_attempts(
+                conn,
+                max_completed=self._MAX_COMPLETED_ATTEMPTS,
+            )
             conn.commit()
 
     def resolve_uncertain_attempt(
@@ -249,41 +228,29 @@ class SideEffectAwareBody(KeyboardTextBody):
             or normalized_status not in self._RECOVERY_STATUSES
         ):
             return False
+        evidence_id = str(evidence_action_id or "").strip() or None
         with closing(self._connect()) as conn:
-            cursor = conn.execute(
-                f"UPDATE {self._TABLE} SET status=?,completed_at=COALESCE(completed_at,?),"
-                "result_action_id=COALESCE(result_action_id,?) "
-                "WHERE attempt_id=? AND event_id=? AND status IN ('started','observed')",
-                (
-                    normalized_status,
-                    utc_now(),
-                    str(evidence_action_id or "").strip() or None,
-                    normalized_attempt,
-                    normalized_event,
-                ),
+            changed = side_effect_attempts.resolve_attempt(
+                conn,
+                attempt_id=normalized_attempt,
+                event_id=normalized_event,
+                status=normalized_status,
+                evidence_action_id=evidence_id,
             )
-            if cursor.rowcount != 1:
-                row = conn.execute(
-                    f"SELECT event_id,status FROM {self._TABLE} WHERE attempt_id=?",
-                    (normalized_attempt,),
-                ).fetchone()
+            if changed != 1:
+                row = side_effect_attempts.attempt(conn, normalized_attempt)
                 conn.rollback()
                 return bool(
                     row is not None
                     and str(row["event_id"]) == normalized_event
                     and str(row["status"]) == normalized_status
                 )
-            self._prune_completed(conn)
+            side_effect_attempts.prune_terminal_attempts(
+                conn,
+                max_completed=self._MAX_COMPLETED_ATTEMPTS,
+            )
             conn.commit()
             return True
-
-    def _prune_completed(self, conn: sqlite3.Connection) -> None:
-        conn.execute(
-            f"DELETE FROM {self._TABLE} WHERE attempt_id IN ("
-            f"SELECT attempt_id FROM {self._TABLE} WHERE status!='started' "
-            "ORDER BY completed_at DESC LIMIT -1 OFFSET ?)",
-            (self._MAX_COMPLETED_ATTEMPTS,),
-        )
 
     def _replay_blocking_attempt(
         self,
@@ -293,13 +260,13 @@ class SideEffectAwareBody(KeyboardTextBody):
         include_observed: bool = False,
     ):
         statuses = ("started", "observed") if include_observed else ("started",)
-        placeholders = ",".join("?" for _ in statuses)
         with closing(self._connect()) as conn:
-            return conn.execute(
-                f"SELECT * FROM {self._TABLE} WHERE event_id=? AND signature_hash=? "
-                f"AND status IN ({placeholders}) ORDER BY started_at DESC LIMIT 1",
-                (event_id, signature_hash, *statuses),
-            ).fetchone()
+            return side_effect_attempts.replay_blocking_attempt(
+                conn,
+                event_id=event_id,
+                signature_hash=signature_hash,
+                statuses=statuses,
+            )
 
     def uncertain_attempts(self, event_id: str) -> list[dict[str, Any]]:
         """Return bounded, argument-free uncertainty evidence for one event."""
@@ -308,12 +275,12 @@ class SideEffectAwareBody(KeyboardTextBody):
         if not normalized:
             return []
         with closing(self._connect()) as conn:
-            rows = conn.execute(
-                f"SELECT attempt_id,event_id,signature_hash,kind,status,started_at "
-                f"FROM {self._TABLE} WHERE event_id=? AND status='started' "
-                "ORDER BY started_at DESC LIMIT 32",
-                (normalized,),
-            ).fetchall()
+            rows = side_effect_attempts.event_attempts(
+                conn,
+                event_id=normalized,
+                statuses=("started",),
+                limit=32,
+            )
         return [dict(row) for row in rows]
 
     @staticmethod
@@ -341,9 +308,3 @@ class SideEffectAwareBody(KeyboardTextBody):
             started_at=now,
             completed_at=now,
         )
-
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.store.path, timeout=5.0)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA busy_timeout=5000")
-        return conn
