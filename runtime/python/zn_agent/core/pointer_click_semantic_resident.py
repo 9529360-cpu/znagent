@@ -391,20 +391,25 @@ class SemanticPointerClickResidentRuntime(EffectScopedPointerClickResidentRuntim
         response: str,
         reason: str,
     ) -> ResidentRunResult:
-        state.stage = "complete"
-        state.next_action = None
+        completion = {
+            "execution_path": ExecutionPath.BODY.value,
+            "success": True,
+            "response": str(response or ""),
+            "model_invocations": 0,
+            "reason": str(reason or ""),
+        }
+        state.stage = "native_completion"
+        state.next_action = "publish terminal EventOutcome"
         state.data["native_completion_scope"] = dict(scope)
+        state.data["native_completion"] = completion
         self._sync_execution_context(event, state)
-        self.store.save_working_state(state)
         self.store.record_runtime_task(model_invocations=0)
-        return ResidentRunResult(
-            event=event,
-            execution_path=ExecutionPath.BODY,
-            success=True,
-            response=response,
-            model_invocations=0,
-            reason=reason,
-        )
+        # Semantic/focused/UIA/text completion is already established by each
+        # caller's fresh typed evidence. Persist only that established result so
+        # restart can reach terminal EventOutcome without re-entering UI sensing,
+        # input, verification, or ordinary runtime task accounting.
+        self.store.save_working_state(state)
+        return self._native_completion_result(event, completion)
 
     def _fail_ui_completion(self, event, state, intent: NativeActionIntent, failure: str) -> None:
         message = "pointer click semantic completion failed: " + str(failure)
