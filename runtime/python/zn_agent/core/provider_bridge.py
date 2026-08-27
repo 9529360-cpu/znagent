@@ -239,7 +239,7 @@ def build_resident_runtime(
 ):
     """Build the resident organism around the ZN-owned kernel."""
     from .budget import CognitiveBudgetManager
-    from .capability_recovery_resident import CapabilityRecoveryResidentRuntime
+    from .recovery_bounded_resident import RecoveryBoundedResidentRuntime
 
     effective_config = config if config is not None else load_zn_config()
     kernel = build_runtime(
@@ -257,7 +257,7 @@ def build_resident_runtime(
             0.0, min(1.0, float(resident_cfg.get("high_risk_threshold", 0.8)))
         ),
     )
-    return CapabilityRecoveryResidentRuntime(kernel=kernel, budget=budget)
+    return RecoveryBoundedResidentRuntime(kernel=kernel, budget=budget)
 
 
 # Transitional source-level aliases only. They preserve existing ZN callers
