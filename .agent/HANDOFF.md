@@ -4,9 +4,12 @@ Updated: 2026-08-27
 
 ## Current goal
 
-Continue broader Work durability from the next real unproven crash window. Five concrete windows are now closed and verified: missing `work_runs` ingress linkage; a committed side-effect recovery decision before the next `WorkingState` checkpoint; append dispatch durably `observed` before checkpoint advancement; generic command dispatch durably `observed` before checkpoint advancement; and verified append recovery returning success before terminal `EventOutcome` publication.
+Pause after closing and verifying the sixth broader Work durability crash
+window. The common verified Body success path now survives a crash before
+terminal `EventOutcome` publication without Body replay. Five earlier windows
+remain closed and verified.
 
-Broader Work durability remains **PARTIAL**. Do not infer completion from these five slices.
+Broader Work durability remains **PARTIAL**. Do not infer completion from these six slices.
 
 Founding boundary remains:
 
@@ -18,7 +21,8 @@ Founding boundary remains:
 - development branch: `dev/zn-agent`
 - canonical source/release branch: `main`
 - canonical `main`: `8234a835dea604783cea0bd9d28a40de654ec03d`
-- verified implementation/test head: `f7d6cb64121e914e0250736c0089d58c4b7fea2b`
+- verified implementation/test head: `dc3b72ad1dfdc5bb8ac2a6c3898fe5038b85197d`
+- common Body completion checkpoint: `dc3b72ad1dfdc5bb8ac2a6c3898fe5038b85197d`
 - append terminal-boundary runtime checkpoint: `2ffb79c4bf11903d46f53dd9a7b8d1fcbd922642`
 - companion test-contract checkpoint: `f7d6cb64121e914e0250736c0089d58c4b7fea2b`
 - implementation-status documentation checkpoint before this HANDOFF sync: `c3b7e4b7a0c6dcfc0a053c4143666de46a2f3184`
@@ -29,6 +33,34 @@ Founding boundary remains:
 A HANDOFF commit cannot contain its own resulting SHA. Re-read `dev/zn-agent` after this file is committed and use that exact head externally.
 
 ## Completed in this stage
+
+### Sixth crash window: common verified Body success before EventOutcome
+
+The active common chain was:
+
+```text
+native verification succeeds
+-> _complete_successful_body_action()
+-> durable WorkingState.stage = complete
+-> crash before outer _complete_result()
+-> restart discards complete checkpoint and returns to orient
+```
+
+`EmbodiedResidentRuntime` now persists a resumable `native_completion`
+checkpoint with the established Body result. Restart reconstructs that result
+and reaches `KernelStore.complete_event()` without calling Body or repeating
+runtime task accounting. Malformed completion data fails closed instead of
+reopening action. Specialized pointer/semantic UI completion overrides were
+not changed and remain separate proof targets.
+
+Product regression:
+
+```text
+test_restart_publishes_verified_body_completion_without_body_replay
+```
+
+It proves restart, zero Body replay, stable runtime task count, terminal
+`EventOutcome`, idle checkpoint and finalized Work progress.
 
 ### Fifth crash window: verified append recovery success before EventOutcome
 
@@ -53,6 +85,21 @@ Regression `test_restart_after_verified_effect_before_checkpoint_save_completes_
 This closes only this concrete append-recovery terminalization window. It does not prove the broader family of resident success/failure completion paths.
 
 ## Real test / CI truth
+
+Exact-head sixth-window proof:
+
+```text
+head dc3b72ad1dfdc5bb8ac2a6c3898fe5038b85197d
+ZN Work Recovery E2E run 33076704204  success / 51 tests / OK
+ZN CI run 33076704179
+Electron / TypeScript / Windows      success
+ZN Source Boundary / Windows         success
+ZN Kernel / Python / Windows         success / 601 tests / 5 skipped / OK
+Publish Windows CI statuses          success
+```
+
+Local exact-code proof before push: 51 focused Work tests, 40 adjacent common
+Body caller tests, and 601 core discovery tests with 5 skips; all OK.
 
 Focused Work proof:
 
@@ -83,8 +130,7 @@ Earlier in this workstream, accidental one-byte placeholder `docs/.tmp-should-no
 
 ## Current risks / incomplete work
 
-- broader Work durability remains partial beyond the five verified crash windows;
-- `EmbodiedResidentRuntime._complete_successful_body_action()` still persists `WorkingState.stage = complete` before outer `_complete_result()` publishes `EventOutcome`; this common verified-body success path is the next selected durability target;
+- broader Work durability remains partial beyond the six verified crash windows;
 - semantic UI completion and base resident investigation completion have analogous pre-`EventOutcome` paths that remain unproven;
 - failure-side terminal-looking checkpoint paths remain unproven;
 - no deliberate outcome-trace rewrite/compactor exists; destructive long-term-memory migration still requires separate review and explicit approval;
@@ -99,7 +145,7 @@ Earlier in this workstream, accidental one-byte placeholder `docs/.tmp-should-no
 
 ### P1 - broader Work durability
 
-Status: **OPEN / FIVE CRASH WINDOWS VERIFIED**
+Status: **OPEN / SIX CRASH WINDOWS VERIFIED / PAUSED BY USER**
 
 Closed without blind replay:
 
@@ -109,9 +155,8 @@ Closed without blind replay:
 4. generic command dispatch durably `observed` before the next `WorkingState` checkpoint, with cancellation coherently accepting that recovery-owned state;
 5. append recovery already durably `verified_effect`, then returns success before terminal `EventOutcome`; restart preserves replay-safe recovery, re-verifies exact text and completes without append replay.
 
-Next selected ambiguity:
-
-6. common verified body success persists `WorkingState.stage = complete` before terminal `EventOutcome` publication.
+6. common verified Body success now resumes from `native_completion` and
+   publishes terminal truth without Body replay.
 
 ### P2 - browser follow-ons
 
@@ -135,22 +180,15 @@ runtime/python/zn_agent/core/store.py
 runtime/python/zn_agent/core/work.py
 tests/zn_agent/core/test_work_side_effect_recovery.py
 tests/zn_agent/core/test_work_side_effect_resolution_recovery.py
+tests/zn_agent/core/test_work_body_success_recovery.py
 docs/ZN-IMPLEMENTATION-STATUS.md
 .agent/HANDOFF.md
 ```
 
 ## Next real target
 
-Read-only trace the exact restart semantics of the active common body-success chain:
-
-```text
-EmbodiedResidentRuntime._native_verification_step()
--> _complete_successful_body_action()
--> ZNResidentRuntime.run_once()
--> _complete_result()
--> KernelStore.complete_event()
-```
-
-Prove what durable evidence exists if the process dies after `_complete_successful_body_action()` persists `stage = complete` but before `_complete_result()` publishes `EventOutcome`. Compare active descendants and tests, then implement only one narrow coherent fix with a regression if the ambiguity is real.
-
+Paused at the user's request after the sixth verified checkpoint. When work is
+resumed, re-read current repository and CI truth before selecting a seventh
+window. Semantic UI completion, base resident investigation completion and
+failure-side terminal-looking checkpoints remain candidates, not conclusions.
 Keep `main` untouched during ordinary development.
