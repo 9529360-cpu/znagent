@@ -16,21 +16,17 @@ Development branch: `dev/zn-agent`. Canonical source/release branch: `main`.
 
 `main` remains unchanged at `8234a835dea604783cea0bd9d28a40de654ec03d`. Ordinary development remains on `dev/zn-agent`.
 
-Exact implementation/test/CI checkpoint before this documentation synchronization:
+Exact newest implementation/CI checkpoint before this documentation synchronization:
 
 ```text
+f90610749d257d63e66dd2149d746d3ec4579535  docs: reconcile managed browser verified frontier
+f05b2934d1ca4bb1299b7f143bc029de5732f212  ci: trigger managed browser proof for checkbox tests
 f79d4f3c81b1d7c46dcfb55b6fc923acda77b39c  test: preserve effect probe accounting authority
 d0e6c3bde9f50274a9ad4c31fac6a042364c8f7f  fix: defer body accounting without stealing completion ownership
 d615241dc7fb0f95be1aa524ab2d27cf1bf1804b  fix: preserve body accounting semantics after checkpoints
-7a420f67efd58dfe55d04c173a15adeabaeb1c83  ci: cover durable body accounting recovery
-c8fec59fdc442da67829ea0a4e299e6c800c7533  test: prove body accounting follows durable semantic truth
-3020604e70762dc9f461fb85555d1c507523c0e2  feat: checkpoint body outcomes before cumulative accounting
-eb06679289765740b7fd13a06e8ffd034e59418b  feat: add idempotent body outcome accounting
-9b657de42ef0bf1a3ea511b2d053470818b17437  docs: record shared side effect attempt owner
-a70d15600c7bd8b361a0120e303b881b82461f3f  ci: cover shared side effect attempt owner
 ```
 
-Status: **BROADER WORK DURABILITY REMAINS PARTIAL. EIGHTEEN CONCRETE CRASH/RESTART WINDOWS REMAIN CLOSED AND VERIFIED. THE DIRECT SYNCHRONOUS `side_effect_recovery` LIFECYCLE, SHARED `resident_side_effect_attempts` OWNER/PRUNING INVARIANT, AND ACTIVE BODY CUMULATIVE ACCOUNTING BOUNDARY ARE VERIFIED. BODY SUCCESS/FAILURE SEMANTIC FACTS NOW BECOME DURABLE BEFORE RETRYABLE CUMULATIVE ACCOUNTING, WITHOUT STEALING SPECIALIZED POINTER/UI COMPLETION AUTHORITY OR INVENTING LEARNING THAT THE ORIGINAL PATH DID NOT ATTEMPT.**
+Status: **BROADER WORK DURABILITY REMAINS PARTIAL. EIGHTEEN CONCRETE CRASH/RESTART WINDOWS REMAIN CLOSED AND VERIFIED. THE SYNCHRONOUS RECOVERY LIFECYCLE, SHARED SIDE-EFFECT-ATTEMPT OWNER/PRUNING INVARIANT, ACTIVE BODY CUMULATIVE ACCOUNTING BOUNDARY, AND CURRENT MANAGED-BROWSER VERIFIED FRONTIER/CI COVERAGE ARE NOW RECONCILED WITH REAL CODE AND REAL WINDOWS EVIDENCE.**
 
 ## 1. Durable foundations
 
@@ -45,7 +41,7 @@ The established durable boundaries remain:
 - zero-model terminal failure and deterministic outer resident exceptions persist failure truth before event-idempotent accounting and terminal publication;
 - structured-memory, native-investigation, external-cognition and active Body outcome paths persist semantic facts before their cumulative accounting/learning;
 - external provider dispatch has durable attempt identity; a provider-dispatch crash with unknown outcome blocks blind replay rather than pretending exactly-once provider semantics;
-- replay-sensitive Body and compiled-capability attempts use one shared low-level SQLite owner while retaining their intentionally different historical signature identities;
+- replay-sensitive Body and compiled-capability attempts use one shared low-level SQLite owner while retaining intentionally different historical signature identities;
 - capacity pruning can remove only attempts whose owning event has both terminal event state and a durable `EventOutcome`; nonterminal recovery truth is retained regardless of attempt status.
 
 Generic nervous `perceive()` remains intentionally plastic and is not an exactly-once API.
@@ -73,7 +69,7 @@ The verified crash/restart windows remain:
 17. external kernel attempts persist stable goal/attempt identity, full worker result, deterministic experience/proposal identity and exactly-once route-quality accounting;
 18. crash after provider dispatch but before a returned result becomes explicit unknown-provider-outcome uncertainty: provider replay is blocked and no route learning or improvement proposal is invented from the unknown result.
 
-The crash-window count remains eighteen. The synchronous caller boundary, shared side-effect-attempt persistence/pruning proof, and Body accounting proof are additional lifecycle/persistence/accounting invariants, not artificial new crash-window counts.
+The crash-window count remains eighteen. The synchronous caller boundary, shared side-effect-attempt persistence/pruning proof, Body-accounting proof and browser frontier reconciliation are additional lifecycle/persistence/accounting/product-evidence invariants, not artificial new crash-window counts.
 
 ## 3. Verified synchronous recovery lifecycle boundary
 
@@ -127,27 +123,17 @@ No persisted-row rewrite or upgrade migration was introduced.
 
 Capacity pruning may delete an attempt only after the owning event is terminal (`completed` or `failed`) and already owns a durable `event_outcomes` row. Nonterminal `observed`, `verified_effect` and `verified_absent` attempts remain protected recovery truth regardless of status. The shared schema delete guard also fails safe against older/direct generic cleanup SQL.
 
-`tests/zn_agent/core/test_side_effect_attempt_persistence.py` locks historical identities, shared visibility and terminal-truth-gated pruning. Existing Work side-effect, observed recovery, resolution recovery, cancellation and compiled-capability recovery tests remain in the focused recovery suite.
-
 ## 5. Durable Body cumulative accounting boundary
 
 ### 5.1 Real active gap that was closed
 
 The bounded backward audit found one active cross-cutting gap in the Body path. Ordinary Body success and several Body failure paths could update cumulative SelfModel/runtime metrics before the next semantic `WorkingState` save. A process death in that window could leave cumulative evidence durable while restart lacked the semantic checkpoint that justified it, allowing duplicate learning/accounting on re-entry.
 
-Other audited active cumulative paths were already protected:
-
-- structured memory: semantic completion first, event-idempotent accounting after;
-- native investigation: semantic completion first, event-idempotent accounting after;
-- external cognition: exact `external_completion` first, idempotent metrics/learning after;
-- compiled capabilities: durable attempt + WorkingState first, idempotent success/failure accounting after;
-- external kernel route accounting: stable attempt/result identity with idempotent route-quality accounting.
-
-No second evidence-backed active cumulative accounting/learning gap was found in this bounded audit. Base resident code still contains older eager implementations for paths that the active product MRO overrides; those inactive/base implementations were not refactored merely for aesthetic uniformity.
+Other audited active cumulative paths were already protected: structured memory, native investigation, external cognition, compiled capability success/failure, and external kernel route accounting. No second evidence-backed active cumulative accounting/learning gap was found. Older eager base implementations that the active product MRO overrides were not refactored merely for aesthetic uniformity.
 
 ### 5.2 Active owner and semantics
 
-The active product chain now includes:
+The active product chain includes:
 
 ```text
 provider_bridge.build_resident_runtime()
@@ -158,15 +144,9 @@ provider_bridge.build_resident_runtime()
 -> EmbodiedResidentRuntime
 ```
 
-`DurableBodyAccountingResidentRuntime` deliberately does **not** construct Body semantic completion. It temporarily defers only cumulative writes that the inherited most-specific owner actually attempts, calls `super()` so existing pointer/UI/ordinary Body owners create and persist their own completion/failure facts, and then applies event-idempotent accounting.
+`DurableBodyAccountingResidentRuntime` does not construct Body semantic completion. It temporarily defers only cumulative writes that the inherited most-specific owner actually attempts, delegates to `super()`, then applies event-idempotent accounting after semantic truth is durable.
 
-This preserves important semantic differences:
-
-- ordinary verified Body success may count one task and update native ability/knowledge evidence;
-- narrow pointer `effect_probe` completion counts one task but deliberately does **not** generalize the local effect into native ability/knowledge credit;
-- specialized failure/recovery paths that did not call SelfModel failure learning do not acquire invented failure evidence merely because a failure record exists.
-
-`ResidentAccountingJournal` now exposes explicit durable Body accounting kinds:
+`ResidentAccountingJournal` distinguishes:
 
 ```text
 native_body_success
@@ -174,81 +154,95 @@ native_body_task
 native_body_failure:<stable failure identity hash>
 ```
 
-`native_body_success` is event-idempotent task + ability/knowledge accounting. `native_body_task` is event-idempotent task-only accounting. Distinct Body failure facts use a stable action-signature/evidence-fingerprint identity and update failure evidence without counting task completion.
-
-Legacy checkpoints with no new descriptor are treated as already-accounted upgrade state, preserving compatibility with builds that used eager accounting.
+Ordinary verified Body success may count one task and update native ability/knowledge evidence. Narrow pointer `effect_probe` completion counts one task but deliberately does not generalize the local visual effect into broad native ability/knowledge credit. Specialized failure/recovery paths that did not attempt SelfModel failure learning do not acquire invented failure evidence.
 
 ### 5.3 Crash/restart proof
 
-`tests/zn_agent/core/test_body_accounting_recovery.py` proves:
+`tests/zn_agent/core/test_body_accounting_recovery.py` proves success, ordinary failure and postcondition-verification failure checkpoint-first behavior. `tests/zn_agent/core/test_work_pointer_completion_recovery.py` locks the specialized effect-probe owner, task-only descriptor and restart idempotence.
 
-- Body success semantic `native_completion` is durable before cumulative accounting and restart finishes without Body replay or duplicate evidence;
-- ordinary Body failure state is durable before failure learning and restart applies the exact failure evidence once;
-- postcondition-verification failure follows the same checkpoint-first rule.
+The first wrapper exposed a real pointer completion ownership regression in focused CI. It was fixed rather than hidden; only the later green proof head is authoritative.
 
-`tests/zn_agent/core/test_work_pointer_completion_recovery.py` additionally locks the specialized effect-probe boundary:
+## 6. Managed-browser frontier reconciliation
 
-- caller text cannot replace the resident-owned `effect_probe` completion reason/scope;
-- the durable accounting descriptor is `native_body_task`, not `native_body_success`;
-- `tasks_total` increments exactly once;
-- `computer_use` ability/knowledge evidence remain unchanged;
-- restart publishes the durable completion without pointer/body replay or duplicate task accounting.
+This stage changed no browser runtime behavior. It reconciled the product ledger and dedicated CI trigger against already-existing code and provider evidence.
 
-The first wrapper implementation exposed this MRO ownership regression in real focused CI; it was not hidden. The wrapper was corrected to defer cumulative writes without stealing specialized completion ownership, and the final code head passed both focused recovery and full CI.
+Repository truth now recorded in `docs/ZN-PRODUCT-CAPABILITY-MAP.md`:
 
-## 6. Real Windows CI proof
+- native `SELECT_OPTION` is already implemented and is **VERIFIED NARROW**, not OPEN;
+- active chain is `BrowserActionKind.SELECT_OPTION` -> `PlaywrightManagedBrowser.act()` -> `managed_browser_select.perform_select_option`;
+- the mutation is limited to an enabled single-select native combobox with one explicit bounded string value, current target authority, exact-node continuity and fresh privacy-safe selected-value evidence;
+- already-selected, multi-select, replacement and no-change cases fail closed, and raw requested value is not persisted;
+- native CHECK/UNCHECK remain **VERIFIED NARROW** with exact-node and fresh boolean state evidence;
+- `PRESS` remains genuinely OPEN: it exists in the typed action/permission contract, but managed-provider dispatch/postcondition ownership is not implemented.
 
-Previous shared-attempt proof head `a70d15600c7bd8b361a0120e303b881b82461f3f` remains verified by:
+The dedicated browser workflow already dynamically executed `test_managed_browser_check.py`, but that test file was absent from `push.paths`. Commit `f05b2934d1ca4bb1299b7f143bc029de5732f212` adds the missing trigger so changes limited to the checkbox contract tests invoke the real Chromium proof lane.
+
+No arbitrary provider method was added. Any future `PRESS` implementation must first define a bounded resident-owned authority and independently observable effect; provider `press()` return alone is not completion truth.
+
+## 7. Real Windows CI proof
+
+Shared-attempt proof head `a70d15600c7bd8b361a0120e303b881b82461f3f` remains verified by:
 
 ```text
 ZN Work Recovery E2E run 33117334326  success
 ZN CI run 33117334321                 success
 ```
 
-Exact current Body-accounting implementation/test proof head `f79d4f3c81b1d7c46dcfb55b6fc923acda77b39c`:
+Body-accounting proof head `f79d4f3c81b1d7c46dcfb55b6fc923acda77b39c` remains verified by:
 
 ```text
-ZN Work Recovery E2E run 33119871079                 success
-  Compile Work recovery path                          success
-  Verify durable Work progress and restart recovery   success
-  includes Body accounting + pointer/UI recovery      success
-
-ZN CI run 33119871129                                success
-ZN Kernel / Python / Windows                         success
-  Boot isolated ZN distribution without a model      success
-  Compile resident core                              success
-  Run ZN core tests against working tree             success
-ZN Source Boundary / Windows                         success
-Electron / TypeScript / Windows                      success
-Publish Windows CI statuses                          success
+ZN Work Recovery E2E run 33119871079  success
+ZN CI run 33119871129                 success
 ```
+
+Current browser frontier reconciliation proof:
+
+```text
+f05b2934d1ca4bb1299b7f143bc029de5732f212
+ZN Managed Browser E2E run 33120809421                success
+  Prepare isolated browser runtime                    success
+  Run managed browser contract tests                  success
+  Run real local Chromium E2E                         success
+
+f90610749d257d63e66dd2149d746d3ec4579535
+ZN CI run 33120848980                                  success
+ZN Kernel / Python / Windows                           success
+  Boot isolated ZN distribution without a model       success
+  Compile resident core                               success
+  Run ZN core tests against working tree              success
+ZN Source Boundary / Windows                           success
+Electron / TypeScript / Windows                        success
+Publish Windows CI statuses                            success
+```
+
+Historical action-specific browser proof remains useful background evidence: SELECT_OPTION had dedicated real-Chromium success in run `33001748123`; CHECK/UNCHECK had real-Chromium success including run `32979312465`. Current run `33120809421` revalidates the present managed-browser working tree after the trigger repair.
 
 No local repository test run is claimed for this web-maintainer slice. Repository self-hosted Windows CI is the verification authority.
 
-## 7. What remains partial
+## 8. What remains partial
 
 Open work still includes:
 
-- broader Work durability beyond the eighteen proven crash/restart windows and the additional verified synchronous recovery, shared-attempt persistence/pruning and Body accounting invariants;
+- broader Work durability beyond the eighteen proven crash/restart windows and the additional verified synchronous recovery, shared-attempt persistence/pruning and Body-accounting invariants;
 - no deliberate outcome-trace rewrite/compactor; any future implementation must atomically retarget receipts before deleting old representation and requires separate review for destructive long-term-memory migration;
 - explanatory-comment cleanup in `intentional_resident.py` remains non-behavioral debt;
 - Windows continuity M8;
-- browser PRESS, broader click/editing/multi-select/page lifecycle and browser capability-ledger/CI reconciliation;
+- browser `PRESS`, broader click/text replacement/ARIA checkbox mutation, multi-target/frame/tab/page lifecycle, headed managed browser and browser-session UX;
 - authenticated User Browser Bridge control;
 - SM1+ self-maintenance.
 
 High-risk identity, long-term memory, credential/permission, updater/signing, rollback and destructive self-maintenance changes still require human approval.
 
-## 8. Next real target
+## 9. Next real target
 
-The bounded cumulative accounting/learning audit is complete. Do not continue it indefinitely without new evidence.
+P1 shared-attempt persistence, P2 bounded cumulative accounting/learning durability, and P3 browser frontier reconciliation are complete and CI-verified. Do not continue any of those audits indefinitely without new evidence.
 
-Next reconcile the browser product frontier against real code and real CI before adding behavior:
+Next reassess the genuinely open managed-browser frontier from the real call chain:
 
-1. correct stale capability-ledger entries where implemented/verified managed-browser actions outrank documentation;
-2. close dedicated managed-browser CI trigger gaps so relevant browser tests reliably invoke the real Chromium lane;
-3. re-evaluate the next genuinely open browser capability (`PRESS` / broader target-frame-tab lifecycle) from its real authority, provider, effect-evidence and active-caller chain rather than assuming the ledger is current;
-4. after the browser checkpoint is trustworthy, choose the next broader Work/browser foundation from current code and evidence.
+1. compare `PRESS` against broader target/frame/tab lifecycle value and dependencies rather than implementing the thinnest enum member automatically;
+2. if `PRESS` is chosen, define exact key vocabulary, authority scope, replay/side-effect lifecycle and independent postcondition before provider dispatch;
+3. if target/frame/tab lifecycle is the higher-leverage prerequisite, establish stable page/frame identities and stale-target handling first;
+4. after that bounded browser checkpoint, return to the highest-leverage broader Work/checkpoint/restore foundation from current repository truth.
 
 Preserve `outside_world_effect_uncertain` and unknown external-provider outcomes as uncertainty, not replay permission or fabricated success/failure evidence.
 
