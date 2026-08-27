@@ -166,6 +166,67 @@ class CapabilityFailureRecoveryTests(unittest.TestCase):
             finally:
                 restored.store.close()
 
+    def test_malformed_observed_result_fails_closed_without_replay(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "kernel.db"
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=store_path,
+            )
+            try:
+                event = resident.enqueue("do not replay malformed observed result")
+                claimed = resident.store.claim_event(event.event_id)
+                self.assertIsNotNone(claimed)
+                assert claimed is not None
+                state = WorkingState(
+                    current_event_id=claimed.event_id,
+                    stage="orient",
+                    next_action="orient to current event",
+                    data={
+                        "capability_execution": {
+                            "attempt_id": "capfx-malformed",
+                            "capability_name": "malformed-local",
+                            "signature_hash": "deadbeef",
+                            "replay_safe": False,
+                            "status": "observed",
+                            "result": {"error": "missing success truth"},
+                        }
+                    },
+                )
+                resident.store.save_working_state(state)
+                readiness = resident.kernel.self_model.assess_task(
+                    claimed.task,
+                    resident._required_capabilities(claimed),
+                )
+
+                with patch.object(
+                    resident.memory,
+                    "recall",
+                    side_effect=AssertionError("malformed observed result must fail closed"),
+                ), patch.object(
+                    resident.capabilities,
+                    "resolve",
+                    side_effect=AssertionError("malformed observed result must not replay"),
+                ):
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "observed capability result checkpoint is malformed",
+                    ):
+                        resident._orient_step(
+                            claimed,
+                            state,
+                            readiness=readiness,
+                        )
+
+                self.assertIsNone(resident.store.get_event_outcome(event.event_id))
+                self.assertEqual(resident.store.get_runtime_metrics().tasks_total, 0)
+                self.assertEqual(
+                    resident.kernel.self_model.get("general").evidence_count,
+                    0,
+                )
+            finally:
+                resident.store.close()
+
 
 if __name__ == "__main__":
     unittest.main()
