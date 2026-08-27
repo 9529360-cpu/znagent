@@ -110,7 +110,30 @@ class ResidentWorkPointerCompletionRecoveryTests(unittest.TestCase):
                 checkpoint.data["native_completion"]["response"],
                 "verified local pointer effect",
             )
+            accounting = checkpoint.data.get("native_body_completion_accounting")
+            self.assertEqual(
+                accounting,
+                {
+                    "version": 1,
+                    "kind": "native_body_task",
+                },
+            )
             self.assertIsNone(resident.store.get_event_outcome(event.event_id))
+            self.assertEqual(resident.store.get_runtime_metrics().tasks_total, 1)
+            self.assertEqual(
+                resident.kernel.self_model.get("computer_use").evidence_count,
+                0,
+            )
+            self.assertEqual(
+                resident.kernel.self_model.knowledge("computer_use").evidence_count,
+                0,
+            )
+            self.assertTrue(
+                resident.resident_accounting.has_record(
+                    event.event_id,
+                    "native_body_task",
+                )
+            )
             metrics_before = resident.store.get_runtime_metrics()
             resident.store.close()
 
@@ -152,6 +175,14 @@ class ResidentWorkPointerCompletionRecoveryTests(unittest.TestCase):
                 self.assertEqual(
                     restored.store.get_runtime_metrics().tasks_total,
                     metrics_before.tasks_total,
+                )
+                self.assertEqual(
+                    restored.kernel.self_model.get("computer_use").evidence_count,
+                    0,
+                )
+                self.assertEqual(
+                    restored.kernel.self_model.knowledge("computer_use").evidence_count,
+                    0,
                 )
 
                 progress = restored_ledger.progress(
