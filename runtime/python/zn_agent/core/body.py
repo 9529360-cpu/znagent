@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 import psutil
 
 from .models import utc_now
+from .path_context import canonical_host_path
 from .terminal import TerminalRequest, TerminalResult, get_zn_local_terminal
 
 if TYPE_CHECKING:
@@ -623,7 +624,7 @@ class NativeBody:
             action,
             started,
             data={
-                "root": str(Path(root_proc.stdout.strip()).expanduser().resolve(strict=True)),
+                "root": str(canonical_host_path(root_proc.stdout.strip()).resolve(strict=True)),
                 "branch": branch,
                 "head": head,
                 "head_short": head[:12] if head else None,
@@ -811,7 +812,7 @@ class NativeBody:
             started,
             output=output,
             data={
-                "root": str(Path(root_proc.stdout.strip()).expanduser().resolve(strict=True)),
+                "root": str(canonical_host_path(root_proc.stdout.strip()).resolve(strict=True)),
                 "head": head,
                 "head_short": head[:12] if head else None,
                 "dirty": bool(changed_paths),

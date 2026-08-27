@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import AgentEvent, EventStatus, ResidentRunResult, utc_now
-from .path_context import resolved_within
+from .path_context import canonical_host_path, resolved_within
 
 
 _WORK_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -484,7 +484,7 @@ class ResidentWorkLedger:
         if not raw_path:
             raise ValueError("workspace path must not be empty")
         try:
-            resolved = Path(raw_path).expanduser().resolve(strict=True)
+            resolved = canonical_host_path(raw_path).resolve(strict=True)
         except (OSError, RuntimeError) as exc:
             raise ValueError(f"workspace path is unavailable: {raw_path}") from exc
         if not resolved.is_dir():

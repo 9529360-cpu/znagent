@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from .pty import ZNPty, spawn_zn_pty
+from .path_context import canonical_host_path
 
 
 _IS_WINDOWS = os.name == "nt"
@@ -784,7 +785,7 @@ def _normalize_host_path(value: str) -> str:
             drive = match.group(1).upper()
             tail = (match.group(2) or "").replace("/", "\\")
             expanded = f"{drive}:\\{tail}" if tail else f"{drive}:\\"
-    return os.path.abspath(expanded)
+    return str(canonical_host_path(expanded))
 
 
 def _cwd_usable(value: str) -> bool:

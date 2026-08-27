@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ctypes
+import os
 import subprocess
 import tempfile
 import textwrap
@@ -10,6 +12,16 @@ from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_s
 
 
 class RepoTargetedTestVerificationTests(unittest.TestCase):
+    @staticmethod
+    def _short_path(path: Path) -> Path:
+        if os.name != "nt":
+            return path
+        buffer = ctypes.create_unicode_buffer(32768)
+        written = int(
+            ctypes.windll.kernel32.GetShortPathNameW(str(path), buffer, len(buffer))
+        )
+        return Path(buffer.value) if written > 0 else path
+
     @staticmethod
     def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -143,6 +155,60 @@ class RepoTargetedTestVerificationTests(unittest.TestCase):
             serialized = str(experiences[0].to_dict())
             self.assertNotIn("tests/test_target.py", serialized)
             self.assertNotIn(str(target), serialized)
+            resident.store.close()
+
+    @unittest.skipUnless(os.name == "nt", "Windows DOS path identity")
+    def test_short_workspace_and_target_keep_targeted_test_authority(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "repo"
+            root.mkdir()
+            target, _ = self._init_repo(
+                root,
+                test_body="""
+                    import unittest
+                    from pathlib import Path
+
+                    class TargetTest(unittest.TestCase):
+                        def test_target(self):
+                            self.assertEqual(
+                                (Path(__file__).parents[1] / "target.txt").read_text(encoding="utf-8"),
+                                "after\\n",
+                            )
+                """,
+            )
+            short_root = self._short_path(root)
+            short_target = self._short_path(target)
+            if str(short_root).casefold() == str(root).casefold():
+                self.skipTest("repository has no distinct DOS 8.3 spelling")
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=base / "resident" / "kernel.db",
+            )
+            event = resident.enqueue(
+                f"replace {short_target} and run its bounded targeted test",
+                payload=self._payload(
+                    short_root,
+                    short_target,
+                    targeted_test={
+                        "kind": "python_unittest",
+                        "path": "tests/test_target.py",
+                        "for_path": "target.txt",
+                    },
+                ),
+            )
+
+            result = self._run_to_terminal(resident)
+
+            self.assertTrue(result.success)
+            self.assertIn("targeted unittest", result.reason)
+            actions = self._event_actions(resident, event.event_id)
+            git_roots = {
+                str(item.data.get("root") or "")
+                for item in actions
+                if item.kind in {"git_status", "git_diff"} and item.success
+            }
+            self.assertEqual(git_roots, {str(root.resolve())})
             resident.store.close()
 
     def test_targeted_unittest_failure_blocks_completion_and_positive_learning(self):
