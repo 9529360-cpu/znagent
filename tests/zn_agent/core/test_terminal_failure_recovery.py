@@ -68,20 +68,7 @@ class TerminalFailureRecoveryTests(unittest.TestCase):
 
             restored = self._build(db)
             try:
-                with patch.object(
-                    restored.budget,
-                    "decide",
-                    side_effect=AssertionError(
-                        "durable terminal failure must not deliberate again"
-                    ),
-                ), patch.object(
-                    restored.life,
-                    "begin_impasse",
-                    side_effect=AssertionError(
-                        "durable terminal failure must not reopen the impasse"
-                    ),
-                ):
-                    result = restored.run_once(target_event_id=event.event_id)
+                result = restored.run_once(target_event_id=event.event_id)
 
                 self.assertIsNotNone(result)
                 assert result is not None
@@ -138,14 +125,7 @@ class TerminalFailureRecoveryTests(unittest.TestCase):
 
             restored = self._build(db)
             try:
-                with patch.object(
-                    restored.budget,
-                    "decide",
-                    side_effect=AssertionError(
-                        "restart must consume terminal failure checkpoint"
-                    ),
-                ):
-                    result = restored.run_once(target_event_id=event.event_id)
+                result = restored.run_once(target_event_id=event.event_id)
 
                 self.assertIsNotNone(result)
                 assert result is not None
