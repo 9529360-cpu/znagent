@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Resident-owned control plane for durable Work lifecycle decisions."""
 
+import json
 from contextlib import closing
 from typing import Any
 
@@ -13,16 +14,107 @@ class ResidentWorkControl:
     """Control lifecycle decisions that are not ordinary Work success/failure.
 
     ``ResidentWorkLedger`` remains the durable interaction ledger for normal
-    execution. This façade owns explicit operator control such as abandoning an
-    unresolved non-replayable side effect. It repairs cancellation before asking
-    the ordinary ledger to finalize anything, so a restart cannot reinterpret a
-    durable cancelled outcome as a failed Work result.
+    execution. This facade owns explicit operator control such as abandoning an
+    unresolved non-replayable side effect. It repairs ingress linkage and
+    cancellation before asking the ordinary ledger to finalize anything, so a
+    restart cannot lose Work ownership or reinterpret a durable cancelled
+    outcome as an ordinary failed Work result.
     """
 
     def __init__(self, ledger: ResidentWorkLedger):
         self.ledger = ledger
         self.resident = ledger.resident
+        self.reconcile_missing_ingress_runs()
         self.reconcile_cancelled_runs()
+
+    def reconcile_missing_ingress_runs(self) -> int:
+        """Repair only the enqueue -> Work-run crash window.
+
+        ``ResidentWorkLedger.start()`` persists the resident event before it
+        persists ``work_runs``. A hard process exit between those commits leaves
+        a real resident event carrying its Work thread/message identity but no
+        Work linkage. Reconstruct that linkage from mutually agreeing durable
+        records. This repair never claims, executes, requeues, or terminalizes an
+        event; the resident event/outcome/checkpoint remain the execution truth.
+        """
+
+        with self.ledger._lock, closing(self.ledger._connect()) as conn:
+            rows = conn.execute(
+                """
+                SELECT events.event_id, events.data
+                FROM events
+                LEFT JOIN work_runs ON work_runs.event_id=events.event_id
+                WHERE work_runs.event_id IS NULL
+                ORDER BY events.created_at ASC
+                """
+            ).fetchall()
+
+            candidates: list[WorkRun] = []
+            for row in rows:
+                try:
+                    data = json.loads(row["data"] or "{}")
+                except Exception:
+                    continue
+                payload = data.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+
+                event_id = str(data.get("event_id") or "").strip()
+                thread_id = str(payload.get("work_thread_id") or "").strip()
+                message_id = str(payload.get("work_message_id") or "").strip()
+                task = str(data.get("task") or "").strip()
+                if (
+                    not event_id
+                    or event_id != str(row["event_id"])
+                    or not thread_id
+                    or not message_id
+                    or not task
+                ):
+                    continue
+                try:
+                    thread_id = self.ledger._normalize_thread_id(thread_id)
+                except ValueError:
+                    continue
+
+                thread = conn.execute(
+                    "SELECT 1 FROM work_threads WHERE thread_id=?",
+                    (thread_id,),
+                ).fetchone()
+                message = conn.execute(
+                    """
+                    SELECT role, text
+                    FROM work_messages
+                    WHERE message_id=? AND thread_id=?
+                    """,
+                    (message_id, thread_id),
+                ).fetchone()
+                if (
+                    thread is None
+                    or message is None
+                    or str(message["role"]) != "user"
+                    or str(message["text"]) != task
+                ):
+                    continue
+
+                created_at = str(data.get("created_at") or "").strip() or utc_now()
+                candidates.append(
+                    WorkRun(
+                        event_id=event_id,
+                        thread_id=thread_id,
+                        message_id=message_id,
+                        task=task,
+                        created_at=created_at,
+                        updated_at=created_at,
+                    )
+                )
+
+        repaired = 0
+        for work_run in candidates:
+            if self.ledger.get_run(work_run.event_id) is not None:
+                continue
+            self.ledger._save_run(work_run)
+            repaired += 1
+        return repaired
 
     def reconcile_cancelled_runs(self, *, thread_id: str | None = None) -> int:
         sql = "SELECT * FROM work_runs WHERE ledger_state='active'"
