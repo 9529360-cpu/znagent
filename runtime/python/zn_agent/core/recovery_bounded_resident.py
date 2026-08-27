@@ -3,6 +3,7 @@ from __future__ import annotations
 """Bound direct synchronous driving at durable recovery-control checkpoints."""
 
 from .capability_recovery_resident import CapabilityRecoveryResidentRuntime
+from .models import EventStatus
 from .recovery_control import raise_if_synchronous_recovery_blocked
 
 
@@ -16,6 +17,43 @@ class RecoveryBoundedResidentRuntime(CapabilityRecoveryResidentRuntime):
     ``ResidentRecoveryRequired`` while leaving the event, WorkingState, and
     side-effect attempt active and recoverable.
     """
+
+    def submit(
+        self,
+        task: str,
+        *,
+        kind: str = "user_task",
+        priority: int = 0,
+        payload: dict | None = None,
+    ):
+        event = self.enqueue(task, kind=kind, priority=priority, payload=payload)
+        while True:
+            completed = self.result_for(event.event_id)
+            if completed is not None:
+                return completed
+
+            result = self.live_once()
+            if result is not None and result.event.event_id == event.event_id:
+                return result
+
+            completed = self.result_for(event.event_id)
+            if completed is not None:
+                return completed
+
+            current = self.store.get_working_state()
+            raise_if_synchronous_recovery_blocked(
+                str(current.current_event_id or event.event_id),
+                current,
+            )
+
+            persisted = self.store.get_event(event.event_id)
+            if persisted is not None and persisted.status in {
+                EventStatus.COMPLETED,
+                EventStatus.FAILED,
+            }:
+                raise RuntimeError(
+                    "resident event reached a terminal state without a durable outcome"
+                )
 
     def run_once(
         self,
@@ -59,9 +97,10 @@ class RecoveryBoundedResidentRuntime(CapabilityRecoveryResidentRuntime):
                 if result is not None:
                     return self._complete_result(event, result)
 
-                current = self.store.get_working_state()
-                raise_if_synchronous_recovery_blocked(event.event_id, current)
-                if not drive_to_terminal:
+                if drive_to_terminal:
+                    current = self.store.get_working_state()
+                    raise_if_synchronous_recovery_blocked(event.event_id, current)
+                else:
                     return None
 
                 pulse = self.pulse()
