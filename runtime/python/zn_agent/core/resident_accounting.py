@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Event-idempotent resident accounting for crash-recoverable results."""
 
+import hashlib
 import json
 import sqlite3
 from contextlib import closing
@@ -69,6 +70,68 @@ class ResidentAccountingJournal:
             ability_sample=sample,
             knowledge_sample=sample,
         )
+        return normalized_domains
+
+    def record_native_body_success(
+        self,
+        *,
+        event_id: str,
+        domains: tuple[str, ...] | list[str],
+        quality: float = 0.95,
+    ) -> tuple[str, ...]:
+        """Count one durable Body completion exactly once for one event."""
+
+        normalized_domains = self._normalize_domains(domains)
+        sample = max(0.0, min(1.0, float(quality)))
+        self._record_native_success(
+            event_id=event_id,
+            kind="native_body_success",
+            domains=normalized_domains,
+            ability_sample=sample,
+            knowledge_sample=sample,
+        )
+        return normalized_domains
+
+    def record_native_body_failure(
+        self,
+        *,
+        event_id: str,
+        domains: tuple[str, ...] | list[str],
+        failure_identity: str,
+    ) -> tuple[str, ...]:
+        """Record one durable Body failure fact once without ending the task.
+
+        A resident event may legitimately encounter more than one distinct body
+        failure while evidence changes. The stable failure identity therefore
+        participates in the journal key rather than collapsing every failure in
+        the event into a single sample.
+        """
+
+        normalized_event = str(event_id or "").strip()
+        normalized_identity = str(failure_identity or "").strip()
+        if not normalized_event:
+            raise ValueError("resident accounting requires event_id")
+        if not normalized_identity:
+            raise ValueError("native body failure accounting requires identity")
+        normalized_domains = self._normalize_domains(domains)
+        identity_hash = hashlib.sha256(normalized_identity.encode("utf-8")).hexdigest()[:24]
+        accounting_kind = f"native_body_failure:{identity_hash}"
+        now = utc_now()
+
+        with closing(self._connect()) as conn:
+            inserted = conn.execute(
+                f"INSERT OR IGNORE INTO {self.TABLE}(event_id,kind,created_at) VALUES(?,?,?)",
+                (normalized_event, accounting_kind, now),
+            )
+            if inserted.rowcount == 1:
+                for domain in normalized_domains:
+                    self._update_capability_estimate(
+                        conn,
+                        SelfModel.agent_capability_key(domain),
+                        0.0,
+                        now,
+                    )
+            conn.commit()
         return normalized_domains
 
     def record_external_completion(
@@ -303,6 +366,13 @@ class ResidentAccountingJournal:
                 (str(event_id or "").strip(), str(kind or "").strip()),
             ).fetchone()
         return row is not None
+
+    def native_body_failure_kind(self, failure_identity: str) -> str:
+        normalized_identity = str(failure_identity or "").strip()
+        if not normalized_identity:
+            raise ValueError("native body failure accounting requires identity")
+        identity_hash = hashlib.sha256(normalized_identity.encode("utf-8")).hexdigest()[:24]
+        return f"native_body_failure:{identity_hash}"
 
     def _init_schema(self) -> None:
         with closing(self._connect()) as conn:
