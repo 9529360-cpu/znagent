@@ -5,7 +5,9 @@ import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
+from unittest.mock import patch
 
+from zn_agent.core.daemon import ResidentRpcServer
 from zn_agent.core.models import EventStatus, WorkingState
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
 from zn_agent.core.recovery_control import (
@@ -162,6 +164,98 @@ class SynchronousRecoveryControlTests(unittest.TestCase):
                 self.assertEqual(restored.store.get_working_state().stage, "idle")
             finally:
                 restored.store.close()
+
+    def test_legacy_work_submit_returns_recovery_progress_then_can_cancel(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            server = ResidentRpcServer(resident=resident)
+            server.work.create_thread(thread_id="sync-work-rpc")
+            attempts: list[str] = []
+
+            def block_work_once(instance):
+                event = instance.store.peek_next_event()
+                self.assertIsNotNone(event)
+                assert event is not None
+                claimed = instance.store.claim_event(event.event_id)
+                self.assertIsNotNone(claimed)
+                attempt_id = f"sidefx-sync-rpc-{event.event_id[-8:]}"
+                attempts.append(attempt_id)
+                args = {"command": "echo uncertain-rpc"}
+                instance.body._start_attempt(
+                    attempt_id=attempt_id,
+                    event_id=event.event_id,
+                    kind="command",
+                    signature_hash=instance.body._signature_hash("command", args),
+                )
+                instance.store.save_working_state(
+                    WorkingState(
+                        current_event_id=event.event_id,
+                        stage="side_effect_recovery",
+                        next_action="await explicit recovery or cancellation decision; do not replay the side effect",
+                        blocked_by="outside_world_effect_uncertain",
+                        data={
+                            "side_effect_recovery": {
+                                "status": "decision_required",
+                                "kind": "command",
+                                "attempt_id": attempt_id,
+                                "replay_blocked": True,
+                                "decision": "user_decision_required",
+                            }
+                        },
+                    )
+                )
+                return instance.run_once(
+                    thought=object(),
+                    target_event_id=event.event_id,
+                )
+
+            try:
+                with patch.object(type(resident), "live_once", new=block_work_once):
+                    response = server.handle(
+                        {
+                            "id": "work-submit-1",
+                            "method": "work_submit",
+                            "params": {
+                                "thread_id": "sync-work-rpc",
+                                "task": "run an uncertain command",
+                            },
+                        }
+                    )
+
+                self.assertTrue(response["ok"])
+                result = response["result"]
+                self.assertTrue(result["recovery_required"])
+                progress = result["progress"]
+                self.assertEqual(progress["stage"], "side_effect_recovery")
+                self.assertEqual(progress["status"], "processing")
+                self.assertFalse(progress["terminal"])
+                self.assertFalse(progress["finalized"])
+                event_id = progress["event_id"]
+                self.assertIsNone(resident.store.get_event_outcome(event_id))
+                self.assertEqual(len(attempts), 1)
+                self.assertEqual(self._attempt_status(resident, attempts[0]), "started")
+
+                cancelled = server.handle(
+                    {
+                        "id": "work-cancel-1",
+                        "method": "work_cancel",
+                        "params": {
+                            "thread_id": "sync-work-rpc",
+                            "event_id": event_id,
+                        },
+                    }
+                )
+                self.assertTrue(cancelled["ok"])
+                cancelled_progress = cancelled["result"]["progress"]
+                self.assertEqual(cancelled_progress["status"], "cancelled")
+                self.assertTrue(cancelled_progress["terminal"])
+                self.assertTrue(cancelled_progress["finalized"])
+                self.assertEqual(self._attempt_status(resident, attempts[0]), "work_abandoned")
+            finally:
+                resident.store.close()
 
     def test_read_only_reverification_is_not_treated_as_explicit_control_block(self):
         state = WorkingState(
