@@ -4,9 +4,9 @@ Updated: 2026-08-27
 
 ## Current goal
 
-Continue the bounded broader-Work durability audit after closing and verifying thirteen concrete crash windows. The newest slice makes zero-model terminal failure and deterministic outer `run_once()` exception publication restart-safe without duplicate task accounting, while preserving durable success and outside-world uncertainty rather than overwriting either as failure.
+Continue the bounded broader-Work durability audit after closing and verifying eighteen concrete crash/restart windows. The newest slice closes the structured-memory and native-investigation accounting-before-completion gaps, then independently closes the active external-cognition resident completion, secondary learning, kernel result/route-learning and unknown-provider-outcome replay boundaries.
 
-Broader Work durability remains **PARTIAL**. The next target is the nearest accounting-before-checkpoint pattern: structured-memory success and base native-investigation success, followed by external-cognition completion boundaries.
+Broader Work durability remains **PARTIAL**. Do not reopen these verified completion paths without evidence; the next real target is the unresolved `side_effect_recovery` synchronous-driving lifecycle and the shared low-level side-effect-attempt helper boundary.
 
 Founding boundary remains:
 
@@ -18,10 +18,9 @@ Founding boundary remains:
 - development branch: `dev/zn-agent`
 - canonical source/release branch: `main`
 - canonical `main`: `8234a835dea604783cea0bd9d28a40de654ec03d`
-- exact implementation/test/CI head: `20655834570a31dd4f59abcbc3502aab9e1d81f4`
-- implementation-status synchronization: `4ecd94cc1ffce33806a8dfe2326a914363b368e8`
-- branch HEAD immediately before this HANDOFF commit: `4ecd94cc1ffce33806a8dfe2326a914363b368e8`
-- PR #6 remains the development PR; recheck its exact state before the next modification
+- exact implementation/test/CI proof head: `8274289f22daa18d8638f365da54d794e2e4b3f0`
+- branch HEAD immediately before this status/HANDOFF synchronization commit: `8274289f22daa18d8638f365da54d794e2e4b3f0`
+- PR #6 remains the development PR from `dev/zn-agent` to `main`
 - `main` was not modified
 - no force push or history rewrite was requested or performed
 
@@ -29,101 +28,136 @@ A HANDOFF commit cannot contain its own resulting SHA. Re-read `dev/zn-agent` af
 
 ## Completed in this stage
 
-### Twelfth crash window: terminal budget-blocked failure ownership
+### 14. Structured-memory accounting boundary
 
-Real active chain:
+Active chain:
 
 ```text
 provider_bridge.build_resident_runtime*
--> CapabilityRecoveryResidentRuntime
--> base ZNResidentRuntime._deliberation_step()
--> no-model/budget-blocked terminal failure
+-> CapabilityRecoveryResidentRuntime._orient_step()
+-> structured memory recall
+-> resident_completion
 -> terminal EventOutcome
 ```
 
-Old behavior could increment `runtime_metrics.tasks_total` before terminal publication. A crash in that interval could repeat deliberation, increment impasse attempts again, and duplicate task accounting.
+Old ordering learned/counted before the durable semantic completion. New ordering persists exact `resident_completion` plus a versioned accounting descriptor first, then calls event-idempotent `ResidentAccountingJournal.record_memory_success(event_id)`.
 
-New ownership:
+Crash/restart proof covers both checkpoint-before-accounting and accounting-before-terminal-publication. Restart does not rerun recall and does not duplicate task or knowledge evidence. Historical completion checkpoints without the new descriptor are treated as already-accounted because the old path only checkpointed after eager accounting.
+
+### 15. Native-investigation accounting boundary
+
+Active native investigation now persists exact `investigation_completion` plus a versioned accounting descriptor before ability/knowledge/task accounting. `record_native_investigation_success(event_id)` gates the cumulative update by durable event identity.
+
+Fault injection proves restart after checkpoint-before-accounting and accounting-before-terminal-publication without native reprobe or duplicate ability/knowledge/task evidence. Historical descriptor-less checkpoints remain upgrade-safe under the same old-ordering rule.
+
+### 16. External resident completion + learning boundary
+
+The active resident now owns external cognition through a durable `external_completion` stage rather than writing `complete/failed` and returning to a non-resumable state.
 
 ```text
-known zero-model terminal failure
--> persist WorkingState stage=terminal_failure + exact failure payload
--> ResidentAccountingJournal.record_terminal_failure(event_id)
--> reconstruct BUDGET_BLOCKED result
--> KernelStore.complete_event()
+bounded CognitionRequest
+-> stable kernel goal derived from request_id
+-> durable kernel result
+-> persist WorkingState stage=external_completion
+   + exact success/failure payload
+   + external accounting descriptor
+-> idempotent resident metrics/token accounting
+-> success-only resident knowledge integration
+-> Life/investigation secondary integration
+-> terminal EventOutcome
 ```
 
-`record_terminal_failure()` is event-idempotent through `resident_event_accounting(event_id, terminal_failure)`. It preserves existing semantics: terminal failure counts one attempted task but does not invent native ability or knowledge evidence.
+Restart from `external_completion` never reruns the provider. Direct fault injection proves:
 
-Restart after checkpoint-before-accounting or accounting-before-EventOutcome now consumes the durable failure fact without repeating deliberation or task count.
+- success after resident accounting before terminal publication: metrics, knowledge, route evidence and Life candidate remain once;
+- success after Life learning before investigation external integration: restart completes investigation integration without provider replay or duplicate Life/accounting;
+- failure before resident metrics: restart accounts once, no success knowledge;
+- failure after resident metrics before Life unresolved publication: restart publishes unresolved Life state without provider replay or duplicate metrics.
 
-### Thirteenth crash window: outer deterministic exception ownership
+### 17. Durable kernel result and route-learning boundary
 
-The outer `run_once()` exception fallback now uses the same durable terminal-failure checkpoint and idempotent task accounting before terminal publication.
+`ZNKernelRuntime.run_goal()` now supports a stable durable `goal_id` and stores a versioned attempt ledger in Goal metadata:
 
-It also refuses to overwrite stronger existing truth:
+```text
+dispatching
+-> full worker result checkpoint (worker_observed)
+-> assessed
+-> idempotent experience + route-quality accounting
+-> settled
+-> final goal result
+```
 
-- existing `EventOutcome` remains authoritative;
-- already-durable success/completion checkpoints are preserved if terminal publication throws;
-- `side_effect_recovery` / `blocked_by=outside_world_effect_uncertain` propagates the exception without becoming known failure evidence;
-- durable terminal/completion stages stay owned by their stage-specific resume path.
+`KernelAttemptAccountingJournal` gates route evidence by `(goal_id, attempt, external_route_assessment)`. Full WorkerResult is persisted, so restart after provider return reconstructs the complete result rather than replaying the provider or relying on the old 2000-character experience excerpt. Experience and improvement-proposal identities are deterministic for recovery.
 
-This contract is deliberately limited to deterministic zero-model `BUDGET_BLOCKED` fallback. External cognition is still an independent open durability boundary.
+Fault injection proves restart after `worker_observed` and after route learning/`settled` before final publication with zero provider replay and exactly-once route evidence.
+
+### 18. Unknown provider outcome blocks replay
+
+The unavoidable crash interval after durable `dispatching` but before a returned provider result is explicit uncertainty. On restart ZN does not retry or switch routes blindly. It records an unknown external outcome, blocks provider replay, adds no route learning, and creates no improvement proposal from the unknown result.
+
+This is an intentional at-most-once provider boundary, not a false exactly-once claim.
 
 ### Implementation/test commits
 
 ```text
-7fdeddc68c3828504931af24149092ddf824783f  feat: journal terminal failure task accounting
-076a611994d85aa76fcaf895142eb46acf93a4e4  fix: make terminal failure completion restart safe
-c67d477397dbe02f12fb562aa7aece9ff941500a  test: prove terminal failure restart recovery
-4f16cebfa867edbf50ed1094c410d3e15e3f90c7  ci: cover terminal failure restart recovery
-20655834570a31dd4f59abcbc3502aab9e1d81f4  test: avoid slot-unsafe budget mocking
-4ecd94cc1ffce33806a8dfe2326a914363b368e8  docs: record terminal failure recovery
+dadc769875f4694d26e908f9c3a445349326d138  fix: close resident completion durability gaps
+5384a71ad0d92d59046a023550c8de987ed22047  test: probe external learning recovery boundaries
+8274289f22daa18d8638f365da54d794e2e4b3f0  ci: cover external learning recovery boundaries
 ```
 
-Focused regressions in `tests/zn_agent/core/test_terminal_failure_recovery.py`:
+Key implementation files:
 
 ```text
-test_budget_failure_accounting_survives_crash_before_outcome
-test_budget_failure_checkpoint_survives_crash_before_accounting
-test_outer_exception_failure_survives_restart_without_duplicate_accounting
-test_publish_exception_preserves_durable_success_checkpoint
-test_outer_exception_does_not_reclassify_outside_world_uncertainty
+runtime/python/zn_agent/core/runtime.py
+runtime/python/zn_agent/core/kernel_accounting.py
+runtime/python/zn_agent/core/evolution.py
+runtime/python/zn_agent/core/capability_recovery_resident.py
+runtime/python/zn_agent/core/resident_accounting.py
 ```
+
+Key new fault-injection suites:
+
+```text
+tests/zn_agent/core/test_completion_durability_boundaries.py
+tests/zn_agent/core/test_completion_durability_secondary.py
+```
+
+The recovery workflow now directly compiles and executes these durability tests.
 
 ## Real test / CI truth
 
-Exact implementation/test/CI proof for `20655834570a31dd4f59abcbc3502aab9e1d81f4`:
+Exact implementation/test/CI proof for `8274289f22daa18d8638f365da54d794e2e4b3f0`:
 
 ```text
-ZN Work Recovery E2E run 33108134821                 success
+ZN Work Recovery E2E run 33112257030                 success
 Windows resident Work restart recovery                success
 Compile Work recovery path                            success
 Verify durable Work progress and restart recovery     success
-focused recovery suite                                66 tests / success
+  primary completion durability fault injection       success
+  secondary learning durability fault injection       success
 
-ZN CI run 33108134767                                 success
+ZN CI run 33112257029                                 success
 ZN Kernel / Python / Windows                          success
   Boot isolated ZN distribution without a model       success
   Compile resident core                               success
   Run ZN core tests against working tree              success
 ZN Source Boundary / Windows                          success
 Electron / TypeScript / Windows                       success
+Publish Windows CI statuses                           success
 ```
 
-The superseded focused run `33108010947` failed only because two new tests attempted to patch the read-only slotted `CognitiveBudgetManager.decide` instance method. The implementation compiled and the other focused tests passed. Commit `20655834570a31dd4f59abcbc3502aab9e1d81f4` replaced that fragile instrumentation with persisted impasse-attempt assertions; the authoritative rerun is green.
+The earlier focused recovery run for `dadc769875f4694d26e908f9c3a445349326d138` (`33111884613`) also passed. Its general CI was superseded by later branch pushes and is not used as the final full-suite proof.
 
-No local repository test run is claimed. Repository self-hosted Windows CI is the verification authority.
+No local repository test run is claimed. Scratch copies of changed Python modules/tests passed `py_compile`; repository self-hosted Windows CI is the verification authority.
 
 ## Current risks / incomplete work
 
-- broader Work durability remains partial beyond thirteen verified crash windows;
-- structured-memory success performs self-model/runtime accounting before `resident_completion`; the later completion restart interval is proven, this earlier interval is not;
-- base native-investigation success performs self-model/runtime accounting before `investigation_completion`; the later completion restart interval is proven, this earlier interval is not;
-- external cognition success/failure still needs direct ownership proof around model result, task accounting, learning, WorkingState and terminal `EventOutcome`;
+- broader Work durability remains partial beyond eighteen verified crash/restart windows;
+- direct synchronous driving while unresolved `side_effect_recovery` persists still deserves separate lifecycle review; external uncertainty must not become automatic replay or invented failure merely to terminate a caller;
 - Body and compiled capability recovery share `resident_side_effect_attempts` durable truth but low-level helper implementation is not fully consolidated;
-- direct synchronous driving while unresolved `side_effect_recovery` persists deserves separate lifecycle review; uncertainty must not become replay/failure merely to terminate a caller;
+- continue the bounded backward audit for any other cumulative accounting/learning writes that can occur before durable semantic facts;
 - no deliberate outcome-trace rewrite/compactor exists; destructive long-term-memory migration remains a separate approval boundary;
+- explanatory-comment cleanup in `intentional_resident.py` remains non-behavioral debt;
 - Windows M8 continuity, browser PRESS/broader interaction lifecycle, authenticated User Browser Bridge control, and SM1+ remain incomplete;
 - identity, long-term memory, credentials/permissions, updater/signing, rollback and destructive self-maintenance remain high-risk approval boundaries.
 
@@ -131,15 +165,15 @@ No local repository test run is claimed. Repository self-hosted Windows CI is th
 
 ### P1 - bounded broader Work durability audit
 
-Status: **OPEN / THIRTEEN CRASH WINDOWS VERIFIED / ACTIVE**
+Status: **OPEN / EIGHTEEN CRASH-RESTART WINDOWS VERIFIED / ACTIVE**
 
 Next real target:
 
-1. structured-memory success accounting before `resident_completion`;
-2. base native-investigation success accounting before `investigation_completion`;
-3. external-cognition success/failure completion and learning ownership.
+1. trace direct synchronous driving while a durable `side_effect_recovery` remains unresolved, including caller termination, cancellation and later resume semantics;
+2. audit/consolidate the shared low-level `resident_side_effect_attempts` helper without introducing a second truth model;
+3. continue backward from other cumulative accounting/learning writes and prove durable semantic facts precede recoverable cumulative state.
 
-For each path, trace entry -> owner -> state -> lifecycle -> dependencies -> tests -> active caller and prove crash/restart behavior directly. Preserve `outside_world_effect_uncertain` as uncertainty.
+For every path, trace entry -> owner -> state -> lifecycle -> dependency -> tests -> active caller and prove the crash/restart boundary directly. Preserve both outside-world-effect uncertainty and unknown-provider outcome as uncertainty.
 
 ### P2 - browser follow-ons
 
@@ -156,14 +190,13 @@ Preserve human approval for high-risk identity, memory, credentials, updater/sig
 ## Related files
 
 ```text
-runtime/python/zn_agent/core/resident.py
-runtime/python/zn_agent/core/resident_accounting.py
+runtime/python/zn_agent/core/runtime.py
+runtime/python/zn_agent/core/kernel_accounting.py
+runtime/python/zn_agent/core/evolution.py
 runtime/python/zn_agent/core/capability_recovery_resident.py
-runtime/python/zn_agent/core/completion_observation.py
-runtime/python/zn_agent/core/provider_bridge.py
-tests/zn_agent/core/test_terminal_failure_recovery.py
-tests/zn_agent/core/test_resident_native_completion_recovery.py
-tests/zn_agent/core/test_capability_failure_recovery.py
+runtime/python/zn_agent/core/resident_accounting.py
+tests/zn_agent/core/test_completion_durability_boundaries.py
+tests/zn_agent/core/test_completion_durability_secondary.py
 .github/workflows/zn-work-recovery-e2e.yml
 docs/ZN-IMPLEMENTATION-STATUS.md
 .agent/HANDOFF.md
@@ -171,4 +204,4 @@ docs/ZN-IMPLEMENTATION-STATUS.md
 
 ## Next real target
 
-Re-read current branch, PR/CI and the active caller chain before modification. Start the bounded backward durability audit at structured-memory and native-investigation accounting-before-checkpoint ownership, then external cognition. Keep broader Work durability marked PARTIAL and keep `main` untouched during ordinary development.
+Re-read current branch, PR/CI and active caller chain before the next modification. Start with unresolved `side_effect_recovery` under direct synchronous driving, then the shared low-level side-effect-attempt helper boundary. Keep broader Work durability marked PARTIAL and keep `main` untouched during ordinary development.
