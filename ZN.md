@@ -258,6 +258,63 @@ The browser subsystem should be designed for the eventual real product rather th
 
 A product slice may implement only part of this at one time, but status documents must name the missing product requirements explicitly. Passing a narrow test is evidence for that slice, not evidence that the browser product is complete.
 
+### 4.6 Resident intelligence must accumulate inside ZN
+
+ZN must not behave like a newborn agent that re-solves every recurring task from scratch merely because an external model is available. A mature resident should become both more capable and more reliable through mechanisms and experience that belong to ZN itself.
+
+Resident intelligence has three distinct sources:
+
+```text
+ZN-owned built-in competence
++ ZN-owned learned experience / procedural competence
++ replaceable external cognition for genuine novelty
+= mature resident intelligence
+```
+
+**Built-in competence** is mature engineering and computer-use knowledge crystallized into ZN-owned mechanisms: state machines, evidence contracts, Body/Senses semantics, verification, recovery, conflict detection, deterministic capabilities, tests and other resident behavior. When a class of failure is already well understood and can be handled by explicit evidence, ZN should not repeatedly ask a model to rediscover the same rule.
+
+**Learned competence** is what ZN acquires through its own verified lived experience: familiar procedures, context-specific expectations, anomaly patterns, recovery tendencies and project/user-specific ways of working. This competence must remain reality-gated and should survive provider replacement.
+
+**External cognition** remains valuable for unfamiliar situations, hard reasoning and genuine knowledge gaps, but its output is candidate cognition rather than resident truth. External model quality may change without redefining who ZN is or erasing what ZN already knows how to do.
+
+The knowledge-crystallization rule is:
+
+```text
+well-understood recurring problem
+→ encode resident-owned observation / invariant / procedure / verification
+→ prove it with tests and current-world evidence
+→ stop paying a model to rediscover the same low-level rule every time
+```
+
+Some questions are never model-authority questions. Whether an action executed, a file now contains intended bytes, a browser mutation took effect, an event is terminal, or the outside world changed must be established from owned state and fresh observation, not inferred from model confidence.
+
+Repeated work should proceduralize rather than become repeated prompting. The first unfamiliar attempt may require deep Investigation and external cognition; later compatible attempts should use accumulated resident competence while still checking current reality. A hundred prior successes do not authorize a blind hundred-and-first action when current evidence has drifted.
+
+A mature familiar path therefore needs both speed and interruption semantics:
+
+```text
+familiar Situation
+→ resident competence activates
+→ act
+→ verify expected result
+→ compatible reality strengthens familiarity
+
+but:
+
+changed / ambiguous / contradictory reality
+→ stop automatic continuation
+→ re-sense
+→ raise uncertainty
+→ Thought / Investigation
+→ adapt or relearn
+```
+
+Product quality is not measured only by whether ZN can complete a task once. Important intelligence criteria include repeated-task reliability, anomaly detection, uncertainty calibration, self-correction, restart continuity, resistance to stale state, provider independence and retention of mature competence when models are unavailable.
+
+This does not mean copying a model's weights, hidden training data or unverified textual knowledge into ZN. It means converting applicable mature systems knowledge into explicit ZN-owned architecture and tests, while allowing ZN's personal/project-specific competence to emerge from verified experience.
+
+Detailed learning mechanics remain governed by `docs/ZN-MEMORY-LEARNING.md`. The broader product/engineering implications of resident intelligence are recorded in `docs/ZN-RESIDENT-INTELLIGENCE.md`.
+
 ## 5. Memory and learning
 
 Memory is lived resident change, not merely transcript/context retrieval.
@@ -389,6 +446,7 @@ keep automatic Windows x64 self-hosted CI green on push / PR
 → continue real Windows desktop/UIA computer-use evidence without confusing it with managed-browser automation
 → remove remaining development/tooling security debt where safely possible
 → advance resident-owned engineering competence
+→ crystallize mature engineering/computer-use knowledge into ZN-owned mechanisms instead of repeated model prompting
 → close Windows M8 install / N→N+1 / rollback / signing gaps
 → maintain self-maintenance/release automation
 ```
