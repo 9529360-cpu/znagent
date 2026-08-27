@@ -4,7 +4,7 @@
 >
 > Architecture authority remains [`../ZN.md`](../ZN.md). Real code and real verification outrank this file.
 
-Updated: 2026-08-26
+Updated: 2026-08-28
 
 ## 1. Why this ledger exists
 
@@ -74,7 +74,7 @@ Resident Managed Browser + User Browser Bridge
 | --- | --- | --- | --- |
 | HTTP web search/extract | Web Senses / external resources | VERIFIED/PARTIAL | Tavily/Exa/Firecrawl resources exist with resident-owned normalization/failover |
 | ZN-owned browser session/action/evidence contracts | Browser Body/Senses | FOUNDATION | session, permission, query, target, observation, action, authority and effect contracts are ZN-owned and hardened |
-| Local managed Chromium, headless | Browser Body | FOUNDATION | Playwright adapter + dedicated real Windows Chromium navigation/target/focus/toggle-click/type-text/check/uncheck E2E exist; lifecycle cleanup is resident-owned |
+| Local managed Chromium, headless | Browser Body | FOUNDATION | Playwright adapter + dedicated real Windows Chromium navigation/target/focus/toggle-click/type-text/check/uncheck/select-option E2E exist; lifecycle cleanup is resident-owned |
 | Local managed Chromium, headed | Browser Body | OPEN | same ZN contracts, separate real UX/evidence |
 | DOM/accessibility target sensing | Browser Senses | PARTIAL / VERIFIED NARROW | exact `DOM_ID` for one unique visible main-frame element is real-Chromium verified; iframe, generic accessibility, multi-target/disambiguation and visual fusion remain open |
 | Managed-browser focus | Browser Body | VERIFIED NARROW | exact current target authority, execution-time exact-node revalidation, `FOCUS`, and fresh `document.activeElement` evidence are real-Chromium verified |
@@ -82,7 +82,8 @@ Resident Managed Browser + User Browser Bridge
 | Managed-browser empty-textbox TYPE_TEXT | Browser Body | VERIFIED NARROW | `allow_page_interaction + allow_text_entry`, empty writable non-password text input/textarea, <=512 UTF-16 units, same-node continuity, and fresh length+SHA-256 completion evidence are real-Chromium verified |
 | Managed-browser native CHECK | Browser Body | VERIFIED NARROW | enabled unchecked native `input[type=checkbox]`, current authority, provider `check()`, exact-node continuity and fresh `checked=true` evidence are real-Chromium verified |
 | Managed-browser native UNCHECK | Browser Body | VERIFIED NARROW | enabled checked native `input[type=checkbox]`, current authority, provider `uncheck()`, exact-node continuity and fresh `checked=false` evidence are real-Chromium verified |
-| SELECT_OPTION / PRESS / broader click / text replacement / ARIA checkbox | Browser Body | OPEN | no arbitrary provider-success surface; each action requires a bounded independent postcondition |
+| Managed-browser native SELECT_OPTION | Browser Body | VERIFIED NARROW | enabled single-select native `select`/combobox, one explicit bounded string value, current target authority, provider `select_option`, exact-node continuity and fresh selected-value length+SHA-256 evidence are real-Chromium verified; already-selected, multi-select, replacement and no-change cases fail closed and raw requested value is not persisted |
+| PRESS / broader click / text replacement / ARIA checkbox | Browser Body | OPEN | `PRESS` exists only in the action/permission contract today; managed-provider dispatch is not implemented. No arbitrary provider-success surface: each new mutation requires a bounded independent postcondition |
 | Multi-tab/popup/frame lifecycle | Browser Body/Senses | OPEN | needs stable page/frame identities and stale-target handling |
 | Downloads/uploads | Browser Body + File authority | OPEN | adapter refuses these until explicit file authority exists |
 | Screenshots/visual browser sensing | Browser Senses | OPEN | integrate with visual evidence rather than making pixels completion authority by themselves |
@@ -92,7 +93,7 @@ Resident Managed Browser + User Browser Bridge
 | Companion extension/native messaging bridge | User Browser Bridge | OPEN | add only if real provider evidence shows it is needed and permission is explicit |
 | MFA/sensitive-field handling | Permission / Body | OPEN | never silently replay/extract secrets; explicit high-risk boundaries required |
 
-Managed mutation evidence remains deliberately narrow. Provider handles are disposable execution resources and never ZN identity. `FOCUS` requires exact-node continuity plus fresh focus evidence. `CLICK` is limited to explicit boolean `aria-pressed` transitions. `TYPE_TEXT` is limited to an empty writable non-password textbox with bounded Unicode input and privacy-safe length/digest evidence. Native `CHECK` and `UNCHECK` independently prove inverse boolean transitions on the same exact native checkbox. Generic click, text replacement, password entry, contenteditable, ARIA checkbox control, select/press and arbitrary provider methods remain unavailable until independently verified.
+Managed mutation evidence remains deliberately narrow. Provider handles are disposable execution resources and never ZN identity. `FOCUS` requires exact-node continuity plus fresh focus evidence. `CLICK` is limited to explicit boolean `aria-pressed` transitions. `TYPE_TEXT` is limited to an empty writable non-password textbox with bounded Unicode input and privacy-safe length/digest evidence. Native `CHECK` and `UNCHECK` independently prove inverse boolean transitions on the same exact native checkbox. Native `SELECT_OPTION` is limited to an enabled single-select native combobox, one explicit bounded string value, exact-node continuity and privacy-safe fresh selected-value evidence. Generic click, text replacement, password entry, contenteditable, ARIA checkbox control, PRESS and arbitrary provider methods remain unavailable until independently verified.
 
 The User Browser Bridge provider proof remains sensing-only: it uses a temporary isolated profile and bounded focused-element/current-text evidence, not authenticated browser control.
 
@@ -105,7 +106,7 @@ The User Browser Bridge provider proof remains sensing-only: it uses a temporary
 | Pointer movement/click with verification | Body + Senses | VERIFIED NARROW | real Windows interactive E2E exists |
 | Native Win32 text entry | Body + Senses | VERIFIED NARROW | real Unicode Edit E2E, empty focused native Edit only |
 | Modern UI text current-state evidence | Senses | VERIFIED NARROW | WPF read-only digest proof and real Edge focused HTML-input provider proof exist; raw text is not exported |
-| Modern app/browser mutation | Body | PARTIAL | managed browser has narrow focus, toggle click, empty-textbox type and native check/uncheck; authenticated user-browser/general modern-app mutation remains open |
+| Modern app/browser mutation | Body | PARTIAL | managed browser has narrow focus, toggle click, empty-textbox type, native check/uncheck and native select-option; authenticated user-browser/general modern-app mutation remains open |
 | Generic keyboard shortcuts/navigation | Body | OPEN | requires typed authority and effect verification |
 | Robust window/app lifecycle | Body/Senses | OPEN/PARTIAL | process/window foundations exist; product-grade cross-app lifecycle incomplete |
 
@@ -160,7 +161,7 @@ The User Browser Bridge provider proof remains sensing-only: it uses a temporary
 | Secret storage outside source/log/memory | credential boundary | VERIFIED | keyring/project secret boundaries exist |
 | URL/private-network safety | network Body policy | VERIFIED/PARTIAL | strong URL checks exist; DNS-rebinding/network-sandbox hardening remains open |
 | Action-specific authority | Body/Action | VERIFIED/PARTIAL | strong typed authority exists in several lifecycles; expansion remains action-specific |
-| Independent post-action evidence | Senses / Action | VERIFIED/PARTIAL | verified lifecycles include managed navigation, focus, toggle click, empty-textbox type and native check/uncheck |
+| Independent post-action evidence | Senses / Action | VERIFIED/PARTIAL | verified lifecycles include managed navigation, focus, toggle click, empty-textbox type, native check/uncheck and native select-option |
 | Global permission center | Self/user boundary | OPEN | inspectable grants/revocation by capability/site/account |
 | Sensitive action escalation | Will / permission | OPEN/PARTIAL | release/self-maintenance rules exist; general product policy remains open |
 | Sandboxed untrusted code/content | Body | OPEN/PARTIAL | some boundaries exist; browser/code/plugin sandboxing needs unified policy |
@@ -196,8 +197,8 @@ The order is dependency- and leverage-driven, not “implement the thinnest row 
 
 ```text
 A. keep resident continuity + Windows CI trustworthy
-B. preserve Managed Browser navigation/target/focus/toggle-click/type-text/check/uncheck real Chromium evidence
-C. add SELECT_OPTION only as a narrow action with native capability validation + independent fresh selected-state evidence
+B. preserve Managed Browser navigation/target/focus/toggle-click/type-text/check/uncheck/select-option real Chromium evidence
+C. keep the dedicated browser proof lane aligned with every verified mutation test and correct capability-ledger drift before expanding behavior
 D. reassess PRESS and broader target/frame/tab lifecycle; stop arbitrary action expansion at a useful browser checkpoint
 E. build durable resident-owned Work / checkpoint / restore / recovery
 F. build isolated parallel Work / Investigation + evidence merge without multiple ZN identities
