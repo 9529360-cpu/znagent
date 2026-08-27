@@ -4,13 +4,13 @@ Updated: 2026-08-27
 
 ## Current goal
 
-Trace and define nervous receipt/trace lifecycle robustness before any pruning or compaction implementation. The Windows NetworkService DOS-8.3 versus long-path identity family is closed at the full owner chain and ordinary CI is green.
+Trace the first still-unproven broader Work durability crash window. Nervous receipt/trace retention and the Windows NetworkService DOS-8.3 versus long-path identity family are closed at their current active owner chains with ordinary CI green.
 
 `EventOutcome` remains terminal truth. Nervous plasticity remains secondary. A nervous failure after terminal completion does not reclassify the event and does not replay the action. `NativeWill` keeps its existing durable outcome reconciliation authority.
 
 Generic nervous `perceive()` remains intentionally plastic and non-idempotent. Do not generalize the event-ID guarantee into a global exactly-once claim.
 
-The next target is investigation/specification first: determine how `neural_event_outcomes.trace_id` survives a future deliberate trace prune/rewrite while preserving event-ID dedupe and restart idempotence. Do not perform a destructive long-term-memory migration without explicit human approval.
+Automatic nervous pruning now fails closed for receipted outcome traces. A future deliberate outcome-trace rewrite must atomically retarget receipts before deleting the old representation; no such rewrite or destructive migration was added. Do not perform a destructive long-term-memory migration without explicit human approval.
 
 Founding boundary remains:
 
@@ -26,7 +26,8 @@ Founding boundary remains:
 - completion journal owner cleanup: `c54bb8c37385d98fc9688b6e89839d7a5cba6df6`
 - Windows path owner checkpoint: `0c011a2473c581e6517a882343208d6efe47cac1`
 - Windows evidence/learning checkpoint: `e3fc20b7b4271e46868f408c258cab58ba014abb`
-- current code/test HEAD when this handoff was prepared: `e3fc20b7b4271e46868f408c258cab58ba014abb`
+- nervous receipt lifecycle checkpoint: `9207d3de534080ea62a9847a848cde3b0ba5b6b5`
+- current code/test HEAD when this handoff was prepared: `9207d3de534080ea62a9847a848cde3b0ba5b6b5`
 - implementation-status sync: `d7f940651bc3896853dff91acfcb0b9e04f511c6`
 - PR #6: draft/open/unmerged, base `main`, head `dev/zn-agent`
 - `main` was not modified
@@ -153,21 +154,39 @@ event/context entry
 
 The first implementation checkpoint removed the historical 16 repository/terminal/Work errors. Its ordinary CI exposed the remaining Investigation/action evidence split; `e3fc20b7...` fixed that owner boundary. Existing strict real-path containment remains fail-closed for symlink/reparse escapes.
 
+### 8. Nervous receipt/trace pruning lifecycle closed
+
+The real lifecycle is:
+
+```text
+resident heartbeat
+-> PersistentNervousSystem.consolidate()
+-> weak isolated trace pruning decision
+-> _delete_trace()
+-> neural trace/link storage
+```
+
+Pruning was already active. It could delete an `outcome` trace without deleting its event receipt, leaving restart reconciliation permanently skipped and direct receipt dereference broken.
+
+`ensure_event_outcome_schema()` now installs a SQLite retention trigger for any trace referenced by `neural_event_outcomes`. This database invariant follows the final `IntegratedTransferNervousSystem` owner. `_delete_trace()` returns whether SQLite actually removed the row, preserves links on a refused delete, and consolidation only reports real pruning. Weak unreferenced traces still prune normally.
+
+The contract is: receipts own event-ID idempotence; their current trace target must remain dereferenceable. Automatic pruning refuses dangling references. A future deliberate compactor may change representation only by atomically retargeting all receipts to an existing canonical trace before removing the old trace. No compactor, pointer rewrite, deletion, or destructive migration was introduced here.
+
 ## Real test / CI truth
 
 ### Focused nervous/Work proof
 
 ```text
-ZN Work Recovery E2E run 33023392867
-head c54bb8c37385d98fc9688b6e89839d7a5cba6df6
+ZN Work Recovery E2E run 33049868415
+head 9207d3de534080ea62a9847a848cde3b0ba5b6b5
 Windows resident Work restart recovery             success
 Prepare isolated runtime                            success
 Compile Work recovery path                          success
 Verify durable Work progress and restart recovery  success
-Ran 44 tests in 9.798s                              OK
+Ran 46 tests in 10.077s                             OK
 ```
 
-The 44 tests include the existing Work progress/restart/side-effect/cancellation and completion-observation suites plus:
+The 46 tests include the existing Work progress/restart/side-effect/cancellation and completion-observation suites plus:
 
 ```text
 tests.zn_agent.core.test_modern_text_resident_ownership
@@ -178,21 +197,21 @@ tests.zn_agent.core.test_event_outcome_nervous_recovery
 ### Windows path identity local proof
 
 ```text
-DOS 8.3 TEMP/TMP coverage group  33 tests / OK / 1 symlink privilege skip
-CI-equivalent full core discovery 594 tests / OK / 5 skips
+DOS 8.3 TEMP/TMP coverage group       33 tests / OK / 1 symlink privilege skip
+Current CI-equivalent core discovery 596 tests / OK / 5 skips
 ```
 
 ### Ordinary CI
 
-The current code-checkpoint result is:
+The current exact-head code-checkpoint result is:
 
 ```text
-ZN CI run 33047823223
-head e3fc20b7b4271e46868f408c258cab58ba014abb
+ZN CI run 33049868413
+head 9207d3de534080ea62a9847a848cde3b0ba5b6b5
 Electron / TypeScript / Windows    success
 ZN Source Boundary / Windows       success
 ZN Kernel / Python / Windows       success
-Kernel                             594 tests / 5 skipped / OK
+Kernel                             596 tests / 5 skipped / OK
 ```
 
 The preceding code checkpoint was intentionally not hidden:
@@ -215,7 +234,7 @@ The second evidence-only commit did not match the Work Recovery workflow's path 
 ## Current risks / incomplete work
 
 - Several explanatory comments in `intentional_resident.py` were accidentally lost during the whole-file owner replacement. Diff review found no corresponding behavioral deletion; restoring those comments remains cleanup.
-- Event receipts currently point to trace IDs. If future neural pruning/compaction deliberately removes a referenced outcome trace, receipt/trace lifecycle semantics need an explicit policy rather than silent guessing.
+- No deliberate outcome-trace rewrite/compactor exists. A future implementation must atomically retarget receipts and receive separate review before any destructive long-term-memory migration.
 - Generic nervous `perceive()` remains intentionally plastic and is not safe for blind replay. Only the durable terminal EventOutcome path has event-ID dedupe semantics.
 - Broader Work durability remains partial outside the proven cancellation, Life-observation, and nervous-outcome slices.
 - Browser PRESS/broader click/editing/multi-select/lifecycle, authenticated User Browser Bridge control, M8 continuity, and SM1+ remain incomplete.
@@ -224,7 +243,7 @@ The second evidence-only commit did not match the Work Recovery workflow's path 
 
 ## Blockers
 
-No blocker prevents the next read-only lifecycle trace and policy specification. Any destructive identity or long-term-memory migration discovered to be necessary must stop for explicit human approval.
+No blocker prevents the next broader Work durability trace. Any destructive identity or long-term-memory migration discovered to be necessary must stop for explicit human approval.
 
 ## Task queue
 
@@ -242,9 +261,9 @@ Single richer birth-root owner; final status projection retained; regression run
 
 ### P0.2 - nervous receipt lifecycle robustness
 
-Status: **OPEN**
+Status: **COMPLETE / ORDINARY AND FOCUSED CI VERIFIED**
 
-Define behavior when a future deliberate neural pruning/compaction pass encounters a trace referenced by `neural_event_outcomes`. Preserve event identity without pinning accidental implementation details forever.
+Automatic pruning preserves referential integrity and accurate pruning/link state. Future deliberate rewriting remains a separate, unimplemented operation that must atomically retarget receipts before deletion.
 
 ### P1 - broader Work durability
 
@@ -303,4 +322,4 @@ docs/ZN-IMPLEMENTATION-STATUS.md
 
 ## Next real target
 
-Trace the neural event receipt to trace/pruning lifecycle and define a fail-closed durable policy before implementation. Any destructive long-term-memory migration requires explicit human approval. Keep `main` untouched.
+Trace Work RPC ingress through claim, durable stage/checkpoint ownership, outside-world side-effect ambiguity, terminal outcome, restart reconstruction, progress projection, and active callers. Select the first unproven crash window without replaying uncertain effects. Keep `main` untouched.
