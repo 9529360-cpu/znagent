@@ -17,9 +17,11 @@ on:
       - tests/zn_agent/core/test_browser_contract.py
       - tests/zn_agent/core/test_managed_browser.py
       - tests/zn_agent/core/test_managed_browser_check.py
+      - tests/zn_agent/core/test_managed_browser_pages.py
       - tests/zn_agent/core/test_managed_browser_select.py
       - tests/zn_agent/core/test_modern_text_resident_ownership.py
       - tests/zn_agent/e2e/test_windows_managed_browser.py
+      - tests/zn_agent/e2e/test_windows_managed_browser_pages.py
       - tests/zn_agent/e2e/test_windows_managed_browser_select.py
   workflow_dispatch:
 

@@ -236,6 +236,8 @@ class _ManagedSession:
     browser: Any
     context: Any
     pages: dict[str, Any] = field(default_factory=dict)
+    default_page_id: str = ""
+    next_page_sequence: int = 1
     last_observation: dict[str, BrowserObservation] = field(default_factory=dict)
     target_bindings: dict[str, _ManagedTargetBinding] = field(default_factory=dict)
 
@@ -1346,6 +1348,8 @@ class PlaywrightManagedBrowser:
             metadata={
                 "provider": session.identity.provider,
                 "page_count": len(session.pages),
+                "page_ids": list(session.pages),
+                "default_page_id": session.default_page_id,
                 "service_workers": "blocked",
                 "profile_scope": session.identity.profile_scope,
             },
@@ -1535,6 +1539,7 @@ class PlaywrightManagedBrowser:
         action: BrowserAction,
         authority: BrowserActionAuthority,
     ) -> None:
+        self._reconcile_pages(session)
         page_id = action.page_id or authority.page_id or self._default_page_id(session)
         observed = session.last_observation.get(page_id)
         if observed is None:
@@ -1633,20 +1638,79 @@ class PlaywrightManagedBrowser:
         for existing_id, existing_page in session.pages.items():
             if existing_page is page:
                 return existing_id
-        page_id = f"page-{len(session.pages) + 1}-{id(page):x}"
+        page_id = f"page-{session.next_page_sequence}"
+        session.next_page_sequence += 1
         session.pages[page_id] = page
+        if not session.default_page_id:
+            session.default_page_id = page_id
         return page_id
 
+    def _reconcile_pages(self, session: _ManagedSession) -> None:
+        provider_pages = self._provider_pages(session)
+        provider_is_authoritative = provider_pages is not None
+        if provider_pages is None:
+            candidates = tuple(session.pages.values())
+        else:
+            candidates = tuple(
+                page for page in provider_pages if not self._page_is_closed(page)
+            )
+
+        for page_id, page in tuple(session.pages.items()):
+            missing_from_provider = provider_is_authoritative and not any(
+                page is candidate for candidate in candidates
+            )
+            if self._page_is_closed(page) or missing_from_provider:
+                self._evict_page(session, page_id)
+
+        for page in candidates:
+            if not self._page_is_closed(page):
+                self._register_page(session, page)
+
+        if session.default_page_id not in session.pages:
+            session.default_page_id = next(iter(session.pages), "")
+
+    @staticmethod
+    def _provider_pages(session: _ManagedSession) -> tuple[Any, ...] | None:
+        try:
+            raw = getattr(session.context, "pages", None)
+            if raw is None:
+                return None
+            if callable(raw):
+                raw = raw()
+            return tuple(raw)
+        except Exception as exc:
+            raise ManagedBrowserError(
+                f"managed browser page registry could not be observed: {type(exc).__name__}: {exc}"
+            ) from exc
+
+    @staticmethod
+    def _page_is_closed(page: Any) -> bool:
+        try:
+            return bool(getattr(page, "is_closed", lambda: False)())
+        except Exception:
+            return True
+
+    def _evict_page(self, session: _ManagedSession, page_id: str) -> None:
+        self._invalidate_target_binding(session, page_id)
+        session.last_observation.pop(page_id, None)
+        session.pages.pop(page_id, None)
+        if session.default_page_id == page_id:
+            session.default_page_id = ""
+
     def _default_page_id(self, session: _ManagedSession) -> str:
-        if not session.pages:
+        self._reconcile_pages(session)
+        if not session.default_page_id:
             raise ManagedBrowserError("managed browser session has no page")
-        return next(iter(session.pages))
+        return session.default_page_id
 
     def _page(self, session: _ManagedSession, page_id: str) -> Any:
-        page = session.pages.get(str(page_id or ""))
+        self._reconcile_pages(session)
+        resolved_page_id = str(page_id or "")
+        page = session.pages.get(resolved_page_id)
         if page is None:
             raise ManagedBrowserError("unknown managed browser page")
-        if bool(getattr(page, "is_closed", lambda: False)()):
+        if self._page_is_closed(page):
+            self._evict_page(session, resolved_page_id)
             raise ManagedBrowserError("managed browser page is closed")
         return page
 
