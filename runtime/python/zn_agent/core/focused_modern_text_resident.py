@@ -392,7 +392,9 @@ class FocusedModernTextResidentRuntime(FocusedTextEntryResidentRuntime):
             state.next_action = None
             state.blocked_by = None
             self._sync_execution_context(event, state)
-            self.store.save_working_state(state)
+            # ``EventOutcome`` is the only durable terminal truth. Keep the last
+            # replay-safe recovery checkpoint on disk until ``complete_event``
+            # atomically publishes terminal event + outcome + idle state.
             self.store.record_runtime_task(model_invocations=0)
             return ResidentRunResult(
                 event=event,
