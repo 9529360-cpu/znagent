@@ -4,9 +4,20 @@ Updated: 2026-08-28
 
 ## Current goal
 
-P1 shared side-effect-attempt persistence, P2 bounded cumulative accounting/learning durability, P3 managed-browser frontier reconciliation, and the bounded P4 resident-owned live-page registry are complete and CI-verified. P5 broader Work checkpoint/restore is now **PARTIAL**: its first bounded ingress-checkpoint slice is complete and CI-verified, while general per-task restore/rollback remains open.
+P1 shared side-effect-attempt persistence, P2 bounded cumulative accounting/learning durability, P3 managed-browser frontier reconciliation, and the bounded P4 resident-owned live-page registry are complete and CI-verified. P5 broader Work checkpoint/restore remains **PARTIAL**: its first bounded ingress-checkpoint slice is complete and CI-verified, while general per-task restore/rollback remains open.
 
-Broader Work durability remains **PARTIAL**. Nineteen concrete crash/restart windows are now closed and verified. The new nineteenth window covers an accepted Work task whose user message is durable but whose resident event does not yet exist; a short-lived ingress checkpoint restores the exact pending event/message/run linkage without executing it or creating replay authority. Synchronous recovery, shared side-effect-attempt persistence/pruning, Body accounting and the managed-browser page-registry proof remain additional verified lifecycle/persistence/accounting/product invariants rather than artificial crash-window counts.
+Broader Work durability remains **PARTIAL**. Nineteen concrete crash/restart windows are closed and verified. The nineteenth window covers an accepted Work task whose user message is durable but whose resident event does not yet exist; a short-lived ingress checkpoint restores the exact pending event/message/run linkage without executing it or creating replay authority.
+
+A new product/architecture contract has been added for resident intelligence. It does **not** claim new runtime implementation. The governing direction is now explicit:
+
+```text
+resident-owned built-in competence
++ resident-owned learned competence
++ replaceable external cognition for genuine novelty
+= ZN intelligence
+```
+
+Mature low-level engineering/computer-use knowledge should crystallize into ZN-owned mechanisms and tests instead of remaining repeated prompt instructions. Repeated familiar work should become faster and require less redundant model use without weakening current-state sensing, postcondition verification or prediction-error interruption. Model/provider replacement must not erase mature resident-owned competence.
 
 Founding boundary remains:
 
@@ -18,12 +29,12 @@ Founding boundary remains:
 - development branch: `dev/zn-agent`
 - canonical source/release branch: `main`
 - canonical `main`: `8234a835dea604783cea0bd9d28a40de654ec03d`
-- P2 Body-accounting proof head: `f79d4f3c81b1d7c46dcfb55b6fc923acda77b39c`
-- P3 browser reconciliation full-CI proof head: `f90610749d257d63e66dd2149d746d3ec4579535`
-- P4 live-page registry implementation/proof head: `fffb0f4b84a76cef21a088167c9eb4faceb93afc`
+- branch HEAD immediately before this HANDOFF synchronization commit: `7b8292be494b191538101119ba31e91c9d4e292a`
 - P5 Work ingress checkpoint implementation/proof head: `2c20b8bded96ce07c6ec43263cc77b7bd10a7a82`
-- P5 implementation-status synchronization head: `bd0897a65209e78592450096de4f2778946a0317`
-- branch HEAD immediately before this HANDOFF synchronization commit: `bd0897a65209e78592450096de4f2778946a0317`
+- resident intelligence architecture commits before this HANDOFF sync:
+  - `76e2bb2bd7fc6b393ad2f534d8fe1c0d926cece1` — `docs: define resident intelligence ownership`
+  - `6f1c41872d8dfc03b447476d2275d35c82cc4c83` — `docs: define resident intelligence product contract`
+  - `7b8292be494b191538101119ba31e91c9d4e292a` — `docs: align next phase with resident intelligence contract`
 - PR #6 remains the draft development PR from `dev/zn-agent` to `main`
 - `main` was not modified
 - no force push or history rewrite was requested or performed
@@ -36,27 +47,7 @@ A HANDOFF commit cannot contain its own resulting SHA. Re-read `dev/zn-agent` af
 
 Status: **COMPLETE / CI VERIFIED**
 
-Active ownership remains:
-
-```text
-SideEffectAwareBody
--> side_effect_attempts
--> resident_side_effect_attempts
-
-compiled capability execution
--> ResidentSideEffectJournal
--> side_effect_attempts
--> resident_side_effect_attempts
-
-KernelStore.cancel_uncertain_event
--> same resident_side_effect_attempts transaction
--> shared schema deletion guard
--> event + EventOutcome + idle WorkingState atomically
-```
-
-Body and compiled-capability historical signature identities remain intentionally distinct. Capacity pruning is terminal-truth-gated and cannot remove active nonterminal recovery facts solely because attempt status is no longer `started`.
-
-Authoritative proof remains:
+Authoritative proof:
 
 ```text
 ZN Work Recovery E2E run 33117334326  success
@@ -66,18 +57,6 @@ ZN CI run 33117334321                 success
 ### P2 - bounded cumulative accounting/learning durability
 
 Status: **COMPLETE / CI VERIFIED**
-
-The bounded audit found one real active gap: Body cumulative SelfModel/runtime accounting could become durable before the semantic completion/failure checkpoint that justified it. `DurableBodyAccountingResidentRuntime` now lets the inherited most-specific completion/failure owner persist semantic truth first, then applies event-idempotent cumulative accounting.
-
-The accounting journal distinguishes:
-
-```text
-native_body_success
-native_body_task
-native_body_failure:<stable failure identity hash>
-```
-
-This preserves specialized semantics. Pointer `effect_probe` completion remains task-only and cannot gain broad `computer_use` competence merely because one local visual effect was verified. Failure/recovery paths receive failure learning only when the original inherited path actually attempted it.
 
 Authoritative proof head `f79d4f3c81b1d7c46dcfb55b6fc923acda77b39c`:
 
@@ -90,16 +69,9 @@ ZN CI run 33119871129                 success
 
 Status: **COMPLETE / CI VERIFIED**
 
-This stage added no new browser runtime behavior. It reconciled repository truth, product capability documentation and dedicated CI coverage.
+`SELECT_OPTION` and CHECK/UNCHECK are **VERIFIED NARROW**. `PRESS` remains genuinely OPEN; no arbitrary provider-success result is completion authority.
 
-Repository truth remains:
-
-- `SELECT_OPTION` is **VERIFIED NARROW** with current-target authority, exact-node continuity and fresh privacy-safe selected-value evidence;
-- CHECK/UNCHECK are **VERIFIED NARROW** with exact-node continuity and fresh boolean post-state evidence;
-- `PRESS` remains genuinely OPEN and has no managed-provider dispatch or resident-owned postcondition owner;
-- no arbitrary provider return is treated as completion evidence.
-
-Authoritative P3 proof:
+Authoritative proof:
 
 ```text
 ZN Managed Browser E2E run 33120809421  success
@@ -110,24 +82,11 @@ ZN CI run 33120848980                   success
 
 Status: **COMPLETE / CI VERIFIED NARROW**
 
-The active call-chain audit found that Playwright `context.pages` was not reconciled into ZN state. Additional provider pages could be absent from `session.pages`, closed pages could remain counted, and the exported page ID embedded provider object identity. That made page observation truth stale before any additional mutation such as PRESS.
+Commit `fffb0f4b84a76cef21a088167c9eb4faceb93afc` adds resident-owned monotonic `page-N` identities, provider-page discovery, closed-page eviction, stale target/observation cleanup, deterministic default-page promotion, and real Chromium proof.
 
-Commit `fffb0f4b84a76cef21a088167c9eb4faceb93afc` closes the bounded live-page registry gap:
-
-- `_ManagedSession` owns monotonic resident `page-N` identities and explicit `default_page_id`;
-- provider-created pages are discovered from `context.pages`;
-- closed/disappeared pages are evicted and their stale observation/target handle is removed/disposed;
-- default-page promotion is deterministic when the current default disappears;
-- page IDs are not reused during the live session;
-- an available provider page registry that cannot be observed fails closed;
-- observation metadata now exposes current `page_ids` and `default_page_id`.
-
-This does **not** complete popup intent/permissions, explicit tab-open/switch/close actions, frame identities, iframe stale-target handling, persistent browser-session recovery, headed browser UX, or PRESS.
-
-Authoritative P4 proof:
+Authoritative proof:
 
 ```text
-fffb0f4b84a76cef21a088167c9eb4faceb93afc
 ZN Managed Browser E2E run 33122620361  success
 ZN CI run 33122620398                   success
 ```
@@ -136,95 +95,91 @@ ZN CI run 33122620398                   success
 
 Status: **PARTIAL / FIRST SLICE COMPLETE / CI VERIFIED**
 
-The active Work ingress chain was traced as:
+Commit `2c20b8bded96ce07c6ec43263cc77b7bd10a7a82` adds a short-lived `work_ingress_checkpoints` owner before accepted Work crosses into resident-event persistence.
 
-```text
-ResidentRpcServer.work_start
--> ResidentWorkControl.start
--> RecoveryBoundedWorkLedger.start
--> Work user message
--> resident AgentEvent
--> work_runs linkage
--> WorkingState / side-effect ownership / EventOutcome
-```
+Verified semantics:
 
-Existing recovery already repaired the later crash window where a resident event was durable but `work_runs` linkage was missing. The newly identified earlier window was different: `ResidentWorkLedger.start()` could persist the user message and then crash before creating the resident event. Restart then had an accepted task with no event/run truth, and the thread could accept another task.
-
-Commit `2c20b8bded96ce07c6ec43263cc77b7bd10a7a82` adds a short-lived `work_ingress_checkpoints` owner inside `RecoveryBoundedWorkLedger`:
-
-- exact message/event identities, task, kind, priority, payload and creation times are durable before the user message/event boundary;
-- a hard restart before event persistence recreates only the exact **pending** resident event because no resident dispatch/outside-world effect has started yet;
-- if the event already exists, reconciliation repairs linkage only and never creates a second event;
+- exact message/event identities are preallocated and durable before the message/event boundary;
+- a hard crash after accepted Work message but before resident-event persistence restores only the exact pending event, with zero attempts and no execution;
+- a hard crash after event persistence but before `work_runs` linkage repairs linkage without duplicate event creation;
 - message, event and WorkRun identities must agree or recovery fails closed;
-- the ingress checkpoint is removed once ordinary message -> event -> `work_runs` linkage is durable;
-- a redundant leftover checkpoint after durable linkage is removed idempotently on restart;
-- this checkpoint is not a second execution `WorkingState` and grants no replay permission for an existing side effect.
+- ingress checkpoint disappears after ordinary linkage is durable;
+- this checkpoint grants no replay permission once resident execution/outside-world effects may have begun.
 
-Hard-crash proof uses `SystemExit` to bypass ordinary exception cleanup and exercise the actual restart boundary:
-
-```text
-tests/zn_agent/core/test_work_ingress_checkpoint_recovery.py
-  crash after accepted Work message, before resident event persistence
-  crash after resident event persistence, before WorkRun linkage
-```
-
-Authoritative P5 ingress proof head `2c20b8bded96ce07c6ec43263cc77b7bd10a7a82`:
+Authoritative proof:
 
 ```text
 ZN Work Recovery E2E run 33124662199  success
-  Compile Work recovery path            success
-  Verify durable Work progress/restart  success
-
 ZN CI run 33124662367                   success
-ZN Kernel / Python / Windows            success
-  Boot isolated zero-model distribution success
-  Compile resident core                 success
-  Run ZN core tests against working tree success
-ZN Source Boundary / Windows            success
-Electron / TypeScript / Windows         success
-Publish Windows CI statuses             success
+```
+
+Final pre-discussion head `86b7ae3d0d89751628976de2368923d016a259cc` also had:
+
+```text
+ZN CI run 33125310706  success
 ```
 
 No local repository test run is claimed. Repository self-hosted Windows CI is the verification authority.
 
-## Key recent commits
+## Product / architecture contract update - resident intelligence
 
-```text
-f90610749d257d63e66dd2149d746d3ec4579535  docs: reconcile managed browser verified frontier
-fffb0f4b84a76cef21a088167c9eb4faceb93afc  fix: reconcile managed browser page lifecycle
-2c20b8bded96ce07c6ec43263cc77b7bd10a7a82  fix: recover accepted Work ingress before event creation
-68e8ee77818920b5bf10888d555a60e7ee6a7d6c  docs: record Work ingress checkpoint recovery
-bd0897a65209e78592450096de4f2778946a0317  docs: record verified Work ingress checkpoint
-```
+Status: **ARCHITECTURE DEFINED / NOT CLAIMED IMPLEMENTED**
+
+The discussion about ZN not behaving like a naive model-driven agent has been converted into durable repository architecture rather than left in chat.
+
+### Governing additions
+
+`ZN.md` now explicitly defines:
+
+- three intelligence sources: built-in resident competence, learned resident competence and replaceable external cognition;
+- known recurring mechanics should become ZN-owned observation/invariant/procedure/verification rather than recurring prompt reminders;
+- some truths, such as whether a side effect happened or a file/browser mutation actually completed, must come from state/evidence rather than model confidence;
+- repeated work should proceduralize rather than become repeated prompting;
+- strong familiarity must not override current-world drift;
+- repeated-task reliability, anomaly detection, uncertainty calibration, self-correction, restart continuity and provider independence are intelligence criteria.
+
+New document `docs/ZN-RESIDENT-INTELLIGENCE.md` expands the product contract with:
+
+- knowledge crystallization rules;
+- file/browser/repeated-work examples;
+- the hundred-and-first repetition rule;
+- prediction-error interruption;
+- model-quality vs ZN-quality separation;
+- repetition, drift, provider replacement and restart benchmarks;
+- a maintainer/product-manager test for future capabilities.
+
+`docs/ZN-NEXT-PHASE.md` now references the resident-intelligence contract and adds the same invariants to the next-phase success criteria.
+
+This architecture update does not change the current verified implementation count, does not create a twentieth crash/restart window, and does not make mature general procedural competence complete.
 
 ## Current risks / incomplete work
 
-- broader Work durability remains partial beyond nineteen verified crash/restart windows plus the verified synchronous recovery, shared-attempt persistence/pruning and Body-accounting invariants;
-- the new ingress checkpoint covers only task acceptance/linkage; durable per-task Work restore/rollback for workspace mutations remains OPEN;
-- generic side-effect guarding currently covers commands and append-style writes, while ordinary overwrite `write_text` / `write_file` directly mutates the target and therefore deserves the next bounded restore/recovery audit;
+- broader Work durability remains partial beyond nineteen verified crash/restart windows;
+- durable per-task Work restore/rollback for workspace mutations remains OPEN/PARTIAL;
+- generic side-effect guarding covers commands and append-style writes, while ordinary overwrite `write_text` / `write_file` directly mutates the target and remains the next bounded recovery audit;
 - any overwrite-file recovery design must distinguish pre-state, intended post-state and current-world evidence and must not overwrite user/external changes merely because an old checkpoint exists;
-- no deliberate outcome-trace rewrite/compactor exists; destructive long-term-memory migration remains a separate approval boundary;
-- explanatory-comment cleanup in `intentional_resident.py` remains non-behavioral debt;
-- browser `PRESS`, broader click/text replacement/ARIA checkbox mutation, multi-target/frame lifecycle, explicit tab/popup control, headed managed-browser UX and authenticated User Browser Bridge control remain incomplete;
-- isolated parallel work remains open;
+- resident intelligence contract is broader than current runtime implementation; do not report it as complete;
+- general procedural competence, long-horizon repetition/drift benchmarks and mature anomaly handling remain incomplete;
+- browser `PRESS`, broader click/text replacement/ARIA checkbox mutation, explicit tab/popup/frame ownership, headed managed-browser UX and authenticated User Browser Bridge remain incomplete;
+- isolated parallel Work remains open;
 - Windows M8 continuity and SM1+ remain incomplete;
 - identity, long-term memory, credentials/permissions, updater/signing, rollback and destructive self-maintenance remain high-risk approval boundaries.
 
 ## Task queue
 
-### P1 - shared side-effect-attempt persistence owner
+### P1
 
 Status: **COMPLETE / CI VERIFIED**
 
-### P2 - bounded cumulative accounting/learning durability audit
+### P2
 
 Status: **COMPLETE / CI VERIFIED**
 
-### P3 - browser frontier reconciliation
+### P3
 
 Status: **COMPLETE / CI VERIFIED**
 
-### P4 - resident-owned live-page registry
+### P4
 
 Status: **COMPLETE / CI VERIFIED NARROW**
 
@@ -235,22 +190,20 @@ Status: **PARTIAL / IN PROGRESS**
 Completed first slice:
 
 1. traced Work ingress through message, event, `work_runs`, resident checkpoint/recovery and terminal truth;
-2. identified the real pre-event crash gap rather than inventing another recovery store;
-3. added a transient ingress checkpoint with stable message/event identities before task acceptance crosses into resident event persistence;
-4. restored a missing pending event safely only while no resident execution/outside-world effect could yet have started;
-5. repaired existing-event linkage without duplicate event creation;
-6. added two hard-crash restart tests and dedicated workflow coverage;
-7. passed focused Work Recovery E2E and full working-tree ZN CI;
-8. increased the concrete verified crash/restart-window count from eighteen to nineteen.
+2. identified and closed the pre-event accepted-message crash gap;
+3. added exact pending-event reconstruction without replay authority;
+4. added hard-crash restart tests and focused workflow coverage;
+5. passed focused Work Recovery E2E and full working-tree ZN CI;
+6. increased concrete verified crash/restart-window count from eighteen to nineteen.
 
 Next bounded P5 audit:
 
 1. trace ordinary overwrite `write_text` / `write_file` from `NativeActionIntent` through `SideEffectAwareBody`, semantic verification, Work artifact capture and restart behavior;
 2. decide whether a safe resident-owned pre-write checkpoint can preserve bounded prior file state and intended post-state without becoming unconditional rollback authority;
 3. require current-world identity/evidence before any restore, especially when a file changed externally after interruption;
-4. add a twentieth crash/restart window only if a real overwrite/restore gap is actually closed and independently verified;
-5. keep generic rollback, destructive workspace restore and broad browser expansion OPEN until evidence justifies them.
+4. use the new resident-intelligence contract as a product test: known file/recovery mechanics should become explicit ZN-owned competence, not model rediscovery;
+5. add a twentieth crash/restart window only if a real overwrite/restore gap is actually closed and independently verified.
 
 ## Next real target
 
-Re-read final branch and CI after this HANDOFF synchronization commit, then continue P5 with the overwrite-file restore/recovery call chain. Do not assume that every overwrite requires rollback: first establish exact current code ownership, existing semantic verification and conflict behavior. Keep `main` untouched during ordinary development.
+Re-read final branch and CI after this HANDOFF synchronization commit. If docs-only CI is green, continue P5 with the ordinary overwrite-file restore/recovery call chain. Keep `main` untouched during ordinary development.
