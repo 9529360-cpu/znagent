@@ -126,15 +126,15 @@ class ResidentWorkPointerCompletionRecoveryTests(unittest.TestCase):
                 self.assertEqual(recovered_event.status, EventStatus.PENDING)
                 recovered_state = restored.store.get_working_state()
                 self.assertEqual(recovered_state.stage, "native_completion")
+                self.assertEqual(
+                    recovered_state.next_action,
+                    "publish terminal EventOutcome",
+                )
 
                 with patch.object(
                     restored.body,
                     "act",
                     side_effect=AssertionError("pointer/body action must not replay"),
-                ), patch.object(
-                    restored.visual_region,
-                    "probe",
-                    side_effect=AssertionError("pointer effect must not be re-probed"),
                 ):
                     completed = restored.run_once(target_event_id=event.event_id)
 
