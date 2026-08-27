@@ -276,9 +276,21 @@ class SideEffectAwareBodyTests(unittest.TestCase):
                     if item.event_id == event.event_id and item.kind == "write_text"
                 ]
                 self.assertEqual(writes, [])
-                final_state = resident.store.get_working_state()
-                self.assertEqual(final_state.stage, "complete")
-                self.assertNotIn("latest_verified_experience", final_state.data)
+
+                pre_terminal_state = resident.store.get_working_state()
+                self.assertEqual(pre_terminal_state.stage, "side_effect_recovery")
+                self.assertEqual(
+                    pre_terminal_state.data["side_effect_recovery"]["decision"],
+                    "reverify_effect",
+                )
+                self.assertNotIn("latest_verified_experience", pre_terminal_state.data)
+
+                resident._complete_result(event, result)
+                outcome = resident.store.get_event_outcome(event.event_id)
+                self.assertIsNotNone(outcome)
+                assert outcome is not None
+                self.assertTrue(outcome.success)
+                self.assertEqual(resident.store.get_working_state().stage, "idle")
             finally:
                 resident.store.close()
 
