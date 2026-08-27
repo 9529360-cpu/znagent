@@ -32,6 +32,8 @@ c72f9348f0a0485483f5cc35554b0bc2c3060f00  bind outcome transaction to active ner
 90a24a4bff07735a95d7a73783518f2cdd4c4044  final-owner crash/restart regression
 ba06e08561cc73bcd8afc61b444b860c45bfb376  focused nervous outcome proof checkpoint
 c54bb8c37385d98fc9688b6e89839d7a5cba6df6  single-owner completion journal cleanup and regression
+0c011a2473c581e6517a882343208d6efe47cac1  canonical Windows path identity at action/Git/terminal/Work owners
+e3fc20b7b4271e46868f408c258cab58ba014abb  carry canonical identity through evidence and procedural learning
 ```
 
 Status: **RECOVERY-ONLY CANCELLATION REMAINS REACHABLE END TO END. `EventOutcome` REMAINS TERMINAL TRUTH. LIFE OBSERVATION REPAIR REMAINS SECONDARY AND NON-REPLAYING. DURABLE EVENT-OUTCOME NERVOUS PLASTICITY NOW HAS AN EVENT-IDENTITY-SAFE ATOMIC BOUNDARY FOR TRACE, LINKS, AFFECT, AND RECEIPT, INCLUDING CRASH/RESTART REPAIR WITHOUT DUPLICATE REINFORCEMENT. GENERIC NERVOUS `perceive()` REMAINS INTENTIONALLY PLASTIC AND IS NOT AN EXACTLY-ONCE API. BROADER WORK DURABILITY REMAINS PARTIAL.**
@@ -167,18 +169,45 @@ Those remaining 16 errors were the known Windows NetworkService DOS-8.3 versus l
 
 An ordinary run at old documentation head `4559fb71...` also encountered a runner-local uv CPython standard-library corruption before Kernel tests began; that was not classified as a repository regression.
 
-Current exact-head ordinary evidence is:
+The first full-boundary implementation checkpoint exposed one remaining split:
 
 ```text
-ZN CI run 33023392907
-head c54bb8c37385d98fc9688b6e89839d7a5cba6df6
+ZN CI run 33046424920
+head 0c011a2473c581e6517a882343208d6efe47cac1
 Electron / TypeScript / Windows    success
 ZN Source Boundary / Windows       success
 ZN Kernel / Python / Windows       failure
-Kernel                             592 tests / 16 errors / 5 skipped
+Kernel                             594 tests / 4 failures / 6 errors / 5 skipped
 ```
 
-The 16 errors remain the same NetworkService DOS-8.3 versus long-path identity family; the new ownership regression passed inside the 592-test discovery. Exact-head `ZN Managed Browser E2E` run `33023392889`, `ZN Work Recovery E2E` run `33023392867`, and the second attempt of `ZN Windows Interactive Desktop E2E` run `33023392801` all succeeded. The first interactive attempt lost foreground ownership to `warp.exe`; a clean rerun passed all four real interactive tests, so that first failure is runner foreground contention rather than evidence of this ownership change regressing ZN.
+The original 16 repository/terminal/Work errors were gone and the new short-path targeted-test regression passed. The remaining failures showed that Investigation facts and procedural fingerprints still retained the incoming DOS spelling while actions and verification carried the canonical long spelling. That evidence/action identity split was fixed at its owners rather than hidden in assertions.
+
+Current code-checkpoint ordinary evidence is genuinely green:
+
+```text
+ZN CI run 33047823223
+head e3fc20b7b4271e46868f408c258cab58ba014abb
+Electron / TypeScript / Windows    success
+ZN Source Boundary / Windows       success
+ZN Kernel / Python / Windows       success
+Kernel                             594 tests / 5 skipped / OK
+```
+
+Exact-head `ZN Windows Interactive Desktop E2E` run `33047823208` also succeeded. `ZN Work Recovery E2E` run `33046424926` succeeded at the first path code checkpoint; the second evidence-only commit did not match that workflow's path trigger.
+
+The final Windows identity chain is:
+
+```text
+event payload / context path
+-> NativeInvestigator canonical path facts and previews
+-> native action path/workdir matching
+-> NativeBody and Terminal host path identity
+-> Git root senses and ResidentWorkLedger workspace identity
+-> verification and privacy-safe procedural fingerprints
+-> active resident callers and tests
+```
+
+DOS 8.3 expansion is lexical: it expands the longest existing Windows prefix and reattaches a missing suffix without following symlinks or reparse points. Security containment still performs strict real-path resolution and rejects candidates outside the resolved root.
 
 ## 6. What remains partial
 
@@ -187,7 +216,6 @@ Open work includes:
 - long-term robustness for event receipts whose referenced trace may later be deliberately pruned/compacted;
 - restore several explanatory comments accidentally lost during the whole-file Intentional owner edit; no behavioral deletion was found in diff review;
 - broader Work durability outside the proven cancellation/Life-observation/nervous-outcome slices;
-- the known/deferred Windows path-identity family;
 - Windows continuity M8;
 - browser PRESS, broader click/editing/multi-select/page lifecycle;
 - authenticated User Browser Bridge control;
@@ -197,8 +225,8 @@ High-risk identity, long-term memory, credential/permission, updater/signing, ro
 
 ## 7. Next real target
 
-Next: **close the Windows path-identity family that keeps ordinary CI red.**
+Next: **trace and define nervous receipt/trace lifecycle robustness before any pruning or compaction implementation.**
 
-The prior `path_context.py`-only canonicalization attempt was reverted because the identity boundary spans repository sensing, stored workspace/terminal metadata, mutation verification and test cleanup. Trace and fix that full call chain without weakening symlink/reparse-point fail-closed behavior or merely normalizing assertion strings.
+Determine how `neural_event_outcomes.trace_id` should behave if a future deliberate neural pruning/compaction pass removes or rewrites the referenced trace. Preserve event identity and restart idempotence without permanently pinning an accidental trace representation. This is investigation/specification first; any destructive long-term-memory migration still requires explicit human approval.
 
-After ordinary CI is genuinely green, return to broader Work durability and neural-receipt lifecycle robustness. Do not weaken cancellation semantics, do not replay completed actions, and do not move development to `main`.
+Broader Work durability remains open immediately behind that target. Do not weaken cancellation semantics, replay completed actions, or move development to `main`.
