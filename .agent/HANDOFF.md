@@ -4,13 +4,13 @@ Updated: 2026-08-27
 
 ## Current goal
 
-Close the Windows NetworkService DOS-8.3 versus long-path identity family that keeps exact-head ordinary CI red. The low-risk completion journal ownership cleanup is complete: `EmbodiedResidentRuntime` is the single richer-resident birth/lifecycle owner; `FocusedModernTextResidentRuntime` no longer reconstructs or re-repairs the same journal and still projects sanitized completion-observation health through `status()`.
+Trace and define nervous receipt/trace lifecycle robustness before any pruning or compaction implementation. The Windows NetworkService DOS-8.3 versus long-path identity family is closed at the full owner chain and ordinary CI is green.
 
 `EventOutcome` remains terminal truth. Nervous plasticity remains secondary. A nervous failure after terminal completion does not reclassify the event and does not replay the action. `NativeWill` keeps its existing durable outcome reconciliation authority.
 
 Generic nervous `perceive()` remains intentionally plastic and non-idempotent. Do not generalize the event-ID guarantee into a global exactly-once claim.
 
-The next real target is now the Windows NetworkService DOS-8.3 versus long-path identity family because exact-head ordinary CI remains red. The repair must cover the full identity call chain and preserve fail-closed symlink/reparse-point semantics; do not restore the prior partial `path_context.py`-only attempt.
+The next target is investigation/specification first: determine how `neural_event_outcomes.trace_id` survives a future deliberate trace prune/rewrite while preserving event-ID dedupe and restart idempotence. Do not perform a destructive long-term-memory migration without explicit human approval.
 
 Founding boundary remains:
 
@@ -24,6 +24,9 @@ Founding boundary remains:
 - canonical `main`: `8234a835dea604783cea0bd9d28a40de654ec03d`
 - nervous code/test checkpoint: `ba06e08561cc73bcd8afc61b444b860c45bfb376`
 - completion journal owner cleanup: `c54bb8c37385d98fc9688b6e89839d7a5cba6df6`
+- Windows path owner checkpoint: `0c011a2473c581e6517a882343208d6efe47cac1`
+- Windows evidence/learning checkpoint: `e3fc20b7b4271e46868f408c258cab58ba014abb`
+- current code/test HEAD when this handoff was prepared: `e3fc20b7b4271e46868f408c258cab58ba014abb`
 - implementation-status sync: `d7f940651bc3896853dff91acfcb0b9e04f511c6`
 - PR #6: draft/open/unmerged, base `main`, head `dev/zn-agent`
 - `main` was not modified
@@ -134,6 +137,22 @@ ba06e08561cc73bcd8afc61b444b860c45bfb376  final focused test fix/checkpoint
 
 `test_modern_text_resident_ownership` now proves the product construction calls `repair_life()` exactly once and preserves the status projection. The Work Recovery workflow triggers on and executes this regression.
 
+### 7. Windows path identity closed across the full active chain
+
+`canonical_host_path()` expands DOS 8.3 components in the longest existing Windows prefix and reattaches missing suffix components without resolving symlinks or reparse points. Canonical identity is now established and carried through:
+
+```text
+event/context entry
+-> Investigation path facts and previews
+-> action path/workdir matching
+-> Body / Terminal
+-> Git root senses / Work workspace state
+-> verification / procedural applicability and experience fingerprints
+-> active resident callers
+```
+
+The first implementation checkpoint removed the historical 16 repository/terminal/Work errors. Its ordinary CI exposed the remaining Investigation/action evidence split; `e3fc20b7...` fixed that owner boundary. Existing strict real-path containment remains fail-closed for symlink/reparse escapes.
+
 ## Real test / CI truth
 
 ### Focused nervous/Work proof
@@ -156,29 +175,42 @@ tests.zn_agent.core.test_event_outcome_nervous
 tests.zn_agent.core.test_event_outcome_nervous_recovery
 ```
 
+### Windows path identity local proof
+
+```text
+DOS 8.3 TEMP/TMP coverage group  33 tests / OK / 1 symlink privilege skip
+CI-equivalent full core discovery 594 tests / OK / 5 skips
+```
+
 ### Ordinary CI
 
-The current exact-head result is:
+The current code-checkpoint result is:
 
 ```text
-ZN CI run 33023392907
-head c54bb8c37385d98fc9688b6e89839d7a5cba6df6
+ZN CI run 33047823223
+head e3fc20b7b4271e46868f408c258cab58ba014abb
 Electron / TypeScript / Windows    success
 ZN Source Boundary / Windows       success
-ZN Kernel / Python / Windows       failure
-Kernel                             592 tests / 16 errors / 5 skipped
+ZN Kernel / Python / Windows       success
+Kernel                             594 tests / 5 skipped / OK
 ```
 
-Those 16 errors are the known Windows NetworkService DOS-8.3 versus long-path identity family. The partial path fix remains reverted in `db647cb49c3de014aa82bc28ec87c1c4e5b02c15`.
-
-Additional exact-head evidence:
+The preceding code checkpoint was intentionally not hidden:
 
 ```text
-ZN Managed Browser E2E run 33023392889             success
-ZN Windows Interactive Desktop E2E run 33023392801 success on attempt 2 / 4 tests
+ZN CI run 33046424920
+head 0c011a2473c581e6517a882343208d6efe47cac1
+Kernel 594 tests / 4 failures / 6 errors / 5 skipped
 ```
 
-Interactive attempt 1 lost foreground ownership to `warp.exe`; the clean rerun passed. Do not infer ordinary-CI success from the focused and E2E workflows.
+That run proved the old 16 failures were gone and exposed the remaining evidence/action split. The follow-up fixed it. Additional code-checkpoint evidence:
+
+```text
+ZN Windows Interactive Desktop E2E run 33047823208 success
+ZN Work Recovery E2E run 33046424926               success at 0c011a24
+```
+
+The second evidence-only commit did not match the Work Recovery workflow's path trigger. Ordinary CI provides the exact-head full-core proof.
 
 ## Current risks / incomplete work
 
@@ -186,10 +218,13 @@ Interactive attempt 1 lost foreground ownership to `warp.exe`; the clean rerun p
 - Event receipts currently point to trace IDs. If future neural pruning/compaction deliberately removes a referenced outcome trace, receipt/trace lifecycle semantics need an explicit policy rather than silent guessing.
 - Generic nervous `perceive()` remains intentionally plastic and is not safe for blind replay. Only the durable terminal EventOutcome path has event-ID dedupe semantics.
 - Broader Work durability remains partial outside the proven cancellation, Life-observation, and nervous-outcome slices.
-- Ordinary Windows Kernel CI remains historically red on the known/deferred path-identity family until the current ordinary run provides newer evidence.
 - Browser PRESS/broader click/editing/multi-select/lifecycle, authenticated User Browser Bridge control, M8 continuity, and SM1+ remain incomplete.
 - High-risk identity, long-term memory, credentials/permissions, updater/signing, rollback, and destructive self-maintenance changes still require human approval.
 - `main` remains untouched.
+
+## Blockers
+
+No blocker prevents the next read-only lifecycle trace and policy specification. Any destructive identity or long-term-memory migration discovered to be necessary must stop for explicit human approval.
 
 ## Task queue
 
@@ -219,9 +254,9 @@ Continue beyond the proven cancellation/Life/nervous secondary-observation slice
 
 ### P1.1 - Windows path identity
 
-Status: **NEXT / ORDINARY-CI BLOCKER**
+Status: **COMPLETE / ORDINARY CI VERIFIED**
 
-Trace repository entry, owner, stored workspace/path state, lifecycle, Git/terminal dependencies, failing tests and active callers. Fix the full identity boundary without weakening alias/symlink safety.
+Full entry/evidence/action/state/dependency/verification caller chain uses one lexical Windows identity; strict containment safety remains separate and fail-closed.
 
 ### P2 - browser follow-ons
 
@@ -247,10 +282,20 @@ runtime/python/zn_agent/core/will.py
 runtime/python/zn_agent/core/completion_observation.py
 runtime/python/zn_agent/core/embodied_resident.py
 runtime/python/zn_agent/core/focused_modern_text_resident.py
+runtime/python/zn_agent/core/path_context.py
+runtime/python/zn_agent/core/action.py
+runtime/python/zn_agent/core/investigation.py
+runtime/python/zn_agent/core/body.py
+runtime/python/zn_agent/core/terminal.py
+runtime/python/zn_agent/core/work.py
+runtime/python/zn_agent/core/procedural_applicability.py
+runtime/python/zn_agent/core/verified_experience.py
 tests/zn_agent/core/test_event_outcome_nervous.py
 tests/zn_agent/core/test_event_outcome_nervous_recovery.py
 tests/zn_agent/core/test_completion_observation_recovery.py
 tests/zn_agent/core/test_completion_observation_embodied.py
+tests/zn_agent/core/test_workspace_file_context.py
+tests/zn_agent/core/test_repo_targeted_test_verification.py
 .github/workflows/zn-work-recovery-e2e.yml
 docs/ZN-IMPLEMENTATION-STATUS.md
 .agent/HANDOFF.md
@@ -258,4 +303,4 @@ docs/ZN-IMPLEMENTATION-STATUS.md
 
 ## Next real target
 
-Close the Windows NetworkService DOS-8.3 versus long-path identity family and obtain a genuinely green ordinary CI run. Keep `main` untouched.
+Trace the neural event receipt to trace/pruning lifecycle and define a fail-closed durable policy before implementation. Any destructive long-term-memory migration requires explicit human approval. Keep `main` untouched.
