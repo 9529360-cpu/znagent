@@ -4,9 +4,9 @@ Updated: 2026-08-27
 
 ## Current goal
 
-Continue broader Work durability after closing and verifying the seventh concrete crash window. Base resident investigation success now survives a crash after durable completion evidence and before terminal `EventOutcome` publication without re-running native investigation.
+Continue broader Work durability after closing and verifying nine concrete crash windows. The newest slice makes already-established base resident MEMORY and compiled CAPABILITY success resumable after a crash before terminal `EventOutcome`, without re-recall/re-execution after the durable completion checkpoint.
 
-Broader Work durability remains **PARTIAL**. Do not infer completion from these seven slices.
+Broader Work durability remains **PARTIAL**. Do not infer completion from these nine slices.
 
 Founding boundary remains:
 
@@ -18,12 +18,13 @@ Founding boundary remains:
 - development branch: `dev/zn-agent`
 - canonical source/release branch: `main`
 - canonical `main`: `8234a835dea604783cea0bd9d28a40de654ec03d`
-- verified implementation/test head: `82c495424acb4a005d8b6de162c833c6486b2cc0`
+- exact implementation/test/CI head before documentation synchronization: `905b276b755806e119b4f1ce7a73294a03c78f57`
+- resident native completion runtime checkpoint: `7e1996ce116fd88b0d2801ad65b984eea8203d88`
+- resident native completion regression checkpoint: `74dc824db2aac312a8999e292eb871e8a568f5f8`
+- resident native completion CI checkpoint: `905b276b755806e119b4f1ce7a73294a03c78f57`
+- semantic/UI completion checkpoint: `08d74abb00410523f3820887ae9b5bd6b2cc81db`
 - investigation completion checkpoint: `82c495424acb4a005d8b6de162c833c6486b2cc0`
-- common Body completion checkpoint: `dc3b72ad1dfdc5bb8ac2a6c3898fe5038b85197d`
-- append terminal-boundary runtime checkpoint: `2ffb79c4bf11903d46f53dd9a7b8d1fcbd922642`
-- companion test-contract checkpoint: `f7d6cb64121e914e0250736c0089d58c4b7fea2b`
-- PR #6: draft/open/unmerged, base `main`, head `dev/zn-agent`
+- PR #6: draft/open/unmerged, mergeable, base `main`, head `dev/zn-agent`
 - `main` was not modified
 - no force push or history rewrite was requested or performed
 
@@ -31,83 +32,84 @@ A HANDOFF commit cannot contain its own resulting SHA. Re-read `dev/zn-agent` af
 
 ## Completed in this stage
 
-### Seventh crash window: base resident investigation success before EventOutcome
+### Ninth crash window: base resident memory / compiled capability success before EventOutcome
 
-The active base chain was:
+The active base capability chain was:
 
 ```text
-native investigation resolves from ZN's own evidence
--> _investigation_step()
--> durable WorkingState.stage = complete
--> successful INVESTIGATION result returned
+_orient_step()
+-> persist native_capability before execute
+-> compiled capability executes and returns success
+-> self-model/runtime accounting
+-> successful CAPABILITY result returned
 -> crash before outer _complete_result()
--> restart discards complete checkpoint and returns to orient/investigation
+-> restart recovers nonterminal event while WorkingState still looks pre-result
+-> orient/capability could execute again
 ```
 
-`ZNResidentRuntime._investigation_step()` now persists a resumable `investigation_completion` checkpoint with the established investigation result required for terminal publication. Restart reconstructs that result and reaches `KernelStore.complete_event()` without invoking `NativeInvestigator.investigate()` again or repeating ordinary runtime task accounting. Missing or malformed completion data fails closed instead of reopening investigation.
+Memory success had the analogous post-result/pre-terminal replay risk for recall/accounting.
 
-Product regression:
+`ZNResidentRuntime` now owns a resumable `resident_completion` checkpoint for already-established successful MEMORY and CAPABILITY results. Once that checkpoint is durable, restart reconstructs the result and proceeds to `KernelStore.complete_event()` without structured-memory recall, capability resolution/execution, or repeated ordinary runtime task accounting. Missing/malformed checkpoint data fails closed instead of reopening native execution.
+
+Product regressions:
 
 ```text
-test_resolved_investigation_completion_survives_restart_without_reprobe
+test_compiled_capability_completion_survives_restart_without_reexecution
+test_memory_completion_survives_restart_without_recall
 ```
 
-It proves the exact crash/restart boundary on the final product resident, makes any reprobe fatal, keeps `tasks_total` and investigation rounds unchanged after restart, then verifies terminal `EventOutcome`, idle checkpoint and finalized Work progress.
+The tests reconstruct the final product resident from the same SQLite store, make replay operations fatal on restart, verify the exact terminal `EventOutcome`, and prove `tasks_total` is unchanged across the restart completion step.
 
-This slice intentionally does not solve the neighboring crash before `investigation_completion` itself is saved. Self-model outcome evidence and runtime task metrics are written before that checkpoint and are not all event-idempotent; that adjacent accounting boundary remains open.
+This slice intentionally does **not** solve the earlier interval after a capability has returned success but before `resident_completion` itself is durable. In that interval the effect may already have happened while restart can still see pre-result state. Self-model/runtime accounting also remains pre-checkpoint and not generally event-idempotent. That is now the strongest next durability target.
 
-### Sixth crash window: common verified Body success before EventOutcome
+### Eighth crash window: verified semantic/focused/UI completion before EventOutcome
 
-`EmbodiedResidentRuntime` persists `native_completion` rather than terminal-looking `complete` before outer terminal publication. Restart reconstructs the verified Body result and reaches `KernelStore.complete_event()` without Body replay or repeated runtime task accounting.
+`pointer_click_semantic_resident._complete_ui_scope()` now persists verified typed UI success as resumable `native_completion` evidence instead of terminal-looking `complete`. Restart publishes terminal outcome without Body/input replay or typed UI re-verification.
 
-Regression: `test_restart_publishes_verified_body_completion_without_body_replay`.
+Regression: `test_verified_ui_completion_survives_restart_without_resensing_or_input`.
 
-### Earlier five windows
+Exact head `08d74abb00410523f3820887ae9b5bd6b2cc81db` passed `ZN Work Recovery E2E` run `33087030416` and `ZN CI` run `33087030408`.
+
+### Earlier seven windows
 
 The earlier verified slices remain closed:
 
 1. missing Work ingress linkage after durable resident event creation;
 2. recovery decision committed before the next WorkingState save;
 3. append dispatch durably `observed` before checkpoint save;
-4. generic command dispatch durably `observed` before checkpoint save, with coherent cancellation of recovery-owned state;
-5. append recovery already durably `verified_effect`, then success returned before terminal `EventOutcome`; restart re-verifies without append replay.
+4. generic command dispatch durably `observed` before checkpoint save;
+5. verified append recovery success before terminal `EventOutcome`;
+6. common verified Body success resumes from `native_completion` without Body replay;
+7. base resident investigation success resumes from `investigation_completion` without native reprobe.
 
 ## Real test / CI truth
 
-Exact-head seventh-window proof:
+Exact implementation/test/CI proof for `905b276b755806e119b4f1ce7a73294a03c78f57`:
 
 ```text
-head 82c495424acb4a005d8b6de162c833c6486b2cc0
-ZN Work Recovery E2E run 33080544314  success / 52 tests / OK
-ZN CI run 33080544259
-Electron / TypeScript / Windows      success
-ZN Source Boundary / Windows         success
-ZN Kernel / Python / Windows         success / 602 tests / 5 skipped / OK
-Publish Windows CI statuses          success
+ZN Work Recovery E2E run 33089482266                 success
+Windows resident Work restart recovery                success
+Compile Work recovery path                            success
+Verify durable Work progress and restart recovery     success
+
+ZN CI run 33089482187                                 success
+Electron / TypeScript / Windows                       success
+ZN Source Boundary / Windows                          success
+ZN Kernel / Python / Windows                          success
+Publish Windows CI statuses                           success
 ```
 
-The focused Work Recovery job and the full Kernel discovery both explicitly passed `test_resolved_investigation_completion_survives_restart_without_reprobe` at the exact implementation SHA.
+The focused recovery suite explicitly includes both new resident native completion regressions. The full Kernel job compiled the resident core and completed its working-tree core test step successfully.
 
-Previous sixth-window proof:
-
-```text
-head dc3b72ad1dfdc5bb8ac2a6c3898fe5038b85197d
-ZN Work Recovery E2E run 33076704204  success / 51 tests / OK
-ZN CI run 33076704179
-Electron / TypeScript / Windows      success
-ZN Source Boundary / Windows         success
-ZN Kernel / Python / Windows         success / 601 tests / 5 skipped / OK
-Publish Windows CI statuses          success
-```
-
-No local test run is claimed for the seventh-window web-maintainer slice; repository self-hosted Windows CI is the verification authority.
+No local test run is claimed for this web-maintainer slice because the available execution container has no repository checkout; repository self-hosted Windows CI is the verification authority.
 
 ## Current risks / incomplete work
 
-- broader Work durability remains partial beyond the seven verified crash windows;
-- specialized semantic/pointer UI completion overrides remain separate proof targets;
+- broader Work durability remains partial beyond nine verified crash windows;
+- strongest adjacent gap: capability success can occur before `resident_completion` is durably saved; a restart in that interval can still re-enter execution;
+- self-model outcome evidence and runtime task metrics are not generally event-idempotent before completion checkpoints;
 - failure-side terminal-looking checkpoint paths remain unproven;
-- adjacent pre-completion-checkpoint accounting is not exactly-once: self-model capability evidence and runtime metrics can be updated before the durable completion checkpoint and may repeat after a crash before checkpoint save;
+- external cognition completion/failure crash boundaries remain unproven;
 - no deliberate outcome-trace rewrite/compactor exists; destructive long-term-memory migration still requires separate review and explicit approval;
 - explanatory-comment cleanup in `intentional_resident.py` remains non-behavioral debt;
 - Windows M8 continuity remains incomplete;
@@ -120,19 +122,11 @@ No local test run is claimed for the seventh-window web-maintainer slice; reposi
 
 ### P1 - broader Work durability
 
-Status: **OPEN / SEVEN CRASH WINDOWS VERIFIED / ACTIVE**
+Status: **OPEN / NINE CRASH WINDOWS VERIFIED / ACTIVE**
 
-Closed without blind replay:
+Next real target: trace the compiled capability ownership boundary from `CapabilityRegistry.resolve()` through capability execution, self-model/runtime accounting, `resident_completion`, and `KernelStore.complete_event()`. Design an explicit durable protocol for the success-return -> checkpoint interval. Do not blindly replay an effectful capability and do not hide the gap behind compatibility state. If capability purity/replayability must become explicit metadata, make that ownership part of ZN's native capability contract and test it on restart.
 
-1. resident event committed before missing `work_runs` linkage;
-2. recovery decision committed before the next `WorkingState` checkpoint;
-3. append dispatch durably `observed` before the next `WorkingState` checkpoint;
-4. generic command dispatch durably `observed` before the next `WorkingState` checkpoint;
-5. verified append recovery success before terminal `EventOutcome`;
-6. common verified Body success resumes from `native_completion` without Body replay;
-7. base resident investigation success resumes from `investigation_completion` without native reprobe.
-
-Next candidates must be selected from real code, not analogy: specialized semantic/pointer UI completion, failure-side terminal-looking checkpoints, or the adjacent pre-checkpoint accounting/idempotence boundary.
+After that, investigate failure-side and external-cognition completion boundaries independently.
 
 ### P2 - browser follow-ons
 
@@ -151,16 +145,16 @@ Preserve human approval for high-risk identity, memory, credentials, updater/sig
 ```text
 runtime/python/zn_agent/core/resident.py
 runtime/python/zn_agent/core/embodied_resident.py
+runtime/python/zn_agent/core/pointer_click_semantic_resident.py
 runtime/python/zn_agent/core/store.py
-runtime/python/zn_agent/core/work.py
-tests/zn_agent/core/test_work_recovery.py
-tests/zn_agent/core/test_work_body_success_recovery.py
-tests/zn_agent/core/test_work_side_effect_recovery.py
-tests/zn_agent/core/test_work_side_effect_resolution_recovery.py
+runtime/python/zn_agent/core/capabilities.py
+tests/zn_agent/core/test_resident_native_completion_recovery.py
+tests/zn_agent/core/test_work_ui_completion_recovery.py
+.github/workflows/zn-work-recovery-e2e.yml
 docs/ZN-IMPLEMENTATION-STATUS.md
 .agent/HANDOFF.md
 ```
 
 ## Next real target
 
-Re-read current branch, CI and active caller chain before modifying the next family. Prioritize a narrow crash boundary with a regression that can prove restart behavior on the final product resident. Keep broader Work durability marked PARTIAL, keep `EventOutcome` as terminal truth, and keep `main` untouched during ordinary development.
+Re-read current branch, CI and active caller chain before modification. Prioritize the pre-`resident_completion` compiled-capability success interval and preserve `EventOutcome` as terminal truth. Keep broader Work durability marked PARTIAL and keep `main` untouched during ordinary development.
