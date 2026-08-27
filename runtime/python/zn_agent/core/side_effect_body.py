@@ -204,6 +204,12 @@ class SideEffectAwareBody(KeyboardTextBody):
     ) -> bool:
         """Close one started attempt only after resident-owned recovery evidence.
 
+        Repeating the same event/attempt/final status is an idempotent
+        acknowledgement of a previously committed recovery decision. This closes
+        the crash window where the attempt commit succeeds but the resident
+        WorkingState transition has not been saved yet. A conflicting final
+        status still fails closed and no action arguments are stored here.
+
         This method grants no mutation authority and stores no action arguments.
         ``verified_effect`` means current reality independently satisfies the
         intended effect; ``verified_absent`` means an action-specific recovery
@@ -234,8 +240,16 @@ class SideEffectAwareBody(KeyboardTextBody):
                 ),
             )
             if cursor.rowcount != 1:
+                row = conn.execute(
+                    f"SELECT event_id,status FROM {self._TABLE} WHERE attempt_id=?",
+                    (normalized_attempt,),
+                ).fetchone()
                 conn.rollback()
-                return False
+                return bool(
+                    row is not None
+                    and str(row["event_id"]) == normalized_event
+                    and str(row["status"]) == normalized_status
+                )
             self._prune_completed(conn)
             conn.commit()
             return True
