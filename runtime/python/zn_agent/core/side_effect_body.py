@@ -19,24 +19,24 @@ class SideEffectAwareBody(KeyboardTextBody):
 
     Pointer clicks and focused keyboard text already own richer resident-level
     non-replayable lifecycles. This body deliberately leaves those contracts
-    unchanged. It adds only a durable pre-dispatch boundary around generic
-    command execution and append-style text writes.
+    unchanged. It adds a durable pre-dispatch boundary around generic command
+    execution and text-file mutations.
 
     A ``started`` attempt is committed before dispatch. If the process dies after
     that commit, the next resident refuses the same event/action signature rather
     than guessing whether the outside-world side effect happened. For guarded
-    commands and append writes, an ``observed`` dispatch also remains replay-
-    blocking if a stale ``native_action`` checkpoint is reconstructed. Append
-    recovery may prove current reality; generic commands remain blocked for an
-    explicit lifecycle decision. No raw command, text, environment or other
-    action arguments are copied into this ledger; only a deterministic signature
-    hash and bounded execution metadata are persisted.
+    commands and writes, an ``observed`` dispatch also remains replay-blocking if
+    a stale ``native_action`` checkpoint is reconstructed. Exact text recovery may
+    prove current reality; generic commands remain blocked for an explicit
+    lifecycle decision. No raw command, text, environment or other action
+    arguments are copied into this ledger; only a deterministic signature hash
+    and bounded execution metadata are persisted.
     """
 
     _TABLE = side_effect_attempts.TABLE
     _MAX_COMPLETED_ATTEMPTS = side_effect_attempts.MAX_COMPLETED_ATTEMPTS
     _COMMAND_KINDS = frozenset({"command", "terminal", "shell"})
-    _APPEND_KINDS = frozenset({"write_text", "write_file"})
+    _WRITE_KINDS = frozenset({"write_text", "write_file"})
     _RECOVERY_STATUSES = frozenset({"verified_effect", "verified_absent"})
 
     def act(
@@ -89,7 +89,7 @@ class SideEffectAwareBody(KeyboardTextBody):
         try:
             result = super().act(kind, event_id=event_id, **args)
         except Exception as exc:
-            # A normal exception cannot establish that a command/append produced
+            # A normal exception cannot establish that a command/write produced
             # no side effect. Keep the durable attempt in ``started`` state and
             # return uncertainty as evidence so the resident investigates rather
             # than terminalizing or replaying the movement.
@@ -132,9 +132,8 @@ class SideEffectAwareBody(KeyboardTextBody):
 
     @classmethod
     def _requires_guard(cls, kind: str, args: dict[str, Any]) -> bool:
-        if kind in cls._COMMAND_KINDS:
-            return True
-        return kind in cls._APPEND_KINDS and bool(args.get("append", False))
+        del args
+        return kind in cls._COMMAND_KINDS or kind in cls._WRITE_KINDS
 
     @staticmethod
     def _signature_hash(kind: str, args: dict[str, Any]) -> str:
@@ -206,10 +205,10 @@ class SideEffectAwareBody(KeyboardTextBody):
         WorkingState transition has not been saved yet. A conflicting final
         status still fails closed and no action arguments are stored here.
 
-        A ``started`` attempt has no durable dispatch result. An append attempt
-        may also be ``observed`` while a stale ``native_action`` checkpoint remains
-        after a crash. Exact read-only append recovery may close either state
-        without replay. Existing dispatch completion metadata is preserved.
+        A ``started`` attempt has no durable dispatch result. A write attempt may
+        also be ``observed`` while a stale ``native_action`` checkpoint remains
+        after a crash. Exact read-only recovery may close either state without
+        replay. Existing dispatch completion metadata is preserved.
 
         This method grants no mutation authority and stores no action arguments.
         ``verified_effect`` means current reality independently satisfies the
