@@ -25,9 +25,10 @@ cf88774ba8c4c9b95adf2aeef5954da4d55ea14b  block observed append replay after res
 173e0d03fbf52cda68571eb5f22e4aabc3d08805  block observed command replay after restart
 2ffb79c4bf11903d46f53dd9a7b8d1fcbd922642  keep verified append recovery replay-safe until terminal EventOutcome
 f7d6cb64121e914e0250736c0089d58c4b7fea2b  align regression contract with the terminal EventOutcome boundary
+dc3b72ad1dfdc5bb8ac2a6c3898fe5038b85197d  resume verified Body completion without replay
 ```
 
-Status: **BROADER WORK DURABILITY REMAINS PARTIAL. FIVE CONCRETE CRASH WINDOWS ARE NOW CLOSED AND VERIFIED: MISSING WORK INGRESS LINKAGE; COMMITTED RECOVERY DECISION BEFORE THE NEXT `WorkingState` CHECKPOINT; APPEND DISPATCH DURABLY `observed` BEFORE THE NEXT CHECKPOINT; GENERIC COMMAND DISPATCH DURABLY `observed` BEFORE THE NEXT CHECKPOINT; AND VERIFIED APPEND RECOVERY RETURNING SUCCESS BEFORE TERMINAL `EventOutcome` PUBLICATION. `EventOutcome` REMAINS TERMINAL TRUTH. CANCELLATION REMAINS LIFECYCLE AUTHORITY, NOT EVIDENCE THAT AN OUTSIDE-WORLD EFFECT DID OR DID NOT OCCUR.**
+Status: **BROADER WORK DURABILITY REMAINS PARTIAL. SIX CONCRETE CRASH WINDOWS ARE NOW CLOSED AND VERIFIED, INCLUDING COMMON VERIFIED BODY SUCCESS BEFORE TERMINAL `EventOutcome` PUBLICATION. `EventOutcome` REMAINS TERMINAL TRUTH. CANCELLATION REMAINS LIFECYCLE AUTHORITY, NOT EVIDENCE THAT AN OUTSIDE-WORLD EFFECT DID OR DID NOT OCCUR.**
 
 ## 1. Existing durable foundations
 
@@ -41,7 +42,7 @@ The established durable boundaries remain:
 
 Generic nervous `perceive()` remains intentionally plastic and is not an exactly-once API.
 
-## 2. Five proven broader Work crash windows
+## 2. Six proven broader Work crash windows
 
 ### 2.1 Missing ingress linkage
 
@@ -97,7 +98,45 @@ If the process dies after recovery returns success but before terminal publicati
 
 This closes only this concrete append-recovery terminalization window. It does **not** prove that every resident success/failure path is safe from a pre-`EventOutcome` terminal-looking checkpoint.
 
+### 2.6 Common verified Body success before terminal outcome
+
+The common `EmbodiedResidentRuntime._complete_successful_body_action()` path
+previously persisted `WorkingState.stage = complete` before outer
+`_complete_result()` published the terminal event and `EventOutcome`. After a
+crash, `_state_for_event()` intentionally discarded that terminal-looking
+checkpoint and restarted the still-nonterminal event from `orient`, allowing
+the verified Body path to be reconsidered and potentially replayed.
+
+The common path now persists a nonterminal, resumable `native_completion`
+checkpoint containing only the already-established Body result needed for
+terminal publication. Ordinary success accounting is recorded before that
+checkpoint becomes visible. On restart, the active resident reconstructs the
+result from the checkpoint and enters the existing atomic `complete_event()`
+boundary without invoking Body or repeating accounting. Missing or malformed
+completion data fails closed as an event failure rather than reopening action.
+
+`test_restart_publishes_verified_body_completion_without_body_replay` proves
+the final product resident survives the exact crash, performs no Body call,
+does not increment runtime task accounting twice, publishes `EventOutcome`,
+clears to idle state and finalizes Work progress. Pointer/semantic UI completion
+overrides are deliberately outside this common-path slice.
+
 ## 3. Real Windows CI proof
+
+Current exact-head proof for `dc3b72ad1dfdc5bb8ac2a6c3898fe5038b85197d`:
+
+```text
+ZN Work Recovery E2E run 33076704204  success / 51 tests / OK
+ZN CI run 33076704179
+Electron / TypeScript / Windows      success
+ZN Source Boundary / Windows         success
+ZN Kernel / Python / Windows         success / 601 tests / 5 skipped / OK
+Publish Windows CI statuses          success
+```
+
+Local proof before push matched the exact code checkpoint: focused Work suite
+51 tests / OK; adjacent common Body callers 40 tests / OK; full core discovery
+601 tests / 5 skipped / OK.
 
 Focused Work proof for the fifth window and its companion contract update:
 
@@ -126,8 +165,7 @@ Runtime behavior for the fifth window was changed in `2ffb79c4...`. The followin
 
 Open work still includes:
 
-- broader Work durability beyond these five proven windows;
-- active successful-body terminalization still has a broader unproven family: `EmbodiedResidentRuntime._complete_successful_body_action()` persists `WorkingState.stage = complete` before outer `_complete_result()` publishes `EventOutcome`;
+- broader Work durability beyond these six proven windows;
 - semantic UI completion and base resident investigation completion have analogous pre-`EventOutcome` paths that still require separate call-chain proof rather than being inferred safe from the append recovery fix;
 - failure-side terminal-looking checkpoint paths remain unproven;
 - no deliberate outcome-trace rewrite/compactor; any future implementation must atomically retarget receipts before deleting old representation and requires separate review for destructive long-term-memory migration;
@@ -141,6 +179,12 @@ High-risk identity, long-term memory, credential/permission, updater/signing, ro
 
 ## 5. Next real target
 
-Re-enter the active common body-success call chain read-only, beginning at `EmbodiedResidentRuntime._native_verification_step()` -> `_complete_successful_body_action()` -> outer `ZNResidentRuntime.run_once()` -> `_complete_result()` -> `KernelStore.complete_event()`. Prove the exact restart behavior if the process dies after a verified body success persists `WorkingState.stage = complete` but before terminal `EventOutcome` publication. Compare this with semantic UI completion and other active descendants, but select only one concrete next crash window for the next implementation slice.
+Work is paused after the verified sixth-window checkpoint at the user's request.
+When resumed, re-read repository/CI truth and select one remaining family, such
+as semantic UI completion, base resident investigation completion, or a
+failure-side terminal-looking checkpoint. Do not infer those paths safe from
+the common Body fix.
 
-Do not generalize the append-recovery fix to all completion paths without proving what durable evidence each path needs to resume safely. Keep `main` untouched during ordinary development.
+Do not generalize any completed slice to all completion paths without proving
+what durable evidence each path needs to resume safely. Keep `main` untouched
+during ordinary development.
