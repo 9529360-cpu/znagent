@@ -253,13 +253,14 @@ class ZNResidentRuntime:
             completed = self.result_for(event.event_id)
             if completed is not None:
                 return completed
+            current = self.store.get_working_state()
+            if self._preserve_working_truth_on_exception(event, current):
+                raise
             message = f"{type(exc).__name__}: {exc}"
             self.life.mark_impasse_unresolved(event, message)
-            self.store.record_runtime_task(model_invocations=0)
-            failure = ResidentRunResult(
-                event=event,
-                execution_path=ExecutionPath.BUDGET_BLOCKED,
-                success=False,
+            failure = self._checkpoint_terminal_failure(
+                event,
+                current,
                 reason=message,
             )
             return self._complete_result(event, failure)
@@ -342,6 +343,95 @@ class ZNResidentRuntime:
         )
         self.completion_observations.observe_life(self, result)
         return result
+
+    @staticmethod
+    def _preserve_working_truth_on_exception(
+        event: AgentEvent,
+        state: WorkingState,
+    ) -> bool:
+        if str(state.current_event_id or "") != str(event.event_id):
+            return False
+        stage = str(state.stage or "").strip().lower()
+        blocked_by = str(state.blocked_by or "").strip().lower()
+        if blocked_by == "outside_world_effect_uncertain" or stage == "side_effect_recovery":
+            return True
+        if stage in {"complete", "failed", "terminal_failure"}:
+            return True
+        return stage.endswith("_completion")
+
+    def _resident_accounting_journal(self):
+        journal = getattr(self, "resident_accounting", None)
+        if journal is None:
+            from .resident_accounting import ResidentAccountingJournal
+
+            journal = ResidentAccountingJournal(self.store)
+            self.resident_accounting = journal
+        return journal
+
+    def _checkpoint_terminal_failure(
+        self,
+        event: AgentEvent,
+        state: WorkingState,
+        *,
+        reason: str,
+    ) -> ResidentRunResult:
+        completion = {
+            "execution_path": ExecutionPath.BUDGET_BLOCKED.value,
+            "success": False,
+            "response": None,
+            "model_invocations": 0,
+            "reason": str(reason or "resident task failed"),
+        }
+        state.current_event_id = event.event_id
+        state.stage = "terminal_failure"
+        state.next_action = "publish terminal EventOutcome"
+        state.data["terminal_failure"] = completion
+        self.store.save_working_state(state)
+        self._resident_accounting_journal().record_terminal_failure(
+            event_id=event.event_id,
+            model_invocations=0,
+        )
+        return self._terminal_failure_result(event, completion)
+
+    def _resume_terminal_failure(
+        self,
+        event: AgentEvent,
+        state: WorkingState,
+    ) -> ResidentRunResult:
+        raw = state.data.get("terminal_failure")
+        if not isinstance(raw, dict):
+            raise RuntimeError("durable terminal failure checkpoint is incomplete")
+        try:
+            result = self._terminal_failure_result(event, raw)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("durable terminal failure checkpoint is malformed") from exc
+        self._resident_accounting_journal().record_terminal_failure(
+            event_id=event.event_id,
+            model_invocations=0,
+        )
+        return result
+
+    @staticmethod
+    def _terminal_failure_result(
+        event: AgentEvent,
+        raw: dict[str, Any],
+    ) -> ResidentRunResult:
+        if raw.get("success") is not False:
+            raise ValueError("terminal failure checkpoint must record failure")
+        execution_path = ExecutionPath(str(raw.get("execution_path") or ""))
+        if execution_path is not ExecutionPath.BUDGET_BLOCKED:
+            raise ValueError("terminal failure checkpoint must use budget-blocked path")
+        model_invocations = raw.get("model_invocations")
+        if isinstance(model_invocations, bool) or int(model_invocations) != 0:
+            raise ValueError("terminal failure checkpoint cannot claim model use")
+        return ResidentRunResult(
+            event=event,
+            execution_path=execution_path,
+            success=False,
+            response=raw.get("response"),
+            model_invocations=0,
+            reason=str(raw.get("reason") or "resident task failed"),
+        )
 
     def run_forever(
         self,
@@ -834,6 +924,8 @@ class ZNResidentRuntime:
             )
         if state.stage == "external_cognition":
             return self._external_cognition_step(event, state)
+        if state.stage == "terminal_failure":
+            return self._resume_terminal_failure(event, state)
 
         state.stage = "orient"
         state.next_action = "orient to current event"
@@ -1166,14 +1258,9 @@ class ZNResidentRuntime:
 
         if not decision.use_model:
             self.life.mark_impasse_unresolved(event, str(deliberation["unknown"]))
-            self.store.record_runtime_task(model_invocations=0)
-            state.stage = "failed"
-            state.next_action = None
-            self.store.save_working_state(state)
-            return ResidentRunResult(
-                event=event,
-                execution_path=ExecutionPath.BUDGET_BLOCKED,
-                success=False,
+            return self._checkpoint_terminal_failure(
+                event,
+                state,
                 reason=decision.reason,
             )
 
