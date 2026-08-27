@@ -4,6 +4,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from zn_agent.core.models import (
     EventOutcome,
@@ -87,6 +88,96 @@ class ResidentWorkRecoveryTests(unittest.TestCase):
                     len([message for message in messages if message.role == "user"]),
                     1,
                 )
+            finally:
+                restored.store.close()
+
+    def test_resolved_investigation_completion_survives_restart_without_reprobe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "kernel.db"
+            first = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=store_path,
+            )
+            ledger = ResidentWorkLedger(first)
+            _, event = ledger.start(
+                "work-investigation-terminal",
+                "what is my current working directory?",
+                payload={"allow_memory": False},
+            )
+
+            self.assertIsNone(first.live_once())
+            state = first.store.get_working_state()
+            self.assertEqual(state.stage, "native_investigation")
+            claimed = first.store.claim_event(event.event_id)
+            self.assertIsNotNone(claimed)
+            readiness = first.kernel.self_model.assess_task(
+                claimed.task,
+                first._required_capabilities(claimed),
+            )
+            result = first._investigation_step(
+                claimed,
+                state,
+                readiness=readiness,
+                learning_evidence=[],
+            )
+            self.assertIsNotNone(result)
+            assert result is not None
+            self.assertTrue(result.success)
+            self.assertEqual(result.execution_path, ExecutionPath.INVESTIGATION)
+            self.assertEqual(result.response, str(Path.cwd()))
+            checkpoint = first.store.get_working_state()
+            self.assertEqual(checkpoint.stage, "investigation_completion")
+            self.assertEqual(
+                checkpoint.data["investigation_completion"]["response"],
+                str(Path.cwd()),
+            )
+            self.assertIsNone(first.store.get_event_outcome(event.event_id))
+            tasks_before = first.store.get_runtime_metrics().tasks_total
+            rounds_before = first.investigator.current(event.event_id).rounds
+            first.store.close()
+
+            restored = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=store_path,
+            )
+            restored_ledger = ResidentWorkLedger(restored)
+            try:
+                recovered = restored.store.get_working_state()
+                self.assertEqual(recovered.current_event_id, event.event_id)
+                self.assertEqual(recovered.stage, "investigation_completion")
+                self.assertEqual(restored.store.get_event(event.event_id).status, EventStatus.PENDING)
+
+                with patch.object(
+                    restored.investigator,
+                    "investigate",
+                    side_effect=AssertionError("resolved investigation must not probe again"),
+                ):
+                    terminal = restored.run_once(target_event_id=event.event_id)
+
+                self.assertIsNotNone(terminal)
+                assert terminal is not None
+                self.assertTrue(terminal.success)
+                self.assertEqual(terminal.execution_path, ExecutionPath.INVESTIGATION)
+                self.assertEqual(terminal.response, str(Path.cwd()))
+                self.assertEqual(restored.store.get_runtime_metrics().tasks_total, tasks_before)
+                self.assertEqual(
+                    restored.investigator.current(event.event_id).rounds,
+                    rounds_before,
+                )
+                outcome = restored.store.get_event_outcome(event.event_id)
+                self.assertIsNotNone(outcome)
+                assert outcome is not None
+                self.assertTrue(outcome.success)
+                self.assertEqual(outcome.execution_path, ExecutionPath.INVESTIGATION)
+                idle = restored.store.get_working_state()
+                self.assertEqual(idle.stage, "idle")
+                self.assertIsNone(idle.current_event_id)
+                progress = restored_ledger.progress(
+                    "work-investigation-terminal",
+                    event.event_id,
+                )
+                self.assertTrue(progress["terminal"])
+                self.assertTrue(progress["finalized"])
             finally:
                 restored.store.close()
 
