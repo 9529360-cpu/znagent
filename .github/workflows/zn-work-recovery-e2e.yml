@@ -11,6 +11,9 @@ on:
       - runtime/python/zn_agent/core/work.py
       - runtime/python/zn_agent/core/work_control.py
       - runtime/python/zn_agent/core/store.py
+      - runtime/python/zn_agent/core/runtime.py
+      - runtime/python/zn_agent/core/kernel_accounting.py
+      - runtime/python/zn_agent/core/evolution.py
       - runtime/python/zn_agent/core/resident.py
       - runtime/python/zn_agent/core/embodied_resident.py
       - runtime/python/zn_agent/core/pointer_click_completion_resident.py
@@ -27,6 +30,7 @@ on:
       - runtime/python/zn_agent/core/focused_modern_text_resident.py
       - runtime/python/zn_agent/core/side_effect_body.py
       - runtime/python/zn_agent/core/side_effect_journal.py
+      - tests/zn_agent/core/test_completion_durability_boundaries.py
       - tests/zn_agent/core/test_resident_native_completion_recovery.py
       - tests/zn_agent/core/test_capability_failure_recovery.py
       - tests/zn_agent/core/test_terminal_failure_recovery.py
@@ -95,9 +99,9 @@ jobs:
       - name: Compile Work recovery path
         run: |
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\work-recovery-venv\Scripts\python.exe'
-          & $python -m py_compile runtime/python/zn_agent/core/models.py runtime/python/zn_agent/core/work.py runtime/python/zn_agent/core/work_control.py runtime/python/zn_agent/core/store.py runtime/python/zn_agent/core/resident.py runtime/python/zn_agent/core/embodied_resident.py runtime/python/zn_agent/core/pointer_click_completion_resident.py runtime/python/zn_agent/core/pointer_click_semantic_resident.py runtime/python/zn_agent/core/completion_observation.py runtime/python/zn_agent/core/event_outcome_nervous.py runtime/python/zn_agent/core/intentional_resident.py runtime/python/zn_agent/core/will.py runtime/python/zn_agent/core/daemon.py runtime/python/zn_agent/core/provider_bridge.py runtime/python/zn_agent/core/capabilities.py runtime/python/zn_agent/core/capability_recovery_resident.py runtime/python/zn_agent/core/resident_accounting.py runtime/python/zn_agent/core/focused_modern_text_resident.py runtime/python/zn_agent/core/side_effect_body.py runtime/python/zn_agent/core/side_effect_journal.py
+          & $python -m py_compile runtime/python/zn_agent/core/models.py runtime/python/zn_agent/core/work.py runtime/python/zn_agent/core/work_control.py runtime/python/zn_agent/core/store.py runtime/python/zn_agent/core/runtime.py runtime/python/zn_agent/core/kernel_accounting.py runtime/python/zn_agent/core/evolution.py runtime/python/zn_agent/core/resident.py runtime/python/zn_agent/core/embodied_resident.py runtime/python/zn_agent/core/pointer_click_completion_resident.py runtime/python/zn_agent/core/pointer_click_semantic_resident.py runtime/python/zn_agent/core/completion_observation.py runtime/python/zn_agent/core/event_outcome_nervous.py runtime/python/zn_agent/core/intentional_resident.py runtime/python/zn_agent/core/will.py runtime/python/zn_agent/core/daemon.py runtime/python/zn_agent/core/provider_bridge.py runtime/python/zn_agent/core/capabilities.py runtime/python/zn_agent/core/capability_recovery_resident.py runtime/python/zn_agent/core/resident_accounting.py runtime/python/zn_agent/core/focused_modern_text_resident.py runtime/python/zn_agent/core/side_effect_body.py runtime/python/zn_agent/core/side_effect_journal.py
       - name: Verify durable Work progress and restart recovery
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\work-recovery-venv\Scripts\python.exe'
-          & $python -m unittest tests.zn_agent.core.test_resident_native_completion_recovery tests.zn_agent.core.test_capability_failure_recovery tests.zn_agent.core.test_terminal_failure_recovery tests.zn_agent.core.test_work_progress tests.zn_agent.core.test_work_recovery tests.zn_agent.core.test_work_ingress_recovery tests.zn_agent.core.test_work_body_success_recovery tests.zn_agent.core.test_work_pointer_completion_recovery tests.zn_agent.core.test_work_ui_completion_recovery tests.zn_agent.core.test_work_side_effect_recovery tests.zn_agent.core.test_work_side_effect_resolution_recovery tests.zn_agent.core.test_work_side_effect_observed_recovery tests.zn_agent.core.test_work_cancellation tests.zn_agent.core.test_work_cancel_control tests.zn_agent.core.test_completion_observation_recovery tests.zn_agent.core.test_completion_observation_embodied tests.zn_agent.core.test_modern_text_resident_ownership tests.zn_agent.core.test_event_outcome_nervous tests.zn_agent.core.test_event_outcome_nervous_recovery -v
+          & $python -m unittest tests.zn_agent.core.test_completion_durability_boundaries tests.zn_agent.core.test_resident_native_completion_recovery tests.zn_agent.core.test_capability_failure_recovery tests.zn_agent.core.test_terminal_failure_recovery tests.zn_agent.core.test_work_progress tests.zn_agent.core.test_work_recovery tests.zn_agent.core.test_work_ingress_recovery tests.zn_agent.core.test_work_body_success_recovery tests.zn_agent.core.test_work_pointer_completion_recovery tests.zn_agent.core.test_work_ui_completion_recovery tests.zn_agent.core.test_work_side_effect_recovery tests.zn_agent.core.test_work_side_effect_resolution_recovery tests.zn_agent.core.test_work_side_effect_observed_recovery tests.zn_agent.core.test_work_cancellation tests.zn_agent.core.test_work_cancel_control tests.zn_agent.core.test_completion_observation_recovery tests.zn_agent.core.test_completion_observation_embodied tests.zn_agent.core.test_modern_text_resident_ownership tests.zn_agent.core.test_event_outcome_nervous tests.zn_agent.core.test_event_outcome_nervous_recovery -v
