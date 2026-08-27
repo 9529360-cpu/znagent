@@ -42,12 +42,9 @@ class CapabilityRecoveryResidentRuntime(FocusedModernTextResidentRuntime):
             attempt_id = str(raw_execution.get("attempt_id") or "").strip()
             capability_name = str(raw_execution.get("capability_name") or "").strip()
             raw_result = raw_execution.get("result")
-            if (
-                status == "observed"
-                and attempt_id
-                and capability_name
-                and isinstance(raw_result, dict)
-            ):
+            if status == "observed" and attempt_id and capability_name:
+                if not isinstance(raw_result, dict):
+                    raise RuntimeError("observed capability result checkpoint is incomplete")
                 if raw_result.get("success") is True:
                     return self._resume_observed_capability_success(
                         event,
@@ -61,6 +58,7 @@ class CapabilityRecoveryResidentRuntime(FocusedModernTextResidentRuntime):
                         raw_execution,
                         thought=thought,
                     )
+                raise RuntimeError("observed capability result checkpoint is malformed")
             if status == "started" and attempt_id and capability_name and not replay_safe:
                 return self._begin_capability_recovery(
                     event,
