@@ -24,9 +24,12 @@ class SideEffectAwareBody(KeyboardTextBody):
 
     A ``started`` attempt is committed before dispatch. If the process dies after
     that commit, the next resident refuses the same event/action signature rather
-    than guessing whether the outside-world side effect happened. No raw command,
-    text, environment or other action arguments are copied into this ledger; only
-    a deterministic signature hash and bounded execution metadata are persisted.
+    than guessing whether the outside-world side effect happened. For append
+    writes, an ``observed`` dispatch also remains replay-blocking until the
+    resident checkpoint has advanced or exact current reality resolves recovery.
+    No raw command, text, environment or other action arguments are copied into
+    this ledger; only a deterministic signature hash and bounded execution
+    metadata are persisted.
     """
 
     _TABLE = "resident_side_effect_attempts"
@@ -48,17 +51,30 @@ class SideEffectAwareBody(KeyboardTextBody):
             return super().act(kind, event_id=event_id, **args)
 
         signature_hash = self._signature_hash(normalized_kind, args)
-        prior = self._started_attempt(normalized_event, signature_hash)
+        prior = self._replay_blocking_attempt(
+            normalized_event,
+            signature_hash,
+            include_observed=normalized_kind in self._APPEND_KINDS,
+        )
         if prior is not None:
+            prior_status = str(prior["status"] or "").strip().lower()
+            if prior_status == "observed":
+                error = (
+                    f"{normalized_kind} dispatch already returned before resident checkpoint "
+                    "reconstruction; refusing blind replay until current reality proves what "
+                    "happened"
+                )
+            else:
+                error = (
+                    f"{normalized_kind} may already have started before resident interruption; "
+                    "refusing blind replay until current reality proves what happened"
+                )
             return self._uncertain_result(
                 normalized_kind,
                 normalized_event,
                 attempt_id=str(prior["attempt_id"]),
                 signature_hash=signature_hash,
-                error=(
-                    f"{normalized_kind} may already have started before resident interruption; "
-                    "refusing blind replay until current reality proves what happened"
-                ),
+                error=error,
             )
 
         attempt_id = f"sidefx-{uuid.uuid4().hex[:12]}"
@@ -202,13 +218,18 @@ class SideEffectAwareBody(KeyboardTextBody):
         status: str,
         evidence_action_id: str | None = None,
     ) -> bool:
-        """Close one started attempt only after resident-owned recovery evidence.
+        """Close one replay-blocking attempt after resident-owned recovery evidence.
 
         Repeating the same event/attempt/final status is an idempotent
         acknowledgement of a previously committed recovery decision. This closes
         the crash window where the attempt commit succeeds but the resident
         WorkingState transition has not been saved yet. A conflicting final
         status still fails closed and no action arguments are stored here.
+
+        A ``started`` attempt has no durable dispatch result. An append attempt
+        may also be ``observed`` while a stale ``native_action`` checkpoint remains
+        after a crash. Exact read-only append recovery may close either state
+        without replay. Existing dispatch completion metadata is preserved.
 
         This method grants no mutation authority and stores no action arguments.
         ``verified_effect`` means current reality independently satisfies the
@@ -229,8 +250,9 @@ class SideEffectAwareBody(KeyboardTextBody):
             return False
         with closing(self._connect()) as conn:
             cursor = conn.execute(
-                f"UPDATE {self._TABLE} SET status=?,completed_at=?,result_action_id=? "
-                "WHERE attempt_id=? AND event_id=? AND status='started'",
+                f"UPDATE {self._TABLE} SET status=?,completed_at=COALESCE(completed_at,?),"
+                "result_action_id=COALESCE(result_action_id,?) "
+                "WHERE attempt_id=? AND event_id=? AND status IN ('started','observed')",
                 (
                     normalized_status,
                     utc_now(),
@@ -262,12 +284,20 @@ class SideEffectAwareBody(KeyboardTextBody):
             (self._MAX_COMPLETED_ATTEMPTS,),
         )
 
-    def _started_attempt(self, event_id: str, signature_hash: str):
+    def _replay_blocking_attempt(
+        self,
+        event_id: str,
+        signature_hash: str,
+        *,
+        include_observed: bool = False,
+    ):
+        statuses = ("started", "observed") if include_observed else ("started",)
+        placeholders = ",".join("?" for _ in statuses)
         with closing(self._connect()) as conn:
             return conn.execute(
                 f"SELECT * FROM {self._TABLE} WHERE event_id=? AND signature_hash=? "
-                "AND status='started' ORDER BY started_at DESC LIMIT 1",
-                (event_id, signature_hash),
+                f"AND status IN ({placeholders}) ORDER BY started_at DESC LIMIT 1",
+                (event_id, signature_hash, *statuses),
             ).fetchone()
 
     def uncertain_attempts(self, event_id: str) -> list[dict[str, Any]]:
