@@ -156,16 +156,69 @@ class ResidentWorkSideEffectResolutionRecoveryTests(unittest.TestCase):
                 ]
                 self.assertEqual(writes, [])
 
-                restored._complete_result(claimed_after_restart, result)
-                progress = restored_ledger.progress(
-                    "work-sidefx-resolution-crash",
-                    event.event_id,
+                # Simulate a second crash after recovery has returned success but
+                # before the outer resident publishes terminal EventOutcome truth.
+                # The durable checkpoint must remain replay-safe recovery rather
+                # than a dead-end `complete` marker that reconstructs as `orient`.
+                before_terminal = restored.store.get_working_state()
+                self.assertEqual(before_terminal.stage, "side_effect_recovery")
+                self.assertEqual(
+                    before_terminal.data["side_effect_recovery"]["decision"],
+                    "reverify_effect",
                 )
-                self.assertTrue(progress["terminal"])
-                self.assertTrue(progress["finalized"])
-                self.assertEqual(progress["stage"], "complete")
-            finally:
+                self.assertIsNone(restored.store.get_event_outcome(event.event_id))
                 restored.store.close()
+
+                restored_again = build_resident_runtime_from_existing_stack(
+                    config={"model": {}},
+                    store_path=store_path,
+                )
+                restored_again_ledger = ResidentWorkLedger(restored_again)
+                try:
+                    event_again = restored_again.store.get_event(event.event_id)
+                    self.assertIsNotNone(event_again)
+                    assert event_again is not None
+                    self.assertEqual(event_again.status, EventStatus.PENDING)
+                    state_again = restored_again.store.get_working_state()
+                    self.assertEqual(state_again.stage, "side_effect_recovery")
+                    self.assertEqual(
+                        state_again.data["side_effect_recovery"]["decision"],
+                        "reverify_effect",
+                    )
+                    claimed_again = restored_again.store.claim_event(event.event_id)
+                    self.assertIsNotNone(claimed_again)
+                    assert claimed_again is not None
+                    result_again = restored_again._side_effect_recovery_step(
+                        claimed_again,
+                        state_again,
+                        readiness=None,
+                    )
+                    self.assertIsNotNone(result_again)
+                    assert result_again is not None
+                    self.assertTrue(result_again.success)
+                    self.assertEqual(target.read_text(encoding="utf-8"), "prefix-suffix")
+                    writes_again = [
+                        item
+                        for item in restored_again.body.recent_actions(80)
+                        if item.event_id == event.event_id and item.kind == "write_text"
+                    ]
+                    self.assertEqual(writes_again, [])
+
+                    restored_again._complete_result(claimed_again, result_again)
+                    progress = restored_again_ledger.progress(
+                        "work-sidefx-resolution-crash",
+                        event.event_id,
+                    )
+                    self.assertTrue(progress["terminal"])
+                    self.assertTrue(progress["finalized"])
+                    self.assertEqual(progress["stage"], "complete")
+                finally:
+                    restored_again.store.close()
+            finally:
+                try:
+                    restored.store.close()
+                except sqlite3.ProgrammingError:
+                    pass
 
 
 if __name__ == "__main__":
