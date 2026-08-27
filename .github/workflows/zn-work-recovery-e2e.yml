@@ -26,6 +26,7 @@ on:
       - tests/zn_agent/core/test_work_ingress_recovery.py
       - tests/zn_agent/core/test_work_side_effect_recovery.py
       - tests/zn_agent/core/test_work_side_effect_resolution_recovery.py
+      - tests/zn_agent/core/test_work_side_effect_observed_recovery.py
       - tests/zn_agent/core/test_work_cancellation.py
       - tests/zn_agent/core/test_work_cancel_control.py
       - tests/zn_agent/core/test_completion_observation_recovery.py
@@ -87,4 +88,4 @@ jobs:
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\work-recovery-venv\Scripts\python.exe'
-          & $python -m unittest tests.zn_agent.core.test_work_progress tests.zn_agent.core.test_work_recovery tests.zn_agent.core.test_work_ingress_recovery tests.zn_agent.core.test_work_side_effect_recovery tests.zn_agent.core.test_work_side_effect_resolution_recovery tests.zn_agent.core.test_work_cancellation tests.zn_agent.core.test_work_cancel_control tests.zn_agent.core.test_completion_observation_recovery tests.zn_agent.core.test_completion_observation_embodied tests.zn_agent.core.test_modern_text_resident_ownership tests.zn_agent.core.test_event_outcome_nervous tests.zn_agent.core.test_event_outcome_nervous_recovery -v
+          & $python -m unittest tests.zn_agent.core.test_work_progress tests.zn_agent.core.test_work_recovery tests.zn_agent.core.test_work_ingress_recovery tests.zn_agent.core.test_work_side_effect_recovery tests.zn_agent.core.test_work_side_effect_resolution_recovery tests.zn_agent.core.test_work_side_effect_observed_recovery tests.zn_agent.core.test_work_cancellation tests.zn_agent.core.test_work_cancel_control tests.zn_agent.core.test_completion_observation_recovery tests.zn_agent.core.test_completion_observation_embodied tests.zn_agent.core.test_modern_text_resident_ownership tests.zn_agent.core.test_event_outcome_nervous tests.zn_agent.core.test_event_outcome_nervous_recovery -v
