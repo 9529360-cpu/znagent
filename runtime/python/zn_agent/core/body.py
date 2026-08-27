@@ -958,7 +958,8 @@ class NativeBody:
         raw = args.get("path") or args.get("target") or args.get("workspace") or default
         if raw is None or not str(raw).strip():
             raise ValueError("body action requires path/target")
-        return Path(str(raw)).expanduser()
+        path = Path(str(raw)).expanduser()
+        return canonical_host_path(path) if path.is_absolute() else path
 
     @staticmethod
     def _ok(

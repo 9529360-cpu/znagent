@@ -19,7 +19,7 @@ class WorkspaceFileContextTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "Windows DOS path identity")
     def test_windows_short_existing_prefix_expands_for_missing_target(self):
         with tempfile.TemporaryDirectory() as tmp:
-            long_root = Path(tmp)
+            long_root = canonical_host_path(tmp)
             buffer = ctypes.create_unicode_buffer(32768)
             written = int(
                 ctypes.windll.kernel32.GetShortPathNameW(
@@ -59,7 +59,7 @@ class WorkspaceFileContextTests(unittest.TestCase):
             self.assertEqual(intent.kind, "write_text")
             self.assertEqual(
                 intent.args["path"],
-                str(workspace / "notes" / "result.txt"),
+                str(canonical_host_path(workspace / "notes" / "result.txt")),
             )
 
     def test_explicit_body_action_path_and_workdir_inherit_workspace_context(self):
@@ -83,8 +83,14 @@ class WorkspaceFileContextTests(unittest.TestCase):
 
             self.assertIsNotNone(intent)
             assert intent is not None
-            self.assertEqual(intent.args["path"], str(workspace / "nested" / "file.txt"))
-            self.assertEqual(intent.args["workdir"], str(workspace))
+            self.assertEqual(
+                intent.args["path"],
+                str(canonical_host_path(workspace / "nested" / "file.txt")),
+            )
+            self.assertEqual(
+                intent.args["workdir"],
+                str(canonical_host_path(workspace)),
+            )
 
     def test_context_path_does_not_rebase_absolute_paths(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -94,7 +100,7 @@ class WorkspaceFileContextTests(unittest.TestCase):
             absolute = root / "outside.txt"
             self.assertEqual(
                 resolve_context_path(absolute, {"workspace_path": str(workspace)}),
-                absolute,
+                canonical_host_path(absolute),
             )
 
     def test_resolved_within_rejects_symlink_escape(self):
