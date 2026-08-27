@@ -9,8 +9,9 @@ from typing import Any, TextIO
 
 from .provider_bridge import build_resident_runtime_from_existing_stack
 from .provider_settings import ProviderSettingsService
+from .recovery_bounded_work import RecoveryBoundedWorkLedger
+from .recovery_control import ResidentRecoveryRequired
 from .service import ResidentService
-from .work import ResidentWorkLedger
 from .work_control import ResidentWorkControl
 
 
@@ -34,7 +35,7 @@ class ResidentRpcServer:
     ):
         self.resident = resident or build_resident_runtime_from_existing_stack()
         self.service = ResidentService(self.resident)
-        self.work = ResidentWorkLedger(self.resident)
+        self.work = RecoveryBoundedWorkLedger(self.resident)
         self.work_control = ResidentWorkControl(self.work)
         self.provider_settings = provider_settings or ProviderSettingsService(self.resident)
         self.input = input_stream or sys.stdin
@@ -236,17 +237,32 @@ class ResidentRpcServer:
             payload = params.get("payload")
             if payload is not None and not isinstance(payload, dict):
                 raise ValueError("work_submit payload must be an object")
-            snapshot, run = self.work.submit(
-                thread_id,
-                task,
-                kind=str(params.get("kind") or "desktop_user_event"),
-                priority=int(params.get("priority") or 0),
-                payload=payload,
-            )
-            result = {
-                "thread": self._work_snapshot(snapshot),
-                "run": self._run_result(run),
-            }
+            try:
+                snapshot, run = self.work.submit(
+                    thread_id,
+                    task,
+                    kind=str(params.get("kind") or "desktop_user_event"),
+                    priority=int(params.get("priority") or 0),
+                    payload=payload,
+                )
+            except ResidentRecoveryRequired as exc:
+                work_run = self.work.get_run(exc.event_id)
+                if work_run is None or work_run.thread_id != thread_id:
+                    raise
+                progress = self.work_control.progress(thread_id, exc.event_id)
+                result = {
+                    "thread": self._work_snapshot(
+                        self.work_control.get_snapshot(thread_id)
+                    ),
+                    "progress": progress,
+                    "recovery_required": True,
+                }
+            else:
+                result = {
+                    "thread": self._work_snapshot(snapshot),
+                    "run": self._run_result(run),
+                    "recovery_required": False,
+                }
         elif method == "pulses":
             limit = self._limit(params)
             result = [
