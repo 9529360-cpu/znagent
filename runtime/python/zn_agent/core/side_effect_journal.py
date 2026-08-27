@@ -2,10 +2,10 @@ from __future__ import annotations
 
 """Resident-owned durable journal for replay-sensitive execution attempts.
 
-The same SQLite table is shared with ``SideEffectAwareBody`` so Work recovery,
-cancellation and compiled-capability interruption use one resident truth model:
-commit ``started`` before an effect-capable dispatch, then never guess after a
-restart unless the action contract explicitly permits replay.
+Body actions and compiled capabilities share one SQLite representation and
+low-level lifecycle owner. Their action identities intentionally remain distinct:
+compiled capabilities keep their historical ``identity`` signature while Body
+keeps its historical raw-args signature.
 """
 
 import hashlib
@@ -14,12 +14,13 @@ import sqlite3
 from contextlib import closing
 from typing import Any
 
+from . import side_effect_attempts
 from .models import WorkingState, utc_now
 
 
 class ResidentSideEffectJournal:
-    TABLE = "resident_side_effect_attempts"
-    MAX_COMPLETED_ATTEMPTS = 4096
+    TABLE = side_effect_attempts.TABLE
+    MAX_COMPLETED_ATTEMPTS = side_effect_attempts.MAX_COMPLETED_ATTEMPTS
 
     def __init__(self, store):
         self.store = store
@@ -27,6 +28,8 @@ class ResidentSideEffectJournal:
 
     @staticmethod
     def signature_hash(kind: str, identity: dict[str, Any]) -> str:
+        # Historical compiled-capability identity. Do not normalize this to the
+        # Body args signature: durable attempt rows depend on these exact bytes.
         encoded = json.dumps(
             {"kind": str(kind or "").strip().lower(), "identity": identity},
             ensure_ascii=False,
@@ -61,24 +64,14 @@ class ResidentSideEffectJournal:
             raise ValueError("side-effect attempt requires complete identity")
 
         with closing(self._connect()) as conn:
-            row = conn.execute(
-                f"SELECT event_id,signature_hash,kind,status FROM {self.TABLE} "
-                "WHERE attempt_id=?",
-                (normalized_attempt,),
-            ).fetchone()
+            row = side_effect_attempts.attempt(conn, normalized_attempt)
             if row is None:
-                conn.execute(
-                    f"INSERT INTO {self.TABLE}"
-                    "(attempt_id,event_id,signature_hash,kind,status,started_at) "
-                    "VALUES(?,?,?,?,?,?)",
-                    (
-                        normalized_attempt,
-                        normalized_event,
-                        normalized_signature,
-                        normalized_kind,
-                        "started",
-                        utc_now(),
-                    ),
+                side_effect_attempts.start_attempt(
+                    conn,
+                    attempt_id=normalized_attempt,
+                    event_id=normalized_event,
+                    kind=normalized_kind,
+                    signature_hash=normalized_signature,
                 )
             elif not (
                 str(row["event_id"]) == normalized_event
@@ -106,22 +99,15 @@ class ResidentSideEffectJournal:
             raise ValueError("observed side-effect attempt requires identity")
 
         with closing(self._connect()) as conn:
-            cursor = conn.execute(
-                f"UPDATE {self.TABLE} SET status='observed',completed_at=?,result_success=? "
-                "WHERE attempt_id=? AND event_id=? AND status='started'",
-                (
-                    utc_now(),
-                    1 if success else 0,
-                    normalized_attempt,
-                    normalized_event,
-                ),
+            changed = side_effect_attempts.observe_started_attempt(
+                conn,
+                attempt_id=normalized_attempt,
+                event_id=normalized_event,
+                completed_at=utc_now(),
+                success=success,
             )
-            if cursor.rowcount != 1:
-                row = conn.execute(
-                    f"SELECT event_id,status,result_success FROM {self.TABLE} "
-                    "WHERE attempt_id=?",
-                    (normalized_attempt,),
-                ).fetchone()
+            if changed != 1:
+                row = side_effect_attempts.attempt(conn, normalized_attempt)
                 if not (
                     row is not None
                     and str(row["event_id"]) == normalized_event
@@ -129,7 +115,10 @@ class ResidentSideEffectJournal:
                     and int(row["result_success"] or 0) == (1 if success else 0)
                 ):
                     raise RuntimeError("side-effect attempt lost its active started record")
-            self._prune_completed(conn)
+            side_effect_attempts.prune_terminal_attempts(
+                conn,
+                max_completed=self.MAX_COMPLETED_ATTEMPTS,
+            )
             self._save_state(conn, state)
             conn.commit()
 
@@ -138,11 +127,7 @@ class ResidentSideEffectJournal:
         if not normalized:
             return None
         with closing(self._connect()) as conn:
-            row = conn.execute(
-                f"SELECT attempt_id,event_id,signature_hash,kind,status,started_at,"
-                f"completed_at,result_success FROM {self.TABLE} WHERE attempt_id=?",
-                (normalized,),
-            ).fetchone()
+            row = side_effect_attempts.attempt(conn, normalized)
         return dict(row) if row is not None else None
 
     def replay_blocking_attempt(
@@ -155,33 +140,17 @@ class ResidentSideEffectJournal:
         if not normalized_event or not normalized_signature:
             return None
         with closing(self._connect()) as conn:
-            row = conn.execute(
-                f"SELECT attempt_id,event_id,signature_hash,kind,status,started_at "
-                f"FROM {self.TABLE} WHERE event_id=? AND signature_hash=? "
-                "AND status='started' ORDER BY started_at DESC LIMIT 1",
-                (normalized_event, normalized_signature),
-            ).fetchone()
+            row = side_effect_attempts.replay_blocking_attempt(
+                conn,
+                event_id=normalized_event,
+                signature_hash=normalized_signature,
+                statuses=("started",),
+            )
         return dict(row) if row is not None else None
 
     def _init_schema(self) -> None:
         with closing(self._connect()) as conn:
-            conn.executescript(
-                f"""
-                CREATE TABLE IF NOT EXISTS {self.TABLE}(
-                    attempt_id TEXT PRIMARY KEY,
-                    event_id TEXT NOT NULL,
-                    signature_hash TEXT NOT NULL,
-                    kind TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    started_at TEXT NOT NULL,
-                    completed_at TEXT,
-                    result_action_id TEXT,
-                    result_success INTEGER
-                );
-                CREATE INDEX IF NOT EXISTS idx_resident_side_effect_attempt
-                    ON {self.TABLE}(event_id, signature_hash, started_at DESC);
-                """
-            )
+            side_effect_attempts.ensure_schema(conn)
             conn.commit()
 
     @staticmethod
@@ -209,16 +178,5 @@ class ResidentSideEffectJournal:
             ),
         )
 
-    def _prune_completed(self, conn: sqlite3.Connection) -> None:
-        conn.execute(
-            f"DELETE FROM {self.TABLE} WHERE attempt_id IN ("
-            f"SELECT attempt_id FROM {self.TABLE} WHERE status!='started' "
-            "ORDER BY completed_at DESC LIMIT -1 OFFSET ?)",
-            (self.MAX_COMPLETED_ATTEMPTS,),
-        )
-
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.store.path, timeout=5.0)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA busy_timeout=5000")
-        return conn
+        return side_effect_attempts.connect(self.store.path)
