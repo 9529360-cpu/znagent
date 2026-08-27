@@ -79,6 +79,50 @@ A useful rule for maintainers is:
 
 > If we already understand a recurring class of failure well enough to express and verify it deterministically, do not leave it as a prompt-level reminder unless there is a good reason.
 
+#### 3.1.1 ZN should be born with mature general computer competence
+
+ZN should not have to spend its early life rediscovering basic computer-operating knowledge that the maintainer/model already understands well enough to encode and verify.
+
+The development process should deliberately transfer mature general knowledge into ZN before the user ever has to teach it. In that sense, development performs an **engineering distillation**:
+
+```text
+maintainer/model general knowledge
+→ select knowledge that is concrete, stable and relevant to ZN
+→ convert it into ZN-owned sensing / state / procedure / verification / recovery
+→ prove it with tests and real execution evidence
+→ ship it as built-in resident competence
+```
+
+This is not model-weight distillation and it is not copying hidden model training data into the product. It is the explicit engineering transfer of knowledge that can be stated, implemented and verified.
+
+The intended product split is:
+
+```text
+before first real use:
+  mature general computer competence is built into ZN as far as engineering evidence allows
+
+after first real use:
+  ZN mainly learns the user's habits, local environment, recurring workflows,
+  application/project specifics, exceptions and personal ways of working
+```
+
+For example, the user should not need to teach ZN from scratch that:
+
+- a file can be changed by another process between observation and write;
+- overwrite, append and create have different recovery/idempotency semantics;
+- a completed API/tool call is not proof of the requested real-world outcome;
+- browser navigation invalidates stale page/control evidence;
+- popups, tabs and frames change the current interaction situation;
+- retries after unknown side effects can duplicate destructive work;
+- a process can crash after an outside-world effect but before recording completion;
+- a familiar procedure must stop when current reality contradicts its assumptions.
+
+Those are general operating competencies and should increasingly be part of ZN's body, senses and resident lifecycle from birth.
+
+Post-birth learning is still essential, but its highest-value role is personalization and environment-specific adaptation rather than relearning universal low-level mechanics. ZN may continue to improve general competence through verified experience and software evolution, but a user should not have to raise a naive agent into basic computer literacy.
+
+This creates a stronger target than "the model is smart": even with a weaker or unavailable external model, a newly installed ZN should already possess substantial reliable computer-use competence because that competence has been crystallized into the product itself.
+
 ### 3.2 Learned resident competence
 
 Learned competence belongs to ZN's lived history.
