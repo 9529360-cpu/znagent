@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -67,6 +69,10 @@ class ResidentNativeCompletionRecoveryTests(unittest.TestCase):
                 checkpoint.data["resident_completion"]["capability_name"],
                 "restart-safe-local",
             )
+            self.assertEqual(
+                checkpoint.data["capability_execution"]["status"],
+                "observed",
+            )
             self.assertIsNone(resident.store.get_event_outcome(event.event_id))
             metrics_before = resident.store.get_runtime_metrics()
             resident.store.close()
@@ -110,6 +116,254 @@ class ResidentNativeCompletionRecoveryTests(unittest.TestCase):
                     metrics_before.tasks_total,
                 )
                 self.assertEqual(restored.store.get_working_state().stage, "idle")
+            finally:
+                restored.store.close()
+
+    def test_interrupted_default_capability_enters_recovery_without_replay_or_failure_learning(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "kernel.db"
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=store_path,
+            )
+            calls = 0
+
+            def interrupted_handler(event, state):
+                nonlocal calls
+                calls += 1
+                raise SystemExit("simulate interruption after durable capability start")
+
+            resident.capabilities.register(
+                ExactTaskCapability(
+                    name="nonreplayable-local",
+                    triggers=("perform uncertain local effect",),
+                    handler=interrupted_handler,
+                )
+            )
+            event = resident.enqueue("perform uncertain local effect")
+            claimed = resident.store.claim_event(event.event_id)
+            self.assertIsNotNone(claimed)
+            assert claimed is not None
+            readiness = resident.kernel.self_model.assess_task(
+                claimed.task,
+                resident._required_capabilities(claimed),
+            )
+            state = WorkingState(
+                current_event_id=claimed.event_id,
+                stage="orient",
+                next_action="orient to current event",
+                data={},
+            )
+            resident.store.save_working_state(state)
+            metrics_before = resident.store.get_runtime_metrics()
+            ability_before = resident.kernel.self_model.get("general").evidence_count
+
+            with self.assertRaises(SystemExit):
+                resident._orient_step(claimed, state, readiness=readiness)
+
+            self.assertEqual(calls, 1)
+            interrupted = resident.store.get_working_state()
+            self.assertEqual(interrupted.stage, "native_capability")
+            execution = interrupted.data["capability_execution"]
+            self.assertEqual(execution["status"], "started")
+            self.assertFalse(execution["replay_safe"])
+            attempt_id = execution["attempt_id"]
+            resident.store.close()
+
+            restored = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=store_path,
+            )
+            restored.capabilities.register(
+                ExactTaskCapability(
+                    name="nonreplayable-local",
+                    triggers=("perform uncertain local effect",),
+                    handler=lambda event, state: (_ for _ in ()).throw(
+                        AssertionError("interrupted default capability must not replay")
+                    ),
+                )
+            )
+            try:
+                recovered = restored.store.claim_event(event.event_id)
+                self.assertIsNotNone(recovered)
+                assert recovered is not None
+                self.assertEqual(recovered.status, EventStatus.PROCESSING)
+                restored_state = restored.store.get_working_state()
+                restored_readiness = restored.kernel.self_model.assess_task(
+                    recovered.task,
+                    restored._required_capabilities(recovered),
+                )
+
+                self.assertIsNone(
+                    restored._advance_event_step(
+                        recovered,
+                        restored_state,
+                        readiness=restored_readiness,
+                        learning_evidence=[],
+                    )
+                )
+                self.assertEqual(restored_state.stage, "orient")
+                self.assertIsNone(
+                    restored._orient_step(
+                        recovered,
+                        restored_state,
+                        readiness=restored_readiness,
+                    )
+                )
+
+                recovery = restored.store.get_working_state()
+                self.assertEqual(recovery.stage, "side_effect_recovery")
+                self.assertEqual(recovery.blocked_by, "outside_world_effect_uncertain")
+                self.assertTrue(recovery.data["side_effect_recovery"]["replay_blocked"])
+                self.assertEqual(
+                    recovery.data["side_effect_recovery"]["attempt_id"],
+                    attempt_id,
+                )
+                self.assertEqual(
+                    recovery.data["side_effect_recovery"]["kind"],
+                    "capability",
+                )
+                self.assertIsNone(restored.store.get_event_outcome(event.event_id))
+                self.assertEqual(
+                    restored.store.get_runtime_metrics().tasks_total,
+                    metrics_before.tasks_total,
+                )
+                self.assertEqual(
+                    restored.kernel.self_model.get("general").evidence_count,
+                    ability_before,
+                )
+
+                cancelled = restored.cancel_uncertain_event(event.event_id)
+                self.assertTrue(cancelled.cancelled)
+                outcome = restored.store.get_event_outcome(event.event_id)
+                self.assertIsNotNone(outcome)
+                assert outcome is not None
+                self.assertTrue(outcome.cancelled)
+                self.assertFalse(outcome.success)
+                self.assertEqual(outcome.execution_path.value, "control")
+                with closing(sqlite3.connect(restored.store.path)) as conn:
+                    row = conn.execute(
+                        "SELECT status FROM resident_side_effect_attempts WHERE attempt_id=?",
+                        (attempt_id,),
+                    ).fetchone()
+                self.assertEqual(row, ("work_abandoned",))
+                self.assertEqual(restored.store.get_working_state().stage, "idle")
+            finally:
+                restored.store.close()
+
+    def test_explicit_replay_safe_capability_may_retry_after_interrupted_start(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "kernel.db"
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=store_path,
+            )
+
+            def interrupted_handler(event, state):
+                raise SystemExit("simulate interruption before replay-safe result")
+
+            resident.capabilities.register(
+                ExactTaskCapability(
+                    name="replayable-local",
+                    triggers=("replay this safe local procedure",),
+                    handler=interrupted_handler,
+                    replay_safe=True,
+                )
+            )
+            event = resident.enqueue("replay this safe local procedure")
+            claimed = resident.store.claim_event(event.event_id)
+            self.assertIsNotNone(claimed)
+            assert claimed is not None
+            readiness = resident.kernel.self_model.assess_task(
+                claimed.task,
+                resident._required_capabilities(claimed),
+            )
+            state = WorkingState(
+                current_event_id=claimed.event_id,
+                stage="orient",
+                next_action="orient to current event",
+                data={},
+            )
+            resident.store.save_working_state(state)
+            with self.assertRaises(SystemExit):
+                resident._orient_step(claimed, state, readiness=readiness)
+            interrupted = resident.store.get_working_state()
+            self.assertEqual(interrupted.data["capability_execution"]["status"], "started")
+            self.assertTrue(interrupted.data["capability_execution"]["replay_safe"])
+            attempt_id = interrupted.data["capability_execution"]["attempt_id"]
+            resident.store.close()
+
+            restored = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=store_path,
+            )
+            replay_calls = 0
+
+            def replay_handler(event, state):
+                nonlocal replay_calls
+                replay_calls += 1
+                return CapabilityResult(success=True, response="safe replay completed")
+
+            restored.capabilities.register(
+                ExactTaskCapability(
+                    name="replayable-local",
+                    triggers=("replay this safe local procedure",),
+                    handler=replay_handler,
+                    replay_safe=True,
+                )
+            )
+            try:
+                recovered = restored.store.claim_event(event.event_id)
+                self.assertIsNotNone(recovered)
+                assert recovered is not None
+                restored_state = restored.store.get_working_state()
+                restored_readiness = restored.kernel.self_model.assess_task(
+                    recovered.task,
+                    restored._required_capabilities(recovered),
+                )
+                self.assertIsNone(
+                    restored._advance_event_step(
+                        recovered,
+                        restored_state,
+                        readiness=restored_readiness,
+                        learning_evidence=[],
+                    )
+                )
+                self.assertEqual(restored_state.stage, "orient")
+
+                result = restored._orient_step(
+                    recovered,
+                    restored_state,
+                    readiness=restored_readiness,
+                )
+                self.assertIsNotNone(result)
+                assert result is not None
+                self.assertTrue(result.success)
+                self.assertEqual(result.response, "safe replay completed")
+                self.assertEqual(replay_calls, 1)
+                checkpoint = restored.store.get_working_state()
+                self.assertEqual(checkpoint.stage, "resident_completion")
+                self.assertEqual(
+                    checkpoint.data["capability_execution"]["status"],
+                    "observed",
+                )
+                self.assertEqual(
+                    checkpoint.data["capability_execution"]["attempt_id"],
+                    attempt_id,
+                )
+                restored._complete_result(recovered, result)
+                outcome = restored.store.get_event_outcome(event.event_id)
+                self.assertIsNotNone(outcome)
+                assert outcome is not None
+                self.assertTrue(outcome.success)
+                self.assertEqual(outcome.capability_name, "replayable-local")
+                with closing(sqlite3.connect(restored.store.path)) as conn:
+                    row = conn.execute(
+                        "SELECT status,result_success FROM resident_side_effect_attempts "
+                        "WHERE attempt_id=?",
+                        (attempt_id,),
+                    ).fetchone()
+                self.assertEqual(row, ("observed", 1))
             finally:
                 restored.store.close()
 
