@@ -35,9 +35,10 @@ c54bb8c37385d98fc9688b6e89839d7a5cba6df6  single-owner completion journal cleanu
 0c011a2473c581e6517a882343208d6efe47cac1  canonical Windows path identity at action/Git/terminal/Work owners
 e3fc20b7b4271e46868f408c258cab58ba014abb  carry canonical identity through evidence and procedural learning
 9207d3de534080ea62a9847a848cde3b0ba5b6b5  retain receipted nervous outcome traces across pruning
+8ebae2c43ba13349aa4aebdf8c84746783096c1b  repair missing Work ingress linkage after restart
 ```
 
-Status: **RECOVERY-ONLY CANCELLATION REMAINS REACHABLE END TO END. `EventOutcome` REMAINS TERMINAL TRUTH. LIFE OBSERVATION REPAIR REMAINS SECONDARY AND NON-REPLAYING. DURABLE EVENT-OUTCOME NERVOUS PLASTICITY NOW HAS AN EVENT-IDENTITY-SAFE ATOMIC BOUNDARY FOR TRACE, LINKS, AFFECT, AND RECEIPT, INCLUDING CRASH/RESTART REPAIR WITHOUT DUPLICATE REINFORCEMENT. GENERIC NERVOUS `perceive()` REMAINS INTENTIONALLY PLASTIC AND IS NOT AN EXACTLY-ONCE API. BROADER WORK DURABILITY REMAINS PARTIAL.**
+Status: **RECOVERY-ONLY CANCELLATION REMAINS REACHABLE END TO END. `EventOutcome` REMAINS TERMINAL TRUTH. LIFE OBSERVATION REPAIR REMAINS SECONDARY AND NON-REPLAYING. DURABLE EVENT-OUTCOME NERVOUS PLASTICITY HAS AN EVENT-IDENTITY-SAFE ATOMIC BOUNDARY AND RECEIPTED TRACES ARE RETAINED ACROSS AUTOMATIC PRUNING. THE FIRST BROADER WORK INGRESS CRASH WINDOW IS NOW CLOSED WITHOUT CLAIMING OR REPLAYING THE EVENT. GENERIC NERVOUS `perceive()` REMAINS INTENTIONALLY PLASTIC AND IS NOT AN EXACTLY-ONCE API. BROADER WORK DURABILITY REMAINS PARTIAL.**
 
 ## 1. Durable cancellation and terminal truth
 
@@ -92,7 +93,7 @@ stages
 
 Generic `PersistentNervousSystem.perceive()` remains intentionally plastic. Repeating a matching perception is new lived evidence and legitimately changes repetitions, trace strength, links, and affect. It is therefore not used as a blind restart-repair primitive.
 
-Durable terminal `EventOutcome` perception now uses a dedicated resident-owned transaction. For one event identity, a single SQLite transaction atomically covers:
+Durable terminal `EventOutcome` perception uses a dedicated resident-owned transaction. For one event identity, a single SQLite transaction atomically covers:
 
 ```text
 event_id dedupe / receipt
@@ -135,27 +136,43 @@ The durable policy is now explicit:
 - a future deliberate outcome-trace compactor may replace a representation only by atomically retargeting every affected receipt to an existing canonical trace before deleting the old trace;
 - no such outcome-trace rewrite or destructive migration was introduced in this stage.
 
-## 4. Focused Windows proof
+## 4. First broader Work ingress crash window
+
+The first unproven broader Work durability window was at ingress:
+
+```text
+work_start RPC
+-> ResidentWorkControl.start()
+-> ResidentWorkLedger.start()
+-> persist user Work message
+-> resident.enqueue() commits resident event
+-> persist work_runs linkage in a separate commit
+```
+
+A hard process exit after the resident event commit but before the `work_runs` commit left a real durable event without Work ledger linkage. The resident could still recover the event, while Work progress could not identify it and the thread could appear free for another Work start.
+
+`ResidentWorkControl` now repairs only this missing linkage during construction. It scans events with no `work_runs` row and reconstructs a run only when the durable event payload, Work thread, exact message identity, user role, and exact task text mutually agree. Malformed or ambiguous records are ignored rather than guessed.
+
+The repair deliberately does **not** claim, execute, requeue, terminalize, or otherwise mutate the resident event. Event/outcome/checkpoint state remains the execution authority. The product regression proves that after restart the linkage is visible while the event remains `PENDING`, attempts remain `0`, the working checkpoint remains idle, progress remains queued/nonterminal, and a duplicate same-thread Work start is refused.
+
+This closes one ingress linkage crash window only. It does not make broader Work durability complete.
+
+## 5. Focused Windows proof
 
 Current focused proof:
 
 ```text
-ZN Work Recovery E2E run 33049868415
-head 9207d3de534080ea62a9847a848cde3b0ba5b6b5
+ZN Work Recovery E2E run 33051627642
+head 8ebae2c43ba13349aa4aebdf8c84746783096c1b
 Windows resident Work restart recovery             success
 Compile Work recovery path                         success
 Verify durable Work progress and restart recovery  success
-46 tests                                             OK
+47 tests                                             OK
 ```
 
-The focused suite includes the established Work progress/restart/side-effect/cancellation and completion-observation modules plus:
+The focused suite includes the established Work progress/restart/side-effect/cancellation and completion-observation modules plus the nervous outcome regressions and `test_work_ingress_recovery`.
 
-```text
-test_event_outcome_nervous
-test_event_outcome_nervous_recovery
-```
-
-The new proof covers:
+The current proof includes:
 
 - same event ID does not reinforce trace/link/affect twice;
 - distinct same-result events still reinforce as separate lived evidence;
@@ -163,28 +180,14 @@ The new proof covers:
 - receipt survives restart and suppresses duplicate reinforcement;
 - the real final product nervous owner receives the immediate completion receipt;
 - forced nervous failure after terminal completion leaves the durable EventOutcome intact;
-- restart repairs only perception and a second restart remains a no-op.
+- restart repairs only perception and a second restart remains a no-op;
 - consolidation cannot prune a receipted outcome trace or falsely count it as pruned;
-- the final product nervous owner retains the trace, and restart retry remains a no-op.
+- the final product nervous owner retains the trace, and restart retry remains a no-op;
+- a persisted Work event missing only its ledger linkage is repaired after restart without execution or replay.
 
-## 5. Ordinary CI truth
+## 6. Ordinary CI truth
 
-The last completed ordinary code checkpoint before this nervous slice remains:
-
-```text
-ZN CI run 33020344789
-head 43142de23196b4e5fb3912bc177a8f25b95189e3
-Electron / TypeScript / Windows    success
-ZN Source Boundary / Windows       success
-ZN Kernel / Python / Windows       failure
-Kernel                             585 tests / 16 errors / 5 skipped
-```
-
-Those remaining 16 errors were the known Windows NetworkService DOS-8.3 versus long-path identity family around repository targeted-test/text-delta verification and terminal/Work artifact cwd identity, with cleanup `PermissionError` fallout. The prior partial path fix remains normally reverted in `db647cb49c3de014aa82bc28ec87c1c4e5b02c15`.
-
-An ordinary run at old documentation head `4559fb71...` also encountered a runner-local uv CPython standard-library corruption before Kernel tests began; that was not classified as a repository regression.
-
-The first full-boundary implementation checkpoint exposed one remaining split:
+The first full-boundary Windows path implementation checkpoint exposed one remaining split:
 
 ```text
 ZN CI run 33046424920
@@ -208,9 +211,7 @@ ZN Kernel / Python / Windows       success
 Kernel                             594 tests / 5 skipped / OK
 ```
 
-Exact-head `ZN Windows Interactive Desktop E2E` run `33047823208` also succeeded. `ZN Work Recovery E2E` run `33046424926` succeeded at the first path code checkpoint; the second evidence-only commit did not match that workflow's path trigger.
-
-Current exact-head ordinary evidence is also genuinely green:
+The nervous receipt retention checkpoint was also green:
 
 ```text
 ZN CI run 33049868413
@@ -221,9 +222,20 @@ ZN Kernel / Python / Windows       success
 Kernel                             596 tests / 5 skipped / OK
 ```
 
-Exact-head `ZN Work Recovery E2E` run `33049868415` succeeded with 46 tests. The only ordinary-run annotation is the existing Node 20 action-runtime deprecation notice; it did not fail a job.
+Current exact-head code evidence is genuinely green:
 
-The final Windows identity chain is:
+```text
+ZN CI run 33051627644
+head 8ebae2c43ba13349aa4aebdf8c84746783096c1b
+Electron / TypeScript / Windows    success
+ZN Source Boundary / Windows       success
+ZN Kernel / Python / Windows       success
+Kernel                             597 tests / 5 skipped / OK
+```
+
+Exact-head `ZN Work Recovery E2E` run `33051627642` succeeded with 47 tests. The ordinary-run action-runtime deprecation notices did not fail a job.
+
+The final Windows identity chain remains:
 
 ```text
 event payload / context path
@@ -237,13 +249,13 @@ event payload / context path
 
 DOS 8.3 expansion is lexical: it expands the longest existing Windows prefix and reattaches a missing suffix without following symlinks or reparse points. Security containment still performs strict real-path resolution and rejects candidates outside the resolved root.
 
-## 6. What remains partial
+## 7. What remains partial
 
 Open work includes:
 
+- broader Work durability remains partial beyond the now-proven ingress linkage, cancellation, Life-observation, nervous-outcome and non-replayable side-effect slices;
 - no deliberate outcome-trace rewrite/compactor exists; any future implementation must atomically retarget receipts and requires separate review before a destructive long-term-memory migration;
 - restore several explanatory comments accidentally lost during the whole-file Intentional owner edit; no behavioral deletion was found in diff review;
-- broader Work durability outside the proven cancellation/Life-observation/nervous-outcome slices;
 - Windows continuity M8;
 - browser PRESS, broader click/editing/multi-select/page lifecycle;
 - authenticated User Browser Bridge control;
@@ -251,10 +263,10 @@ Open work includes:
 
 High-risk identity, long-term memory, credential/permission, updater/signing, rollback, and destructive self-maintenance changes still require human approval.
 
-## 7. Next real target
+## 8. Next real target
 
-Next: **trace the first still-unproven broader Work durability crash window.**
+Next: **trace the next still-unproven broader Work durability crash window after persisted ingress linkage.**
 
-Follow the active product chain from Work RPC ingress through event claim, stage/checkpoint ownership, outside-world side-effect admission, terminal `EventOutcome`, restart reconstruction, progress projection, and active callers. Select the first real ambiguity not already covered by cancellation, Life observation, nervous outcome perception, or the existing non-replayable action guard, then close it without replaying uncertain effects.
+Continue the active product chain from event claim through durable stage/checkpoint ownership, outside-world side-effect admission, terminal `EventOutcome`, restart reconstruction, progress projection, and active callers. Select only the next real ambiguity not already covered by ingress linkage repair, cancellation, Life observation, nervous outcome perception, or the existing non-replayable action guard, then close it without replaying uncertain effects.
 
 Do not weaken cancellation semantics, replay completed actions, or move development to `main`.
