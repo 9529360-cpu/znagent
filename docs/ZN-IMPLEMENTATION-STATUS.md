@@ -19,15 +19,15 @@ Development branch: `dev/zn-agent`. Canonical source/release branch: `main`.
 Exact implementation/test/CI checkpoint before this documentation synchronization:
 
 ```text
+a70d15600c7bd8b361a0120e303b881b82461f3f  ci: cover shared side effect attempt owner
+a681bfbf08efe720251ef037f0bd45d5f1b797aa  test: protect active side effect recovery facts
+a093a35226d05bff866063b2f483a01f869bb84f  refactor: share compiled side effect persistence
+5c42cdd7a403b1a14ee915934d9e3d4967e34a8b  refactor: route body side effects through shared persistence
+836acf3b778cf0bbb7b5ae6eeb247f6771ae424e  refactor: centralize side effect attempt persistence
 7b88494d8f6ef8974ca256ef6772754dec523310  ci: cover synchronous Work handoff
-68447fea5bbda5b96a4e2a29a49f14c5fb625a82  test: prove synchronous Work recovery handoff
-c26152175436b0d84a563437cae9f25466453eb4  feat: return blocked Work recovery to sync RPC callers
-a200fcec16a429fdd65fce10f403f97b249070ff  feat: bound synchronous Work recovery driving
-c812154b75bab5b2020c2020099df5028c10b812  refactor: reuse resident loop for sync recovery control
-8274289f22daa18d8638f365da54d794e2e4b3f0  ci: cover external learning recovery boundaries
 ```
 
-Status: **BROADER WORK DURABILITY REMAINS PARTIAL. EIGHTEEN CONCRETE CRASH/RESTART WINDOWS REMAIN CLOSED AND VERIFIED. THE DIRECT SYNCHRONOUS `side_effect_recovery` LIFECYCLE IS NOW ALSO BOUNDED AND VERIFIED. `EventOutcome` REMAINS TERMINAL TRUTH; OUTSIDE-WORLD UNCERTAINTY IS NOT CONVERTED INTO REPLAY PERMISSION OR INVENTED SUCCESS/FAILURE MERELY TO TERMINATE A CALLER.**
+Status: **BROADER WORK DURABILITY REMAINS PARTIAL. EIGHTEEN CONCRETE CRASH/RESTART WINDOWS REMAIN CLOSED AND VERIFIED. THE DIRECT SYNCHRONOUS `side_effect_recovery` LIFECYCLE REMAINS BOUNDED AND VERIFIED. BODY AND COMPILED CAPABILITY RECOVERY NOW SHARE ONE LOW-LEVEL `resident_side_effect_attempts` PERSISTENCE OWNER, AND CAPACITY PRUNING IS TERMINAL-TRUTH-GATED SO ACTIVE RECOVERY FACTS CANNOT BE DELETED MERELY BECAUSE THEIR ATTEMPT STATUS IS NO LONGER `started`.**
 
 ## 1. Durable foundations
 
@@ -41,13 +41,15 @@ The established durable boundaries remain:
 - effect-capable resident work persists durable ownership before dispatch and treats unresolved restart state as uncertainty;
 - zero-model terminal failure and deterministic outer resident exceptions persist failure truth before event-idempotent accounting and terminal publication;
 - structured-memory, native-investigation and external-cognition completion persist semantic completion before cumulative accounting/learning;
-- external provider dispatch has durable attempt identity; a provider-dispatch crash with unknown outcome blocks blind replay rather than pretending exactly-once provider semantics.
+- external provider dispatch has durable attempt identity; a provider-dispatch crash with unknown outcome blocks blind replay rather than pretending exactly-once provider semantics;
+- replay-sensitive Body and compiled-capability attempts use one shared low-level SQLite owner while retaining their intentionally different historical signature identities;
+- capacity pruning can remove only attempts whose owning event has both terminal event state and a durable `EventOutcome`; nonterminal recovery truth is retained regardless of attempt status.
 
 Generic nervous `perceive()` remains intentionally plastic and is not an exactly-once API.
 
 ## 2. Eighteen proven broader Work crash/restart windows
 
-The verified crash/restart windows are:
+The verified crash/restart windows remain:
 
 1. missing Work ingress linkage after durable resident event creation;
 2. recovery decision committed before the next `WorkingState` save;
@@ -68,13 +70,11 @@ The verified crash/restart windows are:
 17. external kernel attempts persist stable goal/attempt identity, full worker result, deterministic experience/proposal identity and exactly-once route-quality accounting;
 18. crash after provider dispatch but before a returned result becomes explicit unknown-provider-outcome uncertainty: provider replay is blocked and no route learning or improvement proposal is invented from the unknown result.
 
-The detailed completion/accounting implementation remains in `runtime.py`, `kernel_accounting.py`, `capability_recovery_resident.py`, `resident_accounting.py` and the completion durability tests. Those eighteen crash/restart windows remain the crash-window count; the synchronous lifecycle proof below is an additional caller/lifecycle boundary rather than an artificial nineteenth crash window.
+The crash-window count remains eighteen. The synchronous caller boundary and the shared side-effect-attempt persistence/pruning proof are additional lifecycle/persistence invariants, not artificial new crash-window counts.
 
 ## 3. Verified synchronous recovery lifecycle boundary
 
-### 3.1 Real active callers audited
-
-The active caller chain is now explicit:
+The previously verified caller chain remains:
 
 ```text
 provider_bridge.build_resident_runtime()
@@ -91,70 +91,87 @@ work_start
 -> work_progress / work_cancel
 ```
 
-The normal desktop path was already asynchronous and did not need to turn uncertainty into a terminal result. The unbounded loop existed in the still-callable synchronous faces: direct `run_once()`, `resident.submit()` and legacy synchronous `work_submit`.
+`ResidentRecoveryRequired` remains caller-control flow rather than task failure. It yields only for durable replay-blocked `side_effect_recovery` that requires an explicit decision, while exact read-only `reverify_effect` can continue. Asynchronous resident life remains alive; explicit cancellation remains lifecycle authority; no terminal result is fabricated solely to end a synchronous call.
 
-### 3.2 Synchronous caller contract
+## 4. Shared side-effect-attempt persistence owner
 
-`recovery_control.py` defines `ResidentRecoveryRequired`, a control-flow exception rather than a task-failure result. It is raised only when the current event is durably in:
+### 4.1 Active callers and ownership
+
+The active replay-sensitive paths now converge on `runtime/python/zn_agent/core/side_effect_attempts.py`:
 
 ```text
-stage=side_effect_recovery
-blocked_by=outside_world_effect_uncertain
-replay_blocked=true
-decision != reverify_effect
+SideEffectAwareBody
+-> side_effect_attempts
+-> resident_side_effect_attempts
+
+compiled capability execution
+-> ResidentSideEffectJournal
+-> side_effect_attempts
+-> resident_side_effect_attempts
+
+KernelStore.cancel_uncertain_event
+-> same resident_side_effect_attempts transaction
+-> shared schema deletion guard
+-> event + EventOutcome + idle WorkingState atomically
 ```
 
-The exact append `reverify_effect` path is deliberately allowed to continue because it can make progress through read-only evidence without replaying the outside-world effect.
+The shared module owns table/index creation, connection policy, plain attempt start/read/observe/resolve queries, replay-blocking/event-attempt lookup and terminal-safe capacity pruning.
 
-`RecoveryBoundedResidentRuntime` does **not** copy the resident main loop. A thread-local synchronous control scope and `_advance_event_step()` hook reuse the single resident owner loop:
+`KernelStore.cancel_uncertain_event()` intentionally remains a participant in the same SQLite transaction instead of opening a second helper connection: cancellation must atomically transition the attempt to `work_abandoned`, publish failed/cancelled event truth + `EventOutcome`, and clear `WorkingState`. The shared schema protects that transaction's existing direct cleanup SQL from deleting any nonterminal recovery fact.
 
-- direct `run_once(thought=None)` yields once an explicit recovery decision is required;
-- `resident.submit()` uses the same boundary;
-- one-step/asynchronous `live_once()` driving does not raise and the resident remains alive while the Work waits;
-- `resident.submit()` preflights an already-blocked active event before enqueueing a second hidden task, so a caller cannot receive an exception while unknowingly creating new queued Work.
+### 4.2 Historical identity semantics preserved
 
-The event remains active, its `WorkingState` remains `side_effect_recovery`, the side-effect attempt remains durable, and no terminal `EventOutcome` is invented.
+The refactor does **not** normalize persisted identities:
 
-### 3.3 Legacy synchronous Work and RPC handoff
+- Body keeps SHA-256 over exact JSON `{"kind": kind, "args": args}`;
+- compiled capabilities keep SHA-256 over exact JSON `{"kind": normalized_kind, "identity": identity}`.
 
-`RecoveryBoundedWorkLedger` wraps the existing `ResidentWorkLedger.submit()` in the same synchronous control scope instead of copying Work execution logic. If that Work itself reaches replay-blocked uncertainty, the resident boundary yields while the Work/event remains active.
+Direct regression constants lock both encodings and assert they remain distinct. No upgrade rewrite or historical row migration was introduced.
 
-`ResidentRpcServer.work_submit` converts that control handoff into structured progress for the same Work:
+Body keeps its existing behavioral differences: strict plain attempt start/observe, `result_action_id` + result success metadata, started-or-observed recovery resolution, and optional observed replay blocking. Compiled capabilities keep idempotent `start_with_checkpoint` / `observe_with_checkpoint`, atomic WorkingState persistence and started-only default replay blocking.
+
+### 4.3 Terminal-truth-gated pruning
+
+The old cleanup rule selected any attempt with `status!='started'`. That was unsafe because `observed`, `verified_effect` or `verified_absent` may still be required recovery truth while the owning event has no terminal `EventOutcome`.
+
+The new invariant is:
+
+> **Capacity pruning may delete an attempt only after the owning event is terminal (`completed` or `failed`) and that event has a durable `event_outcomes` row. Attempts for nonterminal events are retained regardless of attempt status.**
+
+The shared helper enforces the rule in its normal prune query. The shared schema also installs a delete guard, so an older/direct generic DELETE fails safe for nonterminal attempts. Terminal outcome publication can then prune bounded historical rows without weakening active recovery.
+
+This specifically protects:
+
+- Body recovery facts already resolved to `verified_effect` / `verified_absent` before terminal publication;
+- Body `observed` dispatch truth before the next semantic checkpoint;
+- compiled-capability `observed` attempt truth paired with its durable WorkingState;
+- unrelated active recoveries during Work cancellation cleanup.
+
+### 4.4 Compatibility proof
+
+`tests/zn_agent/core/test_side_effect_attempt_persistence.py` proves:
+
+- the exact historical Body and compiled-capability signature encodings remain stable and distinct;
+- an attempt started through Body is visible through `ResidentSideEffectJournal`, and a Body recovery transition is visible through the same journal owner;
+- terminal historical attempts are eligible for bounded pruning;
+- active Body `verified_effect` and compiled-capability `observed` attempts survive zero-capacity pruning pressure;
+- a raw/generic DELETE cannot remove those nonterminal recovery facts;
+- the active event still has no `EventOutcome`, demonstrating that retention is tied to terminal truth rather than attempt status.
+
+Existing Work side-effect, observed recovery, resolution recovery, cancellation and compiled-capability recovery tests remain in the focused recovery suite and all passed on the same code head.
+
+## 5. Real Windows CI proof
+
+Exact implementation/test/CI head `a70d15600c7bd8b361a0120e303b881b82461f3f`:
 
 ```text
-recovery_required=true
-progress.stage=side_effect_recovery
-progress.terminal=false
-progress.finalized=false
-```
-
-The caller can then use existing progress/cancel control instead of hanging the RPC or receiving invented failure truth. Explicit `work_cancel` remains atomic lifecycle authority and marks the durable side-effect attempt `work_abandoned`; cancellation still does not assert whether the outside-world effect actually happened.
-
-### 3.4 Restart and no-replay proof
-
-`tests/zn_agent/core/test_synchronous_recovery_control.py` directly proves:
-
-- direct synchronous `run_once()` yields without terminal publication or side-effect replay;
-- one-step resident life driving holds the same recovery without throwing;
-- synchronous `resident.submit()` refuses to enqueue hidden new Work behind an already-blocked event;
-- restart preserves the yield boundary and the same event can still be explicitly cancelled afterward;
-- legacy RPC `work_submit` returns structured recovery progress for its own blocked Work, and subsequent `work_cancel` atomically terminates lifecycle ownership while marking the attempt `work_abandoned`;
-- read-only `reverify_effect` is not mistaken for a user-decision block.
-
-This closes the synchronous caller-termination/cancellation/restart lifecycle gap without changing outside-world uncertainty semantics.
-
-## 4. Real Windows CI proof
-
-Exact implementation/test/CI head `7b88494d8f6ef8974ca256ef6772754dec523310`:
-
-```text
-ZN Work Recovery E2E run 33114819916                success
+ZN Work Recovery E2E run 33117334326                success
 Windows resident Work restart recovery               success
 Compile Work recovery path                           success
 Verify durable Work progress and restart recovery    success
-  includes synchronous recovery lifecycle regressions
+  includes shared attempt-owner/pruning regressions
 
-ZN CI run 33114819943                                success
+ZN CI run 33117334321                                success
 ZN Kernel / Python / Windows                         success
   Boot isolated ZN distribution without a model      success
   Compile resident core                              success
@@ -164,17 +181,14 @@ Electron / TypeScript / Windows                      success
 Publish Windows CI statuses                          success
 ```
 
-A superseded general-CI run on `a200fcec16a429fdd65fce10f403f97b249070ff` was partially cancelled during the later branch pushes and is not used as proof. The final-head recovery and general CI runs above are authoritative.
-
 No local repository test run is claimed for this web-maintainer slice. Repository self-hosted Windows CI is the verification authority.
 
-## 5. What remains partial
+## 6. What remains partial
 
 Open work still includes:
 
-- broader Work durability beyond the eighteen proven crash/restart windows and the now-verified synchronous recovery lifecycle;
-- Body and compiled capability recovery share the single `resident_side_effect_attempts` durable truth, but low-level helper implementation remains duplicated and needs an audit/consolidation that preserves existing signature/hash and upgrade semantics;
-- continue bounded backward auditing for any other cumulative accounting/learning writes that can occur before durable semantic facts in active paths;
+- broader Work durability beyond the eighteen proven crash/restart windows, synchronous recovery lifecycle and now-verified shared side-effect-attempt owner/pruning invariant;
+- continue bounded backward auditing for other cumulative accounting/learning writes that can occur before durable semantic facts in active paths;
 - no deliberate outcome-trace rewrite/compactor; any future implementation must atomically retarget receipts before deleting old representation and requires separate review for destructive long-term-memory migration;
 - explanatory-comment cleanup in `intentional_resident.py` remains non-behavioral debt;
 - Windows continuity M8;
@@ -184,14 +198,14 @@ Open work still includes:
 
 High-risk identity, long-term memory, credential/permission, updater/signing, rollback and destructive self-maintenance changes still require human approval.
 
-## 6. Next real target
+## 7. Next real target
 
-Continue the bounded broader-Work audit at the shared low-level side-effect-attempt owner:
+Continue the bounded broader-Work durability audit from cumulative accounting/learning writes:
 
-1. trace `resident_side_effect_attempts` from Body and compiled capability entry points through schema, signature identity, start/observe/finish/abandon transitions, pruning, recovery and tests;
-2. consolidate only genuinely duplicated low-level persistence helpers without introducing a second truth model or changing historical signature/hash semantics;
-3. add direct compatibility/recovery proof for Body and compiled capability callers against the shared helper;
-4. then continue backward from other cumulative accounting/learning writes to verify durable semantic facts precede recoverable cumulative state.
+1. enumerate active resident/kernel accounting and learning writes that mutate cumulative state;
+2. trace each backward to the durable semantic fact that makes the write replay-safe or event-idempotent;
+3. identify any remaining path where cumulative state can become durable before the semantic completion/failure fact needed to resume correctly;
+4. close only evidence-backed gaps with restart tests and real CI before advancing again.
 
 Preserve `outside_world_effect_uncertain` and unknown external-provider outcomes as uncertainty, not replay permission or fabricated success/failure evidence.
 
