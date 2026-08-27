@@ -22,7 +22,8 @@ Founding boundary remains:
 - P3 browser reconciliation full-CI proof head: `f90610749d257d63e66dd2149d746d3ec4579535`
 - P4 live-page registry implementation/proof head: `fffb0f4b84a76cef21a088167c9eb4faceb93afc`
 - P5 Work ingress checkpoint implementation/proof head: `2c20b8bded96ce07c6ec43263cc77b7bd10a7a82`
-- branch HEAD immediately before this HANDOFF synchronization commit: `2c20b8bded96ce07c6ec43263cc77b7bd10a7a82`
+- P5 implementation-status synchronization head: `bd0897a65209e78592450096de4f2778946a0317`
+- branch HEAD immediately before this HANDOFF synchronization commit: `bd0897a65209e78592450096de4f2778946a0317`
 - PR #6 remains the draft development PR from `dev/zn-agent` to `main`
 - `main` was not modified
 - no force push or history rewrite was requested or performed
@@ -189,13 +190,11 @@ No local repository test run is claimed. Repository self-hosted Windows CI is th
 ## Key recent commits
 
 ```text
-f79d4f3c81b1d7c46dcfb55b6fc923acda77b39c  test: preserve effect probe accounting authority
-f05b2934d1ca4bb1299b7f143bc029de5732f212  ci: trigger managed browser proof for checkbox tests
 f90610749d257d63e66dd2149d746d3ec4579535  docs: reconcile managed browser verified frontier
-2fe2ed7c2d53c25edebbb5c949043c37dbd9e362  docs: record managed browser frontier reconciliation
-600d87e36dd4998b196a81e0aed3e5aeb3defa2c  docs: hand off managed browser frontier reconciliation
 fffb0f4b84a76cef21a088167c9eb4faceb93afc  fix: reconcile managed browser page lifecycle
 2c20b8bded96ce07c6ec43263cc77b7bd10a7a82  fix: recover accepted Work ingress before event creation
+68e8ee77818920b5bf10888d555a60e7ee6a7d6c  docs: record Work ingress checkpoint recovery
+bd0897a65209e78592450096de4f2778946a0317  docs: record verified Work ingress checkpoint
 ```
 
 ## Current risks / incomplete work
