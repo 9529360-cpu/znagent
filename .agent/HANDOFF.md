@@ -4,7 +4,7 @@ Updated: 2026-08-27
 
 ## Current goal
 
-Trace the **next** still-unproven broader Work durability crash window. The first enqueue-to-`work_runs` ingress linkage crash window is now closed and CI verified. Nervous receipt/trace retention and the Windows NetworkService DOS-8.3 versus long-path identity family remain closed at their current active owner chains with ordinary CI green.
+Trace the **next** still-unproven broader Work durability crash window. Two concrete windows are now closed and CI verified: the enqueue-to-`work_runs` ingress linkage window, and the side-effect recovery decision commit -> next `WorkingState` checkpoint window. Nervous receipt/trace retention and the Windows NetworkService DOS-8.3 versus long-path identity family remain closed at their current active owner chains with ordinary CI green.
 
 `EventOutcome` remains terminal truth. Nervous plasticity remains secondary. A nervous failure after terminal completion does not reclassify the event and does not replay the action. `NativeWill` keeps its existing durable outcome reconciliation authority.
 
@@ -28,7 +28,9 @@ Founding boundary remains:
 - Windows evidence/learning checkpoint: `e3fc20b7b4271e46868f408c258cab58ba014abb`
 - nervous receipt lifecycle checkpoint: `9207d3de534080ea62a9847a848cde3b0ba5b6b5`
 - Work ingress linkage checkpoint: `8ebae2c43ba13349aa4aebdf8c84746783096c1b`
-- current code/test HEAD when this handoff was prepared: `8ebae2c43ba13349aa4aebdf8c84746783096c1b`
+- side-effect recovery resolution checkpoint: `b41b65dd35ab652e6ed573e5d512778d7313db47`
+- current code/test HEAD when this handoff was prepared: `b41b65dd35ab652e6ed573e5d512778d7313db47`
+- implementation-status sync immediately before this handoff: `297daef73067c110c6c6befee016331f00ab446f`
 - PR #6: draft/open/unmerged, base `main`, head `dev/zn-agent`
 - `main` was not modified
 - no force push or history rewrite was requested or performed by the maintainer
@@ -62,11 +64,11 @@ For one durable event identity, one SQLite transaction covers event receipt/dedu
 
 ### 4. Nervous receipt/trace pruning lifecycle remains closed
 
-Resident heartbeat can invoke nervous consolidation and weak trace pruning. A database retention invariant now prevents automatic deletion of any trace referenced by `neural_event_outcomes`. `_delete_trace()` reports the actual SQLite delete result and does not remove links when deletion is refused. Weak unreferenced traces still prune normally.
+Resident heartbeat can invoke nervous consolidation and weak trace pruning. A database retention invariant prevents automatic deletion of any trace referenced by `neural_event_outcomes`. `_delete_trace()` reports the actual SQLite delete result and does not remove links when deletion is refused. Weak unreferenced traces still prune normally.
 
 The contract is: receipts own event-ID idempotence and their current trace target must remain dereferenceable. A future deliberate compactor may change representation only by atomically retargeting every affected receipt before deleting the old trace. No compactor or destructive migration exists in this stage.
 
-### 5. First broader Work ingress linkage crash window closed
+### 5. First broader Work ingress linkage crash window remains closed
 
 The real ingress chain is:
 
@@ -79,47 +81,62 @@ work_start RPC
 -> work_runs linkage commits separately
 ```
 
-A hard exit between the event commit and `work_runs` commit left a durable resident event with valid Work thread/message identity but no Work ledger run. The event could recover independently while Work progress could not see it and the thread could appear free for another start.
+A hard exit between the event commit and `work_runs` commit left a durable resident event with valid Work thread/message identity but no Work ledger run. `ResidentWorkControl.reconcile_missing_ingress_runs()` repairs only this linkage from mutually agreeing durable evidence and does not claim, execute, requeue, terminalize, or replay the event.
 
-`ResidentWorkControl.reconcile_missing_ingress_runs()` now repairs only this linkage on construction. It requires mutually agreeing durable evidence: embedded event identity, Work thread, exact Work message identity, `user` role and exact message/task text. Invalid or ambiguous records are ignored rather than guessed.
+### 6. Side-effect recovery decision/checkpoint crash window closed
 
-The repair does not claim, execute, requeue, terminalize, or replay the event. Resident event/outcome/checkpoint state remains execution truth. The regression constructs the exact crash state, restarts the product path, proves the Work run is restored, proves the event remains `PENDING` with `attempts == 0`, proves the working checkpoint remains idle, and proves the repaired active run blocks duplicate same-thread Work.
+The active append recovery path contains two separate durable writes:
+
+```text
+side_effect_recovery checkpoint
+-> fresh independent reality read
+-> resolve_uncertain_attempt(... verified_effect | verified_absent)
+   commits resident_side_effect_attempts
+-> update WorkingState
+-> save_working_state()
+```
+
+Before `b41b65dd...`, a hard exit after the attempt had durably become `verified_effect` or `verified_absent`, but before the next `WorkingState` save, left the old `side_effect_recovery` checkpoint behind. On restart, fresh reality could prove the exact same recovery result again, but `resolve_uncertain_attempt()` returned false because it only accepted rows still in `started`, incorrectly converting an already-committed recovery decision into a mismatch/hold.
+
+`SideEffectAwareBody.resolve_uncertain_attempt()` now accepts only an exact idempotent acknowledgement of an already-committed recovery decision: same event, same attempt, same final recovery status. A wrong event or conflicting final status still fails closed. The method does not grant mutation authority and does not replay the outside-world action.
+
+`tests/zn_agent/core/test_work_side_effect_resolution_recovery.py` constructs the exact crash state. It commits `verified_effect`, intentionally leaves the stale `side_effect_recovery` checkpoint, reconstructs the product resident, reclaims the event, re-verifies current reality, and completes without any `write_text` dispatch. The test also proves a conflicting `verified_absent` acknowledgement is rejected.
 
 ## Real test / CI truth
 
 ### Focused Work proof
 
 ```text
-ZN Work Recovery E2E run 33051627642
-head 8ebae2c43ba13349aa4aebdf8c84746783096c1b
+ZN Work Recovery E2E run 33053986871
+head b41b65dd35ab652e6ed573e5d512778d7313db47
 Windows resident Work restart recovery             success
 Prepare isolated runtime                            success
 Compile Work recovery path                          success
 Verify durable Work progress and restart recovery  success
-Ran 47 tests                                        OK
+Ran 48 tests                                        OK
 ```
 
-The focused suite includes the new `tests.zn_agent.core.test_work_ingress_recovery` regression together with existing Work progress/restart/side-effect/cancellation, completion-observation and nervous-outcome regressions.
+The 48-test focused suite includes the new side-effect resolution restart regression together with existing Work progress/restart/ingress/side-effect/cancellation, completion-observation and nervous-outcome regressions.
 
 ### Ordinary CI
 
 ```text
-ZN CI run 33051627644
-head 8ebae2c43ba13349aa4aebdf8c84746783096c1b
+ZN CI run 33053986879
+head b41b65dd35ab652e6ed573e5d512778d7313db47
 Electron / TypeScript / Windows    success
 ZN Source Boundary / Windows       success
 ZN Kernel / Python / Windows       success
-Kernel                             597 tests / 5 skipped / OK
+Kernel                             598 tests / 5 skipped / OK
 Publish Windows CI statuses        success
 ```
 
-Previous green checkpoints remain evidence, including nervous receipt retention at `9207d3de...` and Windows path identity at `e3fc20b7...`.
+The new `test_restart_after_verified_effect_before_checkpoint_save_completes_without_replay` passed in the full Kernel suite as well as focused CI.
 
-No local test run was claimed for this web-maintainer slice; the exact code checkpoint was verified by repository self-hosted Windows CI.
+No local test run is claimed for this web-maintainer slice; the exact code checkpoint was verified by repository self-hosted Windows CI.
 
 ## Current risks / incomplete work
 
-- Broader Work durability remains partial beyond the proven ingress linkage, cancellation, Life-observation, nervous-outcome and non-replayable side-effect slices.
+- Broader Work durability remains partial beyond the proven ingress linkage, recovery-resolution idempotence, cancellation, Life-observation, nervous-outcome and non-replayable side-effect slices.
 - Several explanatory comments in `intentional_resident.py` were accidentally lost during an earlier whole-file owner replacement; diff review found no corresponding behavioral deletion. Restoring them remains cleanup.
 - No deliberate outcome-trace rewrite/compactor exists. Any future implementation must atomically retarget receipts and receive separate review before a destructive long-term-memory migration.
 - Generic nervous `perceive()` remains intentionally plastic and is not safe for blind replay. Only the durable terminal EventOutcome path has event-ID dedupe semantics.
@@ -153,9 +170,14 @@ Automatic pruning preserves referential integrity and accurate pruning/link stat
 
 ### P1 - broader Work durability
 
-Status: **OPEN / FIRST INGRESS WINDOW VERIFIED**
+Status: **OPEN / TWO CRASH WINDOWS VERIFIED**
 
-The enqueue-to-`work_runs` linkage crash window is closed without event replay. Continue tracing the next real ambiguity after persisted ingress linkage.
+Closed without replay:
+
+1. resident event committed before missing `work_runs` linkage;
+2. side-effect recovery decision committed before the next `WorkingState` checkpoint.
+
+Continue tracing only the next real ambiguity. Do not mark broader Work durability complete.
 
 ### P1.1 - Windows path identity
 
@@ -182,6 +204,8 @@ runtime/python/zn_agent/core/work.py
 runtime/python/zn_agent/core/work_control.py
 runtime/python/zn_agent/core/store.py
 runtime/python/zn_agent/core/resident.py
+runtime/python/zn_agent/core/focused_modern_text_resident.py
+runtime/python/zn_agent/core/side_effect_body.py
 runtime/python/zn_agent/core/daemon.py
 runtime/python/zn_agent/core/event_outcome_nervous.py
 runtime/python/zn_agent/core/intentional_resident.py
@@ -192,6 +216,7 @@ tests/zn_agent/core/test_work_ingress_recovery.py
 tests/zn_agent/core/test_work_progress.py
 tests/zn_agent/core/test_work_recovery.py
 tests/zn_agent/core/test_work_side_effect_recovery.py
+tests/zn_agent/core/test_work_side_effect_resolution_recovery.py
 tests/zn_agent/core/test_work_cancellation.py
 tests/zn_agent/core/test_work_cancel_control.py
 tests/zn_agent/core/test_event_outcome_nervous.py
@@ -203,7 +228,7 @@ docs/ZN-IMPLEMENTATION-STATUS.md
 
 ## Next real target
 
-Trace the next unproven Work durability boundary beginning after persisted ingress linkage:
+Trace the next unproven Work durability boundary after the two now-closed windows:
 
 ```text
 event claim
@@ -213,4 +238,4 @@ event claim
 -> restart reconstruction / progress
 ```
 
-Select only a real ambiguity not already covered by ingress repair, cancellation, Life observation, nervous outcome perception, or the existing non-replayable action guard. Do not replay uncertain effects. Keep `main` untouched.
+Select only a real ambiguity not already covered by ingress repair, recovery-resolution idempotence, cancellation, Life observation, nervous outcome perception, or the existing non-replayable action guard. Do not replay uncertain effects. Keep `main` untouched.
