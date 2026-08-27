@@ -36,9 +36,10 @@ c54bb8c37385d98fc9688b6e89839d7a5cba6df6  single-owner completion journal cleanu
 e3fc20b7b4271e46868f408c258cab58ba014abb  carry canonical identity through evidence and procedural learning
 9207d3de534080ea62a9847a848cde3b0ba5b6b5  retain receipted nervous outcome traces across pruning
 8ebae2c43ba13349aa4aebdf8c84746783096c1b  repair missing Work ingress linkage after restart
+b41b65dd35ab652e6ed573e5d512778d7313db47  make side-effect recovery resolution restart-idempotent
 ```
 
-Status: **RECOVERY-ONLY CANCELLATION REMAINS REACHABLE END TO END. `EventOutcome` REMAINS TERMINAL TRUTH. LIFE OBSERVATION REPAIR REMAINS SECONDARY AND NON-REPLAYING. DURABLE EVENT-OUTCOME NERVOUS PLASTICITY HAS AN EVENT-IDENTITY-SAFE ATOMIC BOUNDARY AND RECEIPTED TRACES ARE RETAINED ACROSS AUTOMATIC PRUNING. THE FIRST BROADER WORK INGRESS CRASH WINDOW IS NOW CLOSED WITHOUT CLAIMING OR REPLAYING THE EVENT. GENERIC NERVOUS `perceive()` REMAINS INTENTIONALLY PLASTIC AND IS NOT AN EXACTLY-ONCE API. BROADER WORK DURABILITY REMAINS PARTIAL.**
+Status: **RECOVERY-ONLY CANCELLATION REMAINS REACHABLE END TO END. `EventOutcome` REMAINS TERMINAL TRUTH. LIFE OBSERVATION REPAIR REMAINS SECONDARY AND NON-REPLAYING. DURABLE EVENT-OUTCOME NERVOUS PLASTICITY HAS AN EVENT-IDENTITY-SAFE ATOMIC BOUNDARY AND RECEIPTED TRACES ARE RETAINED ACROSS AUTOMATIC PRUNING. TWO BROADER WORK CRASH WINDOWS ARE NOW CLOSED: MISSING INGRESS LINKAGE, AND A COMMITTED SIDE-EFFECT RECOVERY DECISION FOLLOWED BY A CRASH BEFORE THE NEXT WORKINGSTATE CHECKPOINT. GENERIC NERVOUS `perceive()` REMAINS INTENTIONALLY PLASTIC AND IS NOT AN EXACTLY-ONCE API. BROADER WORK DURABILITY REMAINS PARTIAL.**
 
 ## 1. Durable cancellation and terminal truth
 
@@ -157,20 +158,41 @@ The repair deliberately does **not** claim, execute, requeue, terminalize, or ot
 
 This closes one ingress linkage crash window only. It does not make broader Work durability complete.
 
-## 5. Focused Windows proof
+## 5. Second broader Work recovery-resolution crash window
+
+The next real ambiguity was inside the existing non-replayable append recovery path:
+
+```text
+side_effect_recovery checkpoint
+-> independently read current reality
+-> resolve_uncertain_attempt(... verified_effect | verified_absent)
+   commits resident_side_effect_attempts
+-> update resident WorkingState
+-> save_working_state()
+```
+
+Before `b41b65dd...`, `resolve_uncertain_attempt()` only accepted a row whose status was still `started`. A hard exit after the attempt row committed `verified_effect` or `verified_absent`, but before the next `WorkingState` checkpoint was saved, left the restart path with the old `side_effect_recovery` checkpoint and an already-resolved attempt. Fresh reality could prove the same recovery result again, but the second resolution returned false because the row was no longer `started`, incorrectly turning a previously committed recovery decision into a mismatch/hold.
+
+`SideEffectAwareBody.resolve_uncertain_attempt()` now treats the exact same `event_id + attempt_id + final recovery status` as an idempotent acknowledgement when that final status is already durable. A conflicting final status or wrong event remains rejected. This adds no mutation authority, stores no action arguments, and does not replay the outside-world action.
+
+The regression `test_work_side_effect_resolution_recovery` constructs the exact crash state: it commits `verified_effect`, intentionally leaves the old `side_effect_recovery` checkpoint in place, reconstructs the product resident, reclaims the event, re-verifies current reality, and completes without dispatching any `write_text`. It also proves a conflicting `verified_absent` resolution is rejected.
+
+This closes one recovery-decision/checkpoint crash window only. Broader Work durability remains partial.
+
+## 6. Focused Windows proof
 
 Current focused proof:
 
 ```text
-ZN Work Recovery E2E run 33051627642
-head 8ebae2c43ba13349aa4aebdf8c84746783096c1b
+ZN Work Recovery E2E run 33053986871
+head b41b65dd35ab652e6ed573e5d512778d7313db47
 Windows resident Work restart recovery             success
 Compile Work recovery path                         success
 Verify durable Work progress and restart recovery  success
-47 tests                                             OK
+48 tests                                             OK
 ```
 
-The focused suite includes the established Work progress/restart/side-effect/cancellation and completion-observation modules plus the nervous outcome regressions and `test_work_ingress_recovery`.
+The focused suite includes the established Work progress/restart/side-effect/cancellation and completion-observation modules, nervous outcome regressions, ingress recovery, and the new side-effect resolution restart regression.
 
 The current proof includes:
 
@@ -183,9 +205,10 @@ The current proof includes:
 - restart repairs only perception and a second restart remains a no-op;
 - consolidation cannot prune a receipted outcome trace or falsely count it as pruned;
 - the final product nervous owner retains the trace, and restart retry remains a no-op;
-- a persisted Work event missing only its ledger linkage is repaired after restart without execution or replay.
+- a persisted Work event missing only its ledger linkage is repaired after restart without execution or replay;
+- a committed side-effect recovery decision followed by a crash before checkpoint save is restart-safe and does not replay the write.
 
-## 6. Ordinary CI truth
+## 7. Ordinary CI truth
 
 The first full-boundary Windows path implementation checkpoint exposed one remaining split:
 
@@ -222,7 +245,7 @@ ZN Kernel / Python / Windows       success
 Kernel                             596 tests / 5 skipped / OK
 ```
 
-Current exact-head code evidence is genuinely green:
+The first broader Work ingress checkpoint was green:
 
 ```text
 ZN CI run 33051627644
@@ -233,7 +256,19 @@ ZN Kernel / Python / Windows       success
 Kernel                             597 tests / 5 skipped / OK
 ```
 
-Exact-head `ZN Work Recovery E2E` run `33051627642` succeeded with 47 tests. The ordinary-run action-runtime deprecation notices did not fail a job.
+Current exact-head code evidence is genuinely green:
+
+```text
+ZN CI run 33053986879
+head b41b65dd35ab652e6ed573e5d512778d7313db47
+Electron / TypeScript / Windows    success
+ZN Source Boundary / Windows       success
+ZN Kernel / Python / Windows       success
+Kernel                             598 tests / 5 skipped / OK
+Publish Windows CI statuses        success
+```
+
+Exact-head `ZN Work Recovery E2E` run `33053986871` succeeded with 48 tests. The ordinary-run action-runtime deprecation notices did not fail a job.
 
 The final Windows identity chain remains:
 
@@ -249,11 +284,11 @@ event payload / context path
 
 DOS 8.3 expansion is lexical: it expands the longest existing Windows prefix and reattaches a missing suffix without following symlinks or reparse points. Security containment still performs strict real-path resolution and rejects candidates outside the resolved root.
 
-## 7. What remains partial
+## 8. What remains partial
 
 Open work includes:
 
-- broader Work durability remains partial beyond the now-proven ingress linkage, cancellation, Life-observation, nervous-outcome and non-replayable side-effect slices;
+- broader Work durability remains partial beyond the now-proven ingress linkage, recovery-resolution idempotence, cancellation, Life-observation, nervous-outcome and non-replayable side-effect slices;
 - no deliberate outcome-trace rewrite/compactor exists; any future implementation must atomically retarget receipts and requires separate review before a destructive long-term-memory migration;
 - restore several explanatory comments accidentally lost during the whole-file Intentional owner edit; no behavioral deletion was found in diff review;
 - Windows continuity M8;
@@ -263,10 +298,10 @@ Open work includes:
 
 High-risk identity, long-term memory, credential/permission, updater/signing, rollback, and destructive self-maintenance changes still require human approval.
 
-## 8. Next real target
+## 9. Next real target
 
-Next: **trace the next still-unproven broader Work durability crash window after persisted ingress linkage.**
+Next: **trace the next still-unproven broader Work durability crash window after the now-closed ingress-linkage and side-effect-recovery-resolution windows.**
 
-Continue the active product chain from event claim through durable stage/checkpoint ownership, outside-world side-effect admission, terminal `EventOutcome`, restart reconstruction, progress projection, and active callers. Select only the next real ambiguity not already covered by ingress linkage repair, cancellation, Life observation, nervous outcome perception, or the existing non-replayable action guard, then close it without replaying uncertain effects.
+Continue the active product chain from event claim through durable stage/checkpoint ownership, outside-world side-effect admission, terminal `EventOutcome`, restart reconstruction, progress projection, and active callers. Select only the next real ambiguity not already covered by ingress linkage repair, recovery-resolution idempotence, cancellation, Life observation, nervous outcome perception, or the existing non-replayable action guard, then close it without replaying uncertain effects.
 
 Do not weaken cancellation semantics, replay completed actions, or move development to `main`.
