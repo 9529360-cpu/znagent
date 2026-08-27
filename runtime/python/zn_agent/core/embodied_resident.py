@@ -117,6 +117,8 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
                 readiness=readiness,
                 thought=thought,
             )
+        if state.stage == "native_completion":
+            return self._resume_native_completion(event, state)
         if state.stage == "cognition_integration":
             return self._cognition_integration_step(
                 event,
@@ -618,19 +620,77 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
             success=True,
             quality=0.95,
         )
-        state.stage = "complete"
-        state.next_action = None
+        completion = {
+            "execution_path": ExecutionPath.BODY.value,
+            "success": True,
+            "response": str(response or ""),
+            "model_invocations": 0,
+            "reason": str(reason or ""),
+        }
+        state.stage = "native_completion"
+        state.next_action = "publish terminal EventOutcome"
         state.data["native_domains"] = list(domains)
+        state.data["native_completion"] = completion
         self._sync_execution_context(event, state)
-        self.store.save_working_state(state)
         self.store.record_runtime_task(model_invocations=0)
+        # The durable completion checkpoint is the final pre-EventOutcome
+        # boundary. Once visible, restart must need only terminal publication;
+        # all ordinary success accounting for this step has already happened.
+        self.store.save_working_state(state)
+        return self._native_completion_result(event, completion)
+
+    def _resume_native_completion(
+        self,
+        event: AgentEvent,
+        state: WorkingState,
+    ) -> ResidentRunResult | None:
+        raw = state.data.get("native_completion")
+        if not isinstance(raw, dict):
+            return self._invalid_native_completion(
+                event,
+                "durable native completion checkpoint is incomplete",
+            )
+        try:
+            return self._native_completion_result(event, raw)
+        except (TypeError, ValueError):
+            return self._invalid_native_completion(
+                event,
+                "durable native completion checkpoint is malformed",
+            )
+
+    @staticmethod
+    def _invalid_native_completion(
+        event: AgentEvent,
+        reason: str,
+    ) -> ResidentRunResult:
         return ResidentRunResult(
             event=event,
             execution_path=ExecutionPath.BODY,
-            success=True,
-            response=response,
+            success=False,
             model_invocations=0,
             reason=reason,
+        )
+
+    @staticmethod
+    def _native_completion_result(
+        event: AgentEvent,
+        raw: dict[str, Any],
+    ) -> ResidentRunResult:
+        if raw.get("success") is not True:
+            raise ValueError("native completion checkpoint must record success")
+        execution_path = ExecutionPath(str(raw.get("execution_path") or ""))
+        if execution_path is not ExecutionPath.BODY:
+            raise ValueError("native completion checkpoint must use the Body path")
+        model_invocations = raw.get("model_invocations")
+        if isinstance(model_invocations, bool) or int(model_invocations) != 0:
+            raise ValueError("native completion checkpoint cannot claim model use")
+        return ResidentRunResult(
+            event=event,
+            execution_path=execution_path,
+            success=True,
+            response=str(raw.get("response") or ""),
+            model_invocations=0,
+            reason=str(raw.get("reason") or ""),
         )
 
     def _sync_execution_context(
