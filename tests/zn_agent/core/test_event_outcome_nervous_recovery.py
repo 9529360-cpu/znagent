@@ -97,6 +97,50 @@ class EventOutcomeNervousRecoveryTests(unittest.TestCase):
             self.assertEqual(len(matching), 1)
             resident.store.close()
 
+    def test_final_nervous_owner_cannot_prune_a_receipted_outcome_trace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "kernel.db"
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=db,
+            )
+            event = resident.enqueue(
+                "retain terminal outcome identity through nervous pruning",
+                payload={"model_policy": "never"},
+            )
+            completed = self._complete(resident, event)
+            matching = [
+                trace
+                for trace in resident.nervous.recent_traces(100)
+                if trace.channel == "outcome"
+                and trace.metadata.get("event_id") == event.event_id
+            ]
+            self.assertEqual(len(matching), 1)
+            trace = matching[0]
+
+            self.assertFalse(resident.nervous._delete_trace(trace.trace_id))
+            self.assertIsNotNone(resident.nervous._get_trace(trace.trace_id))
+            resident.store.close()
+
+            restored = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=db,
+            )
+            try:
+                restored_event = restored.store.get_event(event.event_id)
+                restored_outcome = restored.store.get_event_outcome(event.event_id)
+                retried = restored._perceive_event_outcome(
+                    restored_event,
+                    restored_outcome,
+                )
+
+                self.assertEqual(retried.trace_id, trace.trace_id)
+                self.assertEqual(retried.repetitions, trace.repetitions)
+                self.assertTrue(has_event_outcome(restored.nervous, event.event_id))
+                self.assertTrue(completed.success)
+            finally:
+                restored.store.close()
+
 
 if __name__ == "__main__":
     unittest.main()

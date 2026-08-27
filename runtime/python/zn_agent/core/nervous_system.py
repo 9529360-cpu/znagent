@@ -480,8 +480,7 @@ class PersistentNervousSystem:
                 and connectedness <= 0.08
                 and activation_recency < 0.03
             )
-            if should_prune:
-                self._delete_trace(trace.trace_id)
+            if should_prune and self._delete_trace(trace.trace_id):
                 pruned += 1
             else:
                 self._save_trace(trace)
@@ -949,14 +948,24 @@ class PersistentNervousSystem:
                 profile[right] = max(profile.get(right, 0.0), strength)
         return profile
 
-    def _delete_trace(self, trace_id: str) -> None:
+    def _delete_trace(self, trace_id: str) -> bool:
+        """Delete one unretained trace and report whether it was removed.
+
+        Durable subsystems may install database-level retention guards.  The
+        row count is therefore authoritative: an ignored delete must neither
+        discard the trace's links nor be reported as successful pruning.
+        """
         with closing(self._connect()) as conn:
-            conn.execute("DELETE FROM neural_traces WHERE trace_id=?", (trace_id,))
-            conn.execute(
-                "DELETE FROM neural_links WHERE left_id=? OR right_id=?",
-                (trace_id, trace_id),
-            )
+            removed = conn.execute(
+                "DELETE FROM neural_traces WHERE trace_id=?", (trace_id,)
+            ).rowcount
+            if removed:
+                conn.execute(
+                    "DELETE FROM neural_links WHERE left_id=? OR right_id=?",
+                    (trace_id, trace_id),
+                )
             conn.commit()
+        return bool(removed)
 
     def _get_by_fingerprint(self, fingerprint: str) -> NeuralTrace | None:
         with closing(self._connect()) as conn:

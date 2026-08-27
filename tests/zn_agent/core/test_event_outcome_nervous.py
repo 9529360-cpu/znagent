@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from zn_agent.core.event_outcome_nervous import EventOutcomeNervousSystem
@@ -137,6 +138,48 @@ class EventOutcomeNervousSystemTests(unittest.TestCase):
                 self.assertEqual(retried.repetitions, trace.repetitions)
                 self.assertEqual(second.snapshot(), before)
                 self.assertEqual(second.repair_from(), cutoff)
+            finally:
+                second_store.close()
+
+    def test_consolidation_keeps_receipted_trace_and_restart_idempotence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "kernel.db"
+            first_store = KernelStore(db)
+            first = EventOutcomeNervousSystem(first_store)
+            trace = self._perceive_outcome(
+                first,
+                "event-retained",
+                summary="one weak isolated outcome",
+            )
+            old = datetime.now(timezone.utc) - timedelta(days=180)
+            trace.first_seen_at = old.isoformat()
+            trace.last_seen_at = old.isoformat()
+            trace.last_activated_at = None
+            trace.strength = 0.05
+            trace.salience = 0.05
+            trace.repetitions = 1
+            first._save_trace(trace)
+
+            report = first.consolidate(now=datetime.now(timezone.utc))
+            retained = first._get_trace(trace.trace_id)
+
+            self.assertEqual(report.pruned, 0)
+            self.assertIsNotNone(retained)
+            self.assertTrue(first.has_event_outcome("event-retained"))
+            first_store.close()
+
+            second_store = KernelStore(db)
+            try:
+                second = EventOutcomeNervousSystem(second_store)
+                retried = self._perceive_outcome(
+                    second,
+                    "event-retained",
+                    summary="one weak isolated outcome",
+                )
+
+                self.assertEqual(retried.trace_id, trace.trace_id)
+                self.assertEqual(retried.repetitions, 1)
+                self.assertTrue(second.has_event_outcome("event-retained"))
             finally:
                 second_store.close()
 
