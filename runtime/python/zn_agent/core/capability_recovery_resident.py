@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .focused_modern_text_resident import FocusedModernTextResidentRuntime
 from .models import CapabilityResult, ExecutionPath
+from .resident_accounting import ResidentAccountingJournal
 
 
 class CapabilityRecoveryResidentRuntime(FocusedModernTextResidentRuntime):
@@ -20,6 +21,7 @@ class CapabilityRecoveryResidentRuntime(FocusedModernTextResidentRuntime):
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
         self.capabilities.bind_store(self.store)
+        self.resident_accounting = ResidentAccountingJournal(self.store)
 
     def _orient_step(
         self,
@@ -29,16 +31,29 @@ class CapabilityRecoveryResidentRuntime(FocusedModernTextResidentRuntime):
         readiness,
         thought=None,
     ):
-        # An interrupted non-replayable capability is outside-world uncertainty,
-        # not evidence that the capability failed. Convert the durable ``started``
-        # checkpoint into the same Work recovery state used by guarded Body
-        # effects before resolve/execute can run again.
+        # Capability execution owns a durable fact before normal orientation can
+        # reconsider memory or matching. ``started`` means outside-world effect
+        # may be uncertain; ``observed`` success is sufficient to finish even if
+        # the compiled code is no longer loadable after restart.
         raw_execution = state.data.get(self._CAPABILITY_EXECUTION_KEY)
         if isinstance(raw_execution, dict):
             status = str(raw_execution.get("status") or "").strip().lower()
             replay_safe = raw_execution.get("replay_safe") is True
             attempt_id = str(raw_execution.get("attempt_id") or "").strip()
             capability_name = str(raw_execution.get("capability_name") or "").strip()
+            raw_result = raw_execution.get("result")
+            if (
+                status == "observed"
+                and attempt_id
+                and capability_name
+                and isinstance(raw_result, dict)
+                and raw_result.get("success") is True
+            ):
+                return self._resume_observed_capability_success(
+                    event,
+                    state,
+                    raw_execution,
+                )
             if status == "started" and attempt_id and capability_name and not replay_safe:
                 return self._begin_capability_recovery(
                     event,
@@ -104,28 +119,13 @@ class CapabilityRecoveryResidentRuntime(FocusedModernTextResidentRuntime):
                 )
 
             if local_result.success:
-                domains = self.kernel.self_model.observe_native_outcome(
-                    event.task,
-                    required,
-                    success=True,
-                    quality=max(0.5, min(1.0, float(confidence))),
+                return self._complete_observed_capability_success(
+                    event,
+                    state,
+                    capability_name=capability.name,
+                    local_result=local_result,
+                    confidence=confidence,
                 )
-                completion = {
-                    "execution_path": ExecutionPath.CAPABILITY.value,
-                    "success": True,
-                    "response": local_result.response,
-                    "model_invocations": 0,
-                    "capability_name": capability.name,
-                    "reason": "resolved by compiled local capability",
-                }
-                state.stage = "resident_completion"
-                state.next_action = "publish terminal EventOutcome"
-                state.blocked_by = None
-                state.data["native_domains"] = list(domains)
-                state.data["resident_completion"] = completion
-                self.store.record_runtime_task(model_invocations=0)
-                self.store.save_working_state(state)
-                return self._resident_completion_result(event, completion)
 
             self.kernel.self_model.observe_native_outcome(
                 event.task,
@@ -146,6 +146,69 @@ class CapabilityRecoveryResidentRuntime(FocusedModernTextResidentRuntime):
             self._persist_enriched_thought(thought)
         self.store.save_working_state(state)
         return None
+
+    def _resume_observed_capability_success(
+        self,
+        event,
+        state,
+        execution,
+    ):
+        raw_result = execution.get("result")
+        if not isinstance(raw_result, dict) or raw_result.get("success") is not True:
+            raise RuntimeError("observed capability success checkpoint is malformed")
+        local_result = CapabilityResult(
+            success=True,
+            response=str(raw_result.get("response") or ""),
+            data=dict(raw_result.get("data") or {}),
+            error=None,
+            verification_passed=raw_result.get("verification_passed"),
+        )
+        capability_name = str(execution.get("capability_name") or "").strip()
+        if not capability_name:
+            raise RuntimeError("observed capability success has no capability name")
+        try:
+            confidence = float(state.data.get("capability_match", 1.0))
+        except (TypeError, ValueError):
+            confidence = 1.0
+        return self._complete_observed_capability_success(
+            event,
+            state,
+            capability_name=capability_name,
+            local_result=local_result,
+            confidence=confidence,
+        )
+
+    def _complete_observed_capability_success(
+        self,
+        event,
+        state,
+        *,
+        capability_name: str,
+        local_result: CapabilityResult,
+        confidence: float,
+    ):
+        required = self._required_capabilities(event)
+        domains = self.resident_accounting.record_native_capability_success(
+            event_id=event.event_id,
+            task=event.task,
+            required_capabilities=required,
+            quality=max(0.5, min(1.0, float(confidence))),
+        )
+        completion = {
+            "execution_path": ExecutionPath.CAPABILITY.value,
+            "success": True,
+            "response": local_result.response,
+            "model_invocations": 0,
+            "capability_name": capability_name,
+            "reason": "resolved by compiled local capability",
+        }
+        state.stage = "resident_completion"
+        state.next_action = "publish terminal EventOutcome"
+        state.blocked_by = None
+        state.data["native_domains"] = list(domains)
+        state.data["resident_completion"] = completion
+        self.store.save_working_state(state)
+        return self._resident_completion_result(event, completion)
 
     def _begin_capability_recovery(
         self,
