@@ -1,15 +1,42 @@
 from __future__ import annotations
 
+import ctypes
+import os
 import tempfile
 import unittest
 from pathlib import Path
 
 from zn_agent.core.action import derive_native_action_intent
 from zn_agent.core.models import AgentEvent
-from zn_agent.core.path_context import resolve_context_path, resolved_within
+from zn_agent.core.path_context import (
+    canonical_host_path,
+    resolve_context_path,
+    resolved_within,
+)
 
 
 class WorkspaceFileContextTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows DOS path identity")
+    def test_windows_short_existing_prefix_expands_for_missing_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            long_root = Path(tmp)
+            buffer = ctypes.create_unicode_buffer(32768)
+            written = int(
+                ctypes.windll.kernel32.GetShortPathNameW(
+                    str(long_root),
+                    buffer,
+                    len(buffer),
+                )
+            )
+            short_root = Path(buffer.value) if written > 0 else long_root
+            if str(short_root).casefold() == str(long_root).casefold():
+                self.skipTest("temporary root has no distinct DOS 8.3 spelling")
+
+            self.assertEqual(
+                canonical_host_path(short_root / "future" / "result.txt"),
+                long_root / "future" / "result.txt",
+            )
+
     def test_relative_native_file_action_is_anchored_to_workspace(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "project"
