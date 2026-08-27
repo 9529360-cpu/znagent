@@ -12,6 +12,7 @@ from .nervous_system import AffectiveState, NeuralTrace, PersistentNervousSystem
 
 _OUTCOME_RECEIPT_TABLE = "neural_event_outcomes"
 _OUTCOME_STATE_TABLE = "neural_event_outcome_state"
+_OUTCOME_TRACE_RETENTION_TRIGGER = "retain_neural_event_outcome_trace"
 
 
 def ensure_event_outcome_schema(nervous: PersistentNervousSystem) -> None:
@@ -27,6 +28,15 @@ def ensure_event_outcome_schema(nervous: PersistentNervousSystem) -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_neural_event_outcomes_trace
                 ON {_OUTCOME_RECEIPT_TABLE}(trace_id);
+            CREATE TRIGGER IF NOT EXISTS {_OUTCOME_TRACE_RETENTION_TRIGGER}
+            BEFORE DELETE ON neural_traces
+            WHEN EXISTS(
+                SELECT 1 FROM {_OUTCOME_RECEIPT_TABLE}
+                WHERE trace_id=OLD.trace_id
+            )
+            BEGIN
+                SELECT RAISE(IGNORE);
+            END;
             CREATE TABLE IF NOT EXISTS {_OUTCOME_STATE_TABLE}(
                 id INTEGER PRIMARY KEY CHECK(id=1),
                 repair_from TEXT NOT NULL
