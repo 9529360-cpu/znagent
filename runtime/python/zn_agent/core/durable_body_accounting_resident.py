@@ -6,22 +6,24 @@ from contextlib import contextmanager
 from typing import Any, Iterator
 
 from .capability_recovery_resident import CapabilityRecoveryResidentRuntime
-from .models import ExecutionPath
 from .self_model import SelfModel
 
 
 class DurableBodyAccountingResidentRuntime(CapabilityRecoveryResidentRuntime):
     """Persist Body semantic truth before updating cumulative self evidence.
 
-    The mature embodied loop historically updated SelfModel/task counters before
-    its next WorkingState save. A process death in that narrow window could make
-    restart learn the same outcome twice. This active wrapper leaves the Body,
-    verification, pointer/text and procedural loops unchanged while moving their
-    cumulative accounting behind durable semantic facts.
+    The inherited Body hierarchy contains deliberately different completion
+    owners. Ordinary verified Body work credits native competence, while narrow
+    pointer/UI effect owners may count a completed task without generalizing that
+    local effect into ability. This wrapper therefore does not construct Body
+    completion truth. It lets the existing most-specific owner build and persist
+    its semantic checkpoint while temporarily deferring only the cumulative
+    writes that owner actually attempted.
 
-    Fresh failures are identified by the resident's existing action-signature +
-    evidence-fingerprint record. Legacy failure records intentionally carry no
-    accounting descriptor and are treated as already accounted during upgrade.
+    Failure learning follows the same rule: only an inherited path that actually
+    called ``observe_native_outcome(..., success=False)`` receives a retryable
+    failure-accounting descriptor. Merely recording a failure/recovery fact does
+    not create new learning semantics.
     """
 
     _BODY_ACCOUNTING_VERSION = 1
@@ -29,19 +31,14 @@ class DurableBodyAccountingResidentRuntime(CapabilityRecoveryResidentRuntime):
     _BODY_FAILURE_ACCOUNTING_KEY = "resident_accounting"
 
     @contextmanager
-    def _defer_native_failure_learning(self) -> Iterator[None]:
-        """Let the inherited loop persist a failure before cumulative learning.
-
-        Only failure observations are deferred. Any success observation from a
-        path not owned by the Body completion override keeps its existing
-        semantics. The resident cycle is the ownership boundary for this narrow
-        temporary interception.
-        """
+    def _defer_native_failure_learning(self) -> Iterator[dict[str, Any]]:
+        """Capture inherited failure learning until its semantic fact is durable."""
 
         self_model = self.kernel.self_model
         had_instance_override = "observe_native_outcome" in vars(self_model)
         previous_instance = vars(self_model).get("observe_native_outcome")
         original = self_model.observe_native_outcome
+        capture: dict[str, Any] = {"pending_failure_domains": None}
 
         def observe_after_checkpoint(
             task: str,
@@ -57,14 +54,120 @@ class DurableBodyAccountingResidentRuntime(CapabilityRecoveryResidentRuntime):
                     success=success,
                     quality=quality,
                 )
-            return SelfModel.infer_domains(task, capabilities)
+            domains = SelfModel.infer_domains(task, capabilities)
+            capture["pending_failure_domains"] = tuple(domains)
+            return domains
 
         self_model.observe_native_outcome = observe_after_checkpoint
+        previous_capture = getattr(self, "_body_failure_capture", None)
+        self._body_failure_capture = capture
         try:
-            yield
+            yield capture
         finally:
+            if previous_capture is None:
+                try:
+                    delattr(self, "_body_failure_capture")
+                except AttributeError:
+                    pass
+            else:
+                self._body_failure_capture = previous_capture
             if had_instance_override:
                 self_model.observe_native_outcome = previous_instance
+            else:
+                delattr(self_model, "observe_native_outcome")
+
+    @contextmanager
+    def _defer_native_success_accounting(
+        self,
+        state,
+    ) -> Iterator[dict[str, Any]]:
+        """Let the inherited completion owner persist truth before accounting.
+
+        ``observe_native_outcome(success=True)`` and ``record_runtime_task`` are
+        the two cumulative writes used by existing Body completion owners. Their
+        interception happens before those owners call ``save_working_state``, so
+        the accounting descriptor is included in the same first durable semantic
+        checkpoint rather than being attached in a later crash window.
+        """
+
+        self_model = self.kernel.self_model
+        store = self.store
+        had_model_override = "observe_native_outcome" in vars(self_model)
+        previous_model = vars(self_model).get("observe_native_outcome")
+        original_model = self_model.observe_native_outcome
+        had_store_override = "record_runtime_task" in vars(store)
+        previous_store = vars(store).get("record_runtime_task")
+        original_store = store.record_runtime_task
+        capture: dict[str, Any] = {
+            "success_domains": None,
+            "success_quality": None,
+            "task_accounting_requested": False,
+        }
+
+        def observe_after_checkpoint(
+            task: str,
+            capabilities=(),
+            *,
+            success: bool,
+            quality: float = 1.0,
+        ):
+            if not success:
+                return original_model(
+                    task,
+                    capabilities,
+                    success=success,
+                    quality=quality,
+                )
+            domains = SelfModel.infer_domains(task, capabilities)
+            capture["success_domains"] = tuple(domains)
+            capture["success_quality"] = max(0.0, min(1.0, float(quality)))
+            return domains
+
+        def record_after_checkpoint(
+            *,
+            model_invocations: int,
+            prompt_tokens: int = 0,
+            completion_tokens: int = 0,
+        ) -> None:
+            # Body completion owners currently count native work only. Preserve
+            # that contract fail-closed if a future caller tries to smuggle model
+            # accounting through this interception point.
+            if (
+                int(model_invocations) != 0
+                or int(prompt_tokens) != 0
+                or int(completion_tokens) != 0
+            ):
+                return original_store(
+                    model_invocations=model_invocations,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                )
+            capture["task_accounting_requested"] = True
+            domains = capture.get("success_domains")
+            if domains:
+                state.data[self._BODY_SUCCESS_ACCOUNTING_KEY] = {
+                    "version": self._BODY_ACCOUNTING_VERSION,
+                    "kind": "native_body_success",
+                    "domains": list(domains),
+                    "quality": float(capture.get("success_quality") or 0.95),
+                }
+            else:
+                state.data[self._BODY_SUCCESS_ACCOUNTING_KEY] = {
+                    "version": self._BODY_ACCOUNTING_VERSION,
+                    "kind": "native_body_task",
+                }
+
+        self_model.observe_native_outcome = observe_after_checkpoint
+        store.record_runtime_task = record_after_checkpoint
+        try:
+            yield capture
+        finally:
+            if had_store_override:
+                store.record_runtime_task = previous_store
+            else:
+                delattr(store, "record_runtime_task")
+            if had_model_override:
+                self_model.observe_native_outcome = previous_model
             else:
                 delattr(self_model, "observe_native_outcome")
 
@@ -86,14 +189,13 @@ class DurableBodyAccountingResidentRuntime(CapabilityRecoveryResidentRuntime):
             failure=failure,
             evidence_fingerprint=evidence_fingerprint,
         )
-        # Upgrade compatibility: a legacy record was already eagerly learned.
-        # Only records produced by a fresh active failure receive a retryable
-        # accounting descriptor.
-        if str(source or "").strip().lower() != "legacy":
-            domains = SelfModel.infer_domains(
-                event.task,
-                self._required_capabilities(event),
-            )
+        capture = getattr(self, "_body_failure_capture", None)
+        domains = (
+            capture.get("pending_failure_domains")
+            if isinstance(capture, dict)
+            else None
+        )
+        if domains:
             signature = str(record.get("signature_hash") or "").strip()
             fingerprint = str(record.get("evidence_fingerprint") or "").strip()
             if signature and fingerprint:
@@ -104,6 +206,7 @@ class DurableBodyAccountingResidentRuntime(CapabilityRecoveryResidentRuntime):
                     "failure_identity": f"{signature}\0{fingerprint}",
                     "applied": False,
                 }
+                capture["pending_failure_domains"] = None
         return record
 
     def _native_action_step(
@@ -153,33 +256,17 @@ class DurableBodyAccountingResidentRuntime(CapabilityRecoveryResidentRuntime):
         response: str,
         reason: str,
     ):
-        domains = SelfModel.infer_domains(
-            event.task,
-            self._required_capabilities(event),
-        )
-        completion = {
-            "execution_path": ExecutionPath.BODY.value,
-            "success": True,
-            "response": str(response or ""),
-            "model_invocations": 0,
-            "reason": str(reason or ""),
-        }
-        state.stage = "native_completion"
-        state.next_action = "publish terminal EventOutcome"
-        state.data["native_domains"] = list(domains)
-        state.data["native_completion"] = completion
-        state.data[self._BODY_SUCCESS_ACCOUNTING_KEY] = {
-            "version": self._BODY_ACCOUNTING_VERSION,
-            "kind": "native_body_success",
-            "domains": list(domains),
-            "quality": 0.95,
-        }
-        self._sync_execution_context(event, state)
-        # Semantic success first. The accounting journal is event-idempotent and
-        # can be retried from native_completion without replaying the Body.
-        self.store.save_working_state(state)
-        self._apply_body_success_accounting(event, state)
-        return self._native_completion_result(event, completion)
+        with self._defer_native_success_accounting(state):
+            result = super()._complete_successful_body_action(
+                event,
+                state,
+                intent,
+                response=response,
+                reason=reason,
+            )
+        if result is not None and result.success:
+            self._apply_body_success_accounting(event, state)
+        return result
 
     def _resume_native_completion(self, event, state):
         result = super()._resume_native_completion(event, state)
@@ -216,13 +303,18 @@ class DurableBodyAccountingResidentRuntime(CapabilityRecoveryResidentRuntime):
             raise RuntimeError("native Body completion accounting checkpoint is malformed")
         if int(raw.get("version") or 0) != self._BODY_ACCOUNTING_VERSION:
             raise RuntimeError("native Body completion accounting version is unsupported")
-        if str(raw.get("kind") or "") != "native_body_success":
-            raise RuntimeError("native Body completion accounting kind is unsupported")
-        self.resident_accounting.record_native_body_success(
-            event_id=event.event_id,
-            domains=tuple(raw.get("domains") or ()),
-            quality=float(raw.get("quality", 0.95)),
-        )
+        kind = str(raw.get("kind") or "")
+        if kind == "native_body_success":
+            self.resident_accounting.record_native_body_success(
+                event_id=event.event_id,
+                domains=tuple(raw.get("domains") or ()),
+                quality=float(raw.get("quality", 0.95)),
+            )
+            return
+        if kind == "native_body_task":
+            self.resident_accounting.record_native_body_task(event_id=event.event_id)
+            return
+        raise RuntimeError("native Body completion accounting kind is unsupported")
 
     def _apply_pending_body_failure_accounting(self, event, state) -> None:
         if str(state.current_event_id or "") != str(event.event_id):
