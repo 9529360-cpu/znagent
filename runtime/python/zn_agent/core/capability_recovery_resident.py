@@ -33,8 +33,8 @@ class CapabilityRecoveryResidentRuntime(FocusedModernTextResidentRuntime):
     ):
         # Capability execution owns a durable fact before normal orientation can
         # reconsider memory or matching. ``started`` means outside-world effect
-        # may be uncertain; ``observed`` success is sufficient to finish even if
-        # the compiled code is no longer loadable after restart.
+        # may be uncertain; an ``observed`` result is sufficient to resume the
+        # known success/failure without loading or executing the code again.
         raw_execution = state.data.get(self._CAPABILITY_EXECUTION_KEY)
         if isinstance(raw_execution, dict):
             status = str(raw_execution.get("status") or "").strip().lower()
@@ -47,13 +47,20 @@ class CapabilityRecoveryResidentRuntime(FocusedModernTextResidentRuntime):
                 and attempt_id
                 and capability_name
                 and isinstance(raw_result, dict)
-                and raw_result.get("success") is True
             ):
-                return self._resume_observed_capability_success(
-                    event,
-                    state,
-                    raw_execution,
-                )
+                if raw_result.get("success") is True:
+                    return self._resume_observed_capability_success(
+                        event,
+                        state,
+                        raw_execution,
+                    )
+                if raw_result.get("success") is False:
+                    return self._resume_observed_capability_failure(
+                        event,
+                        state,
+                        raw_execution,
+                        thought=thought,
+                    )
             if status == "started" and attempt_id and capability_name and not replay_safe:
                 return self._begin_capability_recovery(
                     event,
@@ -88,7 +95,6 @@ class CapabilityRecoveryResidentRuntime(FocusedModernTextResidentRuntime):
             self.store.save_working_state(state)
             return self._resident_completion_result(event, completion)
 
-        local_failure: str | None = None
         resolved = self.capabilities.resolve(event)
         state.data["local_capability_checked"] = True
         if resolved is not None:
@@ -127,25 +133,14 @@ class CapabilityRecoveryResidentRuntime(FocusedModernTextResidentRuntime):
                     confidence=confidence,
                 )
 
-            self.kernel.self_model.observe_native_outcome(
-                event.task,
-                required,
-                success=False,
+            return self._continue_after_observed_capability_failure(
+                event,
+                state,
+                local_result=local_result,
+                thought=thought,
             )
-            local_failure = local_result.error or "local capability failed"
-            state.data["local_failure"] = local_failure
 
-        state.stage = "native_investigation"
-        state.next_action = "select the next native probe"
-        state.blocked_by = None
-        if thought is not None:
-            action = "inspect concrete local state before declaring an impasse"
-            if action not in thought.possible_actions:
-                thought.possible_actions = (*thought.possible_actions, action)
-            thought.reason = f"{thought.reason}; orientation found no terminal native answer"
-            self._persist_enriched_thought(thought)
-        self.store.save_working_state(state)
-        return None
+        return self._continue_to_native_investigation(event, state, thought=thought)
 
     def _resume_observed_capability_success(
         self,
@@ -176,6 +171,35 @@ class CapabilityRecoveryResidentRuntime(FocusedModernTextResidentRuntime):
             capability_name=capability_name,
             local_result=local_result,
             confidence=confidence,
+        )
+
+    def _resume_observed_capability_failure(
+        self,
+        event,
+        state,
+        execution,
+        *,
+        thought=None,
+    ):
+        raw_result = execution.get("result")
+        if not isinstance(raw_result, dict) or raw_result.get("success") is not False:
+            raise RuntimeError("observed capability failure checkpoint is malformed")
+        local_result = CapabilityResult(
+            success=False,
+            response=str(raw_result.get("response") or ""),
+            data=dict(raw_result.get("data") or {}),
+            error=(
+                str(raw_result.get("error"))
+                if raw_result.get("error") is not None
+                else None
+            ),
+            verification_passed=raw_result.get("verification_passed"),
+        )
+        return self._continue_after_observed_capability_failure(
+            event,
+            state,
+            local_result=local_result,
+            thought=thought,
         )
 
     def _complete_observed_capability_success(
@@ -209,6 +233,43 @@ class CapabilityRecoveryResidentRuntime(FocusedModernTextResidentRuntime):
         state.data["resident_completion"] = completion
         self.store.save_working_state(state)
         return self._resident_completion_result(event, completion)
+
+    def _continue_after_observed_capability_failure(
+        self,
+        event,
+        state,
+        *,
+        local_result: CapabilityResult,
+        thought=None,
+    ):
+        if (
+            isinstance(local_result.data, dict)
+            and bool(local_result.data.get("side_effect_uncertain"))
+        ):
+            raise RuntimeError(
+                "uncertain capability effect cannot be converted into failure evidence"
+            )
+        required = self._required_capabilities(event)
+        self.resident_accounting.record_native_capability_failure(
+            event_id=event.event_id,
+            task=event.task,
+            required_capabilities=required,
+        )
+        state.data["local_failure"] = local_result.error or "local capability failed"
+        return self._continue_to_native_investigation(event, state, thought=thought)
+
+    def _continue_to_native_investigation(self, event, state, *, thought=None):
+        state.stage = "native_investigation"
+        state.next_action = "select the next native probe"
+        state.blocked_by = None
+        if thought is not None:
+            action = "inspect concrete local state before declaring an impasse"
+            if action not in thought.possible_actions:
+                thought.possible_actions = (*thought.possible_actions, action)
+            thought.reason = f"{thought.reason}; orientation found no terminal native answer"
+            self._persist_enriched_thought(thought)
+        self.store.save_working_state(state)
+        return None
 
     def _begin_capability_recovery(
         self,
