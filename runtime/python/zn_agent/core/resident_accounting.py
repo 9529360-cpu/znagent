@@ -13,11 +13,11 @@ from .self_model import SelfModel
 class ResidentAccountingJournal:
     """Commit self evidence once for one durable resident event fact.
 
-    Capability execution is journaled before this accounting runs. If the process
-    dies after an accounting transaction but before the next WorkingState
-    checkpoint, restart may safely call the same method again: the event/kind key
-    makes the second call a no-op rather than duplicating self-model evidence or,
-    for completed successes, ordinary task totals.
+    Crash-recoverable resident paths persist their semantic result before this
+    accounting runs. If the process dies after an accounting transaction but
+    before terminal publication or the next WorkingState checkpoint, restart may
+    safely call the same method again: the event/kind key makes the second call a
+    no-op rather than duplicating self-model evidence or task totals.
     """
 
     TABLE = "resident_event_accounting"
@@ -104,6 +104,55 @@ class ResidentAccountingJournal:
                     )
             conn.commit()
         return domains
+
+    def record_terminal_failure(
+        self,
+        *,
+        event_id: str,
+        model_invocations: int = 0,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+    ) -> bool:
+        """Count one durable terminal failure exactly once for the resident event.
+
+        This preserves the existing terminal-failure semantics: a budget/exception
+        failure counts as one attempted task but does not invent native ability or
+        knowledge evidence. The caller must persist the failure checkpoint before
+        invoking this method so a restart can reconstruct the same terminal fact.
+        """
+        normalized_event = str(event_id or "").strip()
+        if not normalized_event:
+            raise ValueError("resident accounting requires event_id")
+        invocations = max(0, int(model_invocations))
+        prompt = max(0, int(prompt_tokens))
+        completion = max(0, int(completion_tokens))
+        accounting_kind = "terminal_failure"
+        now = utc_now()
+
+        with closing(self._connect()) as conn:
+            inserted = conn.execute(
+                f"INSERT OR IGNORE INTO {self.TABLE}(event_id,kind,created_at) VALUES(?,?,?)",
+                (normalized_event, accounting_kind, now),
+            )
+            if inserted.rowcount == 1:
+                conn.execute(
+                    "UPDATE runtime_metrics SET "
+                    "tasks_total=tasks_total+1, "
+                    "tasks_model=tasks_model+?, "
+                    "model_invocations=model_invocations+?, "
+                    "prompt_tokens=prompt_tokens+?, "
+                    "completion_tokens=completion_tokens+?, "
+                    "updated_at=? WHERE id=1",
+                    (
+                        1 if invocations else 0,
+                        invocations,
+                        prompt,
+                        completion,
+                        now,
+                    ),
+                )
+            conn.commit()
+        return inserted.rowcount == 1
 
     def has_record(self, event_id: str, kind: str) -> bool:
         with closing(self._connect()) as conn:
