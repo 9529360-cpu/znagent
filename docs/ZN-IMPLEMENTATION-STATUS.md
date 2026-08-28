@@ -83,9 +83,9 @@ PR #34 added browser Work modules/tests to the dedicated Work Recovery lane. Tha
 - `ZN Managed Browser E2E` run `33219726246`: success on implementation head `1f4da5fae6d6481375290637027fa273714bb032`, including real Chromium structured Work navigation.
 - `ZN Managed Browser E2E` run `33220567118`: success on exact PR #35 merge head `5c347925490179748e44e35c43b0435ede9e1f14`; managed-browser contract tests and real local Chromium E2E succeeded after the MRO fix.
 - `ZN Work Recovery E2E` run `33220567184`: success on the exact PR #35 merge head; the full recovery lane passed after the MRO fix, resolving the 19 mature non-browser recovery errors exposed by PR #34.
-- `ZN CI` run `33220567183`: Electron/TypeScript and Source Boundary jobs are green on the exact merge head; Kernel/Python full suite is still running at the latest recorded check.
+- `ZN CI` run `33220567183`: success on the exact PR #35 merge head across Electron/TypeScript, Kernel/Python, Source Boundary and final status publication. The Python job completed zero-model boot, resident-core compilation and the full working-tree core suite successfully.
 
-Do not upgrade the remaining in-flight general CI entry to success without fresh Actions evidence.
+Together these runs close the browser/recovery regression gate for the PR #35 product head.
 
 ## Windows candidate and clean-install proof
 
