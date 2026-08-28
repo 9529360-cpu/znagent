@@ -15,12 +15,14 @@ type ZnRuntimeManifest = {
   python_version?: string
   python: string
   backend_root: string
+  browser_root?: string
 }
 
 type ResolvedZnRuntime = {
   root: string
   python: string
   backendRoot: string
+  browserRoot?: string
   manifest: ZnRuntimeManifest
 }
 
@@ -57,6 +59,9 @@ function readManifest(runtimeRoot: string): ZnRuntimeManifest {
   if (typeof manifest.python !== 'string' || !manifest.python) throw new Error(`ZN runtime manifest is missing python at ${manifestPath}`)
   if (typeof manifest.backend_root !== 'string' || !manifest.backend_root) {
     throw new Error(`ZN runtime manifest is missing backend_root at ${manifestPath}`)
+  }
+  if (manifest.browser_root !== undefined && (typeof manifest.browser_root !== 'string' || !manifest.browser_root.trim())) {
+    throw new Error(`ZN runtime manifest has an invalid browser_root at ${manifestPath}`)
   }
   if (manifest.platform && manifest.platform !== process.platform) {
     throw new Error(`ZN runtime platform mismatch: expected ${process.platform}, got ${manifest.platform}`)
@@ -99,14 +104,24 @@ function resolveRuntime(runtimeRoot: string, expectedRuntimeId?: string): Resolv
   }
   const python = resolveInside(runtimeRoot, manifest.python, 'python')
   const backendRoot = resolveInside(runtimeRoot, manifest.backend_root, 'backend_root')
+  const browserRoot = manifest.browser_root
+    ? resolveInside(runtimeRoot, manifest.browser_root, 'browser_root')
+    : undefined
   requireFile(python, 'python executable')
   requireDirectory(backendRoot, 'backend root')
+  if (browserRoot) requireDirectory(browserRoot, 'managed browser root')
   requireFile(path.join(backendRoot, 'zn_agent', 'resident.py'), 'resident package entrypoint')
   requireFile(path.join(backendRoot, 'zn_agent', 'core', 'resident_server.py'), 'resident core entrypoint')
   if (fs.existsSync(path.join(backendRoot, RETIRED_PACKAGE_NAME))) {
     throw new Error(`ZN runtime contains forbidden retired package: ${path.join(backendRoot, RETIRED_PACKAGE_NAME)}`)
   }
-  return { root: path.resolve(runtimeRoot), python, backendRoot, manifest }
+  return {
+    root: path.resolve(runtimeRoot),
+    python,
+    backendRoot,
+    ...(browserRoot ? { browserRoot } : {}),
+    manifest
+  }
 }
 
 function tryResolveRuntime(runtimeRoot: string, expectedRuntimeId: string): ResolvedZnRuntime | null {
@@ -154,6 +169,8 @@ function configureZnPackagedRuntime({
   env.ZN_PACKAGED_RUNTIME_ROOT = runtime.root
   env.ZN_RUNTIME_ID = runtime.manifest.runtime_id
   env.ZN_RESIDENT_PYTHON = runtime.python
+  if (runtime.browserRoot) env.PLAYWRIGHT_BROWSERS_PATH = runtime.browserRoot
+  else delete env.PLAYWRIGHT_BROWSERS_PATH
   env.PYTHONNOUSERSITE = '1'
   env.PYTHONUTF8 = '1'
   return runtime
