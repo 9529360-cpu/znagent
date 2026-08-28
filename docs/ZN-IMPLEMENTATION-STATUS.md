@@ -10,10 +10,13 @@ This file records implementation truth for the active ZN product. Source code, G
 - development branch: `dev/zn-agent`
 - canonical/release branch: `main`
 - canonical `main`: `8234a835dea604783cea0bd9d28a40de654ec03d`
-- latest P5 code/proof head before this documentation sync: `099a1af7615e79fe34317f22d5c785aa46cba2b4`
-- PR #6 remains the draft development PR from `dev/zn-agent` to `main`
-- `main` was not modified
+- latest exact P5 code/proof head: `48bfe13ba6783184292e871ebbc62a895db47d1c`
+- maintenance-policy descendant immediately before this status sync: `251508d06c8974aa342f61b36fef8d8cac1b74b2`
+- PR #6 remains the development PR from `dev/zn-agent` to `main`; it is open, draft, and currently mergeable
+- `main` has not yet received the accumulated post-M10 development
 - no force push or history rewrite was performed
+
+M10 canonical promotion remains complete. `main` is the canonical source/release branch, but that does **not** mean it should remain permanently frozen. Normal development stays on `dev/zn-agent` or isolated work branches; a coherent low-risk stage may enter `main` through the normal verified PR/promotion flow after its repository gates are satisfied. High-risk boundaries remain human-approved.
 
 Founding boundary:
 
@@ -25,9 +28,11 @@ Founding boundary:
 - P2 bounded cumulative accounting/learning durability: **COMPLETE / CI VERIFIED**
 - P3 managed-browser frontier reconciliation: **COMPLETE / CI VERIFIED NARROW**
 - P4 resident-owned live-page registry: **COMPLETE / CI VERIFIED NARROW**
-- P5 durable Work checkpoint / restore foundation: **PARTIAL / SEVEN BOUNDED SLICES CI VERIFIED**
+- P5 durable Work checkpoint / restore foundation: **PARTIAL / EIGHT BOUNDED SLICES CI VERIFIED**
 
-Broader Work durability has **TWENTY-SIX concrete crash/restart windows closed and verified**. The latest race/drift tests harden P5.7 but are not counted as additional crash/restart windows. This does not mean general rollback/restore is complete.
+Broader Work durability now has **TWENTY-SEVEN concrete crash/restart windows closed and verified**. P5.8 adds one new concrete crash/restart boundary; its additional drift, ownership, capacity, and finalized-run tests are safety hardening and are not counted as separate crash windows.
+
+This does **not** mean general rollback/restore, arbitrary workspace snapshots, or user-visible restore application is complete.
 
 ## P5 verified bounded slices
 
@@ -61,17 +66,13 @@ Implementation/proof head `a006ee90c9fc6e53f4b90d09f69b64ebf7ffd4c1`.
 
 Durable owner `runtime/python/zn_agent/core/atomic_overwrite_protocols.py` stores an atomic-overwrite protocol independent of `WorkingState`, binding event, Body signature, intent, attempt, deterministic stage/backup paths, exact stage identity, protocol version, and `namespace_commit_started`.
 
-Restart may close the old attempt `verified_absent` and grant a fresh lifecycle only when all of the following are exact: matching protocol/attempt, complete stage-ready evidence, `namespace_commit_started=false`, target equals the pre-dispatch identity, stage equals its durable identity, and deterministic backup is absent. Missing/legacy protocol, incomplete identity, tampering, drift, unexpected backup, or commit-start remain fail-closed.
+Restart may close the old attempt `verified_absent` and grant a fresh lifecycle only when matching protocol/attempt, complete stage-ready evidence, `namespace_commit_started=false`, exact target prestate, exact durable stage identity, and absent deterministic backup all agree. Ambiguity remains fail-closed.
 
 ### P5.6 - commit-start namespace reconciliation and verified-effect artifact cleanup (#24)
 
 Base implementation/proof head `042e196418d8c4e9baa17d810b60d995007dc5b0`; zero-byte identity hardening descendant `75e50c243b44e347c0e549fa9cb4cf7b37716e9f`.
 
-The namespace layer owns post-commit namespace evidence without converting that evidence into stale-attempt replay authority. For the documented `ReplaceFileW` WinError `1177` split with a supplied backup, ZN recognizes the exact bounded contradiction only when the matching attempt has durable `namespace_commit_started=true`, target is provably missing, retained stage is the exact durable staged payload, and retained backup is the exact durable pre-state.
-
-That state is classified as `replacefile_1177_split_retained`. Before P5.7 it was preserved and replay-blocked for explicit repair. Independently verified intended target content may resolve `verified_effect`; only then may exact retained artifacts enter checkpointed cleanup. Cleanup rechecks checkpointed identities before deletion and preserves drifted artifacts.
-
-The zero-byte hardening treats size zero as valid content evidence only when paired with a complete SHA-256 identity; malformed/incomplete identities remain fail-closed.
+The namespace layer owns post-commit namespace evidence without converting that evidence into stale-attempt replay authority. Exact `ReplaceFileW` WinError `1177` split evidence is retained and replay-blocked. Independently verified intended target content may resolve `verified_effect`; exact retained artifacts may be cleaned only under checkpointed identity ownership. Zero-byte content remains valid exact evidence only with complete size + SHA-256 identity.
 
 ### P5.7 - restart-safe retained namespace repair (#25, #26)
 
@@ -88,23 +89,34 @@ fb8864f6934dc38c4f83fcce66b30b0212e55cc5  test: harden retained namespace repair
 099a1af7615e79fe34317f22d5c785aa46cba2b4  test: tolerate Windows path aliases in repair race
 ```
 
-Active owner:
+A proven retained `1177` split creates a new durable namespace-repair lifecycle rather than replaying the stale overwrite attempt. Immediately before mutation ZN revalidates target-missing + exact-stage-new + exact-backup-old reality and uses Windows no-replace movement. An external target winner is preserved.
+
+Crash/restart window **#25** is death after durable repair checkpoint but before movement. Window **#26** is death after the retained stage has moved into target but before repair completion/cleanup state is durably advanced. Restart never repeats a proven move and never replays the stale overwrite attempt.
+
+### P5.8 - Work-owned exact-file restore-point foundation (#27)
+
+Implementation chain:
 
 ```text
-runtime/python/zn_agent/core/atomic_overwrite_namespace_recovery_resident.py
+448bbbd48d0b8454282860617152005361732dda  feat: persist Work overwrite restore points
+15e732119844866538614189442ea2e40e40a549  feat: route active resident through Work restore points
+0cf4bef527d479df149449def51a6a4f30ccf0e7  fix: retain rollback points without pruning
+ea08b0b1c1d5d8dd2147befea1ff8c3ea7feca6e  fix: bind restore points to active Work runs
+48bfe13ba6783184292e871ebbc62a895db47d1c  exact CI proof descendant
 ```
 
-Physical no-replace movement:
+Active restore owner:
 
 ```text
-runtime/python/zn_agent/core/staged_text_write.py
+runtime/python/zn_agent/core/work_restore_point_resident.py
 ```
 
-Active runtime chain remains:
+The active runtime chain is now:
 
 ```text
 provider_bridge
 -> RecoveryBoundedResidentRuntime
+-> WorkRestorePointResidentRuntime
 -> AtomicOverwriteNamespaceRecoveryResidentRuntime
 -> AtomicOverwriteRecoveryResidentRuntime
 -> OverwriteRecoveryResidentRuntime
@@ -113,67 +125,98 @@ provider_bridge
 -> resident core
 ```
 
-P5.7 does not replay the stale overwrite attempt. A proven `replacefile_1177_split_retained` state first receives a new durable namespace-repair checkpoint bound to the exact protocol, attempt, intent, target, stage, backup, and retained artifact identities. Immediately before mutation ZN revalidates target-missing + exact-stage-new + exact-backup-old reality.
+Before an eligible Work-owned existing-file overwrite can dispatch to Body, ZN retains exact pre-mutation bytes in the kernel database. The durable `work_restore_points` record binds a deterministic restore-point identity to the event, thread, message, intent, action signature, canonical target path, exact pre-mutation identity, raw content BLOB, content SHA-256, size, status, and timestamps.
 
-The repair is a new bounded Body movement: move the exact retained stage into the still-missing target using Windows no-replace namespace semantics. If another process creates the target before or during this move, ZN preserves the external winner, withdraws repair authority, preserves stage and backup, keeps replay blocked, and returns to explicit handling rather than overwriting it.
+Restore ownership is deliberately stricter than event payload alone. Creation requires a matching durable `work_runs` row whose event/thread/message/task linkage agrees and whose `ledger_state` is exactly `active`. Non-Work events do not create restore points. Forged, missing, conflicting, or finalized Work linkage cannot create restore content or authorize the overwrite.
 
-Crash/restart window **#25** is process death after the durable repair checkpoint but before the no-replace move. Restart revalidates current target/stage/backup reality and may continue only the checkpointed new repair action; it never replays the stale overwrite attempt.
+Current restorable scope is intentionally narrow:
 
-Crash/restart window **#26** is process death after the retained stage has moved into the target but before repair completion/cleanup state is durably advanced. Restart observes fresh target/stage/backup reality. Exact intended target content plus missing retained stage proves the repair effect; the move is not repeated, the old overwrite attempt is not replayed, and the potentially unique backup remains until independent effect verification and exact cleanup authority allow removal.
+- the target already exists;
+- it is a stable regular file;
+- its full SHA-256 identity is complete;
+- its exact content is at most `DEFAULT_MAX_HASH_BYTES` (currently 8 MiB);
+- the bytes read for retention match both the durable prestate size/hash and a fresh post-read identity observation.
 
-Repair authority is deliberately revocable. Target appearance, stage identity drift, backup identity drift, protocol mismatch, or incomplete evidence fail closed and preserve retained artifacts.
+If file reality changes while capture is occurring, mutation authority is withdrawn and the resident returns to Investigation. Missing targets and unsupported file shapes preserve their previous overwrite behavior but are **not** represented as restorable.
 
-### Real CI proof for P5.7
+Restore-point identity is deterministic from event + action signature + target path. Existing durable rows are fully revalidated before reuse, so preparation is idempotent across inherited lifecycle calls and resident reconstruction.
 
-Focused Windows atomic-overwrite proof on exact head `099a1af7615e79fe34317f22d5c785aa46cba2b4`:
+The restore point is content ownership, **not rollback authority**. The active checkpoint records `automatic_restore_authority: False`. P5.8 never writes retained bytes back to the target and never interprets restart as permission to restore automatically.
+
+Retention is bounded without destructive pruning:
+
+- maximum 32 retained points per event;
+- maximum 256 retained points resident-wide;
+- maximum 128 MiB total retained content;
+- maximum 8 MiB for one exact captured file.
+
+An earlier implementation attempt pruned older finalized points to make capacity. That was rejected because it could delete the only rollback material. The active implementation never deletes an old restore point merely to admit a new one. If capacity is exhausted, the new exact Work overwrite is blocked **before mutation** with `capacity_blocked` and returns to Investigation.
+
+`retained_work_restore_points(event_id)` exposes bounded metadata and does not return the raw retained BLOB.
+
+Crash/restart window **#27** is process death after the exact restore point has been durably committed but before Body dispatch/mutation. The focused test injects process termination at dispatch, proves the target is still unchanged, reconstructs the resident, and proves the same restore point remains retained without becoming automatic restore authority.
+
+Additional P5.8 hardening proves:
+
+- capture-time identity drift withdraws mutation authority;
+- forged Work linkage fails closed;
+- a finalized Work run cannot authorize new restore capture or mutation;
+- retention capacity preserves existing rollback points and blocks the new overwrite rather than pruning them;
+- non-Work overwrite does not create a Work restore point.
+
+### Real CI proof for P5.8
+
+Exact code/proof head:
 
 ```text
-ZN Atomic Overwrite E2E run 33163584755          success
-  Windows atomic overwrite lifecycle             success
-  Ran 28 tests in 27.391s                        OK
+48bfe13ba6783184292e871ebbc62a895db47d1c
 ```
 
-The P5.7 suite includes direct proof that:
+Focused Windows Work recovery proof:
 
-- a repair checkpoint survives process death before movement;
-- process death after the repair move is reconciled without a second move;
-- an external target winner appearing after checkpoint is never clobbered;
-- an external target winner appearing during the no-replace move is never clobbered;
-- stage drift after checkpoint withdraws repair authority;
-- backup drift after checkpoint withdraws repair authority.
-
-The first run of the new race test on `fb8864f...` exposed only a Windows 8.3-short-path versus long-path test equality assumption. Runtime behavior was not the failure. `099a1af...` removed that representation-only assertion, and the exact-head focused suite passed 28/28.
+```text
+ZN Work Recovery E2E run 33166734152             success
+  Windows resident Work restart recovery          success
+  Ran 102 tests in 75.017s                        OK
+```
 
 Full-tree proof on the same exact head:
 
 ```text
-ZN CI run 33163584746                             success
+ZN CI run 33166734199                             success
   ZN Kernel / Python / Windows                    success
     Boot isolated ZN distribution without model  success
     Compile resident core                        success
     Run ZN core tests against working tree       success
-    Ran 673 tests in 844.861s                    OK (skipped=5)
+    Ran 680 tests in 853.298s                    OK (skipped=5)
   ZN Source Boundary / Windows                    success
+    active tracked tree remains ZN-only           success
   Electron / TypeScript / Windows                 success
+    npm audit --audit-level=high                  0 vulnerabilities
+    desktop typecheck / bundle                    success
+    37 Electron contract tests                    passed
+    8 release/runtime script tests                passed
   Publish Windows CI statuses                     success
 ```
 
+The later `251508d...` maintenance-policy commit changed only `docs/ZN-MAINTAINER-PROMPT.md`. GitHub currently reports no workflow run associated with that docs-only descendant, so this document does not mislabel it as an independently CI-proven code head. Runtime proof remains the exact `48bfe13...` run above.
+
 No local repository test run is claimed for this web-maintainer slice. Repository self-hosted Windows CI is the verification authority.
 
-## Current atomic overwrite invariants
+## Current restore/recovery invariants
 
-1. Old-state equality after dispatch is never replay authority.
-2. `namespace_commit_started=false` may authorize only the exact P5.5 precommit reconciliation state.
-3. `namespace_commit_started=true` never authorizes replay of the old overwrite attempt.
-4. Exact intended target content can resolve `verified_effect` through read-only verification.
-5. A proven retained 1177 split may authorize only the new P5.7 namespace-repair lifecycle, never the stale overwrite attempt.
-6. Repair authority is bound to exact durable protocol/attempt/intent/artifact evidence and is revalidated immediately before mutation.
-7. A target that appears before or during repair wins; ZN never replaces that external winner.
-8. Stage or backup drift withdraws repair authority and preserves the artifacts.
-9. A potentially unique retained backup is preserved until stronger terminal effect truth plus exact cleanup ownership exists.
-10. Delayed cleanup rechecks exact checkpointed artifact identity immediately before deletion.
-11. Artifact drift removes delete authority; it does not manufacture effect truth.
-12. Zero-byte content is valid exact evidence only when size and complete SHA-256 are both well-formed; malformed/incomplete identities remain fail-closed.
+1. Old-state equality after dispatch is never stale-attempt replay authority.
+2. `namespace_commit_started=true` never authorizes replay of the old overwrite attempt.
+3. Retained `1177` namespace repair is a new bounded lifecycle with fresh exact evidence.
+4. External target appearance wins over repair; ZN does not clobber it.
+5. Stage/backup drift withdraws repair or cleanup authority.
+6. Work restore capture requires an exact active durable Work run, not merely claimed payload linkage.
+7. A retained restore point proves exact captured pre-mutation content ownership only; it grants no automatic restore authority.
+8. Capture-time file drift withdraws overwrite authority.
+9. Capacity exhaustion blocks the incoming restorable overwrite rather than deleting older rollback evidence.
+10. Missing/unsupported/too-large targets are not claimed restorable.
+11. Raw restore content stays resident-owned in the kernel DB and is not exposed by the metadata projection.
+12. General restore application remains a separate authority/lifecycle problem.
 
 ## Relevant files
 
@@ -185,39 +228,46 @@ No local repository test run is claimed for this web-maintainer slice. Repositor
 - `runtime/python/zn_agent/core/staged_text_write.py`
 - `runtime/python/zn_agent/core/atomic_overwrite_resident.py`
 - `runtime/python/zn_agent/core/atomic_overwrite_namespace_recovery_resident.py`
+- `runtime/python/zn_agent/core/work_restore_point_resident.py`
 - `runtime/python/zn_agent/core/recovery_bounded_resident.py`
 - `runtime/python/zn_agent/core/provider_bridge.py`
 - `runtime/python/zn_agent/core/work_control.py`
+- `runtime/python/zn_agent/core/work.py`
 - `tests/zn_agent/core/test_work_overwrite_recovery.py`
 - `tests/zn_agent/core/test_windows_atomic_overwrite.py`
 - `tests/zn_agent/core/test_windows_atomic_overwrite_namespace_recovery.py`
 - `tests/zn_agent/core/test_windows_atomic_overwrite_namespace_repair.py`
+- `tests/zn_agent/core/test_work_restore_points.py`
+- `tests/zn_agent/core/test_work_restore_point_guards.py`
+- `tests/zn_agent/core/test_work_restore_point_retention.py`
+- `tests/zn_agent/core/test_work_restore_point_active_run.py`
 - `.github/workflows/zn-atomic-overwrite-e2e.yml`
+- `.github/workflows/zn-work-recovery-e2e.yml`
 
 ## Open risks / incomplete work
 
 P5 remains **PARTIAL**. Still open:
 
-- general per-task restore/rollback and arbitrary workspace snapshots;
-- user-visible restore points;
-- a general startup/maintenance GC owner for deterministic artifacts outside an exact active protocol;
-- large/incomplete identities that cannot be proven exact remain fail-closed;
+- user-visible restore-point inspection/projection is not yet connected through Work control/UI;
+- actual restore application and its authority, target-drift handling, user confirmation, and post-restore verification are not implemented;
+- general per-task rollback and arbitrary workspace snapshots remain open;
+- there is no general startup/maintenance GC owner for deterministic artifacts outside an exact active protocol;
+- files larger than the exact capture limit and incomplete identities remain non-restorable/fail-closed for this path;
 - replacement changes file identity; uncommon metadata/named-stream behavior and host/power-loss durability remain open;
 - generic `NativeBody` remains unchanged for non-active/shared callers;
 - isolated parallel Work remains open;
 - broader browser, M8 continuity, and SM1+ work remains incomplete;
-- identity, long-term memory, credentials/permissions, updater/signing, rollback and destructive self-maintenance remain human-approval boundaries.
+- identity, long-term memory, credentials/permissions, updater/signing, destructive rollback and destructive self-maintenance remain human-approval boundaries.
 
 ## Next real target
 
-Continue P5 above the now-closed 1177 repair boundary. The next bounded target is a resident-owned **per-task restore-point foundation**, not another special-case overwrite replay mechanism:
+Continue P5 without jumping directly to destructive restore application. The next bounded target is a **read-only Work restore-point projection/inspection path**:
 
-1. define durable restore-point metadata owned by the Work lifecycle and bound to one exact Work run;
-2. begin with a narrow exact-file restore point around resident-owned file mutation rather than claiming arbitrary workspace snapshots;
-3. record exact pre-mutation identity and restorable content ownership before mutation, with explicit retention/lifecycle rules;
-4. make restart semantics explicit so a restore point is neither silently lost nor interpreted as automatic rollback authority;
-5. keep actual rollback user-visible and bounded until destructive/identity-sensitive restore policy is separately proven.
+1. connect existing retained restore metadata to the resident-owned `work_control.py` / Work snapshot surface;
+2. expose only metadata required to understand that a restore point exists; do not expose the raw retained BLOB by default;
+3. bind projection to the exact Work event/thread ownership already enforced by the restore layer;
+4. re-observe current target identity so future restore eligibility can distinguish unchanged, changed, missing, and unsupported reality without mutating anything;
+5. add restart and privacy/ownership tests around that read-only projection;
+6. design actual restore proposal/authority as a later bounded slice with explicit drift handling and user-visible approval where destructive replacement is involved.
 
-This is a stepping stone toward general per-task restore/rollback. Do not describe arbitrary workspace restore, broad rollback, or M8 as complete.
-
-Keep `main` untouched.
+Repository promotion is a separate engineering gate from P5 implementation. Do not develop directly on `main`, but also do not keep canonical `main` frozen merely because development occurs on `dev/zn-agent`. Once the current coherent promotion gate is fully reconciled, use the normal traceable PR/promotion flow; high-risk boundaries still require human approval.
