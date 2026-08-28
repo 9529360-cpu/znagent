@@ -7,10 +7,12 @@ from contextlib import contextmanager
 from typing import Any, Iterator
 
 from .recovery_control import raise_if_synchronous_recovery_blocked
-from .work_restore_application_resident import WorkRestoreApplicationResidentRuntime
+from .work_restore_application_authority_resident import (
+    WorkRestoreApplicationAuthorityResidentRuntime,
+)
 
 
-class RecoveryBoundedResidentRuntime(WorkRestoreApplicationResidentRuntime):
+class RecoveryBoundedResidentRuntime(WorkRestoreApplicationAuthorityResidentRuntime):
     """Keep asynchronous resident life alive while bounding synchronous callers.
 
     Synchronous call policy is deliberately layered around the same resident
