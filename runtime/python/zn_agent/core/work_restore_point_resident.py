@@ -2,10 +2,10 @@ from __future__ import annotations
 
 """Resident-owned exact-file restore-point foundation for Work overwrites.
 
-This layer captures restorable pre-mutation bytes only for a real durable Work
-run and only while an exact overwrite is still before Body dispatch. A retained
-restore point is evidence/content ownership, not rollback authority: nothing in
-this module writes the captured bytes back to the target.
+A restore point captures exact pre-mutation bytes for one durable Work-owned
+existing-file overwrite. Retention is deliberately separate from restore
+authority: this module never writes captured bytes back to the target and never
+deletes an older point to make room for a newer one.
 """
 
 import hashlib
@@ -31,25 +31,29 @@ _TABLE = "work_restore_points"
 _VERSION = 1
 _MAX_CONTENT_BYTES = DEFAULT_MAX_HASH_BYTES
 _MAX_POINTS_PER_EVENT = 32
-_MAX_FINALIZED_POINTS = 96
+_MAX_TOTAL_POINTS = 256
 
 
 class _RestoreCaptureChanged(RuntimeError):
     pass
 
 
+class _RestoreCaptureCapacity(RuntimeError):
+    pass
+
+
 class WorkRestorePointResidentRuntime(AtomicOverwriteNamespaceRecoveryResidentRuntime):
-    """Retain exact pre-mutation file content for durable Work-owned overwrites.
+    """Retain exact old file bytes before a durable Work overwrite can dispatch.
 
-    The record is bound to the ordinary ``work_runs`` identity (event, thread and
-    accepted user message), the exact resident intent/signature and the canonical
-    pre-mutation file identity. Existing behavior is intentionally unchanged for
-    non-Work events, missing targets, non-regular files and files whose exact
-    identity is outside the current bounded hash/capture limit.
+    Ownership requires both the event payload linkage and a matching durable
+    ``work_runs`` row. A deterministic identity makes repeated preparation on
+    the Windows atomic-overwrite chain idempotent across both inheritance and
+    process restart.
 
-    Retained content survives resident reconstruction. It is never interpreted
-    as permission to restore automatically; actual rollback remains a separate,
-    future user-visible authority boundary.
+    Current scope is intentionally narrow: existing stable regular files whose
+    full SHA-256 identity and bytes fit the resident's bounded exact-file limit.
+    Missing targets and other unsupported shapes preserve historical behavior;
+    they are not misrepresented as restorable by this owner.
     """
 
     _WORK_RESTORE_STATE_KEY = "work_restore_point"
@@ -222,21 +226,21 @@ class WorkRestorePointResidentRuntime(AtomicOverwriteNamespaceRecoveryResidentRu
             raise RuntimeError("durable Work restore content digest is inconsistent")
         return self._row_public(row)
 
-    def _prune_finalized_restore_points(self, conn: sqlite3.Connection) -> None:
-        conn.execute(
-            f"""
-            DELETE FROM {_TABLE}
-            WHERE restore_point_id IN (
-                SELECT rp.restore_point_id
-                FROM {_TABLE} AS rp
-                JOIN work_runs AS wr ON wr.event_id=rp.event_id
-                WHERE wr.ledger_state='finalized'
-                ORDER BY rp.created_at DESC
-                LIMIT -1 OFFSET ?
+    @staticmethod
+    def _enforce_capacity(conn: sqlite3.Connection, *, event_id: str) -> None:
+        event_count = conn.execute(
+            f"SELECT COUNT(*) AS n FROM {_TABLE} WHERE event_id=?",
+            (event_id,),
+        ).fetchone()
+        if int(event_count["n"] if event_count is not None else 0) >= _MAX_POINTS_PER_EVENT:
+            raise _RestoreCaptureCapacity(
+                "per-event restore-point retention capacity is exhausted"
             )
-            """,
-            (_MAX_FINALIZED_POINTS,),
-        )
+        total_count = conn.execute(f"SELECT COUNT(*) AS n FROM {_TABLE}").fetchone()
+        if int(total_count["n"] if total_count is not None else 0) >= _MAX_TOTAL_POINTS:
+            raise _RestoreCaptureCapacity(
+                "resident restore-point retention capacity is exhausted"
+            )
 
     def _capture_work_restore_point(
         self,
@@ -273,12 +277,6 @@ class WorkRestorePointResidentRuntime(AtomicOverwriteNamespaceRecoveryResidentRu
                     action_signature=action_signature,
                     identity=identity,
                 )
-            count_row = conn.execute(
-                f"SELECT COUNT(*) AS n FROM {_TABLE} WHERE event_id=?",
-                (event.event_id,),
-            ).fetchone()
-            if int(count_row["n"] if count_row is not None else 0) >= _MAX_POINTS_PER_EVENT:
-                return None
 
         path = Path(target_path)
         try:
@@ -302,55 +300,76 @@ class WorkRestorePointResidentRuntime(AtomicOverwriteNamespaceRecoveryResidentRu
 
         now = utc_now()
         with closing(self._restore_connect()) as conn:
-            work_linkage = self._verified_work_linkage(conn, event)
-            if work_linkage is None:
-                return None
-            thread_id, message_id = work_linkage
-            conn.execute(
-                f"""
-                INSERT OR IGNORE INTO {_TABLE}(
-                    restore_point_id,version,event_id,thread_id,message_id,intent_id,
-                    action_signature,target_path,pre_identity_json,content,content_sha256,
-                    size_bytes,status,created_at,updated_at
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                """,
-                (
-                    restore_point_id,
-                    _VERSION,
-                    event.event_id,
-                    thread_id,
-                    message_id,
-                    intent.intent_id,
-                    action_signature,
-                    target_path,
-                    json.dumps(identity, ensure_ascii=False, separators=(",", ":")),
-                    sqlite3.Binary(content),
-                    expected_digest,
-                    expected_size,
-                    "retained",
-                    now,
-                    now,
-                ),
-            )
-            row = conn.execute(
-                f"SELECT * FROM {_TABLE} WHERE restore_point_id=?",
-                (restore_point_id,),
-            ).fetchone()
-            if row is None:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                work_linkage = self._verified_work_linkage(conn, event)
+                if work_linkage is None:
+                    conn.rollback()
+                    return None
+                thread_id, message_id = work_linkage
+                existing = conn.execute(
+                    f"SELECT * FROM {_TABLE} WHERE restore_point_id=?",
+                    (restore_point_id,),
+                ).fetchone()
+                if existing is not None:
+                    public = self._verify_existing_restore_point(
+                        existing,
+                        event=event,
+                        thread_id=thread_id,
+                        message_id=message_id,
+                        intent=intent,
+                        action_signature=action_signature,
+                        identity=identity,
+                    )
+                    conn.commit()
+                    return public
+                self._enforce_capacity(conn, event_id=event.event_id)
+                conn.execute(
+                    f"""
+                    INSERT INTO {_TABLE}(
+                        restore_point_id,version,event_id,thread_id,message_id,intent_id,
+                        action_signature,target_path,pre_identity_json,content,content_sha256,
+                        size_bytes,status,created_at,updated_at
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        restore_point_id,
+                        _VERSION,
+                        event.event_id,
+                        thread_id,
+                        message_id,
+                        intent.intent_id,
+                        action_signature,
+                        target_path,
+                        json.dumps(identity, ensure_ascii=False, separators=(",", ":")),
+                        sqlite3.Binary(content),
+                        expected_digest,
+                        expected_size,
+                        "retained",
+                        now,
+                        now,
+                    ),
+                )
+                row = conn.execute(
+                    f"SELECT * FROM {_TABLE} WHERE restore_point_id=?",
+                    (restore_point_id,),
+                ).fetchone()
+                if row is None:
+                    raise RuntimeError("durable Work restore point was not persisted")
+                public = self._verify_existing_restore_point(
+                    row,
+                    event=event,
+                    thread_id=thread_id,
+                    message_id=message_id,
+                    intent=intent,
+                    action_signature=action_signature,
+                    identity=identity,
+                )
+                conn.commit()
+                return public
+            except Exception:
                 conn.rollback()
-                raise RuntimeError("durable Work restore point was not persisted")
-            public = self._verify_existing_restore_point(
-                row,
-                event=event,
-                thread_id=thread_id,
-                message_id=message_id,
-                intent=intent,
-                action_signature=action_signature,
-                identity=identity,
-            )
-            self._prune_finalized_restore_points(conn)
-            conn.commit()
-            return public
+                raise
 
     def retained_work_restore_points(self, event_id: str) -> list[dict[str, Any]]:
         normalized = str(event_id or "").strip()
@@ -368,17 +387,15 @@ class WorkRestorePointResidentRuntime(AtomicOverwriteNamespaceRecoveryResidentRu
         event,
         state,
         intent: NativeActionIntent,
-        exc: _RestoreCaptureChanged,
+        exc: RuntimeError,
         *,
+        status: str,
+        failure: str,
         thought=None,
     ) -> bool:
-        failure = (
-            "Work restore-point capture lost exact pre-mutation file reality; "
-            "ZN will refresh Investigation before allowing the overwrite"
-        )
         state.data["local_failure"] = failure
         state.data["work_restore_point_capture"] = {
-            "status": "identity_changed",
+            "status": status,
             "reason": str(exc)[:240],
         }
         self._record_failed_action(
@@ -389,7 +406,11 @@ class WorkRestorePointResidentRuntime(AtomicOverwriteNamespaceRecoveryResidentRu
             failure=failure,
         )
         state.stage = "native_investigation"
-        state.next_action = "refresh exact file evidence before another overwrite"
+        state.next_action = (
+            "resolve restore-point retention capacity before overwrite"
+            if status == "capacity_blocked"
+            else "refresh exact file evidence before another overwrite"
+        )
         state.blocked_by = None
         self._sync_execution_context(event, state)
         self.store.save_working_state(state)
@@ -397,8 +418,8 @@ class WorkRestorePointResidentRuntime(AtomicOverwriteNamespaceRecoveryResidentRu
             if failure not in thought.unknown:
                 thought.unknown = (*thought.unknown, failure)
             thought.reason = (
-                f"{thought.reason}; the Work restore checkpoint could not be bound to "
-                "stable current file reality, so mutation authority was withdrawn"
+                f"{thought.reason}; restore-point ownership was not safely established, "
+                "so mutation authority was withdrawn"
             )
             self._persist_enriched_thought(thought)
         return False
@@ -430,12 +451,30 @@ class WorkRestorePointResidentRuntime(AtomicOverwriteNamespaceRecoveryResidentRu
             return True
         try:
             restore_point = self._capture_work_restore_point(event, intent, identity)
+        except _RestoreCaptureCapacity as exc:
+            return self._hold_restore_capture(
+                event,
+                state,
+                intent,
+                exc,
+                status="capacity_blocked",
+                failure=(
+                    "Work restore-point retention is at its bounded capacity; ZN will not "
+                    "delete an older rollback point or dispatch this overwrite implicitly"
+                ),
+                thought=thought,
+            )
         except _RestoreCaptureChanged as exc:
             return self._hold_restore_capture(
                 event,
                 state,
                 intent,
                 exc,
+                status="identity_changed",
+                failure=(
+                    "Work restore-point capture lost exact pre-mutation file reality; "
+                    "ZN will refresh Investigation before allowing the overwrite"
+                ),
                 thought=thought,
             )
         if restore_point is None:
