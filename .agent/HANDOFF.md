@@ -1,81 +1,77 @@
 # ZN Maintainer Handoff
 
-This is the current engineering work site and fact index, not a chat summary or a script. Repository state, real code and actual CI are authoritative. The next maintainer inherits facts, then independently chooses the highest-value product work.
+This is the current engineering work site and fact index, not a chat summary or execution script. Real code, Git state and actual CI remain authoritative.
 
 ## Current goal
 
-Restore the earlier product-first autonomous maintenance behavior while preserving practical lessons learned since then: coherent work is committed/pushed, CI is respected, and `main` does not silently fall far behind verified development.
+Close the managed-browser + bounded Work-restore stage cleanly, keep canonical `main` reasonably current after verification, then re-rank the next product gap. The leading safe candidate is an installed-N continuity baseline because ZN must be able to prove that Self/Work/config/provider references survive a later installation transition; an actual N -> N+1 replacement remains approval-gated.
 
-The maintenance rule now also teaches product judgment: a maintainer must actively diagnose ZN, distinguish code existence from a real product closure, protect resident continuity, and prioritize real product impact over evidence/process volume.
-
-Git/CI/main synchronization is normal engineering hygiene, not the ZN roadmap.
-
-## Current repository state
+## Repository state
 
 - Repository: `9529360-cpu/znagent`
-- Canonical branch: `main`
-- Development branch: `dev/zn-agent`
-- Maintenance branch / PR: `work/maintainer-agency-reset` / PR #14
-- PR #13 clean-install promotion is already merged to `main` at `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`.
-- At maintenance-branch creation, `dev/zn-agent` was 3 commits ahead of `main` and 0 behind; those commits were post-PR #13 ledger/status reconciliation.
-- Historical regression point: `934de7ab19174de5ca1fe81494c9f3ca565f4c97` (`docs: align maintainer promotion rules`) elevated promotion/canonical synchronization into the explicit development loop.
-- Useful pre-regression baseline: `AGENTS.md` at `58d416f0527d191f4a752290375d3814ce8be484`.
-- Product-judgment refinement commit: `a6ebcd32e54918ab5e5feeb67d3481843006bb61`.
-- Implementation-status de-script commit: `852d1e0195165b5e32381857339c74ac5287cdd8`.
+- Canonical/release branch: `main`
+- Primary development branch: `dev/zn-agent`
+- Current verified-development head entering this reconciliation: `5c347925490179748e44e35c43b0435ede9e1f14` (PR #35 merge).
+- Reconciliation branch: `work/browser-stage-reconcile`.
+- `main` is still at `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`; at the PR #35 merge head, `dev/zn-agent` was 103 commits ahead and 0 behind. Do not treat this divergence as a roadmap item; sync normally after exact-head validation and ledger reconciliation.
 
-## What the maintenance rule now means
+## Product reality
 
-- ZN product progress is the primary objective.
-- A new maintainer must understand current product state, actively look for real gaps, rank them, and start working without step-by-step user direction.
-- HANDOFF queues and status-file candidate work are evidence/suggestions, not immutable commands.
-- Important capabilities are judged as `exists -> wired -> verified -> product-closed`; `implemented` alone is not enough.
-- ZN identity/memory/work/Will/config/resident continuity receives stronger regression scrutiny than ordinary feature completion.
-- Prefer a vertical real-world product closure over many horizontal half-finished modules.
-- Documentation, test counts, evidence artifacts, PR/commit counts and branch synchronization must not substitute for real product progress.
-- Do not stop after every small step; continue autonomously until a real approval/blocker boundary is reached.
-- Commit/push coherent verified increments instead of leaving long-lived unpublished work.
-- Keep `main` reasonably synchronized through normal PR/CI when development is stable, but treat this as background Git hygiene rather than a product milestone.
-- Preserve explicit human approval for destructive/high-risk identity, memory, credential, updater/replacement, rollback/signing/release-trust and self-approval-boundary changes.
+### Bounded Work restore
 
-## Completed product evidence still relevant
+The old “read-only restore only” description is obsolete.
 
-- Clean-install implementation/proof head `cb913d61f001af6c729a141a3c8631a72e8362cf`.
-- `ZN CI` run `33193710879`: success; Python kernel reported 686 tests, 5 skipped.
-- `ZN Windows Release Candidate` run `33193711016`: success.
-- `ZN Windows Clean Install` run `33193710872`: success.
-- Documentation closeout head `4b770345e1267db1cfdc37c9551ff967d6955c27`; CI run `33195494937`: success.
-- PR #13 canonical post-merge CI run `33196441295`: success.
+- PR #19 added the first mutation-capable restore slice for Windows: exact retained Work bytes may be restored only when the target is freshly/stably missing, through explicit `work_restore_prepare` then `work_restore_approve`.
+- Existing parent identity is bound and revalidated; same-directory staging plus a no-replace namespace move ensures a target that reappears wins the race and is never overwritten.
+- Application state is durable (`approval_required`, `applying`, `stage_ready`, `commit_started`, `completed`, `recovery_required`, `blocked`). Restart reconciliation observes reality but never silently resumes a mutation.
+- PR #21 keeps full restore context behind exact Work-thread binding.
+- PR #22 wired the bounded flow into the desktop with two explicit user actions: Prepare, then Approve exact restore. Unsafe/changed/unchanged targets stay inspection-only.
+- PR #23 proved a prepared approval can be rediscovered after resident restart while still requiring a new explicit approval action.
+- PRs #25/#26 closed desktop protocol and proposal-contract regressions.
+- This is a narrow missing-target/no-replace product slice, not general destructive restore authority.
 
-These prove completed capability; they do not dictate the next product task.
+### Managed browser + Work
 
-## Task Queue
+- PR #28 packages Playwright + Chromium inside the formal versioned Windows ZN runtime and verifies packaged Chromium can launch.
+- PR #29 makes the formal resident expose bounded managed-browser RPC.
+- PR #30 fixes Playwright thread affinity by owning all browser provider calls on one resident browser thread, including reconnecting TCP clients.
+- PR #31 makes browser owner shutdown atomic against late calls.
+- PR #32 wires structured `browser_navigate` into the real Work lifecycle. Permission is derived from the structured target URL; free text/model output is not browser authority.
+- Navigation is treated as a non-replayable outside-world side effect. ZN durably records the attempt and blocks blind replay when certainty is lost.
+- Provider success is not Work completion. ZN persists a `browser_url_equals` postcondition, independently re-observes the live page, closes the session, and only then finalizes Work.
+- PR #33 composes browser behavior on the mature Body stack so atomic-overwrite, namespace-recovery, keyboard/pointer and generic side-effect protocols remain intact.
+- PR #34 puts browser Work under the dedicated Work Recovery lane.
+- PR #35 fixes the MRO regression exposed by that lane: non-browser verification now delegates via instance `super()` instead of bypassing the mature verification chain.
+- Browser click/type/select/upload/download are intentionally not exposed through Work yet; they need stronger authority/replay/postcondition design.
 
-| Priority | Status | Task | Completion condition |
-| --- | --- | --- | --- |
-| P1 | in_progress | Finish PR #14 with product-first autonomy + product judgment | Review exact PR diff and check requirements/current CI state |
-| P1 | planned | Merge PR #14 to `dev/zn-agent` through normal traceable flow | No safety-boundary regression; repository merge/check requirements satisfied |
-| P1 | planned | Keep `main` reasonably current through normal CI/PR flow | Background engineering hygiene, not a separate product phase |
-| P1 | planned | Resume autonomous ZN development | Re-read product contract/status/active code, actively diagnose gaps, then choose highest-value safe vertical closure |
+## Verification evidence
 
-## Known gaps to reassess, not a fixed roadmap
+Completed exact-head evidence already available:
 
-- installed-N continuity baseline and later N -> N+1 continuity;
-- failed-update rollback;
-- Windows login/reboot autostart on persistent installed state;
-- signing/release-trust/formal publication readiness;
-- remaining P5 restore/recovery capabilities;
-- any higher-priority correctness, security, reliability, active-caller wiring or user-facing blocker found in active code.
+- `ZN Managed Browser E2E` run `33219726246` on implementation head `1f4da5fae6d6481375290637027fa273714bb032`: success, including real Chromium Work navigation.
+- `ZN Managed Browser E2E` run `33220567118` on PR #35 merge head `5c347925490179748e44e35c43b0435ede9e1f14`: success; browser contract tests and real local Chromium E2E both succeeded.
+- Prior packaged-runtime clean-install proof `33216509252`: success, including packaged Chromium launch and installed resident start.
 
-`docs/ZN-IMPLEMENTATION-STATUS.md` no longer declares installed-N baseline as the mandatory next slice. It records it as one useful candidate and explicitly requires re-ranking against current product reality.
+Validation still in flight at the time this reconciliation branch was created:
 
-## Verification state
+- `ZN Work Recovery E2E` run `33220567184`, exact merge head `5c347925...`: full recovery verification running. This is the hard gate for the 19-test MRO regression exposed by PR #34.
+- `ZN CI` run `33220567183`, exact merge head: Electron/TypeScript and Source Boundary are green; Kernel/Python full suite is still running.
+- `ZN Windows Clean Install` run `33220521263` on exact PR #35 code head `aec2dcf72d6a91878e69930c9c93dfa8d014e3f5` is still building the unsigned installer candidate.
 
-- Historical AGENTS versions and the promotion-rule regression commit were actually inspected through GitHub.
-- The user-provided Actions screenshot showed a successful `dev/zn-agent` ZN CI run for commit `9a72374`; it was not the later PR #14 head.
-- Earlier GitHub inspection reported PR #14 open and mergeable; re-check after these latest commits before merge.
-- No runtime/product code changed in this maintenance branch; changes are maintainer rules/status/HANDOFF.
-- Exact latest-head CI/check state still needs fresh inspection before merge; do not claim it green without GitHub evidence.
+Do not convert these in-flight statements to success without fresh Actions evidence.
 
-## Next action
+## Current risks / real gaps
 
-Inspect PR #14's final three-file diff and exact latest-head check state. If repository requirements are satisfied, merge normally into `dev/zn-agent`, reconcile branch state, and return attention to autonomous product development. The next maintainer should diagnose ZN's current product gaps rather than automatically continuing an inherited evidence slice.
+- `main` is materially behind verified development and should be synchronized after the above exact-head gates and status reconciliation.
+- Installed-N continuity evidence still does not bind stable Self identity/reference, Work/thread references, runtime/home/config identity, and sanitized provider-setting metadata into a baseline suitable for a later N -> N+1 comparison.
+- A real N -> N+1 installation replacement, failed-update rollback, signing/release trust and user-machine replacement remain explicit human-approval boundaries.
+- Real Windows login/reboot autostart on persistent installed state remains a product gap.
+- Managed browser mutation beyond navigation remains deliberately ungranted.
+
+## Next candidates after current gates
+
+1. Reconcile this HANDOFF/status ledger with the final exact-head CI results and normally merge it to `dev/zn-agent`.
+2. Promote the verified development stack to canonical `main` through a normal PR if merge/check requirements remain satisfied.
+3. Re-rank current product gaps. If no higher-severity defect appears, build a read-only installed-N continuity baseline in isolated Windows install state. It must capture enough non-secret resident evidence to detect identity/Work/config/provider continuity loss later without invoking the updater or replacing the installation.
+
+A later N -> N+1 transition is not authorized by this handoff.
