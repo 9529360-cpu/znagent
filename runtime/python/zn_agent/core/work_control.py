@@ -154,9 +154,28 @@ class ResidentWorkControl:
             message_limit=message_limit,
         )
 
+    def inspect_restore_points(
+        self,
+        thread_id: str,
+        *,
+        limit: int = 48,
+    ) -> list[dict[str, Any]]:
+        normalized_thread = self.ledger._normalize_thread_id(thread_id)
+        inspector = getattr(self.resident, "inspect_work_restore_points", None)
+        if not callable(inspector):
+            return []
+        points = inspector(normalized_thread, limit=limit)
+        if not isinstance(points, list):
+            raise RuntimeError("resident returned invalid Work restore-point inspection")
+        return points
+
     def get_snapshot(self, thread_id: str, *, message_limit: int = 120):
         self.reconcile_cancelled_runs(thread_id=thread_id)
-        return self.ledger.get_snapshot(thread_id, message_limit=message_limit)
+        thread, messages = self.ledger.get_snapshot(thread_id, message_limit=message_limit)
+        metadata = dict(thread.metadata)
+        metadata["restore_points"] = self.inspect_restore_points(thread.thread_id)
+        thread.metadata = metadata
+        return thread, messages
 
     def start(self, thread_id: str, task: str, **kwargs):
         self.reconcile_cancelled_runs(thread_id=thread_id)
