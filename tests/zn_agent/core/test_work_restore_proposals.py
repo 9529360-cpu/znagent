@@ -83,7 +83,11 @@ class WorkRestoreProposalTests(unittest.TestCase):
                 self.assertEqual(point["event_id"], event_id)
                 self.assertEqual(point["current_status"], "unchanged")
                 self.assertEqual(proposal["kind"], "restore_exact_file")
-                self.assertEqual(proposal["status"], "candidate")
+                self.assertEqual(proposal["status"], "blocked")
+                self.assertEqual(
+                    proposal["reason"],
+                    "current_target_already_matches_retained_prestate",
+                )
                 self.assertTrue(proposal["destructive"])
                 self.assertTrue(proposal["requires_user_approval"])
                 self.assertTrue(proposal["requires_fresh_revalidation"])
@@ -172,6 +176,34 @@ class WorkRestoreProposalTests(unittest.TestCase):
                     )
                     conn.commit()
                 with self.assertRaisesRegex(RuntimeError, "conflicts with its Work ownership"):
+                    control.get_snapshot(thread_id)
+                self.assertEqual(target.read_text(encoding="utf-8"), "old state")
+            finally:
+                resident.store.close()
+
+    def test_restore_proposal_rejects_forged_resident_event_ownership(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "document.txt"
+            target.write_text("old state", encoding="utf-8")
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=root / "kernel.db"
+            )
+            ledger = RecoveryBoundedWorkLedger(resident)
+            thread_id, event_id = self._capture_restore_point(resident, ledger, target)
+            control = ResidentWorkControl(ledger)
+            try:
+                event = resident.store.get_event(event_id)
+                self.assertIsNotNone(event)
+                assert event is not None
+                event.payload = dict(event.payload)
+                event.payload["work_message_id"] = "forged-event-message"
+                resident.store._save_event(event)
+
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "conflicts with its resident event ownership",
+                ):
                     control.get_snapshot(thread_id)
                 self.assertEqual(target.read_text(encoding="utf-8"), "old state")
             finally:
