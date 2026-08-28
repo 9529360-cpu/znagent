@@ -27,7 +27,6 @@ class ContinuitySnapshotService:
             self.work.list_threads(limit=self.WORK_REFERENCE_LIMIT),
             key=lambda item: item.thread_id,
         )
-        thread_count = self.work.count_threads()
         provider = self._provider_snapshot(self.provider_settings.snapshot())
         return {
             "schema_version": self.SCHEMA_VERSION,
@@ -49,9 +48,12 @@ class ContinuitySnapshotService:
                 ),
             },
             "work": {
-                "thread_count": thread_count,
+                "reference_count": len(threads),
                 "reference_limit": self.WORK_REFERENCE_LIMIT,
-                "references_truncated": thread_count > len(threads),
+                # list_threads is deliberately bounded. Equality means callers
+                # must treat the reference set as potentially incomplete rather
+                # than claiming a false exact total.
+                "references_may_be_truncated": len(threads) >= self.WORK_REFERENCE_LIMIT,
                 "threads": [
                     {
                         "id": str(thread.thread_id),
