@@ -3,10 +3,27 @@ from __future__ import annotations
 """Reality-gated crash recovery for exact overwrite text mutations."""
 
 from dataclasses import asdict
+from typing import Any
 
 from .action import NativeActionIntent
 from .durable_body_accounting_resident import DurableBodyAccountingResidentRuntime
 from .models import ExecutionPath, ResidentRunResult
+from .side_effect_body import SideEffectAwareBody
+
+
+class OverwriteAwareBody(SideEffectAwareBody):
+    """Active-product Body guard that adds exact overwrite dispatch ownership.
+
+    The shared ``SideEffectAwareBody`` keeps its historical command + append
+    contract for existing callers. ZN's active resident layers overwrite
+    protection on top without silently broadening that reusable base contract.
+    """
+
+    @classmethod
+    def _requires_guard(cls, kind: str, args: dict[str, Any]) -> bool:
+        if kind in {"write_text", "write_file"}:
+            return True
+        return super()._requires_guard(kind, args)
 
 
 class OverwriteRecoveryResidentRuntime(DurableBodyAccountingResidentRuntime):
@@ -27,6 +44,10 @@ class OverwriteRecoveryResidentRuntime(DurableBodyAccountingResidentRuntime):
     pre-dispatch identity. A stale intent is never unconditional overwrite
     authority.
     """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.body = OverwriteAwareBody(resident=self)
 
     @staticmethod
     def _generic_guarded_side_effect(intent: NativeActionIntent) -> bool:
