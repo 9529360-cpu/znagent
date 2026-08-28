@@ -4,17 +4,17 @@ This is the current engineering work site and fact index, not a chat summary or 
 
 ## Current goal
 
-Close the managed-browser + bounded Work-restore stage cleanly, keep canonical `main` reasonably current after verification, and advance the next product gap: a read-only installed-N continuity baseline. The baseline is safe preparation for later continuity testing; an actual N -> N+1 replacement remains approval-gated.
+The managed-browser + bounded Work-restore stage is now exact-head verified. Reconcile that fact into `dev/zn-agent`, keep canonical `main` reasonably current, and continue the next product gap: a read-only installed-N continuity baseline. The baseline is safe preparation for later continuity testing; an actual N -> N+1 replacement remains approval-gated.
 
 ## Repository state
 
 - Repository: `9529360-cpu/znagent`
 - Canonical/release branch: `main`
 - Primary development branch: `dev/zn-agent`
-- Current verified-development head entering this reconciliation: `5c347925490179748e44e35c43b0435ede9e1f14` (PR #35 merge).
+- Verified product head for the browser/recovery stage: `5c347925490179748e44e35c43b0435ede9e1f14` (PR #35 merge).
 - Reconciliation branch: `work/browser-stage-reconcile` / PR #36.
 - Installed-N continuity work is isolated on `work/installed-n-continuity-baseline` / PR #37 until its own Windows evidence is green.
-- `main` is still at `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`; at the PR #35 merge head, `dev/zn-agent` was 103 commits ahead and 0 behind. Do not treat this divergence as a roadmap item; sync normally after exact-head validation and ledger reconciliation.
+- `main` is still at `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`; at the PR #35 merge head, `dev/zn-agent` was 103 commits ahead and 0 behind. Do not treat this divergence as a roadmap item; sync normally after ledger reconciliation.
 
 ## Product reality
 
@@ -52,27 +52,27 @@ Completed exact-head evidence:
 - `ZN Managed Browser E2E` run `33219726246` on implementation head `1f4da5fae6d6481375290637027fa273714bb032`: success, including real Chromium Work navigation.
 - `ZN Managed Browser E2E` run `33220567118` on PR #35 merge head `5c347925490179748e44e35c43b0435ede9e1f14`: success; browser contract tests and real local Chromium E2E both succeeded.
 - `ZN Work Recovery E2E` run `33220567184` on the same PR #35 merge head: success; the full recovery lane passed after the MRO fix, so the 19 mature non-browser recovery regressions exposed by PR #34 are resolved in actual CI.
+- `ZN CI` run `33220567183` on the same PR #35 merge head: success across Electron/TypeScript, Kernel/Python, Source Boundary and final status publication. The Python job completed the full working-tree core suite successfully after zero-model boot and resident-core compilation.
 - Prior packaged-runtime clean-install proof `33216509252`: success, including packaged Chromium launch and installed resident start.
 
-Still in flight at the latest check:
+Other evidence still in flight at the latest check:
 
-- `ZN CI` run `33220567183`, exact PR #35 merge head: Electron/TypeScript and Source Boundary are green; Kernel/Python full suite is still running.
-- `ZN Windows Clean Install` run `33220521263` on exact PR #35 code head `aec2dcf72d6a91878e69930c9c93dfa8d014e3f5` is still building the unsigned installer candidate.
-- PR #37 has its own latest Windows clean-install evidence run on the continuity-baseline head; do not claim the installed baseline product path is verified until that exact-head run succeeds.
+- `ZN Windows Clean Install` run `33220521263` on exact PR #35 code head `aec2dcf72d6a91878e69930c9c93dfa8d014e3f5` was still building the unsigned installer candidate. It is supplementary to the exact merge-head browser/recovery/general-CI gates above.
+- PR #37 has its own Windows clean-install evidence run on the continuity-baseline head; do not claim the installed baseline product path is verified until that exact-head run succeeds through installed resident startup, `continuity_snapshot`, evidence persistence and graceful shutdown.
 
 Do not convert in-flight statements to success without fresh Actions evidence.
 
 ## Current risks / real gaps
 
-- `main` is materially behind verified development and should be synchronized after the remaining exact-head general CI gate and status reconciliation.
-- The installed-N continuity baseline is now being implemented, but it is not product-verified until a real installed resident emits the sanitized artifact in Windows clean-install CI.
+- `main` is materially behind verified development and should now be synchronized after PR #36 lands.
+- The installed-N continuity baseline is implemented on PR #37, but it is not product-verified until a real installed resident emits the sanitized artifact in Windows clean-install CI.
 - A real N -> N+1 installation replacement, failed-update rollback, signing/release trust and user-machine replacement remain explicit human-approval boundaries.
 - Real Windows login/reboot autostart on persistent installed state remains a product gap.
 - Managed browser mutation beyond navigation remains deliberately ungranted.
 
-## Next candidates after current gates
+## Next candidates
 
-1. Finish PR #36 once exact-head general CI truth is final, then normally merge the ledger reconciliation to `dev/zn-agent`.
+1. Merge PR #36 to reconcile the verified browser/recovery stage into `dev/zn-agent`.
 2. Promote the verified development stack to canonical `main` through a normal PR if merge/check requirements remain satisfied.
 3. Finish PR #37 by proving a real installed ZN emits a bounded, non-secret continuity baseline containing stable Self identity/reference, Work/thread references and sanitized provider metadata without invoking updater/replacement authority.
 4. Re-rank product gaps after that evidence. An actual N -> N+1 transition remains separately approval-gated.
