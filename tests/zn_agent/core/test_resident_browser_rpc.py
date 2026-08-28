@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -22,8 +23,13 @@ class _FakeManagedBrowser:
         self.sessions: dict[str, BrowserPermissionContext] = {}
         self.closed: set[str] = set()
         self.last_action = None
+        self.call_threads: list[int] = []
+
+    def _record_thread(self) -> None:
+        self.call_threads.append(threading.get_ident())
 
     def open_session(self, *, permission=None, headless=True):
+        self._record_thread()
         assert headless is True
         policy = permission or BrowserPermissionContext()
         session = BrowserSessionIdentity.create(
@@ -35,6 +41,7 @@ class _FakeManagedBrowser:
         return session
 
     def observe(self, session_id: str, *, page_id: str = ""):
+        self._record_thread()
         if session_id not in self.sessions or session_id in self.closed:
             raise ValueError("unknown fake session")
         session = BrowserSessionIdentity(
@@ -53,6 +60,7 @@ class _FakeManagedBrowser:
         )
 
     def act(self, action, authority: BrowserActionAuthority):
+        self._record_thread()
         observation = BrowserObservation(
             session=BrowserSessionIdentity(
                 session_id=action.session_id,
@@ -66,11 +74,7 @@ class _FakeManagedBrowser:
             title="",
             load_state="complete",
         )
-        authority.validate_current(
-            action,
-            observation,
-            self.sessions[action.session_id],
-        )
+        authority.validate_current(action, observation, self.sessions[action.session_id])
         self.last_action = action
         return BrowserEffectEvidence(
             action_id=action.action_id,
@@ -84,9 +88,11 @@ class _FakeManagedBrowser:
         )
 
     def close_session(self, session_id: str) -> None:
+        self._record_thread()
         self.closed.add(session_id)
 
     def close(self) -> None:
+        self._record_thread()
         self.closed.update(self.sessions)
 
 
@@ -100,13 +106,18 @@ class ResidentBrowserRpcTests(unittest.TestCase):
         resident.managed_browser = browser
         return BrowserResidentRpcServer(resident=resident), browser
 
+    @staticmethod
+    def _close(server: BrowserResidentRpcServer) -> None:
+        try:
+            server.resident.managed_browser.close()
+        finally:
+            server.resident.store.close()
+
     def test_browser_rpc_defaults_to_observation_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             server, browser = self._server(Path(tmp))
             try:
-                opened = server.handle(
-                    {"id": "open", "method": "browser_open", "params": {}}
-                )
+                opened = server.handle({"id": "open", "method": "browser_open", "params": {}})
                 self.assertTrue(opened["ok"])
                 session_id = opened["result"]["session_id"]
                 observed = server.handle(
@@ -122,17 +133,15 @@ class ResidentBrowserRpcTests(unittest.TestCase):
                         {
                             "id": "navigate",
                             "method": "browser_navigate",
-                            "params": {
-                                "session_id": session_id,
-                                "url": "https://example.com/",
-                            },
+                            "params": {"session_id": session_id, "url": "https://example.com/"},
                         }
                     )
                 self.assertIsNone(browser.last_action)
             finally:
-                server.resident.store.close()
+                self._close(server)
+            self.assertEqual(len(set(browser.call_threads)), 1)
 
-    def test_browser_rpc_navigation_uses_fresh_resident_authority_and_effect_evidence(self) -> None:
+    def test_browser_rpc_navigation_and_cleanup_stay_on_one_resident_owner_thread(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             server, browser = self._server(Path(tmp))
             try:
@@ -182,11 +191,12 @@ class ResidentBrowserRpcTests(unittest.TestCase):
                             "params": {"session_id": session_id},
                         }
                     )
-
                 ping = server.handle({"id": "ping", "method": "ping", "params": {}})
                 self.assertTrue(ping["result"]["alive"])
             finally:
-                server.resident.store.close()
+                self._close(server)
+            self.assertGreaterEqual(len(browser.call_threads), 5)
+            self.assertEqual(len(set(browser.call_threads)), 1)
 
 
 if __name__ == "__main__":
