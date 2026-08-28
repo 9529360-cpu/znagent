@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -50,7 +51,7 @@ class WorkRestorePointRetentionTests(unittest.TestCase):
                 data={"native_action_intent": intent.to_dict()},
             )
             resident.store.save_working_state(state)
-            with sqlite3.connect(store_path) as conn:
+            with closing(sqlite3.connect(store_path)) as conn:
                 conn.execute(
                     """
                     INSERT INTO work_restore_points(
@@ -95,7 +96,7 @@ class WorkRestorePointRetentionTests(unittest.TestCase):
                     target.read_text(encoding="utf-8"),
                     "old current value",
                 )
-                with sqlite3.connect(store_path) as conn:
+                with closing(sqlite3.connect(store_path)) as conn:
                     rows = conn.execute(
                         "SELECT restore_point_id FROM work_restore_points ORDER BY restore_point_id"
                     ).fetchall()
