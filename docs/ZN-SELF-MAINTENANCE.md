@@ -130,7 +130,11 @@ working_branch: dev/zn-agent
 canonical_branch: main
 ```
 
-M10 canonical promotion 已完成。`main` 不再是“未来目标”，而是 canonical source/release branch；普通开发和自动修复仍必须先在 `dev/zn-agent` 或隔离 work branch 验证，不能直接在 `main` 试错。
+M10 canonical promotion 已完成。`main` 不再是“未来目标”，而是 canonical source/release branch；`dev/zn-agent` 是固定主开发分支。普通开发和自动修复仍必须先在 `dev/zn-agent` 或隔离 work branch 验证，不能直接在 `main` 试错。
+
+但是 `main` 也不能因为“不能直接开发”而永久冻结。低风险 coherent maintenance/development stage 在实现完整、相关测试及 full CI/必要 E2E 通过、diff 已审查、状态文档/HANDOFF 已对账、无未解决 blocker 且没有触及人工审批边界时，可按正常可追踪 PR / merge / promotion flow 进入 canonical source，不需要额外依赖某段聊天再次授权同一项正常 promotion。
+
+高风险边界仍必须人工批准，包括身份、长期记忆、破坏性数据迁移、凭证/权限、updater/rollback/signing、release trust root、自维护审批规则，以及替换用户当前正式安装版本。
 
 源码仓库连接信息属于配置。Token/密钥必须进入安全凭证存储，不能写入普通日志、记忆、提交或 HANDOFF。
 
@@ -239,7 +243,7 @@ work/self-maintenance-<issue-id>-<short-name>
 
 不能为了通过而删除有效测试、降低断言或关闭保护机制，除非证明测试本身错误并记录理由。
 
-### 5.7 提交、PR、CI
+### 5.7 提交、PR、CI 与 promotion
 
 ```text
 review diff
@@ -249,21 +253,25 @@ review diff
 → create/update PR or follow repository promotion flow
 → CI
 → 读取真实结果
+→ 同步状态文档/HANDOFF
+→ 满足 promotion gate 后进入 canonical source
 ```
 
-CI 失败必须重新进入调查；“已 push”不等于完成。
+CI 失败必须重新进入调查；“已 push”不等于完成。满足低风险 promotion gate 后，也不应因为维护者等待聊天口令而无限期让 canonical source 停滞。
 
 ## 6. 合并与审批策略
 
 风险不是由模型自我声明决定，而由受影响的产品边界决定。
 
-可逐步自动化的低风险示例：
+可逐步自动化、并可在仓库 gate 满足后正常 promotion 的低风险示例：
 
 - 文档；
 - 非关键 UI；
 - 明确小范围 bug；
 - 测试补强；
 - 不改变权限/身份/更新语义的内部重构。
+
+低风险不等于“无需验证”。至少仍需与改动匹配的真实测试/CI、diff 审查、状态对账和正常可追踪 Git/PR 历史。
 
 默认保留人工批准的高风险区域：
 
@@ -275,9 +283,10 @@ CI 失败必须重新进入调查；“已 push”不等于完成。
 - release trust root；
 - self-maintenance approval rules；
 - 自动批准自己；
-- 删除唯一可回退版本。
+- 删除唯一可回退版本；
+- 替换用户当前正在使用的正式安装版本。
 
-即使未来允许更多自动合并，也必须在分支保护、CI 和可回退版本基础上进行。
+即使未来允许更多自动合并，也必须在分支保护、CI 和可回退版本基础上进行。任何 force push、历史重写、绕过失败 CI、关闭保护机制的“promotion”都不属于正常 promotion flow。
 
 ## 7. 发布与更新
 
