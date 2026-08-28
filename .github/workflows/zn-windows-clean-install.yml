@@ -128,7 +128,16 @@ jobs:
           $znHome = Join-Path $env:RUNNER_TEMP 'zn-clean-install-home'
           Remove-Item -Recurse -Force $installDir,$znHome -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path $znHome | Out-Null
-          $process = Start-Process -FilePath $installer -ArgumentList '/S', "/D=$installDir" -Wait -PassThru
+          $process = Start-Process -FilePath $installer -ArgumentList '/S', "/D=$installDir" -PassThru
+          $deadline = (Get-Date).AddMinutes(3)
+          while (-not $process.HasExited -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 1
+            $process.Refresh()
+          }
+          if (-not $process.HasExited) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            throw 'ZN NSIS installer did not exit within 3 minutes'
+          }
           if ($process.ExitCode -ne 0) { throw "ZN NSIS installer failed with exit code $($process.ExitCode)" }
           $installedExe = Join-Path $installDir 'ZN.exe'
           if (-not (Test-Path -LiteralPath $installedExe -PathType Leaf)) {
