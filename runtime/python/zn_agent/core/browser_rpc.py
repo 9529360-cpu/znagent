@@ -23,6 +23,8 @@ from .browser import (
 from .daemon import ResidentRpcServer
 
 _T = TypeVar("_T")
+_FORMAL_RESIDENT_SURFACE = "zn-formal-resident"
+_FORMAL_RESIDENT_SURFACE_SCHEMA = 1
 
 
 def _jsonable(value: Any) -> Any:
@@ -71,10 +73,6 @@ class _BrowserOwner:
         with self._state_lock:
             if self._closed:
                 return
-            # Closing is a lifecycle boundary: reject every new browser call
-            # before provider cleanup is enqueued. Otherwise a reconnect can
-            # slip an operation behind close and reach an already-closed
-            # Playwright instance.
             self._closed = True
             future: Future[Any] = Future()
             self._queue.put((operation, future))
@@ -153,6 +151,18 @@ class BrowserResidentRpcServer(ResidentRpcServer):
 
     def handle(self, request: dict[str, Any]) -> dict[str, Any]:
         method = str(request.get("method") or "").strip()
+        if method == "status":
+            response = super().handle(request)
+            result = response.get("result")
+            if isinstance(result, dict):
+                response["result"] = {
+                    **result,
+                    "resident_surface": {
+                        "name": _FORMAL_RESIDENT_SURFACE,
+                        "schema": _FORMAL_RESIDENT_SURFACE_SCHEMA,
+                    },
+                }
+            return response
         if not method.startswith("browser_"):
             return super().handle(request)
 
