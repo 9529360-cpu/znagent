@@ -19,6 +19,7 @@ test('Work restore points expose only explicit missing-target no-replace applica
   const workbench = read('src/zn/workbench.tsx')
   const preload = read('electron/zn-preload.ts')
   const ipc = read('electron/zn-resident-ipc.ts')
+  const protocol = read('electron/zn-resident-process.ts')
 
   assert.match(state, /ZnRestorePointCurrentStatus/)
   assert.match(state, /ZnRestoreProposalStatus/)
@@ -48,6 +49,9 @@ test('Work restore points expose only explicit missing-target no-replace applica
   assert.match(ipc, /if \(!threadId\) throw new Error\('threadId is required'\)/)
   assert.match(ipc, /work_restore_prepare/)
   assert.match(ipc, /work_restore_approve/)
+  assert.match(protocol, /\| 'work_restore_prepare'/)
+  assert.match(protocol, /\| 'work_restore_approve'/)
+  assert.match(protocol, /\| 'work_restore_application'/)
 
   assert.match(workbench, /Restore points/)
   assert.match(workbench, /ZnMissingRestoreControls/)
