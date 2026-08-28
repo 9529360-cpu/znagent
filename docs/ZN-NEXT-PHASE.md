@@ -1,14 +1,12 @@
-# ZN next phase — Self + mature execution + resident competence
+# ZN next phase — Self + mature execution + Windows-first release continuity
 
-> Date: 2026-08-23
+> Updated: 2026-08-28
 >
-> Active branch: `dev/zn-agent`
+> Active development branch: `dev/zn-agent`
+>
+> Canonical source/release branch: `main`
 >
 > Governing architecture: [`../ZN.md`](../ZN.md)
->
-> Memory/learning architecture: [`ZN-MEMORY-LEARNING.md`](ZN-MEMORY-LEARNING.md)
->
-> Resident intelligence contract: [`ZN-RESIDENT-INTELLIGENCE.md`](ZN-RESIDENT-INTELLIGENCE.md)
 >
 > Current facts: [`ZN-IMPLEMENTATION-STATUS.md`](ZN-IMPLEMENTATION-STATUS.md)
 >
@@ -16,238 +14,158 @@
 
 ## 1. Product target
 
-The organism-first architecture remains the governing design.
+The organism-first architecture remains governing:
 
-> **ZN must keep its own durable Self, finish complex real-world/computer work through reality-based execution, and gradually turn verified experience into resident-owned competence that remains useful when external models are gone.**
+> **ZN keeps its own durable Self, acts through ZN-owned Body/Senses, verifies reality, learns from verified experience, and uses external models only as replaceable cognitive resources.**
 
 ```text
-durable ZN Self
-+ mature task-execution depth
-+ reality-based verification
-+ resident-owned built-in competence
-+ resident-owned learned competence
-+ replaceable cognition for novelty
-= the ZN we are building
+durable Self
++ reality-based execution
++ resident-owned competence
++ verified learning
++ replaceable external cognition
+= ZN
 ```
 
-Persistent identity without practical competence is insufficient. Impressive model/tool execution without resident ownership is also insufficient.
+The first formal desktop release target is **Windows x64**. Linux and macOS are deferred and do not block the first-release lane unless `ZN.md` is deliberately changed again.
 
 ## 2. Core invariants
 
 1. The same resident Self owns work before, during and after model calls.
-2. Work continuity lives in ZN-owned durable state, not in a model context window.
-3. Investigation advances from current evidence, not from a giant static LLM plan.
-4. Body actions are movements of ZN, not tools owned by an external planner.
-5. Action success is not task success; completion requires observed reality evidence.
-6. Failure becomes new evidence and must not create uncontrolled retry loops.
-7. Past memory/schema/skill is prediction/support, never proof over current reality.
-8. External models may suggest hypotheses, procedures or code; ZN must test them.
-9. A model response alone cannot create mature resident skill.
-10. Mature competence should survive provider replacement and full model removal.
-11. Prediction error must interrupt stale automatic behavior and return control to Thought/Investigation.
-12. Familiarity never bypasses safety or authorization boundaries.
-13. Mature low-level engineering/computer-use knowledge should crystallize into ZN-owned mechanisms rather than remain recurring prompt instructions.
-14. Repeated familiar work should require less redundant deliberation/model use while preserving current-state checks and independent verification.
-15. No new capability may introduce another product/agent framework as ZN's runtime or control plane.
-16. The active repository must remain source-independent and ZN-only.
+2. Work continuity lives in ZN-owned durable state, not a model context window.
+3. Body action success is not task success; completion requires fresh reality evidence.
+4. Model output is candidate cognition, never automatic fact/authority/completion proof.
+5. Familiarity and learned competence never bypass current evidence or authorization.
+6. Prediction error interrupts stale automatic behavior and returns control to Investigation.
+7. Mature recurring mechanics should crystallize into ZN-owned mechanisms/tests.
+8. Providers/frameworks remain replaceable and may not become ZN's control plane.
+9. The active repository remains ZN-only.
+10. Formal product continuity must survive runtime/version replacement without redefining ZN identity.
 
-## 3. Current verified foundation
+## 3. Verified foundation
 
-The current repository already has substantial foundations:
+Current repository evidence already supports:
 
 - persistent resident life and identity;
 - meaningful zero-model operation;
 - Situation / Thought / Will;
 - durable events and WorkingState;
-- multi-pulse native Investigation;
-- native Action intents and Body movement;
-- bounded external cognition through ZN-owned resources;
-- persistent nervous traces, associations and schema formation;
-- fading/pruning and reality-gated reconsolidation;
-- structured Git repository and scoped diff senses;
-- exact text and explicit command postcondition verification;
-- compact durable execution context;
-- evidence-bound failed-action history;
-- current-reality-gated alternative choices;
-- independently verified experience records;
-- candidate procedural tendencies and bounded procedural influence;
-- tracked exact-replacement repository-delta verification;
-- targeted Python unittest verification and a narrow resident-owned test-identity formation contract;
-- ZN-owned local filesystem/process/terminal/PTTY/web/channel paths;
-- independent ZN runtime/package/desktop/build/release ownership;
-- physical core source under `runtime/python/zn_agent/core` and tests under `tests/zn_agent/core`.
+- native Investigation / Action / verification loops;
+- ZN-owned filesystem/process/terminal/web/channel paths;
+- persistent nervous traces and bounded procedural learning;
+- restart-safe bounded Work overwrite recovery;
+- Work-owned exact-file restore-point retention;
+- read-only restore-point inspection and non-mutating restore proposals;
+- ZN-owned Python runtime/package/desktop/build/release boundaries;
+- physically ZN-only active source tree;
+- canonical `main` promotion flow with real Windows CI;
+- clean GitHub-hosted Windows x64 unsigned NSIS/MSI candidate packaging, packaged-runtime verification and zero-model boot.
 
-These are real foundations. They do not yet prove mature general procedural memory, mature general computer-use competence, or the broader resident-intelligence contract.
+These foundations do not prove general intelligence, general rollback, installed-version continuity or formal release trust.
 
-## 4. Repository-boundary work is no longer the main lane
+## 4. Immediate engineering sequence
 
-Physical reference-source evacuation is complete on `dev/zn-agent`. Do not continue treating migration cleanup as the product roadmap.
+### P0 — Protect ZN-only ownership
 
-Steady-state rule:
+Keep source-boundary, package/runtime ownership and zero-model boot evidence green. Never restore a foreign product/control plane to satisfy a build or test.
 
-```text
-need mature mechanism
-→ inspect Git history or external reference
-→ understand it
-→ adapt behind ZN ownership
-→ test current ZN behavior
-→ keep the active tree source-independent
-```
+### P1 — Resident-owned verification and competence
 
-The main engineering lane can therefore return to resident competence and release continuity.
+Continue broadening deterministic evidence contracts where the repository/current world can prove them. Do not guess arbitrary execution authority from filenames, model text or prior success.
 
-## 5. Immediate implementation sequence
+### P2 — Recovery into learned competence
 
-### P0 — Protect the ZN-only boundary
-
-Keep normal CI, ownership tests and package/runtime verifiers green. A regression that restores a foreign product path/control plane is an architecture defect, not a compatibility requirement.
-
-### P1 — Broaden resident-owned engineering verification carefully
-
-The existing exact-replacement + repository-delta + Python unittest contract is intentionally narrow.
-
-Next work should search for repo-owned structured verifier mappings that current evidence can prove, for example configuration/manifest/CI relationships. Do not guess arbitrary commands from filenames or model suggestions.
-
-Required negatives before widening execution authority include:
-
-- ambiguous mapping;
-- stale config;
-- dirty verifier/config evidence;
-- cross-target identity;
-- symlink/path escape;
-- HEAD drift;
-- restart after execution-start marker;
-- output/exit-code success without current-world proof.
-
-### P2 — Turn verified recovery into broader competence
-
-Desired loop:
-
-```text
-movement A fails under evidence E
-→ A remains blocked under E
-→ Investigation establishes current reality
-→ resident forms/selects genuinely different movement B
-→ B executes through normal Body path
-→ B is independently verified
-→ E + failure(A) + verified success(B) becomes learning evidence
-```
-
-Similar future evidence may make B easier to activate, but learned memory must not become stored raw side-effect replay.
+Verified failure/recovery should become resident-owned experience without turning memory into blind side-effect replay.
 
 ### P3 — Skill maturity, inhibition and relearning
 
-Repeated verified use may mature a tendency. Repeated contradiction must weaken, narrow or inhibit it.
-
-Prediction error must be able to interrupt familiar execution and return control to Thought/Investigation.
+Repeated verified compatible experience may strengthen a tendency. Contradiction must weaken/inhibit it and trigger re-sensing/relearning.
 
 ### P4 — Browser/computer-use Body and Senses
 
-Establish a genuinely ZN-owned browser/visual/keyboard/mouse seam before adding computer-use competence.
+Advance managed-browser and user-browser-bridge capability behind ZN-owned target, permission, action and evidence semantics.
 
-The goal is not screenshot-by-screenshot model control forever. Repeated verified interaction should gradually create resident-owned structural familiarity and procedural competence.
+### P5 — M8 Windows-first release continuity
 
-### P5 — M8 release continuity
+The launch-gating sequence is now explicitly Windows x64:
 
-Close the remaining release lane deliberately:
+```text
+clean hosted Windows candidate build
+→ clean Windows install/start proof
+→ installed N state/identity/work baseline
+→ real installed N -> N+1 handoff
+→ post-update resident/body/state verification
+→ rollback proof across a real Windows version transition
+→ Windows signing/release-trust proof
+→ formal immutable release assets
+→ stable.json last
+```
 
-- installed N → N+1 application/runtime/resident handoff;
-- intended-platform clean-install/login continuity evidence;
-- rollback across a real version transition;
-- signing/notarization through secure repository-defined release infrastructure.
+Current completed narrow evidence:
 
-Do not let release debt quietly become “done” because package ownership is already strong.
+- clean GitHub-hosted Windows x64 builder;
+- portable ZN runtime staging;
+- zero-model runtime smoke;
+- Electron build;
+- unsigned NSIS + MSI build;
+- packaged-runtime verification and boot;
+- Windows manifest generation;
+- independent installer size/SHA-256 verification;
+- CI artifact retention.
+
+Still required before formal first release:
+
+- real clean Windows installation and first launch evidence;
+- real installed N -> N+1 continuity, including resident identity/state/work/config references;
+- safe rollback across a real Windows transition;
+- Windows signing and release trust through secure repository-defined infrastructure;
+- formal release artifact verification and immutable publication;
+- stable channel advancement only after immutable assets are verified.
+
+Linux/macOS packaging may remain useful optional evidence but is not a Windows first-release gate. macOS notarization is therefore not part of the first-release gate.
+
+Do not quietly reinterpret the current unsigned package proof as signing or release readiness.
 
 ### P6 — SM1+ self-maintenance
 
-Advance ZN's ability to detect, investigate and prepare its own fixes only behind the existing branch/PR/CI and human-approval boundaries.
+Advance detection/investigation/fix preparation behind branch/PR/CI and existing human-approval boundaries. First-stage ZN must not silently replace the user's installed formal body.
 
-## 6. Relationship to external models
+## 5. High-risk release boundary
 
-The desired maturity gradient is:
+Ordinary low-risk investigation, tests, candidate-build automation and source promotion may proceed through repository gates.
 
-```text
-young / unfamiliar ZN
-→ more Investigation, explicit Thought and optional external cognition
+Explicit human approval remains required for changes to or execution of high-risk areas such as:
 
-experienced ZN
-→ more resident recall and learned procedural tendency
+- updater/installed-version replacement;
+- rollback semantics;
+- signing keys/trust root/release trust;
+- credentials/permissions;
+- identity or long-term-memory destructive migration;
+- destructive restore/writeback;
+- self-maintenance approval rules.
 
-mature familiar competence
-→ lower-cost resident-owned execution
-→ external cognition reserved for genuine novelty / hard reasoning gaps
-```
+The current Windows candidate workflow intentionally does not cross those boundaries.
 
-A model can teach or help solve a new problem. The verified experience produced by ZN's own Body/Senses is what can become resident competence.
+## 6. Growth benchmark
 
-General mature systems knowledge should also be transferred into ZN-owned mechanisms when it is stable and testable. The project should not force every future ZN instance to rediscover known facts about files, browsers, process state, crash recovery, idempotency or verification through repeated prompting.
-
-## 7. Reference engineering benchmark
-
-A representative benchmark remains:
+A mature ZN should increasingly support:
 
 ```text
-Give ZN an unfamiliar repository and a real failing CI result:
-
-“Find why CI is failing, fix the defect, run the relevant validation,
-check the resulting diff/state, and report the evidence.”
+receive durable work
+→ same Self owns it
+→ investigate current reality
+→ act through owned Body
+→ verify real outcome
+→ preserve/reconcile state across restart/version change
+→ learn from verified experience
+→ use less external cognition for familiar compatible work
+→ interrupt itself when reality contradicts familiarity
 ```
 
-A mature resident should eventually be able to:
+Release continuity is part of this benchmark: replacing runtime/body must not mean replacing the subject.
 
-```text
-inspect repository/Git/CI
-→ identify an unknown
-→ inspect code/tests/logs
-→ form a hypothesis
-→ modify through its Body
-→ run a reality-proven verifier
-→ observe result
-→ verify diff/repository state
-→ revise tactic if contradicted
-→ learn from Situation/action/outcome
-→ repeat until the original goal is satisfied
-→ report concrete evidence
-```
+## 7. Next concrete release target
 
-Consulting an external model for genuine novelty is allowed, provided the model never owns identity, work continuity, action authority, truth or learned competence.
+After the current candidate-proof stage is fully documented and promoted, the next low-risk M8 target is **clean Windows install/start evidence** using isolated test state and no production update channel.
 
-## 8. Growth benchmarks
-
-For the same task family after verified practice, look for:
-
-- fewer external cognition calls when novelty decreases;
-- fewer explicit deliberative steps where appropriate;
-- lower latency and higher reliability;
-- verification quality preserved;
-- competence surviving resident restart;
-- competence surviving runtime replacement;
-- competence surviving provider replacement/all-model removal;
-- changed context preventing blind execution;
-- prediction error interrupting stale behavior;
-- repeated contradiction weakening stale competence;
-- repeated-task reliability improving rather than merely one-shot capability breadth increasing.
-
-Do not optimize model-call count at the expense of truth or safety.
-
-## 9. Phase success signal
-
-This phase is moving correctly when repository evidence increasingly supports:
-
-```text
-ZN receives durable work
-→ same Self owns it throughout
-→ investigates using owned senses
-→ acts through owned Body
-→ verifies reality
-→ stores verified experience rather than only text history
-→ repeated compatible experience changes future resident behavior
-→ familiar work needs less external cognition
-→ known low-level mechanics are handled by resident-owned competence rather than repeatedly rediscovered
-→ mature skill still works with external models removed
-→ stale skill is interrupted by prediction error
-→ new evidence causes relearning
-→ original task is truthfully completed and learned from
-```
-
-The objective is not a bigger prompt, vector database, planner or catalog of model-called tools. The objective is a persistent ZN subject that gets better because of what it has actually experienced and because mature applicable knowledge has been crystallized into its own Body/Senses/runtime rather than left outside as recurring advice.
+Real installed N -> N+1 application, rollback and signing/release-trust changes remain separate explicitly reviewed slices because they touch the high-risk update boundary.
