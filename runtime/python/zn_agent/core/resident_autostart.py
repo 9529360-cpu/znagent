@@ -33,7 +33,7 @@ def _resident_argv(home: Path, python_executable: str | Path | None = None) -> l
     return [
         str(python),
         "-m",
-        "zn_agent.core.resident_server",
+        "zn_agent.resident",
         "--home",
         str(_normalized_home(home)),
     ]
