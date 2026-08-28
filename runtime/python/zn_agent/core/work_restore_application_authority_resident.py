@@ -2,9 +2,17 @@ from __future__ import annotations
 
 """Authorization hardening for explicit Work restore application control."""
 
+import json
+import os
+from contextlib import closing
+from pathlib import Path
 from typing import Any
 
-from .work_restore_application_resident import WorkRestoreApplicationResidentRuntime
+from .file_identity import DEFAULT_MAX_HASH_BYTES, observe_file_identity
+from .work_restore_application_resident import (
+    _APPLICATION_TABLE,
+    WorkRestoreApplicationResidentRuntime,
+)
 
 
 class WorkRestoreApplicationAuthorityResidentRuntime(
@@ -32,6 +40,15 @@ class WorkRestoreApplicationAuthorityResidentRuntime(
             )
         )
 
+    @classmethod
+    def _safe_parent(cls, identity: dict[str, Any]) -> bool:
+        inode = identity.get("inode")
+        return bool(
+            type(inode) is int
+            and inode > 0
+            and WorkRestoreApplicationResidentRuntime._safe_parent(identity)
+        )
+
     @staticmethod
     def _application_public(row) -> dict[str, Any]:
         projected = WorkRestoreApplicationResidentRuntime._application_public(row)
@@ -41,6 +58,68 @@ class WorkRestoreApplicationAuthorityResidentRuntime(
         for key in ("restore_point_id", "thread_id", "event_id", "target_path"):
             projected.pop(key, None)
         return projected
+
+    def prepare_missing_work_restore(
+        self,
+        thread_id: str,
+        restore_point_id: str,
+    ) -> dict[str, Any]:
+        """Reuse one still-valid approval request instead of minting duplicates.
+
+        This is restart continuity, not mutation authority. The target must still
+        be freshly missing, Work ownership must still verify, and the exact parent
+        directory identity must match the durable approval context. An interrupted
+        application therefore remains discoverable by repeating the explicit
+        Prepare action after a desktop/resident restart, while approval remains a
+        separate user act.
+        """
+
+        if os.name != "nt":
+            return super().prepare_missing_work_restore(thread_id, restore_point_id)
+
+        row, _, _ = self._owned_restore_point(thread_id, restore_point_id)
+        normalized_thread = str(thread_id or "").strip()
+        normalized_point = str(restore_point_id or "").strip()
+        target = Path(str(row["target_path"]))
+        current = observe_file_identity(target, max_hash_bytes=DEFAULT_MAX_HASH_BYTES)
+        parent = self._observe_parent(target)
+        if not self._stable_missing(current) or not self._safe_parent(parent):
+            return super().prepare_missing_work_restore(thread_id, restore_point_id)
+
+        with closing(self._restore_connect()) as conn:
+            active = conn.execute(
+                f"""
+                SELECT * FROM {_APPLICATION_TABLE}
+                WHERE thread_id=? AND restore_point_id=?
+                  AND status IN ('approval_required','recovery_required')
+                ORDER BY updated_at DESC, created_at DESC
+                """,
+                (normalized_thread, normalized_point),
+            ).fetchall()
+
+        reusable = None
+        for application in active:
+            try:
+                expected_parent = json.loads(application["parent_identity_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                expected_parent = {}
+            if reusable is None and self._same_parent_identity(expected_parent, parent):
+                reusable = application
+                continue
+            self._set_application(
+                str(application["application_id"]),
+                status="blocked",
+                current_identity=current,
+                error=(
+                    "restore approval was superseded by a newer explicit preparation"
+                    if reusable is not None
+                    else "restore parent directory identity changed before renewed preparation"
+                ),
+            )
+
+        if reusable is not None:
+            return self.inspect_work_restore_application(str(reusable["application_id"]))
+        return super().prepare_missing_work_restore(thread_id, restore_point_id)
 
     def inspect_work_restore_application_for_thread(
         self,
