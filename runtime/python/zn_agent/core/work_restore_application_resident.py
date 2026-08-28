@@ -519,9 +519,16 @@ class WorkRestoreApplicationResidentRuntime(WorkRestorePointInspectionResidentRu
             )
             raise RuntimeError("Work restore application staging identity is inconsistent")
 
+        size_bytes = int(point["size_bytes"])
+        content_sha256 = str(point["content_sha256"])
         try:
             expected_parent = json.loads(str(app["parent_identity_json"] or "{}"))
         except json.JSONDecodeError as exc:
+            self._discard_exact_stage(
+                staging,
+                size_bytes=size_bytes,
+                content_sha256=content_sha256,
+            )
             self._set_application(
                 str(app["application_id"]),
                 status="blocked",
@@ -533,6 +540,11 @@ class WorkRestoreApplicationResidentRuntime(WorkRestorePointInspectionResidentRu
             self._safe_parent(parent)
             and self._same_parent_identity(expected_parent, parent)
         ):
+            self._discard_exact_stage(
+                staging,
+                size_bytes=size_bytes,
+                content_sha256=content_sha256,
+            )
             self._set_application(
                 str(app["application_id"]),
                 status="blocked",
@@ -540,10 +552,13 @@ class WorkRestoreApplicationResidentRuntime(WorkRestorePointInspectionResidentRu
             )
             raise RuntimeError("Work restore parent directory changed since preparation")
 
-        size_bytes = int(point["size_bytes"])
-        content_sha256 = str(point["content_sha256"])
         current = observe_file_identity(target, max_hash_bytes=DEFAULT_MAX_HASH_BYTES)
         if not self._stable_missing(current):
+            self._discard_exact_stage(
+                staging,
+                size_bytes=size_bytes,
+                content_sha256=content_sha256,
+            )
             self._set_application(
                 str(app["application_id"]),
                 status="blocked",
