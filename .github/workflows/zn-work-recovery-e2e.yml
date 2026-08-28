@@ -94,6 +94,7 @@ jobs:
       PYTHONUTF8: '1'
       PYTHONUNBUFFERED: '1'
       ZN_AGENT_HOME: ${{ github.workspace }}/.ci/work-recovery-home
+      UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/zn-uv-python
     steps:
       - name: Require Windows x64 headless CI runner
         run: |
