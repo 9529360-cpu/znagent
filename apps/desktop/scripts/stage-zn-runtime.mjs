@@ -10,6 +10,7 @@ const repoRoot = path.resolve(desktopRoot, '../..')
 const runtimeProject = path.join(repoRoot, 'runtime', 'python')
 const runtimeRoot = path.join(desktopRoot, 'build', 'zn-runtime')
 const pythonInstallDir = path.join(runtimeRoot, 'python')
+const browserInstallDir = path.join(runtimeRoot, 'playwright-browsers')
 const retiredPackageName = Buffer.from('6865726d65735f636c69', 'hex').toString('utf8')
 
 function run(command, args, options = {}) {
@@ -99,8 +100,20 @@ const pythonPath = findPortablePython(pythonInstallDir)
 removeWindowsPythonAliases(pythonInstallDir, pythonPath)
 const stagedPythonInstallArgs = ['--python', pythonPath, '--break-system-packages']
 
-console.log('[zn-runtime] installing ZN-owned Python distribution')
-run('uv', ['pip', 'install', ...stagedPythonInstallArgs, runtimeProject])
+console.log('[zn-runtime] installing ZN-owned Python distribution with managed-browser support')
+run('uv', ['pip', 'install', ...stagedPythonInstallArgs, `${runtimeProject}[browser]`])
+
+console.log('[zn-runtime] installing version-bound Playwright Chromium')
+fs.mkdirSync(browserInstallDir, { recursive: true })
+run(pythonPath, ['-m', 'playwright', 'install', 'chromium'], {
+  env: {
+    ...process.env,
+    PLAYWRIGHT_BROWSERS_PATH: browserInstallDir
+  }
+})
+if (fs.readdirSync(browserInstallDir).length === 0) {
+  throw new Error(`Playwright Chromium installation produced an empty browser root: ${browserInstallDir}`)
+}
 
 // Ask the staged interpreter where zn_agent was actually installed instead of
 // assuming a platform-specific site-packages layout. uv's portable Windows
@@ -161,7 +174,8 @@ const manifest = {
   arch: process.arch,
   python_version: pythonVersion,
   python: portableRelative(runtimeRoot, pythonPath),
-  backend_root: portableRelative(runtimeRoot, backendRoot)
+  backend_root: portableRelative(runtimeRoot, backendRoot),
+  browser_root: portableRelative(runtimeRoot, browserInstallDir)
 }
 fs.writeFileSync(path.join(runtimeRoot, 'runtime.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
 console.log(`[zn-runtime] staged ${runtimeId} at ${runtimeRoot}`)
