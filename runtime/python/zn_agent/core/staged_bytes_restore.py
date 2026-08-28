@@ -46,6 +46,20 @@ def _move_new_windows(staging: Path, target: Path) -> None:
     )
 
 
+def commit_staged_bytes_to_missing_target_windows(staging: Path, target: Path) -> None:
+    """Commit one already-verified retained stage without replacing a target."""
+
+    if os.name != "nt":
+        raise RuntimeError("exact-byte Work restore currently requires Windows")
+    staging = Path(staging)
+    target = Path(target)
+    if not os.path.lexists(str(staging)):
+        raise FileNotFoundError(f"restore staging artifact is missing: {staging}")
+    if os.path.lexists(str(target)):
+        raise FileExistsError(f"restore target is no longer missing: {target}")
+    _move_new_windows(staging, target)
+
+
 def restore_bytes_to_missing_target_windows(
     target: Path,
     content: bytes,
@@ -96,7 +110,7 @@ def restore_bytes_to_missing_target_windows(
             before_commit(staging)
         if os.path.lexists(str(target)):
             raise FileExistsError(f"restore target appeared at commit boundary: {target}")
-        _move_new_windows(staging, target)
+        commit_staged_bytes_to_missing_target_windows(staging, target)
         return StagedBytesRestoreResult(
             written_bytes=written,
             staging_path=str(staging),
