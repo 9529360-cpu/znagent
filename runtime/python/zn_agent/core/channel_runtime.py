@@ -81,6 +81,15 @@ class ResidentChannelSupervisor:
 
     def start(self) -> None:
         with self._lock:
+            # stop() intentionally retains a still-alive worker so a provider
+            # that ignored close()/poll timeout cannot be duplicated. If that
+            # worker exits after stop() returned, reap the confirmed-dead handle
+            # here so the same supervisor can recover without an extra stop().
+            self._threads = {
+                name: thread
+                for name, thread in self._threads.items()
+                if thread.is_alive()
+            }
             if self._threads:
                 return
             self._stop.clear()
