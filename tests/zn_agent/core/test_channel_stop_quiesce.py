@@ -52,6 +52,29 @@ class _LatePollAdapter:
         return None
 
 
+class _PollCountingAdapter:
+    name = "telegram"
+
+    def __init__(self):
+        self.poll_calls = 0
+
+    def poll(self, *, timeout=0.0):
+        self.poll_calls += 1
+        return []
+
+    def send(self, message):  # pragma: no cover - delivery is overridden by the supervisor
+        raise AssertionError("send should not be called")
+
+    def close(self):
+        return None
+
+
+class _StopAfterDeliverySupervisor(ResidentChannelSupervisor):
+    def _deliver_ready(self, name, adapter):
+        self._stop.set()
+        return 1
+
+
 class ResidentChannelStopQuiesceTests(unittest.TestCase):
     def test_poll_return_after_stop_does_not_touch_resident_state(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -85,6 +108,25 @@ class ResidentChannelStopQuiesceTests(unittest.TestCase):
 
                 supervisor.stop()
                 self.assertEqual(supervisor._threads, {})
+            finally:
+                resident.store.close()
+
+    def test_stop_after_delivery_does_not_begin_another_poll(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = _Resident(Path(tmp) / "kernel.db")
+            try:
+                adapter = _PollCountingAdapter()
+                supervisor = _StopAfterDeliverySupervisor(
+                    resident,
+                    [adapter],
+                    poll_timeout=0.0,
+                )
+
+                supervisor._run_channel("telegram", adapter)
+
+                self.assertEqual(adapter.poll_calls, 0)
+                self.assertTrue(supervisor._stop.is_set())
+                self.assertFalse(supervisor.status()[0]["running"])
             finally:
                 resident.store.close()
 
