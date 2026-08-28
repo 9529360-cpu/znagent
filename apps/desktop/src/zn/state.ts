@@ -28,6 +28,18 @@ export type ZnArtifact = {
 }
 
 export type ZnRestorePointCurrentStatus = 'unchanged' | 'changed' | 'missing' | 'unsupported'
+export type ZnRestoreProposalStatus = 'candidate' | 'conflict_review_required' | 'missing_target_review_required' | 'blocked'
+
+export type ZnRestoreProposal = {
+  kind: 'restore_exact_file'
+  status: ZnRestoreProposalStatus
+  reason: string
+  destructive: true
+  requiresUserApproval: true
+  requiresFreshRevalidation: true
+  applicationAvailable: false
+  automaticAuthority: false
+}
 
 export type ZnRestorePoint = {
   id: string
@@ -43,6 +55,7 @@ export type ZnRestorePoint = {
   currentSizeBytes?: number
   createdAt: number
   updatedAt: number
+  proposal?: ZnRestoreProposal
   automaticRestoreAuthority: false
   restoreApplicationAvailable: false
 }
