@@ -64,8 +64,14 @@ test('verifies one NSIS exe and one MSI against exact manifest size and SHA-256'
 test('rejects a candidate that does not contain exactly one exe and one msi', async () => {
   const item = await fixture()
   try {
-    await item.writeManifest({ assets: [item.assets[0], { ...item.assets[0], name: 'second.exe' }] })
-    await fs.writeFile(path.join(item.root, 'second.exe'), 'second')
+    const secondExe = Buffer.from('second')
+    const secondAsset = {
+      name: 'second.exe',
+      size: secondExe.length,
+      sha256: digest(secondExe)
+    }
+    await fs.writeFile(path.join(item.root, secondAsset.name), secondExe)
+    await item.writeManifest({ assets: [item.assets[0], secondAsset] })
     await assert.rejects(
       verifyZnWindowsReleaseCandidate({ releaseDir: item.root, version: VERSION }),
       /exactly one \.exe installer|exactly one \.msi installer/
