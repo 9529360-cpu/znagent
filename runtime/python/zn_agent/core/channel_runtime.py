@@ -192,6 +192,11 @@ class ResidentChannelSupervisor:
                 try:
                     delivered_before = self._deliver_ready(name, adapter)
                     events = adapter.poll(timeout=self.poll_timeout)
+                    # A stop can arrive while a long poll is blocked. Once the
+                    # poll returns, do not enqueue, checkpoint or deliver anything
+                    # else: resident teardown may already be closing durable state.
+                    if self._stop.is_set():
+                        break
                     enqueued, duplicates = self._ingest_events(events)
                     # Persist transport cursor only after every percept returned by
                     # this poll has a durable route. A crash before here replays
