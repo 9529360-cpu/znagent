@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from zn_agent.core.action import NativeActionIntent
@@ -49,7 +50,7 @@ class WorkRestorePointActiveRunTests(unittest.TestCase):
                 data={"native_action_intent": intent.to_dict()},
             )
             resident.store.save_working_state(state)
-            with sqlite3.connect(store_path) as conn:
+            with closing(sqlite3.connect(store_path)) as conn:
                 conn.execute(
                     "UPDATE work_runs SET ledger_state='finalized', finalized_at=? WHERE event_id=?",
                     ("2026-08-28T00:00:00+00:00", event.event_id),
