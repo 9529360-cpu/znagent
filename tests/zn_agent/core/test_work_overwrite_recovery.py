@@ -140,7 +140,7 @@ class OverwriteRecoveryTests(unittest.TestCase):
             target = root / "document.txt"
             target.write_text("old", encoding="utf-8")
             intended = "resident intended state"
-            external = "user changed this after the crash"
+            external = "user edit"
 
             resident = build_resident_runtime_from_existing_stack(
                 config={"model": {}},
