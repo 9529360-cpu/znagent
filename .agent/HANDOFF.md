@@ -6,7 +6,7 @@ This is an operational maintainer handoff, not a chat summary. Real repository s
 
 ## Current goal
 
-Continue P5 durable Work recovery at the Windows atomic-overwrite retained-namespace boundary. The next narrow work is zero-byte artifact identity hardening followed by an explicit restart-safe repair lifecycle for a proven `ReplaceFileW` 1177 split, without granting replay authority to the stale overwrite attempt.
+Continue P5 durable Work recovery at the explicit Windows atomic-overwrite namespace-repair boundary. The zero-byte retained-artifact identity edge is now CI-verified. Next narrow work is a restart-safe repair lifecycle for a proven `ReplaceFileW` 1177 split, implemented as a new namespace repair action and never as replay of the stale overwrite attempt.
 
 ## Branch / repository state
 
@@ -14,23 +14,18 @@ Continue P5 durable Work recovery at the Windows atomic-overwrite retained-names
 - development branch: `dev/zn-agent`
 - canonical branch: `main`
 - canonical `main` HEAD: `8234a835dea604783cea0bd9d28a40de654ec03d`
-- implementation/proof HEAD before this documentation sync: `042e196418d8c4e9baa17d810b60d995007dc5b0`
-- key implementation commit: `042e196418d8c4e9baa17d810b60d995007dc5b0` (`fix: reconcile committed overwrite namespaces`)
+- implementation/proof HEAD before this documentation sync: `75e50c243b44e347c0e549fa9cb4cf7b37716e9f`
+- key latest implementation commit: `75e50c243b44e347c0e549fa9cb4cf7b37716e9f` (`fix: handle zero-byte overwrite artifacts`)
+- base #24 implementation: `042e196418d8c4e9baa17d810b60d995007dc5b0` (`fix: reconcile committed overwrite namespaces`)
 - draft PR: #6, `dev/zn-agent` -> `main`
 - `main` was not modified
 - no force push/history rewrite performed
 
-Re-read `dev/zn-agent` after this handoff/documentation commit before starting the next implementation slice; the branch HEAD will be the documentation sync descendant of `042e1964...`.
+Re-read `dev/zn-agent` after this handoff/documentation commit before starting the next implementation slice; the branch HEAD will be the documentation-sync descendant of `75e50c24...`.
 
-## Completed in the latest P5 slice
+## Completed in the latest P5 hardening
 
-Added active product layer:
-
-```text
-runtime/python/zn_agent/core/atomic_overwrite_namespace_recovery_resident.py
-```
-
-Updated active runtime ownership:
+The live call chain remains:
 
 ```text
 provider_bridge
@@ -43,34 +38,36 @@ provider_bridge
 -> ...
 ```
 
-The slice closes one more distinct crash/restart window (#24) and adds bounded post-commit namespace reasoning:
+Root cause closed in:
 
-1. A matching `namespace_commit_started=true` protocol may be used as read-only namespace evidence, never as replay authority.
-2. The exact documented `ReplaceFileW` WinError 1177 split can be recognized when target is missing, retained stage still equals the durable new payload, and retained backup still equals the durable pre-state.
-3. That split is held as `repair_retained_atomic_namespace_required`, with both artifacts preserved and replay blocked.
-4. If target independently verifies as the exact requested effect, the attempt may resolve `verified_effect` through inherited overwrite recovery.
-5. Only after that verified effect may ZN durably checkpoint cleanup ownership for exact retained deterministic artifacts.
-6. Restart after the cleanup checkpoint continues only exact artifact deletion and never repeats the overwrite.
-7. Exact artifact identity is rechecked before delayed unlink; drift removes delete authority and preserves the artifact.
-8. Matching protocol is removed only after the exact retained artifacts are absent.
+```text
+runtime/python/zn_agent/core/atomic_overwrite_namespace_recovery_resident.py
+```
 
-New tests:
+`observe_file_identity()` already records a complete SHA-256 for zero-byte files. The bug was in cross-path content equivalence: `size_bytes == 0` was passed through a truthy fallback and became a sentinel, so exact empty stage or backup files could never match durable content evidence.
+
+The repaired equivalence rule now requires all of the following for both identities:
+
+- observable, stable, existing regular file;
+- complete digest;
+- exact Python integer size, nonnegative (zero is valid);
+- exact 64-character lowercase hexadecimal SHA-256.
+
+Only then are exact size and digest compared. This closes the empty-file edge without accepting malformed/incomplete identity evidence.
+
+New Windows proofs in:
 
 ```text
 tests/zn_agent/core/test_windows_atomic_overwrite_namespace_recovery.py
 ```
 
-Coverage includes:
+Coverage added:
 
-- 1177 split classification/preservation without replay;
-- process death after durable cleanup checkpoint before backup delete, followed by restart completion without replay;
-- retained-backup drift after checkpoint, proving ZN preserves the changed artifact instead of deleting it.
+1. Empty **new staged payload** + nonempty old pre-state can still classify the documented 1177 split after restart, with target missing and replay blocked.
+2. Nonempty new staged payload + empty **old pre-state / retained backup** can still classify the documented 1177 split.
+3. After independently verified target effect, an exact zero-byte retained backup can receive cleanup ownership and be deleted; the overwrite itself is not replayed.
 
-Updated focused workflow:
-
-```text
-.github/workflows/zn-atomic-overwrite-e2e.yml
-```
+This is an identity-input hardening of the already-counted #24 restart window. Do **not** increment the concrete crash/restart-window count for these three boundary tests.
 
 ## P5 status
 
@@ -80,46 +77,43 @@ Concrete crash/restart windows closed and verified: **24**.
 
 Do not describe this as general rollback/restore complete.
 
-Important prior boundary from #23 remains unchanged:
+Important boundaries remain:
 
-- exact matching protocol;
-- stage ready with complete identity;
-- `namespace_commit_started=false`;
-- target exactly equals durable pre-dispatch identity;
-- stage exactly equals durable staged identity;
-- backup absent;
-
-Only that state can close the old attempt `verified_absent` and permit a fresh overwrite lifecycle. Once commit-start is durable, stale overwrite replay remains forbidden.
+- #23 is the only precommit replay-adjacent reconciliation: matching protocol/attempt, complete stage-ready identity, `namespace_commit_started=false`, unchanged target pre-state, exact stage, absent backup may close old attempt `verified_absent` and permit a fresh lifecycle.
+- Once `namespace_commit_started=true`, the old overwrite attempt is never replay authority.
+- #24 may classify exact 1177 split evidence and preserve artifacts, or resolve exact target effect and run checkpointed cleanup.
+- zero-byte stage/backup content is now valid exact evidence under the same strict complete-digest rules.
 
 ## Real test / CI result
 
-Exact implementation head:
+Exact zero-byte hardening head:
 
 ```text
-042e196418d8c4e9baa17d810b60d995007dc5b0
+75e50c243b44e347c0e549fa9cb4cf7b37716e9f
 ```
 
 Focused Windows CI:
 
 ```text
-ZN Atomic Overwrite E2E run 33159250870  success
-Ran 19 tests                           OK
+ZN Atomic Overwrite E2E run 33161103589  success
+Windows atomic overwrite lifecycle       success
+Ran 22 tests in 10.841s                  OK
 ```
 
 Full-tree Windows CI:
 
 ```text
-ZN CI run 33159250929                  success
-Electron / TypeScript / Windows        success
-ZN Source Boundary / Windows           success
-ZN Kernel / Python / Windows           success
-  isolated no-model boot               success
-  compile resident core                success
-  664 core tests                       OK (skipped=5)
-Publish Windows CI statuses             success
+ZN CI run 33161103586                    success
+Electron / TypeScript / Windows          success
+ZN Source Boundary / Windows             success
+ZN Kernel / Python / Windows             success
+  isolated no-model boot                 success
+  compile resident core                  success
+  667 core tests in 505.584s             OK (skipped=5)
+Publish Windows CI statuses              success
 ```
 
-The 664-test suite explicitly includes all 12 earlier Windows atomic-overwrite tests plus the 3 new namespace-recovery tests.
+The full suite explicitly includes the three added zero-byte namespace-recovery tests.
 
 No local repository test execution is claimed for this slice. Self-hosted Windows repository CI is the verification authority.
 
@@ -141,6 +135,7 @@ No local repository test execution is claimed for this slice. Self-hosted Window
 - `runtime/python/zn_agent/core/atomic_overwrite_namespace_recovery_resident.py`
 - `runtime/python/zn_agent/core/recovery_bounded_resident.py`
 - `runtime/python/zn_agent/core/provider_bridge.py`
+- `runtime/python/zn_agent/core/work_control.py`
 - `tests/zn_agent/core/test_work_overwrite_recovery.py`
 - `tests/zn_agent/core/test_windows_atomic_overwrite.py`
 - `tests/zn_agent/core/test_windows_atomic_overwrite_namespace_recovery.py`
@@ -152,10 +147,9 @@ No current CI blocker on the implementation head.
 
 Open technical risks:
 
-- A proven 1177 split is classified and preserved, but there is no automatic repair/restore action yet.
+- A proven 1177 split is classified and preserved, but there is no restart-safe repair action yet.
 - General workspace rollback/restore remains open.
 - There is no general startup/maintenance GC authority for retained deterministic artifacts outside an exact protocol.
-- Cross-path content-equivalence currently fails closed for zero-byte files because the bounded comparison uses truthy size fallback; zero-byte retained stage/backup cannot yet receive automatic equivalence authority.
 - Incomplete/large identities remain fail-closed.
 - Replacement file identity and uncommon Windows metadata/named-stream/power-loss behavior are not claimed solved.
 - Potentially unique backups must continue to be preserved unless stronger terminal truth and explicit cleanup authority exist.
@@ -166,12 +160,16 @@ No secret, token, password, signing key, or production credential belongs in thi
 ## Task queue
 
 1. Re-read the six canonical project/handoff documents and current Git/PR/CI before coding.
-2. Fix zero-byte exact artifact content-equivalence without broadening unsafe identity assumptions; add focused Windows tests including zero-byte pre-state/new payload cases.
-3. Re-run focused atomic-overwrite CI and full `ZN CI`; fix failures before moving on.
-4. Then design an explicit 1177 repair lifecycle as a **new repair action/lifecycle**, not replay of the old overwrite attempt. It must be restart-safe, preserve unique backup data until authority is durable, and use fresh namespace evidence.
-5. Keep broader rollback/restore, isolated parallel Work, M8, and SM1+ marked incomplete until their own proofs exist.
-6. Keep PR #6 draft and keep `main` untouched unless explicitly authorized and M10 conditions are revalidated.
+2. Design the 1177 repair as a **new namespace repair lifecycle**, not a retry/replay of `write_text`.
+3. Add durable repair-start truth bound to the exact protocol/attempt and retained stage/backup identities before the new namespace action crosses its mutation boundary.
+4. Immediately before repair, re-observe and require exact proven split reality: target absent, stage still exact new payload, backup still exact old pre-state.
+5. Repair stage -> target with no replace semantics so an external target winner is never clobbered.
+6. Add crash/restart tests for death after repair-start and after namespace mutation; restart must classify target/stage/backup truth before any continuation and must never replay the old overwrite.
+7. Keep backup cleanup downstream of independent target-effect verification plus durable exact cleanup authority.
+8. Run focused atomic-overwrite CI and full `ZN CI`; fix failures before updating status/HANDOFF.
+9. Keep broader rollback/restore, isolated parallel Work, M8, and SM1+ marked incomplete until their own proofs exist.
+10. Keep PR #6 draft and keep `main` untouched unless explicitly authorized and M10 conditions are revalidated.
 
 ## Next real target
 
-P5 atomic-overwrite retained namespace hardening: close the zero-byte exact-artifact identity edge first, then establish explicit 1177 repair authority that cannot be confused with stale overwrite replay.
+P5 explicit 1177 namespace repair: exact proven split -> durable repair-start -> no-replace stage-to-target repair -> restart reconciliation -> independent effect verification -> bounded backup cleanup. Never reuse the stale overwrite attempt as repair authority.
