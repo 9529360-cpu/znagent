@@ -191,6 +191,11 @@ class ResidentChannelSupervisor:
                 started = time.monotonic()
                 try:
                     delivered_before = self._deliver_ready(name, adapter)
+                    # stop() may arrive while an outbound provider send is
+                    # blocked. Do not start another poll after delivery returns;
+                    # teardown has already revoked further channel work.
+                    if self._stop.is_set():
+                        break
                     events = adapter.poll(timeout=self.poll_timeout)
                     # A stop can arrive while a long poll is blocked. Once the
                     # poll returns, do not enqueue, checkpoint or deliver anything
