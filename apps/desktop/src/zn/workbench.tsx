@@ -24,6 +24,7 @@ import {
   newZnThread,
   saveZnThreadCache,
   type ZnRestorePointCurrentStatus,
+  type ZnRestoreProposalStatus,
   type ZnThread
 } from './state'
 
@@ -55,6 +56,13 @@ function restorePointStatusLabel(status: ZnRestorePointCurrentStatus): string {
   if (status === 'changed') return 'Current target changed'
   if (status === 'missing') return 'Current target missing'
   return 'Current target cannot be compared safely'
+}
+
+function restoreProposalStatusLabel(status: ZnRestoreProposalStatus): string {
+  if (status === 'candidate') return 'Restore candidate'
+  if (status === 'conflict_review_required') return 'Review current changes before any restore'
+  if (status === 'missing_target_review_required') return 'Review missing target before any restore'
+  return 'Restore proposal blocked'
 }
 
 function credentialLabel(settings: ZnProviderSettings | null): string {
@@ -698,11 +706,16 @@ export function ZnWorkbench() {
                     <span className="zn-artifact-kind">{restorePointStatusLabel(point.currentStatus)}</span>
                     <span className="zn-artifact-name" title={point.targetPath}>{point.targetPath}</span>
                     <span className="zn-muted zn-small">Observed {timeLabel(point.currentObservedAt)} · retained {point.sizeBytes} bytes</span>
+                    {point.proposal ? (
+                      <span className="zn-muted zn-small">
+                        {restoreProposalStatusLabel(point.proposal.status)} · user approval and fresh revalidation would be required
+                      </span>
+                    ) : null}
                   </div>
                 ))}
               </div>
             )}
-            <p className="zn-muted zn-small">Read-only inspection only. ZN does not restore or overwrite files from this surface.</p>
+            <p className="zn-muted zn-small">Proposal and inspection only. No restore action is available from this surface.</p>
           </section>
           {activeArtifacts.length > 0 ? (
             <section className="zn-context-section zn-context-grow zn-artifact-section">
