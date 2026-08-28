@@ -34,7 +34,27 @@ inspect repository + branch + CI
 → synchronize status docs and HANDOFF
 ```
 
-M10 canonical promotion is complete. Ordinary development must still not experiment directly on `main`; verified development flows through `dev/zn-agent` or isolated work branches and reaches `main` only through the repository's deliberate promotion/release process.
+M10 canonical promotion is complete. `main` is the canonical source/release branch; `dev/zn-agent` is the fixed primary development branch.
+
+Ordinary development, investigation, self-maintenance and experiments must not be performed directly on `main`. They belong on `dev/zn-agent` or an isolated work branch.
+
+That restriction does not freeze `main`. A coherent low-risk engineering stage may be promoted through the repository's normal PR/merge/promotion flow when all applicable gates are true:
+
+```text
+implementation complete for the claimed slice
+→ relevant tests pass
+→ full CI / required E2E pass
+→ diff reviewed
+→ status docs + HANDOFF match real code and CI
+→ no unresolved promotion blocker
+→ no high-risk boundary requiring human approval
+→ normal traceable PR / merge / promotion
+→ main becomes the new verified canonical source
+```
+
+A normal low-risk promotion that satisfies these repository gates does not require an extra chat-only approval sentence. High-risk boundaries still require explicit human approval, including identity, long-term memory, destructive data migration, credentials/permissions, updater/rollback/signing trust, self-maintenance approval rules, and replacement of the user's currently installed formal version.
+
+Promotion must never use force push, Git history rewrite, disabled CI, bypassed failed checks, or false completion claims.
 
 ## 1. Product definition
 
@@ -410,49 +430,4 @@ At minimum protect:
 - managed-browser lifecycle/evidence contracts once implemented;
 - real user-browser integration and privacy/permission boundaries once implemented.
 
-Tests retained in the active tree must describe ZN behavior or guard ZN ownership boundaries. Optional Linux/macOS checks must not be presented as required evidence while those platforms are not intended targets.
-
-## 11. M8 and M10 boundaries
-
-M8 release continuity debt remains separate and must not be falsely reported complete. For the current Windows x64 product target, M8 requires Windows clean-install/login evidence, installed N→N+1 continuity, rollback evidence and applicable Windows signing evidence.
-
-Historical Linux/macOS evidence remains useful engineering evidence, but Linux AppImage, Linux container and macOS continuity/signing are not current M8 blockers unless those platforms are deliberately restored as intended targets.
-
-M10 canonical source promotion is complete. Its continuing value is the stable ownership rule it established:
-
-1. ZN owns resident runtime and persistent identity/state paths;
-2. ZN owns desktop main/preload/renderer and product identity;
-3. ZN owns build, package and release automation;
-4. CI verifies the active canonical source;
-5. applicable license/provenance obligations remain preserved;
-6. historical/reference source is not an active dependency;
-7. unresolved release risks remain explicit rather than being hidden by branch promotion.
-
-The 2026-08-24 promotion was performed by non-forced fast-forward after a fresh full CI review. No history rewrite was used.
-
-Canonical branch promotion does not mean M8 or formal release readiness is complete. M8 remains a separate evidence-based milestone.
-
-## 12. Current priority
-
-The repository-boundary evacuation and M10 canonical promotion are complete. Engineering priority is now:
-
-```text
-keep automatic Windows x64 self-hosted CI green on push / PR
-→ keep ZN-only ownership guards green
-→ build the product-grade browser foundation as two explicit planes
-   → Resident Managed Browser for autonomous local/headless/headed web work
-   → User Browser Bridge for existing authenticated user sessions
-→ preserve common ZN-owned browser action/evidence/privacy semantics across both planes
-→ continue real Windows desktop/UIA computer-use evidence without confusing it with managed-browser automation
-→ remove remaining development/tooling security debt where safely possible
-→ advance resident-owned engineering competence
-→ crystallize mature engineering/computer-use knowledge into ZN-owned mechanisms instead of repeated model prompting
-→ close Windows M8 install / N→N+1 / rollback / signing gaps
-→ maintain self-maintenance/release automation
-```
-
-Linux/macOS work is optional/on-demand at the current product stage. Do not let dormant secondary-platform work block Windows development, and do not expand product behavior by restoring old control planes or generic agent-framework ownership.
-
-## 13. Provenance
-
-Historical upstream provenance and license obligations are retained through repository history, the dedicated reference branch and applicable license records. Provenance is legal/historical information only; it must not become a runtime, build, test, release or maintenance dependency.
+Tests retained in the active tree must describe ZN behavior or guard ZN ownership boundaries. Optional Linux/macOS checks remain supplementary unless restored as product targets.
