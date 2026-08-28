@@ -118,8 +118,12 @@ test('workbench browser cache is bounded fallback state, not resident authority'
   assert.match(state, /MAX_MESSAGES_PER_THREAD = 120/)
   assert.match(state, /MAX_ARTIFACTS_PER_THREAD = 48/)
   assert.match(state, /Resident identity\/memory must never/)
+  assert.match(state, /delete cached\.restorePoints/)
   assert.match(workbench, /const authoritative = residentThreads\.length > 0/)
-  assert.match(workbench, /setThreads\(authoritative\)/)
+  assert.match(workbench, /setThreads\(current => authoritative\.map\(thread =>/)
+  assert.match(workbench, /const previous = current\.find\(item => item\.id === thread\.id\)/)
+  assert.match(workbench, /previous\?\.restorePoints !== undefined/)
+  assert.match(workbench, /\{ \.\.\.thread, restorePoints: previous\.restorePoints \}/)
   assert.doesNotMatch(state, /nervous|kernel\.db|structured memory/i)
 })
 
