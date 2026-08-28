@@ -54,8 +54,8 @@ class WorkRestorePointInspectionResidentRuntime(WorkRestorePointResidentRuntime)
         """Describe a possible future restore without granting write authority."""
 
         if current_status == "unchanged":
-            status = "candidate"
-            reason = "current_target_matches_retained_prestate"
+            status = "blocked"
+            reason = "current_target_already_matches_retained_prestate"
         elif current_status == "changed":
             status = "conflict_review_required"
             reason = "current_target_changed_since_restore_point"
@@ -113,7 +113,7 @@ class WorkRestorePointInspectionResidentRuntime(WorkRestorePointResidentRuntime)
             projected: list[dict[str, Any]] = []
             for row in rows:
                 run = conn.execute(
-                    "SELECT event_id,thread_id,message_id FROM work_runs WHERE event_id=?",
+                    "SELECT event_id,thread_id,message_id,task FROM work_runs WHERE event_id=?",
                     (str(row["event_id"]),),
                 ).fetchone()
                 if run is None or (
@@ -124,6 +124,19 @@ class WorkRestorePointInspectionResidentRuntime(WorkRestorePointResidentRuntime)
                 ):
                     raise RuntimeError(
                         "durable Work restore point conflicts with its Work ownership"
+                    )
+
+                event = self.store.get_event(str(row["event_id"]))
+                event_payload = event.payload if event is not None and isinstance(event.payload, dict) else {}
+                if (
+                    event is None
+                    or event.event_id != str(row["event_id"])
+                    or event.task != str(run["task"])
+                    or str(event_payload.get("work_thread_id") or "").strip() != normalized_thread
+                    or str(event_payload.get("work_message_id") or "").strip() != str(row["message_id"])
+                ):
+                    raise RuntimeError(
+                        "durable Work restore point conflicts with its resident event ownership"
                     )
 
                 try:
