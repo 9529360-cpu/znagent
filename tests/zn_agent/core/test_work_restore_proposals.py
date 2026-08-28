@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -119,6 +120,60 @@ class WorkRestoreProposalTests(unittest.TestCase):
                     self.assertNotIn(private_name, encoded)
                 self.assertNotIn("old private bytes", encoded)
                 self.assertTrue(target.is_dir())
+            finally:
+                resident.store.close()
+
+    def test_restore_proposal_is_rederived_after_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store_path = root / "kernel.db"
+            target = root / "document.txt"
+            target.write_text("old state", encoding="utf-8")
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=store_path
+            )
+            ledger = RecoveryBoundedWorkLedger(resident)
+            thread_id, _ = self._capture_restore_point(resident, ledger, target)
+            resident.store.close()
+
+            target.write_text("changed after restart", encoding="utf-8")
+            restored = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=store_path
+            )
+            try:
+                control = ResidentWorkControl(RecoveryBoundedWorkLedger(restored))
+                point, proposal = self._proposal(control, thread_id)
+                self.assertEqual(point["current_status"], "changed")
+                self.assertEqual(proposal["status"], "conflict_review_required")
+                self.assertTrue(proposal["requires_user_approval"])
+                self.assertTrue(proposal["requires_fresh_revalidation"])
+                self.assertFalse(proposal["application_available"])
+                self.assertEqual(target.read_text(encoding="utf-8"), "changed after restart")
+            finally:
+                restored.store.close()
+
+    def test_restore_proposal_rejects_forged_work_ownership(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store_path = root / "kernel.db"
+            target = root / "document.txt"
+            target.write_text("old state", encoding="utf-8")
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=store_path
+            )
+            ledger = RecoveryBoundedWorkLedger(resident)
+            thread_id, event_id = self._capture_restore_point(resident, ledger, target)
+            control = ResidentWorkControl(ledger)
+            try:
+                with sqlite3.connect(store_path) as conn:
+                    conn.execute(
+                        "UPDATE work_restore_points SET message_id=? WHERE event_id=?",
+                        ("forged-message", event_id),
+                    )
+                    conn.commit()
+                with self.assertRaisesRegex(RuntimeError, "conflicts with its Work ownership"):
+                    control.get_snapshot(thread_id)
+                self.assertEqual(target.read_text(encoding="utf-8"), "old state")
             finally:
                 resident.store.close()
 
