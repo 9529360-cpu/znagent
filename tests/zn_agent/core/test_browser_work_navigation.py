@@ -32,6 +32,7 @@ class _FakeManagedBrowser:
         self.act_calls = 0
         self.close_calls = 0
         self.permission = None
+        self.last_observation = None
 
     def open_session(self, *, permission=None, headless=True):
         self.open_calls += 1
@@ -43,7 +44,7 @@ class _FakeManagedBrowser:
         self.observe_calls += 1
         if session_id != self.identity.session_id:
             raise ValueError("wrong fake browser session")
-        return BrowserObservation(
+        observation = BrowserObservation(
             session=self.identity,
             page_id=page_id or self.page_id,
             captured_at=utc_now(),
@@ -51,11 +52,14 @@ class _FakeManagedBrowser:
             title="ZN Work Browser" if self.url != "about:blank" else "",
             load_state="complete",
         )
+        self.last_observation = observation
+        return observation
 
     def act(self, action, authority: BrowserActionAuthority):
         self.act_calls += 1
-        current = self.observe(action.session_id, page_id=action.page_id)
-        authority.validate_current(action, current, self.permission)
+        if self.last_observation is None:
+            raise AssertionError("browser action requires a prior observation")
+        authority.validate_current(action, self.last_observation, self.permission)
         before = self.url
         self.url = str(action.args["url"])
         return BrowserEffectEvidence(
@@ -124,9 +128,7 @@ class BrowserWorkNavigationTests(unittest.TestCase):
                 )
                 resident.store.save_working_state(state)
 
-                self.assertIsNone(
-                    resident._native_action_step(event, state, readiness=None)
-                )
+                self.assertIsNone(resident._native_action_step(event, state, readiness=None))
                 verification = resident.store.get_working_state()
                 self.assertEqual(verification.stage, "native_verification")
                 self.assertEqual(
@@ -225,9 +227,7 @@ class BrowserWorkNavigationTests(unittest.TestCase):
                     signature_hash=signature,
                 )
 
-                self.assertIsNone(
-                    resident._native_action_step(event, state, readiness=None)
-                )
+                self.assertIsNone(resident._native_action_step(event, state, readiness=None))
                 recovery = resident.store.get_working_state()
                 self.assertEqual(recovery.stage, "side_effect_recovery")
                 self.assertEqual(recovery.blocked_by, "outside_world_effect_uncertain")
