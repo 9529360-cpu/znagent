@@ -15,9 +15,11 @@ on:
       - runtime/python/zn_agent/core/atomic_overwrite_protocols.py
       - runtime/python/zn_agent/core/staged_text_write.py
       - runtime/python/zn_agent/core/atomic_overwrite_resident.py
+      - runtime/python/zn_agent/core/atomic_overwrite_namespace_recovery_resident.py
       - runtime/python/zn_agent/core/recovery_bounded_resident.py
       - tests/zn_agent/core/test_work_overwrite_recovery.py
       - tests/zn_agent/core/test_windows_atomic_overwrite.py
+      - tests/zn_agent/core/test_windows_atomic_overwrite_namespace_recovery.py
   workflow_dispatch:
 
 permissions:
@@ -52,9 +54,9 @@ jobs:
       - name: Compile atomic overwrite path
         run: |
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\atomic-overwrite-venv\Scripts\python.exe'
-          & $python -m py_compile runtime/python/zn_agent/core/atomic_overwrite_protocols.py runtime/python/zn_agent/core/staged_text_write.py runtime/python/zn_agent/core/atomic_overwrite_resident.py runtime/python/zn_agent/core/recovery_bounded_resident.py tests/zn_agent/core/test_windows_atomic_overwrite.py
+          & $python -m py_compile runtime/python/zn_agent/core/atomic_overwrite_protocols.py runtime/python/zn_agent/core/staged_text_write.py runtime/python/zn_agent/core/atomic_overwrite_resident.py runtime/python/zn_agent/core/atomic_overwrite_namespace_recovery_resident.py runtime/python/zn_agent/core/recovery_bounded_resident.py tests/zn_agent/core/test_windows_atomic_overwrite.py tests/zn_agent/core/test_windows_atomic_overwrite_namespace_recovery.py
       - name: Verify overwrite recovery and Windows commit semantics
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\atomic-overwrite-venv\Scripts\python.exe'
-          & $python -m unittest tests.zn_agent.core.test_work_overwrite_recovery tests.zn_agent.core.test_windows_atomic_overwrite -v
+          & $python -m unittest tests.zn_agent.core.test_work_overwrite_recovery tests.zn_agent.core.test_windows_atomic_overwrite tests.zn_agent.core.test_windows_atomic_overwrite_namespace_recovery -v
