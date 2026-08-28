@@ -73,8 +73,9 @@ def restore_bytes_to_missing_target_windows(
     The target must remain absent through the final resident precommit callback.
     ``MoveFileExW`` is deliberately invoked without a replace flag, so a target
     that appears after preflight wins the race instead of being overwritten.
-    The deterministic stage is preserved after an uncertain/failed commit so
-    restart recovery can classify current reality without replaying blindly.
+    This primitive never creates parent directories. The deterministic stage is
+    preserved after an uncertain/failed commit so resident recovery can classify
+    current reality without replaying blindly.
     """
 
     if os.name != "nt":
@@ -83,6 +84,10 @@ def restore_bytes_to_missing_target_windows(
     target = Path(target)
     payload = bytes(content)
     staging = restore_staging_path(target, token)
+    if not target.parent.is_dir():
+        raise FileNotFoundError(
+            f"restore target parent must already exist as a directory: {target.parent}"
+        )
     if os.path.lexists(str(target)):
         raise FileExistsError(f"restore target is no longer missing: {target}")
     if os.path.lexists(str(staging)):
@@ -90,7 +95,6 @@ def restore_bytes_to_missing_target_windows(
             f"ZN restore staging artifact already exists and requires recovery: {staging}"
         )
 
-    target.parent.mkdir(parents=True, exist_ok=True)
     stage_ready = False
     try:
         with staging.open("xb") as handle:
