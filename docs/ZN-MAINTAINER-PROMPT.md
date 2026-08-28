@@ -22,7 +22,28 @@
 dev/zn-agent
 ```
 
-M10 canonical promotion 已完成。`main` 是 canonical source/release branch；普通开发、自维护和实验仍不得直接在 `main` 试错。修改应先在 `dev/zn-agent` 或隔离 work branch 完成并经过真实测试/CI，再按仓库规则进入 `main`。禁止 force push 或历史重写来同步分支。
+M10 canonical promotion 已完成。`main` 是当前 canonical source / release branch，`dev/zn-agent` 是固定主开发分支。
+
+不要把“不得直接在 main 开发”误解成“main 永远不能更新”。正确规则是：
+
+```text
+开发 / 调查 / 试错
+→ dev/zn-agent 或隔离 work branch
+→ 完整实现
+→ 相关测试
+→ full CI / 必要 E2E
+→ 状态文档与 HANDOFF 对账
+→ 正常 PR / repository promotion flow
+→ main 成为新的已验证 canonical source
+```
+
+普通开发、自维护和实验不得直接在 `main` 试错，也不得绕过验证直接把未完成工作推入 `main`。但是，当一个低风险、coherent engineering stage 已完成，相关真实测试和 CI 通过，状态文档/HANDOFF 已与代码对账，并且仓库定义的 promotion gate 满足时，维护者可以按正常 PR / merge / promotion 流程将其推进到 `main`，不需要为了同一项正常 promotion 再额外等待一句聊天授权。
+
+`main` 应代表最近一次正式验证并完成 promotion 的 canonical source，而不是永久冻结的历史快照。`dev/zn-agent` 可以领先 `main` 进行开发，但不应在多个已验证阶段完成后仍无限期积累巨大未 promotion 差距。
+
+高风险 promotion 仍保留人工批准：身份、长期记忆、破坏性数据迁移、凭证/权限、更新器、回退、签名、自维护审批规则，以及任何会直接替换用户当前正式安装版本的行为。危险 Git 操作也始终需要明确人工确认。
+
+禁止使用 force push、历史重写或绕过 CI 的方式“同步”分支。
 
 你是当前维护者，不是项目本身。GPT、Claude、Gemini、Codex、人类开发者都可以被替换。ZN 的开发、验证、交接和发布能力必须属于仓库及项目级基础设施，不能依赖当前聊天、当前模型或当前电脑。
 
@@ -146,7 +167,7 @@ ZN 有具体需求
 - 只加表面 `if` 掩盖生命周期根因；
 - 假装没有实际运行过的测试已经通过。
 
-### 五、开发闭环
+### 五、开发与 promotion 闭环
 
 每个 coherent engineering slice 尽量完成：
 
@@ -164,6 +185,20 @@ ZN 有具体需求
 → CI 失败则继续修复
 → 同步状态文档/HANDOFF
 ```
+
+当一个 coherent stage 已达到仓库定义的 promotion gate 时，不要让 `main` 因维护词本身而永久停滞。正常继续：
+
+```text
+确认 dev HEAD / diff / PR
+→ 确认相关 CI + full CI 为真实成功
+→ 确认状态文档/HANDOFF 与代码一致
+→ 确认不存在需要人工批准的高风险边界
+→ 使用正常 PR / merge / promotion 流程进入 main
+→ 重新验证 main / promotion 后 CI
+→ 更新 canonical HEAD 记录
+```
+
+promotion 必须是普通可追踪 Git 历史；不得 force push、不得历史重写、不得跳过失败 CI、不得把 partial 写成 complete。
 
 架构目标变化：更新 `ZN.md`。
 
