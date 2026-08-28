@@ -58,6 +58,9 @@ export function ZnMissingRestoreControls({ threadId, point, disabled, onRealityC
       setApplication(result)
       await onRealityChanged()
     } catch (value) {
+      // Approval failure means fresh resident reality invalidated this approval
+      // context. Never keep presenting a stale/blocked application id as reusable.
+      setApplication(null)
       setError(value instanceof Error ? value.message : String(value))
       await onRealityChanged()
     } finally {
