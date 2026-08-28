@@ -1,0 +1,142 @@
+name: ZN Windows Release Candidate
+
+on:
+  push:
+    branches:
+      - dev/zn-agent
+    paths:
+      - '.github/workflows/zn-windows-release-candidate.yml'
+      - 'apps/desktop/**'
+      - 'runtime/python/**'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: write
+
+env:
+  CI: 'true'
+  NODE_OPTIONS: --max-old-space-size=4096
+
+concurrency:
+  group: zn-windows-release-candidate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package-candidate:
+    name: Windows x64 unsigned candidate
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Publish candidate pending status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: 'pending',
+              context: 'ZN Windows Release Candidate',
+              description: 'unsigned Windows x64 package candidate: running',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            })
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Require clean Windows x64 hosted runner
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "Windows release candidate requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+          Write-Host "Windows candidate runner: $env:RUNNER_NAME"
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22.22.0'
+          cache: npm
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: true
+          cache-dependency-glob: runtime/python/pyproject.toml
+
+      - name: Install locked workspace dependencies
+        run: npm ci
+
+      - name: Reject high-severity npm advisories
+        run: npm audit --audit-level=high
+
+      - name: Test Windows release-candidate verifier
+        run: node --test apps/desktop/scripts/verify-zn-windows-release-candidate.test.mjs
+
+      - name: Resolve candidate version
+        id: version
+        run: |
+          $version = (node -p "require('./apps/desktop/package.json').version").Trim()
+          if (-not $version) { throw 'desktop package version is empty' }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Candidate version: $version"
+
+      - name: Stage ZN-owned packaged runtime
+        env:
+          ZN_RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          ZN_RELEASE_COMMIT: ${{ github.sha }}
+        run: node apps/desktop/scripts/stage-zn-runtime.mjs
+
+      - name: Build renderer and Electron runtime
+        run: npm run build --workspace apps/desktop
+
+      - name: Build unsigned Windows installer candidates
+        run: |
+          Remove-Item -Recurse -Force apps/desktop/release -ErrorAction SilentlyContinue
+          npm run builder --workspace apps/desktop -- --config electron-builder.zn.yml --win --publish never
+
+      - name: Verify runtime inside packaged Windows app
+        env:
+          ZN_CANDIDATE_VERSION: ${{ steps.version.outputs.version }}
+        run: node apps/desktop/scripts/verify-zn-packaged-runtime.mjs apps/desktop/release $env:ZN_CANDIDATE_VERSION $env:GITHUB_SHA
+
+      - name: Write Windows release manifest
+        env:
+          ZN_CANDIDATE_VERSION: ${{ steps.version.outputs.version }}
+        run: node apps/desktop/scripts/write-zn-release-manifest.mjs windows $env:ZN_CANDIDATE_VERSION
+
+      - name: Verify Windows installer candidate integrity
+        env:
+          ZN_CANDIDATE_VERSION: ${{ steps.version.outputs.version }}
+        run: node apps/desktop/scripts/verify-zn-windows-release-candidate.mjs apps/desktop/release $env:ZN_CANDIDATE_VERSION x64
+
+      - name: Upload unsigned candidate evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: zn-windows-release-candidate-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.msi
+            apps/desktop/release/zn-release-windows-x64.json
+
+      - name: Publish candidate status
+        if: ${{ always() }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const result = '${{ job.status }}'
+            const state = result === 'success' ? 'success' : result === 'failure' ? 'failure' : 'error'
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state,
+              context: 'ZN Windows Release Candidate',
+              description: `unsigned Windows x64 package candidate: ${result}`.slice(0, 140),
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            })

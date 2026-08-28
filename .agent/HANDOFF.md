@@ -2,15 +2,11 @@
 
 Updated: 2026-08-28
 
-This is an operational maintainer handoff, not a chat summary. Real repository state, code, tests, and CI remain authoritative.
+This is the operational work site, not a chat summary. Real repository state/code and real CI/build evidence remain authoritative.
 
 ## Current goal
 
-P5.10 non-mutating Work restore proposal / eligibility is implemented and verified at the code head. The current action is documentation-head verification and normal low-risk source promotion into canonical `main` if the promotion gate remains green.
-
-This stage is source development only. It does not create a GitHub Release, advance the stable channel, replace an installed version, or grant destructive restore authority.
-
-Founding boundary:
+Close and promote a low-risk **Windows x64 unsigned release-candidate proof** stage after P5.10 canonical promotion. This stage proves clean hosted packaging and artifact/runtime integrity only. It does not modify or execute formal publishing, updater replacement, rollback, signing or the stable channel.
 
 > **ZN uses models. Models do not own ZN.**
 
@@ -18,151 +14,180 @@ Founding boundary:
 
 - repository: `9529360-cpu/znagent`
 - development branch: `dev/zn-agent`
-- canonical source branch: `main`
-- current canonical `main`: `5ff8331ba1e44090b2cec9ca1ed8715c33196580`
-- P5.9 was promoted to `main` through PR #7
-- PR #9 merged the read-only restore proposal implementation into `dev/zn-agent`
-- exact P5.10 code/proof head: `2fe96e46396c0cda8d618ad342b1196519e96e7b`
-- implementation-status closeout commit: `0c4973b1f0430af67b770af290429c8fdb6f2e66`
-- this HANDOFF write creates the final documentation-head commit; re-read actual `dev/zn-agent` HEAD after this write
-- before documentation closeout, dev was 16 commits ahead of main and 0 behind
-- no force push or Git history rewrite has been used
+- canonical branch: `main`
+- canonical `main`: `b29a7c9ecd205c34560e2945fe14451429afd16d`
+- P5.10 promotion PR #10: merged normally and post-merge CI verified
+- Windows candidate implementation commit: `50aab205d6cb898e9da044c44f9e1c0ab8849f62`
+- candidate fixture-fix / exact package proof head: `3f1dca12f844d8745023a0322b499b7aed18cbad`
+- Windows-first status/roadmap closeout head: `ccba9ca8ea5519ea9af5d218e8a7c9522aa51da4`
+- this HANDOFF update creates the final documentation head; re-read the branch ref for the resulting exact HEAD
+- no force push/history rewrite has been used
 
-## P5 status
+## Completed
 
-P5 remains **PARTIAL / TEN BOUNDED SLICES CI VERIFIED AT CODE HEAD**. Documentation-head exact CI is still required before calling the stage closed/promotable.
+### P5.10 canonical closeout
 
-Concrete crash/restart windows closed and verified: **27**.
+- exact pre-promotion docs CI `33184402941`: success
+- PR #10 merged to `main` as `b29a7c9ecd205c34560e2945fe14451429afd16d`
+- exact post-merge `main` CI `33185789960`: success for Source Boundary, Electron/TypeScript, Kernel/Python and status publisher
+- dev HANDOFF refresh `60001371aadf94560aba56d9c682e8691d5f2bc6` passed full CI `33185971086`
+- P5.10 remains read-only/non-mutating; no restore writeback/Apply/approval token/automatic authority exists
 
-P5.9 and P5.10 are read-only and add no mutation lifecycle, so they do not add crash/restart windows.
+### Windows-first candidate proof
 
-Current resident chain:
+Added:
 
-```text
-provider_bridge
--> RecoveryBoundedResidentRuntime
--> WorkRestorePointInspectionResidentRuntime
--> WorkRestorePointResidentRuntime
--> AtomicOverwriteNamespaceRecoveryResidentRuntime
--> AtomicOverwriteRecoveryResidentRuntime
--> OverwriteRecoveryResidentRuntime
--> DurableBodyAccountingResidentRuntime
--> CapabilityRecoveryResidentRuntime
--> resident core
-```
+- `.github/workflows/zn-windows-release-candidate.yml`
+- `apps/desktop/scripts/verify-zn-windows-release-candidate.mjs`
+- `apps/desktop/scripts/verify-zn-windows-release-candidate.test.mjs`
 
-P5.10 owner:
+The workflow is intentionally non-publishing:
 
-```text
-runtime/python/zn_agent/core/work_restore_point_inspection_resident.py
-```
+- GitHub-hosted `windows-latest` x64;
+- permissions only `contents: read`, `statuses: write`;
+- no release secrets;
+- no tag/GitHub Release;
+- no public update-channel upload;
+- no `stable.json` advance;
+- no updater invocation;
+- no signing;
+- no installed-version replacement.
 
-P5.10 derives a read-only restore proposal only after exact durable Work ownership validation plus fresh target observation. Current proposal states are:
+First candidate run `33187867062` failed before packaging because the duplicate-EXE unit-test fixture wrote 6 bytes while retaining 17-byte manifest metadata. The verifier correctly rejected the mismatch. Commit `3f1dca12f844d8745023a0322b499b7aed18cbad` fixed only the fixture; verifier assertions were not weakened.
 
-- unchanged -> blocked because the target already matches retained prestate;
-- changed -> conflict review required;
-- missing -> missing-target review required;
-- unsupported -> blocked because current reality cannot be compared safely.
-
-Every proposal is marked destructive, requires user approval and fresh revalidation, while `application_available` and `automatic_authority` remain false.
-
-The proposal surface exports no retained content BLOB, content hash, private pre-identity record, action signature, intent ID, or message ID. Forged Work ownership and forged resident-event ownership fail closed.
-
-The desktop remains read-only. There is no Restore/Apply action, no writeback RPC, no approval token, and no automatic restore path.
-
-Actual destructive restore application is **not implemented** and remains a separate human-approved authority slice.
-
-## Real test / CI evidence
-
-Canonical P5.9 source state:
+Exact package proof:
 
 ```text
-main                                             5ff8331ba1e44090b2cec9ca1ed8715c33196580
-PR #7                                            merged
+ZN Windows Release Candidate / 33188046176       success
+clean GitHub-hosted Windows x64 runner            success
+npm ci                                            success
+npm audit --audit-level=high                      success (0 vulnerabilities)
+release-candidate verifier                        5 tests passed
+portable ZN runtime staging / zero-model smoke    success
+renderer/Electron build                           success
+unsigned Windows NSIS + MSI build                 success
+packaged runtime verification + zero-model boot   success
+release manifest generation                       success
+independent installer size/SHA-256 verification   success
+artifact upload                                   success
 ```
 
-P5.10 exact code/proof head:
+CI artifact:
 
 ```text
-2fe96e46396c0cda8d618ad342b1196519e96e7b
-ZN Work Recovery E2E / run 33183092342          success
-Windows resident Work restart recovery           success
-Ran 108 tests in 87.381s                         OK
-
-ZN CI / run 33183092366                          success
-ZN Kernel / Python / Windows                     success
-  Ran 686 tests in 610.053s                      OK (skipped=5)
-Electron / TypeScript / Windows                  success
-ZN Source Boundary / Windows                     success
-Publish Windows CI statuses                      success
+artifact id: 9692735233
+name: zn-windows-release-candidate-3f1dca12f844d8745023a0322b499b7aed18cbad
+archive digest: sha256:8b230e382c285a9b13ab9851b4583ffaa2f6163deb246649b6270cf3d348ae85
 ```
 
-An earlier Work Recovery E2E run on `26bf1b9a430f29aa7fdb8415cbc46e6b7f330fa7` failed on Windows because the forged-ownership test left its SQLite connection open and `TemporaryDirectory` cleanup hit `WinError 32`. Commit `2fe96e46396c0cda8d618ad342b1196519e96e7b` explicitly closes that test connection. The failing run remains visible and was fixed rather than bypassed.
+Downloaded artifact contents were independently inspected:
 
-No local repository test run is claimed for this web-maintainer stage. Repository self-hosted Windows CI is the execution authority.
+```text
+ZN-0.17.0-win-x64.exe
+size   131798873
+sha256 e0cb2e0a08082a8d9e1268e05de8b9b6cd8d94441488e02ff352e77158d01988
 
-The documentation-head commit created by this HANDOFF update has **not yet been remotely verified** at the moment this text is written. Do not call it CI verified until its exact-head run completes successfully.
+ZN-0.17.0-win-x64.msi
+size   145854544
+sha256 3ab452ba38bf75514259d03333967dea7f4596e2348b848463ffe3f6891b30e0
+
+zn-release-windows-x64.json
+```
+
+Independent `sha256sum` over the downloaded EXE/MSI exactly matched the manifest.
+
+### Status/roadmap alignment
+
+`docs/ZN-IMPLEMENTATION-STATUS.md` and `docs/ZN-NEXT-PHASE.md` now record:
+
+- P5.10 is canonical verified, not docs-closeout-pending;
+- first formal desktop target is Windows x64;
+- Linux/macOS are deferred/non-blocking for the first release;
+- current candidate proof is explicitly unsigned and non-publishing;
+- clean install, installed N -> N+1, rollback and Windows signing/release trust remain incomplete.
+
+Exact status/roadmap head `ccba9ca8ea5519ea9af5d218e8a7c9522aa51da4` passed full ZN CI `33188933799`: Source Boundary, Electron/TypeScript, Kernel/Python and status publisher all succeeded.
+
+## Current CI
+
+Verified proof points:
+
+```text
+main P5.10 merge                               b29a7c9ecd205c34560e2945fe14451429afd16d
+ZN CI / 33185789960                           success
+
+candidate proof head                          3f1dca12f844d8745023a0322b499b7aed18cbad
+Windows Release Candidate / 33188046176       success
+
+status/roadmap head                           ccba9ca8ea5519ea9af5d218e8a7c9522aa51da4
+ZN CI / 33188933799                           success
+```
+
+The HANDOFF update containing this final closeout still requires its own exact-head ZN CI before promotion. Do not substitute predecessor CI for that final gate.
+
+## Windows-first release reality
+
+The candidate proof establishes that a clean hosted Windows machine can build self-contained unsigned NSIS/MSI candidates and boot the packaged ZN runtime without a model.
+
+It does **not** establish:
+
+- real clean installed desktop first launch/login;
+- real installed N -> N+1 update continuity;
+- identity/memory/work/config continuity across an installed transition;
+- rollback across a real Windows version transition;
+- Windows code signing or release trust;
+- formal immutable release/stable-channel publication.
+
+The formal `.github/workflows/zn-release.yml` remains unchanged and still contains a three-OS package matrix. It was deliberately kept outside this low-risk stage.
+
+## Risks / blockers
+
+P5 remains partial overall: destructive restore writeback, destructive revalidation/authority lifecycle, post-restore verification/crash semantics, general workspace rollback and isolated parallel Work remain open.
+
+Windows M8 remaining gates:
+
+1. exact final HANDOFF-head full CI and source promotion for this candidate-proof stage;
+2. real clean Windows install/start evidence;
+3. real installed N -> N+1 continuity evidence;
+4. safe Windows rollback lifecycle/proof;
+5. Windows signing/release trust;
+6. only after those gates, formal immutable release assets and stable-channel advancement.
+
+High-risk areas still require explicit human approval: identity/long-term-memory destructive changes, credentials/permissions, updater/rollback/signing/release trust, destructive restore/migrations, installed-version replacement and self-maintenance approval-rule changes.
+
+No secret, token, password, signing key or production credential belongs here.
 
 ## Relevant files
 
 - `ZN.md`
 - `AGENTS.md`
 - `docs/ZN-IMPLEMENTATION-STATUS.md`
+- `docs/ZN-NEXT-PHASE.md`
 - `docs/ZN-SOURCE-EXTRACTION.md`
 - `docs/ZN-SELF-MAINTENANCE.md`
 - `.agent/HANDOFF.md`
-- `runtime/python/zn_agent/core/work_restore_point_resident.py`
-- `runtime/python/zn_agent/core/work_restore_point_inspection_resident.py`
-- `runtime/python/zn_agent/core/recovery_bounded_resident.py`
-- `runtime/python/zn_agent/core/work_control.py`
-- `runtime/python/zn_agent/core/work.py`
-- `tests/zn_agent/core/test_work_restore_points.py`
-- `tests/zn_agent/core/test_work_restore_proposals.py`
-- `tests/zn_agent/core/test_work_restore_point_guards.py`
-- `tests/zn_agent/core/test_work_restore_point_retention.py`
-- `tests/zn_agent/core/test_work_restore_point_active_run.py`
-- `apps/desktop/src/zn/resident-client.ts`
-- `apps/desktop/src/zn/state.ts`
-- `apps/desktop/src/zn/workbench.tsx`
-- `apps/desktop/electron/zn-restore-point-inspection.test.ts`
-- `apps/desktop/electron/zn-desktop-ownership.test.ts`
 - `.github/workflows/zn-ci.yml`
-- `.github/workflows/zn-work-recovery-e2e.yml`
-
-## Risks / blockers
-
-No known P5.10 product blocker remains at the verified code head.
-
-Before claiming this stage closed/promoted, the final documentation head still needs exact-head ZN CI and a final diff/repository-state check.
-
-Still incomplete:
-
-- actual destructive restore application/writeback;
-- commit-time target revalidation for destructive restore;
-- restore approval/authority lifecycle;
-- post-restore verification, crash semantics, and failure semantics;
-- arbitrary workspace snapshots/general per-task rollback;
-- isolated parallel Work;
-- broader browser/M8 continuity and SM1+ work.
-
-Human approval remains required for identity, long-term memory destructive changes, credentials/permissions, updater/rollback/signing/release trust, self-maintenance approval-rule changes, destructive restore, destructive migrations, and installed-version replacement.
-
-No secret, token, password, signing key, or production credential belongs in this file.
+- `.github/workflows/zn-release.yml`
+- `.github/workflows/zn-windows-release-candidate.yml`
+- `apps/desktop/electron-builder.zn.yml`
+- `apps/desktop/electron/zn-release-updater.ts`
+- `apps/desktop/scripts/stage-zn-runtime.mjs`
+- `apps/desktop/scripts/verify-zn-packaged-runtime.mjs`
+- `apps/desktop/scripts/write-zn-release-manifest.mjs`
+- `apps/desktop/scripts/verify-zn-windows-release-candidate.mjs`
+- `apps/desktop/scripts/verify-zn-windows-release-candidate.test.mjs`
 
 ## Task queue
 
-1. Re-read the actual `dev/zn-agent` documentation HEAD created by this update.
-2. Observe exact docs-head ZN CI; do not call the closeout verified until it is green.
-3. Re-check `main` / `dev/zn-agent` HEADs and the complete cumulative diff.
-4. If the low-risk promotion gate remains satisfied, create a traceable P5.10 promotion PR and normally merge it to `main`.
-5. Verify post-merge `main` CI on the exact merge commit.
-6. If ancestry permits, non-force fast-forward `dev/zn-agent` to the canonical merge commit; never force push or rewrite history.
-7. Keep formal Release/stable-channel/install actions out of this stage.
-8. After promotion, begin a non-mutating restore approval/authority-boundary contract.
-9. Do not implement actual restore writeback without the separate human-approved destructive authority slice.
+1. Observe exact final HANDOFF-head ZN CI; fix failures rather than bypass them.
+2. Re-check `main`/`dev` heads and complete cumulative diff.
+3. If the low-risk gate is fully green, create/merge a traceable promotion PR into `main` and verify exact post-merge `main` CI.
+4. If ancestry permits after merge, non-force fast-forward `dev/zn-agent` to the canonical merge commit; never rewrite history.
+5. Keep formal release/updater/rollback/signing/stable actions out of this stage.
+6. Next low-risk M8 target: clean Windows install/start evidence in isolated test state, without production update infrastructure.
+7. Real installed N -> N+1, rollback and signing/release-trust changes remain separately reviewed high-risk slices.
+8. Separately, next safe P5 restore work remains a non-mutating approval/authority-boundary contract; actual restore application remains human-approved.
 
 ## Next real target
 
-Close and promote P5.10, then define the **non-mutating restore approval/authority-boundary contract**: an explicit approval must be bindable to one restore point, exact Work ownership, one target identity, a freshness boundary, and one exact proposed operation, but the contract itself must still grant no writeback authority.
-
-Actual restore application remains a separately reviewed human-approved destructive slice.
+Finish this candidate-proof stage through exact final-head CI and normal source promotion. Then build a bounded **clean Windows install/start proof** that exercises the real installer in isolated test state but does not change updater/rollback/signing trust or the user's installed formal version.
