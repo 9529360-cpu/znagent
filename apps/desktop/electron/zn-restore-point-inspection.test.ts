@@ -59,6 +59,7 @@ test('Work restore points expose only explicit missing-target no-replace applica
   assert.match(controls, /never overwrites a target that exists again/)
   assert.match(controls, /prepareZnMissingWorkRestore/)
   assert.match(controls, /approveZnMissingWorkRestore/)
+  assert.match(controls, /Approval failure means fresh resident reality invalidated/)
 
   const prepareIndex = controls.indexOf('prepareZnMissingWorkRestore(threadId, point.id)')
   const approveIndex = controls.indexOf('approveZnMissingWorkRestore(threadId, application.id)')
