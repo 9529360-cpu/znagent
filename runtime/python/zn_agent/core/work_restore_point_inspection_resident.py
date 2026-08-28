@@ -8,6 +8,7 @@ and never converts inspection or proposal evidence into restore authority.
 """
 
 import json
+import os
 from contextlib import closing
 from typing import Any
 
@@ -51,8 +52,9 @@ class WorkRestorePointInspectionResidentRuntime(WorkRestorePointResidentRuntime)
 
     @staticmethod
     def _restore_proposal(current_status: str) -> dict[str, Any]:
-        """Describe a possible future restore without granting write authority."""
+        """Describe a possible restore without granting write authority."""
 
+        application_available = bool(current_status == "missing" and os.name == "nt")
         if current_status == "unchanged":
             status = "blocked"
             reason = "current_target_already_matches_retained_prestate"
@@ -73,7 +75,10 @@ class WorkRestorePointInspectionResidentRuntime(WorkRestorePointResidentRuntime)
             "destructive": True,
             "requires_user_approval": True,
             "requires_fresh_revalidation": True,
-            "application_available": False,
+            "application_available": application_available,
+            "application_scope": (
+                "missing_target_no_replace" if application_available else None
+            ),
             "automatic_authority": False,
         }
 
@@ -165,6 +170,7 @@ class WorkRestorePointInspectionResidentRuntime(WorkRestorePointResidentRuntime)
                 current_size = current.get("size_bytes")
                 if isinstance(current_size, bool) or not isinstance(current_size, int):
                     current_size = None
+                proposal = self._restore_proposal(current_status)
 
                 projected.append(
                     {
@@ -187,9 +193,11 @@ class WorkRestorePointInspectionResidentRuntime(WorkRestorePointResidentRuntime)
                         ),
                         "current_type": str(current.get("type") or "unknown"),
                         "current_size_bytes": current_size,
-                        "restore_proposal": self._restore_proposal(current_status),
+                        "restore_proposal": proposal,
                         "automatic_restore_authority": False,
-                        "restore_application_available": False,
+                        "restore_application_available": bool(
+                            proposal["application_available"]
+                        ),
                     }
                 )
         return projected

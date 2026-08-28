@@ -1,6 +1,8 @@
 import type {
   ZnArtifact,
   ZnArtifactKind,
+  ZnRestoreApplication,
+  ZnRestoreApplicationStatus,
   ZnRestorePoint,
   ZnRestorePointCurrentStatus,
   ZnRestoreProposal,
@@ -150,6 +152,19 @@ function restoreProposalStatus(value: unknown): ZnRestoreProposalStatus {
   return 'blocked'
 }
 
+function restoreApplicationStatus(value: unknown): ZnRestoreApplicationStatus {
+  if (
+    value === 'approval_required' ||
+    value === 'applying' ||
+    value === 'stage_ready' ||
+    value === 'commit_started' ||
+    value === 'completed' ||
+    value === 'recovery_required' ||
+    value === 'blocked'
+  ) return value
+  return 'blocked'
+}
+
 function normalizeRestoreProposal(value: unknown): ZnRestoreProposal | undefined {
   const item = record(value)
   if (!item || item.kind !== 'restore_exact_file') return undefined
@@ -157,18 +172,51 @@ function normalizeRestoreProposal(value: unknown): ZnRestoreProposal | undefined
     item.destructive !== true ||
     item.requires_user_approval !== true ||
     item.requires_fresh_revalidation !== true ||
-    item.application_available !== false ||
+    typeof item.application_available !== 'boolean' ||
     item.automatic_authority !== false
   ) return undefined
+
+  const status = restoreProposalStatus(item.status)
+  const applicationAvailable = item.application_available === true
+  const applicationScope = String(item.application_scope || '').trim()
+  if (
+    applicationAvailable &&
+    (status !== 'missing_target_review_required' || applicationScope !== 'missing_target_no_replace')
+  ) return undefined
+
   return {
     kind: 'restore_exact_file',
-    status: restoreProposalStatus(item.status),
+    status,
     reason: String(item.reason || ''),
     destructive: true,
     requiresUserApproval: true,
     requiresFreshRevalidation: true,
-    applicationAvailable: false,
+    applicationAvailable,
+    ...(applicationAvailable ? { applicationScope: 'missing_target_no_replace' as const } : {}),
     automaticAuthority: false
+  }
+}
+
+function normalizeRestoreApplication(value: unknown): ZnRestoreApplication {
+  const item = record(value)
+  if (!item) throw new Error('Resident returned an invalid Work restore application')
+  const id = String(item.application_id || item.applicationId || '').trim()
+  if (!id) throw new Error('Work restore application has no id')
+  if (item.automatic_authority !== false) {
+    throw new Error('Work restore application granted unexpected automatic authority')
+  }
+  const error = String(item.error || '').trim()
+  const completedAt = item.completed_at || item.completedAt
+  return {
+    id,
+    status: restoreApplicationStatus(item.status),
+    requiresUserApproval: item.requires_user_approval === true || item.requiresUserApproval === true,
+    freshRevalidationRequired:
+      item.fresh_revalidation_required === true || item.freshRevalidationRequired === true,
+    automaticAuthority: false,
+    ...(error ? { error } : {}),
+    updatedAt: timestamp(item.updated_at || item.updatedAt),
+    ...(completedAt ? { completedAt: timestamp(completedAt) } : {})
   }
 }
 
@@ -217,14 +265,21 @@ function normalizeRestorePoint(value: unknown): ZnRestorePoint | null {
   const currentExistsRaw = item.current_exists ?? item.currentExists
   const currentSizeRaw = item.current_size_bytes ?? item.currentSizeBytes
   const sizeBytes = Number(item.size_bytes ?? item.sizeBytes ?? 0)
+  const currentStatus = restorePointCurrentStatus(item.current_status || item.currentStatus)
   const proposal = normalizeRestoreProposal(item.restore_proposal || item.restoreProposal)
+  const restoreApplicationAvailable = Boolean(
+    currentStatus === 'missing' &&
+    proposal?.applicationAvailable === true &&
+    proposal.applicationScope === 'missing_target_no_replace' &&
+    item.restore_application_available === true
+  )
   return {
     id,
     eventId,
     targetPath,
     sizeBytes: Number.isFinite(sizeBytes) && sizeBytes >= 0 ? sizeBytes : 0,
     status: String(item.status || 'retained'),
-    currentStatus: restorePointCurrentStatus(item.current_status || item.currentStatus),
+    currentStatus,
     currentReason: String(item.current_reason || item.currentReason || ''),
     currentObservedAt: timestamp(item.current_observed_at || item.currentObservedAt),
     ...(typeof currentExistsRaw === 'boolean' ? { currentExists: currentExistsRaw } : {}),
@@ -236,7 +291,7 @@ function normalizeRestorePoint(value: unknown): ZnRestorePoint | null {
     updatedAt: timestamp(item.updated_at || item.updatedAt),
     ...(proposal ? { proposal } : {}),
     automaticRestoreAuthority: false,
-    restoreApplicationAvailable: false
+    restoreApplicationAvailable
   }
 }
 
@@ -535,6 +590,44 @@ export async function submitZnWork(threadId: string, task: string): Promise<ZnWo
     thread: normalizeThread(result.thread),
     run: result.run
   }
+}
+
+export async function prepareZnMissingWorkRestore(
+  threadId: string,
+  restorePointId: string
+): Promise<ZnRestoreApplication> {
+  const normalizedThread = threadId.trim()
+  const normalizedPoint = restorePointId.trim()
+  if (!normalizedThread) throw new Error('Work thread id is required')
+  if (!normalizedPoint) throw new Error('Restore point id is required')
+  return normalizeRestoreApplication(await desktop().resident.workRestorePrepare({
+    threadId: normalizedThread,
+    restorePointId: normalizedPoint
+  }))
+}
+
+export async function approveZnMissingWorkRestore(
+  threadId: string,
+  applicationId: string
+): Promise<ZnRestoreApplication> {
+  const normalizedThread = threadId.trim()
+  const normalizedApplication = applicationId.trim()
+  if (!normalizedThread) throw new Error('Work thread id is required')
+  if (!normalizedApplication) throw new Error('Restore application id is required')
+  return normalizeRestoreApplication(await desktop().resident.workRestoreApprove({
+    threadId: normalizedThread,
+    applicationId: normalizedApplication
+  }))
+}
+
+export async function loadZnWorkRestoreApplication(
+  applicationId: string
+): Promise<ZnRestoreApplication> {
+  const normalizedApplication = applicationId.trim()
+  if (!normalizedApplication) throw new Error('Restore application id is required')
+  return normalizeRestoreApplication(await desktop().resident.workRestoreApplication({
+    applicationId: normalizedApplication
+  }))
 }
 
 export async function attachZnWorkspace(threadId: string): Promise<ZnThread | null> {

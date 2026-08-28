@@ -43,6 +43,11 @@ class ResidentChannelSupervisor:
     decides when and how to process those events. Completed outcomes are read
     from the same durable store and routed outward, so UI disconnects or channel
     reconnects do not become alternate cognition owners.
+
+    A supervisor owns one adapter lifecycle. ``stop()`` closes those adapters;
+    restarting therefore requires constructing a fresh supervisor with fresh
+    adapter resources instead of reusing a closed transport or duplicating a
+    worker that is still unwinding.
     """
 
     def __init__(
@@ -74,6 +79,7 @@ class ResidentChannelSupervisor:
         self._stop = threading.Event()
         self._threads: dict[str, threading.Thread] = {}
         self._lock = threading.RLock()
+        self._stopped = False
 
     @property
     def channels(self) -> tuple[str, ...]:
@@ -81,6 +87,11 @@ class ResidentChannelSupervisor:
 
     def start(self) -> None:
         with self._lock:
+            if self._stopped:
+                raise RuntimeError(
+                    "channel supervisor cannot restart after stop; "
+                    "create a fresh supervisor with fresh adapters"
+                )
             if self._threads:
                 return
             self._stop.clear()
@@ -96,6 +107,8 @@ class ResidentChannelSupervisor:
                 thread.start()
 
     def stop(self) -> None:
+        with self._lock:
+            self._stopped = True
         self._stop.set()
         for adapter in self._adapters.values():
             try:
@@ -103,15 +116,33 @@ class ResidentChannelSupervisor:
             except Exception:
                 continue
         with self._lock:
-            threads = list(self._threads.values())
+            threads = list(self._threads.items())
         join_timeout = max(1.0, min(10.0, self.poll_timeout + 2.0))
-        for thread in threads:
+        for _, thread in threads:
             if thread.is_alive():
                 thread.join(timeout=join_timeout)
         with self._lock:
-            self._threads.clear()
-            for state in self._states.values():
-                state.running = False
+            # A provider that ignores close()/poll timeout may leave its daemon
+            # thread alive. Keep that thread owned and visible rather than
+            # claiming shutdown completed while it can still touch resident
+            # state during process teardown.
+            alive = {
+                name: thread
+                for name, thread in self._threads.items()
+                if thread.is_alive()
+            }
+            self._threads = alive
+            for name, state in self._states.items():
+                thread = alive.get(name)
+                state.running = bool(thread and thread.is_alive())
+                if state.running:
+                    state.total_failures += 1
+                    state.consecutive_failures += 1
+                    state.last_error_at = utc_now()
+                    state.last_error = (
+                        "channel worker did not stop before shutdown timeout; "
+                        "worker remains owned until process teardown"
+                    )
 
     def status(self) -> tuple[dict[str, Any], ...]:
         with self._lock:
@@ -160,7 +191,17 @@ class ResidentChannelSupervisor:
                 started = time.monotonic()
                 try:
                     delivered_before = self._deliver_ready(name, adapter)
+                    # stop() may arrive while an outbound provider send is
+                    # blocked. Do not start another poll after delivery returns;
+                    # teardown has already revoked further channel work.
+                    if self._stop.is_set():
+                        break
                     events = adapter.poll(timeout=self.poll_timeout)
+                    # A stop can arrive while a long poll is blocked. Once the
+                    # poll returns, do not enqueue, checkpoint or deliver anything
+                    # else: resident teardown may already be closing durable state.
+                    if self._stop.is_set():
+                        break
                     enqueued, duplicates = self._ingest_events(events)
                     # Persist transport cursor only after every percept returned by
                     # this poll has a durable route. A crash before here replays

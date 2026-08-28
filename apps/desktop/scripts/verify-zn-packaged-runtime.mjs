@@ -16,6 +16,8 @@ import os
 from pathlib import Path
 
 import zn_agent.resident
+from zn_agent.core.browser import BrowserPermissionContext
+from zn_agent.core.managed_browser import PlaywrightManagedBrowser
 from zn_agent.core.provider_bridge import build_resident_runtime
 
 home = Path(os.environ["ZN_AGENT_HOME"])
@@ -29,6 +31,16 @@ try:
     assert state.external_brains == ()
 finally:
     resident.store.close()
+
+browser = PlaywrightManagedBrowser()
+session = browser.open_session(permission=BrowserPermissionContext(), headless=True)
+try:
+    observation = browser.observe(session.session_id)
+    assert observation.url == "about:blank"
+    assert session.profile_scope == "ephemeral"
+    assert session.provider == "playwright-chromium"
+finally:
+    browser.close()
 `
 
 function resolveInside(root, relativePath, label) {
@@ -107,9 +119,13 @@ export async function verifyPackagedZnRuntime(runtimeRoot, { version, commit }) 
   }
   const python = resolveInside(runtimeRoot, manifest.python, 'python')
   const backendRoot = resolveInside(runtimeRoot, manifest.backend_root, 'backend_root')
+  const browserRoot = resolveInside(runtimeRoot, manifest.browser_root, 'browser_root')
   const pythonStat = await requireFile(python, 'python executable')
   if (process.platform !== 'win32' && (pythonStat.mode & 0o111) === 0) throw new Error(`packaged runtime python is not executable: ${python}`)
   await requireDirectory(backendRoot, 'backend root')
+  await requireDirectory(browserRoot, 'managed browser root')
+  const browserEntries = await fs.readdir(browserRoot)
+  if (browserEntries.length === 0) throw new Error(`packaged runtime managed browser root is empty: ${browserRoot}`)
   await requireFile(path.join(backendRoot, 'zn_agent', 'resident.py'), 'resident package entrypoint')
   await requireFile(path.join(backendRoot, 'zn_agent', 'core', 'resident_server.py'), 'resident core entrypoint')
   try {
@@ -118,7 +134,7 @@ export async function verifyPackagedZnRuntime(runtimeRoot, { version, commit }) 
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('packaged ZN runtime contains')) throw error
   }
-  return { runtimeRoot: path.resolve(runtimeRoot), runtimeId, python, backendRoot }
+  return { runtimeRoot: path.resolve(runtimeRoot), runtimeId, python, backendRoot, browserRoot }
 }
 
 export async function smokePackagedZnRuntime(runtime, { run = execFileAsync } = {}) {
@@ -126,7 +142,15 @@ export async function smokePackagedZnRuntime(runtime, { run = execFileAsync } = 
   try {
     await run(runtime.python, ['-I', '-c', PACKAGED_RUNTIME_SMOKE], {
       cwd: runtime.runtimeRoot,
-      env: { ...process.env, CI: 'true', PYTHONUTF8: '1', PYTHONUNBUFFERED: '1', ZN_AGENT_HOME: home, ZN_RUNTIME_ID: runtime.runtimeId },
+      env: {
+        ...process.env,
+        CI: 'true',
+        PYTHONUTF8: '1',
+        PYTHONUNBUFFERED: '1',
+        ZN_AGENT_HOME: home,
+        ZN_RUNTIME_ID: runtime.runtimeId,
+        PLAYWRIGHT_BROWSERS_PATH: runtime.browserRoot
+      },
       timeout: PACKAGED_RUNTIME_SMOKE_TIMEOUT_MS,
       maxBuffer: 1024 * 1024,
       windowsHide: true
@@ -154,7 +178,7 @@ async function main() {
   const verified = await verifyPackagedZnRelease({ releaseDir, version, commit })
   for (const item of verified) {
     await smokePackagedZnRuntime(item)
-    console.log(`[zn-runtime] verified and booted packaged runtime ${item.runtimeId} at ${item.runtimeRoot}`)
+    console.log(`[zn-runtime] verified resident and managed Chromium ${item.runtimeId} at ${item.runtimeRoot}`)
   }
 }
 

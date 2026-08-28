@@ -197,6 +197,33 @@ export function registerZnResidentIpc(): void {
   ipcMain.handle('zn:resident:work-submit', async (_event, payload) => {
     return getZnResidentProcess().request('work_submit', normalizedWorkPayload(payload))
   })
+  ipcMain.handle('zn:resident:work-restore-prepare', async (_event, payload) => {
+    const threadId = String(payload?.threadId || payload?.thread_id || '').trim()
+    const restorePointId = String(payload?.restorePointId || payload?.restore_point_id || '').trim()
+    if (!threadId) throw new Error('threadId is required')
+    if (!restorePointId) throw new Error('restorePointId is required')
+    return getZnResidentProcess().request('work_restore_prepare', {
+      thread_id: threadId,
+      restore_point_id: restorePointId
+    })
+  })
+  ipcMain.handle('zn:resident:work-restore-approve', async (_event, payload) => {
+    const threadId = String(payload?.threadId || payload?.thread_id || '').trim()
+    const applicationId = String(payload?.applicationId || payload?.application_id || '').trim()
+    if (!threadId) throw new Error('threadId is required')
+    if (!applicationId) throw new Error('applicationId is required')
+    return getZnResidentProcess().request('work_restore_approve', {
+      thread_id: threadId,
+      application_id: applicationId
+    })
+  })
+  ipcMain.handle('zn:resident:work-restore-application', async (_event, payload) => {
+    const applicationId = String(payload?.applicationId || payload?.application_id || '').trim()
+    if (!applicationId) throw new Error('applicationId is required')
+    return getZnResidentProcess().request('work_restore_application', {
+      application_id: applicationId
+    })
+  })
   ipcMain.handle('zn:resident:pulses', async (_event, limit) => history('pulses', limit))
   ipcMain.handle('zn:resident:situations', async (_event, limit) => history('situations', limit))
   ipcMain.handle('zn:resident:thoughts', async (_event, limit) => history('thoughts', limit))
