@@ -59,13 +59,25 @@ def overwrite_artifact_paths(target: Path, token: str) -> tuple[Path, Path]:
     )
 
 
-def cleanup_overwrite_artifacts(target: Path, token: str) -> dict[str, object]:
-    """Best-effort cleanup of only the deterministic artifacts owned by one write."""
+def cleanup_overwrite_artifacts(
+    target: Path,
+    token: str,
+    *,
+    include_staging: bool = True,
+    include_backup: bool = True,
+) -> dict[str, object]:
+    """Best-effort cleanup of exact deterministic artifacts owned by one write."""
 
     staging_path, backup_path = overwrite_artifact_paths(Path(target), token)
+    artifacts: list[Path] = []
+    if include_staging:
+        artifacts.append(staging_path)
+    if include_backup:
+        artifacts.append(backup_path)
+
     removed: list[str] = []
     errors: list[str] = []
-    for artifact in (staging_path, backup_path):
+    for artifact in artifacts:
         if not os.path.lexists(str(artifact)):
             continue
         try:
@@ -169,7 +181,9 @@ def write_text_staged_windows(
     *,
     encoding: str,
     token: str,
+    after_stage: Callable[[Path], None] | None = None,
     precommit_check: Callable[[], None] | None = None,
+    before_commit: Callable[[str, Path, Path | None], None] | None = None,
 ) -> StagedTextWriteResult:
     """Write complete text beside the target, then commit it as one Windows rename.
 
@@ -179,6 +193,12 @@ def write_text_staged_windows(
     ZN-owned backup name. Missing targets use MoveFileExW without
     MOVEFILE_REPLACE_EXISTING, so a target that appears during the race is never
     silently clobbered.
+
+    ``after_stage`` runs after the full stage has been flushed and fsynced.
+    ``before_commit`` runs after staging/precondition checks and immediately
+    before the Windows namespace API. A resident can persist exact restart
+    evidence in those callbacks; both callbacks must finish before this function
+    invokes ReplaceFileW/MoveFileExW.
     """
 
     if os.name != "nt":
@@ -192,9 +212,12 @@ def write_text_staged_windows(
                 f"ZN overwrite artifact already exists and will not be replaced: {artifact}"
             )
 
-    commit_started = False
+    stage_started = False
     try:
+        stage_started = True
         written = _write_stage(staging_path, content, encoding)
+        if after_stage is not None:
+            after_stage(staging_path)
         if precommit_check is not None:
             precommit_check()
 
@@ -204,7 +227,8 @@ def write_text_staged_windows(
             target_info = None
 
         if target_info is None:
-            commit_started = True
+            if before_commit is not None:
+                before_commit("move_new_no_replace", staging_path, None)
             _move_new_windows(staging_path, target)
             return StagedTextWriteResult(
                 written_chars=written,
@@ -214,7 +238,8 @@ def write_text_staged_windows(
             )
 
         _validate_existing_windows_target(target)
-        commit_started = True
+        if before_commit is not None:
+            before_commit("replace_file_with_backup", staging_path, backup_path)
         _replace_existing_windows(target, staging_path, backup_path)
 
         cleanup_pending: list[str] = []
@@ -235,14 +260,25 @@ def write_text_staged_windows(
         # reality and must not destroy the only retained pre-replacement file.
         raise
     except Exception:
-        # Microsoft documents all ReplaceFileW errors except 1177 as retaining
-        # the original names when a backup path is supplied. Precommit failures
-        # also occur before namespace mutation, so ZN can safely remove its stage.
-        cleanup_overwrite_artifacts(target, token)
+        # Precommit/checkpoint failures occur before namespace mutation. Microsoft
+        # documents every ReplaceFileW failure except 1177 as keeping the original
+        # names when a backup is supplied. Remove only ZN's exact stage; never
+        # erase an unexpected backup as part of generic exception cleanup.
+        cleanup_overwrite_artifacts(
+            target,
+            token,
+            include_staging=True,
+            include_backup=False,
+        )
         raise
     except BaseException:
-        # Process-death injection after commit ownership begins models the real
-        # crash window. Leave deterministic artifacts for restart recovery.
-        if not commit_started:
-            cleanup_overwrite_artifacts(target, token)
+        # A killed process may bypass Python cleanup entirely. Once stage creation
+        # may have begun, preserve deterministic artifacts for restart evidence.
+        if not stage_started:
+            cleanup_overwrite_artifacts(
+                target,
+                token,
+                include_staging=True,
+                include_backup=False,
+            )
         raise
