@@ -32,6 +32,16 @@ class WorkRestoreApplicationAuthorityResidentRuntime(
             )
         )
 
+    @staticmethod
+    def _application_public(row) -> dict[str, Any]:
+        projected = WorkRestoreApplicationResidentRuntime._application_public(row)
+        # The legacy application-id-only inspection RPC is capability-token scoped,
+        # not Work-thread scoped. Keep its response deliberately minimal so knowing
+        # an application id cannot reveal another Work thread's path/event metadata.
+        for key in ("restore_point_id", "thread_id", "event_id", "target_path"):
+            projected.pop(key, None)
+        return projected
+
     def inspect_work_restore_application_for_thread(
         self,
         thread_id: str,
