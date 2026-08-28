@@ -32,6 +32,7 @@ _VERSION = 1
 _MAX_CONTENT_BYTES = DEFAULT_MAX_HASH_BYTES
 _MAX_POINTS_PER_EVENT = 32
 _MAX_TOTAL_POINTS = 256
+_MAX_TOTAL_BYTES = 128 * 1024 * 1024
 
 
 class _RestoreCaptureChanged(RuntimeError):
@@ -45,10 +46,10 @@ class _RestoreCaptureCapacity(RuntimeError):
 class WorkRestorePointResidentRuntime(AtomicOverwriteNamespaceRecoveryResidentRuntime):
     """Retain exact old file bytes before a durable Work overwrite can dispatch.
 
-    Ownership requires both the event payload linkage and a matching durable
-    ``work_runs`` row. A deterministic identity makes repeated preparation on
-    the Windows atomic-overwrite chain idempotent across both inheritance and
-    process restart.
+    Ownership requires both the event payload linkage and a matching *active*
+    durable ``work_runs`` row. A deterministic identity makes repeated
+    preparation on the Windows atomic-overwrite chain idempotent across both
+    inheritance and process restart.
 
     Current scope is intentionally narrow: existing stable regular files whose
     full SHA-256 identity and bytes fit the resident's bounded exact-file limit.
@@ -155,7 +156,8 @@ class WorkRestorePointResidentRuntime(AtomicOverwriteNamespaceRecoveryResidentRu
         if table is None:
             raise RuntimeError("Work restore ownership requires the durable Work ledger")
         row = conn.execute(
-            "SELECT event_id,thread_id,message_id,task FROM work_runs WHERE event_id=?",
+            "SELECT event_id,thread_id,message_id,task,ledger_state "
+            "FROM work_runs WHERE event_id=?",
             (event.event_id,),
         ).fetchone()
         if row is None:
@@ -165,8 +167,9 @@ class WorkRestorePointResidentRuntime(AtomicOverwriteNamespaceRecoveryResidentRu
             or str(row["thread_id"]) != thread_id
             or str(row["message_id"]) != message_id
             or str(row["task"]) != event.task
+            or str(row["ledger_state"]) != "active"
         ):
-            raise RuntimeError("Work restore ownership conflicts with durable Work linkage")
+            raise RuntimeError("Work restore ownership conflicts with active durable Work linkage")
         return thread_id, message_id
 
     @staticmethod
@@ -227,7 +230,12 @@ class WorkRestorePointResidentRuntime(AtomicOverwriteNamespaceRecoveryResidentRu
         return self._row_public(row)
 
     @staticmethod
-    def _enforce_capacity(conn: sqlite3.Connection, *, event_id: str) -> None:
+    def _enforce_capacity(
+        conn: sqlite3.Connection,
+        *,
+        event_id: str,
+        incoming_size: int,
+    ) -> None:
         event_count = conn.execute(
             f"SELECT COUNT(*) AS n FROM {_TABLE} WHERE event_id=?",
             (event_id,),
@@ -236,10 +244,18 @@ class WorkRestorePointResidentRuntime(AtomicOverwriteNamespaceRecoveryResidentRu
             raise _RestoreCaptureCapacity(
                 "per-event restore-point retention capacity is exhausted"
             )
-        total_count = conn.execute(f"SELECT COUNT(*) AS n FROM {_TABLE}").fetchone()
-        if int(total_count["n"] if total_count is not None else 0) >= _MAX_TOTAL_POINTS:
+        totals = conn.execute(
+            f"SELECT COUNT(*) AS n, COALESCE(SUM(size_bytes),0) AS bytes FROM {_TABLE}"
+        ).fetchone()
+        total_count = int(totals["n"] if totals is not None else 0)
+        total_bytes = int(totals["bytes"] if totals is not None else 0)
+        if total_count >= _MAX_TOTAL_POINTS:
             raise _RestoreCaptureCapacity(
-                "resident restore-point retention capacity is exhausted"
+                "resident restore-point count capacity is exhausted"
+            )
+        if total_bytes + max(0, int(incoming_size)) > _MAX_TOTAL_BYTES:
+            raise _RestoreCaptureCapacity(
+                "resident restore-point byte capacity is exhausted"
             )
 
     def _capture_work_restore_point(
@@ -323,7 +339,11 @@ class WorkRestorePointResidentRuntime(AtomicOverwriteNamespaceRecoveryResidentRu
                     )
                     conn.commit()
                     return public
-                self._enforce_capacity(conn, event_id=event.event_id)
+                self._enforce_capacity(
+                    conn,
+                    event_id=event.event_id,
+                    incoming_size=expected_size,
+                )
                 conn.execute(
                     f"""
                     INSERT INTO {_TABLE}(
