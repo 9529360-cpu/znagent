@@ -1,97 +1,75 @@
 # ZN Maintainer Handoff
 
-This is the current engineering work site and fact index, not a chat summary or a script for the next maintainer. Repository state, code and real CI remain authoritative. Re-evaluate priorities from the product and code before blindly continuing this queue.
+This is the current engineering work site and fact index, not a chat summary or a script. Repository state, real code and actual CI are authoritative. The next maintainer inherits facts, then independently chooses the highest-value product work.
 
 ## Current goal
 
-The Windows x64 clean-install + first resident-start proof is complete and canonically verified. The immediate maintenance goal is to restore strong maintainer autonomy: keep the safe `work/* -> dev/zn-agent -> main` promotion model, while ensuring future maintainers choose work from ZN's real product gaps rather than mechanically extending the previous evidence slice.
+Restore the earlier product-first autonomous maintenance behavior while preserving the practical lessons learned since then: work must be committed/pushed in coherent increments, CI must be respected, and `main` must not silently fall far behind verified development.
 
-After this maintenance-rule change is verified and promoted, the next product task must be selected by re-reading `ZN.md`, implementation status, current code and remaining milestone gaps. The previously proposed installed-N baseline evidence remains a candidate, not an automatic mandate.
+Git/CI/main synchronization is normal engineering hygiene, not the ZN roadmap. After this maintenance change lands, resume product development by re-reading ZN goals/status/code and choosing the highest-value real product gap.
 
-## Repository state at branch creation
+## Current repository state
 
 - Repository: `9529360-cpu/znagent`
 - Canonical branch: `main`
 - Development branch: `dev/zn-agent`
-- Maintenance branch: `work/maintainer-agency-reset`
-- Canonical clean-install promotion merge: `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`
-- At inspection time `dev/zn-agent` was 3 commits ahead of `main` and 0 behind; those commits reconcile post-PR #13 ledger/status documentation.
-- This maintenance branch was created from that current `dev/zn-agent` state.
-- PR #13 is already merged; any older HANDOFF text describing clean-install promotion as pending is stale.
-- No force push/history rewrite is authorized or required.
+- Maintenance branch / PR: `work/maintainer-agency-reset` / PR #14
+- PR #13 clean-install promotion is already merged to `main` at `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`.
+- At maintenance-branch creation, `dev/zn-agent` was 3 commits ahead of `main` and 0 behind; those commits were post-PR #13 ledger/status reconciliation.
+- Historical regression point identified: `934de7ab19174de5ca1fe81494c9f3ca565f4c97` (`docs: align maintainer promotion rules`) elevated promotion/canonical synchronization into the explicit development loop.
+- Useful pre-regression baseline: `AGENTS.md` at `58d416f0527d191f4a752290375d3814ce8be484`.
+- Current maintenance-rule head after restoring the product-first wording: `04db1d24ec230d6fc7c94e90f60f6e6a009ba8db` before this HANDOFF commit.
 
-## Completed product evidence
+## What the maintenance rule now means
 
-The clean-install stage already has real implementation and canonical verification:
+- ZN product progress is the primary objective.
+- A new maintainer must understand current product state, identify the most valuable real gap and start working without waiting for step-by-step user direction.
+- HANDOFF queues are evidence and suggestions, not immutable commands.
+- Do not stop after every small step; continue autonomously until a real approval/blocker boundary is reached.
+- Commit/push coherent verified increments instead of leaving long-lived uncommitted/unpublished work.
+- Keep `main` reasonably synchronized through normal PR/CI when development is stable, but treat this as background Git hygiene rather than a product milestone.
+- Do not repeatedly ask the user whether to commit, push, open a normal PR, inspect/fix CI, or perform low-risk branch synchronization.
+- Preserve explicit human approval for destructive/high-risk identity, memory, credential, updater/replacement, rollback/signing/release-trust and self-approval-boundary changes.
 
-- Implementation/proof head `cb913d61f001af6c729a141a3c8631a72e8362cf`.
+## Completed product evidence still relevant
+
+- Clean-install implementation/proof head `cb913d61f001af6c729a141a3c8631a72e8362cf`.
 - `ZN CI` run `33193710879`: success; Python kernel reported 686 tests, 5 skipped.
 - `ZN Windows Release Candidate` run `33193711016`: success.
-- `ZN Windows Clean Install` run `33193710872`: success; installed resident runtime identity matched the implementation head and the materialized isolated Python runtime was exercised.
+- `ZN Windows Clean Install` run `33193710872`: success.
 - Documentation closeout head `4b770345e1267db1cfdc37c9551ff967d6955c27`; CI run `33195494937`: success.
-- Canonical promotion merge `a4f9c95a32571add9bd16ec5aa08a618c8e5566b` via PR #13.
-- Canonical post-merge CI run `33196441295`: success.
+- PR #13 canonical post-merge CI run `33196441295`: success.
 
-This evidence should remain available as proof, but generating ever-more evidence is not itself the product roadmap.
-
-## Maintenance-rule change in progress
-
-`AGENTS.md` is being adjusted to make these points explicit:
-
-- advancing ZN is the primary objective; process artifacts are supporting tools;
-- maintainers should independently re-evaluate the highest-value next task from current product gaps;
-- HANDOFF Task Queue is advisory operational state, not an immutable instruction chain;
-- small tasks use a lightweight verified loop; medium/large/high-risk tasks use progressively stronger process;
-- low-risk reversible engineering decisions should be made autonomously when repository evidence is sufficient;
-- evidence should prove product capability rather than replace product capability;
-- the existing safe promotion path to `main` remains intact;
-- human approval remains mandatory for the existing high-risk boundaries.
-
-## Relevant files
-
-- `AGENTS.md` — durable maintainer behavior and repository rules.
-- `.agent/HANDOFF.md` — current operational state only.
-- `ZN.md` — product/architecture source used when choosing future work.
-- `docs/ZN-IMPLEMENTATION-STATUS.md` — implementation reality and gaps.
-- `docs/ZN-NEXT-PHASE.md` — roadmap input, not an unquestionable command queue.
-- `docs/ZN-SELF-MAINTENANCE.md` — safety boundaries.
-
-## Safety boundary
-
-This maintenance change must not alter product runtime behavior, identity, long-term memory, credentials, updater/replacement, rollback, signing, release trust, stable channel or installed user versions.
-
-Existing human-approval boundaries remain unchanged for destructive identity/long-term-memory migration, credential/permission expansion, updater/replacement/rollback/signing/release-trust actions, destructive data operations, and self-approval-rule weakening.
+These prove completed capability; they do not dictate the next product task.
 
 ## Task Queue
 
-| Priority | Status | Task | Dependency / completion condition |
+| Priority | Status | Task | Completion condition |
 | --- | --- | --- | --- |
-| P1 | in_progress | Verify the maintainer-agency rule diff is narrow and preserves safety/promotion boundaries | Review `AGENTS.md` + HANDOFF diff |
-| P1 | planned | Run/inspect appropriate CI for this docs/rules branch | Exact branch head must be green; do not claim success before GitHub reports it |
-| P1 | planned | Merge this maintenance change back to `dev/zn-agent` through a traceable PR | CI green, diff clean, no safety regression |
-| P1 | planned | Reconcile `dev/zn-agent` with canonical `main` through the normal promotion gate | Include the already-pending ledger reconciliation; verify post-merge canonical state |
-| P1 | planned | Re-evaluate ZN's next product task from current code/status instead of automatically inheriting the old installed-N evidence plan | Read product/status/active code after maintenance promotion |
+| P1 | in_progress | Finish PR #14 with the restored product-first/autonomous rule | Exact PR head reviewed; required checks green or repository policy confirms docs-only path needs no separate run |
+| P1 | planned | Merge PR #14 to `dev/zn-agent` and reconcile normal branch state | Traceable merge, no safety-boundary regression |
+| P1 | planned | Keep `main` reasonably current through normal CI/PR flow | Treat as engineering hygiene, not a separate product phase |
+| P1 | planned | Resume autonomous ZN development | Re-read `ZN.md`, implementation status and active code; choose highest-value gap based on product impact/risk/dependencies |
 
-## Known product gaps for the next maintainer to evaluate
+## Candidate product gaps to reassess
 
-These are candidates to prioritize, not a fixed sequence:
-
-- installed-N continuity/baseline and later N -> N+1 continuity;
+- installed-N continuity and later N -> N+1 continuity;
 - failed-update rollback;
-- Windows login/reboot autostart proof on persistent installed state;
-- signing/release-trust validation and formal publication readiness;
-- remaining P5 restore/recovery capabilities recorded in implementation status;
-- any higher-priority correctness, security, reliability or user-facing blocker found in the current active code.
+- Windows login/reboot autostart on persistent installed state;
+- signing/release-trust/formal publication readiness;
+- remaining P5 restore/recovery capabilities;
+- any higher-priority correctness, security, reliability or user-facing blocker found in active code.
 
-Choose among them by impact, dependency, risk and closeness to a usable ZN product. Do not select a task merely because it is the next numbered evidence slice.
+This list is not a fixed sequence. The maintainer should inspect current reality and choose.
 
 ## Verification state
 
-- Repository/branch/HANDOFF/AGENTS inspection: actually performed through GitHub.
-- `main...dev/zn-agent` comparison at inspection: `dev/zn-agent` ahead by 3, behind by 0.
-- Product tests were not rerun before this rule edit because no runtime/product code was changed.
-- The exact maintenance-branch CI result is still pending and must be checked before merge/promotion.
+- Historical AGENTS versions and the promotion-rule regression commit were actually inspected through GitHub.
+- The user-provided Actions screenshot shows a successful recent `dev/zn-agent` ZN CI run, but that run is for commit `9a72374`, not the current PR #14 head.
+- GitHub currently reports PR #14 as open and mergeable.
+- GitHub Actions API currently shows no workflow run for the PR #14 work-branch head; commit status has no reported checks. Do not mislabel the screenshot as exact-head PR #14 CI.
+- This maintenance change modifies documentation/rules only; no runtime/product code was changed.
 
 ## Next action
 
-Review the exact two-file maintenance diff, then inspect CI for the resulting branch head. If green, merge normally into `dev/zn-agent`, re-check the cumulative `main...dev` state, and promote through the existing safe gate. After canonical reconciliation, select the next product task afresh from real ZN gaps.
+Inspect the updated PR #14 diff and repository check requirements for its exact head. If no required check is missing, merge normally to `dev/zn-agent`. Then keep branch synchronization routine and return attention to autonomous product development rather than creating another promotion/evidence phase.
