@@ -160,15 +160,20 @@ jobs:
           $stdout = Join-Path $env:RUNNER_TEMP 'zn-clean-install-desktop.stdout.log'
           $stderr = Join-Path $env:RUNNER_TEMP 'zn-clean-install-desktop.stderr.log'
           $proof = Join-Path $env:RUNNER_TEMP 'zn-clean-install-proof.log'
+          $continuity = Join-Path $env:RUNNER_TEMP 'zn-installed-continuity-baseline.json'
+          Remove-Item -Force $continuity -ErrorAction SilentlyContinue
           $desktop = $null
           try {
             $desktop = Start-Process -FilePath $installedExe -ArgumentList '--disable-gpu' -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
-            node apps/desktop/scripts/verify-zn-windows-clean-install.mjs $env:ZN_INSTALL_DIR $env:ZN_CLEAN_HOME $env:GITHUB_SHA 2>&1 | Tee-Object -FilePath $proof
+            node apps/desktop/scripts/verify-zn-windows-clean-install.mjs $env:ZN_INSTALL_DIR $env:ZN_CLEAN_HOME $env:GITHUB_SHA $continuity 2>&1 | Tee-Object -FilePath $proof
             if ($LASTEXITCODE -ne 0) { throw "clean-install verifier failed with exit code $LASTEXITCODE" }
           } finally {
             if ($desktop -and -not $desktop.HasExited) {
               Stop-Process -Id $desktop.Id -Force -ErrorAction SilentlyContinue
             }
+          }
+          if (-not (Test-Path -LiteralPath $continuity -PathType Leaf)) {
+            throw "Installed resident continuity baseline missing after proof: $continuity"
           }
           $runtimeManifest = Join-Path $env:ZN_CLEAN_HOME "runtime/$env:GITHUB_SHA/runtime.json"
           if (-not (Test-Path -LiteralPath $runtimeManifest -PathType Leaf)) {
@@ -186,6 +191,7 @@ jobs:
           path: |
             ${{ runner.temp }}/zn-clean-install-proof.log
             ${{ runner.temp }}/zn-clean-install-runtime.json
+            ${{ runner.temp }}/zn-installed-continuity-baseline.json
             ${{ runner.temp }}/zn-clean-install-desktop.stdout.log
             ${{ runner.temp }}/zn-clean-install-desktop.stderr.log
 
