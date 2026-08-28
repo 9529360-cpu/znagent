@@ -11,11 +11,11 @@ This file records implementation truth for the active ZN product. Source code, G
 - canonical source branch: `main`
 - canonical `main` after PR #6 promotion: `b9820e6a56b20bc3e9eb5b431d0aab6bedc39438`
 - promoted PR head: `40111a97f5335cee6678d6e18375543a01baa6bb`
-- latest exact P5 code/proof head: `48bfe13ba6783184292e871ebbc62a895db47d1c`
+- latest P5.9 product/inspection head: `0e806fe64109d3428a098ece7f2e59d409bd84a2`
+- latest exact P5.9 full-CI proof descendant: `a59380d5a70c79ea8fd1e759c537d2245beafdff`
 - PR #6 was merged on 2026-08-28 through the normal traceable merge flow
 - `dev/zn-agent` was then non-force fast-forwarded to the merge commit; no force push or history rewrite was performed
 - GitHub Releases were confirmed empty during this stage; canonical source promotion is not a formal product release
-- a documentation closeout commit on `dev/zn-agent` follows the merge and may make dev narrowly ahead again as normal development resumes
 
 M10 canonical promotion remains complete. `main` is canonical source and the future release source, but a commit entering `main` does **not** by itself mean ZN has been formally released as a product. Normal development stays on `dev/zn-agent` or isolated work branches. Coherent verified stages should be promoted rather than leaving canonical `main` indefinitely stale. High-risk boundaries remain human-approved.
 
@@ -36,7 +36,7 @@ ZN Kernel / Python / Windows             success
 Publish Windows CI statuses              success
 ```
 
-Post-merge `main` CI run `33170354975` initially encountered a runner environment failure in Kernel before ZN tests started: the isolated uv/Python build environment on `zn-ci-01` raised an `importlib.metadata` partial-initialization error. Source Boundary and Electron succeeded. The failed Kernel job was re-run rather than bypassed. On the retry, the same runner successfully completed Python preparation, no-model boot, and resident compile and entered the full core-test step. A same-SHA dev run also successfully prepared/booted/compiled and entered core tests on another runner. At the time of this status write those core-test executions are still in progress, so post-merge CI is **not yet claimed fully green**.
+Post-merge `main` CI run `33170354975` initially encountered a runner environment failure in Kernel before ZN tests started: the isolated uv/Python build environment on `zn-ci-01` raised an `importlib.metadata` partial-initialization error. The failed Kernel job was re-run rather than bypassed. Attempt 2 completed successfully on the same canonical merge SHA. `ZN Kernel / Python / Windows`, `Electron / TypeScript / Windows`, `ZN Source Boundary / Windows`, and `Publish Windows CI statuses` all completed `success`. The transient first-attempt failure remains visible in CI history and was not hidden or waived.
 
 Founding boundary:
 
@@ -48,11 +48,11 @@ Founding boundary:
 - P2 bounded cumulative accounting/learning durability: **COMPLETE / CI VERIFIED**
 - P3 managed-browser frontier reconciliation: **COMPLETE / CI VERIFIED NARROW**
 - P4 resident-owned live-page registry: **COMPLETE / CI VERIFIED NARROW**
-- P5 durable Work checkpoint / restore foundation: **PARTIAL / EIGHT BOUNDED SLICES CI VERIFIED**
+- P5 durable Work checkpoint / restore foundation: **PARTIAL / NINE BOUNDED SLICES CI VERIFIED**
 
-Broader Work durability now has **TWENTY-SEVEN concrete crash/restart windows closed and verified**. P5.8 adds one new concrete crash/restart boundary; its additional drift, ownership, capacity, and finalized-run tests are safety hardening and are not counted as separate crash windows.
+Broader Work durability has **TWENTY-SEVEN concrete crash/restart windows closed and verified**. P5.9 is a read-only inspection/projection slice and adds no mutation lifecycle, so it does not increment that crash-window count.
 
-This does **not** mean general rollback/restore, arbitrary workspace snapshots, or user-visible restore application is complete.
+This does **not** mean general rollback/restore, arbitrary workspace snapshots, or destructive restore application is complete.
 
 ## P5 verified bounded slices
 
@@ -131,7 +131,7 @@ Active restore owner:
 runtime/python/zn_agent/core/work_restore_point_resident.py
 ```
 
-The active runtime chain is now:
+At the P5.8 proof head the runtime chain was:
 
 ```text
 provider_bridge
@@ -219,7 +219,79 @@ ZN CI run 33166734199                             success
   Publish Windows CI statuses                     success
 ```
 
-The P5.8 runtime proof remains the exact `48bfe13...` evidence above. Later documentation/promotion descendants do not alter the P5.8 runtime implementation and are not substituted for that exact proof.
+The P5.8 runtime proof remains the exact `48bfe13...` evidence above. Later descendants do not replace that historical exact proof.
+
+### P5.9 - read-only Work restore-point inspection
+
+Implementation/proof chain:
+
+```text
+ed000252db5b262e1954712a9679ed83653b89c5  feat: inspect Work restore points read-only
+ce00790ff2f9fb28a8b409467800a21892893a2f  feat: show Work restore-point inspection
+21c34f3ca7fdd8cb107c78231523ffb691ffd5e8  ci: cover restore-point inspection path
+0e806fe64109d3428a098ece7f2e59d409bd84a2  ci: run restore-point desktop contract
+8841efbacb01d0cf64575f9ffe31948af192347c  fix: preserve desktop cache ownership contract
+a59380d5a70c79ea8fd1e759c537d2245beafdff  exact full-CI proof descendant
+```
+
+Read-only inspection owner:
+
+```text
+runtime/python/zn_agent/core/work_restore_point_inspection_resident.py
+```
+
+The current resident chain is:
+
+```text
+provider_bridge
+-> RecoveryBoundedResidentRuntime
+-> WorkRestorePointInspectionResidentRuntime
+-> WorkRestorePointResidentRuntime
+-> AtomicOverwriteNamespaceRecoveryResidentRuntime
+-> AtomicOverwriteRecoveryResidentRuntime
+-> OverwriteRecoveryResidentRuntime
+-> DurableBodyAccountingResidentRuntime
+-> CapabilityRecoveryResidentRuntime
+-> resident core
+```
+
+P5.9 projects retained restore-point metadata through the detailed resident-owned Work control path without granting mutation authority. Inspection revalidates exact durable Work event/thread/message ownership and freshly observes the current target before classifying it as `unchanged`, `changed`, `missing`, or `unsupported`.
+
+The SQL projection intentionally excludes the retained content BLOB. Stored pre-mutation identity is consumed only inside the resident to compare against fresh outside-world evidence. Public inspection does not export raw retained bytes, content hashes, action signatures, intent identity, or the private pre-identity record. Every projected point records `automatic_restore_authority: False` and `restore_application_available: False`.
+
+The desktop reuses the existing detailed `workGet` path; no new restore IPC or write capability was added. Restore-point inspection is requested when a user opens a Work or explicitly presses Refresh. The ordinary recurring Work list remains the resident authority for durable Work state and does not repeatedly hash target files every 12 seconds.
+
+Desktop restore-point state is transient outside-world observation. It is explicitly stripped from the browser localStorage cache, so stale file reality cannot survive a renderer restart and masquerade as current evidence. The UI displays only inspection state and a refresh action. It contains no Restore/Apply control and says that the surface is read-only.
+
+P5.9 adds no destructive operation and therefore no new crash/restart mutation window. Actual restore writeback, authority, drift handling at commit time, confirmation, and post-restore verification remain separate work.
+
+### Real CI proof for P5.9
+
+Backend implementation head `ed000252db5b262e1954712a9679ed83653b89c5`:
+
+```text
+ZN Work Recovery E2E #96 / run 33172674061       success
+ZN Atomic Overwrite E2E #10 / run 33172674065    success
+ZN CI #1107                                      success
+```
+
+Desktop/CI product head `0e806fe64109d3428a098ece7f2e59d409bd84a2`:
+
+```text
+ZN Work Recovery E2E #97 / run 33173759246       success
+```
+
+Latest exact full-tree proof descendant `a59380d5a70c79ea8fd1e759c537d2245beafdff`:
+
+```text
+ZN CI #1110 / run 33174294153                    success
+ZN Source Boundary / Windows                     success
+Electron / TypeScript / Windows                  success
+ZN Kernel / Python / Windows                     success
+Publish Windows CI statuses                      success
+```
+
+Two intermediate full-CI runs intentionally remain visible in history: they exposed desktop contract mismatches and were fixed rather than bypassed. The new restore-point desktop contract itself passed; the final exact-head run above is green.
 
 No local repository test run is claimed for this web-maintainer stage. Repository self-hosted Windows CI is the verification authority.
 
@@ -237,6 +309,10 @@ No local repository test run is claimed for this web-maintainer stage. Repositor
 10. Missing/unsupported/too-large targets are not claimed restorable.
 11. Raw restore content stays resident-owned in the kernel DB and is not exposed by the metadata projection.
 12. General restore application remains a separate authority/lifecycle problem.
+13. Read-only inspection must revalidate exact Work ownership before projecting a retained point.
+14. Current-target inspection is fresh observation, not restore authority.
+15. The recurring Work list does not perform restore-target hashing; detailed `workGet` / explicit refresh owns inspection.
+16. Desktop restore-point observations are transient and are not persisted in browser localStorage.
 
 ## Relevant files
 
@@ -249,6 +325,7 @@ No local repository test run is claimed for this web-maintainer stage. Repositor
 - `runtime/python/zn_agent/core/atomic_overwrite_resident.py`
 - `runtime/python/zn_agent/core/atomic_overwrite_namespace_recovery_resident.py`
 - `runtime/python/zn_agent/core/work_restore_point_resident.py`
+- `runtime/python/zn_agent/core/work_restore_point_inspection_resident.py`
 - `runtime/python/zn_agent/core/recovery_bounded_resident.py`
 - `runtime/python/zn_agent/core/provider_bridge.py`
 - `runtime/python/zn_agent/core/work_control.py`
@@ -261,6 +338,12 @@ No local repository test run is claimed for this web-maintainer stage. Repositor
 - `tests/zn_agent/core/test_work_restore_point_guards.py`
 - `tests/zn_agent/core/test_work_restore_point_retention.py`
 - `tests/zn_agent/core/test_work_restore_point_active_run.py`
+- `apps/desktop/src/zn/resident-client.ts`
+- `apps/desktop/src/zn/state.ts`
+- `apps/desktop/src/zn/workbench.tsx`
+- `apps/desktop/electron/zn-restore-point-inspection.test.ts`
+- `apps/desktop/electron/zn-desktop-ownership.test.ts`
+- `.github/workflows/zn-ci.yml`
 - `.github/workflows/zn-atomic-overwrite-e2e.yml`
 - `.github/workflows/zn-work-recovery-e2e.yml`
 
@@ -268,8 +351,8 @@ No local repository test run is claimed for this web-maintainer stage. Repositor
 
 P5 remains **PARTIAL**. Still open:
 
-- user-visible restore-point inspection/projection is not yet connected through Work control/UI;
-- actual restore application and its authority, target-drift handling, user confirmation, and post-restore verification are not implemented;
+- actual restore application and its authority, target-drift handling at mutation time, user confirmation, and post-restore verification are not implemented;
+- current read-only inspection is informational and grants no restore authority;
 - general per-task rollback and arbitrary workspace snapshots remain open;
 - there is no general startup/maintenance GC owner for deterministic artifacts outside an exact active protocol;
 - files larger than the exact capture limit and incomplete identities remain non-restorable/fail-closed for this path;
@@ -281,15 +364,16 @@ P5 remains **PARTIAL**. Still open:
 
 ## Next real target
 
-First finish the post-promotion verification/doc closeout honestly; do not call the post-merge run green until its retry actually completes successfully.
+P5.9 is ready for normal low-risk source promotion after its documentation/HANDOFF closeout and exact docs-head CI. Do not turn this source promotion into a formal product Release or installed-version update.
 
-Then continue P5 without jumping directly to destructive restore application. The next bounded target is a **read-only Work restore-point projection/inspection path**:
+After promotion, the next safe P5 target is a **non-mutating restore proposal / eligibility contract**. It should build on P5.9 without writing retained bytes back:
 
-1. connect existing retained restore metadata to the resident-owned `work_control.py` / Work snapshot surface;
-2. expose only metadata required to understand that a restore point exists; do not expose the raw retained BLOB by default;
-3. bind projection to the exact Work event/thread ownership already enforced by the restore layer;
-4. re-observe current target identity so future restore eligibility can distinguish unchanged, changed, missing, and unsupported reality without mutating anything;
-5. add restart and privacy/ownership tests around that read-only projection;
-6. design actual restore proposal/authority as a later bounded slice with explicit drift handling and user-visible approval where destructive replacement is involved.
+1. derive a user-visible proposal only from exact Work-owned retained metadata plus fresh target observation;
+2. state clearly which restore point and target would be involved and whether the current target is unchanged, changed, missing, or unsupported;
+3. fail closed when ownership or current reality is not exact enough to propose safely;
+4. keep retained bytes and private identity evidence resident-owned;
+5. model explicit user approval as a prerequisite for a later destructive restore lifecycle, but do not treat approval UI or a proposal as mutation authority;
+6. test restart, drift, privacy, and forged-ownership behavior around the proposal surface;
+7. leave actual restore application, commit-time revalidation, writeback, rollback semantics, and post-restore verification for a separately reviewed human-approved slice.
 
 Normal development remains on `dev/zn-agent` or isolated work branches. Verified coherent stages should continue to use traceable PR/promotion flow into `main`; a `main` merge is canonical source maintenance, not by itself a formal product Release.
