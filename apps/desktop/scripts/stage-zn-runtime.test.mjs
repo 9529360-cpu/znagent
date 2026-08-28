@@ -22,3 +22,12 @@ test('Windows runtime staging removes uv top-level Python aliases before packagi
   assert.match(source, /removeWindowsPythonAliases\(pythonInstallDir, pythonPath\)/)
   assert.match(source, /unsupported top-level aliases/)
 })
+
+test('runtime staging packages Playwright and Chromium inside the versioned ZN runtime', () => {
+  assert.match(source, /const browserInstallDir = path\.join\(runtimeRoot, ['"]playwright-browsers['"]\)/)
+  assert.match(source, /`\$\{runtimeProject\}\[browser\]`/)
+  assert.match(source, /\['-m', 'playwright', 'install', 'chromium'\]/)
+  assert.match(source, /PLAYWRIGHT_BROWSERS_PATH:\s*browserInstallDir/)
+  assert.match(source, /browser_root:\s*portableRelative\(runtimeRoot, browserInstallDir\)/)
+  assert.doesNotMatch(source, /PLAYWRIGHT_BROWSERS_PATH\s*:\s*(?:os\.|process\.env\.LOCALAPPDATA|process\.env\.USERPROFILE)/)
+})
