@@ -77,15 +77,17 @@ class WorkRestoreApplicationAuthorityResidentRuntime(
         if os.name != "nt":
             return super().prepare_missing_work_restore(thread_id, restore_point_id)
 
-        row, _, _ = self._owned_restore_point(thread_id, restore_point_id)
+        point, _, _ = self._owned_restore_point(thread_id, restore_point_id)
         normalized_thread = str(thread_id or "").strip()
         normalized_point = str(restore_point_id or "").strip()
-        target = Path(str(row["target_path"]))
+        target = Path(str(point["target_path"]))
         current = observe_file_identity(target, max_hash_bytes=DEFAULT_MAX_HASH_BYTES)
         parent = self._observe_parent(target)
         if not self._stable_missing(current) or not self._safe_parent(parent):
             return super().prepare_missing_work_restore(thread_id, restore_point_id)
 
+        size_bytes = int(point["size_bytes"])
+        content_sha256 = str(point["content_sha256"])
         with closing(self._restore_connect()) as conn:
             active = conn.execute(
                 f"""
@@ -106,14 +108,25 @@ class WorkRestoreApplicationAuthorityResidentRuntime(
             if reusable is None and self._same_parent_identity(expected_parent, parent):
                 reusable = application
                 continue
+
+            stage_removed = self._discard_exact_stage(
+                Path(str(application["staging_path"])),
+                size_bytes=size_bytes,
+                content_sha256=content_sha256,
+            )
+            base_error = (
+                "restore approval was superseded by a newer explicit preparation"
+                if reusable is not None
+                else "restore parent directory identity changed before renewed preparation"
+            )
             self._set_application(
                 str(application["application_id"]),
                 status="blocked",
                 current_identity=current,
                 error=(
-                    "restore approval was superseded by a newer explicit preparation"
-                    if reusable is not None
-                    else "restore parent directory identity changed before renewed preparation"
+                    base_error
+                    if stage_removed
+                    else f"{base_error}; unexpected staging evidence remains"
                 ),
             )
 
