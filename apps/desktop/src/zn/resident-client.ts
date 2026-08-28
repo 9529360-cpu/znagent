@@ -3,6 +3,8 @@ import type {
   ZnArtifactKind,
   ZnRestorePoint,
   ZnRestorePointCurrentStatus,
+  ZnRestoreProposal,
+  ZnRestoreProposalStatus,
   ZnThread,
   ZnThreadMessage,
   ZnThreadRole,
@@ -139,6 +141,37 @@ function restorePointCurrentStatus(value: unknown): ZnRestorePointCurrentStatus 
     : 'unsupported'
 }
 
+function restoreProposalStatus(value: unknown): ZnRestoreProposalStatus {
+  if (
+    value === 'candidate' ||
+    value === 'conflict_review_required' ||
+    value === 'missing_target_review_required'
+  ) return value
+  return 'blocked'
+}
+
+function normalizeRestoreProposal(value: unknown): ZnRestoreProposal | undefined {
+  const item = record(value)
+  if (!item || item.kind !== 'restore_exact_file') return undefined
+  if (
+    item.destructive !== true ||
+    item.requires_user_approval !== true ||
+    item.requires_fresh_revalidation !== true ||
+    item.application_available !== false ||
+    item.automatic_authority !== false
+  ) return undefined
+  return {
+    kind: 'restore_exact_file',
+    status: restoreProposalStatus(item.status),
+    reason: String(item.reason || ''),
+    destructive: true,
+    requiresUserApproval: true,
+    requiresFreshRevalidation: true,
+    applicationAvailable: false,
+    automaticAuthority: false
+  }
+}
+
 function normalizeMessage(value: unknown): ZnThreadMessage | null {
   const item = record(value)
   if (!item) return null
@@ -184,6 +217,7 @@ function normalizeRestorePoint(value: unknown): ZnRestorePoint | null {
   const currentExistsRaw = item.current_exists ?? item.currentExists
   const currentSizeRaw = item.current_size_bytes ?? item.currentSizeBytes
   const sizeBytes = Number(item.size_bytes ?? item.sizeBytes ?? 0)
+  const proposal = normalizeRestoreProposal(item.restore_proposal || item.restoreProposal)
   return {
     id,
     eventId,
@@ -200,6 +234,7 @@ function normalizeRestorePoint(value: unknown): ZnRestorePoint | null {
       : {}),
     createdAt: timestamp(item.created_at || item.createdAt),
     updatedAt: timestamp(item.updated_at || item.updatedAt),
+    ...(proposal ? { proposal } : {}),
     automaticRestoreAuthority: false,
     restoreApplicationAvailable: false
   }
