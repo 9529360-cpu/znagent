@@ -27,6 +27,26 @@ export type ZnArtifact = {
   metadata?: Record<string, unknown>
 }
 
+export type ZnRestorePointCurrentStatus = 'unchanged' | 'changed' | 'missing' | 'unsupported'
+
+export type ZnRestorePoint = {
+  id: string
+  eventId: string
+  targetPath: string
+  sizeBytes: number
+  status: string
+  currentStatus: ZnRestorePointCurrentStatus
+  currentReason: string
+  currentObservedAt: number
+  currentExists?: boolean
+  currentType: string
+  currentSizeBytes?: number
+  createdAt: number
+  updatedAt: number
+  automaticRestoreAuthority: false
+  restoreApplicationAvailable: false
+}
+
 export type ZnThread = {
   id: string
   title: string
@@ -35,6 +55,7 @@ export type ZnThread = {
   messages: ZnThreadMessage[]
   artifacts: ZnArtifact[]
   workspace?: ZnWorkspace
+  restorePoints?: ZnRestorePoint[]
 }
 
 const STORAGE_KEY = 'zn.desktop.thread-cache.v1'
@@ -98,19 +119,28 @@ function isThread(value: unknown): value is ZnThread {
   )
 }
 
+function withoutTransientRestorePoints(thread: ZnThread): ZnThread {
+  const cached = { ...thread }
+  delete cached.restorePoints
+  return cached
+}
+
 export function loadZnThreadCache(): ZnThread[] {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return []
-    return parsed.filter(isThread).slice(0, MAX_THREADS).map(thread => ({
-      ...thread,
-      messages: thread.messages.slice(-MAX_MESSAGES_PER_THREAD),
-      artifacts: Array.isArray(thread.artifacts)
-        ? thread.artifacts.slice(0, MAX_ARTIFACTS_PER_THREAD)
-        : []
-    }))
+    return parsed.filter(isThread).slice(0, MAX_THREADS).map(thread => {
+      const cached = withoutTransientRestorePoints(thread)
+      return {
+        ...cached,
+        messages: cached.messages.slice(-MAX_MESSAGES_PER_THREAD),
+        artifacts: Array.isArray(cached.artifacts)
+          ? cached.artifacts.slice(0, MAX_ARTIFACTS_PER_THREAD)
+          : []
+      }
+    })
   } catch {
     return []
   }
@@ -121,14 +151,17 @@ export function saveZnThreadCache(threads: readonly ZnThread[]): void {
     const bounded = [...threads]
       .sort((left, right) => right.updatedAt - left.updatedAt)
       .slice(0, MAX_THREADS)
-      .map(thread => ({
-        ...thread,
-        messages: thread.messages.slice(-MAX_MESSAGES_PER_THREAD),
-        artifacts: thread.artifacts.slice(0, MAX_ARTIFACTS_PER_THREAD)
-      }))
+      .map(thread => {
+        const cached = withoutTransientRestorePoints(thread)
+        return {
+          ...cached,
+          messages: cached.messages.slice(-MAX_MESSAGES_PER_THREAD),
+          artifacts: cached.artifacts.slice(0, MAX_ARTIFACTS_PER_THREAD)
+        }
+      })
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(bounded))
   } catch {
     // The cache is convenience state only. Resident identity/memory must never
-    // depend on browser storage being writable.
+    // depend on browser storage; fresh restore-point inspection is transient too.
   }
 }
