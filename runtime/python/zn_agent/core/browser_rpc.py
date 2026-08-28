@@ -2,15 +2,18 @@ from __future__ import annotations
 
 """Resident-owned RPC control surface for the managed browser.
 
-This module deliberately exposes a narrow first product path: create an ephemeral
-managed session, observe it, navigate with fresh observation-bound authority,
-and close it. The browser adapter still owns URL/network safety enforcement and
-post-action effect evidence; the RPC face does not treat dispatch as completion.
+Playwright's synchronous API is thread-affine. Resident TCP clients may reconnect
+or coexist, so request-handler threads are not a valid browser owner. This module
+therefore serializes all managed-browser provider calls onto one resident-owned
+thread while keeping permission and action authority in ZN-owned contracts.
 """
 
+import queue
+import threading
+from concurrent.futures import Future
 from dataclasses import asdict
 from enum import Enum
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 from .browser import (
     BrowserAction,
@@ -19,6 +22,8 @@ from .browser import (
     BrowserPermissionContext,
 )
 from .daemon import ResidentRpcServer
+
+_T = TypeVar("_T")
 
 
 def _jsonable(value: Any) -> Any:
@@ -31,12 +36,77 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
+class _BrowserOwner:
+    """Single resident thread that owns every thread-affine browser provider call."""
+
+    def __init__(self) -> None:
+        self._queue: queue.Queue[tuple[Callable[[], Any], Future[Any]] | None] = queue.Queue()
+        self._ready = threading.Event()
+        self._thread_id: int | None = None
+        self._closed = False
+        self._state_lock = threading.Lock()
+        self._thread = threading.Thread(
+            target=self._run,
+            name="zn-managed-browser",
+            daemon=True,
+        )
+        self._thread.start()
+        self._ready.wait()
+
+    def call(self, operation: Callable[[], _T]) -> _T:
+        if threading.get_ident() == self._thread_id:
+            return operation()
+        with self._state_lock:
+            if self._closed:
+                raise RuntimeError("resident managed-browser owner is closed")
+            future: Future[_T] = Future()
+            self._queue.put((operation, future))
+        return future.result()
+
+    def close(self, operation: Callable[[], Any]) -> None:
+        with self._state_lock:
+            already_closed = self._closed
+        if already_closed:
+            return
+        error: BaseException | None = None
+        try:
+            self.call(operation)
+        except BaseException as exc:  # preserve provider cleanup failure after owner teardown
+            error = exc
+        finally:
+            with self._state_lock:
+                if not self._closed:
+                    self._closed = True
+                    self._queue.put(None)
+            if threading.get_ident() != self._thread_id:
+                self._thread.join(timeout=10.0)
+        if error is not None:
+            raise error
+
+    def _run(self) -> None:
+        self._thread_id = threading.get_ident()
+        self._ready.set()
+        while True:
+            command = self._queue.get()
+            if command is None:
+                return
+            operation, future = command
+            if not future.set_running_or_notify_cancel():
+                continue
+            try:
+                future.set_result(operation())
+            except BaseException as exc:
+                future.set_exception(exc)
+
+
 class BrowserResidentRpcServer(ResidentRpcServer):
     """Extend the normal resident RPC face with bounded managed browsing."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._browser_permissions: dict[str, BrowserPermissionContext] = {}
+        self._browser_permissions_lock = threading.Lock()
+        self._browser_owner = _BrowserOwner()
 
     def handle(self, request: dict[str, Any]) -> dict[str, Any]:
         method = str(request.get("method") or "").strip()
@@ -54,23 +124,23 @@ class BrowserResidentRpcServer(ResidentRpcServer):
 
         if method == "browser_open":
             permission = self._permission_from_params(params.get("permission"))
-            session = browser.open_session(
-                permission=permission,
-                headless=bool(params.get("headless", True)),
+            session = self._browser_owner.call(
+                lambda: browser.open_session(
+                    permission=permission,
+                    headless=bool(params.get("headless", True)),
+                )
             )
-            self._browser_permissions[session.session_id] = permission
+            with self._browser_permissions_lock:
+                self._browser_permissions[session.session_id] = permission
             result = _jsonable(asdict(session))
         elif method == "browser_observe":
             session_id = self._session_id(params, method)
             self._require_known_session(session_id)
-            result = _jsonable(
-                asdict(
-                    browser.observe(
-                        session_id,
-                        page_id=str(params.get("page_id") or "").strip(),
-                    )
-                )
+            page_id = str(params.get("page_id") or "").strip()
+            observation = self._browser_owner.call(
+                lambda: browser.observe(session_id, page_id=page_id)
             )
+            result = _jsonable(asdict(observation))
         elif method == "browser_navigate":
             session_id = self._session_id(params, method)
             permission = self._require_known_session(session_id)
@@ -78,35 +148,48 @@ class BrowserResidentRpcServer(ResidentRpcServer):
             if not url:
                 raise ValueError("browser_navigate requires url")
             page_id = str(params.get("page_id") or "").strip()
-            observation = browser.observe(session_id, page_id=page_id)
-            action = BrowserAction.create(
-                session_id=session_id,
-                kind=BrowserActionKind.NAVIGATE,
-                page_id=page_id or observation.page_id,
-                args={"url": url},
-                expected=(
-                    {"url_equals": str(params.get("url_equals") or "").strip()}
-                    if str(params.get("url_equals") or "").strip()
-                    else {}
-                ),
-            )
-            authority = BrowserActionAuthority.from_observation(
-                action,
-                observation,
-                permission,
-            )
-            evidence = browser.act(action, authority)
+            expected_url = str(params.get("url_equals") or "").strip()
+
+            def navigate() -> Any:
+                observation = browser.observe(session_id, page_id=page_id)
+                action = BrowserAction.create(
+                    session_id=session_id,
+                    kind=BrowserActionKind.NAVIGATE,
+                    page_id=page_id or observation.page_id,
+                    args={"url": url},
+                    expected={"url_equals": expected_url} if expected_url else {},
+                )
+                authority = BrowserActionAuthority.from_observation(
+                    action,
+                    observation,
+                    permission,
+                )
+                return browser.act(action, authority)
+
+            evidence = self._browser_owner.call(navigate)
             result = _jsonable(asdict(evidence))
         elif method == "browser_close":
             session_id = self._session_id(params, method)
             self._require_known_session(session_id)
-            browser.close_session(session_id)
-            self._browser_permissions.pop(session_id, None)
+            self._browser_owner.call(lambda: browser.close_session(session_id))
+            with self._browser_permissions_lock:
+                self._browser_permissions.pop(session_id, None)
             result = {"closed": True, "session_id": session_id}
         else:
             raise ValueError(f"unknown method: {method}")
 
         return {"id": request_id, "ok": True, "result": result}
+
+    def close_managed_browser(self) -> None:
+        """Close provider resources on the same resident thread that created them."""
+
+        browser = getattr(self.resident, "managed_browser", None)
+        if browser is None:
+            self._browser_owner.close(lambda: None)
+            return
+        self._browser_owner.close(browser.close)
+        with self._browser_permissions_lock:
+            self._browser_permissions.clear()
 
     @staticmethod
     def _session_id(params: dict[str, Any], method: str) -> str:
@@ -116,7 +199,8 @@ class BrowserResidentRpcServer(ResidentRpcServer):
         return session_id
 
     def _require_known_session(self, session_id: str) -> BrowserPermissionContext:
-        permission = self._browser_permissions.get(session_id)
+        with self._browser_permissions_lock:
+            permission = self._browser_permissions.get(session_id)
         if permission is None:
             raise ValueError("unknown resident managed-browser session")
         return permission
