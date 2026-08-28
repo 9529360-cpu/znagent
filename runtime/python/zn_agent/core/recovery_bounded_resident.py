@@ -6,11 +6,11 @@ import threading
 from contextlib import contextmanager
 from typing import Any, Iterator
 
-from .overwrite_recovery_resident import OverwriteRecoveryResidentRuntime
+from .atomic_overwrite_resident import AtomicOverwriteRecoveryResidentRuntime
 from .recovery_control import raise_if_synchronous_recovery_blocked
 
 
-class RecoveryBoundedResidentRuntime(OverwriteRecoveryResidentRuntime):
+class RecoveryBoundedResidentRuntime(AtomicOverwriteRecoveryResidentRuntime):
     """Keep asynchronous resident life alive while bounding synchronous callers.
 
     Synchronous call policy is deliberately layered around the same resident
