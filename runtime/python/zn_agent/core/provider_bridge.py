@@ -173,9 +173,6 @@ def build_zn_cognitive_resource_plan(
     try:
         routes = resolve_zn_routes(runtime_route_specs)
     except (ValueError, RuntimeError) as exc:
-        # External cognition is optional to ZN's existence. A missing credential,
-        # malformed provider endpoint or unavailable resource degrades to the
-        # explicit zero-model worker instead of preventing resident boot.
         return _unavailable_plan(
             max_attempts=max_attempts,
             error=f"{type(exc).__name__}: {exc}",
@@ -238,8 +235,8 @@ def build_resident_runtime(
     credential_store: CredentialStore | None = None,
 ):
     """Build the resident organism around the ZN-owned kernel."""
+    from .browser_work_resident import BrowserWorkResidentRuntime
     from .budget import CognitiveBudgetManager
-    from .recovery_bounded_resident import RecoveryBoundedResidentRuntime
 
     effective_config = config if config is not None else load_zn_config()
     kernel = build_runtime(
@@ -257,11 +254,8 @@ def build_resident_runtime(
             0.0, min(1.0, float(resident_cfg.get("high_risk_threshold", 0.8)))
         ),
     )
-    return RecoveryBoundedResidentRuntime(kernel=kernel, budget=budget)
+    return BrowserWorkResidentRuntime(kernel=kernel, budget=budget)
 
 
-# Transitional source-level aliases only. They preserve existing ZN callers
-# while naming migration happens, but no longer expose or construct a legacy
-# runtime path.
 build_runtime_from_existing_stack = build_runtime
 build_resident_runtime_from_existing_stack = build_resident_runtime

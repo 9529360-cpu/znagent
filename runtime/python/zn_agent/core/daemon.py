@@ -12,7 +12,7 @@ from .provider_settings import ProviderSettingsService
 from .recovery_bounded_work import RecoveryBoundedWorkLedger
 from .recovery_control import ResidentRecoveryRequired
 from .service import ResidentService
-from .work_control import ResidentWorkControl
+from .work_restore_control import RestoreAwareWorkControl
 
 
 class ResidentRpcServer:
@@ -36,7 +36,7 @@ class ResidentRpcServer:
         self.resident = resident or build_resident_runtime_from_existing_stack()
         self.service = ResidentService(self.resident)
         self.work = RecoveryBoundedWorkLedger(self.resident)
-        self.work_control = ResidentWorkControl(self.work)
+        self.work_control = RestoreAwareWorkControl(self.work)
         self.provider_settings = provider_settings or ProviderSettingsService(self.resident)
         self.input = input_stream or sys.stdin
         self.output = output_stream or sys.stdout
@@ -227,6 +227,31 @@ class ResidentRpcServer:
                     )
                 ),
             }
+        elif method == "work_restore_prepare":
+            thread_id = str(params.get("thread_id") or "").strip()
+            restore_point_id = str(params.get("restore_point_id") or "").strip()
+            if not thread_id:
+                raise ValueError("work_restore_prepare requires thread_id")
+            if not restore_point_id:
+                raise ValueError("work_restore_prepare requires restore_point_id")
+            result = self.work_control.prepare_missing_restore(
+                thread_id, restore_point_id
+            )
+        elif method == "work_restore_approve":
+            thread_id = str(params.get("thread_id") or "").strip()
+            application_id = str(params.get("application_id") or "").strip()
+            if not thread_id:
+                raise ValueError("work_restore_approve requires thread_id")
+            if not application_id:
+                raise ValueError("work_restore_approve requires application_id")
+            result = self.work_control.approve_missing_restore(
+                thread_id, application_id
+            )
+        elif method == "work_restore_application":
+            application_id = str(params.get("application_id") or "").strip()
+            if not application_id:
+                raise ValueError("work_restore_application requires application_id")
+            result = self.work_control.restore_application(application_id)
         elif method == "work_submit":
             thread_id = str(params.get("thread_id") or "").strip()
             task = str(params.get("task") or "").strip()

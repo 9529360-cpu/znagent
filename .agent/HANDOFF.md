@@ -1,110 +1,80 @@
 # ZN Maintainer Handoff
 
-This is an engineering handoff/evidence ledger, not a chat summary. Repository state, code and real CI remain authoritative.
+This is the current engineering work site and fact index, not a chat summary or execution script. Real code, Git state and actual CI remain authoritative.
 
 ## Current goal
 
-Close and normally promote the low-risk Windows x64 **clean install + first resident start proof** stage, then begin the next isolated/read-only installed-N baseline evidence slice without invoking updater/replacement.
+The managed-browser + bounded Work-restore stage is now exact-head verified. Reconcile that fact into `dev/zn-agent`, keep canonical `main` reasonably current, and continue the next product gap: a read-only installed-N continuity baseline. The baseline is safe preparation for later continuity testing; an actual N -> N+1 replacement remains approval-gated.
 
-## Branch and Git state at this handoff write
+## Repository state
 
 - Repository: `9529360-cpu/znagent`
-- Development branch: `dev/zn-agent`
-- Canonical branch: `main`
-- Canonical `main` before clean-install promotion: `3741db32c739322a3f921ea62798b2c698ef0771`
-- Verified clean-install implementation/proof parent head: `cb913d61f001af6c729a141a3c8631a72e8362cf`
-- This documentation closeout commit becomes the current `dev/zn-agent` HEAD; resolve the branch ref after the commit rather than inventing a self-referential SHA here.
-- PR #11: merged `dev/zn-agent -> main`, promoting the unsigned candidate-proof stage.
-- PR #12: merged `work/windows-clean-install-proof -> dev/zn-agent`, adding the clean-install proof.
-- No force push/history rewrite is authorized or required.
+- Canonical/release branch: `main`
+- Primary development branch: `dev/zn-agent`
+- Verified product head for the browser/recovery stage: `5c347925490179748e44e35c43b0435ede9e1f14` (PR #35 merge).
+- Reconciliation branch: `work/browser-stage-reconcile` / PR #36.
+- Installed-N continuity work is isolated on `work/installed-n-continuity-baseline` / PR #37 until its own Windows evidence is green.
+- `main` is still at `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`; at the PR #35 merge head, `dev/zn-agent` was 103 commits ahead and 0 behind. Do not treat this divergence as a roadmap item; sync normally after ledger reconciliation.
 
-## Completed in the current engineering stage
+## Product reality
 
-- Promoted the already verified Windows unsigned candidate-proof stage to canonical `main` via PR #11.
-- Verified post-merge canonical `main` with `ZN CI` run `33192086069` (success).
-- Added a separate clean hosted Windows x64 install/start workflow and verifier rather than expanding formal release automation.
-- Added contract tests for installed layout, exact runtime identity, materialized-Python ownership and loopback endpoint evidence.
-- Built the real unsigned NSIS/MSI candidate and verified its packaged runtime/manifest before installation.
-- Ran the real NSIS installer silently into isolated GitHub-hosted Windows state.
-- Started the installed `ZN.exe` and exercised the production path through packaged runtime materialization and resident IPC/autostart.
-- Verified the real resident TCP endpoint with `ping`, `status`, `self`, exact runtime id, materialized portable Python, live pulse, graceful shutdown and endpoint retirement.
-- Bounded NSIS wait to three minutes after the first proof showed install exit latency; assertions were not weakened.
-- Merged the verified implementation through PR #12 into `dev/zn-agent`.
-- Re-read `ZN.md`, `AGENTS.md`, implementation/source/self-maintenance docs, this handoff, branch heads, diff/PR/CI and the real installed desktop -> packaged runtime -> resident call chain before closeout.
+### Bounded Work restore
 
-## Exact implementation-head verification
+The old “read-only restore only” description is obsolete.
 
-Implementation/proof head: `cb913d61f001af6c729a141a3c8631a72e8362cf`.
+- PR #19 added the first mutation-capable restore slice for Windows: exact retained Work bytes may be restored only when the target is freshly/stably missing, through explicit `work_restore_prepare` then `work_restore_approve`.
+- Existing parent identity is bound and revalidated; same-directory staging plus a no-replace namespace move ensures a target that reappears wins the race and is never overwritten.
+- Application state is durable (`approval_required`, `applying`, `stage_ready`, `commit_started`, `completed`, `recovery_required`, `blocked`). Restart reconciliation observes reality but never silently resumes a mutation.
+- PR #21 keeps full restore context behind exact Work-thread binding.
+- PR #22 wired the bounded flow into the desktop with two explicit user actions: Prepare, then Approve exact restore. Unsafe/changed/unchanged targets stay inspection-only.
+- PR #23 proved a prepared approval can be rediscovered after resident restart while still requiring a new explicit approval action.
+- PRs #25/#26 closed desktop protocol and proposal-contract regressions.
+- This is a narrow missing-target/no-replace product slice, not general destructive restore authority.
 
-- `ZN CI` run `33193710879`: substantive jobs success.
-  - `ZN Source Boundary / Windows`: success.
-  - `Electron / TypeScript / Windows`: success.
-  - `ZN Kernel / Python / Windows`: success; **686 tests**, `609.959s`, `OK (skipped=5)`.
-- `ZN Windows Release Candidate` run `33193711016`: success.
-  - Artifact `9695032455`.
-  - Archive digest `sha256:a5e65ee7b02ef977260e30365ba460cbd30dcfef1d46550c58a31b8cc7739aa6`.
-- `ZN Windows Clean Install` run `33193710872`: success.
-  - Installed runtime id: `cb913d61f001af6c729a141a3c8631a72e8362cf`.
-  - Resident Python came from the materialized isolated runtime.
-  - Observed resident `pulse_count=1`.
-  - Artifact `9695069801`.
-  - Archive digest `sha256:c55e2c72c3a86b8661273520874b1aec395804188cc34f8231071e4ce2407f06`.
+### Managed browser + Work
 
-The implementation head therefore has real full-CI + candidate-build + clean-install evidence. The documentation closeout head must still receive its own required CI before promotion.
+- PR #28 packages Playwright + Chromium inside the formal versioned Windows ZN runtime and verifies packaged Chromium can launch.
+- PR #29 makes the formal resident expose bounded managed-browser RPC.
+- PR #30 fixes Playwright thread affinity by owning all browser provider calls on one resident browser thread, including reconnecting TCP clients.
+- PR #31 makes browser owner shutdown atomic against late calls.
+- PR #32 wires structured `browser_navigate` into the real Work lifecycle. Permission is derived from the structured target URL; free text/model output is not browser authority.
+- Navigation is treated as a non-replayable outside-world side effect. ZN durably records the attempt and blocks blind replay when certainty is lost.
+- Provider success is not Work completion. ZN persists a `browser_url_equals` postcondition, independently re-observes the live page, closes the session, and only then finalizes Work.
+- PR #33 composes browser behavior on the mature Body stack so atomic-overwrite, namespace-recovery, keyboard/pointer and generic side-effect protocols remain intact.
+- PR #34 puts browser Work under the dedicated Work Recovery lane.
+- PR #35 fixes the MRO regression exposed by that lane: non-browser verification now delegates via instance `super()` instead of bypassing the mature verification chain.
+- Browser click/type/select/upload/download are intentionally not exposed through Work yet; they need stronger authority/replay/postcondition design.
 
-## Relevant files
+## Verification evidence
 
-Current stage implementation:
+Completed exact-head evidence:
 
-- `.github/workflows/zn-windows-clean-install.yml`
-- `apps/desktop/scripts/verify-zn-windows-clean-install.mjs`
-- `apps/desktop/scripts/verify-zn-windows-clean-install.test.mjs`
+- `ZN Managed Browser E2E` run `33219726246` on implementation head `1f4da5fae6d6481375290637027fa273714bb032`: success, including real Chromium Work navigation.
+- `ZN Managed Browser E2E` run `33220567118` on PR #35 merge head `5c347925490179748e44e35c43b0435ede9e1f14`: success; browser contract tests and real local Chromium E2E both succeeded.
+- `ZN Work Recovery E2E` run `33220567184` on the same PR #35 merge head: success; the full recovery lane passed after the MRO fix, so the 19 mature non-browser recovery regressions exposed by PR #34 are resolved in actual CI.
+- `ZN CI` run `33220567183` on the same PR #35 merge head: success across Electron/TypeScript, Kernel/Python, Source Boundary and final status publication. The Python job completed the full working-tree core suite successfully after zero-model boot and resident-core compilation.
+- Prior packaged-runtime clean-install proof `33216509252`: success, including packaged Chromium launch and installed resident start.
 
-Production call chain inspected during closeout:
+Other evidence still in flight at the latest check:
 
-- `apps/desktop/electron/zn-main.ts`
-- `apps/desktop/electron/zn-packaged-runtime.ts`
-- `apps/desktop/electron/zn-resident-ipc.ts`
-- `runtime/python/zn_agent/core/resident_server.py`
-- `runtime/python/zn_agent/core/daemon.py`
+- `ZN Windows Clean Install` run `33220521263` on exact PR #35 code head `aec2dcf72d6a91878e69930c9c93dfa8d014e3f5` was still building the unsigned installer candidate. It is supplementary to the exact merge-head browser/recovery/general-CI gates above.
+- PR #37 has its own Windows clean-install evidence run on the continuity-baseline head; do not claim the installed baseline product path is verified until that exact-head run succeeds through installed resident startup, `continuity_snapshot`, evidence persistence and graceful shutdown.
 
-Ledger/status files updated by this closeout:
+Do not convert in-flight statements to success without fresh Actions evidence.
 
-- `docs/ZN-IMPLEMENTATION-STATUS.md`
-- `docs/ZN-NEXT-PHASE.md`
-- `.agent/HANDOFF.md`
+## Current risks / real gaps
 
-## Safety boundary / risks
+- `main` is materially behind verified development and should now be synchronized after PR #36 lands.
+- The installed-N continuity baseline is implemented on PR #37, but it is not product-verified until a real installed resident emits the sanitized artifact in Windows clean-install CI.
+- A real N -> N+1 installation replacement, failed-update rollback, signing/release trust and user-machine replacement remain explicit human-approval boundaries.
+- Real Windows login/reboot autostart on persistent installed state remains a product gap.
+- Managed browser mutation beyond navigation remains deliberately ungranted.
 
-This stage did **not**:
+## Next candidates
 
-- invoke the production updater or replace a user's installed formal version;
-- execute N -> N+1 transition or rollback;
-- modify identity/long-term-memory migration rules;
-- modify credentials/permissions or expose credential values;
-- alter signing keys, signing policy, release trust roots, branch protection or required checks;
-- create a tag/GitHub Release or advance `stable.json`.
+1. Merge PR #36 to reconcile the verified browser/recovery stage into `dev/zn-agent`.
+2. Promote the verified development stack to canonical `main` through a normal PR if merge/check requirements remain satisfied.
+3. Finish PR #37 by proving a real installed ZN emits a bounded, non-secret continuity baseline containing stable Self identity/reference, Work/thread references and sanitized provider metadata without invoking updater/replacement authority.
+4. Re-rank product gaps after that evidence. An actual N -> N+1 transition remains separately approval-gated.
 
-Still unproven:
-
-- real Windows login/reboot autostart on a persistent installed machine;
-- installed N baseline continuity evidence;
-- N -> N+1 continuity;
-- failed-update rollback;
-- signing/release-trust validation;
-- formal publication/stable-channel transition.
-
-Those high-risk transition/trust operations remain human-approval boundaries.
-
-## Task queue
-
-1. Resolve this documentation closeout commit as the current `dev/zn-agent` HEAD.
-2. Run/inspect exact-docs-head `ZN CI`; do not reuse implementation-head CI as if docs were remotely verified.
-3. Re-check complete `main...dev` diff and unresolved blockers.
-4. If the repository promotion gate remains green, open and normally merge a traceable `dev/zn-agent -> main` PR for the clean-install stage.
-5. Verify canonical post-merge `main` `ZN CI` and reconcile refs/docs/HANDOFF.
-6. Begin the next low-risk isolated installed-N baseline evidence slice. It may read sanitized Self/work/config/provider metadata, but it must not invoke updater/replacement/rollback/signing.
-
-## Blockers
-
-No implementation blocker is currently known for the clean-install slice. Promotion remains pending only on documentation-head verification and final promotion checks at the time of this handoff write.
+A later N -> N+1 transition is not authorized by this handoff.

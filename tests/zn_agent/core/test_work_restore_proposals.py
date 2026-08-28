@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -67,7 +68,7 @@ class WorkRestoreProposalTests(unittest.TestCase):
         assert len(points) == 1
         return points[0], points[0]["restore_proposal"]
 
-    def test_restore_proposal_tracks_reality_without_granting_authority(self):
+    def test_restore_proposal_tracks_reality_without_granting_automatic_authority(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             target = root / "document.txt"
@@ -103,9 +104,17 @@ class WorkRestoreProposalTests(unittest.TestCase):
                 self.assertFalse(changed["application_available"])
 
                 target.unlink()
-                _, missing = self._proposal(control, thread_id)
+                point, missing = self._proposal(control, thread_id)
                 self.assertEqual(missing["status"], "missing_target_review_required")
-                self.assertFalse(missing["application_available"])
+                expected_available = os.name == "nt"
+                self.assertEqual(missing["application_available"], expected_available)
+                self.assertEqual(
+                    missing["application_scope"],
+                    "missing_target_no_replace" if expected_available else None,
+                )
+                self.assertEqual(point["restore_application_available"], expected_available)
+                self.assertFalse(missing["automatic_authority"])
+                self.assertFalse(point["automatic_restore_authority"])
 
                 target.mkdir()
                 point, blocked = self._proposal(control, thread_id)

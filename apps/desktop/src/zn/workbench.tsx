@@ -18,6 +18,7 @@ import {
   type ZnResidentSnapshot,
   type ZnWorkProgress
 } from './resident-client'
+import { ZnMissingRestoreControls } from './restore-controls'
 import {
   addZnThreadMessage,
   loadZnThreadCache,
@@ -711,11 +712,19 @@ export function ZnWorkbench() {
                         {restoreProposalStatusLabel(point.proposal.status)} · user approval and fresh revalidation would be required
                       </span>
                     ) : null}
+                    {activeThread ? (
+                      <ZnMissingRestoreControls
+                        threadId={activeThread.id}
+                        point={point}
+                        disabled={restoreBusy || busy}
+                        onRealityChanged={() => refreshRestorePoints(activeThread.id)}
+                      />
+                    ) : null}
                   </div>
                 ))}
               </div>
             )}
-            <p className="zn-muted zn-small">Proposal and inspection only. No restore action is available from this surface.</p>
+            <p className="zn-muted zn-small">Changed, unchanged and unsafe targets remain inspection-only. Missing-target restore requires explicit preparation and approval with fresh resident revalidation.</p>
           </section>
           {activeArtifacts.length > 0 ? (
             <section className="zn-context-section zn-context-grow zn-artifact-section">
