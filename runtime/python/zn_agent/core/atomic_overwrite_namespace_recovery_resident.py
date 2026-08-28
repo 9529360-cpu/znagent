@@ -42,19 +42,24 @@ class AtomicOverwriteNamespaceRecoveryResidentRuntime(AtomicOverwriteRecoveryRes
         if not isinstance(expected, dict) or not isinstance(current, dict):
             return False
         for identity in (expected, current):
+            size_bytes = identity.get("size_bytes")
+            content_sha256 = identity.get("content_sha256")
             if (
                 identity.get("observable") is not True
                 or identity.get("stable") is not True
                 or identity.get("exists") is not True
                 or str(identity.get("type") or "") != "file"
                 or identity.get("digest_complete") is not True
-                or not str(identity.get("content_sha256") or "")
+                or type(size_bytes) is not int
+                or size_bytes < 0
+                or not isinstance(content_sha256, str)
+                or len(content_sha256) != 64
+                or any(character not in "0123456789abcdef" for character in content_sha256)
             ):
                 return False
         return bool(
-            int(expected.get("size_bytes") or -1) == int(current.get("size_bytes") or -2)
-            and str(expected.get("content_sha256") or "")
-            == str(current.get("content_sha256") or "")
+            expected["size_bytes"] == current["size_bytes"]
+            and expected["content_sha256"] == current["content_sha256"]
         )
 
     def _prestate_identity(self, state, intent: NativeActionIntent) -> dict[str, Any] | None:

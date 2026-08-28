@@ -81,6 +81,17 @@ class WindowsAtomicOverwriteNamespaceRecoveryTests(unittest.TestCase):
             with unittest.TestCase().assertRaises(SystemExit):
                 resident._native_action_step(event, state, readiness=None)
 
+    @staticmethod
+    def _split_1177(target_path: Path, staging: Path, backup: Path) -> None:
+        target_path.replace(backup)
+        raise StagedWriteCommitUncertainError(
+            "synthetic documented ERROR_UNABLE_TO_MOVE_REPLACEMENT_2",
+            staging_path=staging,
+            backup_path=backup,
+            strategy="replace_file_with_backup",
+            error_code=1177,
+        )
+
     def test_restart_classifies_documented_1177_split_without_replay(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -97,20 +108,10 @@ class WindowsAtomicOverwriteNamespaceRecoveryTests(unittest.TestCase):
                 args=dict(intent.args),
             )
 
-            def split_1177(target_path: Path, staging: Path, backup: Path) -> None:
-                target_path.replace(backup)
-                raise StagedWriteCommitUncertainError(
-                    "synthetic documented ERROR_UNABLE_TO_MOVE_REPLACEMENT_2",
-                    staging_path=staging,
-                    backup_path=backup,
-                    strategy="replace_file_with_backup",
-                    error_code=1177,
-                )
-
             try:
                 with patch(
                     "zn_agent.core.staged_text_write._replace_existing_windows",
-                    side_effect=split_1177,
+                    side_effect=self._split_1177,
                 ):
                     self.assertIsNone(
                         resident._native_action_step(event, state, readiness=None)
@@ -162,6 +163,106 @@ class WindowsAtomicOverwriteNamespaceRecoveryTests(unittest.TestCase):
                 )
                 self.assertEqual(self._attempt_statuses(db, event.event_id), ["observed"])
                 self.assertIsNotNone(self._protocol(db, event.event_id))
+            finally:
+                restarted.store.close()
+
+    def test_zero_byte_new_payload_still_classifies_1177_split(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "kernel.db"
+            target = root / "document.txt"
+            target.write_text("old durable state", encoding="utf-8")
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=db
+            )
+            event, state, intent = self._work(resident, target, "")
+            staging_path, backup_path = resident.body.atomic_artifact_paths(
+                event_id=event.event_id,
+                kind=intent.kind,
+                args=dict(intent.args),
+            )
+            try:
+                with patch(
+                    "zn_agent.core.staged_text_write._replace_existing_windows",
+                    side_effect=self._split_1177,
+                ):
+                    self.assertIsNone(
+                        resident._native_action_step(event, state, readiness=None)
+                    )
+            finally:
+                resident.store.close()
+
+            restarted = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=db
+            )
+            try:
+                current = restarted.store.get_working_state()
+                self.assertIsNone(
+                    restarted._side_effect_recovery_step(event, current, readiness=None)
+                )
+                held = restarted.store.get_working_state()
+                evidence = held.data["side_effect_recovery"]["atomic_commit_namespace"]
+                self.assertEqual(
+                    evidence["classification"], "replacefile_1177_split_retained"
+                )
+                self.assertTrue(evidence["stage_matches_durable_payload"])
+                self.assertTrue(evidence["backup_matches_durable_prestate"])
+                self.assertEqual(staging_path.stat().st_size, 0)
+                self.assertEqual(
+                    backup_path.read_text(encoding="utf-8"), "old durable state"
+                )
+                self.assertFalse(target.exists())
+                self.assertEqual(self._attempt_statuses(db, event.event_id), ["observed"])
+            finally:
+                restarted.store.close()
+
+    def test_zero_byte_prestate_still_classifies_1177_split(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "kernel.db"
+            target = root / "document.txt"
+            target.write_bytes(b"")
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=db
+            )
+            event, state, intent = self._work(resident, target, "new complete state")
+            staging_path, backup_path = resident.body.atomic_artifact_paths(
+                event_id=event.event_id,
+                kind=intent.kind,
+                args=dict(intent.args),
+            )
+            try:
+                with patch(
+                    "zn_agent.core.staged_text_write._replace_existing_windows",
+                    side_effect=self._split_1177,
+                ):
+                    self.assertIsNone(
+                        resident._native_action_step(event, state, readiness=None)
+                    )
+            finally:
+                resident.store.close()
+
+            restarted = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=db
+            )
+            try:
+                current = restarted.store.get_working_state()
+                self.assertIsNone(
+                    restarted._side_effect_recovery_step(event, current, readiness=None)
+                )
+                held = restarted.store.get_working_state()
+                evidence = held.data["side_effect_recovery"]["atomic_commit_namespace"]
+                self.assertEqual(
+                    evidence["classification"], "replacefile_1177_split_retained"
+                )
+                self.assertTrue(evidence["stage_matches_durable_payload"])
+                self.assertTrue(evidence["backup_matches_durable_prestate"])
+                self.assertEqual(
+                    staging_path.read_text(encoding="utf-8"), "new complete state"
+                )
+                self.assertEqual(backup_path.stat().st_size, 0)
+                self.assertFalse(target.exists())
+                self.assertEqual(self._attempt_statuses(db, event.event_id), ["observed"])
             finally:
                 restarted.store.close()
 
@@ -251,6 +352,55 @@ class WindowsAtomicOverwriteNamespaceRecoveryTests(unittest.TestCase):
                 )
             finally:
                 resumed.store.close()
+
+    def test_zero_byte_backup_is_owned_for_verified_effect_cleanup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "kernel.db"
+            target = root / "document.txt"
+            target.write_bytes(b"")
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=db
+            )
+            event, state, intent = self._work(resident, target, "new complete state")
+            _, backup_path = resident.body.atomic_artifact_paths(
+                event_id=event.event_id,
+                kind=intent.kind,
+                args=dict(intent.args),
+            )
+            try:
+                self._crash_after_successful_namespace_commit(resident, event, state)
+                self.assertTrue(backup_path.exists())
+                self.assertEqual(backup_path.stat().st_size, 0)
+            finally:
+                resident.store.close()
+
+            restarted = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=db
+            )
+            try:
+                current = restarted.store.get_working_state()
+                self.assertIsNone(
+                    restarted._native_action_step(event, current, readiness=None)
+                )
+                current = restarted.store.get_working_state()
+                result = restarted._side_effect_recovery_step(
+                    event, current, readiness=None
+                )
+                self.assertIsNotNone(result)
+                self.assertTrue(result.success)
+                completed = restarted.store.get_working_state()
+                self.assertEqual(completed.stage, "complete")
+                self.assertFalse(backup_path.exists())
+                self.assertIsNone(self._protocol(db, event.event_id))
+                self.assertEqual(
+                    self._attempt_statuses(db, event.event_id), ["verified_effect"]
+                )
+                self.assertEqual(
+                    target.read_text(encoding="utf-8"), "new complete state"
+                )
+            finally:
+                restarted.store.close()
 
     def test_cleanup_checkpoint_preserves_backup_if_identity_drifts(self):
         with tempfile.TemporaryDirectory() as tmp:
