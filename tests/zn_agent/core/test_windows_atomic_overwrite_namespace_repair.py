@@ -255,6 +255,117 @@ class WindowsAtomicOverwriteNamespaceRepairTests(unittest.TestCase):
             finally:
                 resumed.store.close()
 
+    def test_external_target_winner_during_repair_move_is_never_clobbered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db, target, event, intent, staging_path, backup_path = self._make_split(root)
+            self._checkpoint_repair(db, event, intent)
+
+            def lose_no_replace_race(staging: Path, target_path: Path) -> None:
+                self.assertEqual(staging, staging_path)
+                self.assertEqual(target_path, target)
+                target_path.write_text("external winner", encoding="utf-8")
+                raise FileExistsError("synthetic no-replace target race")
+
+            resumed = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=db
+            )
+            try:
+                checkpoint = resumed.store.get_working_state()
+                with patch(
+                    "zn_agent.core.staged_text_write.repair_staged_to_missing_target_windows",
+                    side_effect=lose_no_replace_race,
+                ):
+                    self.assertIsNone(
+                        resumed._side_effect_recovery_step(
+                            event, checkpoint, readiness=None
+                        )
+                    )
+                held = resumed.store.get_working_state()
+                recovery = held.data["side_effect_recovery"]
+                self.assertEqual(recovery["decision"], "user_decision_required")
+                self.assertEqual(recovery["status"], "namespace_repair_blocked")
+                self.assertTrue(recovery["replay_blocked"])
+                self.assertEqual(target.read_text(encoding="utf-8"), "external winner")
+                self.assertEqual(staging_path.read_text(encoding="utf-8"), "new complete state")
+                self.assertEqual(backup_path.read_text(encoding="utf-8"), "old durable state")
+                self.assertEqual(self._attempt_statuses(db, event.event_id), ["observed"])
+                self.assertIsNotNone(self._protocol(db, event.event_id))
+            finally:
+                resumed.store.close()
+
+    def test_stage_drift_after_repair_checkpoint_withdraws_repair_authority(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db, target, event, intent, staging_path, backup_path = self._make_split(root)
+            self._checkpoint_repair(db, event, intent)
+            staging_path.write_text("externally changed stage", encoding="utf-8")
+
+            resumed = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=db
+            )
+            try:
+                checkpoint = resumed.store.get_working_state()
+                with patch(
+                    "zn_agent.core.staged_text_write.repair_staged_to_missing_target_windows",
+                    side_effect=AssertionError("repair must not run after stage identity drift"),
+                ):
+                    self.assertIsNone(
+                        resumed._side_effect_recovery_step(
+                            event, checkpoint, readiness=None
+                        )
+                    )
+                held = resumed.store.get_working_state()
+                recovery = held.data["side_effect_recovery"]
+                self.assertEqual(recovery["decision"], "user_decision_required")
+                self.assertEqual(recovery["status"], "namespace_repair_blocked")
+                self.assertTrue(recovery["replay_blocked"])
+                self.assertFalse(target.exists())
+                self.assertEqual(
+                    staging_path.read_text(encoding="utf-8"), "externally changed stage"
+                )
+                self.assertEqual(backup_path.read_text(encoding="utf-8"), "old durable state")
+                self.assertEqual(self._attempt_statuses(db, event.event_id), ["observed"])
+                self.assertIsNotNone(self._protocol(db, event.event_id))
+            finally:
+                resumed.store.close()
+
+    def test_backup_drift_after_repair_checkpoint_withdraws_repair_authority(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db, target, event, intent, staging_path, backup_path = self._make_split(root)
+            self._checkpoint_repair(db, event, intent)
+            backup_path.write_text("externally changed backup", encoding="utf-8")
+
+            resumed = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=db
+            )
+            try:
+                checkpoint = resumed.store.get_working_state()
+                with patch(
+                    "zn_agent.core.staged_text_write.repair_staged_to_missing_target_windows",
+                    side_effect=AssertionError("repair must not run after backup identity drift"),
+                ):
+                    self.assertIsNone(
+                        resumed._side_effect_recovery_step(
+                            event, checkpoint, readiness=None
+                        )
+                    )
+                held = resumed.store.get_working_state()
+                recovery = held.data["side_effect_recovery"]
+                self.assertEqual(recovery["decision"], "user_decision_required")
+                self.assertEqual(recovery["status"], "namespace_repair_blocked")
+                self.assertTrue(recovery["replay_blocked"])
+                self.assertFalse(target.exists())
+                self.assertEqual(staging_path.read_text(encoding="utf-8"), "new complete state")
+                self.assertEqual(
+                    backup_path.read_text(encoding="utf-8"), "externally changed backup"
+                )
+                self.assertEqual(self._attempt_statuses(db, event.event_id), ["observed"])
+                self.assertIsNotNone(self._protocol(db, event.event_id))
+            finally:
+                resumed.store.close()
+
 
 if __name__ == "__main__":
     unittest.main()
