@@ -29,15 +29,15 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
             return True
         return RecoveryBoundedResidentRuntime._generic_guarded_side_effect(intent)
 
-    @staticmethod
     def _verification_contract(
+        self,
         event,
         intent: NativeActionIntent,
         *,
         result=None,
     ) -> dict[str, Any] | None:
         if str(intent.kind or "").strip().lower() != "browser_navigate":
-            return RecoveryBoundedResidentRuntime._verification_contract(
+            return super()._verification_contract(
                 event,
                 intent,
                 result=result,
@@ -46,14 +46,14 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
         explicit = event.payload.get("expected_outcome")
         if explicit is not None:
             if not isinstance(explicit, dict):
-                return RecoveryBoundedResidentRuntime._verification_contract(
+                return super()._verification_contract(
                     event,
                     intent,
                     result=result,
                 )
             requested_kind = str(explicit.get("kind") or "").strip().lower()
             if requested_kind != "browser_url_equals":
-                return RecoveryBoundedResidentRuntime._verification_contract(
+                return super()._verification_contract(
                     event,
                     intent,
                     result=result,
@@ -67,7 +67,7 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
                     "requested_kind": "browser_url_equals",
                     "error": "browser_url_equals postcondition requires url",
                     "intent_id": intent.intent_id,
-                    "action_signature": BrowserWorkResidentRuntime._intent_signature(intent),
+                    "action_signature": self._intent_signature(intent),
                 }
         else:
             expected_url = str(intent.args.get("expected_url") or intent.args.get("url") or "").strip()
@@ -87,7 +87,7 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
             "page_id": page_id,
             "expected_url": expected_url,
             "intent_id": intent.intent_id,
-            "action_signature": BrowserWorkResidentRuntime._intent_signature(intent),
+            "action_signature": self._intent_signature(intent),
         }
 
     def _native_verification_step(
