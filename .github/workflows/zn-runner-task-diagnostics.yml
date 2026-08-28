@@ -1,0 +1,45 @@
+name: ZN Runner Task Diagnostics
+
+on:
+  push:
+    branches:
+      - dev/zn-agent
+    paths:
+      - .github/workflows/zn-runner-task-diagnostics.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  task-diagnostics:
+    name: Runner scheduler task evidence
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Inspect watchdog control flow without secrets
+        shell: powershell
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows') { exit 0 }
+          $scriptPath = 'C:\actions-runner-znagent\watch-runner.ps1'
+          if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+            throw "watchdog script missing: $scriptPath"
+          }
+          $lines = @(Get-Content -LiteralPath $scriptPath -ErrorAction Stop)
+          Write-Host "runner.watchdog.path=$scriptPath"
+          Write-Host "runner.watchdog.line_count=$($lines.Count)"
+          $hash = Get-FileHash -LiteralPath $scriptPath -Algorithm SHA256
+          Write-Host "runner.watchdog.sha256=$($hash.Hash)"
+
+          $pattern = '(?i)Runner\.Listener|run\.cmd|Start-Process|Stop-Process|taskkill|Wait-Process|WaitForExit|Start-Sleep|\bsleep\b|timeout|GenerateConsoleCtrlEvent|Ctrl|while\s*\(|for\s*\(|exit\b|return\b|\b60\b|\b90\b|\b100\b|\b110\b|\b120\b'
+          for ($index = 0; $index -lt $lines.Count; $index++) {
+            $line = [string]$lines[$index]
+            if ($line -notmatch $pattern) { continue }
+            if ($line -match '(?i)TOKEN|SECRET|PASSWORD|API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY') {
+              Write-Host "runner.watchdog.line[$($index + 1)]=<redacted-sensitive-line>"
+              continue
+            }
+            $safe = $line
+            if ($safe.Length -gt 400) { $safe = $safe.Substring(0, 400) + '...<truncated>' }
+            Write-Host "runner.watchdog.line[$($index + 1)]=$safe"
+          }

@@ -27,22 +27,40 @@
 4. 读取 `docs/ZN-SOURCE-EXTRACTION.md`。
 5. 读取 `docs/ZN-SELF-MAINTENANCE.md`。
 6. 读取 `.agent/HANDOFF.md`。
-7. 检查 `dev/zn-agent` 当前 HEAD、相关 diff、PR、CI、最近提交。
+7. 检查 `dev/zn-agent` 与 `main` 当前 HEAD、相关 diff、PR、CI、最近提交。
 8. 检查准备修改功能的真实调用链、测试和 active caller。
 
 文档与代码冲突时，以真实仓库状态为准，先对账再继续。新的维护者不需要知道上一位是谁，也不需要拥有上一段聊天记录。
 
 ## 分支边界
 
+M10 canonical promotion 已完成。当前分支职责：
+
 ```text
-main          = M10 正式晋升目标；M10 前保持不动
-dev/zn-agent  = ZN 主开发分支
+main          = canonical source / release branch
+dev/zn-agent  = ZN 固定主开发分支
 work/*        = 隔离实验、研究或维护分支
 ```
 
-普通开发、自维护和实验不得直接在 `main` 试错。
+普通开发、自维护、调查和实验不得直接在 `main` 试错。正常修改在 `dev/zn-agent` 或隔离 work branch 完成。
 
-除非用户明确要求，并且 `ZN.md` 的 M10 条件已经由真实代码/CI/发布证据满足，否则绝对不要修改 `main`。
+这条规则不代表 `main` 应永久冻结。一个低风险、coherent engineering stage 在满足仓库 promotion gate 后，应按正常可追踪 PR / merge / promotion flow 进入 `main`：
+
+```text
+完成所声明的实现范围
+→ 相关测试通过
+→ full CI / 必要 E2E 通过
+→ 检查 diff
+→ 状态文档与 HANDOFF 对账
+→ 无未解决 promotion blocker
+→ 不触及需要人工批准的高风险边界
+→ 正常 PR / merge / promotion
+→ main 成为新的 verified canonical source
+```
+
+满足这些条件的正常低风险 promotion 不需要额外依赖某一段聊天里再说一句“可以合并”。但是身份、长期记忆、破坏性数据迁移、凭证/权限、updater/rollback/signing、自维护审批规则，以及替换用户当前正式安装版本等高风险边界，仍必须保留明确人工批准。
+
+禁止为了“同步方便”对 `main` 或 `dev/zn-agent` 使用 force push、历史重写、绕过失败 CI 或伪造完成状态。
 
 ## 开发顺序
 
@@ -59,6 +77,7 @@ work/*        = 隔离实验、研究或维护分支
 → commit / push
 → 检查 CI
 → 更新状态/HANDOFF
+→ 达到 promotion gate 时按正常流程推进 canonical source
 ```
 
 能从仓库、代码、测试、CI、日志查清楚的，不要反复询问用户。
@@ -79,7 +98,7 @@ work/*        = 隔离实验、研究或维护分支
 
 ```text
 ZN 有具体需求
-→ 阅读 Git 历史或外部参考实现
+→ 阅读 dedicated reference branch、Git 历史或外部参考实现
 → 理解机制和边界
 → 提取/适配最小完整机制
 → 放入 ZN-owned namespace/interface/config/state/lifecycle
@@ -103,7 +122,7 @@ GPT、Claude、Gemini、人类开发者等都只是可替换维护者。
 ```text
 可追踪 commit/tag
 → GitHub 自动构建
-→ 多平台正式产物
+→ 正式产物
 → 验证正式产物
 → 发布不可变版本文件
 → GitHub Release（需要时）
@@ -129,7 +148,7 @@ GPT、Claude、Gemini、人类开发者等都只是可替换维护者。
 
 - 大模型输出不是事实，必须用代码、日志、测试和真实运行结果验证；
 - 不直接修改正在运行的正式安装目录；
-- 修复在隔离分支/工作区完成；
+- 修复在开发分支/隔离分支/工作区完成；
 - 测试失败不能伪装成成功；
 - 不能为了通过而删除有效测试、关闭 CI、关闭更新完整性检查或绕过分支保护；
 - 身份、记忆、凭证、更新器、回退、签名、自维护权限等高风险区域默认需要人工批准；
@@ -172,7 +191,7 @@ GPT、Claude、Gemini、人类开发者等都只是可替换维护者。
 - 把秘密写入仓库；
 - 让自维护系统修改安全审批规则后自己批准自己。
 
-其他正常、可逆、与明确目标一致的开发工作不要反复询问。
+其他正常、可逆、与明确目标一致的开发工作，以及满足 promotion gate 的低风险正常 promotion，不要反复依赖聊天确认。
 
 ## 接手成功标准
 

@@ -45,6 +45,7 @@ type ZnDesktopResidentBridge = {
   workGet: (payload: ZnDesktopPayload) => Promise<unknown>
   workStart: (payload: ZnDesktopPayload) => Promise<unknown>
   workProgress: (payload: ZnDesktopPayload) => Promise<unknown>
+  workCancel: (payload: ZnDesktopPayload) => Promise<unknown>
   workSubmit: (payload: ZnDesktopPayload) => Promise<unknown>
   pulses: (limit?: number) => Promise<unknown>
   situations: (limit?: number) => Promise<unknown>

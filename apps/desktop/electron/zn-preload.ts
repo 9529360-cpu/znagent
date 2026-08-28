@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld('znDesktop', {
     workStart: (payload?: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:work-start', payload || {}),
     workProgress: (payload?: ZnDesktopPayload) =>
       ipcRenderer.invoke('zn:resident:work-progress', payload || {}),
+    workCancel: (payload?: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:work-cancel', payload || {}),
     workSubmit: (payload?: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:work-submit', payload || {}),
     pulses: (limit?: number) => ipcRenderer.invoke('zn:resident:pulses', limit),
     situations: (limit?: number) => ipcRenderer.invoke('zn:resident:situations', limit),

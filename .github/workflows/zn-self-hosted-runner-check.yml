@@ -1,0 +1,195 @@
+name: ZN Self-Hosted Runner Check
+
+on:
+  push:
+    branches:
+      - dev/zn-agent
+    paths:
+      - .github/workflows/zn-self-hosted-runner-check.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: zn-self-hosted-runner-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runner-check:
+    name: Self-hosted runner connectivity
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Publish runner check pending status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: 'pending',
+              context: 'ZN Self-Hosted Runner',
+              description: 'self-hosted runner accepted the job',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            })
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Verify repository checkout and report runner identity
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('node:fs')
+            const required = ['ZN.md', 'AGENTS.md', '.github/workflows/zn-ci.yml']
+            for (const path of required) {
+              if (!fs.existsSync(path)) throw new Error(`missing required repository path: ${path}`)
+            }
+            core.info(`runner.name=${process.env.RUNNER_NAME ?? 'unknown'}`)
+            core.info(`runner.os=${process.env.RUNNER_OS ?? process.platform}`)
+            core.info(`runner.arch=${process.env.RUNNER_ARCH ?? process.arch}`)
+            core.info(`workspace=${process.env.GITHUB_WORKSPACE ?? process.cwd()}`)
+
+      - name: Report runner lifecycle evidence
+        shell: powershell
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows') {
+            Write-Host "runner.lifecycle=non-windows"
+            exit 0
+          }
+
+          $current = Get-Process -Id $PID
+          Write-Host "job.shell.pid=$PID"
+          Write-Host "job.shell.session_id=$($current.SessionId)"
+
+          $listener = Get-CimInstance Win32_Process -Filter "Name = 'Runner.Listener.exe'" |
+            Sort-Object CreationDate -Descending |
+            Select-Object -First 1
+          $worker = Get-CimInstance Win32_Process -Filter "Name = 'Runner.Worker.exe'" |
+            Sort-Object CreationDate -Descending |
+            Select-Object -First 1
+
+          function Report-Process([string]$label, $process) {
+            if ($null -eq $process) {
+              Write-Host "$label.present=false"
+              return
+            }
+            Write-Host "$label.present=true"
+            Write-Host "$label.pid=$($process.ProcessId)"
+            Write-Host "$label.ppid=$($process.ParentProcessId)"
+            Write-Host "$label.created=$($process.CreationDate)"
+            Write-Host "$label.path=$($process.ExecutablePath)"
+            try {
+              $native = Get-Process -Id $process.ProcessId -ErrorAction Stop
+              Write-Host "$label.session_id=$($native.SessionId)"
+            } catch {
+              Write-Host "$label.session_id=unavailable"
+            }
+          }
+
+          function Report-Ancestry([string]$label, $process) {
+            Write-Host "$label.ancestry.begin"
+            $seen = @{}
+            $cursor = $process
+            for ($depth = 0; $depth -lt 12 -and $null -ne $cursor; $depth++) {
+              $pidValue = [int]$cursor.ProcessId
+              if ($seen.ContainsKey($pidValue)) { break }
+              $seen[$pidValue] = $true
+              $session = 'unavailable'
+              try {
+                $session = (Get-Process -Id $pidValue -ErrorAction Stop).SessionId
+              } catch {}
+              Write-Host "$label.ancestor[$depth].name=$($cursor.Name)"
+              Write-Host "$label.ancestor[$depth].pid=$pidValue"
+              Write-Host "$label.ancestor[$depth].ppid=$($cursor.ParentProcessId)"
+              Write-Host "$label.ancestor[$depth].created=$($cursor.CreationDate)"
+              Write-Host "$label.ancestor[$depth].session_id=$session"
+              if (-not $cursor.ParentProcessId) { break }
+              $cursor = Get-CimInstance Win32_Process -Filter "ProcessId = $($cursor.ParentProcessId)"
+            }
+            Write-Host "$label.ancestry.end"
+          }
+
+          Report-Process 'runner.listener' $listener
+          Report-Process 'runner.worker' $worker
+          if ($null -ne $listener) { Report-Ancestry 'runner.listener' $listener }
+          if ($null -ne $worker) { Report-Ancestry 'runner.worker' $worker }
+
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.Runtime.InteropServices;
+          public static class ZNConsoleProbe {
+              [DllImport("kernel32.dll", SetLastError = true)]
+              public static extern uint GetConsoleProcessList(uint[] processList, uint processCount);
+          }
+          '@
+          $consolePids = [System.UInt32[]]::new(64)
+          $consoleCount = [ZNConsoleProbe]::GetConsoleProcessList($consolePids, $consolePids.Length)
+          Write-Host "console.process_count=$consoleCount"
+          $limit = [Math]::Min([int]$consoleCount, $consolePids.Length)
+          for ($index = 0; $index -lt $limit; $index++) {
+            $consolePid = [int]$consolePids[$index]
+            if ($consolePid -le 0) { continue }
+            $consoleProcess = Get-CimInstance Win32_Process -Filter "ProcessId = $consolePid"
+            if ($null -eq $consoleProcess) {
+              Write-Host "console.process[$index].pid=$consolePid"
+              Write-Host "console.process[$index].name=unavailable"
+              continue
+            }
+            Write-Host "console.process[$index].pid=$consolePid"
+            Write-Host "console.process[$index].name=$($consoleProcess.Name)"
+            Write-Host "console.process[$index].ppid=$($consoleProcess.ParentProcessId)"
+            Write-Host "console.process[$index].created=$($consoleProcess.CreationDate)"
+          }
+
+          $hostServicePids = @()
+          if ($null -ne $listener) {
+            $cursor = $listener
+            for ($depth = 0; $depth -lt 12 -and $null -ne $cursor; $depth++) {
+              if ($cursor.Name -eq 'svchost.exe') {
+                $hostServicePids += [int]$cursor.ProcessId
+              }
+              if (-not $cursor.ParentProcessId) { break }
+              $cursor = Get-CimInstance Win32_Process -Filter "ProcessId = $($cursor.ParentProcessId)"
+            }
+          }
+          foreach ($hostPid in ($hostServicePids | Select-Object -Unique)) {
+            $hosted = @(Get-CimInstance Win32_Service -Filter "ProcessId = $hostPid")
+            Write-Host "runner.host_svchost.pid=$hostPid"
+            Write-Host "runner.host_svchost.service_count=$($hosted.Count)"
+            foreach ($service in $hosted) {
+              Write-Host "runner.host_service.name=$($service.Name)"
+              Write-Host "runner.host_service.display_name=$($service.DisplayName)"
+              Write-Host "runner.host_service.state=$($service.State)"
+              Write-Host "runner.host_service.start_mode=$($service.StartMode)"
+            }
+          }
+
+          $services = @(Get-Service -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like 'actions.runner*' })
+          Write-Host "runner.services.count=$($services.Count)"
+          foreach ($service in $services) {
+            Write-Host "runner.service.name=$($service.Name)"
+            Write-Host "runner.service.status=$($service.Status)"
+            Write-Host "runner.service.start_type=$($service.StartType)"
+          }
+
+      - name: Publish runner check terminal status
+        if: ${{ always() }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const result = '${{ job.status }}'
+            const state = result === 'success' ? 'success' : result === 'failure' ? 'failure' : 'error'
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state,
+              context: 'ZN Self-Hosted Runner',
+              description: `self-hosted runner check: ${result}`.slice(0, 140),
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            })

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import uuid
+import hashlib
 
 from .models import Experience, Goal, ImprovementProposal
 from .self_model import SelfModel
@@ -28,9 +28,12 @@ class EvolutionEngine:
         weakest = min(estimates, key=lambda item: item.score)
         mature_weakness = weakest.evidence_count >= 3 and weakest.score < 0.65
         scope = "kernel_or_skill" if mature_weakness else "skill_or_policy"
+        proposal_identity = hashlib.sha256(
+            f"{goal.goal_id}\0{weakest.name}\0{scope}".encode("utf-8")
+        ).hexdigest()[:12]
 
         proposal = ImprovementProposal(
-            proposal_id=f"imp-{uuid.uuid4().hex[:12]}",
+            proposal_id=f"imp-{proposal_identity}",
             goal_id=goal.goal_id,
             capability=weakest.name,
             scope=scope,

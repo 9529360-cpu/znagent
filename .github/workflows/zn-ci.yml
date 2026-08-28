@@ -5,9 +5,6 @@ on:
     branches:
       - dev/zn-agent
       - main
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
@@ -21,47 +18,97 @@ env:
   PYTHONUNBUFFERED: '1'
   ZN_AGENT_HOME: ${{ github.workspace }}/.ci/zn-home
 
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
 concurrency:
   group: zn-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   source-boundary:
-    name: ZN Source Boundary
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    name: ZN Source Boundary / Windows
+    runs-on: [self-hosted, Windows, X64, zn-ci]
+    timeout-minutes: 10
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Verify active tree is ZN-only
-        run: python .agent/verify_zn_source_boundary.py
-
-  kernel:
-    name: ZN Kernel / Python
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Prepare ZN home
-        run: mkdir -p "$ZN_AGENT_HOME"
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Publish source-boundary pending status
+        uses: actions/github-script@v7
         with:
-          python-version: '3.12'
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: 'pending',
+              context: 'ZN Source Boundary',
+              description: 'ZN Windows CI: running',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            })
+      - name: Require Windows x64 headless CI runner
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "ZN steady-state CI requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+          Write-Host "ZN CI runner: $env:RUNNER_NAME"
+      - name: Checkout
+        uses: actions/checkout@v7
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
           version: '0.11.6'
-          enable-cache: true
-          cache-dependency-glob: runtime/python/pyproject.toml
-      - name: Install isolated ZN runtime distribution
+          enable-cache: false
+      - name: Prepare unprivileged Python 3.12
         run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/source-venv -ErrorAction SilentlyContinue
+          uv venv .ci/source-venv --python 3.12
+      - name: Verify active tree is ZN-only
+        run: .\.ci\source-venv\Scripts\python.exe .agent/verify_zn_source_boundary.py
+
+  kernel:
+    name: ZN Kernel / Python / Windows
+    runs-on: [self-hosted, Windows, X64, zn-ci]
+    timeout-minutes: 25
+    steps:
+      - name: Publish kernel pending status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: 'pending',
+              context: 'ZN Kernel / Python',
+              description: 'ZN Windows CI: running',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            })
+      - name: Require Windows x64 headless CI runner
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "ZN steady-state CI requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+          Write-Host "ZN CI runner: $env:RUNNER_NAME"
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare ZN home and isolated runtime
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:ZN_AGENT_HOME | Out-Null
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/runtime-venv -ErrorAction SilentlyContinue
           uv venv .ci/runtime-venv --python 3.12
-          uv pip install --python .ci/runtime-venv/bin/python runtime/python
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\runtime-venv\Scripts\python.exe'
+          uv pip install --python $python runtime/python
       - name: Boot isolated ZN distribution without a model
         run: |
-          .ci/runtime-venv/bin/python -I - <<'PY'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\runtime-venv\Scripts\python.exe'
+          @'
           import os
           from pathlib import Path
           import zn_agent.resident
@@ -75,30 +122,50 @@ jobs:
           assert state.body is not None
           assert state.external_brains == ()
           resident.store.close()
-          PY
+          '@ | & $python -I -
       - name: Compile resident core
-        run: .ci/runtime-venv/bin/python -m compileall -q runtime/python/zn_agent/core
+        run: .\.ci\runtime-venv\Scripts\python.exe -m compileall -q runtime/python/zn_agent/core
       - name: Run ZN core tests against working tree
-        run: PYTHONPATH="$GITHUB_WORKSPACE/runtime/python" .ci/runtime-venv/bin/python -m unittest discover -s tests/zn_agent/core -p 'test_*.py' -v
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          & .\.ci\runtime-venv\Scripts\python.exe -m unittest discover -s tests/zn_agent/core -p 'test_*.py' -v
 
   desktop:
-    name: Electron / TypeScript
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    name: Electron / TypeScript / Windows
+    runs-on: [self-hosted, Windows, X64, zn-ci]
+    timeout-minutes: 30
     env:
       NODE_OPTIONS: --max-old-space-size=4096
     steps:
+      - name: Publish desktop pending status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: 'pending',
+              context: 'Electron / TypeScript',
+              description: 'ZN Windows CI: running',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            })
+      - name: Require Windows x64 headless CI runner
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "ZN steady-state CI requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+          Write-Host "ZN CI runner: $env:RUNNER_NAME"
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22.22.0'
-          cache: npm
       - name: Install locked workspace dependencies
         run: npm ci --ignore-scripts
-      - name: Reject high-severity production npm advisories
-        run: npm audit --omit=dev --audit-level=high
+      - name: Reject high-severity npm advisories
+        run: npm audit --audit-level=high
       - name: Typecheck Electron desktop
         run: npm run typecheck --workspace apps/desktop
       - name: Bundle independent ZN desktop control plane
@@ -108,43 +175,12 @@ jobs:
       - name: Test release-channel, runtime staging and packaged-artifact verifiers
         run: node --test apps/desktop/scripts/prepare-zn-public-channel.test.mjs apps/desktop/scripts/stage-zn-runtime.test.mjs apps/desktop/scripts/verify-zn-packaged-runtime.test.mjs
 
-  container:
-    name: Container / Runtime Smoke
-    if: ${{ github.event_name != 'push' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Build runtime image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          push: false
-          load: true
-          tags: znagent-ci:dev
-          cache-from: type=gha
-          cache-to: type=gha,mode=min
-      - name: Boot ZN inside container without a model
-        run: |
-          docker run --rm --entrypoint python \
-            -e CI=true \
-            -e TZ=UTC \
-            -e PYTHONUTF8=1 \
-            -e PYTHONUNBUFFERED=1 \
-            -e ZN_AGENT_HOME=/tmp/znagent-ci \
-            znagent-ci:dev \
-            -c "from pathlib import Path; from zn_agent.core.provider_bridge import build_resident_runtime; p=Path('/tmp/znagent-ci'); p.mkdir(parents=True, exist_ok=True); r=build_resident_runtime(config={'model': {}}, store_path=p/'kernel.db'); pulse=r.pulse(); s=r.life.snapshot(); assert pulse.sequence >= 1 and s.body is not None and s.external_brains == (); r.store.close()"
-
   publish-status:
-    name: Publish commit statuses
-    if: ${{ always() && github.event_name != 'pull_request' }}
-    needs: [source-boundary, kernel, desktop, container]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    name: Publish Windows CI statuses
+    if: ${{ always() }}
+    needs: [source-boundary, kernel, desktop]
+    runs-on: [self-hosted, Windows, X64, zn-ci]
+    timeout-minutes: 10
     steps:
       - name: Publish readable CI statuses
         uses: actions/github-script@v7
@@ -157,7 +193,6 @@ jobs:
               ['ZN Kernel / Python', '${{ needs.kernel.result }}'],
               ['Electron / TypeScript', '${{ needs.desktop.result }}'],
             ]
-            if (context.eventName !== 'push') rows.push(['Container / Runtime Smoke', '${{ needs.container.result }}'])
             for (const [statusContext, result] of rows) {
               await github.rest.repos.createCommitStatus({
                 owner: context.repo.owner,
@@ -165,7 +200,7 @@ jobs:
                 sha: context.sha,
                 state: normalize(result),
                 context: statusContext,
-                description: `ZN CI: ${result}`.slice(0, 140),
+                description: `ZN Windows CI: ${result}`.slice(0, 140),
                 target_url: runUrl,
               })
             }

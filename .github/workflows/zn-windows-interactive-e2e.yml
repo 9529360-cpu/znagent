@@ -1,0 +1,77 @@
+name: ZN Windows Interactive Desktop E2E
+
+on:
+  push:
+    branches:
+      - dev/zn-agent
+    paths:
+      - .github/workflows/zn-windows-interactive-e2e.yml
+      - tests/zn_agent/e2e/test_windows_interactive_pointer_uia.py
+      - tests/zn_agent/e2e/test_windows_interactive_text_entry.py
+      - tests/zn_agent/e2e/test_windows_interactive_uia_text_capability.py
+      - tests/zn_agent/e2e/test_windows_interactive_user_browser_bridge.py
+      - runtime/python/zn_agent/core/body.py
+      - runtime/python/zn_agent/core/keyboard_text_body.py
+      - runtime/python/zn_agent/core/visual_region_sense.py
+      - runtime/python/zn_agent/core/foreground_window_sense.py
+      - runtime/python/zn_agent/core/focused_control_sense.py
+      - runtime/python/zn_agent/core/focused_text_sense.py
+      - runtime/python/zn_agent/core/automation_element_sense.py
+      - runtime/python/zn_agent/core/automation_text_state_sense.py
+      - runtime/python/zn_agent/core/pointer_click_resident.py
+      - runtime/python/zn_agent/core/pointer_click_completion_resident.py
+      - runtime/python/zn_agent/core/pointer_click_semantic_resident.py
+      - runtime/python/zn_agent/core/pointer_click_focused_control_resident.py
+      - runtime/python/zn_agent/core/pointer_click_automation_focus_resident.py
+      - runtime/python/zn_agent/core/focused_text_entry_resident.py
+      - runtime/python/zn_agent/core/focused_modern_text_resident.py
+      - runtime/python/zn_agent/core/provider_bridge.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zn-windows-interactive-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  interactive-desktop-e2e:
+    name: Windows interactive computer-use E2E
+    runs-on: [self-hosted, Windows, X64, zn-interactive]
+    timeout-minutes: 15
+    env:
+      CI: 'true'
+      TZ: UTC
+      PYTHONUTF8: '1'
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - name: Require Windows x64 interactive runner
+        shell: powershell
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "ZN interactive desktop E2E requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+          if ($env:RUNNER_NAME -ne 'zn-interactive') {
+            throw "ZN interactive desktop E2E requires the dedicated zn-interactive runner; got $env:RUNNER_NAME"
+          }
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare isolated runtime
+        shell: powershell
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/interactive-e2e-venv -ErrorAction SilentlyContinue
+          uv venv .ci/interactive-e2e-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-e2e-venv\Scripts\python.exe'
+          uv pip install --python $python runtime/python
+      - name: Run real interactive computer-use E2Es
+        shell: powershell
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          & .\.ci\interactive-e2e-venv\Scripts\python.exe -m unittest discover -s tests/zn_agent/e2e -p 'test_windows_interactive_*.py' -v

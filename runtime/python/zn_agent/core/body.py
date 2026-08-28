@@ -14,7 +14,10 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
+import psutil
+
 from .models import utc_now
+from .path_context import canonical_host_path
 from .terminal import TerminalRequest, TerminalResult, get_zn_local_terminal
 
 if TYPE_CHECKING:
@@ -140,6 +143,12 @@ class NativeBody:
             return self._list_directory(action, started)
         if kind in {"process_state", "process"}:
             return self._process_state(action, started)
+        if kind == "pointer_state":
+            return self._pointer_state(action, started)
+        if kind == "pointer_move":
+            return self._pointer_move(action, started)
+        if kind == "pointer_click":
+            return self._pointer_click(action, started)
         if kind in {"git_state", "git"}:
             return self._git_state(action, started)
         if kind == "git_diff":
@@ -254,20 +263,10 @@ class NativeBody:
 
     def _process_state(self, action: BodyAction, started: str) -> BodyActionResult:
         pid = int(action.args.get("pid", os.getpid()))
-        alive = True
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            alive = False
-        except PermissionError:
-            alive = True
-        except OSError:
-            alive = False
+        alive = bool(pid > 0 and psutil.pid_exists(pid))
         data: dict[str, Any] = {"pid": pid, "alive": alive}
         if alive:
             try:
-                import psutil
-
                 proc = psutil.Process(pid)
                 data.update(
                     {
@@ -281,6 +280,260 @@ class NativeBody:
             except Exception:
                 pass
         return self._ok(action, started, data=data)
+
+    def _pointer_state(self, action: BodyAction, started: str) -> BodyActionResult:
+        return self._ok(
+            action,
+            started,
+            data=self._read_primary_pointer_state(),
+        )
+
+    def _pointer_move(self, action: BodyAction, started: str) -> BodyActionResult:
+        """Move the primary-screen pointer from explicit normalized coordinates.
+
+        This is intentionally only a movement primitive. It does not click,
+        select an element, interpret a screen, or infer coordinates from task
+        prose. The resident verification lifecycle must re-observe pointer state
+        before the event can be completed.
+        """
+
+        x_fraction = self._unit_fraction_arg(
+            action.args,
+            "x_fraction",
+            action_kind="pointer_move",
+        )
+        y_fraction = self._unit_fraction_arg(
+            action.args,
+            "y_fraction",
+            action_kind="pointer_move",
+        )
+        before = self._read_primary_pointer_state()
+        width = int(before.get("screen_width") or 0)
+        height = int(before.get("screen_height") or 0)
+        if width <= 0 or height <= 0:
+            raise RuntimeError("primary screen dimensions are unavailable")
+
+        target_x = int(round(x_fraction * max(0, width - 1)))
+        target_y = int(round(y_fraction * max(0, height - 1)))
+        moved = self._set_primary_pointer_position(target_x, target_y)
+        data = {
+            "coordinate_space": "primary_screen_fraction",
+            "x_fraction": x_fraction,
+            "y_fraction": y_fraction,
+            "target_x": target_x,
+            "target_y": target_y,
+            "screen_width": width,
+            "screen_height": height,
+            "before_x": int(before.get("x") or 0),
+            "before_y": int(before.get("y") or 0),
+        }
+        if not moved:
+            return BodyActionResult(
+                action_id=action.action_id,
+                kind=action.kind,
+                success=False,
+                data=data,
+                error="Windows pointer movement was rejected by the current desktop session",
+                event_id=action.event_id,
+                started_at=started,
+                completed_at=utc_now(),
+            )
+        return self._ok(
+            action,
+            started,
+            output=f"{target_x},{target_y}",
+            data=data,
+        )
+
+    def _pointer_click(self, action: BodyAction, started: str) -> BodyActionResult:
+        """Send one bounded click only when the pointer is already at its target.
+
+        Pointer positioning belongs to the resident's pre-click lifecycle. This
+        primitive deliberately refuses to move the cursor, so a fresh visual
+        baseline can be captured after hover/position effects have settled and
+        before the non-replayable click is sent.
+        """
+
+        x_fraction = self._unit_fraction_arg(
+            action.args,
+            "x_fraction",
+            action_kind="pointer_click",
+        )
+        y_fraction = self._unit_fraction_arg(
+            action.args,
+            "y_fraction",
+            action_kind="pointer_click",
+        )
+        button = str(action.args.get("button") or "left").strip().lower()
+        if button != "left":
+            raise ValueError("pointer_click currently supports only the left button")
+
+        current = self._read_primary_pointer_state()
+        width = int(current.get("screen_width") or 0)
+        height = int(current.get("screen_height") or 0)
+        if width <= 0 or height <= 0:
+            raise RuntimeError("primary screen dimensions are unavailable")
+
+        target_x = int(round(x_fraction * max(0, width - 1)))
+        target_y = int(round(y_fraction * max(0, height - 1)))
+        current_x = int(current.get("x") or 0)
+        current_y = int(current.get("y") or 0)
+        tolerance = 1
+        data = {
+            "coordinate_space": "primary_screen_fraction",
+            "x_fraction": x_fraction,
+            "y_fraction": y_fraction,
+            "target_x": target_x,
+            "target_y": target_y,
+            "screen_width": width,
+            "screen_height": height,
+            "current_x": current_x,
+            "current_y": current_y,
+            "tolerance_pixels": tolerance,
+            "button": button,
+        }
+        if (
+            abs(current_x - target_x) > tolerance
+            or abs(current_y - target_y) > tolerance
+        ):
+            return BodyActionResult(
+                action_id=action.action_id,
+                kind=action.kind,
+                success=False,
+                data=data,
+                error=(
+                    "pointer_click refused because the current cursor position no longer "
+                    "matches the explicit target"
+                ),
+                event_id=action.event_id,
+                started_at=started,
+                completed_at=utc_now(),
+            )
+
+        if not self._send_primary_pointer_click(button):
+            return BodyActionResult(
+                action_id=action.action_id,
+                kind=action.kind,
+                success=False,
+                data=data,
+                error="Windows click input was rejected by the current desktop session",
+                event_id=action.event_id,
+                started_at=started,
+                completed_at=utc_now(),
+            )
+        return self._ok(
+            action,
+            started,
+            output=f"{button}@{target_x},{target_y}",
+            data=data,
+        )
+
+    def _read_primary_pointer_state(self) -> dict[str, Any]:
+        if platform.system() != "Windows":
+            raise RuntimeError("primary pointer body is currently supported only on Windows")
+
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        width = int(user32.GetSystemMetrics(0))
+        height = int(user32.GetSystemMetrics(1))
+        if width <= 0 or height <= 0:
+            raise RuntimeError("Windows primary screen dimensions are unavailable")
+
+        point = wintypes.POINT()
+        if not bool(user32.GetCursorPos(ctypes.byref(point))):
+            raise OSError("Windows GetCursorPos failed")
+        x = int(point.x)
+        y = int(point.y)
+        return {
+            "coordinate_space": "primary_screen_fraction",
+            "x": x,
+            "y": y,
+            "x_fraction": round(x / max(1, width - 1), 6),
+            "y_fraction": round(y / max(1, height - 1), 6),
+            "screen_width": width,
+            "screen_height": height,
+            "captured_at": utc_now(),
+        }
+
+    def _set_primary_pointer_position(self, x: int, y: int) -> bool:
+        if platform.system() != "Windows":
+            raise RuntimeError("primary pointer body is currently supported only on Windows")
+
+        import ctypes
+
+        return bool(ctypes.windll.user32.SetCursorPos(int(x), int(y)))
+
+    def _send_primary_pointer_click(self, button: str) -> bool:
+        if platform.system() != "Windows":
+            raise RuntimeError("primary pointer body is currently supported only on Windows")
+        if str(button or "").strip().lower() != "left":
+            raise ValueError("pointer_click currently supports only the left button")
+
+        import ctypes
+        from ctypes import wintypes
+
+        ulong_ptr = ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong
+
+        class MouseInput(ctypes.Structure):
+            _fields_ = [
+                ("dx", wintypes.LONG),
+                ("dy", wintypes.LONG),
+                ("mouseData", wintypes.DWORD),
+                ("dwFlags", wintypes.DWORD),
+                ("time", wintypes.DWORD),
+                ("dwExtraInfo", ulong_ptr),
+            ]
+
+        class InputUnion(ctypes.Union):
+            _fields_ = [("mi", MouseInput)]
+
+        class Input(ctypes.Structure):
+            _anonymous_ = ("union",)
+            _fields_ = [
+                ("type", wintypes.DWORD),
+                ("union", InputUnion),
+            ]
+
+        input_mouse = 0
+        mouse_left_down = 0x0002
+        mouse_left_up = 0x0004
+        events = (Input * 2)(
+            Input(
+                type=input_mouse,
+                mi=MouseInput(0, 0, 0, mouse_left_down, 0, 0),
+            ),
+            Input(
+                type=input_mouse,
+                mi=MouseInput(0, 0, 0, mouse_left_up, 0, 0),
+            ),
+        )
+        sent = int(
+            ctypes.windll.user32.SendInput(
+                len(events),
+                events,
+                ctypes.sizeof(Input),
+            )
+        )
+        return sent == len(events)
+
+    @staticmethod
+    def _unit_fraction_arg(
+        args: dict[str, Any],
+        key: str,
+        *,
+        action_kind: str = "pointer_move",
+    ) -> float:
+        if key not in args:
+            raise ValueError(f"{action_kind} body action requires {key}")
+        try:
+            value = float(args[key])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{action_kind} {key} must be numeric") from exc
+        if not 0.0 <= value <= 1.0:
+            raise ValueError(f"{action_kind} {key} must be between 0 and 1")
+        return round(value, 6)
 
     def _git_state(self, action: BodyAction, started: str) -> BodyActionResult:
         workspace = self._path_arg(action.args, default=os.getcwd())
@@ -371,7 +624,7 @@ class NativeBody:
             action,
             started,
             data={
-                "root": root_proc.stdout.strip(),
+                "root": str(canonical_host_path(root_proc.stdout.strip()).resolve(strict=True)),
                 "branch": branch,
                 "head": head,
                 "head_short": head[:12] if head else None,
@@ -390,9 +643,6 @@ class NativeBody:
                 "untracked_paths": untracked_paths,
                 "conflicted_files": len(conflicted_paths),
                 "conflicted_paths": conflicted_paths,
-                # Retain the bounded porcelain lines for existing callers that
-                # need compact status evidence, but make structured paths the
-                # primary resident-owned repository contract.
                 "changes": changes,
             },
         )
@@ -562,7 +812,7 @@ class NativeBody:
             started,
             output=output,
             data={
-                "root": root_proc.stdout.strip(),
+                "root": str(canonical_host_path(root_proc.stdout.strip()).resolve(strict=True)),
                 "head": head,
                 "head_short": head[:12] if head else None,
                 "dirty": bool(changed_paths),
@@ -708,7 +958,8 @@ class NativeBody:
         raw = args.get("path") or args.get("target") or args.get("workspace") or default
         if raw is None or not str(raw).strip():
             raise ValueError("body action requires path/target")
-        return Path(str(raw)).expanduser()
+        path = Path(str(raw)).expanduser()
+        return canonical_host_path(path) if path.is_absolute() else path
 
     @staticmethod
     def _ok(

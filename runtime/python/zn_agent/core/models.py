@@ -1,14 +1,32 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from enum import Enum
+from threading import Lock
 from typing import Any
 
 
-def utc_now() -> str:
-    from datetime import datetime, timezone
+_UTC_NOW_LOCK = Lock()
+_LAST_UTC_NOW: datetime | None = None
 
-    return datetime.now(timezone.utc).isoformat()
+
+def utc_now() -> str:
+    """Return a process-monotonic UTC timestamp suitable for freshness identity.
+
+    Wall-clock reads can repeat at microsecond resolution (or move backwards after
+    a clock adjustment). Several resident authority contracts use exact timestamp
+    equality as freshness evidence, so every in-process observation timestamp must
+    advance even when the platform clock does not.
+    """
+
+    global _LAST_UTC_NOW
+    with _UTC_NOW_LOCK:
+        now = datetime.now(timezone.utc)
+        if _LAST_UTC_NOW is not None and now <= _LAST_UTC_NOW:
+            now = _LAST_UTC_NOW + timedelta(microseconds=1)
+        _LAST_UTC_NOW = now
+        return now.isoformat()
 
 
 class GoalStatus(str, Enum):
@@ -39,6 +57,7 @@ class ExecutionPath(str, Enum):
     BODY = "body"
     MODEL = "model"
     BUDGET_BLOCKED = "budget_blocked"
+    CONTROL = "control"
 
 
 @dataclass(slots=True)
@@ -238,6 +257,7 @@ class EventOutcome:
     capability_name: str | None = None
     reason: str = ""
     completed_at: str = field(default_factory=utc_now)
+    cancelled: bool = False
 
 
 @dataclass(slots=True)
@@ -250,3 +270,4 @@ class ResidentRunResult:
     capability_name: str | None = None
     reason: str = ""
     kernel_result: KernelRunResult | None = None
+    cancelled: bool = False

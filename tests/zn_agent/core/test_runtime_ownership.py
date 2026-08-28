@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
 import unittest
 from pathlib import Path
 
@@ -38,6 +39,9 @@ class RuntimeOwnershipTests(unittest.TestCase):
         self.assertNotIn(RETIRED_DIST, text)
         self.assertNotIn(RETIRED_CLI, text)
         self.assertNotIn("run_agent", text)
+
+    def test_default_visual_capture_dependency_is_installed(self):
+        self.assertIsNotNone(importlib.util.find_spec("PIL"))
 
     def test_staging_installs_runtime_project_not_repository_root(self):
         text = STAGE_SCRIPT.read_text(encoding="utf-8")

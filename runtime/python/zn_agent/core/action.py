@@ -7,7 +7,7 @@ from typing import Any
 
 from .git_semantics import current_git_path_staged_goal, git_stage_command
 from .models import AgentEvent, utc_now
-from .path_context import resolve_context_path
+from .path_context import canonical_host_path, resolve_context_path
 
 
 @dataclass(slots=True)
@@ -506,7 +506,8 @@ def _path_key(value: Any) -> str:
     if not text:
         return ""
     try:
-        return str(Path(text).expanduser())
+        path = Path(text).expanduser()
+        return str(canonical_host_path(path) if path.is_absolute() else path)
     except (OSError, RuntimeError, ValueError):
         return text
 
@@ -520,8 +521,13 @@ def _contextualize_action_args(
     if raw_path is not None and str(raw_path).strip():
         contextualized["path"] = str(resolve_context_path(str(raw_path), payload))
         contextualized.pop("target", None)
-    if contextualized.get("workdir") is None and payload.get("workdir") is not None:
-        contextualized["workdir"] = payload["workdir"]
+    raw_workdir = contextualized.get("workdir")
+    if raw_workdir is None:
+        raw_workdir = payload.get("workdir")
+    if raw_workdir is not None and str(raw_workdir).strip():
+        contextualized["workdir"] = str(
+            resolve_context_path(str(raw_workdir), payload)
+        )
     return contextualized
 
 

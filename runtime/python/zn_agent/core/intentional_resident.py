@@ -5,8 +5,13 @@ from typing import Any, Iterable
 
 from .adaptive_guidance import schema_attention_focus, schema_reality_score
 from .embodied_resident import EmbodiedResidentRuntime
+from .event_outcome_nervous import (
+    EventOutcomeNervousSystem,
+    event_outcome_repair_from,
+    has_event_outcome,
+    perceive_event_outcome,
+)
 from .models import EventStatus, ResidentRunResult
-from .nervous_system import PersistentNervousSystem
 from .will import NativeWill, ResidentIntention
 from .world_sense import NativeWorldSense, WorldObservation
 
@@ -51,7 +56,8 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
         )
         self.will = NativeWill(self.store)
         self.will.reconcile_outcomes()
-        self.nervous = PersistentNervousSystem(self.store)
+        self.nervous = EventOutcomeNervousSystem(self.store)
+        self._repair_nervous_event_outcomes()
         self.nervous.heartbeat(body=self.body.sense())
         self.world = NativeWorldSense(self)
 
@@ -229,9 +235,6 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
             "test whether this consolidated pattern applies to my current "
             f"intention: {schema.summary[:420]}"
         )
-        # Do not keep repeating the exact same self-initiated probe after it has
-        # already produced an outcome. New lived evidence must first change the
-        # candidate before Will will choose another step.
         if primary.current_step == step and primary.last_outcome:
             return False
 
@@ -802,33 +805,67 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
             },
         )
 
-    def _complete_result(self, event, result):
-        completed = super()._complete_result(event, result)
-        summary = (
-            completed.response
-            or completed.reason
-            or ("event succeeded" if completed.success else "event failed")
+    @staticmethod
+    def _event_outcome_summary(outcome) -> str:
+        return (
+            outcome.response
+            or outcome.reason
+            or ("event succeeded" if outcome.success else "event failed")
         )
-        self.nervous.perceive(
-            "outcome",
+
+    def _perceive_event_outcome(self, event, outcome):
+        summary = self._event_outcome_summary(outcome)
+        return perceive_event_outcome(
+            self.nervous,
+            event.event_id,
             f"{event.task}: {summary[:1000]}",
             features=(
                 event.kind,
-                completed.execution_path.value,
-                "success" if completed.success else "failure",
+                outcome.execution_path.value,
+                "success" if outcome.success else "failure",
             ),
             source="self",
             salience=min(
                 1.0,
-                0.58 + (0.18 if not completed.success else 0.0),
+                0.58 + (0.18 if not outcome.success else 0.0),
             ),
-            valence=0.52 if completed.success else -0.78,
-            arousal=0.42 if completed.success else 0.82,
+            valence=0.52 if outcome.success else -0.78,
+            arousal=0.42 if outcome.success else 0.82,
             metadata={
-                "event_id": completed.event.event_id,
-                "model_invocations": completed.model_invocations,
+                "event_id": event.event_id,
+                "model_invocations": outcome.model_invocations,
             },
+            before_commit=self._before_nervous_outcome_commit,
         )
+
+    def _before_nervous_outcome_commit(self, conn, *, event_id, trace) -> None:
+        """Fault-injection seam; production behavior deliberately does nothing."""
+
+    def _repair_nervous_event_outcomes(self) -> None:
+        repair_from = event_outcome_repair_from(self.nervous)
+        outcomes = [
+            outcome
+            for outcome in self.store.list_event_outcomes(limit=100000)
+            if outcome.completed_at >= repair_from and not outcome.cancelled
+        ]
+        for outcome in reversed(outcomes):
+            if has_event_outcome(self.nervous, outcome.event_id):
+                continue
+            event = self.store.get_event(outcome.event_id)
+            if event is None:
+                continue
+            try:
+                self._perceive_event_outcome(event, outcome)
+            except Exception:
+                continue
+
+    def _complete_result(self, event, result):
+        completed = super()._complete_result(event, result)
+        summary = self._event_outcome_summary(completed)
+        try:
+            self._perceive_event_outcome(event, completed)
+        except Exception:
+            pass
 
         intention_id = str(event.payload.get("intention_id") or "").strip()
         if intention_id:
@@ -840,8 +877,6 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
                     summary=summary,
                 )
             except KeyError:
-                # The event remains valid if an imported/manual payload points
-                # at an intention that is not present in this resident.
                 pass
         return completed
 

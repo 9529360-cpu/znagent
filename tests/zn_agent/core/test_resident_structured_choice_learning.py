@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from zn_agent.core.path_context import canonical_host_path
 from zn_agent.core.provider_bridge import build_resident_runtime
 from zn_agent.core.procedural_resident import ProcedurallyInfluencedResidentRuntime
 
@@ -137,7 +138,10 @@ class ResidentStructuredChoiceLearningTests(unittest.TestCase):
             self.assertEqual(selected["source"], "resident_choice")
             self.assertEqual(selected["kind"], "write_text")
             self.assertFalse(selected["args"]["append"])
-            self.assertEqual(selected["args"]["path"], str(target))
+            self.assertEqual(
+                selected["args"]["path"],
+                str(canonical_host_path(target)),
+            )
             self.assertEqual(selected["args"]["content"], expected)
             influence = state.data.get("procedural_action_influence")
             self.assertIsInstance(influence, dict)

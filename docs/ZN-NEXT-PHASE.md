@@ -8,6 +8,8 @@
 >
 > Memory/learning architecture: [`ZN-MEMORY-LEARNING.md`](ZN-MEMORY-LEARNING.md)
 >
+> Resident intelligence contract: [`ZN-RESIDENT-INTELLIGENCE.md`](ZN-RESIDENT-INTELLIGENCE.md)
+>
 > Current facts: [`ZN-IMPLEMENTATION-STATUS.md`](ZN-IMPLEMENTATION-STATUS.md)
 >
 > Self-maintenance: [`ZN-SELF-MAINTENANCE.md`](ZN-SELF-MAINTENANCE.md)
@@ -22,7 +24,9 @@ The organism-first architecture remains the governing design.
 durable ZN Self
 + mature task-execution depth
 + reality-based verification
-+ resident-owned learning / procedural competence
++ resident-owned built-in competence
++ resident-owned learned competence
++ replaceable cognition for novelty
 = the ZN we are building
 ```
 
@@ -42,8 +46,10 @@ Persistent identity without practical competence is insufficient. Impressive mod
 10. Mature competence should survive provider replacement and full model removal.
 11. Prediction error must interrupt stale automatic behavior and return control to Thought/Investigation.
 12. Familiarity never bypasses safety or authorization boundaries.
-13. No new capability may introduce another product/agent framework as ZN's runtime or control plane.
-14. The active repository must remain source-independent and ZN-only.
+13. Mature low-level engineering/computer-use knowledge should crystallize into ZN-owned mechanisms rather than remain recurring prompt instructions.
+14. Repeated familiar work should require less redundant deliberation/model use while preserving current-state checks and independent verification.
+15. No new capability may introduce another product/agent framework as ZN's runtime or control plane.
+16. The active repository must remain source-independent and ZN-only.
 
 ## 3. Current verified foundation
 
@@ -71,7 +77,7 @@ The current repository already has substantial foundations:
 - independent ZN runtime/package/desktop/build/release ownership;
 - physical core source under `runtime/python/zn_agent/core` and tests under `tests/zn_agent/core`.
 
-These are real foundations. They do not yet prove mature general procedural memory or mature general computer-use competence.
+These are real foundations. They do not yet prove mature general procedural memory, mature general computer-use competence, or the broader resident-intelligence contract.
 
 ## 4. Repository-boundary work is no longer the main lane
 
@@ -174,6 +180,8 @@ mature familiar competence
 
 A model can teach or help solve a new problem. The verified experience produced by ZN's own Body/Senses is what can become resident competence.
 
+General mature systems knowledge should also be transferred into ZN-owned mechanisms when it is stable and testable. The project should not force every future ZN instance to rediscover known facts about files, browsers, process state, crash recovery, idempotency or verification through repeated prompting.
+
 ## 7. Reference engineering benchmark
 
 A representative benchmark remains:
@@ -217,7 +225,8 @@ For the same task family after verified practice, look for:
 - competence surviving provider replacement/all-model removal;
 - changed context preventing blind execution;
 - prediction error interrupting stale behavior;
-- repeated contradiction weakening stale competence.
+- repeated contradiction weakening stale competence;
+- repeated-task reliability improving rather than merely one-shot capability breadth increasing.
 
 Do not optimize model-call count at the expense of truth or safety.
 
@@ -234,10 +243,11 @@ ZN receives durable work
 → stores verified experience rather than only text history
 → repeated compatible experience changes future resident behavior
 → familiar work needs less external cognition
+→ known low-level mechanics are handled by resident-owned competence rather than repeatedly rediscovered
 → mature skill still works with external models removed
 → stale skill is interrupted by prediction error
 → new evidence causes relearning
 → original task is truthfully completed and learned from
 ```
 
-The objective is not a bigger prompt, vector database, planner or catalog of model-called tools. The objective is a persistent ZN subject that gets better because of what it has actually experienced.
+The objective is not a bigger prompt, vector database, planner or catalog of model-called tools. The objective is a persistent ZN subject that gets better because of what it has actually experienced and because mature applicable knowledge has been crystallized into its own Body/Senses/runtime rather than left outside as recurring advice.

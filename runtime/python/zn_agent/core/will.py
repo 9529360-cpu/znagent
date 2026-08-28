@@ -157,12 +157,17 @@ class NativeWill:
             summary = (
                 outcome.response
                 or outcome.reason
-                or ("step succeeded" if outcome.success else "step failed")
+                or (
+                    "step cancelled"
+                    if outcome.cancelled
+                    else ("step succeeded" if outcome.success else "step failed")
+                )
             )
             self.observe_event_outcome(
                 intention.intention_id,
                 event_id=intention.related_event_id,
                 success=outcome.success,
+                cancelled=outcome.cancelled,
                 summary=summary,
             )
             repaired += 1
@@ -551,19 +556,25 @@ class NativeWill:
         event_id: str,
         success: bool,
         summary: str,
+        cancelled: bool = False,
     ) -> ResidentIntention:
         intention = self._require(intention_id)
         outcome = str(summary or "").strip() or (
-            "step succeeded" if success else "step failed"
+            "step cancelled"
+            if cancelled
+            else ("step succeeded" if success else "step failed")
         )
         intention.last_outcome = outcome[:1000]
         intention.related_event_id = None
         intention.updated_at = utc_now()
+        label = "cancelled" if cancelled else ("succeeded" if success else "failed")
         intention.progress = (
             *intention.progress,
-            f"event {event_id} {'succeeded' if success else 'failed'}: {outcome[:500]}",
+            f"event {event_id} {label}: {outcome[:500]}",
         )[-64:]
-        if success and intention.complete_on_step_success:
+        if cancelled:
+            intention.status = "active"
+        elif success and intention.complete_on_step_success:
             intention.status = "completed"
             intention.current_step = None
             self._clear_candidate_fields(intention)

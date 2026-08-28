@@ -2,7 +2,9 @@
 
 > Governing contract: [`../ZN.md`](../ZN.md)
 >
-> Active branch: `dev/zn-agent`
+> Development branch: `dev/zn-agent`
+>
+> Canonical branch: `main`
 >
 > Current status: **physical source evacuation complete; active repository is ZN-only**.
 
@@ -10,11 +12,11 @@
 
 This file is no longer a migration plan for an in-tree reference product. That phase is complete.
 
-Its continuing purpose is to define how ZN may study and adopt mature implementation from Git history or external/upstream repositories without importing another product control plane.
+Its continuing purpose is to define how ZN may study and adopt mature implementation from the dedicated reference branch, Git history or external/upstream repositories without importing another product control plane.
 
-## 2. Current verified state — 2026-08-23
+## 2. Current verified state
 
-The active development tree now has these ownership boundaries:
+The active tree has these ownership boundaries:
 
 ```text
 runtime/python/zn_agent/core/   resident core
@@ -25,23 +27,24 @@ apps/desktop/                    ZN desktop only
 .github/workflows/               ZN CI / release automation only
 ```
 
-The bulk source evacuation was committed on `dev/zn-agent` as:
+The bulk source evacuation commit is:
 
 ```text
 6d5f78d22883857fcc99aff5cfd4ba1b9a2d3e6b
-refactor: evacuate inherited source from ZN
 ```
 
-The verifying CI run was `32669071891`. Its one-shot migration job proved, on the physically reduced tree before committing it:
+One-shot verification run `32669071891` proved the physically reduced tree before the migration machinery was retired:
 
-- a fresh ZN-only Node lock/install;
+- fresh ZN-only Node lock/install;
 - isolated ZN Python installation and zero-model resident boot;
 - full `tests/zn_agent/core` discovery: 382 tests passed;
 - desktop typecheck/bundle and 37 desktop tests passed;
 - 8 retained release/runtime script tests passed;
 - ZN-only Docker image build and zero-model resident boot;
-- generated verification artifacts were excluded from the commit;
-- the verified deleted tree was committed and pushed to `dev/zn-agent`.
+- generated verification artifacts excluded from the commit;
+- verified deleted tree committed and pushed.
+
+M10 later promoted the verified ZN tree to canonical `main` without history rewrite. `main` and `dev/zn-agent` are now expected to remain synchronized only through normal verified development/promotion flow.
 
 The one-shot migration job and migration script are not part of the steady-state architecture.
 
@@ -56,7 +59,7 @@ A mature external mechanism may be adopted only when all of the following are tr
 5. resident identity/state/lifecycle remain ZN-owned;
 6. external product assumptions and control-plane dependencies are removed;
 7. ZN tests cover the owned behavior and important edge cases;
-8. clean build/test/package/release does not require the reference repository;
+8. clean build/test/package/release does not require the reference source;
 9. applicable license/provenance obligations are retained.
 
 Copying mature implementation is allowed. Cosmetic originality is not a goal. Ownership transfer and product fit are the goal.
@@ -81,12 +84,16 @@ A broken test or build is not permission to restore a removed control plane. Fix
 Reference access belongs outside the active development tree:
 
 ```text
+dedicated reference branch
+or
 Git history
 or
 external/upstream repository
 ```
 
-If a future investigation studies a mature mechanism, record only the durable result that matters to ZN: the need, chosen design, provenance/license obligation if applicable, tests and active caller. Do not recreate a permanent source quarry inside this repository.
+The dedicated reference branch is read-only quarry material for maintainers. It must not be merged back wholesale, added as a submodule, included in packaging, or treated as a build/runtime dependency.
+
+If a future investigation studies a mature mechanism, record only the durable result that matters to ZN: the need, chosen design, provenance/license obligation if applicable, tests and active caller. Do not recreate a permanent source quarry inside the active tree.
 
 ## 6. Retained ZN research documents
 
@@ -101,7 +108,7 @@ Historical migration-only documents should not be retained merely for nostalgia;
 
 ## 7. Ongoing verification
 
-Steady-state CI and ownership tests should continue to prove:
+Steady-state CI and ownership tests must continue to prove:
 
 - the installed Python package is `zn_agent`;
 - core source is physically under `runtime/python/zn_agent/core`;
@@ -110,6 +117,7 @@ Steady-state CI and ownership tests should continue to prove:
 - desktop build uses the ZN builder configuration;
 - package/runtime verifiers reject foreign product package/control-plane content;
 - zero-model resident boot remains valid;
-- no clean ZN build requires a reference source checkout.
+- no clean ZN build requires a reference source checkout;
+- tracked source-boundary scanning remains green.
 
 If this file and the real repository ever disagree, the real tree and real CI win; update this ledger immediately.

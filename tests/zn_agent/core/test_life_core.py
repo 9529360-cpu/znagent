@@ -3,12 +3,21 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from zn_agent.core import CapabilityResult, ExactTaskCapability
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
 
 
 class LifeCoreTests(unittest.TestCase):
+    @staticmethod
+    def _healthy_disk():
+        return patch(
+            "zn_agent.core.life.shutil.disk_usage",
+            return_value=SimpleNamespace(total=100, used=50, free=50),
+        )
+
     def test_living_self_survives_process_style_restart(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "kernel.db"
@@ -30,29 +39,55 @@ class LifeCoreTests(unittest.TestCase):
 
     def test_pulse_senses_body_and_builds_situation_without_any_model(self):
         with tempfile.TemporaryDirectory() as tmp:
-            resident = build_resident_runtime_from_existing_stack(config={"model": {}}, store_path=Path(tmp) / "kernel.db")
-            pulse = resident.pulse()
-            state = resident.life.snapshot()
-            self.assertGreaterEqual(pulse.sequence, 1)
-            self.assertIsNotNone(state.body)
-            self.assertTrue(state.body.hostname)
-            self.assertGreater(state.body.pid, 0)
-            self.assertEqual(state.external_brains, ())
-            self.assertIsNotNone(state.current_situation)
-            self.assertEqual(state.current_situation.external_brains, ())
-            self.assertEqual(state.current_situation.body_health, "nominal")
-            self.assertEqual(len(resident.life.recent_situations(1)), 1)
-            resident.store.close()
+            with self._healthy_disk():
+                resident = build_resident_runtime_from_existing_stack(config={"model": {}}, store_path=Path(tmp) / "kernel.db")
+                try:
+                    pulse = resident.pulse()
+                    state = resident.life.snapshot()
+                    self.assertGreaterEqual(pulse.sequence, 1)
+                    self.assertIsNotNone(state.body)
+                    self.assertTrue(state.body.hostname)
+                    self.assertGreater(state.body.pid, 0)
+                    self.assertEqual(state.external_brains, ())
+                    self.assertIsNotNone(state.current_situation)
+                    self.assertEqual(state.current_situation.external_brains, ())
+                    self.assertEqual(state.current_situation.body_health, "nominal")
+                    self.assertEqual(len(resident.life.recent_situations(1)), 1)
+                finally:
+                    resident.store.close()
 
     def test_idle_pulse_forms_native_thought_without_model(self):
         with tempfile.TemporaryDirectory() as tmp:
-            resident = build_resident_runtime_from_existing_stack(config={"model": {}}, store_path=Path(tmp) / "kernel.db")
-            thought = resident.pulse().thought
-            self.assertIsNotNone(thought)
-            self.assertEqual(thought.focus, "environment")
-            self.assertEqual(thought.action_kind, "observe")
-            self.assertIsNone(thought.action_target)
-            resident.store.close()
+            with self._healthy_disk():
+                resident = build_resident_runtime_from_existing_stack(config={"model": {}}, store_path=Path(tmp) / "kernel.db")
+                try:
+                    thought = resident.pulse().thought
+                    self.assertIsNotNone(thought)
+                    self.assertEqual(thought.focus, "environment")
+                    self.assertEqual(thought.action_kind, "observe")
+                    self.assertIsNone(thought.action_target)
+                finally:
+                    resident.store.close()
+
+    def test_low_disk_body_constraint_preempts_idle_environment_attention(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "zn_agent.core.life.shutil.disk_usage",
+                return_value=SimpleNamespace(total=100, used=95, free=5),
+            ):
+                resident = build_resident_runtime_from_existing_stack(config={"model": {}}, store_path=Path(tmp) / "kernel.db")
+                try:
+                    pulse = resident.pulse()
+                    situation = resident.life.snapshot().current_situation
+                    self.assertIsNotNone(situation)
+                    self.assertEqual(situation.body_health, "constrained")
+                    self.assertIn("disk free space below ten percent", situation.body_signals)
+                    self.assertIsNotNone(pulse.thought)
+                    self.assertEqual(pulse.thought.focus, "body resources")
+                    self.assertEqual(pulse.thought.action_kind, "body")
+                    self.assertEqual(pulse.thought.action_target, "body_health")
+                finally:
+                    resident.store.close()
 
     def test_action_becomes_part_of_self_state(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,0 +1,74 @@
+name: ZN Kernel Short Diagnostics
+
+on:
+  push:
+    branches:
+      - dev/zn-agent
+    paths:
+      - .github/workflows/zn-kernel-short-diagnostics.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI: 'true'
+  TZ: UTC
+  PYTHONUTF8: '1'
+  PYTHONUNBUFFERED: '1'
+  ZN_AGENT_HOME: ${{ github.workspace }}/.ci/zn-home-short-diagnostics
+
+jobs:
+  short-kernel-diagnostics:
+    name: Native body polluter isolation
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Require Windows x64 runner
+        shell: powershell
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "ZN kernel diagnostics require Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Prepare isolated runtime
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:ZN_AGENT_HOME | Out-Null
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/runtime-short-diag -ErrorAction SilentlyContinue
+          uv venv .ci/runtime-short-diag --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\runtime-short-diag\Scripts\python.exe'
+          uv pip install --python $python runtime/python
+
+      - name: Run multi-pulse predecessor then target
+        shell: powershell
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $base = 'tests.zn_agent.core.test_native_body.NativeBodyTests'
+          & .\.ci\runtime-short-diag\Scripts\python.exe -m unittest `
+            "$base.test_multi_pulse_investigation_uses_body_for_evidence_and_next_action" `
+            "$base.test_resident_reports_changed_paths_from_its_git_body" -v
+
+      - name: Run normal-resident predecessor then target
+        if: ${{ always() }}
+        shell: powershell
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $base = 'tests.zn_agent.core.test_native_body.NativeBodyTests'
+          & .\.ci\runtime-short-diag\Scripts\python.exe -m unittest `
+            "$base.test_normal_resident_has_body_without_registering_a_skill" `
+            "$base.test_resident_reports_changed_paths_from_its_git_body" -v
+
+      - name: Run process-state predecessor then target
+        if: ${{ always() }}
+        shell: powershell
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $base = 'tests.zn_agent.core.test_native_body.NativeBodyTests'
+          & .\.ci\runtime-short-diag\Scripts\python.exe -m unittest `
+            "$base.test_process_observation_is_a_body_movement" `
+            "$base.test_resident_reports_changed_paths_from_its_git_body" -v
