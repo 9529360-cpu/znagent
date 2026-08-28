@@ -12,6 +12,7 @@ never resumes a pending mutation automatically.
 import hashlib
 import json
 import os
+import stat
 import uuid
 from contextlib import closing
 from pathlib import Path
@@ -33,6 +34,7 @@ from .work_restore_point_resident import _TABLE as _RESTORE_TABLE
 _APPLICATION_TABLE = "work_restore_applications"
 _TRANSIENT_STATUSES = {"applying", "stage_ready", "commit_started"}
 _APPROVABLE_STATUSES = {"approval_required", "recovery_required"}
+_FILE_ATTRIBUTE_REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x00000400)
 
 
 class WorkRestoreApplicationResidentRuntime(WorkRestorePointInspectionResidentRuntime):
@@ -57,6 +59,7 @@ class WorkRestoreApplicationResidentRuntime(WorkRestorePointInspectionResidentRu
                     staging_path TEXT NOT NULL,
                     status TEXT NOT NULL,
                     current_identity_json TEXT NOT NULL,
+                    parent_identity_json TEXT NOT NULL,
                     stage_identity_json TEXT,
                     error TEXT,
                     created_at TEXT NOT NULL,
@@ -95,6 +98,49 @@ class WorkRestoreApplicationResidentRuntime(WorkRestorePointInspectionResidentRu
             and identity.get("digest_complete") is True
             and identity.get("size_bytes") == int(size_bytes)
             and str(identity.get("content_sha256") or "") == content_sha256
+        )
+
+    @staticmethod
+    def _same_parent_identity(
+        expected: dict[str, Any], current: dict[str, Any]
+    ) -> bool:
+        return bool(
+            expected.get("observable") is True
+            and expected.get("stable") is True
+            and expected.get("exists") is True
+            and expected.get("type") == "directory"
+            and current.get("observable") is True
+            and current.get("stable") is True
+            and current.get("exists") is True
+            and current.get("type") == "directory"
+            and expected.get("path") == current.get("path")
+            and expected.get("device") == current.get("device")
+            and expected.get("inode") == current.get("inode")
+        )
+
+    @staticmethod
+    def _observe_parent(target: Path) -> dict[str, Any]:
+        parent = target.parent
+        identity = observe_file_identity(parent, max_hash_bytes=0)
+        try:
+            info = parent.lstat()
+        except OSError:
+            return identity
+        attributes = int(getattr(info, "st_file_attributes", 0) or 0)
+        identity = dict(identity)
+        identity["reparse_point"] = bool(
+            stat.S_ISLNK(int(info.st_mode)) or attributes & _FILE_ATTRIBUTE_REPARSE_POINT
+        )
+        return identity
+
+    @classmethod
+    def _safe_parent(cls, identity: dict[str, Any]) -> bool:
+        return bool(
+            identity.get("observable") is True
+            and identity.get("stable") is True
+            and identity.get("exists") is True
+            and identity.get("type") == "directory"
+            and identity.get("reparse_point") is False
         )
 
     def _owned_restore_point(
@@ -152,7 +198,7 @@ class WorkRestoreApplicationResidentRuntime(WorkRestorePointInspectionResidentRu
         if (
             len(content) != size_bytes
             or hashlib.sha256(content).hexdigest() != content_sha256
-            or int(expected.get("size_bytes") or -1) != size_bytes
+            or expected.get("size_bytes") != size_bytes
             or str(expected.get("content_sha256") or "") != content_sha256
         ):
             raise RuntimeError("durable Work restore bytes failed integrity verification")
@@ -253,9 +299,14 @@ class WorkRestoreApplicationResidentRuntime(WorkRestorePointInspectionResidentRu
         row, _, _ = self._owned_restore_point(thread_id, restore_point_id)
         target = Path(str(row["target_path"]))
         current = observe_file_identity(target, max_hash_bytes=DEFAULT_MAX_HASH_BYTES)
+        parent = self._observe_parent(target)
         if not self._stable_missing(current):
             raise RuntimeError(
                 "missing-file Work restore requires fresh stable evidence that target is absent"
+            )
+        if not self._safe_parent(parent):
+            raise RuntimeError(
+                "missing-file Work restore requires an existing non-reparse parent directory"
             )
 
         application_id = f"restore-app-{uuid.uuid4().hex[:20]}"
@@ -266,9 +317,9 @@ class WorkRestoreApplicationResidentRuntime(WorkRestorePointInspectionResidentRu
                 f"""
                 INSERT INTO {_APPLICATION_TABLE}(
                     application_id,restore_point_id,thread_id,event_id,message_id,
-                    target_path,staging_path,status,current_identity_json,
+                    target_path,staging_path,status,current_identity_json,parent_identity_json,
                     stage_identity_json,error,created_at,updated_at,completed_at
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     application_id,
@@ -280,6 +331,7 @@ class WorkRestoreApplicationResidentRuntime(WorkRestorePointInspectionResidentRu
                     str(staging),
                     "approval_required",
                     json.dumps(current, ensure_ascii=False, separators=(",", ":")),
+                    json.dumps(parent, ensure_ascii=False, separators=(",", ":")),
                     None,
                     None,
                     now,
@@ -323,6 +375,28 @@ class WorkRestoreApplicationResidentRuntime(WorkRestorePointInspectionResidentRu
             identity,
         )
 
+    def _discard_exact_stage(
+        self,
+        staging: Path,
+        *,
+        size_bytes: int,
+        content_sha256: str,
+    ) -> bool:
+        if not os.path.lexists(str(staging)):
+            return True
+        stage_ok, _ = self._stage_matches(
+            staging,
+            size_bytes=size_bytes,
+            content_sha256=content_sha256,
+        )
+        if not stage_ok:
+            return False
+        try:
+            staging.unlink()
+        except OSError:
+            return False
+        return True
+
     def _reconcile_application(self, application_id: str) -> dict[str, Any]:
         app = self._application_row(application_id)
         if app is None:
@@ -349,17 +423,11 @@ class WorkRestoreApplicationResidentRuntime(WorkRestorePointInspectionResidentRu
             size_bytes=size_bytes,
             content_sha256=content_sha256,
         ):
-            if os.path.lexists(str(staging)):
-                stage_ok, _ = self._stage_matches(
-                    staging,
-                    size_bytes=size_bytes,
-                    content_sha256=content_sha256,
-                )
-                if stage_ok:
-                    try:
-                        staging.unlink()
-                    except OSError:
-                        pass
+            self._discard_exact_stage(
+                staging,
+                size_bytes=size_bytes,
+                content_sha256=content_sha256,
+            )
             self._set_application(
                 application_id,
                 status="completed",
@@ -381,11 +449,20 @@ class WorkRestoreApplicationResidentRuntime(WorkRestorePointInspectionResidentRu
             )
             return self.inspect_work_restore_application(application_id)
 
+        stage_removed = self._discard_exact_stage(
+            staging,
+            size_bytes=size_bytes,
+            content_sha256=content_sha256,
+        )
         self._set_application(
             application_id,
             status="blocked",
             current_identity=current,
-            error="restore target is no longer missing and will not be overwritten",
+            error=(
+                "restore target is no longer missing and will not be overwritten"
+                if stage_removed
+                else "restore target is no longer missing; unexpected staging evidence remains"
+            ),
         )
         return self.inspect_work_restore_application(application_id)
 
@@ -410,9 +487,10 @@ class WorkRestoreApplicationResidentRuntime(WorkRestorePointInspectionResidentRu
         """Explicitly approve and apply one missing-target restore request.
 
         Calling this control method is the approval act. It revalidates Work
-        ownership, retained-byte integrity, current missing reality and any
-        retained stage immediately before the no-replace namespace movement.
-        A restart never calls this method automatically.
+        ownership, retained-byte integrity, current missing reality, original
+        parent-directory identity and any retained stage immediately before the
+        no-replace namespace movement. A restart never calls this method
+        automatically.
         """
 
         if os.name != "nt":
@@ -440,6 +518,27 @@ class WorkRestoreApplicationResidentRuntime(WorkRestorePointInspectionResidentRu
                 error="durable restore staging path does not match application identity",
             )
             raise RuntimeError("Work restore application staging identity is inconsistent")
+
+        try:
+            expected_parent = json.loads(str(app["parent_identity_json"] or "{}"))
+        except json.JSONDecodeError as exc:
+            self._set_application(
+                str(app["application_id"]),
+                status="blocked",
+                error="durable restore parent identity is malformed",
+            )
+            raise RuntimeError("Work restore application parent identity is malformed") from exc
+        parent = self._observe_parent(target)
+        if not (
+            self._safe_parent(parent)
+            and self._same_parent_identity(expected_parent, parent)
+        ):
+            self._set_application(
+                str(app["application_id"]),
+                status="blocked",
+                error="restore parent directory changed or is no longer safe",
+            )
+            raise RuntimeError("Work restore parent directory changed since preparation")
 
         size_bytes = int(point["size_bytes"])
         content_sha256 = str(point["content_sha256"])
@@ -474,9 +573,16 @@ class WorkRestoreApplicationResidentRuntime(WorkRestorePointInspectionResidentRu
                     current_identity=current,
                     stage_identity=stage_identity,
                 )
+                latest_parent = self._observe_parent(target)
                 latest = observe_file_identity(target, max_hash_bytes=DEFAULT_MAX_HASH_BYTES)
-                if not self._stable_missing(latest):
-                    raise FileExistsError("restore target appeared before reapproved commit")
+                if not (
+                    self._stable_missing(latest)
+                    and self._safe_parent(latest_parent)
+                    and self._same_parent_identity(expected_parent, latest_parent)
+                ):
+                    raise FileExistsError(
+                        "restore namespace changed before reapproved commit"
+                    )
                 self._set_application(
                     application,
                     status="commit_started",
@@ -507,11 +613,16 @@ class WorkRestoreApplicationResidentRuntime(WorkRestorePointInspectionResidentRu
                     )
 
                 def before_commit(stage_path: Path) -> None:
+                    latest_parent = self._observe_parent(target)
                     latest = observe_file_identity(
                         target, max_hash_bytes=DEFAULT_MAX_HASH_BYTES
                     )
-                    if not self._stable_missing(latest):
-                        raise FileExistsError("restore target appeared before commit")
+                    if not (
+                        self._stable_missing(latest)
+                        and self._safe_parent(latest_parent)
+                        and self._same_parent_identity(expected_parent, latest_parent)
+                    ):
+                        raise FileExistsError("restore namespace changed before commit")
                     stage_ok, stage_identity = self._stage_matches(
                         stage_path,
                         size_bytes=size_bytes,
