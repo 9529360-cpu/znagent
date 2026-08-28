@@ -22,15 +22,15 @@ Development branch: `dev/zn-agent`. Canonical source/release branch: `main`.
 
 Ordinary development remains on `dev/zn-agent`.
 
-Newest verified P5 overwrite-recovery proof head before this documentation synchronization:
+Newest verified P5 proof head before this documentation synchronization:
 
 ```text
-c4276f8b151d2c45b69368cb414f012bf0644d01  test: exercise nontruncated overwrite conflict
+97803f8d0616c1f2b30a61af5acc686f1256cd11  fix: checkpoint overwrite pre-dispatch identity
 ```
 
-Status: **BROADER WORK DURABILITY REMAINS PARTIAL. TWENTY CONCRETE CRASH/RESTART WINDOWS ARE NOW CLOSED AND VERIFIED. THE TWENTIETH WINDOW COVERS AN ORDINARY OVERWRITE THAT REACHED THE FILESYSTEM BEFORE THE RESIDENT COULD SAVE ITS BODY RESULT/CHECKPOINT: RESTART WILL NOT BLINDLY REPLAY THE STALE OVERWRITE. IT RE-OBSERVES CURRENT FILE REALITY, COMPLETES ONLY WHEN THE EXACT INTENDED TEXT IS ALREADY PRESENT, AND OTHERWISE HOLDS UNCERTAINTY WITHOUT MUTATING THE FILE. GENERAL PER-TASK RESTORE/ROLLBACK REMAINS OPEN/PARTIAL.**
+Status: **BROADER WORK DURABILITY REMAINS PARTIAL. TWENTY-ONE CONCRETE CRASH/RESTART WINDOWS ARE NOW CLOSED AND VERIFIED. WINDOW #20 PREVENTS BLIND REPLAY AFTER AN OVERWRITE MAY ALREADY HAVE REACHED THE FILESYSTEM. WINDOW #21 PREVENTS A STALE PRE-DISPATCH OVERWRITE FROM SILENTLY CONTINUING AFTER RESTART WHEN THE TARGET CHANGED WHILE ZN WAS DOWN. GENERAL PER-TASK RESTORE/ROLLBACK REMAINS OPEN/PARTIAL.**
 
-The resident-intelligence direction is also now explicit: mature general computer-use/recovery mechanics should become ZN-owned built-in competence, while post-birth learning concentrates on user/environment/project-specific experience. This architecture direction is broader than current implementation and must not be reported as complete.
+The resident-intelligence direction remains explicit: mature general computer-use/recovery mechanics should become ZN-owned built-in competence, while post-birth learning concentrates on user/environment/project-specific experience. This architecture direction is broader than current implementation and must not be reported as complete.
 
 ## 1. Durable foundations
 
@@ -47,11 +47,12 @@ Established durable boundaries include:
 - external provider dispatch has durable attempt identity and unknown provider outcomes block replay;
 - terminal-safe pruning cannot remove nonterminal recovery truth;
 - accepted Work ingress has a short-lived pre-event checkpoint so accepted user work cannot disappear before resident-event persistence;
-- active ordinary overwrite writes now participate in the resident side-effect ownership/recovery lifecycle without broadening the reusable generic guard contract.
+- active ordinary overwrite writes participate in the resident side-effect ownership/recovery lifecycle without broadening the reusable generic guard contract;
+- fresh ordinary overwrite now owns a privacy-bounded pre-dispatch file-identity checkpoint before Body dispatch. If restart sees that checkpoint and no matching side-effect attempt, the resident re-observes current target identity before allowing the inherited fresh lifecycle to continue.
 
 Generic nervous `perceive()` remains intentionally plastic and is not an exactly-once API.
 
-## 2. Twenty proven broader Work crash/restart windows
+## 2. Twenty-one proven broader Work crash/restart windows
 
 The verified crash/restart windows are:
 
@@ -74,9 +75,10 @@ The verified crash/restart windows are:
 17. external kernel attempts persist stable goal/attempt identity, full worker result, deterministic experience/proposal identity and exactly-once route-quality accounting;
 18. crash after provider dispatch but before a returned result becomes explicit unknown-provider-outcome uncertainty: provider replay is blocked and no route learning or improvement proposal is invented from the unknown result;
 19. an accepted Work user message can survive a hard crash before resident-event persistence: restart reconstructs the exact preallocated **pending** event and `work_runs` linkage without executing the event, duplicating the message, or granting replay authority. The adjacent event-persisted / WorkRun-missing window is also regression-locked;
-20. an ordinary exact overwrite can reach the filesystem and then lose the process before Body result / resident checkpoint persistence. A durable `started` side-effect attempt survives. Restart detects the exact replay-sensitive signature, enters overwrite recovery instead of dispatching the write again, and performs only read-only current-world verification. Exact intended content resolves the attempt as `verified_effect` and completes without replay. Any mismatch, truncation or observation failure remains replay-blocked and does not mutate the target. A regression test also proves an external/user edit after the crash is preserved.
+20. an ordinary exact overwrite can reach the filesystem and then lose the process before Body result / resident checkpoint persistence. A durable `started` side-effect attempt survives. Restart detects the exact replay-sensitive signature, enters overwrite recovery instead of dispatching the write again, and performs only read-only current-world verification. Exact intended content resolves the attempt as `verified_effect` and completes without replay. Any mismatch, truncation or observation failure remains replay-blocked and does not mutate the target. A regression test also proves an external/user edit after the crash is preserved;
+21. a fresh overwrite can durably save its resident pre-dispatch file identity and then lose the process **before** `OverwriteAwareBody` starts the durable side-effect attempt. On restart, absence of the exact side-effect attempt proves ZN did not cross its guarded Body dispatch boundary. The resident re-observes the target before continuing. If exact privacy-bounded identity still matches, the inherited fresh lifecycle may continue. If the target drifted while ZN was down, the stale overwrite is blocked, the resident returns to Investigation, no side-effect attempt is created and the external/user content is preserved.
 
-The crash-window count is now twenty. Browser lifecycle proofs, synchronous caller control, shared-attempt pruning and Body-accounting invariants remain additional evidence, not artificial crash-window counts.
+The crash-window count is now twenty-one. Browser lifecycle proofs, synchronous caller control, shared-attempt pruning and Body-accounting invariants remain additional evidence, not artificial crash-window counts.
 
 ## 3. Active synchronous recovery boundary
 
@@ -180,9 +182,9 @@ ZN CI                  33122620398  success
 
 ## 6. P5 - durable Work checkpoint / restore foundation
 
-Status: **PARTIAL / TWO BOUNDED SLICES CI VERIFIED**
+Status: **PARTIAL / THREE BOUNDED SLICES CI VERIFIED**
 
-P5 is not generic workspace rollback. It currently contains two bounded recovery improvements.
+P5 is not generic workspace rollback. It currently contains three bounded recovery improvements.
 
 ### 6.1 Accepted Work ingress checkpoint
 
@@ -190,18 +192,6 @@ Proof head:
 
 ```text
 2c20b8bded96ce07c6ec43263cc77b7bd10a7a82  fix: recover accepted Work ingress before event creation
-```
-
-Active ingress chain:
-
-```text
-ResidentRpcServer.work_start
--> ResidentWorkControl.start
--> RecoveryBoundedWorkLedger.start
--> work_ingress_checkpoints
--> durable Work user message
--> resident AgentEvent
--> durable work_runs linkage
 ```
 
 Restart verifies exact thread/message/event identities, reconstructs only a missing **pending** event with zero attempts, repairs WorkRun linkage and removes the short-lived checkpoint after agreement. It grants no execution/replay authority.
@@ -213,7 +203,7 @@ ZN Work Recovery E2E 33124662199  success
 ZN CI                33124662367  success
 ```
 
-### 6.2 Reality-gated overwrite recovery
+### 6.2 Reality-gated overwrite effect-present recovery
 
 Final proof head:
 
@@ -221,63 +211,79 @@ Final proof head:
 c4276f8b151d2c45b69368cb414f012bf0644d01  test: exercise nontruncated overwrite conflict
 ```
 
-Relevant implementation sequence includes:
+Fresh overwrite preserves the inherited mature lifecycle. `OverwriteAwareBody` commits durable side-effect ownership before mutation. After a hard crash with a replay-blocking attempt, restart performs only read-only current-text observation: exact intended state completes without replay; mismatch/truncation/read failure holds uncertainty and preserves the target.
+
+Proof:
 
 ```text
-d6546ec1a3c5a9a8d3576cd06ecb182c0b312890  fix: recover interrupted overwrite from reality
-0c8a553f9530b859c4a45ed8fadc1c50991cdca9  fix: activate overwrite recovery owner
-21022c9f8460df789305e138152a4f04d6c96fd8  refactor: keep generic side-effect guard narrow
-13f3c6708dfb0bcf4029fdda1146b9435fff8fa7  fix: scope overwrite guard to active resident
-57aab99c16d506591e24d2334c379c7ba01a206c  ci: verify overwrite recovery
-480bbca626eae1b02271f5eb95beeb8310f5d2e8  fix: keep overwrite recovery evidence content-free
-a656b3952b1561657153f1b55da8c397d931a6e1  fix: preserve specialized overwrite lifecycle
-c4276f8b151d2c45b69368cb414f012bf0644d01  test: exercise nontruncated overwrite conflict
+ZN Work Recovery E2E 33129111422  success
+ZN CI                33129111419  success
 ```
 
-Active semantics:
+### 6.3 Privacy-bounded overwrite pre-dispatch identity
+
+Proof head:
 
 ```text
-fresh overwrite
--> inherited mature resident lifecycle remains authoritative
-   (repo baseline / Git delta / targeted-test / semantic verification where applicable)
--> OverwriteAwareBody commits durable side-effect attempt before actual mutation
--> NativeBody overwrite currently performs Path.write_text(...)
-
-hard crash after durable attempt + real write
--> WorkingState may still say native_action
--> restart sees exact replay-blocking attempt
--> Body refuses a second overwrite dispatch
--> side_effect_recovery
--> read current text only
-
-current text == exact intended complete text
--> resolve attempt as verified_effect
--> complete without replay
-
-anything else
--> user_decision_required / outside_world_effect_uncertain
--> preserve current file
--> no stale overwrite replay
+97803f8d0616c1f2b30a61af5acc686f1256cd11  fix: checkpoint overwrite pre-dispatch identity
 ```
 
-Important safety properties:
-
-- no raw file body is copied into overwrite recovery control metadata;
-- recovery observation stores only bounded metadata such as action id, success, truncation and character count;
-- a user/external edit after the crash is preserved;
-- a mismatch is not treated as proof that the original write failed;
-- a stale intent never becomes unconditional authority to restore/overwrite;
-- the first implementation exposed a real regression by replacing higher-level Body ownership and thereby bypassing existing repo-aware/targeted-test behavior. That regression was fixed; final active code delegates all fresh overwrites to the inherited most-specific lifecycle and intercepts only already-durable replay-blocked attempts.
-
-Final real Windows proof on exact head `c4276f8b151d2c45b69368cb414f012bf0644d01`:
+New resident-owned module:
 
 ```text
-ZN Work Recovery E2E run 33129111422                  success
+runtime/python/zn_agent/core/file_identity.py
+```
+
+The identity sensor stores no raw file body. It records canonical path, existence/type and bounded filesystem metadata. Stable regular files up to 8 MiB also receive a complete SHA-256 observed with before/after stat agreement. Large files, symlinks, unsupported types or unstable/unobservable files fail closed for exact identity.
+
+Fresh overwrite semantics are now:
+
+```text
+native_action intent durable
+-> observe + durably checkpoint overwrite pre-state identity
+-> inherited fresh lifecycle remains authoritative
+-> OverwriteAwareBody durable side-effect attempt starts
+-> actual Body mutation
+```
+
+If process death happens after the pre-state checkpoint but before Body dispatch, restart has the following evidence:
+
+```text
+pre-state checkpoint exists
++ exact side-effect attempt does not exist
+= ZN did not cross its guarded overwrite Body dispatch boundary
+```
+
+Restart still does **not** blindly resume. It re-observes current target identity:
+
+```text
+exact same pre-state identity
+-> inherited fresh lifecycle may continue
+
+target identity drifted / cannot be proved exact
+-> stale overwrite blocked
+-> native_investigation
+-> no Body attempt
+-> no mutation
+```
+
+This is deliberately different from post-dispatch recovery. Once a durable side-effect attempt exists, matching the old pre-state again does **not** prove `verified_absent`; the write may have happened and later been restored externally. Automatic post-dispatch replay therefore remains forbidden.
+
+Real focused proof on exact head `97803f8d0616c1f2b30a61af5acc686f1256cd11`:
+
+```text
+ZN Work Recovery E2E run 33151244307                  success
   Prepare isolated runtime                            success
   Compile Work recovery path                          success
   Verify durable Work progress and restart recovery  success
+```
 
-ZN CI run 33129111419                                  success
+Focused logs include both new hard-crash cases and the prior overwrite-recovery regressions; the suite completed `Ran 95 tests ... OK`.
+
+Real full-tree proof on the same exact head:
+
+```text
+ZN CI run 33151244298                                  success
 ZN Kernel / Python / Windows                           success
   Boot isolated ZN distribution without a model       success
   Compile resident core                               success
@@ -287,11 +293,11 @@ Electron / TypeScript / Windows                        success
 Publish Windows CI statuses                            success
 ```
 
-No local repository test run is claimed for this web-maintainer slice. Repository self-hosted Windows CI is the verification authority.
+No local repository test run is claimed for these web-maintainer slices. Repository self-hosted Windows CI is the verification authority.
 
 ## 7. Resident intelligence architecture direction
 
-`ZN.md` and `docs/ZN-RESIDENT-INTELLIGENCE.md` now explicitly distinguish:
+`ZN.md` and `docs/ZN-RESIDENT-INTELLIGENCE.md` distinguish:
 
 ```text
 built-in resident competence
@@ -312,11 +318,11 @@ This is an architecture/product contract, not a claim that broad mature computer
 
 Open work includes:
 
-- broader Work durability beyond the twenty proven crash/restart windows;
+- broader Work durability beyond the twenty-one proven crash/restart windows;
 - general per-task restore/rollback, arbitrary workspace checkpoints and user-visible restore points;
-- automatic overwrite retry when the resident can prove the target still has the exact pre-dispatch state;
-- privacy-safe pre-write identity for overwrite recovery;
-- partial-write avoidance / atomic overwrite staging where appropriate;
+- post-dispatch overwrite `verified_absent` remains intentionally unavailable because old-state equality is not causal proof that the effect never happened;
+- direct `Path.write_text(...)` overwrite still permits partial-target ambiguity if the process or host fails during the write;
+- any atomic/staged replacement design must account for Windows permissions/ACLs, file attributes, metadata semantics, temp-file cleanup and crash recovery instead of merely swapping in `os.replace()`;
 - isolated parallel Work;
 - long-horizon repetition/drift/provider-replacement benchmarks for resident intelligence;
 - browser `PRESS`, broader click/text replacement/ARIA checkbox mutation, explicit tab/popup/frame ownership, headed managed-browser UX and authenticated User Browser Bridge;
@@ -326,21 +332,16 @@ Open work includes:
 
 ## 9. Next real target
 
-Continue P5 at the narrower remaining overwrite boundary.
+Continue P5 at the partial-write / atomic-overwrite boundary, but do not implement a naive temp-file replacement merely because it is usually called atomic.
 
-The current mechanism can prove **effect present** but intentionally cannot prove **effect absent** for an overwrite. A mismatch may mean old pre-state, partial write or a user/external change.
+Next investigation should:
 
-Next investigation/implementation should therefore:
-
-1. reuse the existing `verified_absent` side-effect resolution path rather than add a competing recovery plane;
-2. design a bounded, privacy-safe pre-write identity owned by the resident before overwrite dispatch, preferably metadata/digest evidence rather than stored raw file contents;
-3. on restart, distinguish at least:
-   - exact intended post-state -> complete without replay;
-   - exact proven pre-dispatch state -> only then consider `verified_absent` and retry authorization;
-   - anything else -> preserve uncertainty and do not mutate;
-4. include file existence/type, canonical path identity and enough current-file identity evidence to reject external/user drift; do not treat content digest alone as unconditional authority if stronger host evidence is available;
-5. evaluate whether atomic temp-file + replace semantics reduce partial-write ambiguity without creating a new cleanup/replay hazard;
-6. preserve the inherited repo-aware / Git-delta / targeted-test lifecycle for fresh overwrites;
-7. add a twenty-first crash/restart count only if a genuinely new distinct interruption is closed and real Windows CI proves it.
+1. trace exact overwrite behavior on Windows for existing regular files, missing files, symlinks/reparse points, readonly files and repository files;
+2. determine which security descriptor/ACL, attributes, timestamps and file identity semantics the current in-place write preserves that temp-file replacement could change;
+3. design same-directory staging only if ZN can define and verify temp lifecycle, cleanup, target replacement and restart semantics without introducing an orphan-temp or stale-replace authority path;
+4. preserve inherited repo baseline / Git delta / targeted-test / semantic verification ownership;
+5. retain the new pre-dispatch identity as Situation evidence, not as unconditional mutation permission;
+6. keep post-dispatch old-state equality insufficient for `verified_absent` unless stronger causal evidence is added;
+7. add crash/restart window #22 only if a genuinely distinct interruption is closed and real Windows CI proves it.
 
 Keep `main` untouched during ordinary development. Preserve outside-world uncertainty as uncertainty, not replay permission.
