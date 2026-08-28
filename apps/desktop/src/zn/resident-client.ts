@@ -1,6 +1,8 @@
 import type {
   ZnArtifact,
   ZnArtifactKind,
+  ZnRestorePoint,
+  ZnRestorePointCurrentStatus,
   ZnThread,
   ZnThreadMessage,
   ZnThreadRole,
@@ -131,6 +133,12 @@ function artifactKind(value: unknown): ZnArtifactKind {
   return value === 'file' || value === 'diff' || value === 'terminal' ? value : 'other'
 }
 
+function restorePointCurrentStatus(value: unknown): ZnRestorePointCurrentStatus {
+  return value === 'unchanged' || value === 'changed' || value === 'missing'
+    ? value
+    : 'unsupported'
+}
+
 function normalizeMessage(value: unknown): ZnThreadMessage | null {
   const item = record(value)
   if (!item) return null
@@ -166,6 +174,37 @@ function normalizeArtifact(value: unknown): ZnArtifact | null {
   }
 }
 
+function normalizeRestorePoint(value: unknown): ZnRestorePoint | null {
+  const item = record(value)
+  if (!item) return null
+  const id = String(item.restore_point_id || item.restorePointId || item.id || '').trim()
+  const eventId = String(item.event_id || item.eventId || '').trim()
+  const targetPath = String(item.target_path || item.targetPath || '').trim()
+  if (!id || !eventId || !targetPath) return null
+  const currentExistsRaw = item.current_exists ?? item.currentExists
+  const currentSizeRaw = item.current_size_bytes ?? item.currentSizeBytes
+  const sizeBytes = Number(item.size_bytes ?? item.sizeBytes ?? 0)
+  return {
+    id,
+    eventId,
+    targetPath,
+    sizeBytes: Number.isFinite(sizeBytes) && sizeBytes >= 0 ? sizeBytes : 0,
+    status: String(item.status || 'retained'),
+    currentStatus: restorePointCurrentStatus(item.current_status || item.currentStatus),
+    currentReason: String(item.current_reason || item.currentReason || ''),
+    currentObservedAt: timestamp(item.current_observed_at || item.currentObservedAt),
+    ...(typeof currentExistsRaw === 'boolean' ? { currentExists: currentExistsRaw } : {}),
+    currentType: String(item.current_type || item.currentType || 'unknown'),
+    ...(typeof currentSizeRaw === 'number' && Number.isFinite(currentSizeRaw) && currentSizeRaw >= 0
+      ? { currentSizeBytes: currentSizeRaw }
+      : {}),
+    createdAt: timestamp(item.created_at || item.createdAt),
+    updatedAt: timestamp(item.updated_at || item.updatedAt),
+    automaticRestoreAuthority: false,
+    restoreApplicationAvailable: false
+  }
+}
+
 function normalizeWorkspace(value: unknown): ZnWorkspace | undefined {
   const metadata = record(value)
   const raw = record(metadata?.workspace)
@@ -194,7 +233,18 @@ function normalizeThread(value: unknown): ZnThread {
   const artifacts = rawArtifacts
     .map(normalizeArtifact)
     .filter((artifact): artifact is ZnArtifact => Boolean(artifact))
-  const workspace = normalizeWorkspace(item.metadata)
+  const metadata = record(item.metadata)
+  const workspace = normalizeWorkspace(metadata)
+  const rawRestorePoints = Array.isArray(metadata?.restore_points)
+    ? metadata.restore_points
+    : Array.isArray(metadata?.restorePoints)
+      ? metadata.restorePoints
+      : null
+  const restorePoints = rawRestorePoints
+    ? rawRestorePoints
+      .map(normalizeRestorePoint)
+      .filter((point): point is ZnRestorePoint => Boolean(point))
+    : undefined
   return {
     id,
     title: String(item.title || 'New work'),
@@ -202,7 +252,8 @@ function normalizeThread(value: unknown): ZnThread {
     updatedAt: timestamp(item.updated_at || item.updatedAt),
     messages,
     artifacts,
-    ...(workspace ? { workspace } : {})
+    ...(workspace ? { workspace } : {}),
+    ...(restorePoints ? { restorePoints } : {})
   }
 }
 
@@ -367,6 +418,15 @@ export async function loadZnWorkThreads(): Promise<ZnThread[]> {
   const result = await desktop().resident.workList({ limit: 24, messageLimit: 120 })
   if (!Array.isArray(result)) throw new Error('Resident returned an invalid work list')
   return result.map(normalizeThread)
+}
+
+export async function loadZnWorkThread(threadId: string): Promise<ZnThread> {
+  const normalized = threadId.trim()
+  if (!normalized) throw new Error('Work thread id is required')
+  return normalizeThread(await desktop().resident.workGet({
+    threadId: normalized,
+    messageLimit: 120
+  }))
 }
 
 export async function createZnWorkThread(thread: ZnThread): Promise<ZnThread> {
