@@ -31,6 +31,8 @@ jobs:
     name: ZN Source Boundary / Windows
     runs-on: [self-hosted, Windows, X64, zn-ci]
     timeout-minutes: 10
+    env:
+      UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/zn-uv-python
     steps:
       - name: Publish source-boundary pending status
         uses: actions/github-script@v7
@@ -70,6 +72,8 @@ jobs:
     name: ZN Kernel / Python / Windows
     runs-on: [self-hosted, Windows, X64, zn-ci]
     timeout-minutes: 25
+    env:
+      UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/zn-uv-python
     steps:
       - name: Publish kernel pending status
         uses: actions/github-script@v7
