@@ -24,6 +24,34 @@ class OverwriteAwareBody(SideEffectAwareBody):
             return True
         return super()._requires_guard(kind, args)
 
+    def overwrite_replay_blocked(
+        self,
+        *,
+        event_id: str,
+        kind: str,
+        args: dict[str, Any],
+    ) -> bool:
+        """Read only whether this exact overwrite already crossed dispatch ownership.
+
+        A fresh overwrite must continue through the existing repo/baseline/verifier
+        owners before Body dispatch. Only an already-started/observed exact
+        signature is diverted into recovery.
+        """
+
+        normalized_kind = str(kind or "").strip().lower()
+        normalized_event = str(event_id or "").strip()
+        if normalized_kind not in {"write_text", "write_file"} or not normalized_event:
+            return False
+        signature_hash = self._signature_hash(normalized_kind, args)
+        return (
+            self._replay_blocking_attempt(
+                normalized_event,
+                signature_hash,
+                include_observed=True,
+            )
+            is not None
+        )
+
 
 class OverwriteRecoveryResidentRuntime(DurableBodyAccountingResidentRuntime):
     """Treat overwrite dispatch as replay-sensitive outside-world mutation.
@@ -48,12 +76,80 @@ class OverwriteRecoveryResidentRuntime(DurableBodyAccountingResidentRuntime):
         super().__init__(*args, **kwargs)
         self.body = OverwriteAwareBody(resident=self)
 
-    @staticmethod
-    def _generic_guarded_side_effect(intent: NativeActionIntent) -> bool:
+    def _native_action_step(
+        self,
+        event,
+        state,
+        *,
+        readiness,
+        thought=None,
+    ):
+        raw = state.data.get("native_action_intent")
+        if not isinstance(raw, dict):
+            return super()._native_action_step(
+                event,
+                state,
+                readiness=readiness,
+                thought=thought,
+            )
+        intent = NativeActionIntent.from_dict(raw)
         kind = str(intent.kind or "").strip().lower()
-        if kind in {"write_text", "write_file"}:
-            return True
-        return DurableBodyAccountingResidentRuntime._generic_guarded_side_effect(intent)
+        if kind not in {"write_text", "write_file"} or bool(intent.args.get("append", False)):
+            return super()._native_action_step(
+                event,
+                state,
+                readiness=readiness,
+                thought=thought,
+            )
+
+        # Fresh overwrites must stay on the inherited most-specific lifecycle.
+        # That preserves repository baselines, scoped Git-delta verification,
+        # targeted tests and every other pre/post condition ZN already owns.
+        if not self.body.overwrite_replay_blocked(
+            event_id=event.event_id,
+            kind=intent.kind,
+            args=dict(intent.args),
+        ):
+            return super()._native_action_step(
+                event,
+                state,
+                readiness=readiness,
+                thought=thought,
+            )
+
+        # Once durable dispatch ownership already exists, calling Body is safe:
+        # the guard returns uncertainty without dispatching the overwrite again.
+        result = self.body.act(
+            intent.kind,
+            event_id=event.event_id,
+            **dict(intent.args),
+        )
+        if not (
+            not result.success
+            and isinstance(result.data, dict)
+            and bool(result.data.get("side_effect_uncertain"))
+        ):
+            raise RuntimeError(
+                "durable overwrite attempt existed but Body did not return replay-blocked uncertainty"
+            )
+        state.data["native_action_result"] = {
+            "action_id": result.action_id,
+            "kind": result.kind,
+            "success": result.success,
+            "data": dict(result.data or {}),
+            "output": result.output,
+            "error": result.error,
+            "event_id": result.event_id,
+            "started_at": result.started_at,
+            "completed_at": result.completed_at,
+        }
+        return self._begin_side_effect_recovery(
+            event,
+            state,
+            intent,
+            result,
+            thought=thought,
+        )
 
     def _begin_side_effect_recovery(
         self,
@@ -228,7 +324,10 @@ class OverwriteRecoveryResidentRuntime(DurableBodyAccountingResidentRuntime):
         if not observed.success:
             reason = observed.error or "current text state could not be observed"
         elif bool(observed.data.get("truncated")):
-            reason = "current text state is truncated and cannot prove overwrite recovery"
+            reason = (
+                "current text exceeds the exact overwrite recovery observation bound; it may "
+                "reflect a partial or user/external change, so replay is forbidden"
+            )
         else:
             reason = (
                 "current text does not equal the intended overwrite result; it may be the "
