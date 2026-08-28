@@ -7,10 +7,13 @@ This file is the implementation/evidence ledger for ZN. It is not a wish list. W
 - Repository: `9529360-cpu/znagent`
 - Primary development branch: `dev/zn-agent`
 - Canonical/release branch: `main`
-- Canonical `main` before the current clean-install promotion: `3741db32c739322a3f921ea62798b2c698ef0771`
-- Current clean-install implementation/proof head on `dev/zn-agent`: `cb913d61f001af6c729a141a3c8631a72e8362cf`
+- Windows clean-install implementation/proof head: `cb913d61f001af6c729a141a3c8631a72e8362cf`
+- Clean-install documentation closeout head: `4b770345e1267db1cfdc37c9551ff967d6955c27`
+- Canonical clean-install promotion head: `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`
+- Before this ledger-reconciliation change, `main` and `dev/zn-agent` were synchronized at `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`.
 - PR #11 promoted the Windows x64 unsigned candidate-proof stage to `main`.
 - PR #12 merged the clean Windows install/first-start proof into `dev/zn-agent`.
+- PR #13 promoted the clean Windows install/first-start proof to canonical `main`.
 - No force push or Git history rewrite is part of this stage.
 
 ## Stage summary
@@ -21,8 +24,9 @@ This file is the implementation/evidence ledger for ZN. It is not a wish list. W
 | Durable work/recovery/restart semantics | implemented in bounded slices | covered by the Windows kernel suite; destructive restore remains outside current authority |
 | P5 recovery-control program | PARTIAL | read-only restore proposals are canonical; restore execution is not granted |
 | Windows x64 unsigned release-candidate build | COMPLETE / CANONICAL NARROW PROOF | clean hosted Windows build, packaged runtime boot, unsigned NSIS/MSI and independent manifest/hash verification |
-| Windows x64 clean install + first resident start | COMPLETE / CI VERIFIED NARROW PROOF | real NSIS install in isolated hosted-runner state, launch installed `ZN.exe`, materialize packaged runtime, observe resident RPC and graceful shutdown |
-| Installed N -> N+1 continuity | INCOMPLETE | no formal updater/replacement transition has been executed |
+| Windows x64 clean install + first resident start | COMPLETE / CANONICAL CI-VERIFIED NARROW PROOF | real NSIS install in isolated hosted-runner state, launch installed `ZN.exe`, materialize packaged runtime, observe resident RPC and graceful shutdown; promoted through PR #13 |
+| Installed N baseline evidence | NOT STARTED | next low-risk isolated/read-only M8 slice |
+| Installed N -> N+1 continuity | INCOMPLETE / HUMAN-APPROVAL BOUNDARY | no formal updater/replacement transition has been executed |
 | Rollback / signing / release trust | INCOMPLETE / HUMAN-APPROVAL BOUNDARY | not exercised by this stage |
 | Formal release/stable-channel publication | INCOMPLETE | no tag, GitHub Release, stable-channel advance, or user-machine replacement in this stage |
 | Self-maintenance | SM0 complete; later phases incomplete | see `docs/ZN-SELF-MAINTENANCE.md` |
@@ -48,7 +52,7 @@ This is a build/integrity proof, not a signed or published formal release.
 
 Implementation/proof head: `cb913d61f001af6c729a141a3c8631a72e8362cf`.
 
-Exact-head remote evidence:
+Exact implementation-head remote evidence:
 
 - `ZN CI` run `33193710879`: all three substantive jobs succeeded; Windows kernel suite ran **686 tests** in `609.959s`, `OK (skipped=5)`; Source Boundary and Electron/TypeScript also succeeded.
 - `ZN Windows Release Candidate` run `33193711016`: success. Artifact `9695032455`, archive digest `sha256:a5e65ee7b02ef977260e30365ba460cbd30dcfef1d46550c58a31b8cc7739aa6`.
@@ -74,6 +78,20 @@ The exact-head run proved that a clean hosted Windows x64 runner can:
 
 The same run observed resident runtime id `cb913d61f001af6c729a141a3c8631a72e8362cf` and portable Python under the isolated installed runtime.
 
+### Clean-install promotion and canonical verification
+
+The documentation closeout head `4b770345e1267db1cfdc37c9551ff967d6955c27` received exact-head `ZN CI` run `33195494937`; the workflow completed successfully.
+
+PR #13 then normally promoted the completed low-risk clean-install stage to canonical `main`, producing merge commit `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`.
+
+Canonical post-merge `ZN CI` run `33196441295` ran on `a4f9c95a32571add9bd16ec5aa08a618c8e5566b` and completed successfully. Its substantive jobs all succeeded:
+
+- `ZN Kernel / Python / Windows`;
+- `Electron / TypeScript / Windows`;
+- `ZN Source Boundary / Windows`.
+
+The clean-install/first-start stage is therefore complete and canonical as a bounded unsigned Windows x64 proof. This does not expand its authority into updater, rollback, signing, publication, or user-machine replacement.
+
 ## What is still not proven
 
 The clean-install proof must not be broadened into a release-ready claim. The following remain open:
@@ -87,18 +105,28 @@ The clean-install proof must not be broadened into a release-ready claim. The fo
 - production tag/release/stable-channel publication;
 - replacing a user's current formal installation.
 
-Updater, rollback, signing, release-trust and installed-version replacement remain explicit human-approval boundaries. This stage did not invoke them.
+Updater/replacement, rollback, signing, release-trust and installed-version replacement remain explicit human-approval boundaries. The clean-install stage did not invoke them.
 
 ## Next low-risk target
 
-After the clean-install stage is documented, exact-docs-head CI passes, and the low-risk stage is promoted normally to `main`, the next safe M8 slice is an **installed N baseline evidence** lane in isolated test state.
+The next safe M8 slice is an **installed N baseline evidence** lane in isolated test state.
 
-That lane should read and bind non-secret resident evidence needed for a later continuity comparison (for example Self identity/reference, bounded work references, runtime/config metadata, and sanitized provider-setting metadata) without:
+That lane should read and bind non-secret resident evidence needed for a later continuity comparison, for example:
 
-- changing the installed version;
-- invoking the updater;
-- mutating credentials;
-- executing rollback;
-- signing or publishing a release.
+- exact installed/runtime identity;
+- stable Self identity/reference required for continuity checks;
+- bounded Work/thread references and counts rather than message bodies;
+- runtime/home/config path identity;
+- sanitized provider-setting metadata such as provider/model/base URL plus credential presence/source metadata, never secret values;
+- resident endpoint and pulse/life evidence.
+
+It must not:
+
+- call the updater or replace installed N;
+- mutate credentials or permissions;
+- execute rollback;
+- change signing/release trust;
+- modify identity or long-term memory;
+- publish a tag/GitHub Release or advance `stable.json`.
 
 Only after that baseline exists should the repository propose the separately approved N -> N+1 transition experiment.
