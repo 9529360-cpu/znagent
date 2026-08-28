@@ -1,0 +1,198 @@
+name: ZN Windows Clean Install
+
+on:
+  push:
+    branches:
+      - dev/zn-agent
+      - 'work/**'
+    paths:
+      - '.github/workflows/zn-windows-clean-install.yml'
+      - 'apps/desktop/**'
+      - 'runtime/python/**'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: write
+
+env:
+  CI: 'true'
+  NODE_OPTIONS: --max-old-space-size=4096
+
+concurrency:
+  group: zn-windows-clean-install-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clean-install:
+    name: Windows x64 clean install and start
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - name: Publish clean-install pending status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: 'pending',
+              context: 'ZN Windows Clean Install',
+              description: 'isolated Windows x64 install/start proof: running',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            })
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Require clean Windows x64 hosted runner
+        shell: pwsh
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "Windows clean-install proof requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+          Write-Host "Windows clean-install runner: $env:RUNNER_NAME"
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22.22.0'
+          cache: npm
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: true
+          cache-dependency-glob: runtime/python/pyproject.toml
+
+      - name: Install locked workspace dependencies
+        run: npm ci
+
+      - name: Reject high-severity npm advisories
+        run: npm audit --audit-level=high
+
+      - name: Test clean-install verifier contract
+        run: node --test apps/desktop/scripts/verify-zn-windows-clean-install.test.mjs
+
+      - name: Resolve candidate version
+        id: version
+        shell: pwsh
+        run: |
+          $version = (node -p "require('./apps/desktop/package.json').version").Trim()
+          if (-not $version) { throw 'desktop package version is empty' }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Clean-install candidate version: $version"
+
+      - name: Stage ZN-owned packaged runtime
+        env:
+          ZN_RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          ZN_RELEASE_COMMIT: ${{ github.sha }}
+        run: node apps/desktop/scripts/stage-zn-runtime.mjs
+
+      - name: Build renderer and Electron runtime
+        run: npm run build --workspace apps/desktop
+
+      - name: Build unsigned Windows installer candidates
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force apps/desktop/release -ErrorAction SilentlyContinue
+          npm run builder --workspace apps/desktop -- --config electron-builder.zn.yml --win --publish never
+
+      - name: Verify packaged runtime before install
+        env:
+          ZN_CANDIDATE_VERSION: ${{ steps.version.outputs.version }}
+        shell: pwsh
+        run: node apps/desktop/scripts/verify-zn-packaged-runtime.mjs apps/desktop/release $env:ZN_CANDIDATE_VERSION $env:GITHUB_SHA
+
+      - name: Write and verify Windows release manifest
+        env:
+          ZN_CANDIDATE_VERSION: ${{ steps.version.outputs.version }}
+        shell: pwsh
+        run: |
+          node apps/desktop/scripts/write-zn-release-manifest.mjs windows $env:ZN_CANDIDATE_VERSION
+          node apps/desktop/scripts/verify-zn-windows-release-candidate.mjs apps/desktop/release $env:ZN_CANDIDATE_VERSION x64
+
+      - name: Install real NSIS candidate into isolated test state
+        id: install
+        shell: pwsh
+        run: |
+          $manifest = Get-Content apps/desktop/release/zn-release-windows-x64.json -Raw | ConvertFrom-Json
+          $exeAssets = @($manifest.assets | Where-Object { [IO.Path]::GetExtension($_.name).ToLowerInvariant() -eq '.exe' })
+          if ($exeAssets.Count -ne 1) { throw "Expected exactly one EXE installer, got $($exeAssets.Count)" }
+          $installer = (Resolve-Path (Join-Path 'apps/desktop/release' $exeAssets[0].name)).Path
+          $installDir = Join-Path $env:RUNNER_TEMP 'zn-clean-install-app'
+          $znHome = Join-Path $env:RUNNER_TEMP 'zn-clean-install-home'
+          Remove-Item -Recurse -Force $installDir,$znHome -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $znHome | Out-Null
+          $process = Start-Process -FilePath $installer -ArgumentList '/S', "/D=$installDir" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "ZN NSIS installer failed with exit code $($process.ExitCode)" }
+          $installedExe = Join-Path $installDir 'ZN.exe'
+          if (-not (Test-Path -LiteralPath $installedExe -PathType Leaf)) {
+            throw "ZN executable missing after real installer completed: $installedExe"
+          }
+          "install_dir=$installDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "zn_home=$znHome" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Installed isolated ZN at $installDir"
+
+      - name: Start installed desktop and verify resident life
+        shell: pwsh
+        env:
+          ZN_INSTALL_DIR: ${{ steps.install.outputs.install_dir }}
+          ZN_CLEAN_HOME: ${{ steps.install.outputs.zn_home }}
+        run: |
+          $env:ZN_AGENT_HOME = $env:ZN_CLEAN_HOME
+          $env:ZN_HOME = $env:ZN_CLEAN_HOME
+          $env:ELECTRON_ENABLE_LOGGING = '1'
+          $installedExe = Join-Path $env:ZN_INSTALL_DIR 'ZN.exe'
+          $stdout = Join-Path $env:RUNNER_TEMP 'zn-clean-install-desktop.stdout.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'zn-clean-install-desktop.stderr.log'
+          $proof = Join-Path $env:RUNNER_TEMP 'zn-clean-install-proof.log'
+          $desktop = $null
+          try {
+            $desktop = Start-Process -FilePath $installedExe -ArgumentList '--disable-gpu' -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+            node apps/desktop/scripts/verify-zn-windows-clean-install.mjs $env:ZN_INSTALL_DIR $env:ZN_CLEAN_HOME $env:GITHUB_SHA 2>&1 | Tee-Object -FilePath $proof
+            if ($LASTEXITCODE -ne 0) { throw "clean-install verifier failed with exit code $LASTEXITCODE" }
+          } finally {
+            if ($desktop -and -not $desktop.HasExited) {
+              Stop-Process -Id $desktop.Id -Force -ErrorAction SilentlyContinue
+            }
+          }
+          $runtimeManifest = Join-Path $env:ZN_CLEAN_HOME "runtime/$env:GITHUB_SHA/runtime.json"
+          if (-not (Test-Path -LiteralPath $runtimeManifest -PathType Leaf)) {
+            throw "Materialized installed runtime manifest missing after proof: $runtimeManifest"
+          }
+          Copy-Item -LiteralPath $runtimeManifest -Destination (Join-Path $env:RUNNER_TEMP 'zn-clean-install-runtime.json') -Force
+
+      - name: Upload clean-install evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: zn-windows-clean-install-${{ github.sha }}
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/zn-clean-install-proof.log
+            ${{ runner.temp }}/zn-clean-install-runtime.json
+            ${{ runner.temp }}/zn-clean-install-desktop.stdout.log
+            ${{ runner.temp }}/zn-clean-install-desktop.stderr.log
+
+      - name: Publish clean-install status
+        if: ${{ always() }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const result = '${{ job.status }}'
+            const state = result === 'success' ? 'success' : result === 'failure' ? 'failure' : 'error'
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state,
+              context: 'ZN Windows Clean Install',
+              description: `isolated Windows x64 install/start proof: ${result}`.slice(0, 140),
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            })
