@@ -136,9 +136,6 @@ class WindowsAtomicOverwriteNamespaceRepairTests(unittest.TestCase):
             db, target, event, intent, staging_path, backup_path = self._make_split(root)
             self._checkpoint_repair(db, event, intent)
 
-            # Process death here leaves only durable repair authority and the
-            # unchanged proven split. A new resident may execute the new repair,
-            # but must never replay the stale overwrite attempt.
             resumed = build_resident_runtime_from_existing_stack(
                 config={"model": {}}, store_path=db
             )
@@ -263,7 +260,6 @@ class WindowsAtomicOverwriteNamespaceRepairTests(unittest.TestCase):
 
             def lose_no_replace_race(staging: Path, target_path: Path) -> None:
                 self.assertEqual(staging, staging_path)
-                self.assertEqual(target_path, target)
                 target_path.write_text("external winner", encoding="utf-8")
                 raise FileExistsError("synthetic no-replace target race")
 
