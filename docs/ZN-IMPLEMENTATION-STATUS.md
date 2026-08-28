@@ -16,7 +16,7 @@ This file is the implementation/evidence ledger for ZN. It is not a mandatory ro
 | Area | Current maturity | Evidence boundary |
 | --- | --- | --- |
 | Resident Self / Body / Senses / Situation / Thought / Will | implemented, wired, continuously tested | ZN-owned Python resident; zero-model boot remains required |
-| Durable Work / restart recovery | implemented in bounded product slices | broad Windows core/recovery suites; exact PR #35 recovery rerun is the current regression gate |
+| Durable Work / restart recovery | implemented and regression-verified in bounded product slices | exact PR #35 Work Recovery lane is green after the browser MRO repair |
 | Work restore inspection | wired and verified | resident + desktop can inspect restore state without mutation |
 | Missing-target Work restore application | wired and verified, narrow authority | Windows-only explicit prepare -> approve, exact retained bytes, missing target only, no replacement, durable restart reconciliation |
 | Managed Chromium runtime | wired and verified | formal versioned Windows runtime packages Playwright/Chromium and launch-smokes the packaged browser |
@@ -25,7 +25,7 @@ This file is the implementation/evidence ledger for ZN. It is not a mandatory ro
 | Browser mutation beyond navigation | not granted | click/type/select/upload/download are intentionally absent from Work authority |
 | Windows x64 unsigned release-candidate build | canonical narrow proof | clean hosted Windows build, packaged runtime boot, unsigned NSIS/MSI and independent manifest/hash verification |
 | Windows x64 clean install + first resident start | canonical narrow proof | real NSIS install in isolated state, installed `ZN.exe`, materialized runtime, resident RPC/life and graceful shutdown |
-| Installed-N continuity baseline | not yet product-closed | current clean-install proof reads `self`/`status`, but does not persist a bounded baseline sufficient for later continuity comparison |
+| Installed-N continuity baseline | implementation in progress, not yet product-verified | PR #37 adds a resident-owned sanitized baseline and real clean-install evidence path; exact-head installed proof is still required |
 | Installed N -> N+1 continuity | approval-gated / incomplete | no formal updater/replacement transition has been executed |
 | Rollback / signing / release trust | approval-gated / incomplete | not exercised by the current stage |
 | Formal release/stable-channel publication | incomplete | no current-stage tag, GitHub Release, stable-channel advance or user-machine replacement |
@@ -77,15 +77,15 @@ PR #33 corrected the browser Body composition so the final runtime inherits the 
 
 PR #34 added browser Work modules/tests to the dedicated Work Recovery lane. That lane exposed a second composition bug: browser verification hard-called a base class as a static function, dropping `self` from the effective procedural verification method and causing 19 mature non-browser recovery errors. PR #35 changed browser verification to instance delegation via `super()`, preserving the full MRO below the browser specialization.
 
-### Browser evidence
+### Browser and recovery evidence
 
 - Windows clean-install run `33216509252`: success on the packaged-browser implementation head; packaged Chromium launch and installed resident start both succeeded.
 - `ZN Managed Browser E2E` run `33219726246`: success on implementation head `1f4da5fae6d6481375290637027fa273714bb032`, including real Chromium structured Work navigation.
 - `ZN Managed Browser E2E` run `33220567118`: success on exact PR #35 merge head `5c347925490179748e44e35c43b0435ede9e1f14`; managed-browser contract tests and real local Chromium E2E succeeded after the MRO fix.
-- `ZN Work Recovery E2E` run `33220567184`: running on the exact PR #35 merge head at the time this reconciliation was written. It is the hard gate proving the 19 mature recovery regressions are actually gone.
-- `ZN CI` run `33220567183`: Electron/TypeScript and Source Boundary jobs are green on the exact merge head; Kernel/Python full suite is still running at the time of this reconciliation.
+- `ZN Work Recovery E2E` run `33220567184`: success on the exact PR #35 merge head; the full recovery lane passed after the MRO fix, resolving the 19 mature non-browser recovery errors exposed by PR #34.
+- `ZN CI` run `33220567183`: Electron/TypeScript and Source Boundary jobs are green on the exact merge head; Kernel/Python full suite is still running at the latest recorded check.
 
-Do not upgrade the two in-flight entries to success without fresh Actions evidence.
+Do not upgrade the remaining in-flight general CI entry to success without fresh Actions evidence.
 
 ## Windows candidate and clean-install proof
 
@@ -104,13 +104,15 @@ The clean-install lane follows the real ownership chain:
 
 The current verifier requires the installed executable/app.asar/bundled runtime, exact materialized runtime id, resident Python under that runtime, real `ping`, `status`, `self`, life pulse, graceful resident shutdown and endpoint retirement.
 
-It is a clean-install/start proof, not proof of update continuity, rollback, signing, publication or user-machine replacement.
+PR #37 extends that proof with a resident-owned `continuity_snapshot` whose schema explicitly allowlists stable identity/living-self references, bounded Work thread references and sanitized provider metadata. The verifier independently rejects unexpected fields before persisting the evidence artifact. Until the exact PR #37 Windows clean-install run succeeds, this is an implemented/wired capability rather than a verified installed product path.
+
+It remains a clean-install/start/baseline proof, not proof of update continuity, rollback, signing, publication or user-machine replacement.
 
 ## Open product gaps
 
 Known gaps that still matter after the restore/browser work include:
 
-- installed-N continuity baseline that binds stable non-secret Self identity/reference, Work/thread references, runtime/home/config identity, sanitized provider-setting metadata and resident-life evidence into a later-comparable snapshot;
+- complete and verify the installed-N continuity baseline on a real installed resident;
 - real installed N -> N+1 application transition and continuity across it;
 - failed-update recovery and formal rollback;
 - actual Windows login/reboot autostart behavior on persistent installed state;
@@ -122,19 +124,12 @@ Known gaps that still matter after the restore/browser work include:
 
 Updater/replacement, formal rollback, signing/release trust and replacement of a user's formal installation remain explicit human-approval boundaries.
 
-## Leading safe next candidate: installed-N continuity baseline
+## Current safe continuity stage
 
-Current triage still makes the installed-N baseline a strong next candidate after the browser/restore stage is fully green and canonical source is reconciled. It is useful because “new version starts” is not enough for a resident subject; later transition work needs a pre-transition truth set capable of detecting continuity loss.
+The installed-N baseline is now the active safe continuity slice because “new version starts” is not enough for a resident subject; later transition work needs a pre-transition truth set capable of detecting continuity loss.
 
-A useful baseline should remain read-only and non-secret while binding, at minimum:
+The current PR #37 design keeps that baseline read-only and non-secret. The resident owns the allowlist rather than exposing raw Work/config state; the Windows verifier also fail-closes on unexpected fields before writing evidence. The baseline binds stable Self/living-state references, bounded Work thread identity/timestamps and sanitized provider/model/credential-source metadata. Exact installed/runtime identity remains separately bound by the existing endpoint/runtime-manifest clean-install evidence.
 
-- exact installed/runtime identity;
-- stable Self identity/reference required for continuity comparison;
-- bounded Work/thread references and counts rather than message bodies;
-- runtime/home/config path identity;
-- sanitized provider/model/base-URL metadata plus credential presence/source metadata, never secret values;
-- resident endpoint/life evidence.
-
-It must not invoke the updater, replace installed N, mutate identity or long-term memory, alter credentials/permissions, execute rollback, change release trust, publish a release, or advance a stable channel.
+It does not invoke the updater, replace installed N, mutate identity or long-term memory, alter credentials/permissions, execute rollback, change release trust, publish a release, or advance a stable channel.
 
 A later N -> N+1 experiment remains separately approval-gated and must not be inferred from completion of the baseline.
