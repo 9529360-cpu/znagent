@@ -57,20 +57,37 @@ class _BrowserOwner:
         return future.result()
 
     def close(self, operation: Callable[[], Any]) -> None:
+        if threading.get_ident() == self._thread_id:
+            with self._state_lock:
+                if self._closed:
+                    return
+                self._closed = True
+            try:
+                operation()
+            finally:
+                self._queue.put(None)
+            return
+
         with self._state_lock:
             if self._closed:
                 return
+            # Closing is a lifecycle boundary: reject every new browser call
+            # before provider cleanup is enqueued. Otherwise a reconnect can
+            # slip an operation behind close and reach an already-closed
+            # Playwright instance.
+            self._closed = True
+            future: Future[Any] = Future()
+            self._queue.put((operation, future))
+            self._queue.put(None)
+
         failure: BaseException | None = None
         try:
-            self.call(operation)
+            future.result()
         except BaseException as exc:
             failure = exc
-        with self._state_lock:
-            if not self._closed:
-                self._closed = True
-                self._queue.put(None)
-        if threading.get_ident() != self._thread_id:
-            self._thread.join(timeout=10.0)
+        self._thread.join(timeout=10.0)
+        if self._thread.is_alive() and failure is None:
+            failure = RuntimeError("resident managed-browser owner did not stop")
         if failure is not None:
             raise failure
 
