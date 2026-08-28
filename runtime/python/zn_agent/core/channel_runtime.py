@@ -43,6 +43,11 @@ class ResidentChannelSupervisor:
     decides when and how to process those events. Completed outcomes are read
     from the same durable store and routed outward, so UI disconnects or channel
     reconnects do not become alternate cognition owners.
+
+    A supervisor owns one adapter lifecycle. ``stop()`` closes those adapters;
+    restarting therefore requires constructing a fresh supervisor with fresh
+    adapter resources instead of reusing a closed transport or duplicating a
+    worker that is still unwinding.
     """
 
     def __init__(
@@ -74,6 +79,7 @@ class ResidentChannelSupervisor:
         self._stop = threading.Event()
         self._threads: dict[str, threading.Thread] = {}
         self._lock = threading.RLock()
+        self._stopped = False
 
     @property
     def channels(self) -> tuple[str, ...]:
@@ -81,15 +87,11 @@ class ResidentChannelSupervisor:
 
     def start(self) -> None:
         with self._lock:
-            # stop() intentionally retains a still-alive worker so a provider
-            # that ignored close()/poll timeout cannot be duplicated. If that
-            # worker exits after stop() returned, reap the confirmed-dead handle
-            # here so the same supervisor can recover without an extra stop().
-            self._threads = {
-                name: thread
-                for name, thread in self._threads.items()
-                if thread.is_alive()
-            }
+            if self._stopped:
+                raise RuntimeError(
+                    "channel supervisor cannot restart after stop; "
+                    "create a fresh supervisor with fresh adapters"
+                )
             if self._threads:
                 return
             self._stop.clear()
@@ -105,6 +107,8 @@ class ResidentChannelSupervisor:
                 thread.start()
 
     def stop(self) -> None:
+        with self._lock:
+            self._stopped = True
         self._stop.set()
         for adapter in self._adapters.values():
             try:
@@ -119,9 +123,9 @@ class ResidentChannelSupervisor:
                 thread.join(timeout=join_timeout)
         with self._lock:
             # A provider that ignores close()/poll timeout may leave its daemon
-            # thread alive. Keep that thread owned and visible so start() cannot
-            # create a duplicate poller over the same channel while the previous
-            # worker is still touching resident state.
+            # thread alive. Keep that thread owned and visible rather than
+            # claiming shutdown completed while it can still touch resident
+            # state during process teardown.
             alive = {
                 name: thread
                 for name, thread in self._threads.items()
@@ -137,7 +141,7 @@ class ResidentChannelSupervisor:
                     state.last_error_at = utc_now()
                     state.last_error = (
                         "channel worker did not stop before shutdown timeout; "
-                        "restart remains blocked until the worker exits"
+                        "worker remains owned until process teardown"
                     )
 
     def status(self) -> tuple[dict[str, Any], ...]:
