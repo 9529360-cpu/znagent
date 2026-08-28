@@ -42,7 +42,7 @@ class _StuckThread:
 
 
 class ResidentChannelStopLifecycleTests(unittest.TestCase):
-    def test_stop_retains_stuck_worker_and_blocks_duplicate_restart(self):
+    def test_stop_retains_stuck_worker_and_rejects_closed_adapter_restart(self):
         with tempfile.TemporaryDirectory() as tmp:
             resident = _Resident(Path(tmp) / "kernel.db")
             try:
@@ -64,15 +64,18 @@ class ResidentChannelStopLifecycleTests(unittest.TestCase):
                 state = supervisor.status()[0]
                 self.assertTrue(state["running"])
                 self.assertGreaterEqual(state["total_failures"], 1)
-                self.assertIn("restart remains blocked", state["last_error"])
+                self.assertIn("worker remains owned", state["last_error"])
 
-                supervisor.start()
+                with self.assertRaisesRegex(RuntimeError, "cannot restart after stop"):
+                    supervisor.start()
                 self.assertIs(supervisor._threads["telegram"], stuck)
 
                 stuck.alive = False
                 supervisor.stop()
                 self.assertEqual(supervisor._threads, {})
                 self.assertFalse(supervisor.status()[0]["running"])
+                with self.assertRaisesRegex(RuntimeError, "fresh supervisor"):
+                    supervisor.start()
             finally:
                 resident.store.close()
 
