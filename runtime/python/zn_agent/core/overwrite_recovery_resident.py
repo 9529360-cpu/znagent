@@ -2,7 +2,6 @@ from __future__ import annotations
 
 """Reality-gated crash recovery for exact overwrite text mutations."""
 
-from dataclasses import asdict
 from typing import Any
 
 from .action import NativeActionIntent
@@ -235,7 +234,6 @@ class OverwriteRecoveryResidentRuntime(DurableBodyAccountingResidentRuntime):
                 "current text does not equal the intended overwrite result; it may be the "
                 "pre-state, a partial mutation, or a user/external change, so replay is forbidden"
             )
-        recovery["verification_observation"] = asdict(observed)
         return self._hold_side_effect_recovery(
             event,
             state,
