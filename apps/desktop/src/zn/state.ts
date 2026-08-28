@@ -161,7 +161,7 @@ export function saveZnThreadCache(threads: readonly ZnThread[]): void {
       })
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(bounded))
   } catch {
-    // The cache is convenience state only. Resident identity/memory and fresh
-    // outside-world restore-point inspection must never depend on browser storage.
+    // The cache is convenience state only. Resident identity/memory must never
+    // depend on browser storage; fresh restore-point inspection is transient too.
   }
 }
