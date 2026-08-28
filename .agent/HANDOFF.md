@@ -4,9 +4,11 @@ This is the current engineering work site and fact index, not a chat summary or 
 
 ## Current goal
 
-Restore the earlier product-first autonomous maintenance behavior while preserving the practical lessons learned since then: work must be committed/pushed in coherent increments, CI must be respected, and `main` must not silently fall far behind verified development.
+Restore the earlier product-first autonomous maintenance behavior while preserving practical lessons learned since then: coherent work is committed/pushed, CI is respected, and `main` does not silently fall far behind verified development.
 
-Git/CI/main synchronization is normal engineering hygiene, not the ZN roadmap. After this maintenance change lands, resume product development by re-reading ZN goals/status/code and choosing the highest-value real product gap.
+The maintenance rule now also teaches product judgment: a maintainer must actively diagnose ZN, distinguish code existence from a real product closure, protect resident continuity, and prioritize real product impact over evidence/process volume.
+
+Git/CI/main synchronization is normal engineering hygiene, not the ZN roadmap.
 
 ## Current repository state
 
@@ -16,19 +18,23 @@ Git/CI/main synchronization is normal engineering hygiene, not the ZN roadmap. A
 - Maintenance branch / PR: `work/maintainer-agency-reset` / PR #14
 - PR #13 clean-install promotion is already merged to `main` at `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`.
 - At maintenance-branch creation, `dev/zn-agent` was 3 commits ahead of `main` and 0 behind; those commits were post-PR #13 ledger/status reconciliation.
-- Historical regression point identified: `934de7ab19174de5ca1fe81494c9f3ca565f4c97` (`docs: align maintainer promotion rules`) elevated promotion/canonical synchronization into the explicit development loop.
+- Historical regression point: `934de7ab19174de5ca1fe81494c9f3ca565f4c97` (`docs: align maintainer promotion rules`) elevated promotion/canonical synchronization into the explicit development loop.
 - Useful pre-regression baseline: `AGENTS.md` at `58d416f0527d191f4a752290375d3814ce8be484`.
-- Current maintenance-rule head after restoring the product-first wording: `04db1d24ec230d6fc7c94e90f60f6e6a009ba8db` before this HANDOFF commit.
+- Product-judgment refinement commit: `a6ebcd32e54918ab5e5feeb67d3481843006bb61`.
+- Implementation-status de-script commit: `852d1e0195165b5e32381857339c74ac5287cdd8`.
 
 ## What the maintenance rule now means
 
 - ZN product progress is the primary objective.
-- A new maintainer must understand current product state, identify the most valuable real gap and start working without waiting for step-by-step user direction.
-- HANDOFF queues are evidence and suggestions, not immutable commands.
+- A new maintainer must understand current product state, actively look for real gaps, rank them, and start working without step-by-step user direction.
+- HANDOFF queues and status-file candidate work are evidence/suggestions, not immutable commands.
+- Important capabilities are judged as `exists -> wired -> verified -> product-closed`; `implemented` alone is not enough.
+- ZN identity/memory/work/Will/config/resident continuity receives stronger regression scrutiny than ordinary feature completion.
+- Prefer a vertical real-world product closure over many horizontal half-finished modules.
+- Documentation, test counts, evidence artifacts, PR/commit counts and branch synchronization must not substitute for real product progress.
 - Do not stop after every small step; continue autonomously until a real approval/blocker boundary is reached.
-- Commit/push coherent verified increments instead of leaving long-lived uncommitted/unpublished work.
+- Commit/push coherent verified increments instead of leaving long-lived unpublished work.
 - Keep `main` reasonably synchronized through normal PR/CI when development is stable, but treat this as background Git hygiene rather than a product milestone.
-- Do not repeatedly ask the user whether to commit, push, open a normal PR, inspect/fix CI, or perform low-risk branch synchronization.
 - Preserve explicit human approval for destructive/high-risk identity, memory, credential, updater/replacement, rollback/signing/release-trust and self-approval-boundary changes.
 
 ## Completed product evidence still relevant
@@ -46,30 +52,30 @@ These prove completed capability; they do not dictate the next product task.
 
 | Priority | Status | Task | Completion condition |
 | --- | --- | --- | --- |
-| P1 | in_progress | Finish PR #14 with the restored product-first/autonomous rule | Exact PR head reviewed; required checks green or repository policy confirms docs-only path needs no separate run |
-| P1 | planned | Merge PR #14 to `dev/zn-agent` and reconcile normal branch state | Traceable merge, no safety-boundary regression |
-| P1 | planned | Keep `main` reasonably current through normal CI/PR flow | Treat as engineering hygiene, not a separate product phase |
-| P1 | planned | Resume autonomous ZN development | Re-read `ZN.md`, implementation status and active code; choose highest-value gap based on product impact/risk/dependencies |
+| P1 | in_progress | Finish PR #14 with product-first autonomy + product judgment | Review exact PR diff and check requirements/current CI state |
+| P1 | planned | Merge PR #14 to `dev/zn-agent` through normal traceable flow | No safety-boundary regression; repository merge/check requirements satisfied |
+| P1 | planned | Keep `main` reasonably current through normal CI/PR flow | Background engineering hygiene, not a separate product phase |
+| P1 | planned | Resume autonomous ZN development | Re-read product contract/status/active code, actively diagnose gaps, then choose highest-value safe vertical closure |
 
-## Candidate product gaps to reassess
+## Known gaps to reassess, not a fixed roadmap
 
-- installed-N continuity and later N -> N+1 continuity;
+- installed-N continuity baseline and later N -> N+1 continuity;
 - failed-update rollback;
 - Windows login/reboot autostart on persistent installed state;
 - signing/release-trust/formal publication readiness;
 - remaining P5 restore/recovery capabilities;
-- any higher-priority correctness, security, reliability or user-facing blocker found in active code.
+- any higher-priority correctness, security, reliability, active-caller wiring or user-facing blocker found in active code.
 
-This list is not a fixed sequence. The maintainer should inspect current reality and choose.
+`docs/ZN-IMPLEMENTATION-STATUS.md` no longer declares installed-N baseline as the mandatory next slice. It records it as one useful candidate and explicitly requires re-ranking against current product reality.
 
 ## Verification state
 
 - Historical AGENTS versions and the promotion-rule regression commit were actually inspected through GitHub.
-- The user-provided Actions screenshot shows a successful recent `dev/zn-agent` ZN CI run, but that run is for commit `9a72374`, not the current PR #14 head.
-- GitHub currently reports PR #14 as open and mergeable.
-- GitHub Actions API currently shows no workflow run for the PR #14 work-branch head; commit status has no reported checks. Do not mislabel the screenshot as exact-head PR #14 CI.
-- This maintenance change modifies documentation/rules only; no runtime/product code was changed.
+- The user-provided Actions screenshot showed a successful `dev/zn-agent` ZN CI run for commit `9a72374`; it was not the later PR #14 head.
+- Earlier GitHub inspection reported PR #14 open and mergeable; re-check after these latest commits before merge.
+- No runtime/product code changed in this maintenance branch; changes are maintainer rules/status/HANDOFF.
+- Exact latest-head CI/check state still needs fresh inspection before merge; do not claim it green without GitHub evidence.
 
 ## Next action
 
-Inspect the updated PR #14 diff and repository check requirements for its exact head. If no required check is missing, merge normally to `dev/zn-agent`. Then keep branch synchronization routine and return attention to autonomous product development rather than creating another promotion/evidence phase.
+Inspect PR #14's final three-file diff and exact latest-head check state. If repository requirements are satisfied, merge normally into `dev/zn-agent`, reconcile branch state, and return attention to autonomous product development. The next maintainer should diagnose ZN's current product gaps rather than automatically continuing an inherited evidence slice.
