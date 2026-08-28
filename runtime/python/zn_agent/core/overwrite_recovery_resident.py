@@ -6,6 +6,7 @@ from typing import Any
 
 from .action import NativeActionIntent
 from .durable_body_accounting_resident import DurableBodyAccountingResidentRuntime
+from .file_identity import compare_file_identities, observe_file_identity
 from .models import ExecutionPath, ResidentRunResult
 from .side_effect_body import SideEffectAwareBody
 
@@ -62,19 +63,118 @@ class OverwriteRecoveryResidentRuntime(DurableBodyAccountingResidentRuntime):
     it does not make a mismatch authority to overwrite again. A mismatch may be
     the old pre-state, a partial write, or a user/external edit after the crash.
 
-    Therefore restart recovery is deliberately asymmetric:
+    The active product also owns one bounded pre-dispatch file-identity
+    checkpoint. It is deliberately content-free apart from a SHA-256 digest and
+    never authorizes replay after a side-effect attempt exists. Its purpose is to
+    prevent an accepted but not-yet-dispatched overwrite from silently resuming
+    across restart after the target changed meanwhile.
+
+    Recovery remains asymmetric:
 
     - current text == intended text -> complete without replay;
-    - anything else -> hold uncertainty and do not mutate.
-
-    Automatic retry can be added later only behind a separately proven exact
-    pre-dispatch identity. A stale intent is never unconditional overwrite
-    authority.
+    - no durable dispatch attempt + exact pre-state identity still current -> the
+      original fresh lifecycle may continue;
+    - anything else -> hold uncertainty / refresh Investigation and do not mutate.
     """
+
+    _OVERWRITE_PRESTATE_KEY = "overwrite_prestate_identity"
+    _OVERWRITE_PRESTATE_RECHECK_KEY = "overwrite_prestate_recheck"
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.body = OverwriteAwareBody(resident=self)
+
+    @staticmethod
+    def _is_overwrite_intent(intent: NativeActionIntent) -> bool:
+        return bool(
+            str(intent.kind or "").strip().lower() in {"write_text", "write_file"}
+            and not bool(intent.args.get("append", False))
+        )
+
+    def _prepare_overwrite_prestate(
+        self,
+        event,
+        state,
+        intent: NativeActionIntent,
+        *,
+        thought=None,
+    ) -> bool:
+        """Persist/recheck bounded pre-dispatch identity before fresh overwrite.
+
+        ``SideEffectAwareBody`` durably starts the replay-sensitive attempt before
+        dispatch. Therefore if restart sees this pre-state checkpoint but no
+        matching attempt, ZN knows its guarded overwrite did not cross the Body
+        dispatch boundary. It still re-observes the target: changed reality blocks
+        the stale action instead of silently continuing it.
+        """
+
+        path = str(intent.args.get("path") or "").strip()
+        if not path:
+            return True
+        current = observe_file_identity(path)
+        raw = state.data.get(self._OVERWRITE_PRESTATE_KEY)
+        same_intent = bool(
+            isinstance(raw, dict)
+            and str(raw.get("intent_id") or "") == intent.intent_id
+            and str(raw.get("action_signature") or "") == self._intent_signature(intent)
+        )
+
+        if not same_intent:
+            state.data[self._OVERWRITE_PRESTATE_KEY] = {
+                "intent_id": intent.intent_id,
+                "action_signature": self._intent_signature(intent),
+                "identity": current,
+            }
+            state.data.pop(self._OVERWRITE_PRESTATE_RECHECK_KEY, None)
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return True
+
+        prior_identity = raw.get("identity") if isinstance(raw, dict) else None
+        comparison = compare_file_identities(
+            prior_identity if isinstance(prior_identity, dict) else None,
+            current,
+        )
+        state.data[self._OVERWRITE_PRESTATE_RECHECK_KEY] = {
+            "intent_id": intent.intent_id,
+            "comparable": bool(comparison.get("comparable")),
+            "exact": bool(comparison.get("exact")),
+            "reason": str(comparison.get("reason") or "identity_unknown")[:120],
+            "current_identity": current,
+        }
+        self._sync_execution_context(event, state)
+
+        if comparison.get("exact") is True:
+            self.store.save_working_state(state)
+            return True
+
+        failure = (
+            "overwrite pre-dispatch identity no longer matches current file reality; "
+            "the prior intent was checkpointed before Body dispatch, so ZN will refresh "
+            "Investigation instead of overwriting a target that may have changed externally"
+        )
+        state.data["local_failure"] = failure
+        self._record_failed_action(
+            event,
+            state,
+            intent,
+            source="precondition",
+            failure=failure,
+        )
+        state.stage = "native_investigation"
+        state.next_action = "refresh current file/repository evidence before another overwrite"
+        state.blocked_by = None
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        if thought is not None:
+            if failure not in thought.unknown:
+                thought.unknown = (*thought.unknown, failure)
+            thought.reason = (
+                f"{thought.reason}; durable pre-dispatch file identity no longer matches "
+                "current reality, so the stale overwrite is not allowed to continue"
+            )
+            self._persist_enriched_thought(thought)
+        return False
 
     def _native_action_step(
         self,
@@ -93,8 +193,7 @@ class OverwriteRecoveryResidentRuntime(DurableBodyAccountingResidentRuntime):
                 thought=thought,
             )
         intent = NativeActionIntent.from_dict(raw)
-        kind = str(intent.kind or "").strip().lower()
-        if kind not in {"write_text", "write_file"} or bool(intent.args.get("append", False)):
+        if not self._is_overwrite_intent(intent):
             return super()._native_action_step(
                 event,
                 state,
@@ -102,52 +201,60 @@ class OverwriteRecoveryResidentRuntime(DurableBodyAccountingResidentRuntime):
                 thought=thought,
             )
 
-        # Fresh overwrites must stay on the inherited most-specific lifecycle.
-        # That preserves repository baselines, scoped Git-delta verification,
-        # targeted tests and every other pre/post condition ZN already owns.
-        if not self.body.overwrite_replay_blocked(
+        # Once durable dispatch ownership exists, pre-state evidence is no longer
+        # replay authority. The existing effect-recovery path exclusively owns the
+        # decision and will perform only read-only current-world verification.
+        if self.body.overwrite_replay_blocked(
             event_id=event.event_id,
             kind=intent.kind,
             args=dict(intent.args),
         ):
-            return super()._native_action_step(
+            result = self.body.act(
+                intent.kind,
+                event_id=event.event_id,
+                **dict(intent.args),
+            )
+            if not (
+                not result.success
+                and isinstance(result.data, dict)
+                and bool(result.data.get("side_effect_uncertain"))
+            ):
+                raise RuntimeError(
+                    "durable overwrite attempt existed but Body did not return replay-blocked uncertainty"
+                )
+            state.data["native_action_result"] = {
+                "action_id": result.action_id,
+                "kind": result.kind,
+                "success": result.success,
+                "data": dict(result.data or {}),
+                "output": result.output,
+                "error": result.error,
+                "event_id": result.event_id,
+                "started_at": result.started_at,
+                "completed_at": result.completed_at,
+            }
+            return self._begin_side_effect_recovery(
                 event,
                 state,
-                readiness=readiness,
+                intent,
+                result,
                 thought=thought,
             )
 
-        # Once durable dispatch ownership already exists, calling Body is safe:
-        # the guard returns uncertainty without dispatching the overwrite again.
-        result = self.body.act(
-            intent.kind,
-            event_id=event.event_id,
-            **dict(intent.args),
-        )
-        if not (
-            not result.success
-            and isinstance(result.data, dict)
-            and bool(result.data.get("side_effect_uncertain"))
-        ):
-            raise RuntimeError(
-                "durable overwrite attempt existed but Body did not return replay-blocked uncertainty"
-            )
-        state.data["native_action_result"] = {
-            "action_id": result.action_id,
-            "kind": result.kind,
-            "success": result.success,
-            "data": dict(result.data or {}),
-            "output": result.output,
-            "error": result.error,
-            "event_id": result.event_id,
-            "started_at": result.started_at,
-            "completed_at": result.completed_at,
-        }
-        return self._begin_side_effect_recovery(
+        # Fresh overwrites stay on the inherited most-specific lifecycle so repo
+        # baseline/Git-delta/targeted-test ownership is preserved. The pre-state
+        # checkpoint is an additional restart guard, not a replacement verifier.
+        if not self._prepare_overwrite_prestate(
             event,
             state,
             intent,
-            result,
+            thought=thought,
+        ):
+            return None
+        return super()._native_action_step(
+            event,
+            state,
+            readiness=readiness,
             thought=thought,
         )
 
@@ -190,6 +297,12 @@ class OverwriteRecoveryResidentRuntime(DurableBodyAccountingResidentRuntime):
             "decision": "reverify_effect" if can_reverify else "user_decision_required",
             "recovery_policy": "overwrite_effect_only",
         }
+        raw_prestate = state.data.get(self._OVERWRITE_PRESTATE_KEY)
+        if (
+            isinstance(raw_prestate, dict)
+            and str(raw_prestate.get("intent_id") or "") == intent.intent_id
+        ):
+            recovery["prestate_checkpointed"] = True
         state.data[self._SIDE_EFFECT_RECOVERY_KEY] = recovery
         state.data.pop("local_failure", None)
         state.stage = "side_effect_recovery"
@@ -321,7 +434,33 @@ class OverwriteRecoveryResidentRuntime(DurableBodyAccountingResidentRuntime):
                 ),
             )
 
-        if not observed.success:
+        raw_prestate = state.data.get(self._OVERWRITE_PRESTATE_KEY)
+        prestate_identity = (
+            raw_prestate.get("identity")
+            if isinstance(raw_prestate, dict)
+            and str(raw_prestate.get("intent_id") or "") == intent.intent_id
+            else None
+        )
+        current_identity = observe_file_identity(path)
+        prestate_comparison = compare_file_identities(
+            prestate_identity if isinstance(prestate_identity, dict) else None,
+            current_identity,
+        )
+        recovery["prestate_recheck"] = {
+            "checkpointed": isinstance(prestate_identity, dict),
+            "comparable": bool(prestate_comparison.get("comparable")),
+            "exact": bool(prestate_comparison.get("exact")),
+            "reason": str(prestate_comparison.get("reason") or "identity_unknown")[:120],
+            "current_identity": current_identity,
+        }
+
+        if prestate_comparison.get("exact") is True:
+            reason = (
+                "current file matches the durable pre-dispatch identity, but a durable Body "
+                "attempt also exists; the overwrite may have happened and later been restored "
+                "externally, so automatic replay remains forbidden"
+            )
+        elif not observed.success:
             reason = observed.error or "current text state could not be observed"
         elif bool(observed.data.get("truncated")):
             reason = (
@@ -330,8 +469,9 @@ class OverwriteRecoveryResidentRuntime(DurableBodyAccountingResidentRuntime):
             )
         else:
             reason = (
-                "current text does not equal the intended overwrite result; it may be the "
-                "pre-state, a partial mutation, or a user/external change, so replay is forbidden"
+                "current text does not equal the intended overwrite result and does not retain "
+                "the exact durable pre-dispatch identity; partial mutation or user/external "
+                "change remains possible, so replay is forbidden"
             )
         return self._hold_side_effect_recovery(
             event,
