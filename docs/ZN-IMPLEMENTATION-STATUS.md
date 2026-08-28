@@ -10,7 +10,7 @@ This file records implementation truth for the active ZN product. Source code, G
 - development branch: `dev/zn-agent`
 - canonical/release branch: `main`
 - canonical `main`: `8234a835dea604783cea0bd9d28a40de654ec03d`
-- latest P5 implementation/proof head: `75e50c243b44e347c0e549fa9cb4cf7b37716e9f`
+- latest P5 code/proof head before this documentation sync: `099a1af7615e79fe34317f22d5c785aa46cba2b4`
 - PR #6 remains the draft development PR from `dev/zn-agent` to `main`
 - `main` was not modified
 - no force push or history rewrite was performed
@@ -25,9 +25,9 @@ Founding boundary:
 - P2 bounded cumulative accounting/learning durability: **COMPLETE / CI VERIFIED**
 - P3 managed-browser frontier reconciliation: **COMPLETE / CI VERIFIED NARROW**
 - P4 resident-owned live-page registry: **COMPLETE / CI VERIFIED NARROW**
-- P5 durable Work checkpoint / restore foundation: **PARTIAL / SIX BOUNDED SLICES CI VERIFIED**
+- P5 durable Work checkpoint / restore foundation: **PARTIAL / SEVEN BOUNDED SLICES CI VERIFIED**
 
-Broader Work durability has **TWENTY-FOUR concrete crash/restart windows closed and verified**. The latest zero-byte work hardens the already-counted #24 namespace-recovery window; it is not counted as a new crash/restart window. This does not mean general rollback/restore is complete.
+Broader Work durability has **TWENTY-SIX concrete crash/restart windows closed and verified**. The latest race/drift tests harden P5.7 but are not counted as additional crash/restart windows. This does not mean general rollback/restore is complete.
 
 ## P5 verified bounded slices
 
@@ -65,22 +65,39 @@ Restart may close the old attempt `verified_absent` and grant a fresh lifecycle 
 
 ### P5.6 - commit-start namespace reconciliation and verified-effect artifact cleanup (#24)
 
-Base implementation/proof head:
+Base implementation/proof head `042e196418d8c4e9baa17d810b60d995007dc5b0`; zero-byte identity hardening descendant `75e50c243b44e347c0e549fa9cb4cf7b37716e9f`.
+
+The namespace layer owns post-commit namespace evidence without converting that evidence into stale-attempt replay authority. For the documented `ReplaceFileW` WinError `1177` split with a supplied backup, ZN recognizes the exact bounded contradiction only when the matching attempt has durable `namespace_commit_started=true`, target is provably missing, retained stage is the exact durable staged payload, and retained backup is the exact durable pre-state.
+
+That state is classified as `replacefile_1177_split_retained`. Before P5.7 it was preserved and replay-blocked for explicit repair. Independently verified intended target content may resolve `verified_effect`; only then may exact retained artifacts enter checkpointed cleanup. Cleanup rechecks checkpointed identities before deletion and preserves drifted artifacts.
+
+The zero-byte hardening treats size zero as valid content evidence only when paired with a complete SHA-256 identity; malformed/incomplete identities remain fail-closed.
+
+### P5.7 - restart-safe retained namespace repair (#25, #26)
+
+Runtime implementation:
 
 ```text
-042e196418d8c4e9baa17d810b60d995007dc5b0  fix: reconcile committed overwrite namespaces
+47bcf6279a0d907ece7f7cda3221f5678efe99ab  fix: repair retained overwrite namespace
 ```
 
-Zero-byte identity hardening descendant:
+Race/drift hardening:
 
 ```text
-75e50c243b44e347c0e549fa9cb4cf7b37716e9f  fix: handle zero-byte overwrite artifacts
+fb8864f6934dc38c4f83fcce66b30b0212e55cc5  test: harden retained namespace repair races
+099a1af7615e79fe34317f22d5c785aa46cba2b4  test: tolerate Windows path aliases in repair race
 ```
 
 Active owner:
 
 ```text
 runtime/python/zn_agent/core/atomic_overwrite_namespace_recovery_resident.py
+```
+
+Physical no-replace movement:
+
+```text
+runtime/python/zn_agent/core/staged_text_write.py
 ```
 
 Active runtime chain remains:
@@ -96,78 +113,46 @@ provider_bridge
 -> resident core
 ```
 
-The namespace layer owns post-commit namespace evidence without converting that evidence into stale-attempt replay authority.
+P5.7 does not replay the stale overwrite attempt. A proven `replacefile_1177_split_retained` state first receives a new durable namespace-repair checkpoint bound to the exact protocol, attempt, intent, target, stage, backup, and retained artifact identities. Immediately before mutation ZN revalidates target-missing + exact-stage-new + exact-backup-old reality.
 
-For the documented `ReplaceFileW` WinError `1177` split with a supplied backup, ZN recognizes the exact bounded namespace contradiction only when:
+The repair is a new bounded Body movement: move the exact retained stage into the still-missing target using Windows no-replace namespace semantics. If another process creates the target before or during this move, ZN preserves the external winner, withdraws repair authority, preserves stage and backup, keeps replay blocked, and returns to explicit handling rather than overwriting it.
 
-- `namespace_commit_started=true` belongs to the matching attempt;
-- target is provably missing;
-- retained stage still contains the exact durable staged payload;
-- retained backup still contains the exact durable pre-state.
+Crash/restart window **#25** is process death after the durable repair checkpoint but before the no-replace move. Restart revalidates current target/stage/backup reality and may continue only the checkpointed new repair action; it never replays the stale overwrite attempt.
 
-That state is classified as `replacefile_1177_split_retained`. ZN preserves both stage and backup, sets `replay_blocked=true`, and requires an explicit namespace repair decision. It does **not** infer rollback, completion, or permission to replay the old overwrite.
+Crash/restart window **#26** is process death after the retained stage has moved into the target but before repair completion/cleanup state is durably advanced. Restart observes fresh target/stage/backup reality. Exact intended target content plus missing retained stage proves the repair effect; the move is not repeated, the old overwrite attempt is not replayed, and the potentially unique backup remains until independent effect verification and exact cleanup authority allow removal.
 
-If commit-start has occurred but the target itself independently verifies as the exact requested effect, inherited overwrite recovery may resolve the attempt as `verified_effect`. Only after that independent effect proof may ZN checkpoint retained-artifact cleanup authority.
+Repair authority is deliberately revocable. Target appearance, stage identity drift, backup identity drift, protocol mismatch, or incomplete evidence fail closed and preserve retained artifacts.
 
-Cleanup remains crash/restart bounded:
+### Real CI proof for P5.7
 
-```text
-verified target effect
--> positive ownership proof for retained deterministic artifacts
--> durable cleanup checkpoint with exact artifact identities
--> unlink only while exact identity still matches
--> protocol removal after artifacts are absent
--> durable completion
-```
-
-Process death after the cleanup checkpoint and before backup deletion is the distinct closed restart window #24: restart continues only the exact artifact cleanup and never repeats the overwrite. If an artifact identity drifts, or its matching protocol disappears while an artifact remains, delete authority is withdrawn and the artifact is preserved for explicit handling.
-
-The zero-byte hardening fixes a narrower input edge inside #24. `observe_file_identity()` already produced complete SHA-256 evidence for empty files; the cross-path equivalence helper incorrectly treated `size_bytes == 0` as a falsy sentinel. It now requires a real nonnegative integer size plus a complete 64-character lowercase hexadecimal SHA-256, so empty stage/pre-state/backup files can receive the same exact content authority without weakening malformed/incomplete identities.
-
-### Real CI proof for #24 and zero-byte hardening
-
-Original #24 focused proof:
+Focused Windows atomic-overwrite proof on exact head `099a1af7615e79fe34317f22d5c785aa46cba2b4`:
 
 ```text
-ZN Atomic Overwrite E2E run 33159250870          success
+ZN Atomic Overwrite E2E run 33163584755          success
   Windows atomic overwrite lifecycle             success
-  Ran 19 tests                                   OK
+  Ran 28 tests in 27.391s                        OK
 ```
 
-Original #24 full-tree proof:
+The P5.7 suite includes direct proof that:
+
+- a repair checkpoint survives process death before movement;
+- process death after the repair move is reconciled without a second move;
+- an external target winner appearing after checkpoint is never clobbered;
+- an external target winner appearing during the no-replace move is never clobbered;
+- stage drift after checkpoint withdraws repair authority;
+- backup drift after checkpoint withdraws repair authority.
+
+The first run of the new race test on `fb8864f...` exposed only a Windows 8.3-short-path versus long-path test equality assumption. Runtime behavior was not the failure. `099a1af...` removed that representation-only assertion, and the exact-head focused suite passed 28/28.
+
+Full-tree proof on the same exact head:
 
 ```text
-ZN CI run 33159250929                             success
-  ZN Kernel / Python / Windows                    success
-    Ran 664 tests in 479.204s                    OK (skipped=5)
-  ZN Source Boundary / Windows                    success
-  Electron / TypeScript / Windows                 success
-  Publish Windows CI statuses                     success
-```
-
-Zero-byte hardening focused proof on exact head `75e50c243b44e347c0e549fa9cb4cf7b37716e9f`:
-
-```text
-ZN Atomic Overwrite E2E run 33161103589          success
-  Windows atomic overwrite lifecycle             success
-  Ran 22 tests in 10.841s                        OK
-```
-
-The three added tests prove:
-
-- an empty new payload still receives exact 1177 split classification without replay;
-- an empty durable pre-state / retained backup still receives exact 1177 split classification;
-- a zero-byte retained backup can be positively owned and removed only after verified target effect.
-
-Full-tree proof on the same exact hardening head:
-
-```text
-ZN CI run 33161103586                             success
+ZN CI run 33163584746                             success
   ZN Kernel / Python / Windows                    success
     Boot isolated ZN distribution without model  success
     Compile resident core                        success
     Run ZN core tests against working tree       success
-    Ran 667 tests in 505.584s                    OK (skipped=5)
+    Ran 673 tests in 844.861s                    OK (skipped=5)
   ZN Source Boundary / Windows                    success
   Electron / TypeScript / Windows                 success
   Publish Windows CI statuses                     success
@@ -178,13 +163,17 @@ No local repository test run is claimed for this web-maintainer slice. Repositor
 ## Current atomic overwrite invariants
 
 1. Old-state equality after dispatch is never replay authority.
-2. `namespace_commit_started=false` may authorize only the exact #23 precommit reconciliation state.
+2. `namespace_commit_started=false` may authorize only the exact P5.5 precommit reconciliation state.
 3. `namespace_commit_started=true` never authorizes replay of the old overwrite attempt.
 4. Exact intended target content can resolve `verified_effect` through read-only verification.
-5. A potentially unique retained backup is preserved unless ZN has stronger terminal effect truth plus exact artifact ownership.
-6. Delayed cleanup rechecks exact checkpointed artifact identity immediately before deletion.
-7. Artifact drift removes delete authority; it does not change the already-verified target effect.
-8. Zero-byte content is valid exact content evidence only when size and complete SHA-256 are both well-formed; malformed/incomplete identities remain fail-closed.
+5. A proven retained 1177 split may authorize only the new P5.7 namespace-repair lifecycle, never the stale overwrite attempt.
+6. Repair authority is bound to exact durable protocol/attempt/intent/artifact evidence and is revalidated immediately before mutation.
+7. A target that appears before or during repair wins; ZN never replaces that external winner.
+8. Stage or backup drift withdraws repair authority and preserves the artifacts.
+9. A potentially unique retained backup is preserved until stronger terminal effect truth plus exact cleanup ownership exists.
+10. Delayed cleanup rechecks exact checkpointed artifact identity immediately before deletion.
+11. Artifact drift removes delete authority; it does not manufacture effect truth.
+12. Zero-byte content is valid exact evidence only when size and complete SHA-256 are both well-formed; malformed/incomplete identities remain fail-closed.
 
 ## Relevant files
 
@@ -198,9 +187,11 @@ No local repository test run is claimed for this web-maintainer slice. Repositor
 - `runtime/python/zn_agent/core/atomic_overwrite_namespace_recovery_resident.py`
 - `runtime/python/zn_agent/core/recovery_bounded_resident.py`
 - `runtime/python/zn_agent/core/provider_bridge.py`
+- `runtime/python/zn_agent/core/work_control.py`
 - `tests/zn_agent/core/test_work_overwrite_recovery.py`
 - `tests/zn_agent/core/test_windows_atomic_overwrite.py`
 - `tests/zn_agent/core/test_windows_atomic_overwrite_namespace_recovery.py`
+- `tests/zn_agent/core/test_windows_atomic_overwrite_namespace_repair.py`
 - `.github/workflows/zn-atomic-overwrite-e2e.yml`
 
 ## Open risks / incomplete work
@@ -209,7 +200,6 @@ P5 remains **PARTIAL**. Still open:
 
 - general per-task restore/rollback and arbitrary workspace snapshots;
 - user-visible restore points;
-- explicit restart-safe repair for a proven 1177 split; the current implementation only classifies and preserves it;
 - a general startup/maintenance GC owner for deterministic artifacts outside an exact active protocol;
 - large/incomplete identities that cannot be proven exact remain fail-closed;
 - replacement changes file identity; uncommon metadata/named-stream behavior and host/power-loss durability remain open;
@@ -220,12 +210,14 @@ P5 remains **PARTIAL**. Still open:
 
 ## Next real target
 
-Continue P5 at the explicit retained namespace-repair boundary:
+Continue P5 above the now-closed 1177 repair boundary. The next bounded target is a resident-owned **per-task restore-point foundation**, not another special-case overwrite replay mechanism:
 
-1. define a new durable repair-start checkpoint for an already-proven `replacefile_1177_split_retained` state;
-2. revalidate exact target-missing + stage-new + backup-old evidence immediately before repair;
-3. perform a new bounded namespace repair action that moves the exact retained stage into the still-missing target **without** replaying the old overwrite attempt and without replacing an external winner;
-4. make process death after repair-start restart-safe by verifying target/stage/backup reality before any continuation;
-5. preserve the potentially unique backup until target effect is independently verified and exact cleanup authority is durable.
+1. define durable restore-point metadata owned by the Work lifecycle and bound to one exact Work run;
+2. begin with a narrow exact-file restore point around resident-owned file mutation rather than claiming arbitrary workspace snapshots;
+3. record exact pre-mutation identity and restorable content ownership before mutation, with explicit retention/lifecycle rules;
+4. make restart semantics explicit so a restore point is neither silently lost nor interpreted as automatic rollback authority;
+5. keep actual rollback user-visible and bounded until destructive/identity-sensitive restore policy is separately proven.
+
+This is a stepping stone toward general per-task restore/rollback. Do not describe arbitrary workspace restore, broad rollback, or M8 as complete.
 
 Keep `main` untouched.
