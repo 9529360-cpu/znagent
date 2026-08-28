@@ -103,15 +103,33 @@ class ResidentChannelSupervisor:
             except Exception:
                 continue
         with self._lock:
-            threads = list(self._threads.values())
+            threads = list(self._threads.items())
         join_timeout = max(1.0, min(10.0, self.poll_timeout + 2.0))
-        for thread in threads:
+        for _, thread in threads:
             if thread.is_alive():
                 thread.join(timeout=join_timeout)
         with self._lock:
-            self._threads.clear()
-            for state in self._states.values():
-                state.running = False
+            # A provider that ignores close()/poll timeout may leave its daemon
+            # thread alive. Keep that thread owned and visible so start() cannot
+            # create a duplicate poller over the same channel while the previous
+            # worker is still touching resident state.
+            alive = {
+                name: thread
+                for name, thread in self._threads.items()
+                if thread.is_alive()
+            }
+            self._threads = alive
+            for name, state in self._states.items():
+                thread = alive.get(name)
+                state.running = bool(thread and thread.is_alive())
+                if state.running:
+                    state.total_failures += 1
+                    state.consecutive_failures += 1
+                    state.last_error_at = utc_now()
+                    state.last_error = (
+                        "channel worker did not stop before shutdown timeout; "
+                        "restart remains blocked until the worker exits"
+                    )
 
     def status(self) -> tuple[dict[str, Any], ...]:
         with self._lock:
