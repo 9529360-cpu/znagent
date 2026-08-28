@@ -175,6 +175,21 @@ def _move_new_windows(staging: Path, target: Path) -> None:
     )
 
 
+def repair_staged_to_missing_target_windows(staging: Path, target: Path) -> None:
+    """Move one already-verified retained stage into a still-missing target.
+
+    This is the physical namespace movement used by the post-1177 repair
+    lifecycle. It deliberately has no replace flag: a target that appears after
+    resident preflight wins the race and is never clobbered. Durable authority,
+    exact artifact identity checks, restart reconciliation, and backup ownership
+    remain resident concerns; this primitive only performs the bounded Body move.
+    """
+
+    if os.name != "nt":
+        raise RuntimeError("Windows retained-stage repair requires os.name == 'nt'")
+    _move_new_windows(Path(staging), Path(target))
+
+
 def write_text_staged_windows(
     target: Path,
     content: str,
