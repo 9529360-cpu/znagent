@@ -1,160 +1,81 @@
 # ZN Maintainer Handoff
 
-This is an engineering handoff/evidence ledger, not a chat summary. Repository state, code and real CI remain authoritative.
+This is the current engineering work site and fact index, not a chat summary or a script. Repository state, real code and actual CI are authoritative. The next maintainer inherits facts, then independently chooses the highest-value product work.
 
 ## Current goal
 
-The Windows x64 clean install + first resident start proof stage is complete, promoted, and canonically verified. The next engineering target is the low-risk isolated/read-only **installed-N baseline evidence** slice, without invoking updater/replacement/rollback/signing.
+Restore the earlier product-first autonomous maintenance behavior while preserving practical lessons learned since then: coherent work is committed/pushed, CI is respected, and `main` does not silently fall far behind verified development.
 
-## Branch and Git state at this handoff write
+The maintenance rule now also teaches product judgment: a maintainer must actively diagnose ZN, distinguish code existence from a real product closure, protect resident continuity, and prioritize real product impact over evidence/process volume.
+
+Git/CI/main synchronization is normal engineering hygiene, not the ZN roadmap.
+
+## Current repository state
 
 - Repository: `9529360-cpu/znagent`
-- Development branch: `dev/zn-agent`
 - Canonical branch: `main`
-- Clean-install implementation/proof head: `cb913d61f001af6c729a141a3c8631a72e8362cf`
-- Clean-install documentation closeout head: `4b770345e1267db1cfdc37c9551ff967d6955c27`
-- Canonical clean-install promotion merge: `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`
-- Before this ledger-reconciliation change, `main` and `dev/zn-agent` were synchronized at `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`.
-- The current `dev/zn-agent` HEAD is the final commit produced by this three-file ledger reconciliation; resolve the branch ref after all three updates rather than writing a stale intermediate SHA here.
-- PR #11: merged, promoting the unsigned Windows candidate-proof stage to `main`.
-- PR #12: merged, adding clean Windows install/first-start proof to `dev/zn-agent`.
-- PR #13: merged, promoting the clean-install/first-start proof to canonical `main`.
-- No force push/history rewrite is authorized or required.
+- Development branch: `dev/zn-agent`
+- Maintenance branch / PR: `work/maintainer-agency-reset` / PR #14
+- PR #13 clean-install promotion is already merged to `main` at `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`.
+- At maintenance-branch creation, `dev/zn-agent` was 3 commits ahead of `main` and 0 behind; those commits were post-PR #13 ledger/status reconciliation.
+- Historical regression point: `934de7ab19174de5ca1fe81494c9f3ca565f4c97` (`docs: align maintainer promotion rules`) elevated promotion/canonical synchronization into the explicit development loop.
+- Useful pre-regression baseline: `AGENTS.md` at `58d416f0527d191f4a752290375d3814ce8be484`.
+- Product-judgment refinement commit: `a6ebcd32e54918ab5e5feeb67d3481843006bb61`.
+- Implementation-status de-script commit: `852d1e0195165b5e32381857339c74ac5287cdd8`.
 
-## Completed clean-install engineering stage
+## What the maintenance rule now means
 
-- Promoted the verified Windows unsigned candidate-proof stage to canonical `main` via PR #11.
-- Added a separate clean hosted Windows x64 install/start workflow and verifier rather than expanding formal release automation.
-- Added contract tests for installed layout, exact runtime identity, materialized-Python ownership and loopback endpoint evidence.
-- Built the real unsigned NSIS/MSI candidate and verified its packaged runtime/manifest before installation.
-- Ran the real NSIS installer silently into isolated GitHub-hosted Windows state.
-- Started the installed `ZN.exe` and exercised the production path through packaged runtime materialization and resident IPC/autostart.
-- Verified the real resident TCP endpoint with `ping`, `status`, `self`, exact runtime id, materialized portable Python, live pulse, graceful shutdown and endpoint retirement.
-- Bounded NSIS wait to three minutes after the first proof showed install exit latency; assertions were not weakened.
-- Merged the verified implementation through PR #12 into `dev/zn-agent`.
-- Closed the implementation ledger at `4b770345e1267db1cfdc37c9551ff967d6955c27` and verified exact docs-head CI.
-- Promoted the completed low-risk clean-install stage through PR #13 to canonical merge `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`.
-- Verified post-merge canonical CI on `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`.
-- Reconciled `docs/ZN-IMPLEMENTATION-STATUS.md`, `docs/ZN-NEXT-PHASE.md`, and this HANDOFF to the real post-merge state.
+- ZN product progress is the primary objective.
+- A new maintainer must understand current product state, actively look for real gaps, rank them, and start working without step-by-step user direction.
+- HANDOFF queues and status-file candidate work are evidence/suggestions, not immutable commands.
+- Important capabilities are judged as `exists -> wired -> verified -> product-closed`; `implemented` alone is not enough.
+- ZN identity/memory/work/Will/config/resident continuity receives stronger regression scrutiny than ordinary feature completion.
+- Prefer a vertical real-world product closure over many horizontal half-finished modules.
+- Documentation, test counts, evidence artifacts, PR/commit counts and branch synchronization must not substitute for real product progress.
+- Do not stop after every small step; continue autonomously until a real approval/blocker boundary is reached.
+- Commit/push coherent verified increments instead of leaving long-lived unpublished work.
+- Keep `main` reasonably synchronized through normal PR/CI when development is stable, but treat this as background Git hygiene rather than a product milestone.
+- Preserve explicit human approval for destructive/high-risk identity, memory, credential, updater/replacement, rollback/signing/release-trust and self-approval-boundary changes.
 
-## Verified evidence
+## Completed product evidence still relevant
 
-### Implementation/proof head
-
-`cb913d61f001af6c729a141a3c8631a72e8362cf`
-
-- `ZN CI` run `33193710879`: substantive jobs success.
-  - `ZN Source Boundary / Windows`: success.
-  - `Electron / TypeScript / Windows`: success.
-  - `ZN Kernel / Python / Windows`: success; **686 tests**, `609.959s`, `OK (skipped=5)`.
+- Clean-install implementation/proof head `cb913d61f001af6c729a141a3c8631a72e8362cf`.
+- `ZN CI` run `33193710879`: success; Python kernel reported 686 tests, 5 skipped.
 - `ZN Windows Release Candidate` run `33193711016`: success.
-  - Artifact `9695032455`.
-  - Archive digest `sha256:a5e65ee7b02ef977260e30365ba460cbd30dcfef1d46550c58a31b8cc7739aa6`.
 - `ZN Windows Clean Install` run `33193710872`: success.
-  - Installed runtime id: `cb913d61f001af6c729a141a3c8631a72e8362cf`.
-  - Resident Python came from the materialized isolated runtime.
-  - Observed resident `pulse_count=1`.
-  - Artifact `9695069801`.
-  - Archive digest `sha256:c55e2c72c3a86b8661273520874b1aec395804188cc34f8231071e4ce2407f06`.
+- Documentation closeout head `4b770345e1267db1cfdc37c9551ff967d6955c27`; CI run `33195494937`: success.
+- PR #13 canonical post-merge CI run `33196441295`: success.
 
-### Documentation closeout head
+These prove completed capability; they do not dictate the next product task.
 
-`4b770345e1267db1cfdc37c9551ff967d6955c27`
+## Task Queue
 
-- `ZN CI` run `33195494937`: `completed / success`.
+| Priority | Status | Task | Completion condition |
+| --- | --- | --- | --- |
+| P1 | in_progress | Finish PR #14 with product-first autonomy + product judgment | Review exact PR diff and check requirements/current CI state |
+| P1 | planned | Merge PR #14 to `dev/zn-agent` through normal traceable flow | No safety-boundary regression; repository merge/check requirements satisfied |
+| P1 | planned | Keep `main` reasonably current through normal CI/PR flow | Background engineering hygiene, not a separate product phase |
+| P1 | planned | Resume autonomous ZN development | Re-read product contract/status/active code, actively diagnose gaps, then choose highest-value safe vertical closure |
 
-### Canonical post-merge head
+## Known gaps to reassess, not a fixed roadmap
 
-`a4f9c95a32571add9bd16ec5aa08a618c8e5566b`
-
-- PR #13 merged successfully at this commit.
-- `ZN CI` run `33196441295`: `completed / success`.
-- Substantive jobs:
-  - `ZN Kernel / Python / Windows`: success.
-  - `Electron / TypeScript / Windows`: success.
-  - `ZN Source Boundary / Windows`: success.
-- `Publish Windows CI statuses`: success.
-
-The clean-install stage therefore has implementation-head CI/E2E evidence, documentation-head CI evidence, normal traceable promotion, and successful canonical post-merge CI evidence.
-
-## Relevant files
-
-Clean-install implementation:
-
-- `.github/workflows/zn-windows-clean-install.yml`
-- `apps/desktop/scripts/verify-zn-windows-clean-install.mjs`
-- `apps/desktop/scripts/verify-zn-windows-clean-install.test.mjs`
-
-Production call chain inspected for the clean-install proof and next baseline slice:
-
-- `apps/desktop/electron/zn-main.ts`
-- `apps/desktop/electron/zn-packaged-runtime.ts`
-- `apps/desktop/electron/zn-resident-ipc.ts`
-- `runtime/python/zn_agent/core/daemon.py`
-- `runtime/python/zn_agent/core/resident.py`
-- `runtime/python/zn_agent/core/life.py`
-- `runtime/python/zn_agent/core/provider_settings.py`
-- `runtime/python/zn_agent/core/recovery_bounded_work.py`
-
-Current ledger files:
-
-- `docs/ZN-IMPLEMENTATION-STATUS.md`
-- `docs/ZN-NEXT-PHASE.md`
-- `.agent/HANDOFF.md`
-
-## Safety boundary / risks
-
-The completed clean-install stage did **not**:
-
-- invoke the production updater or replace a user's installed formal version;
-- execute N -> N+1 transition or rollback;
-- modify identity/long-term-memory migration rules;
-- modify credentials/permissions or expose credential values;
-- alter signing keys, signing policy, release trust roots, branch protection or required checks;
-- create a tag/GitHub Release or advance `stable.json`.
-
-Still unproven:
-
-- real Windows login/reboot autostart on a persistent installed machine;
-- installed N baseline continuity evidence;
-- N -> N+1 continuity;
+- installed-N continuity baseline and later N -> N+1 continuity;
 - failed-update rollback;
-- signing/release-trust validation;
-- formal publication/stable-channel transition.
+- Windows login/reboot autostart on persistent installed state;
+- signing/release-trust/formal publication readiness;
+- remaining P5 restore/recovery capabilities;
+- any higher-priority correctness, security, reliability, active-caller wiring or user-facing blocker found in active code.
 
-Updater/replacement, rollback, signing/release trust, identity/long-term-memory destructive migration, credential/permission expansion, and replacement of the user's installed formal version remain human-approval boundaries.
+`docs/ZN-IMPLEMENTATION-STATUS.md` no longer declares installed-N baseline as the mandatory next slice. It records it as one useful candidate and explicitly requires re-ranking against current product reality.
 
-## Next target: installed-N baseline evidence
+## Verification state
 
-The next low-risk slice should create a privacy-safe continuity baseline from an isolated installed N without changing that installation.
+- Historical AGENTS versions and the promotion-rule regression commit were actually inspected through GitHub.
+- The user-provided Actions screenshot showed a successful `dev/zn-agent` ZN CI run for commit `9a72374`; it was not the later PR #14 head.
+- Earlier GitHub inspection reported PR #14 open and mergeable; re-check after these latest commits before merge.
+- No runtime/product code changed in this maintenance branch; changes are maintainer rules/status/HANDOFF.
+- Exact latest-head CI/check state still needs fresh inspection before merge; do not claim it green without GitHub evidence.
 
-Prefer the existing read-only production chain:
+## Next action
 
-`resident endpoint -> ResidentRpcServer -> ping/status/self/provider_settings/work_list`.
-
-Baseline evidence should retain only what a later N+1 continuity comparison needs:
-
-- exact runtime/install identity;
-- stable Self reference/identity fields;
-- bounded Work/thread ids/counts/references, not message bodies;
-- runtime/home/config path identity;
-- sanitized provider/model/base URL and credential presence/source metadata, never secret values;
-- endpoint/life pulse evidence.
-
-Important implementation warning: current `work_list` snapshots include message and artifact content. A baseline collector must explicitly sanitize/bound these fields before writing proof artifacts, and tests should reject leakage of message bodies, artifact contents, credential values, or unrelated resident memory.
-
-## Task queue
-
-1. Resolve the current `dev/zn-agent` HEAD after this ledger reconciliation.
-2. Inspect exact-head CI for the reconciliation commit(s). Do not claim the new docs head as CI-verified until GitHub has actually run it.
-3. If the docs-only reconciliation gate is green, normally promote it to `main` so canonical ledger state matches canonical code/CI state.
-4. Verify canonical post-merge CI for that docs reconciliation and re-check `main...dev` refs.
-5. Begin the installed-N baseline slice by tracing the exact read-only evidence path and defining a sanitized baseline schema/verifier.
-6. Add tests proving no updater/replacement/rollback/signing path is invoked and no secret/private body content leaks into the baseline artifact.
-7. Add isolated Windows installed-N baseline E2E evidence, then run full CI and follow the ordinary promotion gate if green.
-
-## Blockers
-
-No implementation blocker is known for beginning the installed-N baseline evidence slice.
-
-The only pending fact at this handoff write is remote verification/promotion of the current docs-only ledger reconciliation itself. It must not be described as CI-verified until its exact GitHub head has completed CI.
+Inspect PR #14's final three-file diff and exact latest-head check state. If repository requirements are satisfied, merge normally into `dev/zn-agent`, reconcile branch state, and return attention to autonomous product development. The next maintainer should diagnose ZN's current product gaps rather than automatically continuing an inherited evidence slice.

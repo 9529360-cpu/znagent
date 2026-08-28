@@ -1,6 +1,6 @@
 # ZN Implementation Status
 
-This file is the implementation/evidence ledger for ZN. It is not a wish list. When it conflicts with code, Git state, or real CI, the repository and real execution evidence win and this file must be corrected.
+This file is the implementation/evidence ledger for ZN. It is not a wish list or a mandatory execution order. When it conflicts with code, Git state, or real CI, the repository and real execution evidence win and this file must be corrected. Candidate next work must be re-ranked against current product gaps before implementation starts.
 
 ## Repository state
 
@@ -10,7 +10,7 @@ This file is the implementation/evidence ledger for ZN. It is not a wish list. W
 - Windows clean-install implementation/proof head: `cb913d61f001af6c729a141a3c8631a72e8362cf`
 - Clean-install documentation closeout head: `4b770345e1267db1cfdc37c9551ff967d6955c27`
 - Canonical clean-install promotion head: `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`
-- Before this ledger-reconciliation change, `main` and `dev/zn-agent` were synchronized at `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`.
+- Before the post-promotion ledger reconciliation, `main` and `dev/zn-agent` were synchronized at `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`.
 - PR #11 promoted the Windows x64 unsigned candidate-proof stage to `main`.
 - PR #12 merged the clean Windows install/first-start proof into `dev/zn-agent`.
 - PR #13 promoted the clean Windows install/first-start proof to canonical `main`.
@@ -25,11 +25,13 @@ This file is the implementation/evidence ledger for ZN. It is not a wish list. W
 | P5 recovery-control program | PARTIAL | read-only restore proposals are canonical; restore execution is not granted |
 | Windows x64 unsigned release-candidate build | COMPLETE / CANONICAL NARROW PROOF | clean hosted Windows build, packaged runtime boot, unsigned NSIS/MSI and independent manifest/hash verification |
 | Windows x64 clean install + first resident start | COMPLETE / CANONICAL CI-VERIFIED NARROW PROOF | real NSIS install in isolated hosted-runner state, launch installed `ZN.exe`, materialize packaged runtime, observe resident RPC and graceful shutdown; promoted through PR #13 |
-| Installed N baseline evidence | NOT STARTED | next low-risk isolated/read-only M8 slice |
+| Installed N baseline evidence | NOT STARTED / CANDIDATE | useful low-risk continuity prerequisite, but must be ranked against other current product gaps |
 | Installed N -> N+1 continuity | INCOMPLETE / HUMAN-APPROVAL BOUNDARY | no formal updater/replacement transition has been executed |
 | Rollback / signing / release trust | INCOMPLETE / HUMAN-APPROVAL BOUNDARY | not exercised by this stage |
 | Formal release/stable-channel publication | INCOMPLETE | no tag, GitHub Release, stable-channel advance, or user-machine replacement in this stage |
 | Self-maintenance | SM0 complete; later phases incomplete | see `docs/ZN-SELF-MAINTENANCE.md` |
+
+A status of `implemented` means code exists and has the stated evidence; it does not by itself prove that every real product entry point, recovery path, installation transition or user scenario is closed. Maintainers should use `AGENTS.md`'s `exists -> wired -> verified -> product-closed` distinction when deciding what to do next.
 
 ## Windows unsigned candidate proof
 
@@ -92,9 +94,9 @@ Canonical post-merge `ZN CI` run `33196441295` ran on `a4f9c95a32571add9bd16ec5a
 
 The clean-install/first-start stage is therefore complete and canonical as a bounded unsigned Windows x64 proof. This does not expand its authority into updater, rollback, signing, publication, or user-machine replacement.
 
-## What is still not proven
+## Open product gaps
 
-The clean-install proof must not be broadened into a release-ready claim. The following remain open:
+The clean-install proof must not be broadened into a release-ready claim. Current known gaps include:
 
 - actual Windows login/reboot autostart behavior on a persistent installed machine; unit contracts exist, but a real login-cycle proof does not;
 - an installed-version continuity baseline covering stable Self/work/config references before a transition;
@@ -103,15 +105,19 @@ The clean-install proof must not be broadened into a release-ready claim. The fo
 - failed-update recovery and rollback;
 - Windows code signing, trust-chain verification and release signing policy;
 - production tag/release/stable-channel publication;
-- replacing a user's current formal installation.
+- replacing a user's current formal installation;
+- remaining P5 restore/recovery capability beyond the currently canonical read-only proposals;
+- any higher-priority correctness, security, reliability, active-caller wiring or user-facing blocker discovered in the current code.
 
 Updater/replacement, rollback, signing, release-trust and installed-version replacement remain explicit human-approval boundaries. The clean-install stage did not invoke them.
 
-## Next low-risk target
+This list is evidence of known gaps, not a fixed roadmap. A maintainer must compare these items with newly discovered code/runtime problems and choose the highest-value safe next increment using `AGENTS.md`.
 
-The next safe M8 slice is an **installed N baseline evidence** lane in isolated test state.
+## Candidate next work: installed N baseline
 
-That lane should read and bind non-secret resident evidence needed for a later continuity comparison, for example:
+An **installed N baseline evidence** lane remains a useful low-risk candidate because it can establish read-only continuity evidence before any later N -> N+1 experiment. It is not automatically the next task.
+
+If current product triage selects this candidate, the lane should read and bind non-secret resident evidence needed for a later continuity comparison, for example:
 
 - exact installed/runtime identity;
 - stable Self identity/reference required for continuity checks;
@@ -129,4 +135,4 @@ It must not:
 - modify identity or long-term memory;
 - publish a tag/GitHub Release or advance `stable.json`.
 
-Only after that baseline exists should the repository propose the separately approved N -> N+1 transition experiment.
+A later N -> N+1 transition experiment remains separately approval-gated. Before proposing it, verify that the selected baseline evidence is actually sufficient to detect continuity loss rather than merely producing another artifact.
