@@ -4,6 +4,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from zn_agent.core.action import NativeActionIntent
@@ -169,7 +170,7 @@ class WorkRestoreProposalTests(unittest.TestCase):
             thread_id, event_id = self._capture_restore_point(resident, ledger, target)
             control = ResidentWorkControl(ledger)
             try:
-                with sqlite3.connect(store_path) as conn:
+                with closing(sqlite3.connect(store_path)) as conn:
                     conn.execute(
                         "UPDATE work_restore_points SET message_id=? WHERE event_id=?",
                         ("forged-message", event_id),
