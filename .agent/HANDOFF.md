@@ -4,11 +4,18 @@ Updated: 2026-08-28
 
 ## Current goal
 
-P1 shared side-effect-attempt persistence, P2 bounded cumulative accounting/learning durability, P3 managed-browser frontier reconciliation, and the bounded P4 resident-owned live-page registry are complete and CI-verified. P5 broader Work checkpoint/restore remains **PARTIAL**: its first bounded ingress-checkpoint slice is complete and CI-verified, while general per-task restore/rollback remains open.
+P1 shared side-effect-attempt persistence, P2 bounded cumulative accounting/learning durability, P3 managed-browser frontier reconciliation, and bounded P4 resident-owned live-page registry are complete and CI-verified.
 
-Broader Work durability remains **PARTIAL**. Nineteen concrete crash/restart windows are closed and verified. The nineteenth window covers an accepted Work task whose user message is durable but whose resident event does not yet exist; a short-lived ingress checkpoint restores the exact pending event/message/run linkage without executing it or creating replay authority.
+P5 broader Work checkpoint/restore remains **PARTIAL / IN PROGRESS**. Two bounded P5 slices are now real and CI-verified:
 
-A new product/architecture contract has been added for resident intelligence. It does **not** claim new runtime implementation. The governing direction is now explicit:
+1. accepted Work ingress checkpoint before resident-event creation;
+2. reality-gated crash/restart recovery for ordinary overwrite `write_text` / `write_file`.
+
+Broader Work durability now has **TWENTY concrete crash/restart windows closed and verified**. Window #20 covers an overwrite that reached the filesystem but lost the process before Body result / resident checkpoint persistence. Restart will not blindly replay the stale overwrite. It re-observes current file reality; exact intended content completes without replay, while mismatch/truncation/observation failure remains uncertainty and preserves the current file.
+
+General per-task restore/rollback, arbitrary workspace snapshots and user-visible restore points remain open.
+
+Resident-intelligence product direction remains:
 
 ```text
 resident-owned built-in competence
@@ -17,9 +24,9 @@ resident-owned built-in competence
 = ZN intelligence
 ```
 
-Mature low-level engineering/computer-use knowledge should crystallize into ZN-owned mechanisms and tests instead of remaining repeated prompt instructions. Repeated familiar work should become faster and require less redundant model use without weakening current-state sensing, postcondition verification or prediction-error interruption. Model/provider replacement must not erase mature resident-owned competence.
+Mature general computer/recovery mechanics should be engineered into ZN before first real use where concrete and verifiable. Post-birth learning should primarily adapt to the user's habits, environment, projects, recurring workflows and exceptions. This architecture is broader than current implementation and must not be reported as complete.
 
-Founding boundary remains:
+Founding boundary:
 
 > **ZN uses models. Models do not own ZN.**
 
@@ -29,25 +36,21 @@ Founding boundary remains:
 - development branch: `dev/zn-agent`
 - canonical source/release branch: `main`
 - canonical `main`: `8234a835dea604783cea0bd9d28a40de654ec03d`
-- branch HEAD immediately before this HANDOFF synchronization commit: `7b8292be494b191538101119ba31e91c9d4e292a`
-- P5 Work ingress checkpoint implementation/proof head: `2c20b8bded96ce07c6ec43263cc77b7bd10a7a82`
-- resident intelligence architecture commits before this HANDOFF sync:
-  - `76e2bb2bd7fc6b393ad2f534d8fe1c0d926cece1` — `docs: define resident intelligence ownership`
-  - `6f1c41872d8dfc03b447476d2275d35c82cc4c83` — `docs: define resident intelligence product contract`
-  - `7b8292be494b191538101119ba31e91c9d4e292a` — `docs: align next phase with resident intelligence contract`
-- PR #6 remains the draft development PR from `dev/zn-agent` to `main`
+- branch HEAD immediately before this HANDOFF synchronization commit: `38298b136f80eb42b5c3b8d13c84bddb63205927`
+- P5 ingress proof head: `2c20b8bded96ce07c6ec43263cc77b7bd10a7a82`
+- P5 overwrite final proof head: `c4276f8b151d2c45b69368cb414f012bf0644d01`
+- implementation-status sync head before this HANDOFF: `38298b136f80eb42b5c3b8d13c84bddb63205927`
+- PR #6 remains draft development PR from `dev/zn-agent` to `main`
 - `main` was not modified
 - no force push or history rewrite was requested or performed
 
-A HANDOFF commit cannot contain its own resulting SHA. Re-read `dev/zn-agent` after this file is committed and use that exact head externally.
+A HANDOFF commit cannot contain its own resulting SHA. Re-read `dev/zn-agent` after this commit and use the resulting exact HEAD externally.
 
 ## Completed stages
 
 ### P1 - shared side-effect-attempt persistence owner
 
 Status: **COMPLETE / CI VERIFIED**
-
-Authoritative proof:
 
 ```text
 ZN Work Recovery E2E run 33117334326  success
@@ -58,7 +61,7 @@ ZN CI run 33117334321                 success
 
 Status: **COMPLETE / CI VERIFIED**
 
-Authoritative proof head `f79d4f3c81b1d7c46dcfb55b6fc923acda77b39c`:
+Proof head `f79d4f3c81b1d7c46dcfb55b6fc923acda77b39c`:
 
 ```text
 ZN Work Recovery E2E run 33119871079  success
@@ -69,9 +72,7 @@ ZN CI run 33119871129                 success
 
 Status: **COMPLETE / CI VERIFIED**
 
-`SELECT_OPTION` and CHECK/UNCHECK are **VERIFIED NARROW**. `PRESS` remains genuinely OPEN; no arbitrary provider-success result is completion authority.
-
-Authoritative proof:
+`SELECT_OPTION` and CHECK/UNCHECK are **VERIFIED NARROW**. `PRESS` remains genuinely OPEN.
 
 ```text
 ZN Managed Browser E2E run 33120809421  success
@@ -82,88 +83,169 @@ ZN CI run 33120848980                   success
 
 Status: **COMPLETE / CI VERIFIED NARROW**
 
-Commit `fffb0f4b84a76cef21a088167c9eb4faceb93afc` adds resident-owned monotonic `page-N` identities, provider-page discovery, closed-page eviction, stale target/observation cleanup, deterministic default-page promotion, and real Chromium proof.
-
-Authoritative proof:
+Commit `fffb0f4b84a76cef21a088167c9eb4faceb93afc` owns monotonic `page-N` identities, provider-page discovery, closed-page eviction, stale target/observation cleanup and deterministic default-page promotion.
 
 ```text
 ZN Managed Browser E2E run 33122620361  success
 ZN CI run 33122620398                   success
 ```
 
-### P5 - durable Work checkpoint / restore foundation, ingress slice
+Explicit tab/popup actions, frame identity, persistent browser-session recovery and PRESS remain open.
 
-Status: **PARTIAL / FIRST SLICE COMPLETE / CI VERIFIED**
+## P5 - durable Work checkpoint / restore foundation
 
-Commit `2c20b8bded96ce07c6ec43263cc77b7bd10a7a82` adds a short-lived `work_ingress_checkpoints` owner before accepted Work crosses into resident-event persistence.
+Status: **PARTIAL / TWO BOUNDED SLICES CI VERIFIED**
+
+### P5.1 - accepted Work ingress checkpoint
+
+Proof head:
+
+```text
+2c20b8bded96ce07c6ec43263cc77b7bd10a7a82  fix: recover accepted Work ingress before event creation
+```
 
 Verified semantics:
 
-- exact message/event identities are preallocated and durable before the message/event boundary;
-- a hard crash after accepted Work message but before resident-event persistence restores only the exact pending event, with zero attempts and no execution;
-- a hard crash after event persistence but before `work_runs` linkage repairs linkage without duplicate event creation;
-- message, event and WorkRun identities must agree or recovery fails closed;
-- ingress checkpoint disappears after ordinary linkage is durable;
-- this checkpoint grants no replay permission once resident execution/outside-world effects may have begun.
+- exact message/event identities are preallocated and durable before message/event boundary;
+- hard crash after accepted Work message but before event persistence restores only exact pending event, zero attempts, no execution;
+- hard crash after event persistence but before `work_runs` linkage repairs linkage without duplicate event;
+- identities must agree or recovery fails closed;
+- ingress checkpoint disappears after ordinary linkage becomes durable;
+- it grants no replay permission after resident execution/outside-world effects may have begun.
 
-Authoritative proof:
+Proof:
 
 ```text
 ZN Work Recovery E2E run 33124662199  success
 ZN CI run 33124662367                   success
 ```
 
-Final pre-discussion head `86b7ae3d0d89751628976de2368923d016a259cc` also had:
+This established crash/restart window #19.
+
+### P5.2 - reality-gated ordinary overwrite recovery
+
+Status: **BOUNDED SLICE COMPLETE / CI VERIFIED**
+
+Final proof head:
 
 ```text
-ZN CI run 33125310706  success
+c4276f8b151d2c45b69368cb414f012bf0644d01  test: exercise nontruncated overwrite conflict
 ```
 
-No local repository test run is claimed. Repository self-hosted Windows CI is the verification authority.
+Relevant implementation commits:
 
-## Product / architecture contract update - resident intelligence
+```text
+d6546ec1a3c5a9a8d3576cd06ecb182c0b312890  fix: recover interrupted overwrite from reality
+0c8a553f9530b859c4a45ed8fadc1c50991cdca9  fix: activate overwrite recovery owner
+21022c9f8460df789305e138152a4f04d6c96fd8  refactor: keep generic side-effect guard narrow
+13f3c6708dfb0bcf4029fdda1146b9435fff8fa7  fix: scope overwrite guard to active resident
+57aab99c16d506591e24d2334c379c7ba01a206c  ci: verify overwrite recovery
+480bbca626eae1b02271f5eb95beeb8310f5d2e8  fix: keep overwrite recovery evidence content-free
+a656b3952b1561657153f1b55da8c397d931a6e1  fix: preserve specialized overwrite lifecycle
+c4276f8b151d2c45b69368cb414f012bf0644d01  test: exercise nontruncated overwrite conflict
+```
 
-Status: **ARCHITECTURE DEFINED / NOT CLAIMED IMPLEMENTED**
+Active call chain:
 
-The discussion about ZN not behaving like a naive model-driven agent has been converted into durable repository architecture rather than left in chat.
+```text
+provider_bridge.build_resident_runtime()
+-> RecoveryBoundedResidentRuntime
+-> OverwriteRecoveryResidentRuntime
+-> DurableBodyAccountingResidentRuntime
+-> CapabilityRecoveryResidentRuntime
+-> focused / embodied / specialized completion owners
+```
 
-### Governing additions
+Active semantics:
 
-`ZN.md` now explicitly defines:
+```text
+fresh overwrite
+-> inherited most-specific resident lifecycle remains authoritative
+   (repo baseline / Git delta / targeted tests / semantic verification where applicable)
+-> active OverwriteAwareBody commits durable side-effect attempt before mutation
+-> NativeBody currently executes ordinary overwrite via Path.write_text(...)
 
-- three intelligence sources: built-in resident competence, learned resident competence and replaceable external cognition;
-- known recurring mechanics should become ZN-owned observation/invariant/procedure/verification rather than recurring prompt reminders;
-- some truths, such as whether a side effect happened or a file/browser mutation actually completed, must come from state/evidence rather than model confidence;
-- repeated work should proceduralize rather than become repeated prompting;
-- strong familiarity must not override current-world drift;
-- repeated-task reliability, anomaly detection, uncertainty calibration, self-correction, restart continuity and provider independence are intelligence criteria.
+hard crash after write reached filesystem but before Body result / WorkingState save
+-> resident_side_effect_attempts keeps exact attempt in started state
+-> restart still sees native_action
+-> exact event/signature is replay-blocking
+-> Body refuses second overwrite dispatch
+-> side_effect_recovery
+-> read-only current file observation
 
-New document `docs/ZN-RESIDENT-INTELLIGENCE.md` expands the product contract with:
+current file == exact intended text
+-> resolve attempt as verified_effect
+-> complete without replay
 
-- knowledge crystallization rules;
-- file/browser/repeated-work examples;
-- the hundred-and-first repetition rule;
-- prediction-error interruption;
-- model-quality vs ZN-quality separation;
-- repetition, drift, provider replacement and restart benchmarks;
-- a maintainer/product-manager test for future capabilities.
+anything else
+-> user_decision_required / outside_world_effect_uncertain
+-> preserve current file
+-> no replay
+```
 
-`docs/ZN-NEXT-PHASE.md` now references the resident-intelligence contract and adds the same invariants to the next-phase success criteria.
+Safety properties:
 
-This architecture update does not change the current verified implementation count, does not create a twentieth crash/restart window, and does not make mature general procedural competence complete.
+- raw file contents are not copied into recovery control metadata;
+- current user/external edit after crash is preserved;
+- mismatch is not treated as proof that original write did not happen;
+- stale intent never becomes unconditional overwrite/restore authority;
+- shared `SideEffectAwareBody` keeps its old command + append contract; overwrite guard is active-product-specific;
+- fresh overwrite continues through inherited specialized lifecycle rather than bypassing existing repo-aware/targeted-test ownership.
+
+A first implementation exposed a real regression: replacing the active Body too broadly caused existing repo-aware baseline/Git-delta/targeted-test behavior to disappear. That regression was fixed instead of hidden. Only the final proof head is authoritative.
+
+Final real Windows proof on exact head `c4276f8b151d2c45b69368cb414f012bf0644d01`:
+
+```text
+ZN Work Recovery E2E run 33129111422                  success
+  Prepare isolated runtime                            success
+  Compile Work recovery path                          success
+  Verify durable Work progress and restart recovery  success
+
+ZN CI run 33129111419                                  success
+ZN Kernel / Python / Windows                           success
+  Boot isolated ZN distribution without a model       success
+  Compile resident core                               success
+  Run ZN core tests against working tree              success
+ZN Source Boundary / Windows                           success
+Electron / TypeScript / Windows                        success
+Publish Windows CI statuses                            success
+```
+
+This establishes crash/restart window #20.
+
+No local repository test run is claimed. Repository self-hosted Windows CI is verification authority.
+
+## Product / architecture - resident intelligence
+
+Status: **ARCHITECTURE DEFINED / BROADER IMPLEMENTATION PARTIAL**
+
+`ZN.md` and `docs/ZN-RESIDENT-INTELLIGENCE.md` define the engineering-distillation rule:
+
+```text
+mature maintainable general knowledge
+-> explicit ZN-owned sensing/state/procedure/verification/recovery
+-> tests + actual evidence
+-> ship as built-in resident competence
+```
+
+The user should not have to raise a naive agent into basic computer literacy. Post-birth learning should focus primarily on personal/environment/project-specific adaptation while broad general competence continues to improve through verified software evolution and lived evidence.
+
+Do not confuse this direction with already-complete general procedural competence.
 
 ## Current risks / incomplete work
 
-- broader Work durability remains partial beyond nineteen verified crash/restart windows;
-- durable per-task Work restore/rollback for workspace mutations remains OPEN/PARTIAL;
-- generic side-effect guarding covers commands and append-style writes, while ordinary overwrite `write_text` / `write_file` directly mutates the target and remains the next bounded recovery audit;
-- any overwrite-file recovery design must distinguish pre-state, intended post-state and current-world evidence and must not overwrite user/external changes merely because an old checkpoint exists;
-- resident intelligence contract is broader than current runtime implementation; do not report it as complete;
-- general procedural competence, long-horizon repetition/drift benchmarks and mature anomaly handling remain incomplete;
-- browser `PRESS`, broader click/text replacement/ARIA checkbox mutation, explicit tab/popup/frame ownership, headed managed-browser UX and authenticated User Browser Bridge remain incomplete;
+- broader Work durability remains partial beyond twenty verified crash/restart windows;
+- general per-task restore/rollback, arbitrary workspace checkpoints and user-visible restore points remain open;
+- overwrite recovery can currently prove effect-present but intentionally cannot prove effect-absent;
+- no privacy-safe overwrite pre-dispatch file identity is yet durably available for safe automatic retry;
+- NativeBody ordinary overwrite is still direct `Path.write_text(...)`, so partial-write ambiguity remains possible;
+- any future retry/restore must reject user/external drift and must not turn a stale checkpoint into mutation authority;
+- general procedural competence, repetition/drift/provider-replacement benchmarks and mature anomaly handling remain incomplete;
 - isolated parallel Work remains open;
+- browser `PRESS`, broader click/text replacement/ARIA checkbox mutation, explicit tab/popup/frame ownership, headed managed browser and authenticated User Browser Bridge remain incomplete;
 - Windows M8 continuity and SM1+ remain incomplete;
-- identity, long-term memory, credentials/permissions, updater/signing, rollback and destructive self-maintenance remain high-risk approval boundaries.
+- identity, long-term memory, credentials/permissions, updater/signing, rollback and destructive self-maintenance remain human-approval boundaries.
 
 ## Task queue
 
@@ -183,27 +265,28 @@ Status: **COMPLETE / CI VERIFIED**
 
 Status: **COMPLETE / CI VERIFIED NARROW**
 
-### P5 - durable Work checkpoint / restore foundation
+### P5
 
 Status: **PARTIAL / IN PROGRESS**
 
-Completed first slice:
+Completed bounded slices:
 
-1. traced Work ingress through message, event, `work_runs`, resident checkpoint/recovery and terminal truth;
-2. identified and closed the pre-event accepted-message crash gap;
-3. added exact pending-event reconstruction without replay authority;
-4. added hard-crash restart tests and focused workflow coverage;
-5. passed focused Work Recovery E2E and full working-tree ZN CI;
-6. increased concrete verified crash/restart-window count from eighteen to nineteen.
+1. accepted Work ingress checkpoint (#19);
+2. ordinary overwrite effect-present recovery/no-replay (#20).
 
 Next bounded P5 audit:
 
-1. trace ordinary overwrite `write_text` / `write_file` from `NativeActionIntent` through `SideEffectAwareBody`, semantic verification, Work artifact capture and restart behavior;
-2. decide whether a safe resident-owned pre-write checkpoint can preserve bounded prior file state and intended post-state without becoming unconditional rollback authority;
-3. require current-world identity/evidence before any restore, especially when a file changed externally after interruption;
-4. use the new resident-intelligence contract as a product test: known file/recovery mechanics should become explicit ZN-owned competence, not model rediscovery;
-5. add a twentieth crash/restart window only if a real overwrite/restore gap is actually closed and independently verified.
+1. reuse existing side-effect `verified_absent` semantics instead of creating another recovery plane;
+2. inspect current file/repo-aware intent lifecycle for any existing pre-write identity evidence that can be reused;
+3. design a privacy-safe pre-dispatch identity for overwrite: canonical path + existence/type + bounded metadata + digest/equivalent content identity, without storing raw user file body in recovery control state;
+4. ensure pre-state evidence is causally bound closely enough to durable dispatch ownership to avoid authorizing retry from stale evidence;
+5. on restart distinguish:
+   - exact intended post-state -> `verified_effect` / complete without replay;
+   - exact proven pre-dispatch state -> only then `verified_absent` / retry may become eligible;
+   - anything else -> remain uncertainty / no mutation;
+6. evaluate same-directory temporary-file + atomic replace semantics as a way to avoid partial-target writes, but do not introduce cleanup/replay hazards or bypass specialized repo-aware lifecycle;
+7. add crash/restart window #21 only if a genuinely new interruption is closed and real Windows CI proves it.
 
 ## Next real target
 
-Re-read final branch and CI after this HANDOFF synchronization commit. If docs-only CI is green, continue P5 with the ordinary overwrite-file restore/recovery call chain. Keep `main` untouched during ordinary development.
+Re-read final `dev/zn-agent` after this HANDOFF commit and inspect docs-only CI. Then continue P5 at the overwrite pre-write-identity / `verified_absent` boundary. Keep `main` untouched.
