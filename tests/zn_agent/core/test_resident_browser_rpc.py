@@ -113,6 +113,31 @@ class ResidentBrowserRpcTests(unittest.TestCase):
         finally:
             server.resident.store.close()
 
+    def test_formal_browser_server_exposes_sanitized_continuity_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            server, _ = self._server(Path(tmp))
+            try:
+                thread = server.work.create_thread(
+                    thread_id="work-continuity",
+                    title="private title must not escape",
+                    metadata={"private": "metadata"},
+                )
+                self.assertEqual(thread.thread_id, "work-continuity")
+                result = server.handle(
+                    {"id": "continuity", "method": "continuity_snapshot", "params": {}}
+                )
+                self.assertTrue(result["ok"])
+                snapshot = result["result"]
+                self.assertEqual(snapshot["schema_version"], 1)
+                self.assertEqual(
+                    snapshot["work"]["threads"],
+                    [{"id": "work-continuity", "created_at": thread.created_at}],
+                )
+                self.assertNotIn("private title must not escape", str(snapshot))
+                self.assertNotIn("metadata", str(snapshot["work"]))
+            finally:
+                self._close(server)
+
     def test_browser_rpc_defaults_to_observation_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             server, browser = self._server(Path(tmp))
