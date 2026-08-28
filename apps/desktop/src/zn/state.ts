@@ -29,6 +29,14 @@ export type ZnArtifact = {
 
 export type ZnRestorePointCurrentStatus = 'unchanged' | 'changed' | 'missing' | 'unsupported'
 export type ZnRestoreProposalStatus = 'candidate' | 'conflict_review_required' | 'missing_target_review_required' | 'blocked'
+export type ZnRestoreApplicationStatus =
+  | 'approval_required'
+  | 'applying'
+  | 'stage_ready'
+  | 'commit_started'
+  | 'completed'
+  | 'recovery_required'
+  | 'blocked'
 
 export type ZnRestoreProposal = {
   kind: 'restore_exact_file'
@@ -37,7 +45,8 @@ export type ZnRestoreProposal = {
   destructive: true
   requiresUserApproval: true
   requiresFreshRevalidation: true
-  applicationAvailable: false
+  applicationAvailable: boolean
+  applicationScope?: 'missing_target_no_replace'
   automaticAuthority: false
 }
 
@@ -57,7 +66,18 @@ export type ZnRestorePoint = {
   updatedAt: number
   proposal?: ZnRestoreProposal
   automaticRestoreAuthority: false
-  restoreApplicationAvailable: false
+  restoreApplicationAvailable: boolean
+}
+
+export type ZnRestoreApplication = {
+  id: string
+  status: ZnRestoreApplicationStatus
+  requiresUserApproval: boolean
+  freshRevalidationRequired: boolean
+  automaticAuthority: false
+  error?: string
+  updatedAt: number
+  completedAt?: number
 }
 
 export type ZnThread = {
