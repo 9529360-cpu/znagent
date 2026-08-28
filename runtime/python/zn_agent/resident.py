@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .core.resident_server import main
+from .core.browser_resident_server import main
 
 __all__ = ["main"]
 
