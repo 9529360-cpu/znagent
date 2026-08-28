@@ -1,138 +1,135 @@
 # ZN Implementation Status
 
-This file is the implementation/evidence ledger for ZN. It is not a wish list or a mandatory execution order. When it conflicts with code, Git state, or real CI, the repository and real execution evidence win and this file must be corrected. Candidate next work must be re-ranked against current product gaps before implementation starts.
+This file is the implementation/evidence ledger for ZN. It is not a mandatory roadmap. Real code, Git state and actual test/build/CI results override this ledger when they disagree.
 
 ## Repository state
 
 - Repository: `9529360-cpu/znagent`
 - Primary development branch: `dev/zn-agent`
 - Canonical/release branch: `main`
-- Windows clean-install implementation/proof head: `cb913d61f001af6c729a141a3c8631a72e8362cf`
-- Clean-install documentation closeout head: `4b770345e1267db1cfdc37c9551ff967d6955c27`
-- Canonical clean-install promotion head: `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`
-- Before the post-promotion ledger reconciliation, `main` and `dev/zn-agent` were synchronized at `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`.
-- PR #11 promoted the Windows x64 unsigned candidate-proof stage to `main`.
-- PR #12 merged the clean Windows install/first-start proof into `dev/zn-agent`.
-- PR #13 promoted the clean Windows install/first-start proof to canonical `main`.
-- No force push or Git history rewrite is part of this stage.
+- Development head entering this reconciliation: `5c347925490179748e44e35c43b0435ede9e1f14` (PR #35 merge).
+- Canonical `main` is still at `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`; at that development head, `dev/zn-agent` was 103 commits ahead and 0 behind.
+- No force push or history rewrite is part of the current stage.
 
-## Stage summary
+## Capability ledger
 
-| Area | Status | Evidence boundary |
+| Area | Current maturity | Evidence boundary |
 | --- | --- | --- |
-| Resident Self / Body / Senses / Situation / Thought / Will | implemented and continuously tested | ZN-owned Python resident; zero-model boot remains required |
-| Durable work/recovery/restart semantics | implemented in bounded slices | covered by the Windows kernel suite; destructive restore remains outside current authority |
-| P5 recovery-control program | PARTIAL | read-only restore proposals are canonical; restore execution is not granted |
-| Windows x64 unsigned release-candidate build | COMPLETE / CANONICAL NARROW PROOF | clean hosted Windows build, packaged runtime boot, unsigned NSIS/MSI and independent manifest/hash verification |
-| Windows x64 clean install + first resident start | COMPLETE / CANONICAL CI-VERIFIED NARROW PROOF | real NSIS install in isolated hosted-runner state, launch installed `ZN.exe`, materialize packaged runtime, observe resident RPC and graceful shutdown; promoted through PR #13 |
-| Installed N baseline evidence | NOT STARTED / CANDIDATE | useful low-risk continuity prerequisite, but must be ranked against other current product gaps |
-| Installed N -> N+1 continuity | INCOMPLETE / HUMAN-APPROVAL BOUNDARY | no formal updater/replacement transition has been executed |
-| Rollback / signing / release trust | INCOMPLETE / HUMAN-APPROVAL BOUNDARY | not exercised by this stage |
-| Formal release/stable-channel publication | INCOMPLETE | no tag, GitHub Release, stable-channel advance, or user-machine replacement in this stage |
+| Resident Self / Body / Senses / Situation / Thought / Will | implemented, wired, continuously tested | ZN-owned Python resident; zero-model boot remains required |
+| Durable Work / restart recovery | implemented and regression-verified in bounded product slices | exact PR #35 Work Recovery lane is green after the browser MRO repair |
+| Work restore inspection | wired and verified | resident + desktop can inspect restore state without mutation |
+| Missing-target Work restore application | wired and verified, narrow authority | Windows-only explicit prepare -> approve, exact retained bytes, missing target only, no replacement, durable restart reconciliation |
+| Managed Chromium runtime | wired and verified | formal versioned Windows runtime packages Playwright/Chromium and launch-smokes the packaged browser |
+| Resident managed-browser RPC | wired and verified | observation by default; explicit bounded navigation; resident-owned browser thread survives reconnecting TCP clients |
+| Structured Work browser navigation | wired and real-E2E verified | structured `browser_navigate` -> durable side-effect attempt -> real Chromium -> independent URL observation -> session cleanup -> Work completion |
+| Browser mutation beyond navigation | not granted | click/type/select/upload/download are intentionally absent from Work authority |
+| Windows x64 unsigned release-candidate build | canonical narrow proof | clean hosted Windows build, packaged runtime boot, unsigned NSIS/MSI and independent manifest/hash verification |
+| Windows x64 clean install + first resident start | canonical narrow proof | real NSIS install in isolated state, installed `ZN.exe`, materialized runtime, resident RPC/life and graceful shutdown |
+| Installed-N continuity baseline | implementation in progress, not yet product-verified | PR #37 adds a resident-owned sanitized baseline and real clean-install evidence path; exact-head installed proof is still required |
+| Installed N -> N+1 continuity | approval-gated / incomplete | no formal updater/replacement transition has been executed |
+| Rollback / signing / release trust | approval-gated / incomplete | not exercised by the current stage |
+| Formal release/stable-channel publication | incomplete | no current-stage tag, GitHub Release, stable-channel advance or user-machine replacement |
 | Self-maintenance | SM0 complete; later phases incomplete | see `docs/ZN-SELF-MAINTENANCE.md` |
 
-A status of `implemented` means code exists and has the stated evidence; it does not by itself prove that every real product entry point, recovery path, installation transition or user scenario is closed. Maintainers should use `AGENTS.md`'s `exists -> wired -> verified -> product-closed` distinction when deciding what to do next.
+Use `exists -> wired -> verified -> product-closed` rather than treating the presence of code as proof that the user scenario is complete.
 
-## Windows unsigned candidate proof
+## Bounded Work restore application
 
-The bounded Windows candidate stage is canonical on `main` through PR #11 at `3741db32c739322a3f921ea62798b2c698ef0771`.
+The previous statement that P5 restore was only read-only is obsolete.
 
-Post-merge `ZN CI` run `33192086069` completed successfully on that canonical commit. The candidate stage proves a clean Windows x64 runner can:
+PR #19 introduced the first mutation-capable recovery slice without granting general destructive restore authority:
 
-- install locked build dependencies;
-- stage ZN-owned portable CPython and the ZN Python distribution;
-- boot the staged runtime with no model;
-- build the independent Electron control plane;
-- build unsigned NSIS and MSI candidates;
-- boot the packaged runtime before publication;
-- generate a Windows release manifest and independently verify exact installer size/SHA-256;
-- upload bounded candidate evidence.
+- the target must be freshly and stably missing;
+- exact retained Work bytes are the only restore content;
+- the existing non-reparse parent directory is identity-bound during preparation and revalidated before commit;
+- bytes are staged in the same directory and committed using a Windows no-replace move, so a target that reappears is never overwritten;
+- application progress is durable across `approval_required`, `applying`, `stage_ready`, `commit_started`, `completed`, `recovery_required` and `blocked` states;
+- restart recovery observes actual namespace/content reality and never automatically resumes an uncertain mutation;
+- preparing and approving are separate explicit authority steps.
 
-This is a build/integrity proof, not a signed or published formal release.
+PR #21 keeps full restore application context behind exact Work-thread ownership. PR #22 wires the flow into the desktop with separate Prepare and Approve controls while unsafe/changed/unchanged targets remain inspection-only. PR #23 proves prepared approval continuity across resident restart without converting it into automatic mutation authority. PRs #25 and #26 close desktop protocol/proposal-contract regressions.
 
-## Windows clean install and first-start proof
+This means the bounded missing-target/no-replace scenario has advanced through existence, wiring and product-path verification. It does **not** authorize overwriting a changed/current target, directory replacement, model-driven automatic restore, or destructive identity/memory recovery.
 
-Implementation/proof head: `cb913d61f001af6c729a141a3c8631a72e8362cf`.
+## Managed browser product path
 
-Exact implementation-head remote evidence:
+The browser path is no longer test-only or an uncalled module.
 
-- `ZN CI` run `33193710879`: all three substantive jobs succeeded; Windows kernel suite ran **686 tests** in `609.959s`, `OK (skipped=5)`; Source Boundary and Electron/TypeScript also succeeded.
-- `ZN Windows Release Candidate` run `33193711016`: success. Artifact `9695032455`, archive digest `sha256:a5e65ee7b02ef977260e30365ba460cbd30dcfef1d46550c58a31b8cc7739aa6`.
-- `ZN Windows Clean Install` run `33193710872`: success. Artifact `9695069801`, archive digest `sha256:c55e2c72c3a86b8661273520874b1aec395804188cc34f8231071e4ce2407f06`.
+PR #28 stages Playwright and Chromium inside the formal versioned Windows runtime, records the runtime-owned browser path, binds `PLAYWRIGHT_BROWSERS_PATH`, isolates N/N+1 runtime browser roots and launch-smokes packaged Chromium before installation.
 
-The clean-install lane uses the production ownership chain rather than an unpacked/mock shortcut:
+PR #29 makes the formal resident browser-aware and exposes a deliberately bounded RPC path. Default permission remains observation-only; navigation requires explicit permission and fresh observed authority.
 
-`installed ZN.exe -> zn-main.ts -> packaged runtime materialization -> resident IPC/autostart path -> Python resident socket service`.
+A real Windows reconnect E2E then exposed Playwright sync API thread affinity. PR #30 moved all provider access onto one resident-owned browser thread so session lifecycle does not depend on TCP handler thread identity. PR #31 made final browser cleanup atomic against late/reconnecting calls.
 
-The exact-head run proved that a clean hosted Windows x64 runner can:
+PR #32 wires structured `browser_navigate` into the actual Work lifecycle:
 
-1. build and independently verify the real unsigned NSIS/MSI candidate;
-2. silently install the real NSIS executable into isolated runner state;
-3. start the installed `ZN.exe`;
-4. require installed `resources/app.asar` and bundled `resources/zn-runtime`;
-5. materialize the packaged runtime into isolated `ZN_AGENT_HOME/runtime/<runtime_id>`;
-6. require resident endpoint `runtime_id` to equal the exact Git commit;
-7. require resident Python to live inside that materialized runtime;
-8. connect to the real loopback TCP resident endpoint and verify `ping`, `status`, and `self`;
-9. observe `pulse_count >= 1` (exact run observed `pulse_count=1`);
-10. request graceful resident shutdown and require endpoint retirement;
-11. upload bounded proof logs/runtime manifest.
+1. a structured Body action provides the target URL;
+2. ZN derives only the minimal browser permission context required for that origin (plus optional explicit private-network allowance);
+3. navigation is classified as a non-replayable outside-world side effect and enters the existing durable attempt/recovery boundary before dispatch;
+4. provider dispatch produces effect evidence but does not complete the Work;
+5. ZN persists a `browser_url_equals` verification contract tied to the real session/page;
+6. a later resident pulse independently observes the live page, compares the URL, closes the session, and only then finalizes success/learning;
+7. uncertainty/restart blocks blind replay and enters the existing explicit recovery-decision path.
 
-The same run observed resident runtime id `cb913d61f001af6c729a141a3c8631a72e8362cf` and portable Python under the isolated installed runtime.
+The formal resident constructor is the active caller. The real Windows E2E drives `work_start/work_progress` over resident TCP, lets the resident life loop execute the structured Work against real local Chromium, requires independent URL observation/cleanup, and observes finalized Work.
 
-### Clean-install promotion and canonical verification
+PR #33 corrected the browser Body composition so the final runtime inherits the mature atomic-overwrite, namespace-recovery, keyboard/pointer and generic side-effect protocols rather than replacing them with an earlier Body layer.
 
-The documentation closeout head `4b770345e1267db1cfdc37c9551ff967d6955c27` received exact-head `ZN CI` run `33195494937`; the workflow completed successfully.
+PR #34 added browser Work modules/tests to the dedicated Work Recovery lane. That lane exposed a second composition bug: browser verification hard-called a base class as a static function, dropping `self` from the effective procedural verification method and causing 19 mature non-browser recovery errors. PR #35 changed browser verification to instance delegation via `super()`, preserving the full MRO below the browser specialization.
 
-PR #13 then normally promoted the completed low-risk clean-install stage to canonical `main`, producing merge commit `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`.
+### Browser and recovery evidence
 
-Canonical post-merge `ZN CI` run `33196441295` ran on `a4f9c95a32571add9bd16ec5aa08a618c8e5566b` and completed successfully. Its substantive jobs all succeeded:
+- Windows clean-install run `33216509252`: success on the packaged-browser implementation head; packaged Chromium launch and installed resident start both succeeded.
+- `ZN Managed Browser E2E` run `33219726246`: success on implementation head `1f4da5fae6d6481375290637027fa273714bb032`, including real Chromium structured Work navigation.
+- `ZN Managed Browser E2E` run `33220567118`: success on exact PR #35 merge head `5c347925490179748e44e35c43b0435ede9e1f14`; managed-browser contract tests and real local Chromium E2E succeeded after the MRO fix.
+- `ZN Work Recovery E2E` run `33220567184`: success on the exact PR #35 merge head; the full recovery lane passed after the MRO fix, resolving the 19 mature non-browser recovery errors exposed by PR #34.
+- `ZN CI` run `33220567183`: success on the exact PR #35 merge head across Electron/TypeScript, Kernel/Python, Source Boundary and final status publication. The Python job completed zero-model boot, resident-core compilation and the full working-tree core suite successfully.
 
-- `ZN Kernel / Python / Windows`;
-- `Electron / TypeScript / Windows`;
-- `ZN Source Boundary / Windows`.
+Together these runs close the browser/recovery regression gate for the PR #35 product head.
 
-The clean-install/first-start stage is therefore complete and canonical as a bounded unsigned Windows x64 proof. This does not expand its authority into updater, rollback, signing, publication, or user-machine replacement.
+## Windows candidate and clean-install proof
+
+The canonical clean-install proof remains the narrow Windows x64 unsigned evidence promoted through PR #13 to `main` at `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`.
+
+Historical exact-head evidence remains valid for that bounded capability:
+
+- `ZN CI` run `33193710879`: success; Python kernel suite reported 686 tests, 5 skipped at that earlier head; Electron/TypeScript and Source Boundary also succeeded.
+- `ZN Windows Release Candidate` run `33193711016`: success.
+- `ZN Windows Clean Install` run `33193710872`: success.
+- canonical post-merge `ZN CI` run `33196441295`: success on `main`.
+
+The clean-install lane follows the real ownership chain:
+
+`installed ZN.exe -> Electron main -> packaged runtime materialization -> resident process -> Python resident TCP service`.
+
+The current verifier requires the installed executable/app.asar/bundled runtime, exact materialized runtime id, resident Python under that runtime, real `ping`, `status`, `self`, life pulse, graceful resident shutdown and endpoint retirement.
+
+PR #37 extends that proof with a resident-owned `continuity_snapshot` whose schema explicitly allowlists stable identity/living-self references, bounded Work thread references and sanitized provider metadata. The verifier independently rejects unexpected fields before persisting the evidence artifact. Until the exact PR #37 Windows clean-install run succeeds, this is an implemented/wired capability rather than a verified installed product path.
+
+It remains a clean-install/start/baseline proof, not proof of update continuity, rollback, signing, publication or user-machine replacement.
 
 ## Open product gaps
 
-The clean-install proof must not be broadened into a release-ready claim. Current known gaps include:
+Known gaps that still matter after the restore/browser work include:
 
-- actual Windows login/reboot autostart behavior on a persistent installed machine; unit contracts exist, but a real login-cycle proof does not;
-- an installed-version continuity baseline covering stable Self/work/config references before a transition;
-- a real installed **N -> N+1** application transition;
-- identity, memory, work, provider-setting and resident continuity across that transition;
-- failed-update recovery and rollback;
-- Windows code signing, trust-chain verification and release signing policy;
+- complete and verify the installed-N continuity baseline on a real installed resident;
+- real installed N -> N+1 application transition and continuity across it;
+- failed-update recovery and formal rollback;
+- actual Windows login/reboot autostart behavior on persistent installed state;
+- Windows code signing, trust-chain verification and release-signing policy;
 - production tag/release/stable-channel publication;
 - replacing a user's current formal installation;
-- remaining P5 restore/recovery capability beyond the currently canonical read-only proposals;
-- any higher-priority correctness, security, reliability, active-caller wiring or user-facing blocker discovered in the current code.
+- richer browser actions, but only after authority/replay/postcondition semantics are designed strongly enough for non-replayable page mutation;
+- any higher-priority identity, memory, reliability, security, active-caller or product-path defect found in real code.
 
-Updater/replacement, rollback, signing, release-trust and installed-version replacement remain explicit human-approval boundaries. The clean-install stage did not invoke them.
+Updater/replacement, formal rollback, signing/release trust and replacement of a user's formal installation remain explicit human-approval boundaries.
 
-This list is evidence of known gaps, not a fixed roadmap. A maintainer must compare these items with newly discovered code/runtime problems and choose the highest-value safe next increment using `AGENTS.md`.
+## Current safe continuity stage
 
-## Candidate next work: installed N baseline
+The installed-N baseline is now the active safe continuity slice because “new version starts” is not enough for a resident subject; later transition work needs a pre-transition truth set capable of detecting continuity loss.
 
-An **installed N baseline evidence** lane remains a useful low-risk candidate because it can establish read-only continuity evidence before any later N -> N+1 experiment. It is not automatically the next task.
+The current PR #37 design keeps that baseline read-only and non-secret. The resident owns the allowlist rather than exposing raw Work/config state; the Windows verifier also fail-closes on unexpected fields before writing evidence. The baseline binds stable Self/living-state references, bounded Work thread identity/timestamps and sanitized provider/model/credential-source metadata. Exact installed/runtime identity remains separately bound by the existing endpoint/runtime-manifest clean-install evidence.
 
-If current product triage selects this candidate, the lane should read and bind non-secret resident evidence needed for a later continuity comparison, for example:
+It does not invoke the updater, replace installed N, mutate identity or long-term memory, alter credentials/permissions, execute rollback, change release trust, publish a release, or advance a stable channel.
 
-- exact installed/runtime identity;
-- stable Self identity/reference required for continuity checks;
-- bounded Work/thread references and counts rather than message bodies;
-- runtime/home/config path identity;
-- sanitized provider-setting metadata such as provider/model/base URL plus credential presence/source metadata, never secret values;
-- resident endpoint and pulse/life evidence.
-
-It must not:
-
-- call the updater or replace installed N;
-- mutate credentials or permissions;
-- execute rollback;
-- change signing/release trust;
-- modify identity or long-term memory;
-- publish a tag/GitHub Release or advance `stable.json`.
-
-A later N -> N+1 transition experiment remains separately approval-gated. Before proposing it, verify that the selected baseline evidence is actually sufficient to detect continuity loss rather than merely producing another artifact.
+A later N -> N+1 experiment remains separately approval-gated and must not be inferred from completion of the baseline.
