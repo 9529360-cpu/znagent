@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -7,9 +9,11 @@ from contextlib import closing
 from pathlib import Path
 
 from zn_agent.core.action import NativeActionIntent
+from zn_agent.core.daemon import ResidentRpcServer
 from zn_agent.core.models import WorkingState
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
 from zn_agent.core.recovery_bounded_work import RecoveryBoundedWorkLedger
+from zn_agent.core.work_control import ResidentWorkControl
 
 
 class WorkRestorePointTests(unittest.TestCase):
@@ -43,6 +47,22 @@ class WorkRestorePointTests(unittest.TestCase):
         )
         resident.store.save_working_state(state)
         return event, intent, state
+
+    @staticmethod
+    def _capture_before_dispatch(resident, event, state):
+        original_act = resident.body.act
+
+        def crash_before_dispatch(kind: str, *, event_id=None, **args):
+            if str(kind).lower() in {"write_text", "write_file"}:
+                raise SystemExit("stop after restore point, before Body dispatch")
+            return original_act(kind, event_id=event_id, **args)
+
+        resident.body.act = crash_before_dispatch
+        try:
+            with unittest.TestCase().assertRaisesRegex(SystemExit, "after restore point"):
+                resident._native_action_step(event, state, readiness=None)
+        finally:
+            resident.body.act = original_act
 
     def test_work_overwrite_persists_exact_old_bytes_before_dispatch(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -141,6 +161,123 @@ class WorkRestorePointTests(unittest.TestCase):
                     target.read_text(encoding="utf-8"),
                     "external current reality",
                 )
+            finally:
+                restored.store.close()
+
+    def test_read_only_work_projection_tracks_current_target_without_private_restore_data(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store_path = root / "kernel.db"
+            target = root / "document.txt"
+            target.write_text("old private restore bytes", encoding="utf-8")
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=store_path
+            )
+            ledger = RecoveryBoundedWorkLedger(resident)
+            event, _, state = self._prepare_work_overwrite(
+                resident, ledger, target, "new state"
+            )
+            control = ResidentWorkControl(ledger)
+            try:
+                self._capture_before_dispatch(resident, event, state)
+
+                thread, _ = control.get_snapshot("restore-point-work")
+                points = thread.metadata["restore_points"]
+                self.assertEqual(len(points), 1)
+                point = points[0]
+                self.assertEqual(point["event_id"], event.event_id)
+                self.assertEqual(point["current_status"], "unchanged")
+                self.assertFalse(point["automatic_restore_authority"])
+                self.assertFalse(point["restore_application_available"])
+
+                encoded = json.dumps(points, sort_keys=True)
+                for private_name in (
+                    "content",
+                    "content_sha256",
+                    "action_signature",
+                    "intent_id",
+                    "message_id",
+                    "pre_identity_json",
+                ):
+                    self.assertNotIn(private_name, encoded)
+                self.assertNotIn("old private restore bytes", encoded)
+
+                target.write_text("external changed reality", encoding="utf-8")
+                changed, _ = control.get_snapshot("restore-point-work")
+                self.assertEqual(
+                    changed.metadata["restore_points"][0]["current_status"],
+                    "changed",
+                )
+
+                target.unlink()
+                missing, _ = control.get_snapshot("restore-point-work")
+                self.assertEqual(
+                    missing.metadata["restore_points"][0]["current_status"],
+                    "missing",
+                )
+
+                target.mkdir()
+                unsupported, _ = control.get_snapshot("restore-point-work")
+                self.assertEqual(
+                    unsupported.metadata["restore_points"][0]["current_status"],
+                    "unsupported",
+                )
+                self.assertTrue(target.is_dir())
+            finally:
+                resident.store.close()
+
+    def test_work_get_projects_restore_points_after_restart_but_work_list_stays_lightweight(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store_path = root / "kernel.db"
+            target = root / "document.txt"
+            target.write_text("retained before restart", encoding="utf-8")
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=store_path
+            )
+            ledger = RecoveryBoundedWorkLedger(resident)
+            event, _, state = self._prepare_work_overwrite(
+                resident, ledger, target, "new state"
+            )
+            try:
+                self._capture_before_dispatch(resident, event, state)
+            finally:
+                resident.store.close()
+
+            restored = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=store_path
+            )
+            server = ResidentRpcServer(
+                resident=restored,
+                input_stream=io.StringIO(),
+                output_stream=io.StringIO(),
+            )
+            try:
+                listed = server.handle(
+                    {"id": "list", "method": "work_list", "params": {"limit": 24}}
+                )
+                self.assertTrue(listed["ok"])
+                listed_thread = next(
+                    item for item in listed["result"] if item["id"] == "restore-point-work"
+                )
+                self.assertNotIn("restore_points", listed_thread["metadata"])
+
+                fetched = server.handle(
+                    {
+                        "id": "get",
+                        "method": "work_get",
+                        "params": {"thread_id": "restore-point-work"},
+                    }
+                )
+                self.assertTrue(fetched["ok"])
+                points = fetched["result"]["metadata"]["restore_points"]
+                self.assertEqual(len(points), 1)
+                self.assertEqual(points[0]["current_status"], "unchanged")
+                self.assertEqual(points[0]["event_id"], event.event_id)
+                self.assertEqual(target.read_text(encoding="utf-8"), "retained before restart")
+                encoded = json.dumps(fetched["result"], sort_keys=True)
+                self.assertNotIn("retained before restart", encoded)
+                self.assertNotIn("content_sha256", encoded)
             finally:
                 restored.store.close()
 
