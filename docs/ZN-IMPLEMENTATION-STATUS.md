@@ -8,15 +8,35 @@ This file records implementation truth for the active ZN product. Source code, G
 
 - repository: `9529360-cpu/znagent`
 - development branch: `dev/zn-agent`
-- canonical/release branch: `main`
-- canonical `main`: `8234a835dea604783cea0bd9d28a40de654ec03d`
+- canonical source branch: `main`
+- canonical `main` after PR #6 promotion: `b9820e6a56b20bc3e9eb5b431d0aab6bedc39438`
+- promoted PR head: `40111a97f5335cee6678d6e18375543a01baa6bb`
 - latest exact P5 code/proof head: `48bfe13ba6783184292e871ebbc62a895db47d1c`
-- maintenance-policy descendant immediately before this status sync: `251508d06c8974aa342f61b36fef8d8cac1b74b2`
-- PR #6 remains the development PR from `dev/zn-agent` to `main`; it is open, draft, and currently mergeable
-- `main` has not yet received the accumulated post-M10 development
-- no force push or history rewrite was performed
+- PR #6 was merged on 2026-08-28 through the normal traceable merge flow
+- `dev/zn-agent` was then non-force fast-forwarded to the merge commit; no force push or history rewrite was performed
+- GitHub Releases were confirmed empty during this stage; canonical source promotion is not a formal product release
+- a documentation closeout commit on `dev/zn-agent` follows the merge and may make dev narrowly ahead again as normal development resumes
 
-M10 canonical promotion remains complete. `main` is the canonical source/release branch, but that does **not** mean it should remain permanently frozen. Normal development stays on `dev/zn-agent` or isolated work branches; a coherent low-risk stage may enter `main` through the normal verified PR/promotion flow after its repository gates are satisfied. High-risk boundaries remain human-approved.
+M10 canonical promotion remains complete. `main` is canonical source and the future release source, but a commit entering `main` does **not** by itself mean ZN has been formally released as a product. Normal development stays on `dev/zn-agent` or isolated work branches. Coherent verified stages should be promoted rather than leaving canonical `main` indefinitely stale. High-risk boundaries remain human-approved.
+
+### PR #6 promotion closeout
+
+The accumulated post-M10 promotion covered 473 commits and 185 changed files. The review explicitly covered approval-sensitive source areas including durable nervous/event-outcome retention semantics, self-maintenance approval/promotion rules, release-workflow source, Windows CI topology, and the P5 restore-point foundation. Explicit human authorization was provided for this accumulated source promotion after those boundaries were identified.
+
+That authorization was limited to repository source promotion. It did not authorize a formal GitHub Release, stable-channel advance, signing/credential changes, updater activation, installed-version replacement, or future destructive restore application.
+
+Exact pre-merge PR-head full CI:
+
+```text
+ZN CI run 33168732659                    success
+head                                     40111a97f5335cee6678d6e18375543a01baa6bb
+ZN Source Boundary / Windows             success
+Electron / TypeScript / Windows          success
+ZN Kernel / Python / Windows             success
+Publish Windows CI statuses              success
+```
+
+Post-merge `main` CI run `33170354975` initially encountered a runner environment failure in Kernel before ZN tests started: the isolated uv/Python build environment on `zn-ci-01` raised an `importlib.metadata` partial-initialization error. Source Boundary and Electron succeeded. The failed Kernel job was re-run rather than bypassed. On the retry, the same runner successfully completed Python preparation, no-model boot, and resident compile and entered the full core-test step. A same-SHA dev run also successfully prepared/booted/compiled and entered core tests on another runner. At the time of this status write those core-test executions are still in progress, so post-merge CI is **not yet claimed fully green**.
 
 Founding boundary:
 
@@ -199,9 +219,9 @@ ZN CI run 33166734199                             success
   Publish Windows CI statuses                     success
 ```
 
-The later `251508d...` maintenance-policy commit changed only `docs/ZN-MAINTAINER-PROMPT.md`. GitHub currently reports no workflow run associated with that docs-only descendant, so this document does not mislabel it as an independently CI-proven code head. Runtime proof remains the exact `48bfe13...` run above.
+The P5.8 runtime proof remains the exact `48bfe13...` evidence above. Later documentation/promotion descendants do not alter the P5.8 runtime implementation and are not substituted for that exact proof.
 
-No local repository test run is claimed for this web-maintainer slice. Repository self-hosted Windows CI is the verification authority.
+No local repository test run is claimed for this web-maintainer stage. Repository self-hosted Windows CI is the verification authority.
 
 ## Current restore/recovery invariants
 
@@ -261,7 +281,9 @@ P5 remains **PARTIAL**. Still open:
 
 ## Next real target
 
-Continue P5 without jumping directly to destructive restore application. The next bounded target is a **read-only Work restore-point projection/inspection path**:
+First finish the post-promotion verification/doc closeout honestly; do not call the post-merge run green until its retry actually completes successfully.
+
+Then continue P5 without jumping directly to destructive restore application. The next bounded target is a **read-only Work restore-point projection/inspection path**:
 
 1. connect existing retained restore metadata to the resident-owned `work_control.py` / Work snapshot surface;
 2. expose only metadata required to understand that a restore point exists; do not expose the raw retained BLOB by default;
@@ -270,4 +292,4 @@ Continue P5 without jumping directly to destructive restore application. The nex
 5. add restart and privacy/ownership tests around that read-only projection;
 6. design actual restore proposal/authority as a later bounded slice with explicit drift handling and user-visible approval where destructive replacement is involved.
 
-Repository promotion is a separate engineering gate from P5 implementation. Do not develop directly on `main`, but also do not keep canonical `main` frozen merely because development occurs on `dev/zn-agent`. Once the current coherent promotion gate is fully reconciled, use the normal traceable PR/promotion flow; high-risk boundaries still require human approval.
+Normal development remains on `dev/zn-agent` or isolated work branches. Verified coherent stages should continue to use traceable PR/promotion flow into `main`; a `main` merge is canonical source maintenance, not by itself a formal product Release.
