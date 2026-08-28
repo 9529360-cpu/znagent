@@ -56,4 +56,4 @@ class WorkRestoreApplicationAuthorityResidentRuntime(
         row = self._application_row(normalized_application)
         if row is None or str(row["thread_id"]) != normalized_thread:
             raise ValueError("unknown Work restore application for thread")
-        return self._application_public(row)
+        return WorkRestoreApplicationResidentRuntime._application_public(row)
