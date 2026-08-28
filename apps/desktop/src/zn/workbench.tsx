@@ -10,6 +10,7 @@ import {
   loadZnProviderSettings,
   loadZnResidentSnapshot,
   loadZnWorkProgress,
+  loadZnWorkThread,
   loadZnWorkThreads,
   startZnWork,
   updateZnProviderSettings,
@@ -22,6 +23,7 @@ import {
   loadZnThreadCache,
   newZnThread,
   saveZnThreadCache,
+  type ZnRestorePointCurrentStatus,
   type ZnThread
 } from './state'
 
@@ -46,6 +48,13 @@ function artifactKindLabel(kind: string): string {
   if (kind === 'file') return 'File'
   if (kind === 'terminal') return 'Terminal'
   return 'Artifact'
+}
+
+function restorePointStatusLabel(status: ZnRestorePointCurrentStatus): string {
+  if (status === 'unchanged') return 'Current target unchanged'
+  if (status === 'changed') return 'Current target changed'
+  if (status === 'missing') return 'Current target missing'
+  return 'Current target cannot be compared safely'
 }
 
 function credentialLabel(settings: ZnProviderSettings | null): string {
@@ -78,6 +87,7 @@ export function ZnWorkbench() {
   const [workProgress, setWorkProgress] = useState<ZnWorkProgress | null>(null)
   const [cancelBusy, setCancelBusy] = useState(false)
   const [workspaceBusy, setWorkspaceBusy] = useState(false)
+  const [restoreBusy, setRestoreBusy] = useState(false)
   const [contextOpen, setContextOpen] = useState(true)
   const [residentHealth, setResidentHealth] = useState<ResidentHealth>('connecting')
   const [residentSnapshot, setResidentSnapshot] = useState<ZnResidentSnapshot | null>(null)
@@ -99,6 +109,7 @@ export function ZnWorkbench() {
   )
   const activeWorkspace = activeThread?.workspace || null
   const activeArtifacts = useMemo(() => activeThread?.artifacts || [], [activeThread])
+  const activeRestorePoints = activeThread?.restorePoints
   const selectedArtifact = useMemo(
     () => activeArtifacts.find(artifact => artifact.id === selectedArtifactId) || activeArtifacts[0] || null,
     [activeArtifacts, selectedArtifactId]
@@ -123,7 +134,13 @@ export function ZnWorkbench() {
   const replaceThread = useCallback((updated: ZnThread) => {
     setThreads(current =>
       current
-        .map(thread => (thread.id === updated.id ? updated : thread))
+        .map(thread => {
+          if (thread.id !== updated.id) return thread
+          if (updated.restorePoints === undefined && thread.restorePoints !== undefined) {
+            return { ...updated, restorePoints: thread.restorePoints }
+          }
+          return updated
+        })
         .sort((left, right) => right.updatedAt - left.updatedAt)
     )
   }, [])
@@ -137,7 +154,12 @@ export function ZnWorkbench() {
       ])
       const authoritative = residentThreads.length > 0 ? residentThreads : [newZnThread()]
       setResidentSnapshot(snapshot)
-      setThreads(authoritative)
+      setThreads(current => authoritative.map(thread => {
+        const previous = current.find(item => item.id === thread.id)
+        return previous?.restorePoints !== undefined
+          ? { ...thread, restorePoints: previous.restorePoints }
+          : thread
+      }))
       setActiveThreadId(current =>
         authoritative.some(thread => thread.id === current) ? current : authoritative[0]?.id || ''
       )
@@ -148,6 +170,21 @@ export function ZnWorkbench() {
       setResidentHealth('offline')
     }
   }, [])
+
+  const refreshRestorePoints = useCallback(async (threadId: string) => {
+    const normalized = threadId.trim()
+    if (!normalized) return
+    setRestoreBusy(true)
+    try {
+      replaceThread(await loadZnWorkThread(normalized))
+      setResidentError(null)
+      setResidentHealth('live')
+    } catch (error) {
+      setResidentError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setRestoreBusy(false)
+    }
+  }, [replaceThread])
 
   const applyProviderSettings = useCallback((settings: ZnProviderSettings) => {
     setProviderSettings(settings)
@@ -429,6 +466,8 @@ export function ZnWorkbench() {
                 onClick={() => {
                   setActiveThreadId(thread.id)
                   setView('work')
+                  setContextOpen(true)
+                  void refreshRestorePoints(thread.id)
                 }}
               >
                 <span>{thread.title}</span>
@@ -641,6 +680,30 @@ export function ZnWorkbench() {
             )}
           </section>
           <section className="zn-context-section"><div className="zn-context-title">Runtime health</div><div className="zn-context-value"><span className={`zn-health-dot ${residentHealth}`} />{residentHealth}</div>{residentError ? <div className="zn-error-text">{residentError}</div> : null}</section>
+          <section className="zn-context-section">
+            <div className="zn-context-header">
+              <div className="zn-context-title">Restore points</div>
+              <button type="button" disabled={restoreBusy || !activeThread} onClick={() => activeThread && void refreshRestorePoints(activeThread.id)}>
+                {restoreBusy ? 'Checking…' : 'Refresh'}
+              </button>
+            </div>
+            {activeRestorePoints === undefined ? (
+              <p className="zn-muted zn-small">Open a Work or refresh to inspect retained restore points against current file reality.</p>
+            ) : activeRestorePoints.length === 0 ? (
+              <p className="zn-muted zn-small">No retained restore points for this Work.</p>
+            ) : (
+              <div className="zn-artifact-list" aria-label="Work restore points">
+                {activeRestorePoints.map(point => (
+                  <div className="zn-artifact-link" key={point.id}>
+                    <span className="zn-artifact-kind">{restorePointStatusLabel(point.currentStatus)}</span>
+                    <span className="zn-artifact-name" title={point.targetPath}>{point.targetPath}</span>
+                    <span className="zn-muted zn-small">Observed {timeLabel(point.currentObservedAt)} · retained {point.sizeBytes} bytes</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="zn-muted zn-small">Read-only inspection only. ZN does not restore or overwrite files from this surface.</p>
+          </section>
           {activeArtifacts.length > 0 ? (
             <section className="zn-context-section zn-context-grow zn-artifact-section">
               <div className="zn-context-title">Artifacts</div>
