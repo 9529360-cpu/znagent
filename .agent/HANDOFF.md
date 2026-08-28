@@ -16,11 +16,11 @@ Close and promote a low-risk **Windows x64 unsigned release-candidate proof** st
 - development branch: `dev/zn-agent`
 - canonical branch: `main`
 - canonical `main`: `b29a7c9ecd205c34560e2945fe14451429afd16d`
-- P5.10 promotion PR #10: merged normally
-- P5.10 canonical post-merge CI: green
+- P5.10 promotion PR #10: merged normally and post-merge CI verified
 - Windows candidate implementation commit: `50aab205d6cb898e9da044c44f9e1c0ab8849f62`
-- candidate fixture-fix / exact proof head before this documentation closeout: `3f1dca12f844d8745023a0322b499b7aed18cbad`
-- this documentation closeout creates the next `dev/zn-agent` commit; re-read the branch ref for the resulting exact HEAD
+- candidate fixture-fix / exact package proof head: `3f1dca12f844d8745023a0322b499b7aed18cbad`
+- Windows-first status/roadmap closeout head: `ccba9ca8ea5519ea9af5d218e8a7c9522aa51da4`
+- this HANDOFF update creates the final documentation head; re-read the branch ref for the resulting exact HEAD
 - no force push/history rewrite has been used
 
 ## Completed
@@ -47,15 +47,15 @@ The workflow is intentionally non-publishing:
 - permissions only `contents: read`, `statuses: write`;
 - no release secrets;
 - no tag/GitHub Release;
-- no upload to the public update channel;
+- no public update-channel upload;
 - no `stable.json` advance;
 - no updater invocation;
 - no signing;
 - no installed-version replacement.
 
-First run `33187867062` failed before packaging because the duplicate-EXE unit-test fixture wrote 6 bytes while retaining 17-byte manifest metadata. The verifier correctly rejected the mismatch. Commit `3f1dca12f844d8745023a0322b499b7aed18cbad` fixed only the fixture; the verifier assertion was not weakened.
+First candidate run `33187867062` failed before packaging because the duplicate-EXE unit-test fixture wrote 6 bytes while retaining 17-byte manifest metadata. The verifier correctly rejected the mismatch. Commit `3f1dca12f844d8745023a0322b499b7aed18cbad` fixed only the fixture; verifier assertions were not weakened.
 
-Exact candidate proof:
+Exact package proof:
 
 ```text
 ZN Windows Release Candidate / 33188046176       success
@@ -96,18 +96,36 @@ zn-release-windows-x64.json
 
 Independent `sha256sum` over the downloaded EXE/MSI exactly matched the manifest.
 
+### Status/roadmap alignment
+
+`docs/ZN-IMPLEMENTATION-STATUS.md` and `docs/ZN-NEXT-PHASE.md` now record:
+
+- P5.10 is canonical verified, not docs-closeout-pending;
+- first formal desktop target is Windows x64;
+- Linux/macOS are deferred/non-blocking for the first release;
+- current candidate proof is explicitly unsigned and non-publishing;
+- clean install, installed N -> N+1, rollback and Windows signing/release trust remain incomplete.
+
+Exact status/roadmap head `ccba9ca8ea5519ea9af5d218e8a7c9522aa51da4` passed full ZN CI `33188933799`: Source Boundary, Electron/TypeScript, Kernel/Python and status publisher all succeeded.
+
 ## Current CI
 
-Exact candidate proof head `3f1dca12...`:
+Verified proof points:
 
-- Windows Release Candidate `33188046176`: **success**
-- ordinary ZN CI `33188046201`: Source Boundary success, Electron/TypeScript success, Kernel/Python was still running when this documentation closeout began; do not claim that run complete unless later observed green
+```text
+main P5.10 merge                               b29a7c9ecd205c34560e2945fe14451429afd16d
+ZN CI / 33185789960                           success
 
-This documentation closeout itself still requires exact-head ZN CI before promotion.
+candidate proof head                          3f1dca12f844d8745023a0322b499b7aed18cbad
+Windows Release Candidate / 33188046176       success
+
+status/roadmap head                           ccba9ca8ea5519ea9af5d218e8a7c9522aa51da4
+ZN CI / 33188933799                           success
+```
+
+The HANDOFF update containing this final closeout still requires its own exact-head ZN CI before promotion. Do not substitute predecessor CI for that final gate.
 
 ## Windows-first release reality
-
-`ZN.md` already defines Windows x64 as the intended first desktop platform. `docs/ZN-NEXT-PHASE.md` and implementation status are now aligned with that direction.
 
 The candidate proof establishes that a clean hosted Windows machine can build self-contained unsigned NSIS/MSI candidates and boot the packaged ZN runtime without a model.
 
@@ -120,15 +138,15 @@ It does **not** establish:
 - Windows code signing or release trust;
 - formal immutable release/stable-channel publication.
 
-The formal `.github/workflows/zn-release.yml` remains unchanged and still contains a three-OS package matrix. That workflow was deliberately kept outside this low-risk stage.
+The formal `.github/workflows/zn-release.yml` remains unchanged and still contains a three-OS package matrix. It was deliberately kept outside this low-risk stage.
 
 ## Risks / blockers
 
 P5 remains partial overall: destructive restore writeback, destructive revalidation/authority lifecycle, post-restore verification/crash semantics, general workspace rollback and isolated parallel Work remain open.
 
-Windows M8 blockers/gates:
+Windows M8 remaining gates:
 
-1. exact documentation-head full CI for this stage;
+1. exact final HANDOFF-head full CI and source promotion for this candidate-proof stage;
 2. real clean Windows install/start evidence;
 3. real installed N -> N+1 continuity evidence;
 4. safe Windows rollback lifecycle/proof;
@@ -161,14 +179,15 @@ No secret, token, password, signing key or production credential belongs here.
 
 ## Task queue
 
-1. Observe exact documentation-head ZN CI; fix failures rather than bypass them.
-2. Re-check `main`/`dev` heads and cumulative diff.
+1. Observe exact final HANDOFF-head ZN CI; fix failures rather than bypass them.
+2. Re-check `main`/`dev` heads and complete cumulative diff.
 3. If the low-risk gate is fully green, create/merge a traceable promotion PR into `main` and verify exact post-merge `main` CI.
-4. Keep formal release/updater/rollback/signing/stable actions out of this stage.
-5. Next low-risk M8 target: clean Windows install/start evidence in isolated test state, without using production update infrastructure.
-6. Real installed N -> N+1, rollback and signing/release-trust changes remain separately reviewed high-risk slices.
-7. Separately, next safe P5 restore work remains a non-mutating approval/authority-boundary contract; actual restore application remains human-approved.
+4. If ancestry permits after merge, non-force fast-forward `dev/zn-agent` to the canonical merge commit; never rewrite history.
+5. Keep formal release/updater/rollback/signing/stable actions out of this stage.
+6. Next low-risk M8 target: clean Windows install/start evidence in isolated test state, without production update infrastructure.
+7. Real installed N -> N+1, rollback and signing/release-trust changes remain separately reviewed high-risk slices.
+8. Separately, next safe P5 restore work remains a non-mutating approval/authority-boundary contract; actual restore application remains human-approved.
 
 ## Next real target
 
-Finish this candidate-proof stage through exact docs-head CI and normal source promotion. Then build a bounded **clean Windows install/start proof** that exercises the real installer in isolated test state but does not change updater/rollback/signing trust or the user's installed formal version.
+Finish this candidate-proof stage through exact final-head CI and normal source promotion. Then build a bounded **clean Windows install/start proof** that exercises the real installer in isolated test state but does not change updater/rollback/signing trust or the user's installed formal version.
