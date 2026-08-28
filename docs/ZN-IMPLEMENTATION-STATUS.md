@@ -2,23 +2,21 @@
 
 Updated: 2026-08-28
 
-This file records implementation truth for the active ZN product. Source code, Git state, tests, and CI remain authoritative over this document.
+This file records current implementation truth for ZN. Real code/Git state is authoritative, followed by real tests/builds/CI, then `.agent/HANDOFF.md`, then this document.
 
 ## Repository truth
 
 - repository: `9529360-cpu/znagent`
 - development branch: `dev/zn-agent`
-- canonical source branch: `main`
-- current canonical `main`: `5ff8331ba1e44090b2cec9ca1ed8715c33196580`
-- `main` contains the P5.9 read-only restore-point inspection promotion from PR #7
-- current P5.10 code/proof head before this documentation closeout: `2fe96e46396c0cda8d618ad342b1196519e96e7b`
-- PR #9 merged the read-only restore proposal / eligibility implementation into `dev/zn-agent`
+- canonical source/release branch: `main`
+- canonical `main`: `b29a7c9ecd205c34560e2945fe14451429afd16d`
+- `b29a7c9...` is the normal merge of PR #10, promoting P5.10 read-only restore proposals
+- P5.10 exact pre-promotion docs head: `7b70d8b2e21b397112c5b45328ebadbe1477c52a`
+- current Windows release-candidate proof head: `3f1dca12f844d8745023a0322b499b7aed18cbad`
 - no force push or Git history rewrite has been used
-- canonical source promotion is not by itself a formal product Release, stable-channel advance, or installed-version replacement
+- canonical source promotion is not itself a formal product Release, stable-channel advance, signing event, updater activation, rollback event, or installed-version replacement
 
-M10 canonical promotion remains complete. Normal development stays on `dev/zn-agent` or isolated work branches. Coherent low-risk stages may be promoted through traceable PR/merge flow when the repository promotion gate is truly green. High-risk boundaries remain human-approved.
-
-Founding boundary:
+M10 canonical promotion remains complete. Normal development stays on `dev/zn-agent` or an isolated work branch. Low-risk coherent stages may enter `main` through the repository promotion gate. High-risk boundaries remain explicitly human-approved.
 
 > **ZN uses models. Models do not own ZN.**
 
@@ -28,95 +26,31 @@ Founding boundary:
 - P2 bounded cumulative accounting/learning durability: **COMPLETE / CI VERIFIED**
 - P3 managed-browser frontier reconciliation: **COMPLETE / CI VERIFIED NARROW**
 - P4 resident-owned live-page registry: **COMPLETE / CI VERIFIED NARROW**
-- P5 durable Work checkpoint / restore foundation: **PARTIAL / TEN BOUNDED SLICES CI VERIFIED AT CODE HEAD; DOCS-HEAD CLOSEOUT PENDING**
+- P5 durable Work checkpoint / restore foundation: **PARTIAL / TEN BOUNDED SLICES CANONICAL VERIFIED**
+- Windows-first release-candidate packaging proof: **COMPLETE / CI VERIFIED NARROW**
+- M8 installed-version continuity / rollback / signing: **INCOMPLETE**
+- SM0: **COMPLETE**; SM1+: **INCOMPLETE**
 
-Broader Work durability has **TWENTY-SEVEN concrete crash/restart windows closed and verified**. P5.9 and P5.10 are read-only inspection/proposal slices and add no mutation lifecycle, so they do not increment that crash-window count.
+Broader Work durability has **27 concrete crash/restart mutation windows closed and verified**. P5.9 and P5.10 are read-only inspection/proposal slices and add no mutation window.
 
-This does **not** mean general rollback/restore, arbitrary workspace snapshots, destructive restore application, restore approval authority, or installed-version rollback is complete.
+## P5 durable Work / restore status
 
-## P5 verified bounded slices
+Historical bounded slices remain:
 
-### P5.1 - accepted Work ingress checkpoint (#19)
+1. accepted Work ingress checkpoint;
+2. ordinary overwrite effect-present recovery;
+3. overwrite pre-dispatch identity guard;
+4. Windows staged atomic overwrite;
+5. durable staged-overwrite precommit reconciliation;
+6. commit-start namespace reconciliation and verified-effect cleanup;
+7. restart-safe retained namespace repair;
+8. Work-owned exact-file restore-point foundation;
+9. read-only Work restore-point inspection;
+10. non-mutating restore proposal / eligibility contract.
 
-An accepted Work request is durably represented before resident-event creation, so restart can restore ingress without duplicating the resident event. Historical proof head: `2c20b8bded96ce07c6ec43263cc77b7bd10a7a82`.
+P5.10 is now canonical source through PR #10. Its proposal remains informational only. For retained exact-file points it freshly classifies current reality as unchanged, changed, missing, or unsupported after exact Work ownership validation.
 
-### P5.2 - ordinary overwrite effect-present recovery (#20)
-
-After a durable overwrite attempt exists, restart never blindly repeats it. Exact intended current text resolves `verified_effect`; mismatch/read failure remains outside-world uncertainty and preserves the target. Historical proof head: `c4276f8b151d2c45b69368cb414f012bf0644d01`.
-
-### P5.3 - overwrite pre-dispatch identity guard (#21)
-
-If restart occurs before Body attempt creation, exact unchanged target identity may continue the inherited fresh lifecycle; drift returns to Investigation without mutation. Once a durable attempt exists, old-state equality can never authorize replay. Historical proof head: `97803f8d0616c1f2b30a61af5acc686f1256cd11`.
-
-### P5.4 - Windows staged atomic overwrite (#22)
-
-Active exact overwrite writes a complete same-directory stage, flushes/fsyncs it, then uses Windows namespace replacement rather than truncation-first overwrite. Historical implementation `b3cf799ec24d8f4bb89d82752c2396e70cc6a233`; proof descendant `403ac14f04866380a0d32c74bd9e250226dbb780`.
-
-### P5.5 - durable staged-overwrite precommit reconciliation (#23)
-
-Durable atomic-overwrite protocol state binds event, Body signature, intent, attempt, deterministic stage/backup paths, exact stage identity, protocol version, and `namespace_commit_started`. Restart may grant a fresh lifecycle only when all retained and freshly observed evidence agrees. Ambiguity fails closed. Historical proof head: `a006ee90c9fc6e53f4b90d09f69b64ebf7ffd4c1`.
-
-### P5.6 - commit-start namespace reconciliation and verified-effect cleanup (#24)
-
-Post-commit namespace evidence never becomes stale-attempt replay authority. Exact retained `ReplaceFileW` split evidence remains replay-blocked; independently verified intended target content may resolve `verified_effect`; cleanup requires exact retained ownership evidence. Historical proof chain includes `042e196418d8c4e9baa17d810b60d995007dc5b0` and zero-byte hardening `75e50c243b44e347c0e549fa9cb4cf7b37716e9f`.
-
-### P5.7 - restart-safe retained namespace repair (#25, #26)
-
-A proven retained namespace split creates a new bounded repair lifecycle rather than replaying the stale overwrite attempt. Immediately before mutation ZN revalidates target-missing + exact-stage-new + exact-backup-old reality. External target appearance wins. Historical implementation/hardening chain includes `47bcf6279a0d907ece7f7cda3221f5678efe99ab`, `fb8864f6934dc38c4f83fcce66b30b0212e55cc5`, and `099a1af7615e79fe34317f22d5c785aa46cba2b4`.
-
-### P5.8 - Work-owned exact-file restore-point foundation (#27)
-
-Before an eligible Work-owned existing-file overwrite can dispatch to Body, ZN retains exact pre-mutation bytes in the kernel database. Creation requires exact active durable `work_runs` ownership; forged, missing, conflicting, non-Work, or finalized linkage cannot create restore content or authorize the overwrite.
-
-Current retained scope is intentionally narrow: stable regular file, complete SHA-256 identity, at most 8 MiB, and matching pre/post capture identity. Capacity exhaustion blocks the incoming restorable overwrite before mutation rather than deleting older rollback material.
-
-The restore point is retained content ownership, **not rollback authority**. `automatic_restore_authority` remains false and retained bytes are never written back by this slice.
-
-Historical exact proof head: `48bfe13ba6783184292e871ebbc62a895db47d1c`.
-
-### P5.9 - read-only Work restore-point inspection
-
-P5.9 was promoted to canonical `main` in PR #7. Read-only inspection owner:
-
-```text
-runtime/python/zn_agent/core/work_restore_point_inspection_resident.py
-```
-
-The active resident chain is:
-
-```text
-provider_bridge
--> RecoveryBoundedResidentRuntime
--> WorkRestorePointInspectionResidentRuntime
--> WorkRestorePointResidentRuntime
--> AtomicOverwriteNamespaceRecoveryResidentRuntime
--> AtomicOverwriteRecoveryResidentRuntime
--> OverwriteRecoveryResidentRuntime
--> DurableBodyAccountingResidentRuntime
--> CapabilityRecoveryResidentRuntime
--> resident core
-```
-
-Inspection revalidates exact durable Work event/thread/message ownership and freshly observes the target before classifying it as `unchanged`, `changed`, `missing`, or `unsupported`.
-
-The public projection excludes retained content BLOBs, content hashes, action signatures, intent identity, and the private pre-identity record. Every projected point keeps `automatic_restore_authority: False` and `restore_application_available: False`.
-
-The desktop reuses detailed `workGet`; recurring Work list refresh remains lightweight and does not repeatedly hash restore targets. Restore observations are transient and stripped from browser localStorage. The UI exposes status and Refresh only, with no Restore/Apply control.
-
-Historical P5.9 exact full-tree proof descendant: `a59380d5a70c79ea8fd1e759c537d2245beafdff`, ZN CI run `33174294153` success. Canonical P5.9 source promotion commit on `main`: `5ff8331ba1e44090b2cec9ca1ed8715c33196580`.
-
-### P5.10 - non-mutating restore proposal / eligibility contract
-
-P5.10 builds on P5.9 and adds a user-visible **proposal**, not restore authority. The proposal is freshly derived only after exact Work ownership validation and current target observation.
-
-For an exact retained file restore point the proposal currently classifies:
-
-- `unchanged` -> `blocked`, reason `current_target_already_matches_retained_prestate`;
-- `changed` -> `conflict_review_required`, reason `current_target_changed_since_restore_point`;
-- `missing` -> `missing_target_review_required`, reason `current_target_is_missing`;
-- `unsupported` -> `blocked`, reason `current_target_cannot_be_compared_safely`.
-
-Every proposal explicitly records:
+Every proposal keeps the destructive boundary explicit:
 
 ```text
 kind = restore_exact_file
@@ -127,124 +61,143 @@ application_available = false
 automatic_authority = false
 ```
 
-This contract does not create a restore command, Apply button, writeback path, approval token, or automatic authority. It cannot mutate the target. Retained bytes and private identity evidence remain resident-owned.
+There is still no Restore/Apply command, writeback RPC, approval token, destructive restore lifecycle, or automatic restore authority. Raw retained content/private identity evidence remains resident-owned and is not projected to the desktop.
 
-Ownership is fail-closed twice: the retained row must agree with the durable Work run, and the resident event payload/task linkage must agree with the same Work ownership. Forged Work ownership or forged resident-event ownership raises instead of producing an apparently safe proposal.
+### P5.10 real canonical proof
 
-The proposal is re-derived after resident reconstruction from durable retained ownership plus fresh outside-world target reality. Stale UI observation is not persisted as authority.
-
-Focused tests cover unchanged/changed/missing/unsupported reality, restart re-derivation, private-data exclusion, forged Work ownership, and forged resident-event ownership.
-
-#### Real CI proof for P5.10 code head
-
-Exact code/proof head:
+Code/proof head:
 
 ```text
 2fe96e46396c0cda8d618ad342b1196519e96e7b
+ZN Work Recovery E2E / 33183092342             success
+Windows resident Work restart recovery          108 tests OK
+ZN CI / 33183092366                             success
+ZN Kernel / Python / Windows                    686 tests OK (5 skipped)
+Electron / TypeScript / Windows                 success
+ZN Source Boundary / Windows                    success
+Publish Windows CI statuses                     success
 ```
 
-Focused Windows Work recovery proof:
+Exact pre-promotion docs head:
 
 ```text
-ZN Work Recovery E2E run 33183092342             success
-Windows resident Work restart recovery           success
-Ran 108 tests in 87.381s                         OK
+7b70d8b2e21b397112c5b45328ebadbe1477c52a
+ZN CI / 33184402941                             success
 ```
 
-Full-tree proof on the same exact head:
+Canonical merge:
 
 ```text
-ZN CI run 33183092366                             success
-ZN Source Boundary / Windows                     success
-Electron / TypeScript / Windows                  success
-ZN Kernel / Python / Windows                     success
-  Ran 686 tests in 610.053s                      OK (skipped=5)
-Publish Windows CI statuses                      success
+PR #10                                          merged
+main                                            b29a7c9ecd205c34560e2945fe14451429afd16d
+ZN CI / 33185789960                             success
+ZN Source Boundary / Windows                    success
+Electron / TypeScript / Windows                 success
+ZN Kernel / Python / Windows                    success
+Publish Windows CI statuses                     success
 ```
 
-An earlier focused run on `26bf1b9a430f29aa7fdb8415cbc46e6b7f330fa7` exposed a Windows-only test resource leak: the forged-ownership test left a SQLite handle open, causing `TemporaryDirectory` cleanup to fail with `WinError 32`. Commit `2fe96e46396c0cda8d618ad342b1196519e96e7b` changed the test connection to explicit closing. The failure was fixed and re-run; it was not waived or bypassed.
+A later HANDOFF-only dev commit `60001371aadf94560aba56d9c682e8691d5f2bc6` also passed full ZN CI run `33185971086`.
 
-No local repository test run is claimed for this web-maintainer stage. Repository self-hosted Windows CI is the execution authority.
+## Windows-first release readiness
 
-Because P5.10 is read-only, it adds no new crash/restart mutation window. The count remains 27.
+`ZN.md` defines the current intended desktop platform as **Windows x64**. Linux/macOS are deferred and are not first-release gates unless the architecture contract explicitly changes again.
+
+A new low-risk, non-publishing proof lane now exists:
+
+```text
+.github/workflows/zn-windows-release-candidate.yml
+apps/desktop/scripts/verify-zn-windows-release-candidate.mjs
+apps/desktop/scripts/verify-zn-windows-release-candidate.test.mjs
+```
+
+The lane runs on a clean GitHub-hosted Windows x64 image and intentionally has only `contents: read` and `statuses: write`. It does not use release secrets, create a tag or GitHub Release, publish to the update channel, advance `stable.json`, invoke the updater, sign artifacts, or replace an installed copy.
+
+Exact candidate proof head:
+
+```text
+3f1dca12f844d8745023a0322b499b7aed18cbad
+ZN Windows Release Candidate / 33188046176       success
+Windows x64 GitHub-hosted runner                 success
+locked npm install + high-severity audit         success
+candidate verifier tests                         5 tests passed
+ZN portable runtime staging + zero-model smoke   success
+renderer/Electron build                          success
+NSIS + MSI unsigned installer build              success
+packaged runtime verification + zero-model boot  success
+Windows release manifest                         success
+independent size/SHA-256 candidate verification  success
+candidate evidence upload                        success
+```
+
+Uploaded artifact `9692735233`, retained by CI for 7 days, contains exactly:
+
+```text
+ZN-0.17.0-win-x64.exe        131798873 bytes
+sha256 e0cb2e0a08082a8d9e1268e05de8b9b6cd8d94441488e02ff352e77158d01988
+
+ZN-0.17.0-win-x64.msi        145854544 bytes
+sha256 3ab452ba38bf75514259d03333967dea7f4596e2348b848463ffe3f6891b30e0
+
+zn-release-windows-x64.json
+```
+
+The artifact archive itself is recorded by GitHub with digest:
+
+```text
+sha256:8b230e382c285a9b13ab9851b4583ffaa2f6163deb246649b6270cf3d348ae85
+```
+
+The installer file hashes were independently recomputed from the downloaded CI artifact and exactly matched the manifest.
+
+This proof establishes reproducible unsigned Windows packaging and packaged-runtime boot on a clean hosted builder. It does **not** prove a clean installed desktop session, real installed N -> N+1 updater continuity, rollback, signing trust, or production release readiness.
 
 ## Current restore/recovery invariants
 
 1. Old-state equality after dispatch is never stale-attempt replay authority.
 2. `namespace_commit_started=true` never authorizes replay of the old overwrite attempt.
 3. Retained namespace repair is a new bounded lifecycle with fresh exact evidence.
-4. External target appearance wins over repair; ZN does not clobber it.
+4. External target appearance wins over repair.
 5. Stage/backup drift withdraws repair or cleanup authority.
-6. Work restore capture requires an exact active durable Work run, not merely claimed payload linkage.
-7. A retained restore point proves exact captured pre-mutation content ownership only; it grants no automatic restore authority.
+6. Restore capture requires exact active durable Work ownership.
+7. A restore point proves retained pre-mutation content ownership, not restore authority.
 8. Capture-time file drift withdraws overwrite authority.
-9. Capacity exhaustion blocks the incoming restorable overwrite rather than deleting older rollback evidence.
-10. Missing/unsupported/too-large targets are not claimed restorable.
-11. Raw restore content stays resident-owned in the kernel DB and is not exposed by metadata, inspection, or proposal projection.
-12. Read-only inspection and proposal derivation must revalidate exact Work ownership.
-13. Current-target inspection is fresh observation, not restore authority.
-14. The recurring Work list does not perform restore-target hashing; detailed `workGet` / explicit refresh owns inspection.
-15. Desktop restore-point observations are transient and are not persisted in browser localStorage.
-16. A restore proposal is informational only; `requires_user_approval` is a prerequisite declaration, not an approval grant.
-17. Actual restore application remains a separate destructive authority/lifecycle problem.
-
-## Relevant files
-
-- `runtime/python/zn_agent/core/file_identity.py`
-- `runtime/python/zn_agent/core/side_effect_attempts.py`
-- `runtime/python/zn_agent/core/side_effect_body.py`
-- `runtime/python/zn_agent/core/overwrite_recovery_resident.py`
-- `runtime/python/zn_agent/core/atomic_overwrite_protocols.py`
-- `runtime/python/zn_agent/core/staged_text_write.py`
-- `runtime/python/zn_agent/core/atomic_overwrite_resident.py`
-- `runtime/python/zn_agent/core/atomic_overwrite_namespace_recovery_resident.py`
-- `runtime/python/zn_agent/core/work_restore_point_resident.py`
-- `runtime/python/zn_agent/core/work_restore_point_inspection_resident.py`
-- `runtime/python/zn_agent/core/recovery_bounded_resident.py`
-- `runtime/python/zn_agent/core/provider_bridge.py`
-- `runtime/python/zn_agent/core/work_control.py`
-- `runtime/python/zn_agent/core/work.py`
-- `tests/zn_agent/core/test_work_overwrite_recovery.py`
-- `tests/zn_agent/core/test_windows_atomic_overwrite.py`
-- `tests/zn_agent/core/test_windows_atomic_overwrite_namespace_recovery.py`
-- `tests/zn_agent/core/test_windows_atomic_overwrite_namespace_repair.py`
-- `tests/zn_agent/core/test_work_restore_points.py`
-- `tests/zn_agent/core/test_work_restore_proposals.py`
-- `tests/zn_agent/core/test_work_restore_point_guards.py`
-- `tests/zn_agent/core/test_work_restore_point_retention.py`
-- `tests/zn_agent/core/test_work_restore_point_active_run.py`
-- `apps/desktop/src/zn/resident-client.ts`
-- `apps/desktop/src/zn/state.ts`
-- `apps/desktop/src/zn/workbench.tsx`
-- `apps/desktop/electron/zn-restore-point-inspection.test.ts`
-- `apps/desktop/electron/zn-desktop-ownership.test.ts`
-- `.github/workflows/zn-ci.yml`
-- `.github/workflows/zn-atomic-overwrite-e2e.yml`
-- `.github/workflows/zn-work-recovery-e2e.yml`
+9. Capacity exhaustion blocks incoming restorable overwrite rather than deleting older rollback evidence.
+10. Raw restore content stays resident-owned and private.
+11. Inspection/proposals require fresh ownership/current-target evidence.
+12. Desktop restore observation is transient, not persisted authority.
+13. `requires_user_approval` declares a prerequisite; it does not grant approval.
+14. Actual destructive restore remains a separate high-risk lifecycle.
 
 ## Open risks / incomplete work
 
-P5 remains **PARTIAL**. Still open:
+P5 remains partial:
 
-- actual destructive restore application/writeback is not implemented;
-- commit-time target revalidation for destructive restore is not implemented;
-- explicit approval/authority lifecycle is not implemented;
-- post-restore verification, crash semantics, and failure semantics are not implemented;
-- current proposal is informational and grants no restore authority;
-- general per-task rollback and arbitrary workspace snapshots remain open;
-- there is no general startup/maintenance GC owner for deterministic artifacts outside an exact active protocol;
-- files larger than the exact capture limit and incomplete identities remain non-restorable/fail-closed for this path;
-- replacement changes file identity; uncommon metadata/named-stream behavior and host/power-loss durability remain open;
-- isolated parallel Work remains open;
-- broader browser, M8 continuity, and SM1+ work remains incomplete;
-- identity, long-term memory, credentials/permissions, updater/rollback/signing/release trust, destructive restore, destructive migrations, installed-version replacement, and self-maintenance approval-rule changes remain human-approval boundaries.
+- destructive restore writeback is not implemented;
+- commit-time destructive target revalidation is not implemented;
+- restore approval/authority lifecycle is not implemented;
+- post-restore verification/crash/failure semantics are not implemented;
+- arbitrary workspace snapshots/general per-task rollback remain open;
+- isolated parallel Work remains open.
+
+Windows-first M8 remains incomplete:
+
+- real clean Windows install/login/startup evidence is still missing;
+- real installed N -> N+1 application/runtime/resident continuity is still missing;
+- identity, memory, work and configuration continuity across the installed transition is not yet proven;
+- a safe Windows rollback lifecycle across a real version transition is not implemented/proven;
+- Windows signing and release trust are not established; current installer proof is explicitly unsigned;
+- the formal `.github/workflows/zn-release.yml` still has a three-OS package matrix and has not been changed in this low-risk candidate stage;
+- no formal tag, GitHub Release or stable-channel advance has occurred.
+
+Broader browser/product work and SM1+ also remain incomplete.
+
+Identity, long-term memory destructive changes, credentials/permissions, updater/rollback/signing/release trust, destructive restore, destructive migrations, installed-version replacement and self-maintenance approval-rule changes remain human-approval boundaries.
 
 ## Next real target
 
-First, close this P5.10 source stage with exact documentation-head CI, final diff review, and normal traceable low-risk promotion into canonical `main` if the gate remains green. Do not turn source promotion into a formal Release, stable-channel advance, updater activation, or installed-version replacement.
+Finish exact documentation-head CI and promote this low-risk Windows candidate proof/status stage only if the full gate remains green.
 
-After promotion, the next safe P5 target is a **non-mutating restore approval/authority-boundary contract**. It should define what an explicit user approval would need to bind to (restore point, Work ownership, target identity, freshness window, and one exact proposed operation) while still granting **no writeback authority** and performing no destructive restore.
+After that, continue Windows-first M8 with the smallest safe step toward **real clean-install evidence** without modifying updater/rollback/signing trust. The later installed N -> N+1, rollback and signing/release-trust slices remain separately reviewed high-risk work.
 
-Actual restore application, commit-time destructive revalidation, writeback, rollback semantics, post-restore verification, and crash recovery for that mutation remain a separately reviewed human-approved slice.
-
-Normal development remains on `dev/zn-agent` or isolated work branches. Verified coherent stages should continue to use traceable PR/promotion flow into `main`; a `main` merge is canonical source maintenance, not by itself a formal product Release.
+The next safe P5 restore slice remains a non-mutating approval/authority-boundary contract. Actual restore writeback remains separately human-approved.
