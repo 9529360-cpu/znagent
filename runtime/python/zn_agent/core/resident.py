@@ -7,6 +7,7 @@ from typing import Any
 
 from .budget import CognitiveBudgetManager
 from .capabilities import CapabilityRegistry
+from .completion_observation import CompletionObservationJournal
 from .investigation import InvestigationResult, NativeInvestigator
 from .memory import StructuredMemory
 from .models import (
@@ -63,6 +64,8 @@ class ZNResidentRuntime:
 
         self.life = ZNLifeCore(self)
         self.life.wake()
+        self.completion_observations = CompletionObservationJournal(self.store)
+        self.completion_observations.repair_life(self)
         self.investigator = NativeInvestigator(self)
 
     def enqueue(
@@ -101,6 +104,10 @@ class ZNResidentRuntime:
             reason=outcome.reason,
             kernel_result=None,
         )
+
+    def repair_completion_observations(self, *, limit: int = 128) -> int:
+        """Retry resident self-observation without reopening completed Work."""
+        return self.completion_observations.repair_life(self, limit=limit)
 
     def submit(
         self,
@@ -243,13 +250,17 @@ class ZNResidentRuntime:
                 )
                 self.store.save_working_state(state)
         except Exception as exc:
+            completed = self.result_for(event.event_id)
+            if completed is not None:
+                return completed
+            current = self.store.get_working_state()
+            if self._preserve_working_truth_on_exception(event, current):
+                raise
             message = f"{type(exc).__name__}: {exc}"
             self.life.mark_impasse_unresolved(event, message)
-            self.store.record_runtime_task(model_invocations=0)
-            failure = ResidentRunResult(
-                event=event,
-                execution_path=ExecutionPath.BUDGET_BLOCKED,
-                success=False,
+            failure = self._checkpoint_terminal_failure(
+                event,
+                current,
                 reason=message,
             )
             return self._complete_result(event, failure)
@@ -317,30 +328,109 @@ class ZNResidentRuntime:
         event: AgentEvent,
         result: ResidentRunResult,
     ) -> ResidentRunResult:
-        self.store.finish_event(
-            event.event_id,
+        outcome = EventOutcome(
+            event_id=event.event_id,
             success=result.success,
+            execution_path=result.execution_path,
+            response=result.response,
+            model_invocations=result.model_invocations,
+            capability_name=result.capability_name,
+            reason=result.reason,
+        )
+        result.event = self.store.complete_event(
+            outcome,
             error=None if result.success else (result.reason or "event failed"),
         )
-        persisted = self.store.get_event(event.event_id)
-        if persisted is not None:
-            result.event = persisted
-        self._persist_outcome(result)
-        self.life.observe_action(result)
-        self.store.save_working_state(WorkingState(stage="idle"))
+        self.completion_observations.observe_life(self, result)
         return result
 
-    def _persist_outcome(self, run: ResidentRunResult) -> None:
-        self.store.save_event_outcome(
-            EventOutcome(
-                event_id=run.event.event_id,
-                success=run.success,
-                execution_path=run.execution_path,
-                response=run.response,
-                model_invocations=run.model_invocations,
-                capability_name=run.capability_name,
-                reason=run.reason,
-            )
+    @staticmethod
+    def _preserve_working_truth_on_exception(
+        event: AgentEvent,
+        state: WorkingState,
+    ) -> bool:
+        if str(state.current_event_id or "") != str(event.event_id):
+            return False
+        stage = str(state.stage or "").strip().lower()
+        blocked_by = str(state.blocked_by or "").strip().lower()
+        if blocked_by == "outside_world_effect_uncertain" or stage == "side_effect_recovery":
+            return True
+        if stage in {"complete", "failed", "terminal_failure"}:
+            return True
+        return stage.endswith("_completion")
+
+    def _resident_accounting_journal(self):
+        journal = getattr(self, "resident_accounting", None)
+        if journal is None:
+            from .resident_accounting import ResidentAccountingJournal
+
+            journal = ResidentAccountingJournal(self.store)
+            self.resident_accounting = journal
+        return journal
+
+    def _checkpoint_terminal_failure(
+        self,
+        event: AgentEvent,
+        state: WorkingState,
+        *,
+        reason: str,
+    ) -> ResidentRunResult:
+        completion = {
+            "execution_path": ExecutionPath.BUDGET_BLOCKED.value,
+            "success": False,
+            "response": None,
+            "model_invocations": 0,
+            "reason": str(reason or "resident task failed"),
+        }
+        state.current_event_id = event.event_id
+        state.stage = "terminal_failure"
+        state.next_action = "publish terminal EventOutcome"
+        state.data["terminal_failure"] = completion
+        self.store.save_working_state(state)
+        self._resident_accounting_journal().record_terminal_failure(
+            event_id=event.event_id,
+            model_invocations=0,
+        )
+        return self._terminal_failure_result(event, completion)
+
+    def _resume_terminal_failure(
+        self,
+        event: AgentEvent,
+        state: WorkingState,
+    ) -> ResidentRunResult:
+        raw = state.data.get("terminal_failure")
+        if not isinstance(raw, dict):
+            raise RuntimeError("durable terminal failure checkpoint is incomplete")
+        try:
+            result = self._terminal_failure_result(event, raw)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("durable terminal failure checkpoint is malformed") from exc
+        self._resident_accounting_journal().record_terminal_failure(
+            event_id=event.event_id,
+            model_invocations=0,
+        )
+        return result
+
+    @staticmethod
+    def _terminal_failure_result(
+        event: AgentEvent,
+        raw: dict[str, Any],
+    ) -> ResidentRunResult:
+        if raw.get("success") is not False:
+            raise ValueError("terminal failure checkpoint must record failure")
+        execution_path = ExecutionPath(str(raw.get("execution_path") or ""))
+        if execution_path is not ExecutionPath.BUDGET_BLOCKED:
+            raise ValueError("terminal failure checkpoint must use budget-blocked path")
+        model_invocations = raw.get("model_invocations")
+        if isinstance(model_invocations, bool) or int(model_invocations) != 0:
+            raise ValueError("terminal failure checkpoint cannot claim model use")
+        return ResidentRunResult(
+            event=event,
+            execution_path=execution_path,
+            success=False,
+            response=raw.get("response"),
+            model_invocations=0,
+            reason=str(raw.get("reason") or "resident task failed"),
         )
 
     def run_forever(
@@ -812,6 +902,8 @@ class ZNResidentRuntime:
                 readiness=readiness,
                 thought=thought,
             )
+        if state.stage == "resident_completion":
+            return self._resume_resident_completion(event, state)
         if state.stage == "native_investigation":
             return self._investigation_step(
                 event,
@@ -820,6 +912,8 @@ class ZNResidentRuntime:
                 learning_evidence=learning_evidence,
                 thought=thought,
             )
+        if state.stage == "investigation_completion":
+            return self._resume_investigation_completion(event, state)
         if state.stage == "native_deliberation":
             return self._deliberation_step(
                 event,
@@ -830,6 +924,8 @@ class ZNResidentRuntime:
             )
         if state.stage == "external_cognition":
             return self._external_cognition_step(event, state)
+        if state.stage == "terminal_failure":
+            return self._resume_terminal_failure(event, state)
 
         state.stage = "orient"
         state.next_action = "orient to current event"
@@ -849,22 +945,29 @@ class ZNResidentRuntime:
         state.data["memory_checked"] = memory_checked
         memory_match = self.memory.recall(event.task) if memory_checked else None
         if memory_match is not None:
-            state.stage = "native_memory"
-            state.next_action = "complete"
-            self.store.save_working_state(state)
+            response = self._render_memory_value(memory_match.value)
+            reason = f"recalled structured fact '{memory_match.key}'"
             self.kernel.self_model.observe_knowledge_use(
                 event.task,
                 required,
                 quality=1.0,
             )
             self.store.record_runtime_task(model_invocations=0)
-            return ResidentRunResult(
-                event=event,
-                execution_path=ExecutionPath.MEMORY,
-                success=True,
-                response=self._render_memory_value(memory_match.value),
-                reason=f"recalled structured fact '{memory_match.key}'",
-            )
+            completion = {
+                "execution_path": ExecutionPath.MEMORY.value,
+                "success": True,
+                "response": response,
+                "model_invocations": 0,
+                "reason": reason,
+            }
+            state.stage = "resident_completion"
+            state.next_action = "publish terminal EventOutcome"
+            state.data["resident_completion"] = completion
+            # The memory answer and ordinary accounting are already established.
+            # Once this checkpoint is durable, restart must publish only the
+            # terminal outcome instead of recalling and accounting a second time.
+            self.store.save_working_state(state)
+            return self._resident_completion_result(event, completion)
 
         local_failure: str | None = None
         resolved = self.capabilities.resolve(event)
@@ -889,17 +992,24 @@ class ZNResidentRuntime:
                     success=True,
                     quality=max(0.5, min(1.0, float(confidence))),
                 )
+                completion = {
+                    "execution_path": ExecutionPath.CAPABILITY.value,
+                    "success": True,
+                    "response": local_result.response,
+                    "model_invocations": 0,
+                    "capability_name": capability.name,
+                    "reason": "resolved by compiled local capability",
+                }
+                state.stage = "resident_completion"
+                state.next_action = "publish terminal EventOutcome"
                 state.data["native_domains"] = list(domains)
-                self.store.save_working_state(state)
+                state.data["resident_completion"] = completion
                 self.store.record_runtime_task(model_invocations=0)
-                return ResidentRunResult(
-                    event=event,
-                    execution_path=ExecutionPath.CAPABILITY,
-                    success=True,
-                    response=local_result.response,
-                    capability_name=capability.name,
-                    reason="resolved by compiled local capability",
-                )
+                # The capability has already returned success. Persist that fact
+                # before EventOutcome so a restart never re-enters the compiled
+                # capability merely to reconstruct an already-established result.
+                self.store.save_working_state(state)
+                return self._resident_completion_result(event, completion)
             self.kernel.self_model.observe_native_outcome(
                 event.task,
                 required,
@@ -918,6 +1028,72 @@ class ZNResidentRuntime:
             self._persist_enriched_thought(thought)
         self.store.save_working_state(state)
         return None
+
+    def _resume_resident_completion(
+        self,
+        event: AgentEvent,
+        state: WorkingState,
+    ) -> ResidentRunResult:
+        raw = state.data.get("resident_completion")
+        if not isinstance(raw, dict):
+            return self._invalid_resident_completion(
+                event,
+                "durable resident completion checkpoint is incomplete",
+            )
+        try:
+            return self._resident_completion_result(event, raw)
+        except (TypeError, ValueError):
+            return self._invalid_resident_completion(
+                event,
+                "durable resident completion checkpoint is malformed",
+            )
+
+    @staticmethod
+    def _invalid_resident_completion(
+        event: AgentEvent,
+        reason: str,
+    ) -> ResidentRunResult:
+        return ResidentRunResult(
+            event=event,
+            execution_path=ExecutionPath.BUDGET_BLOCKED,
+            success=False,
+            model_invocations=0,
+            reason=reason,
+        )
+
+    @staticmethod
+    def _resident_completion_result(
+        event: AgentEvent,
+        raw: dict[str, Any],
+    ) -> ResidentRunResult:
+        if raw.get("success") is not True:
+            raise ValueError("resident completion checkpoint must record success")
+        execution_path = ExecutionPath(str(raw.get("execution_path") or ""))
+        if execution_path not in {ExecutionPath.MEMORY, ExecutionPath.CAPABILITY}:
+            raise ValueError(
+                "resident completion checkpoint must use memory or capability path"
+            )
+        model_invocations = raw.get("model_invocations")
+        if isinstance(model_invocations, bool) or int(model_invocations) != 0:
+            raise ValueError("resident completion checkpoint cannot claim model use")
+
+        capability_name = None
+        if execution_path is ExecutionPath.CAPABILITY:
+            capability_name = str(raw.get("capability_name") or "").strip()
+            if not capability_name:
+                raise ValueError(
+                    "capability completion checkpoint must identify the capability"
+                )
+
+        return ResidentRunResult(
+            event=event,
+            execution_path=execution_path,
+            success=True,
+            response=raw.get("response"),
+            model_invocations=0,
+            capability_name=capability_name,
+            reason=str(raw.get("reason") or ""),
+        )
 
     def _investigation_step(
         self,
@@ -947,18 +1123,23 @@ class ZNResidentRuntime:
                 success=True,
                 quality=0.95,
             )
-            state.stage = "complete"
-            state.next_action = None
+            completion = {
+                "execution_path": ExecutionPath.INVESTIGATION.value,
+                "success": True,
+                "response": str(investigation.response or ""),
+                "model_invocations": 0,
+                "reason": "resolved from ZN's own body and environment evidence",
+            }
+            state.stage = "investigation_completion"
+            state.next_action = "publish terminal EventOutcome"
             state.data["native_domains"] = list(domains)
-            self.store.save_working_state(state)
+            state.data["investigation_completion"] = completion
             self.store.record_runtime_task(model_invocations=0)
-            return ResidentRunResult(
-                event=event,
-                execution_path=ExecutionPath.INVESTIGATION,
-                success=True,
-                response=investigation.response,
-                reason="resolved from ZN's own body and environment evidence",
-            )
+            # Once this checkpoint is durable, the investigation result is
+            # established. Restart must publish it without running another
+            # native probe or repeating ordinary task accounting.
+            self.store.save_working_state(state)
+            return self._investigation_completion_result(event, completion)
 
         if investigation.can_continue:
             state.stage = "native_investigation"
@@ -970,6 +1151,60 @@ class ZNResidentRuntime:
         state.next_action = "integrate native evidence and identify remaining gap"
         self.store.save_working_state(state)
         return None
+
+    def _resume_investigation_completion(
+        self,
+        event: AgentEvent,
+        state: WorkingState,
+    ) -> ResidentRunResult:
+        raw = state.data.get("investigation_completion")
+        if not isinstance(raw, dict):
+            return self._invalid_investigation_completion(
+                event,
+                "durable investigation completion checkpoint is incomplete",
+            )
+        try:
+            return self._investigation_completion_result(event, raw)
+        except (TypeError, ValueError):
+            return self._invalid_investigation_completion(
+                event,
+                "durable investigation completion checkpoint is malformed",
+            )
+
+    @staticmethod
+    def _invalid_investigation_completion(
+        event: AgentEvent,
+        reason: str,
+    ) -> ResidentRunResult:
+        return ResidentRunResult(
+            event=event,
+            execution_path=ExecutionPath.INVESTIGATION,
+            success=False,
+            model_invocations=0,
+            reason=reason,
+        )
+
+    @staticmethod
+    def _investigation_completion_result(
+        event: AgentEvent,
+        raw: dict[str, Any],
+    ) -> ResidentRunResult:
+        if raw.get("success") is not True:
+            raise ValueError("investigation completion checkpoint must record success")
+        execution_path = ExecutionPath(str(raw.get("execution_path") or ""))
+        if execution_path is not ExecutionPath.INVESTIGATION:
+            raise ValueError("investigation completion checkpoint must use investigation path")
+        model_invocations = raw.get("model_invocations")
+        if isinstance(model_invocations, bool) or int(model_invocations) != 0:
+            raise ValueError("investigation completion checkpoint cannot claim model use")
+        return ResidentRunResult(
+            event=event,
+            execution_path=execution_path,
+            success=True,
+            response=str(raw.get("response") or ""),
+            model_invocations=0,
+            reason=str(raw.get("reason") or ""),
+        )
 
     def _deliberation_step(
         self,
@@ -1023,14 +1258,9 @@ class ZNResidentRuntime:
 
         if not decision.use_model:
             self.life.mark_impasse_unresolved(event, str(deliberation["unknown"]))
-            self.store.record_runtime_task(model_invocations=0)
-            state.stage = "failed"
-            state.next_action = None
-            self.store.save_working_state(state)
-            return ResidentRunResult(
-                event=event,
-                execution_path=ExecutionPath.BUDGET_BLOCKED,
-                success=False,
+            return self._checkpoint_terminal_failure(
+                event,
+                state,
                 reason=decision.reason,
             )
 

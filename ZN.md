@@ -2,7 +2,7 @@
 
 > Active development branch: `dev/zn-agent`
 >
-> Canonical release/source branch: `main` once the M10 promotion decision below is executed.
+> Canonical source/release branch: `main`
 >
 > This file is the current architecture contract. Real code and Git state determine what exists; tests/CI determine what has been verified; `.agent/HANDOFF.md` records the current work site.
 
@@ -25,7 +25,7 @@ Normal engineering loop:
 inspect repository + branch + CI
 → identify entry / owner / state / lifecycle / dependency / tests / active caller
 → update ZN.md first when architecture direction changes
-→ implement the smallest coherent ZN-owned step
+→ implement the smallest coherent ZN-owned step on dev/zn-agent or an isolated work branch
 → add or update tests
 → run relevant verification
 → inspect diff
@@ -34,7 +34,27 @@ inspect repository + branch + CI
 → synchronize status docs and HANDOFF
 ```
 
-`main` must not be modified until the explicit M10 conditions are satisfied and the user explicitly authorizes promotion.
+M10 canonical promotion is complete. `main` is the canonical source/release branch; `dev/zn-agent` is the fixed primary development branch.
+
+Ordinary development, investigation, self-maintenance and experiments must not be performed directly on `main`. They belong on `dev/zn-agent` or an isolated work branch.
+
+That restriction does not freeze `main`. A coherent low-risk engineering stage may be promoted through the repository's normal PR/merge/promotion flow when all applicable gates are true:
+
+```text
+implementation complete for the claimed slice
+→ relevant tests pass
+→ full CI / required E2E pass
+→ diff reviewed
+→ status docs + HANDOFF match real code and CI
+→ no unresolved promotion blocker
+→ no high-risk boundary requiring human approval
+→ normal traceable PR / merge / promotion
+→ main becomes the new verified canonical source
+```
+
+A normal low-risk promotion that satisfies these repository gates does not require an extra chat-only approval sentence. High-risk boundaries still require explicit human approval, including identity, long-term memory, destructive data migration, credentials/permissions, updater/rollback/signing trust, self-maintenance approval rules, and replacement of the user's currently installed formal version.
+
+Promotion must never use force push, Git history rewrite, disabled CI, bypassed failed checks, or false completion claims.
 
 ## 1. Product definition
 
@@ -42,7 +62,7 @@ ZN is the only product and the only resident subject.
 
 **ZN uses models. Models do not own ZN.**
 
-Models, browsers, search systems, code interpreters and future cognitive systems are replaceable resources. They do not own ZN identity, memory, Will, continuity or the resident life loop.
+Models, browser engines/providers, search systems, code interpreters and future cognitive systems are replaceable resources. They do not own ZN identity, memory, Will, continuity or the resident life loop. ZN owns the semantics, state, authority and evidence contracts around those resources.
 
 ZN owns:
 
@@ -63,7 +83,7 @@ Disconnecting every external model must not erase ZN identity/state or prevent n
 
 The active development tree is ZN-only. Historical/reference product source is not kept inside the active tree and is not a runtime, build, test, packaging, release or maintenance dependency.
 
-Reference mechanisms may be studied from Git history or a dedicated reference branch/external upstream. Reuse is allowed only when the mechanism is understood, adapted behind ZN-owned interfaces/config/state/lifecycle, covered by ZN tests and free of reference-product control-plane assumptions.
+Reference mechanisms may be studied from Git history, the dedicated reference branch, or an external/upstream repository. Reuse is allowed only when the mechanism is understood, adapted behind ZN-owned interfaces/config/state/lifecycle, covered by ZN tests and free of reference-product control-plane assumptions.
 
 Never restore a historical product tree merely because a test, import or build step breaks. Decide whether the capability belongs to ZN. If it does, implement or adapt it as ZN-owned code; otherwise remove the obsolete caller or contract.
 
@@ -159,6 +179,162 @@ Engineering competence must preserve:
 - familiar execution never makes current evidence optional;
 - model suggestions do not create execution authority.
 
+### 4.1 Browser is a first-class resident Body/Senses subsystem
+
+Browser capability is not a late tool attachment and must not be reduced to "a model controlling Playwright". Product-grade ZN needs two distinct browser planes from the architecture level:
+
+```text
+Resident Managed Browser
++ User Browser Bridge
+= complete browser capability
+```
+
+They serve different realities and neither can replace the other.
+
+The browser subsystem must be ZN-owned at the contract/lifecycle/evidence layer even when the underlying engine or provider is replaceable.
+
+### 4.2 Resident Managed Browser
+
+ZN needs a managed browser for autonomous web work that should not require a visible user browser or an already logged-in personal session.
+
+The default design target is a locally available Chromium-class browser controlled through a ZN-owned adapter, with both headless and headed execution when the platform supports them. A remote/cloud browser may be an optional provider, but basic resident web ability must not depend on a cloud browser account.
+
+The managed browser is responsible for product capabilities such as:
+
+- page/session lifecycle and bounded profile storage;
+- navigation, redirects and URL safety;
+- DOM/accessibility/page-state sensing;
+- screenshots and visual evidence where needed;
+- click, focus, form entry and bounded script-driven page interaction;
+- downloads/uploads with explicit file authority;
+- multi-page/tab state where justified;
+- current page URL/title/load/error evidence;
+- post-action verification and recovery from stale targets;
+- explicit network/proxy/provider configuration;
+- deterministic cleanup of ephemeral sessions.
+
+Managed browser profiles are isolated from the user's ordinary browser profiles by default. ZN must not silently copy Chrome/Edge cookies, password stores, browser databases, profile directories or authentication secrets into its managed browser.
+
+Search/extract APIs such as Tavily, Exa or Firecrawl remain useful WebResources, but they complement rather than replace a real managed browser. API extraction cannot prove interactive page state, JavaScript behavior, authenticated UI flows or browser-side effects.
+
+### 4.3 User Browser Bridge
+
+Many important tasks depend on state that already exists in the user's real browser: authenticated applications, enterprise SSO, remembered MFA, local certificates, site grants, extensions, open tabs or data that the user should not have to log into again inside a second ZN-managed profile.
+
+ZN therefore also needs a separate bridge to the user's existing browser session.
+
+The user browser remains the user's application and profile; it does not become ZN runtime or identity storage. ZN may sense and act through bounded adapters such as:
+
+```text
+Windows UIA / accessibility / desktop evidence
++ optional ZN browser companion extension
++ optional native-messaging or similarly bounded local bridge
+```
+
+A companion extension/bridge may provide higher-fidelity semantic page evidence when installed and explicitly permitted, while UIA/desktop control remains an independent path and fallback for visible user interaction.
+
+The user must not be forced to reproduce every login inside the managed browser merely because ZN needs data from an authenticated user session. Conversely, ZN must not solve this by extracting raw cookies, saved passwords or browser credential databases. Authentication material stays in the browser/OS security boundary whenever possible; ZN acts through the already-authorized session.
+
+Per-site/page/session permission, sensitive-field handling and user-visible control must be explicit. Password fields, payment secrets, recovery codes and other sensitive inputs require conservative handling and must never become ordinary observation or learned-memory content.
+
+### 4.4 Shared browser action and evidence contract
+
+Managed-browser and user-browser paths may use different providers, but they should converge on ZN-owned semantic contracts rather than create two unrelated automation stacks.
+
+Common concepts should include:
+
+```text
+BrowserTarget
+BrowserObservation
+BrowserAction
+BrowserActionAuthority
+BrowserEffectEvidence
+BrowserSessionIdentity
+BrowserPermissionContext
+```
+
+Actions must bind to fresh target/session evidence. Successful dispatch is not successful completion. Navigation, form submission, downloads, uploads and state-changing page actions require appropriate postconditions.
+
+DOM identity, accessibility identity, UIA RuntimeId, coordinates and visual regions are all scoped evidence, not permanent truth. The resident must be able to reject stale targets and re-sense after page/process/frame changes.
+
+Cloud browser providers, local Chromium, browser extensions and desktop automation are implementations behind ZN ownership. No provider may become the browser control plane or own resident intention, permission, memory or completion semantics.
+
+### 4.5 Product-level browser requirements
+
+The browser subsystem should be designed for the eventual real product rather than a CI-demo minimum. Important requirements include:
+
+- local-first managed browsing with optional cloud capacity;
+- use of the user's existing authenticated browser when task reality lives there;
+- no hidden credential/profile copying between browser planes;
+- first-class privacy boundaries for text, screenshots, downloads and page metadata;
+- explicit MFA/user-presence handoff where automation cannot or should not continue alone;
+- robust handling of popups, new tabs, redirects, downloads, file pickers and browser crashes;
+- bounded persistence and cleanup for managed sessions;
+- observable provider/session health and actionable failure reasons;
+- anti-stale target checks and independent post-action evidence;
+- replaceable providers without changing ZN identity or resident semantics;
+- real-browser E2E evidence for supported user-browser integrations;
+- managed-browser E2E evidence for supported autonomous browser integrations.
+
+A product slice may implement only part of this at one time, but status documents must name the missing product requirements explicitly. Passing a narrow test is evidence for that slice, not evidence that the browser product is complete.
+
+### 4.6 Resident intelligence must accumulate inside ZN
+
+ZN must not behave like a newborn agent that re-solves every recurring task from scratch merely because an external model is available. A mature resident should become both more capable and more reliable through mechanisms and experience that belong to ZN itself.
+
+Resident intelligence has three distinct sources:
+
+```text
+ZN-owned built-in competence
++ ZN-owned learned experience / procedural competence
++ replaceable external cognition for genuine novelty
+= mature resident intelligence
+```
+
+**Built-in competence** is mature engineering and computer-use knowledge crystallized into ZN-owned mechanisms: state machines, evidence contracts, Body/Senses semantics, verification, recovery, conflict detection, deterministic capabilities, tests and other resident behavior. When a class of failure is already well understood and can be handled by explicit evidence, ZN should not repeatedly ask a model to rediscover the same rule.
+
+**Learned competence** is what ZN acquires through its own verified lived experience: familiar procedures, context-specific expectations, anomaly patterns, recovery tendencies and project/user-specific ways of working. This competence must remain reality-gated and should survive provider replacement.
+
+**External cognition** remains valuable for unfamiliar situations, hard reasoning and genuine knowledge gaps, but its output is candidate cognition rather than resident truth. External model quality may change without redefining who ZN is or erasing what ZN already knows how to do.
+
+The knowledge-crystallization rule is:
+
+```text
+well-understood recurring problem
+→ encode resident-owned observation / invariant / procedure / verification
+→ prove it with tests and current-world evidence
+→ stop paying a model to rediscover the same low-level rule every time
+```
+
+Some questions are never model-authority questions. Whether an action executed, a file now contains intended bytes, a browser mutation took effect, an event is terminal, or the outside world changed must be established from owned state and fresh observation, not inferred from model confidence.
+
+Repeated work should proceduralize rather than become repeated prompting. The first unfamiliar attempt may require deep Investigation and external cognition; later compatible attempts should use accumulated resident competence while still checking current reality. A hundred prior successes do not authorize a blind hundred-and-first action when current evidence has drifted.
+
+A mature familiar path therefore needs both speed and interruption semantics:
+
+```text
+familiar Situation
+→ resident competence activates
+→ act
+→ verify expected result
+→ compatible reality strengthens familiarity
+
+but:
+
+changed / ambiguous / contradictory reality
+→ stop automatic continuation
+→ re-sense
+→ raise uncertainty
+→ Thought / Investigation
+→ adapt or relearn
+```
+
+Product quality is not measured only by whether ZN can complete a task once. Important intelligence criteria include repeated-task reliability, anomaly detection, uncertainty calibration, self-correction, restart continuity, resistance to stale state, provider independence and retention of mature competence when models are unavailable.
+
+This does not mean copying a model's weights, hidden training data or unverified textual knowledge into ZN. It means converting applicable mature systems knowledge into explicit ZN-owned architecture and tests, while allowing ZN's personal/project-specific competence to emerge from verified experience.
+
+Detailed learning mechanics remain governed by `docs/ZN-MEMORY-LEARNING.md`. The broader product/engineering implications of resident intelligence are recorded in `docs/ZN-RESIDENT-INTELLIGENCE.md`.
+
 ## 5. Memory and learning
 
 Memory is lived resident change, not merely transcript/context retrieval.
@@ -209,6 +385,8 @@ Credentials and secrets belong in appropriate secure stores/project secret infra
 
 ## 8. Release/update architecture
 
+The current intended desktop platform is **Windows x64**. Formal release readiness and M8 evidence are Windows-first. Linux and macOS packaging or continuity checks may be retained as optional/on-demand evidence, but they do not block normal development or M8 unless they are explicitly restored as intended product targets.
+
 Formal installers and update assets are ZN-only:
 
 ```text
@@ -221,9 +399,9 @@ traceable commit/tag
 → advance stable.json LAST
 ```
 
-A clean machine must not require a source checkout, system Python, Node/npm or private source credentials.
+A clean Windows machine must not require a source checkout, system Python, Node/npm or private source credentials.
 
-Hashes are integrity checks, not signatures. Signing/notarization remain separate release hardening gates where applicable.
+Hashes are integrity checks, not signatures. Windows signing remains a separate release hardening gate.
 
 ## 9. Self-maintenance
 
@@ -234,6 +412,8 @@ First-stage principle: ZN may investigate, develop, test, prepare branches/PRs a
 Identity, long-term memory, credentials, updater, rollback, signing and self-maintenance permission rules remain high-risk boundaries requiring conservative approval.
 
 ## 10. Testing contract
+
+The steady-state daily CI target is Windows x64. It should run automatically from repository events on a replaceable self-hosted Windows x64 runner rather than depending on a specific runner name or maintainer session. A replacement Windows x64 runner registered to the repository must be able to resume the same workflow.
 
 At minimum protect:
 
@@ -246,63 +426,8 @@ At minimum protect:
 - runtime package ownership;
 - active ZN renderer/main/preload/protocol ownership;
 - release/runtime staging integrity;
-- repository-boundary scans that prevent historical/reference product paths, package namespaces or control planes from becoming active dependencies again.
+- repository-boundary scans that prevent historical/reference product paths, package namespaces or control planes from becoming active dependencies again;
+- managed-browser lifecycle/evidence contracts once implemented;
+- real user-browser integration and privacy/permission boundaries once implemented.
 
-Tests retained in the active tree must describe ZN behavior or guard ZN ownership boundaries.
-
-## 11. M8 and M10 boundaries
-
-M8 release continuity debt remains separate and must not be falsely reported complete. Installed N→N+1 continuity, intended-platform clean-install/login evidence and signing/notarization remain explicit until verified.
-
-M10 is the intentional promotion of verified ZN to `main`. Active-tree source cleanup by itself does not authorize modifying `main`.
-
-M10 requires all of the following at promotion time:
-
-1. ZN-owned resident runtime and persistent identity/state path;
-2. ZN-owned desktop main/preload/renderer and protocol/product identity;
-3. ZN-owned build, package and release automation;
-4. reproducible CI proving the current promoted commit;
-5. applicable license/provenance obligations retained;
-6. no active dependency on historical/reference product source;
-7. unresolved M8/release risks explicitly reviewed and acceptable for the intended promotion;
-8. explicit user authorization to promote `dev/zn-agent` to `main`.
-
-Promotion must be deliberate and traceable. Do not force-push or rewrite history to achieve it.
-
-### 11.1 2026-08-24 canonical-branch promotion decision
-
-For the purpose of making ZN the canonical source on `main`—not for declaring M8 or formal release readiness complete—the M10 risk review is approved once the exact promotion commit has a fresh full CI pass.
-
-Current review:
-
-- resident/runtime ownership is ZN-owned and zero-model boot is CI-verified;
-- desktop main/preload/renderer, protocol and packaged runtime ownership are ZN-owned and CI-verified;
-- build/package/release automation is ZN-owned;
-- the active tracked tree has a CI-enforced source boundary; preserved legal attribution in `LICENSE` is the only text-scan exception;
-- historical source is preserved outside the active tree in a dedicated reference branch and is not an active dependency;
-- production npm dependencies are gated against high-severity advisories in CI;
-- two known high-severity findings in the development/tooling dependency set remain debt and must be traced, but they are not accepted as production/runtime dependencies;
-- M8 remains **PARTIAL**: intended-platform continuity, real secure signing/notarization evidence and real-version rollback evidence remain open;
-- those M8 gaps are accepted only for canonical branch promotion, not for claiming formal release completion;
-- the user has explicitly authorized promotion after the source boundary is clean.
-
-Therefore the final M10 gate is: fresh full CI on the exact documentation/decision commit, followed by a non-forced fast-forward of `main`. After promotion, the same source-boundary, production dependency, Python and desktop CI gates must remain active on `main`.
-
-## 12. Current priority
-
-The repository-boundary evacuation is complete. After M10 canonical-branch promotion, engineering priority remains:
-
-```text
-keep ZN-only ownership guards green
-→ trace and remove remaining development/tooling security debt
-→ advance resident-owned engineering competence
-→ strengthen browser/computer Body/Senses only behind ZN ownership
-→ close M8 N→N+1 and intended-platform continuity gaps
-→ maintain self-maintenance/release automation
-```
-
-Do not expand product behavior by restoring old control planes or generic agent-framework ownership.
-
-## 13. Provenance
-
-Historical upstream provenance and license obligations are retained through repository history, the dedicated reference branch and applicable license records. Provenance is legal/historical information only; it must not become a runtime, build, test, release or maintenance dependency.
+Tests retained in the active tree must describe ZN behavior or guard ZN ownership boundaries. Optional Linux/macOS checks remain supplementary unless restored as product targets.

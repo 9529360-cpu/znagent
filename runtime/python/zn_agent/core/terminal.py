@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from .pty import ZNPty, spawn_zn_pty
+from .path_context import canonical_host_path
 
 
 _IS_WINDOWS = os.name == "nt"
@@ -606,10 +607,13 @@ class ZNLocalTerminal:
     @staticmethod
     def _wrap_command(command: str, marker: str) -> str:
         marker_literal = marker.replace("'", "")
+        cwd_probe = "pwd -W" if _IS_WINDOWS else "pwd -P"
         return (
-            "trap '__zn_status=$?; printf \"\\n"
+            "trap '__zn_status=$?; __zn_cwd=$("
+            + cwd_probe
+            + "); printf \"\\n"
             + marker_literal
-            + "%s\\n\" \"$PWD\"; exit $__zn_status' EXIT\n"
+            + "%s\\n\" \"$__zn_cwd\"; exit $__zn_status' EXIT\n"
             + command
         )
 
@@ -656,10 +660,16 @@ class ZNLocalTerminal:
                 return configured
             return shutil.which("bash") or shutil.which("sh") or "/bin/sh"
 
-        candidates = [str(os.environ.get("ZN_GIT_BASH_PATH") or "").strip()]
-        which = shutil.which("bash")
-        if which:
-            candidates.append(which)
+        configured = str(os.environ.get("ZN_GIT_BASH_PATH") or "").strip()
+        candidates: list[str] = [configured] if configured else []
+
+        git_executable = shutil.which("git")
+        if git_executable:
+            git_dir = os.path.dirname(os.path.abspath(git_executable))
+            candidates.append(os.path.join(git_dir, "bash.exe"))
+            if os.path.basename(git_dir).casefold() in {"cmd", "bin"}:
+                candidates.append(os.path.join(os.path.dirname(git_dir), "bin", "bash.exe"))
+
         program_files = [
             os.environ.get("ProgramFiles"),
             os.environ.get("ProgramFiles(x86)"),
@@ -775,11 +785,15 @@ def _normalize_host_path(value: str) -> str:
             drive = match.group(1).upper()
             tail = (match.group(2) or "").replace("/", "\\")
             expanded = f"{drive}:\\{tail}" if tail else f"{drive}:\\"
-    return os.path.abspath(expanded)
+    return str(canonical_host_path(expanded))
 
 
 def _cwd_usable(value: str) -> bool:
-    return bool(value) and os.path.isdir(value) and os.access(value, os.X_OK)
+    if not value or not os.path.isdir(value):
+        return False
+    if _IS_WINDOWS:
+        return True
+    return os.access(value, os.X_OK)
 
 
 def _resolve_safe_cwd(value: str) -> str:

@@ -11,6 +11,7 @@ from zn_agent.core import (
     ExecutionPath,
     IntentionalResidentRuntime,
 )
+from zn_agent.core.path_context import canonical_host_path
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
 
 
@@ -111,7 +112,7 @@ class NativeWillTests(unittest.TestCase):
             completed = resident.will.get(intention.intention_id)
             self.assertEqual(completed.status, "completed")
             self.assertIsNone(completed.related_event_id)
-            self.assertIn(str(target), completed.last_outcome)
+            self.assertIn(str(canonical_host_path(target)), completed.last_outcome)
             self.assertEqual(resident.will.active(), [])
             resident.store.close()
 

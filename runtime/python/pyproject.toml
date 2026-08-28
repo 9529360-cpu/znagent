@@ -9,9 +9,11 @@ description = "ZN resident runtime"
 requires-python = ">=3.11,<3.14"
 license = "MIT"
 dependencies = [
+  "comtypes==1.4.16; sys_platform == 'win32'",
   "httpx[socks]==0.28.1",
   "keyring==25.7.0",
   "openai==2.24.0",
+  "Pillow==12.3.0",
   "psutil==7.2.2",
   "PyYAML==6.0.3",
   "ptyprocess>=0.7.0,<1; sys_platform != 'win32'",
@@ -22,6 +24,7 @@ dependencies = [
 anthropic = ["anthropic==0.87.0"]
 exa = ["exa-py==2.10.2"]
 firecrawl = ["firecrawl-py==4.17.0"]
+browser = ["playwright==1.62.0"]
 
 [project.scripts]
 zn-resident = "zn_agent.resident:main"

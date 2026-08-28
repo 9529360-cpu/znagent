@@ -12,11 +12,13 @@ import hashlib
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 from .action import NativeActionIntent, current_text_equals_postcondition
 from .git_semantics import current_git_stage_intent_goal
 from .models import AgentEvent
+from .path_context import canonical_host_path
 from .procedural_tendency import CandidateProceduralTendency
 
 
@@ -36,6 +38,10 @@ def _fingerprint(value: Any) -> str:
 
 def _fingerprint_text(value: Any) -> str | None:
     text = str(value or "").strip()
+    if text:
+        path = Path(text).expanduser()
+        if path.is_absolute():
+            text = str(canonical_host_path(path))
     return _fingerprint(text) if text else None
 
 

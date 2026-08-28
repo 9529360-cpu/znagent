@@ -9,8 +9,10 @@ from typing import Any, TextIO
 
 from .provider_bridge import build_resident_runtime_from_existing_stack
 from .provider_settings import ProviderSettingsService
+from .recovery_bounded_work import RecoveryBoundedWorkLedger
+from .recovery_control import ResidentRecoveryRequired
 from .service import ResidentService
-from .work import ResidentWorkLedger
+from .work_control import ResidentWorkControl
 
 
 class ResidentRpcServer:
@@ -33,7 +35,8 @@ class ResidentRpcServer:
     ):
         self.resident = resident or build_resident_runtime_from_existing_stack()
         self.service = ResidentService(self.resident)
-        self.work = ResidentWorkLedger(self.resident)
+        self.work = RecoveryBoundedWorkLedger(self.resident)
+        self.work_control = ResidentWorkControl(self.work)
         self.provider_settings = provider_settings or ProviderSettingsService(self.resident)
         self.input = input_stream or sys.stdin
         self.output = output_stream or sys.stdout
@@ -101,7 +104,7 @@ class ResidentRpcServer:
         elif method == "work_list":
             result = [
                 self._work_snapshot(snapshot, artifact_limit=1)
-                for snapshot in self.work.list_snapshots(
+                for snapshot in self.work_control.list_snapshots(
                     thread_limit=max(1, min(100, int(params.get("limit") or 24))),
                     message_limit=max(
                         1, min(500, int(params.get("message_limit") or 120))
@@ -123,7 +126,7 @@ class ResidentRpcServer:
             if not thread_id:
                 raise ValueError("work_get requires thread_id")
             result = self._work_snapshot(
-                self.work.get_snapshot(
+                self.work_control.get_snapshot(
                     thread_id,
                     message_limit=max(
                         1, min(500, int(params.get("message_limit") or 120))
@@ -143,7 +146,7 @@ class ResidentRpcServer:
                 name=str(params.get("workspace_name") or "").strip() or None,
             )
             result = self._work_snapshot(
-                self.work.get_snapshot(
+                self.work_control.get_snapshot(
                     thread.thread_id,
                     message_limit=max(
                         1, min(500, int(params.get("message_limit") or 120))
@@ -156,7 +159,7 @@ class ResidentRpcServer:
                 raise ValueError("work_detach_workspace requires thread_id")
             thread = self.work.detach_workspace(thread_id)
             result = self._work_snapshot(
-                self.work.get_snapshot(
+                self.work_control.get_snapshot(
                     thread.thread_id,
                     message_limit=max(
                         1, min(500, int(params.get("message_limit") or 120))
@@ -173,16 +176,16 @@ class ResidentRpcServer:
             payload = params.get("payload")
             if payload is not None and not isinstance(payload, dict):
                 raise ValueError("work_start payload must be an object")
-            snapshot, event = self.work.start(
+            snapshot, event = self.work_control.start(
                 thread_id,
                 task,
                 kind=str(params.get("kind") or "desktop_user_event"),
                 priority=int(params.get("priority") or 0),
                 payload=payload,
             )
-            progress = self.work.progress(thread_id, event.event_id)
+            progress = self.work_control.progress(thread_id, event.event_id)
             if progress.get("finalized"):
-                snapshot = self.work.get_snapshot(thread_id)
+                snapshot = self.work_control.get_snapshot(thread_id)
             result = {
                 "thread": self._work_snapshot(snapshot),
                 "progress": progress,
@@ -194,17 +197,36 @@ class ResidentRpcServer:
                 raise ValueError("work_progress requires thread_id")
             if not event_id:
                 raise ValueError("work_progress requires event_id")
-            progress = self.work.progress(thread_id, event_id)
+            progress = self.work_control.progress(thread_id, event_id)
             result = {"progress": progress}
             if progress.get("finalized"):
                 result["thread"] = self._work_snapshot(
-                    self.work.get_snapshot(
+                    self.work_control.get_snapshot(
                         thread_id,
                         message_limit=max(
                             1, min(500, int(params.get("message_limit") or 120))
                         ),
                     )
                 )
+        elif method == "work_cancel":
+            thread_id = str(params.get("thread_id") or "").strip()
+            event_id = str(params.get("event_id") or "").strip()
+            if not thread_id:
+                raise ValueError("work_cancel requires thread_id")
+            if not event_id:
+                raise ValueError("work_cancel requires event_id")
+            progress = self.work_control.cancel(thread_id, event_id)
+            result = {
+                "progress": progress,
+                "thread": self._work_snapshot(
+                    self.work_control.get_snapshot(
+                        thread_id,
+                        message_limit=max(
+                            1, min(500, int(params.get("message_limit") or 120))
+                        ),
+                    )
+                ),
+            }
         elif method == "work_submit":
             thread_id = str(params.get("thread_id") or "").strip()
             task = str(params.get("task") or "").strip()
@@ -215,17 +237,32 @@ class ResidentRpcServer:
             payload = params.get("payload")
             if payload is not None and not isinstance(payload, dict):
                 raise ValueError("work_submit payload must be an object")
-            snapshot, run = self.work.submit(
-                thread_id,
-                task,
-                kind=str(params.get("kind") or "desktop_user_event"),
-                priority=int(params.get("priority") or 0),
-                payload=payload,
-            )
-            result = {
-                "thread": self._work_snapshot(snapshot),
-                "run": self._run_result(run),
-            }
+            try:
+                snapshot, run = self.work.submit(
+                    thread_id,
+                    task,
+                    kind=str(params.get("kind") or "desktop_user_event"),
+                    priority=int(params.get("priority") or 0),
+                    payload=payload,
+                )
+            except ResidentRecoveryRequired as exc:
+                work_run = self.work.get_run(exc.event_id)
+                if work_run is None or work_run.thread_id != thread_id:
+                    raise
+                progress = self.work_control.progress(thread_id, exc.event_id)
+                result = {
+                    "thread": self._work_snapshot(
+                        self.work_control.get_snapshot(thread_id)
+                    ),
+                    "progress": progress,
+                    "recovery_required": True,
+                }
+            else:
+                result = {
+                    "thread": self._work_snapshot(snapshot),
+                    "run": self._run_result(run),
+                    "recovery_required": False,
+                }
         elif method == "pulses":
             limit = self._limit(params)
             result = [
@@ -490,6 +527,7 @@ class ResidentRpcServer:
             "event_id": run.event.event_id,
             "execution_path": run.execution_path.value,
             "success": run.success,
+            "cancelled": bool(getattr(run, "cancelled", False)),
             "response": run.response,
             "model_invocations": run.model_invocations,
             "capability_name": run.capability_name,

@@ -16,6 +16,9 @@ from .models import (
 class KernelStore:
     """Compact durable store for the resident agent's actual state."""
 
+    _SIDE_EFFECT_TABLE = "resident_side_effect_attempts"
+    _MAX_COMPLETED_SIDE_EFFECT_ATTEMPTS = 4096
+
     def __init__(self, path: str | Path):
         self.path = Path(path).expanduser()
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -251,9 +254,12 @@ class KernelStore:
         self._save_event(event)
 
     def save_event_outcome(self, outcome: EventOutcome) -> None:
+        if outcome.cancelled:
+            raise ValueError("cancelled outcomes require cancel_uncertain_event")
         data = {
             "event_id": outcome.event_id,
             "success": outcome.success,
+            "cancelled": outcome.cancelled,
             "execution_path": outcome.execution_path.value,
             "response": outcome.response,
             "model_invocations": outcome.model_invocations,
@@ -267,6 +273,325 @@ class KernelStore:
                 (outcome.event_id, outcome.completed_at, self._dump(data)),
             )
 
+    def complete_event(
+        self,
+        outcome: EventOutcome,
+        *,
+        error: str | None = None,
+    ) -> AgentEvent:
+        """Atomically publish one resident terminal result and clear its checkpoint.
+
+        The event terminal status, durable outcome and singleton idle WorkingState
+        become visible together. A claimed event may complete when no resident
+        checkpoint is active yet, but this transition must never erase another
+        event's live checkpoint. Any SQLite error rolls the whole transition back.
+        """
+
+        event_id = str(outcome.event_id or "").strip()
+        if not event_id:
+            raise ValueError("event outcome requires event_id")
+        if outcome.cancelled:
+            raise ValueError("cancelled outcomes require cancel_uncertain_event")
+
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT data FROM events WHERE event_id=?",
+                (event_id,),
+            ).fetchone()
+            if not row:
+                raise ValueError(f"unknown resident event: {event_id}")
+            event = self._event_from_data(row["data"])
+            if event.status != EventStatus.PROCESSING:
+                raise RuntimeError(
+                    "resident terminal transition requires a processing event"
+                )
+
+            existing_outcome = self._conn.execute(
+                "SELECT 1 FROM event_outcomes WHERE event_id=?",
+                (event_id,),
+            ).fetchone()
+            if existing_outcome:
+                raise RuntimeError(
+                    "processing resident event already has a durable outcome"
+                )
+
+            state_row = self._conn.execute(
+                "SELECT data FROM working_state WHERE id=1"
+            ).fetchone()
+            if state_row:
+                try:
+                    working = json.loads(state_row["data"])
+                except Exception as exc:
+                    raise RuntimeError(
+                        "resident terminal transition found a malformed working checkpoint"
+                    ) from exc
+                working_event_id = str(
+                    working.get("current_event_id") or ""
+                ).strip()
+                working_stage = str(working.get("stage") or "").strip().lower()
+                if working_event_id and working_event_id != event_id:
+                    raise RuntimeError(
+                        "resident terminal transition cannot clear another event checkpoint"
+                    )
+                if (
+                    not working_event_id
+                    and working_stage not in {"", "idle", "complete", "failed"}
+                ):
+                    raise RuntimeError(
+                        "resident terminal transition found an orphaned non-idle checkpoint"
+                    )
+
+            event.status = (
+                EventStatus.COMPLETED if outcome.success else EventStatus.FAILED
+            )
+            event.last_error = (
+                None
+                if outcome.success
+                else (str(error or outcome.reason or "event failed"))
+            )
+            event.updated_at = utc_now()
+            event_data = {
+                "event_id": event.event_id,
+                "task": event.task,
+                "kind": event.kind,
+                "priority": event.priority,
+                "payload": event.payload,
+                "status": event.status.value,
+                "attempts": event.attempts,
+                "last_error": event.last_error,
+                "created_at": event.created_at,
+                "updated_at": event.updated_at,
+            }
+            outcome_data = {
+                "event_id": outcome.event_id,
+                "success": outcome.success,
+                "cancelled": outcome.cancelled,
+                "execution_path": outcome.execution_path.value,
+                "response": outcome.response,
+                "model_invocations": outcome.model_invocations,
+                "capability_name": outcome.capability_name,
+                "reason": outcome.reason,
+                "completed_at": outcome.completed_at,
+            }
+            idle = WorkingState(stage="idle")
+            idle.updated_at = utc_now()
+            idle_data = {
+                "current_event_id": idle.current_event_id,
+                "current_goal_id": idle.current_goal_id,
+                "stage": idle.stage,
+                "next_action": idle.next_action,
+                "blocked_by": idle.blocked_by,
+                "data": idle.data,
+                "updated_at": idle.updated_at,
+            }
+
+            self._conn.execute(
+                "INSERT OR REPLACE INTO events(event_id,status,priority,created_at,data) "
+                "VALUES(?,?,?,?,?)",
+                (
+                    event.event_id,
+                    event.status.value,
+                    event.priority,
+                    event.created_at,
+                    self._dump(event_data),
+                ),
+            )
+            self._conn.execute(
+                "INSERT INTO event_outcomes(event_id,created_at,data) VALUES(?,?,?)",
+                (outcome.event_id, outcome.completed_at, self._dump(outcome_data)),
+            )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO working_state(id,data) VALUES(1,?)",
+                (self._dump(idle_data),),
+            )
+        return event
+
+    def cancel_uncertain_event(
+        self,
+        event_id: str,
+        *,
+        reason: str = "work cancelled by explicit control decision",
+    ) -> AgentEvent:
+        """Atomically abandon Work while preserving uncertainty about its side effect.
+
+        This is lifecycle authority only. ``work_abandoned`` means ZN will no
+        longer continue the Work; it does not mean the outside-world effect was
+        present or absent. The event, outcome, idle checkpoint, and side-effect
+        attempt transition are one SQLite transaction so restart can never
+        publish only part of the cancellation decision. A replay-blocking attempt
+        may be ``started`` or ``observed``; observed dispatch metadata remains
+        durable because cancellation does not reinterpret what the command did.
+        """
+
+        normalized_event = str(event_id or "").strip()
+        if not normalized_event:
+            raise ValueError("uncertain event cancellation requires event_id")
+        normalized_reason = " ".join(str(reason or "").strip().split())[:500]
+        if not normalized_reason:
+            normalized_reason = "work cancelled by explicit control decision"
+
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT data FROM events WHERE event_id=?",
+                (normalized_event,),
+            ).fetchone()
+            if not row:
+                raise ValueError(f"unknown resident event: {normalized_event}")
+            event = self._event_from_data(row["data"])
+            if event.status not in {EventStatus.PROCESSING, EventStatus.PENDING}:
+                raise RuntimeError(
+                    "uncertain event cancellation requires unfinished resident work"
+                )
+
+            existing_outcome = self._conn.execute(
+                "SELECT 1 FROM event_outcomes WHERE event_id=?",
+                (normalized_event,),
+            ).fetchone()
+            if existing_outcome:
+                raise RuntimeError(
+                    "uncertain resident event already has a durable outcome"
+                )
+
+            state_row = self._conn.execute(
+                "SELECT data FROM working_state WHERE id=1"
+            ).fetchone()
+            if not state_row:
+                raise RuntimeError(
+                    "uncertain event cancellation requires a side-effect recovery checkpoint"
+                )
+            try:
+                working = json.loads(state_row["data"])
+            except Exception as exc:
+                raise RuntimeError(
+                    "uncertain event cancellation found a malformed working checkpoint"
+                ) from exc
+
+            working_event_id = str(working.get("current_event_id") or "").strip()
+            working_stage = str(working.get("stage") or "").strip().lower()
+            blocked_by = str(working.get("blocked_by") or "").strip().lower()
+            working_data = working.get("data")
+            recovery = (
+                working_data.get("side_effect_recovery")
+                if isinstance(working_data, dict)
+                else None
+            )
+            if (
+                working_event_id != normalized_event
+                or working_stage != "side_effect_recovery"
+                or blocked_by != "outside_world_effect_uncertain"
+                or not isinstance(recovery, dict)
+                or recovery.get("replay_blocked") is not True
+            ):
+                raise RuntimeError(
+                    "uncertain event cancellation requires the event's active side-effect recovery checkpoint"
+                )
+
+            attempt_id = str(recovery.get("attempt_id") or "").strip()
+            if not attempt_id:
+                raise RuntimeError(
+                    "side-effect recovery checkpoint has no durable attempt id"
+                )
+            try:
+                attempt = self._conn.execute(
+                    f"SELECT event_id,status FROM {self._SIDE_EFFECT_TABLE} "
+                    "WHERE attempt_id=?",
+                    (attempt_id,),
+                ).fetchone()
+            except sqlite3.OperationalError as exc:
+                raise RuntimeError("side-effect attempt ledger is unavailable") from exc
+            if (
+                not attempt
+                or str(attempt["event_id"]) != normalized_event
+                or str(attempt["status"]) not in {"started", "observed"}
+            ):
+                raise RuntimeError(
+                    "side-effect recovery checkpoint does not own a replay-blocking uncertain attempt"
+                )
+
+            now = utc_now()
+            outcome = EventOutcome(
+                event_id=normalized_event,
+                success=False,
+                cancelled=True,
+                execution_path=ExecutionPath.CONTROL,
+                reason=normalized_reason,
+                completed_at=now,
+            )
+            event.status = EventStatus.FAILED
+            event.last_error = None
+            event.updated_at = now
+            event_data = {
+                "event_id": event.event_id,
+                "task": event.task,
+                "kind": event.kind,
+                "priority": event.priority,
+                "payload": event.payload,
+                "status": event.status.value,
+                "attempts": event.attempts,
+                "last_error": event.last_error,
+                "created_at": event.created_at,
+                "updated_at": event.updated_at,
+            }
+            outcome_data = {
+                "event_id": outcome.event_id,
+                "success": outcome.success,
+                "cancelled": outcome.cancelled,
+                "execution_path": outcome.execution_path.value,
+                "response": outcome.response,
+                "model_invocations": outcome.model_invocations,
+                "capability_name": outcome.capability_name,
+                "reason": outcome.reason,
+                "completed_at": outcome.completed_at,
+            }
+            idle = WorkingState(stage="idle")
+            idle.updated_at = utc_now()
+            idle_data = {
+                "current_event_id": idle.current_event_id,
+                "current_goal_id": idle.current_goal_id,
+                "stage": idle.stage,
+                "next_action": idle.next_action,
+                "blocked_by": idle.blocked_by,
+                "data": idle.data,
+                "updated_at": idle.updated_at,
+            }
+
+            attempt_update = self._conn.execute(
+                f"UPDATE {self._SIDE_EFFECT_TABLE} "
+                "SET status='work_abandoned',completed_at=COALESCE(completed_at,?) "
+                "WHERE attempt_id=? AND event_id=? AND status IN ('started','observed')",
+                (now, attempt_id, normalized_event),
+            )
+            if attempt_update.rowcount != 1:
+                raise RuntimeError(
+                    "side-effect attempt changed before cancellation could be committed"
+                )
+            self._conn.execute(
+                f"DELETE FROM {self._SIDE_EFFECT_TABLE} WHERE attempt_id IN ("
+                f"SELECT attempt_id FROM {self._SIDE_EFFECT_TABLE} WHERE status!='started' "
+                "ORDER BY completed_at DESC LIMIT -1 OFFSET ?)",
+                (self._MAX_COMPLETED_SIDE_EFFECT_ATTEMPTS,),
+            )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO events(event_id,status,priority,created_at,data) "
+                "VALUES(?,?,?,?,?)",
+                (
+                    event.event_id,
+                    event.status.value,
+                    event.priority,
+                    event.created_at,
+                    self._dump(event_data),
+                ),
+            )
+            self._conn.execute(
+                "INSERT INTO event_outcomes(event_id,created_at,data) VALUES(?,?,?)",
+                (outcome.event_id, outcome.completed_at, self._dump(outcome_data)),
+            )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO working_state(id,data) VALUES(1,?)",
+                (self._dump(idle_data),),
+            )
+        return event
+
     def get_event_outcome(self, event_id: str) -> EventOutcome | None:
         with self._lock:
             row = self._conn.execute(
@@ -277,6 +602,7 @@ class KernelStore:
             return None
         data = json.loads(row["data"])
         data["execution_path"] = ExecutionPath(data["execution_path"])
+        data.setdefault("cancelled", False)
         return EventOutcome(**data)
 
     def list_event_outcomes(self, limit: int = 100) -> list[EventOutcome]:
@@ -289,6 +615,7 @@ class KernelStore:
         for row in rows:
             data = json.loads(row["data"])
             data["execution_path"] = ExecutionPath(data["execution_path"])
+            data.setdefault("cancelled", False)
             outcomes.append(EventOutcome(**data))
         return outcomes
 

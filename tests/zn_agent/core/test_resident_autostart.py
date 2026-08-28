@@ -14,6 +14,7 @@ from zn_agent.core.resident_autostart import (
     _launch_agent_payload,
     _linux_unit,
     _resident_argv,
+    _systemd_quote,
     _windows_task_xml,
 )
 
@@ -78,8 +79,8 @@ class ResidentAutostartTests(unittest.TestCase):
             self.assertIn("RestartSec=5", unit)
             self.assertIn("StartLimitIntervalSec=300", unit)
             self.assertIn("StartLimitBurst=5", unit)
-            self.assertIn(str(python.resolve()), unit)
-            self.assertIn(str(home.resolve()), unit)
+            self.assertIn(_systemd_quote(python.resolve()), unit)
+            self.assertIn(_systemd_quote(home.resolve()), unit)
             self.assertIn("zn_agent.core.resident_server", unit)
             self.assertNotIn(RETIRED_SERVER, unit)
             self.assertNotIn("WorkingDirectory=", unit)

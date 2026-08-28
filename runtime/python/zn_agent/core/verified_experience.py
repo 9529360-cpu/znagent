@@ -8,9 +8,11 @@ import sqlite3
 from collections.abc import Mapping, Sequence
 from contextlib import closing
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .models import utc_now
+from .path_context import canonical_host_path
 from .result_semantics import normalize_action_result
 
 if TYPE_CHECKING:
@@ -40,6 +42,16 @@ def _optional_text_fingerprint(value: Any) -> str | None:
     return _fingerprint(text) if text else None
 
 
+def _path_fingerprint(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    path = Path(text).expanduser()
+    if path.is_absolute():
+        text = str(canonical_host_path(path))
+    return _fingerprint(text)
+
+
 def _safe_source(value: str | None) -> str:
     source = str(value or "native").strip().lower()
     if source in {"native", "external-cognition-assisted", "human-assisted"}:
@@ -53,7 +65,7 @@ def _safe_expected_outcome(raw: Mapping[str, Any]) -> dict[str, Any]:
     if kind == "text_equals":
         path = str(raw.get("path") or "").strip()
         variant = str(raw.get("action_variant") or "").strip().lower()
-        summary["target_fingerprint"] = _fingerprint(path) if path else None
+        summary["target_fingerprint"] = _path_fingerprint(path)
         summary["expected_chars"] = max(
             0,
             int(raw.get("expected_chars") or len(str(raw.get("expected_text") or ""))),
@@ -67,8 +79,8 @@ def _safe_expected_outcome(raw: Mapping[str, Any]) -> dict[str, Any]:
         variant = str(raw.get("action_variant") or "").strip().lower()
         summary.update(
             {
-                "target_fingerprint": _fingerprint(path) if path else None,
-                "workdir_fingerprint": _fingerprint(root) if root else None,
+                "target_fingerprint": _path_fingerprint(path),
+                "workdir_fingerprint": _path_fingerprint(root),
                 "action_variant": variant if variant in _GIT_STAGE_VARIANTS else None,
             }
         )
@@ -97,7 +109,7 @@ def _safe_expected_outcome(raw: Mapping[str, Any]) -> dict[str, Any]:
                 )
                 if command
                 else None,
-                "workdir_fingerprint": _fingerprint(workdir) if workdir else None,
+                "workdir_fingerprint": _path_fingerprint(workdir),
                 "expected_exit_code": expected_exit_code,
                 "required_output_count": output_count,
             }
@@ -133,7 +145,7 @@ def _safe_verification(
         )
         summary.update(
             {
-                "target_fingerprint": _fingerprint(path) if path else None,
+                "target_fingerprint": _path_fingerprint(path),
                 "expected_chars": max(0, int(raw.get("expected_chars") or 0)),
                 "observed_chars": (
                     int(raw.get("observed_chars"))
@@ -149,7 +161,7 @@ def _safe_verification(
         path = str(raw.get("path") or expected_outcome.get("path") or "").strip()
         summary.update(
             {
-                "target_fingerprint": _fingerprint(path) if path else None,
+                "target_fingerprint": _path_fingerprint(path),
                 "staged": bool(raw.get("staged")),
                 "unstaged": bool(raw.get("unstaged")),
                 "untracked": bool(raw.get("untracked")),

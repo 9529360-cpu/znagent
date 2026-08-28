@@ -52,7 +52,7 @@ class ResidentDerivedPostconditionTests(unittest.TestCase):
             choices[0].expected_outcome,
             {
                 "kind": "text_equals",
-                "path": target,
+                "path": str(Path(target)),
                 "expected_text": "prefix-suffix",
             },
         )

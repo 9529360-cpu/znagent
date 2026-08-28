@@ -1,0 +1,85 @@
+name: ZN Managed Browser E2E
+
+on:
+  push:
+    branches:
+      - dev/zn-agent
+    paths:
+      - .github/workflows/zn-managed-browser-e2e.yml
+      - runtime/python/pyproject.toml
+      - runtime/python/zn_agent/core/browser.py
+      - runtime/python/zn_agent/core/managed_browser.py
+      - runtime/python/zn_agent/core/managed_browser_select.py
+      - runtime/python/zn_agent/core/models.py
+      - runtime/python/zn_agent/core/focused_modern_text_resident.py
+      - runtime/python/zn_agent/core/provider_bridge.py
+      - runtime/python/zn_agent/core/url_safety.py
+      - tests/zn_agent/core/test_browser_contract.py
+      - tests/zn_agent/core/test_managed_browser.py
+      - tests/zn_agent/core/test_managed_browser_check.py
+      - tests/zn_agent/core/test_managed_browser_pages.py
+      - tests/zn_agent/core/test_managed_browser_select.py
+      - tests/zn_agent/core/test_modern_text_resident_ownership.py
+      - tests/zn_agent/e2e/test_windows_managed_browser.py
+      - tests/zn_agent/e2e/test_windows_managed_browser_pages.py
+      - tests/zn_agent/e2e/test_windows_managed_browser_select.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+concurrency:
+  group: zn-managed-browser-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  managed-browser-e2e:
+    name: Windows local managed Chromium E2E
+    runs-on: [self-hosted, Windows, X64, zn-ci]
+    timeout-minutes: 20
+    env:
+      CI: 'true'
+      TZ: UTC
+      PYTHONUTF8: '1'
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - name: Require Windows x64 headless CI runner
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "ZN managed browser E2E requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+          Write-Host "ZN managed-browser runner: $env:RUNNER_NAME"
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare isolated browser runtime
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/managed-browser-venv -ErrorAction SilentlyContinue
+          uv venv .ci/managed-browser-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
+          Push-Location runtime/python
+          try {
+            uv pip install --python $python '.[browser]'
+          } finally {
+            Pop-Location
+          }
+          & $python -m playwright install chromium
+      - name: Run managed browser contract tests
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
+          & $python -m unittest discover -s tests/zn_agent/core -p 'test_*browser*.py' -v
+      - name: Run real local Chromium E2E
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
+          & $python -m unittest discover -s tests/zn_agent/e2e -p 'test_windows_managed_browser*.py' -v

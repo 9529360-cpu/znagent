@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
 from zn_agent.core.daemon import ResidentRpcServer
+from zn_agent.core.models import WorkingState
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
 from zn_agent.core.work import ResidentWorkLedger
 
@@ -31,6 +33,7 @@ class ResidentWorkProgressTests(unittest.TestCase):
             self.assertEqual(pending["stage"], "queued")
             self.assertFalse(pending["terminal"])
             self.assertFalse(pending["finalized"])
+            self.assertIsNone(pending["recovery"])
 
             body = getattr(resident, "body", None)
             self.assertIsNotNone(body)
@@ -47,6 +50,7 @@ class ResidentWorkProgressTests(unittest.TestCase):
             self.assertTrue(completed["terminal"])
             self.assertTrue(completed["finalized"])
             self.assertEqual(completed["stage"], "complete")
+            self.assertIsNone(completed["recovery"])
             final_thread, messages = ledger.get_snapshot("work-progress")
             self.assertEqual(final_thread.thread_id, "work-progress")
             self.assertEqual([message.role for message in messages], ["user", "zn", "activity"])
@@ -54,12 +58,102 @@ class ResidentWorkProgressTests(unittest.TestCase):
 
             again = ledger.progress("work-progress", event.event_id)
             self.assertTrue(again["finalized"])
+            self.assertIsNone(again["recovery"])
             _, messages_again = ledger.get_snapshot("work-progress")
             self.assertEqual(
                 [message.message_id for message in messages_again],
                 [message.message_id for message in messages],
             )
             resident.store.close()
+
+    def test_active_side_effect_recovery_is_sanitized_and_survives_reconstruction(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store_path = root / "kernel.db"
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=store_path,
+            )
+            ledger = ResidentWorkLedger(resident)
+            _, event = ledger.start("work-recovery-projection", "uncertain command")
+            self.assertIsNotNone(resident.store.claim_event(event.event_id))
+            resident.store.save_working_state(
+                WorkingState(
+                    current_event_id=event.event_id,
+                    stage="side_effect_recovery",
+                    next_action="await explicit recovery decision",
+                    blocked_by="outside_world_effect_uncertain",
+                    data={
+                        "side_effect_recovery": {
+                            "status": "uncertain",
+                            "kind": "command",
+                            "intent_id": "intent-private",
+                            "attempt_id": "sidefx-public-attempt",
+                            "replay_blocked": True,
+                            "signature": "0123456789abcdef",
+                            "verification_kind": None,
+                            "decision": "user_decision_required",
+                            "reason": "current reality cannot prove whether the command effect happened",
+                            "command": "secret-command --token raw-secret",
+                            "content": "private appended content",
+                            "env": {"API_KEY": "raw-secret"},
+                            "verification": {
+                                "action_id": "read-public-evidence",
+                                "success": True,
+                                "truncated": False,
+                                "observed_chars": 17,
+                                "path": "C:/private/path.txt",
+                                "output": "private current text",
+                            },
+                        }
+                    },
+                )
+            )
+
+            progress = ledger.progress("work-recovery-projection", event.event_id)
+            self.assertEqual(progress["stage"], "side_effect_recovery")
+            self.assertEqual(
+                progress["recovery"],
+                {
+                    "status": "uncertain",
+                    "kind": "command",
+                    "attempt_id": "sidefx-public-attempt",
+                    "replay_blocked": True,
+                    "verification_kind": None,
+                    "decision": "user_decision_required",
+                    "reason": "current reality cannot prove whether the command effect happened",
+                    "verification": {
+                        "action_id": "read-public-evidence",
+                        "success": True,
+                        "truncated": False,
+                        "observed_chars": 17,
+                    },
+                },
+            )
+            encoded = json.dumps(progress["recovery"], sort_keys=True)
+            for private_value in (
+                "intent-private",
+                "0123456789abcdef",
+                "secret-command",
+                "raw-secret",
+                "private appended content",
+                "C:/private/path.txt",
+                "private current text",
+            ):
+                self.assertNotIn(private_value, encoded)
+            resident.store.close()
+
+            restored = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=store_path,
+            )
+            restored_ledger = ResidentWorkLedger(restored)
+            restored_progress = restored_ledger.progress(
+                "work-recovery-projection", event.event_id
+            )
+            self.assertEqual(restored_progress["stage"], "side_effect_recovery")
+            self.assertEqual(restored_progress["recovery"], progress["recovery"])
+            restored.store.close()
 
     def test_completed_background_work_is_finalized_after_resident_reconstruction(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -135,6 +229,7 @@ class ResidentWorkProgressTests(unittest.TestCase):
             )
             progress = started["result"]["progress"]
             self.assertFalse(progress["terminal"])
+            self.assertIsNone(progress["recovery"])
             event_id = progress["event_id"]
 
             resident.live_once()
@@ -151,10 +246,73 @@ class ResidentWorkProgressTests(unittest.TestCase):
             self.assertTrue(polled["ok"])
             self.assertTrue(polled["result"]["progress"]["terminal"])
             self.assertTrue(polled["result"]["progress"]["finalized"])
+            self.assertIsNone(polled["result"]["progress"]["recovery"])
             self.assertEqual(
                 [item["role"] for item in polled["result"]["thread"]["messages"]],
                 ["user", "zn", "activity"],
             )
+            resident.store.close()
+
+    def test_work_progress_rpc_passes_through_sanitized_recovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            server = ResidentRpcServer(
+                resident=resident,
+                input_stream=io.StringIO(),
+                output_stream=io.StringIO(),
+            )
+            started = server.handle(
+                {
+                    "id": "start-recovery",
+                    "method": "work_start",
+                    "params": {
+                        "thread_id": "work-rpc-recovery",
+                        "task": "recover uncertain side effect",
+                    },
+                }
+            )
+            event_id = started["result"]["progress"]["event_id"]
+            self.assertIsNotNone(resident.store.claim_event(event_id))
+            resident.store.save_working_state(
+                WorkingState(
+                    current_event_id=event_id,
+                    stage="side_effect_recovery",
+                    next_action="await explicit recovery decision",
+                    blocked_by="outside_world_effect_uncertain",
+                    data={
+                        "side_effect_recovery": {
+                            "status": "uncertain",
+                            "kind": "command",
+                            "attempt_id": "sidefx-rpc",
+                            "replay_blocked": True,
+                            "signature": "private-signature",
+                            "decision": "user_decision_required",
+                            "command": "private command",
+                        }
+                    },
+                )
+            )
+
+            polled = server.handle(
+                {
+                    "id": "poll-recovery",
+                    "method": "work_progress",
+                    "params": {
+                        "thread_id": "work-rpc-recovery",
+                        "event_id": event_id,
+                    },
+                }
+            )
+            self.assertTrue(polled["ok"])
+            recovery = polled["result"]["progress"]["recovery"]
+            self.assertEqual(recovery["attempt_id"], "sidefx-rpc")
+            self.assertTrue(recovery["replay_blocked"])
+            self.assertEqual(recovery["decision"], "user_decision_required")
+            self.assertNotIn("private-signature", json.dumps(recovery))
+            self.assertNotIn("private command", json.dumps(recovery))
             resident.store.close()
 
 

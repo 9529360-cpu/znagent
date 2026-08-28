@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "mappings": [
+    {
+      "target": "runtime/python/zn_agent/core/repo_test_semantics.py",
+      "test": "tests/zn_agent/core/test_repo_test_semantics_authority.py"
+    },
+    {
+      "target": "runtime/python/zn_agent/core/git_semantics.py",
+      "test": "tests/zn_agent/core/test_git_staging_semantics.py"
+    },
+    {
+      "target": "runtime/python/zn_agent/core/result_semantics.py",
+      "test": "tests/zn_agent/core/test_verified_experience.py"
+    }
+  ]
+}

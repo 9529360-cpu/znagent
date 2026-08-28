@@ -174,7 +174,7 @@ class ProceduralInfluenceTests(unittest.TestCase):
         self.assertEqual(intents[0].kind, "command")
 
     def test_supported_candidate_can_only_reorder_current_safe_intents(self):
-        target = "/private/stable.txt"
+        target = str(Path("/private/stable.txt"))
         content = "PRIVATE_CURRENT_CONTENT"
         event = self._choice_event(target, content)
         facts = {"paths": [{"path": target, "exists": True, "type": "file"}]}

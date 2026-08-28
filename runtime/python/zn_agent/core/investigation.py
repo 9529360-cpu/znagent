@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from .git_semantics import current_git_path_staged_goal
 from .models import AgentEvent, utc_now
+from .path_context import canonical_host_path
 from .self_model import TaskReadiness
 
 if TYPE_CHECKING:
@@ -591,6 +592,8 @@ class NativeInvestigator:
         result: list[dict[str, Any]] = []
         for raw in self._path_candidates(event):
             path = Path(raw).expanduser()
+            if path.is_absolute():
+                path = canonical_host_path(path)
             try:
                 stat = path.stat()
                 if path.is_file():
@@ -853,13 +856,17 @@ class NativeInvestigator:
             and text_state_request
             and not append_requested
         ):
-            target = str(Path(str(requested_path)).expanduser())
+            target_path = Path(str(requested_path)).expanduser()
+            if target_path.is_absolute():
+                target_path = canonical_host_path(target_path)
+            target = str(target_path)
             for item in previews:
                 if not isinstance(item, dict):
                     continue
-                observed_path = str(
-                    Path(str(item.get("path") or "")).expanduser()
-                )
+                observed = Path(str(item.get("path") or "")).expanduser()
+                if observed.is_absolute():
+                    observed = canonical_host_path(observed)
+                observed_path = str(observed)
                 if observed_path != target or bool(item.get("truncated")):
                     continue
                 if str(item.get("preview") or "") == str(requested_text):

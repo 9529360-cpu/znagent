@@ -2,7 +2,9 @@
 
 > 状态：架构契约 / SM0 COMPLETE / SM1+ 待实现
 >
-> 适用分支：`dev/zn-agent`
+> 开发分支：`dev/zn-agent`
+>
+> Canonical source/release branch：`main`
 >
 > 上位产品契约：[`../ZN.md`](../ZN.md)
 >
@@ -27,9 +29,9 @@ ZN 正常生活/工作
 → 运行验证
 → 审查 diff
 → 推送维护分支
-→ PR
+→ PR / verified promotion flow
 → CI
-→ 满足规则后合并
+→ 满足规则后进入 canonical source
 → 构建不可变新版本
 → 验证正式产物
 → 通知用户更新原因
@@ -114,7 +116,7 @@ ZN 的工程连续性不能属于某一个 GPT、Claude、Gemini、人类、聊�
 
 自维护不能重新引入外部产品/agent framework 作为 resident runtime、主循环、UI、gateway brain、Python distribution、build/release dependency 或产品控制面。
 
-需要成熟实现时，只能从 Git 历史或外部参考源研究并适配到 ZN ownership。
+需要成熟实现时，只能从 dedicated reference branch、Git 历史或外部参考源研究并适配到 ZN ownership。
 
 ## 4. GitHub 和仓库的角色
 
@@ -125,8 +127,14 @@ GitHub 是 ZN 的远程源码、协作、工程交接和版本历史边界之一
 ```text
 repository: 9529360-cpu/znagent
 working_branch: dev/zn-agent
-release_branch: main   # 仅在 M10 后按正式策略使用
+canonical_branch: main
 ```
+
+M10 canonical promotion 已完成。`main` 不再是“未来目标”，而是 canonical source/release branch；`dev/zn-agent` 是固定主开发分支。普通开发和自动修复仍必须先在 `dev/zn-agent` 或隔离 work branch 验证，不能直接在 `main` 试错。
+
+但是 `main` 也不能因为“不能直接开发”而永久冻结。低风险 coherent maintenance/development stage 在实现完整、相关测试及 full CI/必要 E2E 通过、diff 已审查、状态文档/HANDOFF 已对账、无未解决 blocker 且没有触及人工审批边界时，可按正常可追踪 PR / merge / promotion flow 进入 canonical source，不需要额外依赖某段聊天再次授权同一项正常 promotion。
+
+高风险边界仍必须人工批准，包括身份、长期记忆、破坏性数据迁移、凭证/权限、updater/rollback/signing、release trust root、自维护审批规则，以及替换用户当前正式安装版本。
 
 源码仓库连接信息属于配置。Token/密钥必须进入安全凭证存储，不能写入普通日志、记忆、提交或 HANDOFF。
 
@@ -190,7 +198,7 @@ ZN 自身代码缺陷
 
 ### 5.4 隔离开发
 
-真正进入开发的维护任务使用隔离分支/工作区，例如：
+真正进入开发的维护任务使用 `dev/zn-agent` 上的明确小修改，或隔离分支/工作区，例如：
 
 ```text
 work/self-maintenance-<issue-id>-<short-name>
@@ -199,7 +207,7 @@ work/self-maintenance-<issue-id>-<short-name>
 要求：
 
 - 不直接修改当前正式安装目录；
-- 不直接在 release/main 分支试错；
+- 不直接在 `main` 试错；
 - 开始前记录基线 commit；
 - 未知 dirty state 不能覆盖；
 - 改动范围保持小而可验证。
@@ -235,31 +243,35 @@ work/self-maintenance-<issue-id>-<short-name>
 
 不能为了通过而删除有效测试、降低断言或关闭保护机制，除非证明测试本身错误并记录理由。
 
-### 5.7 提交、PR、CI
+### 5.7 提交、PR、CI 与 promotion
 
 ```text
 review diff
 → 检查秘密/临时文件/调试输出
 → commit
-→ push isolated branch
-→ create PR
+→ push development/isolated branch
+→ create/update PR or follow repository promotion flow
 → CI
 → 读取真实结果
+→ 同步状态文档/HANDOFF
+→ 满足 promotion gate 后进入 canonical source
 ```
 
-CI 失败必须重新进入调查；“已 push”不等于完成。
+CI 失败必须重新进入调查；“已 push”不等于完成。满足低风险 promotion gate 后，也不应因为维护者等待聊天口令而无限期让 canonical source 停滞。
 
 ## 6. 合并与审批策略
 
 风险不是由模型自我声明决定，而由受影响的产品边界决定。
 
-可逐步自动化的低风险示例：
+可逐步自动化、并可在仓库 gate 满足后正常 promotion 的低风险示例：
 
 - 文档；
 - 非关键 UI；
 - 明确小范围 bug；
 - 测试补强；
 - 不改变权限/身份/更新语义的内部重构。
+
+低风险不等于“无需验证”。至少仍需与改动匹配的真实测试/CI、diff 审查、状态对账和正常可追踪 Git/PR 历史。
 
 默认保留人工批准的高风险区域：
 
@@ -271,9 +283,10 @@ CI 失败必须重新进入调查；“已 push”不等于完成。
 - release trust root；
 - self-maintenance approval rules；
 - 自动批准自己；
-- 删除唯一可回退版本。
+- 删除唯一可回退版本；
+- 替换用户当前正在使用的正式安装版本。
 
-即使未来允许更多自动合并，也必须在分支保护、CI 和可回退版本基础上进行。
+即使未来允许更多自动合并，也必须在分支保护、CI 和可回退版本基础上进行。任何 force push、历史重写、绕过失败 CI、关闭保护机制的“promotion”都不属于正常 promotion flow。
 
 ## 7. 发布与更新
 

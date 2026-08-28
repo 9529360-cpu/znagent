@@ -10,6 +10,7 @@ from .action import NativeActionIntent, derive_native_action_intent
 from .budget import CognitiveBudgetManager
 from .capabilities import CapabilityRegistry
 from .cognition import CognitiveIncrement
+from .completion_observation import CompletionObservationJournal
 from .memory import StructuredMemory
 from .models import (
     AgentEvent,
@@ -87,6 +88,11 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         self.investigator = EmbodiedInvestigator(self)
         self.life = EmbodiedLifeCore(self)
         self.life.wake()
+        # This is the second legitimate resident birth sequence. Install the
+        # same completion-observation organ only after the richer Life exists;
+        # repair uses durable EventOutcome truth and never replays completed work.
+        self.completion_observations = CompletionObservationJournal(self.store)
+        self.completion_observations.repair_life(self)
 
     def _advance_event_step(
         self,
@@ -111,6 +117,8 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
                 readiness=readiness,
                 thought=thought,
             )
+        if state.stage == "native_completion":
+            return self._resume_native_completion(event, state)
         if state.stage == "cognition_integration":
             return self._cognition_integration_step(
                 event,
@@ -231,7 +239,7 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
         state.data["native_action_result"] = asdict(result)
 
         if result.success:
-            verification = self._verification_contract(event, intent)
+            verification = self._verification_contract(event, intent, result=result)
             if verification is not None:
                 # A successful movement is evidence, not proof that the user's
                 # requested state now exists. Persist the postcondition and let
@@ -349,6 +357,50 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
                 failure = (
                     f"postcondition verification failed for {path}: "
                     f"{observed.error or 'current text state could not be observed'}"
+                )
+
+        elif kind == "pointer_position":
+            expected_x = int(raw_contract.get("expected_x"))
+            expected_y = int(raw_contract.get("expected_y"))
+            tolerance = max(0, min(8, int(raw_contract.get("tolerance_pixels", 1))))
+            observed = self.body.act(
+                "pointer_state",
+                event_id=event.event_id,
+            )
+            observed_x = observed.data.get("x") if observed.success else None
+            observed_y = observed.data.get("y") if observed.success else None
+            verified = bool(
+                observed.success
+                and observed_x is not None
+                and observed_y is not None
+                and abs(int(observed_x) - expected_x) <= tolerance
+                and abs(int(observed_y) - expected_y) <= tolerance
+            )
+            verification_result = {
+                "verified": verified,
+                "kind": kind,
+                "expected_x": expected_x,
+                "expected_y": expected_y,
+                "observed_x": int(observed_x) if observed_x is not None else None,
+                "observed_y": int(observed_y) if observed_y is not None else None,
+                "tolerance_pixels": tolerance,
+                "observation": asdict(observed),
+            }
+            response = (
+                f"pointer at ({int(observed_x)},{int(observed_y)})"
+                if observed.success and observed_x is not None and observed_y is not None
+                else ""
+            )
+            if observed.success:
+                failure = (
+                    "pointer postcondition verification failed: current cursor position "
+                    f"({observed_x},{observed_y}) does not match expected "
+                    f"({expected_x},{expected_y}) within {tolerance}px"
+                )
+            else:
+                failure = (
+                    "pointer postcondition verification failed: "
+                    f"{observed.error or 'current pointer position could not be observed'}"
                 )
 
         elif kind == "command":
@@ -568,19 +620,77 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
             success=True,
             quality=0.95,
         )
-        state.stage = "complete"
-        state.next_action = None
+        completion = {
+            "execution_path": ExecutionPath.BODY.value,
+            "success": True,
+            "response": str(response or ""),
+            "model_invocations": 0,
+            "reason": str(reason or ""),
+        }
+        state.stage = "native_completion"
+        state.next_action = "publish terminal EventOutcome"
         state.data["native_domains"] = list(domains)
+        state.data["native_completion"] = completion
         self._sync_execution_context(event, state)
-        self.store.save_working_state(state)
         self.store.record_runtime_task(model_invocations=0)
+        # The durable completion checkpoint is the final pre-EventOutcome
+        # boundary. Once visible, restart must need only terminal publication;
+        # all ordinary success accounting for this step has already happened.
+        self.store.save_working_state(state)
+        return self._native_completion_result(event, completion)
+
+    def _resume_native_completion(
+        self,
+        event: AgentEvent,
+        state: WorkingState,
+    ) -> ResidentRunResult | None:
+        raw = state.data.get("native_completion")
+        if not isinstance(raw, dict):
+            return self._invalid_native_completion(
+                event,
+                "durable native completion checkpoint is incomplete",
+            )
+        try:
+            return self._native_completion_result(event, raw)
+        except (TypeError, ValueError):
+            return self._invalid_native_completion(
+                event,
+                "durable native completion checkpoint is malformed",
+            )
+
+    @staticmethod
+    def _invalid_native_completion(
+        event: AgentEvent,
+        reason: str,
+    ) -> ResidentRunResult:
         return ResidentRunResult(
             event=event,
             execution_path=ExecutionPath.BODY,
-            success=True,
-            response=response,
+            success=False,
             model_invocations=0,
             reason=reason,
+        )
+
+    @staticmethod
+    def _native_completion_result(
+        event: AgentEvent,
+        raw: dict[str, Any],
+    ) -> ResidentRunResult:
+        if raw.get("success") is not True:
+            raise ValueError("native completion checkpoint must record success")
+        execution_path = ExecutionPath(str(raw.get("execution_path") or ""))
+        if execution_path is not ExecutionPath.BODY:
+            raise ValueError("native completion checkpoint must use the Body path")
+        model_invocations = raw.get("model_invocations")
+        if isinstance(model_invocations, bool) or int(model_invocations) != 0:
+            raise ValueError("native completion checkpoint cannot claim model use")
+        return ResidentRunResult(
+            event=event,
+            execution_path=execution_path,
+            success=True,
+            response=str(raw.get("response") or ""),
+            model_invocations=0,
+            reason=str(raw.get("reason") or ""),
         )
 
     def _sync_execution_context(
@@ -674,6 +784,9 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
             summary["expected_exit_code"] = raw.get("expected_exit_code")
         elif raw.get("exit_code") is not None:
             summary["expected_exit_code"] = raw.get("exit_code")
+        for key in ("expected_x", "expected_y", "tolerance_pixels"):
+            if raw.get(key) is not None:
+                summary[key] = raw.get(key)
         output = raw.get("output_contains")
         if isinstance(output, str):
             summary["output_contains"] = [output]
@@ -697,6 +810,11 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
             "observed_chars",
             "expected_exit_code",
             "observed_exit_code",
+            "expected_x",
+            "expected_y",
+            "observed_x",
+            "observed_y",
+            "tolerance_pixels",
             "requested_kind",
         ):
             if raw.get(key) is not None:
@@ -713,6 +831,8 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
     def _verification_contract(
         event: AgentEvent,
         intent: NativeActionIntent,
+        *,
+        result=None,
     ) -> dict[str, Any] | None:
         explicit = event.payload.get("expected_outcome")
         if explicit is not None:
@@ -791,6 +911,30 @@ class EmbodiedResidentRuntime(ZNResidentRuntime):
                     "unsupported expected_outcome kind: "
                     f"{requested_kind or '<empty>'}"
                 ),
+                "intent_id": intent.intent_id,
+                "action_signature": EmbodiedResidentRuntime._intent_signature(intent),
+            }
+
+        if intent.kind == "pointer_move":
+            data = getattr(result, "data", None)
+            if not isinstance(data, dict):
+                data = {}
+            try:
+                expected_x = int(data["target_x"])
+                expected_y = int(data["target_y"])
+            except (KeyError, TypeError, ValueError):
+                return {
+                    "kind": "unsupported",
+                    "requested_kind": "pointer_position",
+                    "error": "pointer movement did not produce a verifiable target position",
+                    "intent_id": intent.intent_id,
+                    "action_signature": EmbodiedResidentRuntime._intent_signature(intent),
+                }
+            return {
+                "kind": "pointer_position",
+                "expected_x": expected_x,
+                "expected_y": expected_y,
+                "tolerance_pixels": 1,
                 "intent_id": intent.intent_id,
                 "action_signature": EmbodiedResidentRuntime._intent_signature(intent),
             }

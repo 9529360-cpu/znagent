@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from zn_agent.core import EmbodiedInvestigator, NativeBody
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
@@ -92,6 +93,28 @@ class NativeBodyTests(unittest.TestCase):
             self.assertEqual(resident.capabilities.names(), ())
             resident.store.close()
 
+    @patch("zn_agent.core.body.os.kill")
+    @patch("zn_agent.core.body.psutil.Process", side_effect=PermissionError("metadata denied"))
+    @patch("zn_agent.core.body.psutil.pid_exists", return_value=True)
+    def test_process_observation_is_signal_free(
+        self,
+        pid_exists,
+        process,
+        os_kill,
+    ):
+        result = NativeBody().act(
+            "process_state",
+            event_id="evt-process-signal-free",
+            pid=424242,
+        )
+
+        self.assertTrue(result.success)
+        self.assertTrue(result.data["alive"])
+        self.assertEqual(result.data["pid"], 424242)
+        pid_exists.assert_called_once_with(424242)
+        process.assert_called_once_with(424242)
+        os_kill.assert_not_called()
+
     def test_git_repository_state_is_structured_body_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -135,7 +158,7 @@ class NativeBodyTests(unittest.TestCase):
             )
 
             self.assertTrue(observed.success)
-            self.assertEqual(Path(observed.data["root"]), root)
+            self.assertEqual(observed.data["root"], str(root.resolve()))
             self.assertEqual(observed.data["branch"], "dev/test")
             self.assertEqual(observed.data["head"], head)
             self.assertEqual(observed.data["head_short"], head[:12])
@@ -196,7 +219,7 @@ class NativeBodyTests(unittest.TestCase):
             )
 
             self.assertTrue(observed.success)
-            self.assertEqual(Path(observed.data["root"]), root)
+            self.assertEqual(observed.data["root"], str(root.resolve()))
             self.assertEqual(observed.data["head"], head)
             self.assertTrue(observed.data["dirty"])
             self.assertEqual(

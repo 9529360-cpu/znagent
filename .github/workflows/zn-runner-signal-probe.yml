@@ -1,0 +1,29 @@
+name: ZN Runner Signal Probe
+
+on:
+  push:
+    branches:
+      - dev/zn-agent
+    paths:
+      - .github/workflows/zn-runner-signal-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  signal-probe:
+    name: Runner Python signal isolation
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Run bare CPython beyond observed interrupt window
+        shell: powershell
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows') {
+            throw "Windows runner required"
+          }
+          uv python install 3.12
+          $python = (uv python find 3.12).Trim()
+          Write-Host "signal_probe.python=$python"
+          & $python -c "import os,sys,time; print(f'signal_probe.pid={os.getpid()}'); print(f'signal_probe.version={sys.version.split()[0]}'); sys.stdout.flush(); started=time.monotonic(); [(time.sleep(5), print(f'signal_probe.elapsed_seconds={time.monotonic()-started:.3f}', flush=True)) for _ in range(25)]; print('signal_probe.completed=true', flush=True)"

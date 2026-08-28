@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-"""Resident-owned formation of one bounded repository test identity.
+"""Resident-owned formation of bounded repository test identities.
 
 The existing procedural resident already knows how to persist, execute and
-recheck an explicitly typed ``python_unittest`` verifier. This layer adds only
-identity formation for ZN's own top-level resident-kernel modules. Authority is
-formed from current repository evidence, never from task prose, model output,
+recheck an explicitly typed ``python_unittest`` verifier. This layer forms
+candidate test identities only from current repo-owned evidence: canonical ZN
+kernel/test layout first, then an explicit repo-owned verifier manifest for
+non-canonical relations. Authority never comes from task prose, model output,
 procedural memory, or a caller-supplied command.
 """
 
@@ -16,8 +17,10 @@ from typing import Any
 
 from .procedural_resident import ProcedurallyInfluencedResidentRuntime
 from .repo_test_semantics import (
+    ZN_VERIFIER_MANIFEST_PATH,
     canonical_kernel_unittest_identity,
     ci_source_runs_kernel_unittest_suite,
+    mapped_kernel_unittest_identity,
     test_source_directly_imports_target,
     test_source_has_discoverable_unittest_case,
 )
@@ -60,14 +63,35 @@ class RepositoryVerifyingResidentRuntime(ProcedurallyInfluencedResidentRuntime):
         event,
         scope: dict[str, str],
     ) -> tuple[dict[str, Any] | None, str | None]:
-        """Prefer explicit typed authority; otherwise prove one ZN-owned identity."""
+        """Prefer typed authority; otherwise prove one current repo-owned identity."""
 
         if super()._targeted_test_requested(event):
             return super()._repo_targeted_test_spec(event, scope)
 
         identity = canonical_kernel_unittest_identity(scope.get("relative_path"))
-        if identity is None:
-            return None, None
+        manifest_evidence: dict[str, Any] | None = None
+        if identity is None or self._resolved_repo_file(
+            scope, identity["test_relative_path"]
+        ) is None:
+            manifest_file = self._resolved_repo_file(scope, ZN_VERIFIER_MANIFEST_PATH)
+            if manifest_file is None:
+                return None, None
+            manifest_text, manifest_evidence, manifest_problems = (
+                self._observe_resident_identity_file(
+                    event,
+                    scope,
+                    ZN_VERIFIER_MANIFEST_PATH,
+                    label="verifier manifest",
+                )
+            )
+            if manifest_problems:
+                return None, None
+            identity = mapped_kernel_unittest_identity(
+                manifest_text,
+                scope.get("relative_path"),
+            )
+            if identity is None:
+                return None, None
 
         test_file = self._resolved_repo_file(scope, identity["test_relative_path"])
         ci_file = self._resolved_repo_file(scope, identity["ci_relative_path"])
@@ -109,7 +133,7 @@ class RepositoryVerifyingResidentRuntime(ProcedurallyInfluencedResidentRuntime):
         if not ci_source_runs_kernel_unittest_suite(ci_text):
             return None, None
 
-        return {
+        spec = {
             "kind": self._TARGETED_TEST_KIND,
             "root": scope["root"],
             "head": scope["head"],
@@ -120,7 +144,22 @@ class RepositoryVerifyingResidentRuntime(ProcedurallyInfluencedResidentRuntime):
             "target_module": identity["target_module"],
             "ci_relative_path": identity["ci_relative_path"],
             "python_source_root_relative": self._RESIDENT_PYTHON_SOURCE_ROOT,
-        }, None
+        }
+        if manifest_evidence is not None:
+            spec.update(
+                {
+                    "manifest_relative_path": ZN_VERIFIER_MANIFEST_PATH,
+                    "manifest_source_sha256": manifest_evidence.get("source_sha256", ""),
+                    "manifest_state_sha256": manifest_evidence.get("state_sha256", ""),
+                    "manifest_worktree_patch_sha256": manifest_evidence.get(
+                        "worktree_patch_sha256", ""
+                    ),
+                    "manifest_staged_patch_sha256": manifest_evidence.get(
+                        "staged_patch_sha256", ""
+                    ),
+                }
+            )
+        return spec, None
 
     @staticmethod
     def _resolved_repo_file(
@@ -279,6 +318,43 @@ class RepositoryVerifyingResidentRuntime(ProcedurallyInfluencedResidentRuntime):
                 "resident-formed kernel CI contract no longer runs the bounded unittest suite"
             )
 
+        manifest_snapshot: dict[str, Any] = {}
+        manifest_relative = str(spec.get("manifest_relative_path") or "")
+        if manifest_relative:
+            manifest_text, manifest_evidence, manifest_problems = (
+                self._observe_resident_identity_file(
+                    event,
+                    scope,
+                    manifest_relative,
+                    label="resident-formed verifier manifest",
+                )
+            )
+            problems.extend(manifest_problems)
+            if not manifest_problems:
+                mapped = mapped_kernel_unittest_identity(
+                    manifest_text,
+                    str(spec.get("for_relative_path") or ""),
+                )
+                if mapped is None:
+                    problems.append("resident-formed verifier manifest relation changed")
+                elif (
+                    mapped.get("test_relative_path") != str(spec.get("relative_path") or "")
+                    or mapped.get("target_module") != target_module
+                    or mapped.get("ci_relative_path") != str(spec.get("ci_relative_path") or "")
+                ):
+                    problems.append("resident-formed verifier manifest now selects a different relation")
+            manifest_snapshot = {
+                "manifest_relative_path": manifest_relative,
+                "manifest_source_sha256": manifest_evidence.get("source_sha256", ""),
+                "manifest_state_sha256": manifest_evidence.get("state_sha256", ""),
+                "manifest_worktree_patch_sha256": manifest_evidence.get(
+                    "worktree_patch_sha256", ""
+                ),
+                "manifest_staged_patch_sha256": manifest_evidence.get(
+                    "staged_patch_sha256", ""
+                ),
+            }
+
         snapshot.update(
             {
                 "identity_source": self._RESIDENT_TEST_IDENTITY_SOURCE,
@@ -294,6 +370,7 @@ class RepositoryVerifyingResidentRuntime(ProcedurallyInfluencedResidentRuntime):
                 "ci_staged_patch_sha256": ci_evidence.get(
                     "staged_patch_sha256", ""
                 ),
+                **manifest_snapshot,
             }
         )
         return snapshot, problems
@@ -311,7 +388,7 @@ class RepositoryVerifyingResidentRuntime(ProcedurallyInfluencedResidentRuntime):
         source = expected.get("identity_source")
         if source != RepositoryVerifyingResidentRuntime._RESIDENT_TEST_IDENTITY_SOURCE:
             return source == observed.get("identity_source")
-        keys = (
+        keys = [
             "identity_source",
             "target_module",
             "ci_relative_path",
@@ -321,5 +398,15 @@ class RepositoryVerifyingResidentRuntime(ProcedurallyInfluencedResidentRuntime):
             "ci_state_sha256",
             "ci_worktree_patch_sha256",
             "ci_staged_patch_sha256",
-        )
+        ]
+        if expected.get("manifest_relative_path"):
+            keys.extend(
+                [
+                    "manifest_relative_path",
+                    "manifest_source_sha256",
+                    "manifest_state_sha256",
+                    "manifest_worktree_patch_sha256",
+                    "manifest_staged_patch_sha256",
+                ]
+            )
         return all(expected.get(key) == observed.get(key) for key in keys)

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import os
 import shlex
 import sqlite3
-import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
@@ -22,7 +21,7 @@ class VerifiedExperienceTests(unittest.TestCase):
     @staticmethod
     def _python_command(code: str) -> str:
         args = [sys.executable, "-c", code]
-        return subprocess.list2cmdline(args) if os.name == "nt" else shlex.join(args)
+        return shlex.join(args)
 
     @staticmethod
     def _advance_until_stage(resident, stage: str, limit: int = 16) -> None:
@@ -84,7 +83,7 @@ class VerifiedExperienceTests(unittest.TestCase):
             self.assertNotIn("path", experience.expected_outcome)
             self.assertNotIn(secret_domain, experience.domains)
 
-            with sqlite3.connect(db) as conn:
+            with closing(sqlite3.connect(db)) as conn:
                 row = conn.execute(
                     "SELECT data FROM verified_experiences WHERE experience_id=?",
                     (experience.experience_id,),

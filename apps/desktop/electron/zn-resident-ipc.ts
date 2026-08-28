@@ -183,6 +183,17 @@ export function registerZnResidentIpc(): void {
       message_limit: Number(payload?.messageLimit || payload?.message_limit || 120)
     })
   })
+  ipcMain.handle('zn:resident:work-cancel', async (_event, payload) => {
+    const threadId = String(payload?.threadId || payload?.thread_id || '').trim()
+    const eventId = String(payload?.eventId || payload?.event_id || '').trim()
+    if (!threadId) throw new Error('threadId is required')
+    if (!eventId) throw new Error('eventId is required')
+    return getZnResidentProcess().request('work_cancel', {
+      thread_id: threadId,
+      event_id: eventId,
+      message_limit: Number(payload?.messageLimit || payload?.message_limit || 120)
+    })
+  })
   ipcMain.handle('zn:resident:work-submit', async (_event, payload) => {
     return getZnResidentProcess().request('work_submit', normalizedWorkPayload(payload))
   })

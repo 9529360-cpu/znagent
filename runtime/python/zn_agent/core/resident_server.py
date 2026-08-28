@@ -12,6 +12,7 @@ from typing import Any, Mapping
 
 from .channel_runtime import ResidentChannelSupervisor, build_zn_channel_adapters
 from .models import utc_now
+from .visual_region_sense import NativeVisualRegionSense, VisualRegionProbeFn
 from .visual_sense import NativeVisualSense, VisualCaptureFn
 
 
@@ -96,9 +97,10 @@ class ResidentSocketService:
     connection therefore does not end the resident; another Electron process can
     later reconnect to the same subject.
 
-    The same service process owns ZN's low-level visual sampling and channel
-    lifecycles. Screen fingerprints and authorized channel events therefore keep
-    entering the same resident while no Electron window is connected.
+    The same service process owns ZN's low-level visual sampling, on-demand local
+    visual region sensing and channel lifecycles. Visual evidence and authorized
+    channel events therefore belong to the same resident while no Electron
+    window is connected.
     """
 
     def __init__(
@@ -110,6 +112,7 @@ class ResidentSocketService:
         endpoint_path: str | Path | None = None,
         visual_capture_fn: VisualCaptureFn | None = None,
         visual_interval: float = 5.0,
+        visual_region_probe_fn: VisualRegionProbeFn | None = None,
         channel_adapters=(),
         channel_poll_timeout: float = 10.0,
     ):
@@ -126,15 +129,16 @@ class ResidentSocketService:
             capture_fn=visual_capture_fn,
             interval_seconds=visual_interval,
         )
+        self.visual_region = NativeVisualRegionSense(probe_fn=visual_region_probe_fn)
         self.channels = ResidentChannelSupervisor(
             self.rpc.resident,
             tuple(channel_adapters or ()),
             poll_timeout=channel_poll_timeout,
         )
-        # Expose the visual organ on the subject while this persistent service
-        # owns its lifecycle. Communication organs are owned by the same service
-        # supervisor rather than by an Electron window or another agent.
+        # Expose resident-owned senses on the subject while this persistent
+        # service owns their lifecycle. Neither becomes an Electron/UI organ.
         self.rpc.resident.vision = self.visual
+        self.rpc.resident.visual_region = self.visual_region
         self._server: _ResidentTcpServer | None = None
         self._visual_stop = threading.Event()
         self._visual_thread: threading.Thread | None = None
@@ -161,12 +165,27 @@ class ResidentSocketService:
             self.channels.stop()
             self._stop_visual_loop()
             self.rpc._stop_life_loop()
+            self._close_managed_browser()
             self.rpc.service.release()
             try:
                 self.rpc.resident.store.close()
             except Exception:
                 pass
         return 0
+
+    def _close_managed_browser(self) -> None:
+        """Release resident-owned browser processes before resident lease/store teardown."""
+
+        browser = getattr(self.rpc.resident, "managed_browser", None)
+        close = getattr(browser, "close", None)
+        if not callable(close):
+            return
+        try:
+            close()
+        except Exception:
+            # Browser cleanup failure must not strand the resident lease or
+            # endpoint. Process shutdown remains the final resource boundary.
+            pass
 
     def _start_visual_loop(self) -> None:
         self._visual_stop.clear()
@@ -236,7 +255,7 @@ def _serve_with_sigterm_cleanup(service: ResidentSocketService) -> int:
     """Convert service-manager SIGTERM into the resident's normal cleanup path.
 
     Python's default SIGTERM action exits immediately, bypassing the service
-    ``finally`` block and leaving the durable resident lease behind.  The first
+    ``finally`` block and leaving the durable resident lease behind. The first
     SIGTERM instead becomes internal control flow that unwinds ``serve_forever``.
     Further SIGTERMs during cleanup are ignored so endpoint retirement, organ
     shutdown and lease release cannot be interrupted halfway through.

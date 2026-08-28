@@ -3,6 +3,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import {
   applyZnUpdate,
   attachZnWorkspace,
+  cancelZnWork,
   checkZnUpdate,
   createZnWorkThread,
   detachZnWorkspace,
@@ -75,6 +76,7 @@ export function ZnWorkbench() {
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [workProgress, setWorkProgress] = useState<ZnWorkProgress | null>(null)
+  const [cancelBusy, setCancelBusy] = useState(false)
   const [workspaceBusy, setWorkspaceBusy] = useState(false)
   const [contextOpen, setContextOpen] = useState(true)
   const [residentHealth, setResidentHealth] = useState<ResidentHealth>('connecting')
@@ -229,6 +231,26 @@ export function ZnWorkbench() {
       setWorkspaceBusy(false)
     }
   }, [activeThread, busy, replaceThread, workspaceBusy])
+
+  const cancelCurrentWork = useCallback(async () => {
+    if (!activeThread || !workProgress || cancelBusy || workProgress.finalized) return
+    if (workProgress.threadId !== activeThread.id || !workProgress.recovery?.replayBlocked) return
+
+    const threadId = activeThread.id
+    const eventId = workProgress.eventId
+    setCancelBusy(true)
+    try {
+      const result = await cancelZnWork(threadId, eventId)
+      setWorkProgress(result.progress)
+      if (result.thread) replaceThread(result.thread)
+      setResidentError(null)
+      setResidentHealth('live')
+    } catch (error) {
+      setResidentError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setCancelBusy(false)
+    }
+  }, [activeThread, cancelBusy, replaceThread, workProgress])
 
   const submit = useCallback(
     async (event: FormEvent) => {
@@ -554,6 +576,15 @@ export function ZnWorkbench() {
                     <article className="zn-message activity" aria-live="polite">
                       <div className="zn-message-label">Resident progress · {workProgress.status}</div>
                       <div className="zn-message-body">{workProgress.stage} · {workProgress.nextAction || 'continuing work'}</div>
+                      {workProgress.recovery?.replayBlocked ? (
+                        <div className="zn-notice">
+                          <strong>Outside-world effect is uncertain.</strong> ZN will not replay this action automatically. Stopping this Work prevents further ZN action, but it cannot undo or prove what already happened outside ZN.
+                          {workProgress.recovery.reason ? <div className="zn-muted zn-small">{workProgress.recovery.reason}</div> : null}
+                          <button type="button" disabled={cancelBusy} onClick={() => void cancelCurrentWork()}>
+                            {cancelBusy ? 'Stopping…' : 'Stop work'}
+                          </button>
+                        </div>
+                      ) : null}
                       {workProgress.thought ? (
                         <div className="zn-muted zn-small">
                           {workProgress.thought.action || workProgress.thought.focus}

@@ -1,166 +1,234 @@
-# ZN Agent Handoff
+# ZN Maintainer Handoff
 
-更新时间：2026-08-24
+Updated: 2026-08-28
 
-## 当前目标
+This is an operational maintainer handoff, not a chat summary. Real repository state and CI remain authoritative.
 
-M10 canonical source promotion 已完成。当前维护主线回到 development/tooling dependency audit、resident competence、M8 continuity 和 SM1+。每次接手先重新读取 exact Git refs、CI 和本文件，事实仍以真实代码/Git/CI 为准。
+## Current goal
 
-核心原则：
+P5.8 exact-file Work restore-point foundation is implemented and CI verified. The next bounded implementation target is a **read-only Work restore-point projection/inspection path**: expose retained restore metadata through resident-owned Work control, re-observe current target reality, and do not implement destructive restore application yet.
+
+In parallel, keep the repository promotion ledger honest. `main` is the canonical source/release branch and must not be developed on directly, but it also must not remain permanently frozen after coherent verified stages. Normal low-risk promotion follows repository gates; high-risk boundaries retain explicit human approval.
+
+Founding boundary:
 
 > **ZN uses models. Models do not own ZN.**
 
-## 当前分支 / 关键基线
+## Branch / repository state
 
-- 固定开发分支：`dev/zn-agent`
-- canonical source branch：`main`
-- bulk source evacuation：`6d5f78d22883857fcc99aff5cfd4ba1b9a2d3e6b`
-- bulk one-shot verification：run `32669071891`
-- clean-tree full CI：`b8eb1727711810f83f26035355370fafdb09ed83` / run `32670967428`
-- production npm high gate：`5466f51f4f9c3952483a824e718bb8a4c36cce68`
-- M10 architecture decision：`c06e25c3fb85df3c3fe42049df7ab5f527135bf3`
-- exact reviewed pre-promotion HEAD：`c158517225ff7b8cf0a952a0ae1dd6ebcf9c2c5d`
-- exact reviewed full PR CI：run `32671245421`
-- canonical promotion-record `main` push CI：run `32671435423`
-- dedicated reference branch 保留完整历史 baseline；active tree 不依赖它。
-- 本文件不能自引用自身最终 commit SHA。接手者必须重新读取 exact `main` 和 `dev/zn-agent` refs。
+- repository: `9529360-cpu/znagent`
+- development branch: `dev/zn-agent`
+- canonical branch: `main`
+- canonical `main` HEAD: `8234a835dea604783cea0bd9d28a40de654ec03d`
+- exact P5.8 code/proof HEAD: `48bfe13ba6783184292e871ebbc62a895db47d1c`
+- maintenance-prompt policy commit: `251508d06c8974aa342f61b36fef8d8cac1b74b2`
+- P5.8 implementation-status sync: `4ba0dfcba8c5af178b18b86a5ade539f7e455838`
+- ZN development-contract promotion alignment: `58d416f0527d191f4a752290375d3814ce8be484`
+- AGENTS promotion alignment: `934de7ab19174de5ca1fe81494c9f3ca565f4c97`
+- self-maintenance promotion alignment immediately before this handoff: `7c27d84a3e60e706d4b26662254a89d5322b52ed`
+- PR #6: `dev/zn-agent` -> `main`, open, draft, mergeable at last check
+- immediately before the latest alignment commits, dev was 468 commits ahead of main and 0 behind; re-check exact count before promotion because each documentation sync advances dev
+- `main` has not been modified during this alignment work
+- no force push or history rewrite was performed
 
-## 已完成
+This file intentionally does not self-reference its own final commit SHA. Re-read the actual branch HEAD before the next write or promotion decision.
 
-### 1. active source evacuation
+## Completed in P5.8
 
-物理参考源撤离完成。active tree 仅保留 ZN-owned product/runtime/desktop/docs/automation structure 与必要 root metadata。迁移脚本和 migration-only write CI 已退役。
-
-one-shot real evidence：
-
-```text
-run 32669071891
-fresh ZN-only Node lock/install          success
-isolated ZN Python install               success
-zero-model resident boot                 success
-Python core tests                        382 passed
-desktop typecheck/bundle                 success
-desktop vitest                           37 passed
-Node release/runtime tests               8 passed
-ZN-only Docker build + boot              success
-verified deletion commit/push            success
-```
-
-### 2. reference source isolation
-
-独立 reference branch 与晋升前旧 canonical baseline 完全一致。历史源码已有单独参考落点，不需要复制进 active tree，也不需要重写 Git 历史。
-
-### 3. source-boundary hard gate
-
-`.agent/verify_zn_source_boundary.py` 扫描 tracked path 与 tracked non-binary text，阻止退休产品标识、旧 package namespace 和旧物理路径回流。
-
-`LICENSE` 文本是唯一法律 provenance 例外；原版权归属必须保留。
-
-`ZN CI` 覆盖 `dev/zn-agent` 与 `main` push。
-
-### 4. final source/text cleanup
-
-所有 active comments/docstrings/tests/runtime verifier 中的历史产品明文均已清理或改为运行时 hex marker，拒绝能力保持。
-
-exact reviewed evidence：
+Active owner:
 
 ```text
-run 32671245421
-ZN Source Boundary        success
-ZN Kernel / Python        success
-Electron / TypeScript     success
-Container / Runtime Smoke success
+runtime/python/zn_agent/core/work_restore_point_resident.py
 ```
 
-### 5. production npm security boundary
-
-完整开发安装仍报告 2 个 high findings。CI 强制：
+Active runtime chain:
 
 ```text
-npm audit --omit=dev --audit-level=high
+provider_bridge
+-> RecoveryBoundedResidentRuntime
+-> WorkRestorePointResidentRuntime
+-> AtomicOverwriteNamespaceRecoveryResidentRuntime
+-> AtomicOverwriteRecoveryResidentRuntime
+-> OverwriteRecoveryResidentRuntime
+-> DurableBodyAccountingResidentRuntime
+-> CapabilityRecoveryResidentRuntime
+-> resident core
 ```
 
-production gate 已通过，因此当前两项 high finding 属于 development/tooling dependency debt，不是接受进 production/runtime 的依赖。
+Before an eligible Work-owned existing-file overwrite can dispatch, ZN now retains exact pre-mutation bytes in durable `work_restore_points` storage.
 
-禁止 blind forced audit upgrade；后续先取得 exact dependency path。
+The restore point binds:
 
-### 6. M10 review and canonical promotion
+- deterministic restore-point ID;
+- exact event/thread/message Work ownership;
+- intent and action signature;
+- canonical target path;
+- exact pre-mutation file identity;
+- raw old content BLOB;
+- SHA-256 and byte size;
+- retained status and timestamps.
 
-`ZN.md` 已记录 M10 review：resident/runtime、desktop、build/package/release、CI、provenance、source independence、M8 risk acceptance 和用户授权均已审查。
+Creation requires a matching durable `work_runs` row with exact event/thread/message/task linkage and `ledger_state='active'`. Non-Work, forged, missing, conflicting, or finalized Work linkage cannot create restore content or authorize the overwrite.
 
-M8 仍 **PARTIAL**。canonical source promotion 不代表 formal release complete。
+Current exact capture scope is intentionally narrow:
 
-真实 promotion sequence：
+- existing stable regular file;
+- complete SHA-256 identity;
+- size at most 8 MiB;
+- captured bytes match durable prestate size/hash;
+- fresh identity after the read still exactly matches the prestate.
+
+Capture-time drift withdraws mutation authority and returns to Investigation.
+
+The restore point is not restore authority. Active state explicitly records:
 
 ```text
-reviewed HEAD c158517225ff7b8cf0a952a0ae1dd6ebcf9c2c5d
-→ full PR CI run 32671245421 success
-→ recheck fast-forward relation
-→ main update force=false
-→ main/dev compare identical
-→ canonical main push CI run 32671435423 success
+automatic_restore_authority: False
 ```
 
-没有 merge commit、force push 或历史重写。
+P5.8 never writes retained bytes back to the target.
 
-canonical run `32671435423`：
+Retention is bounded without destructive pruning:
+
+- max 32 points per event;
+- max 256 points resident-wide;
+- max 128 MiB retained content total;
+- max 8 MiB per captured file.
+
+If capacity is exhausted, ZN preserves existing rollback material and blocks the new exact Work overwrite before Body mutation. It does not delete an older restore point to make room.
+
+`retained_work_restore_points(event_id)` returns metadata only and does not expose the raw retained BLOB.
+
+## P5 status
+
+P5 is **PARTIAL / EIGHT BOUNDED SLICES CI VERIFIED**.
+
+Concrete crash/restart windows closed and verified: **27**.
+
+New window **#27**: process death after durable restore-point commit but before Body dispatch/mutation. The target remains unchanged, resident reconstruction retains the same restore point, and restart does not manufacture automatic rollback authority.
+
+Additional P5.8 hardening covers capture identity drift, forged Work linkage, finalized Work runs, retention capacity, and non-Work exclusion. These are safety guards, not separately counted crash windows.
+
+Do not describe P5 as general rollback/restore complete.
+
+## Real test / CI result
+
+Exact code/proof head:
 
 ```text
-ZN Source Boundary        success
-ZN Kernel / Python        success
-Electron / TypeScript     success
-Container / Runtime Smoke skipped by push-event design
-Publish commit statuses   success
+48bfe13ba6783184292e871ebbc62a895db47d1c
 ```
 
-Container 在 exact reviewed PR run `32671245421` 已成功。
+Focused Windows Work recovery CI:
 
-### 7. M10 documentation closeout
+```text
+ZN Work Recovery E2E run 33166734152  success
+Windows resident Work restart recovery    success
+Ran 102 tests in 75.017s                  OK
+```
 
-`docs/ZN-IMPLEMENTATION-STATUS.md` 已改为稳定状态：M10 对 canonical source promotion 为 COMPLETE；M8 继续 PARTIAL。未来 docs-only commit 的实时 CI 仍以 GitHub 当前结果为准，不以文档声称代替验证。
+Full-tree Windows CI on the same exact head:
 
-## 当前未完成
+```text
+ZN CI run 33166734199                    success
+ZN Kernel / Python / Windows             success
+  isolated no-model boot                 success
+  compile resident core                  success
+  Ran 680 tests in 853.298s              OK (skipped=5)
+ZN Source Boundary / Windows             success
+  active tracked tree remains ZN-only    success
+Electron / TypeScript / Windows          success
+  npm audit high                         0 vulnerabilities
+  typecheck / bundle                     success
+  Electron contract tests                37 passed
+  release/runtime script tests           8 passed
+Publish Windows CI statuses              success
+```
 
-1. 2 个 development/tooling npm high finding 的 exact dependency path 与安全修复判断；
-2. remaining M8 intended-platform continuity / secure signing / rollback；
-3. browser/computer Body/Senses；
-4. broader resident engineering competence；
-5. SM1+ self-maintenance。
+The later maintenance/documentation alignment commits are documentation-only descendants. The GitHub connector returned no PR-triggered workflow run for `251508d...`; do not claim those documentation descendants as independently code-CI-proven. Runtime proof remains `48bfe13...`.
 
-## 风险 / 边界
+No local repository test execution is claimed for this web-maintainer slice. Repository self-hosted Windows CI is the verification authority.
 
-- 禁止 force push/history rewrite。
-- `LICENSE` legal attribution 不得删除或改写。
-- M8 不得写成 complete。
-- canonical `main` promotion 不等于正式 release。
-- historical reference branch 仅供阅读成熟机制，不得重新成为 active runtime/build/release/control-plane dependency。
+## Promotion policy now aligned
 
-## Task Queue
+The following repository contracts now distinguish direct development from verified promotion:
 
-### P0 — source evacuation
+- `ZN.md`;
+- `AGENTS.md`;
+- `docs/ZN-MAINTAINER-PROMPT.md`;
+- `docs/ZN-SELF-MAINTENANCE.md`.
 
-Status: **COMPLETE**
+Normal rule:
 
-### P1 — source boundary / regression guard
+```text
+develop / investigate on dev or work branch
+→ complete coherent claimed stage
+→ relevant tests + full CI / required E2E
+→ review diff
+→ align status docs + HANDOFF
+→ confirm no unresolved blocker or high-risk approval boundary
+→ normal traceable PR / merge / promotion
+→ main becomes new verified canonical source
+```
 
-Status: **COMPLETE**
+Do not require a chat-only approval sentence for every ordinary low-risk promotion after those repository gates are genuinely satisfied. Do not use this rule to bypass explicit human approval for identity, long-term memory, destructive migrations, credentials/permissions, updater/rollback/signing trust, self-maintenance approval rules, or replacement of the user's installed formal version.
 
-### P2 — M10 review and canonical source promotion
+Force push, history rewrite, disabled CI, bypassed failed checks, and false completion claims are never normal promotion.
 
-Status: **COMPLETE**
+## Relevant files
 
-### P3 — development/tooling dependency audit
+- `ZN.md`
+- `AGENTS.md`
+- `docs/ZN-MAINTAINER-PROMPT.md`
+- `docs/ZN-IMPLEMENTATION-STATUS.md`
+- `docs/ZN-SOURCE-EXTRACTION.md`
+- `docs/ZN-SELF-MAINTENANCE.md`
+- `.agent/HANDOFF.md`
+- `runtime/python/zn_agent/core/work_restore_point_resident.py`
+- `runtime/python/zn_agent/core/recovery_bounded_resident.py`
+- `runtime/python/zn_agent/core/provider_bridge.py`
+- `runtime/python/zn_agent/core/work_control.py`
+- `runtime/python/zn_agent/core/work.py`
+- `tests/zn_agent/core/test_work_restore_points.py`
+- `tests/zn_agent/core/test_work_restore_point_guards.py`
+- `tests/zn_agent/core/test_work_restore_point_retention.py`
+- `tests/zn_agent/core/test_work_restore_point_active_run.py`
+- `.github/workflows/zn-work-recovery-e2e.yml`
 
-Status: **NEXT**
+## Risks / blockers
 
-获取 2 个 high findings 的 exact dependency tree，判断是否存在 stable safe upgrade；禁止 blind `--force`。
+No known P5.8 implementation CI blocker.
 
-### P4 — resident competence / M8 / SM1+
+Open technical/product work:
 
-Status: **PENDING**
+- restore-point metadata is not yet projected through `work_control.py` / Work UI;
+- actual restore application is not implemented;
+- current-target drift/eligibility semantics for a future restore proposal are not yet exposed to users;
+- arbitrary workspace snapshots and general per-task rollback remain open;
+- retained restore points have bounded capacity but no destructive automatic GC policy, intentionally;
+- files above the exact capture limit and incomplete identities are not claimed restorable;
+- uncommon Windows metadata/named-stream and host/power-loss durability remain open;
+- isolated parallel Work remains open;
+- broader browser, M8 continuity, and SM1+ remain incomplete;
+- identity, long-term memory, credentials/permissions, updater/signing, destructive rollback, destructive self-maintenance, and installed-version replacement remain explicit human-approval boundaries.
 
-dependency audit → resident-owned engineering competence → remaining M8 continuity/signing/rollback → SM1+。
+Repository promotion also requires a separate review of the accumulated post-M10 PR scope. PR #6 contains hundreds of commits and touches release/update and other broad product areas; being mergeable and having a green code proof does not by itself prove the whole accumulated PR is a low-risk automatic promotion. Inspect the actual accumulated diff and high-risk boundaries before changing `main`.
 
-## 下一真实目标
+No secret, token, password, signing key, or production credential belongs in this file.
 
-重新确认 final docs HEAD 的 CI 与 `main`/`dev/zn-agent` exact refs 一致，然后进入 development/tooling npm advisory exact-path investigation。
+## Task queue
+
+1. Re-read exact dev/main HEAD, PR #6, latest CI, and this handoff before the next implementation or promotion decision.
+2. Update PR #6 body to P5.8 / eight slices / 27 windows and current promotion policy.
+3. Re-check the accumulated PR #6 diff specifically for high-risk promotion boundaries before any `main` merge.
+4. Continue P5 with a read-only restore-point projection in `work_control.py` / Work snapshot surface.
+5. Expose metadata only; do not expose raw restore BLOB by default.
+6. Re-observe the current target and report read-only eligibility reality such as unchanged / changed / missing / unsupported without performing restore.
+7. Add ownership, privacy, restart, and target-drift tests for the projection.
+8. Run focused Work recovery CI and full `ZN CI`; fix failures before claiming the next slice complete.
+9. Update implementation status and this HANDOFF after exact-head proof.
+10. Keep actual destructive restore application as a later bounded authority slice with explicit drift handling and appropriate user approval.
+
+## Next real target
+
+Read-only Work restore-point projection: exact Work ownership -> retained metadata projection -> fresh target re-observation -> restart-safe user-visible inspection, with **no restore mutation** in this slice.
