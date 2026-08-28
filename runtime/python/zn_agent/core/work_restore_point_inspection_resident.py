@@ -4,7 +4,7 @@ from __future__ import annotations
 
 This layer projects bounded metadata for an existing retained restore point. It
 never reads the retained content BLOB, never writes bytes back to the target,
-and never converts inspection evidence into restore authority.
+and never converts inspection or proposal evidence into restore authority.
 """
 
 import json
@@ -48,6 +48,34 @@ class WorkRestorePointInspectionResidentRuntime(WorkRestorePointResidentRuntime)
         if comparison.get("comparable") is True:
             return "changed", str(comparison.get("reason") or "file_identity_changed")
         return "unsupported", str(comparison.get("reason") or "identity_not_comparable")
+
+    @staticmethod
+    def _restore_proposal(current_status: str) -> dict[str, Any]:
+        """Describe a possible future restore without granting write authority."""
+
+        if current_status == "unchanged":
+            status = "candidate"
+            reason = "current_target_matches_retained_prestate"
+        elif current_status == "changed":
+            status = "conflict_review_required"
+            reason = "current_target_changed_since_restore_point"
+        elif current_status == "missing":
+            status = "missing_target_review_required"
+            reason = "current_target_is_missing"
+        else:
+            status = "blocked"
+            reason = "current_target_cannot_be_compared_safely"
+
+        return {
+            "kind": "restore_exact_file",
+            "status": status,
+            "reason": reason,
+            "destructive": True,
+            "requires_user_approval": True,
+            "requires_fresh_revalidation": True,
+            "application_available": False,
+            "automatic_authority": False,
+        }
 
     def inspect_work_restore_points(
         self,
@@ -146,6 +174,7 @@ class WorkRestorePointInspectionResidentRuntime(WorkRestorePointResidentRuntime)
                         ),
                         "current_type": str(current.get("type") or "unknown"),
                         "current_size_bytes": current_size,
+                        "restore_proposal": self._restore_proposal(current_status),
                         "automatic_restore_authority": False,
                         "restore_application_available": False,
                     }
