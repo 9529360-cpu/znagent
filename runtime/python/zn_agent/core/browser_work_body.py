@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
+from .atomic_overwrite_namespace_recovery_resident import AtomicOverwriteNamespaceAwareBody
 from .body import BodyAction, BodyActionResult
 from .browser import (
     BrowserAction,
@@ -13,15 +14,15 @@ from .browser import (
     BrowserPermissionContext,
 )
 from .models import utc_now
-from .side_effect_body import SideEffectAwareBody
 
 
-class BrowserSideEffectAwareBody(SideEffectAwareBody):
-    """Extend ZN's existing Body with one bounded managed-browser product path.
+class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
+    """Extend ZN's mature Body with one bounded managed-browser product path.
 
-    Browser navigation is guarded as a non-replayable outside-world side effect.
-    A GET/navigation can itself mutate remote state, so a resident interruption
-    after dispatch must never authorize a blind retry.
+    The base deliberately remains the current final overwrite-aware Body rather
+    than an earlier SideEffectAwareBody layer. That preserves atomic overwrite,
+    namespace recovery, keyboard/pointer, and generic side-effect protocols while
+    adding browser navigation as another guarded outside-world movement.
     """
 
     _BROWSER_NAVIGATE = "browser_navigate"
