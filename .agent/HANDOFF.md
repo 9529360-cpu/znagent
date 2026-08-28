@@ -1,250 +1,177 @@
-# ZN Agent Handoff
+# ZN Maintainer Handoff
 
 Updated: 2026-08-28
 
+This is an operational maintainer handoff, not a chat summary. Real repository state and CI remain authoritative.
+
 ## Current goal
 
-P1-P4 are complete and CI-verified. P5 broader Work checkpoint/restore remains **PARTIAL / IN PROGRESS** with five bounded, verified slices:
+Continue P5 durable Work recovery at the Windows atomic-overwrite retained-namespace boundary. The next narrow work is zero-byte artifact identity hardening followed by an explicit restart-safe repair lifecycle for a proven `ReplaceFileW` 1177 split, without granting replay authority to the stale overwrite attempt.
 
-1. accepted Work ingress checkpoint before resident-event creation (#19);
-2. reality-gated ordinary overwrite effect-present recovery (#20);
-3. privacy-bounded overwrite pre-dispatch identity/restart guard (#21);
-4. Windows staged atomic-overwrite lifecycle that removes truncation-first process-death ambiguity for active exact overwrite (#22);
-5. durable staged-overwrite precommit reconciliation that proves an exact fsynced stage never entered the Windows namespace commit API before granting a fresh lifecycle (#23).
-
-Broader Work durability now has **TWENTY-THREE concrete crash/restart windows closed and verified**.
-
-General per-task restore/rollback, arbitrary workspace snapshots, user-visible restore points, isolated parallel Work and any automatic replay after namespace commit has started remain open.
-
-Founding boundary:
-
-> **ZN uses models. Models do not own ZN.**
-
-## Branch / repository truth
+## Branch / repository state
 
 - repository: `9529360-cpu/znagent`
 - development branch: `dev/zn-agent`
-- canonical source/release branch: `main`
-- canonical `main`: `8234a835dea604783cea0bd9d28a40de654ec03d`
-- P5 ingress proof head: `2c20b8bded96ce07c6ec43263cc77b7bd10a7a82`
-- P5 overwrite effect-present proof head: `c4276f8b151d2c45b69368cb414f012bf0644d01`
-- P5 overwrite pre-dispatch proof head: `97803f8d0616c1f2b30a61af5acc686f1256cd11`
-- P5 atomic-overwrite implementation head: `b3cf799ec24d8f4bb89d82752c2396e70cc6a233`
-- P5 staged-overwrite reconciliation implementation/proof head: `a006ee90c9fc6e53f4b90d09f69b64ebf7ffd4c1`
-- PR #6 remains the draft development PR from `dev/zn-agent` to `main`
+- canonical branch: `main`
+- canonical `main` HEAD: `8234a835dea604783cea0bd9d28a40de654ec03d`
+- implementation/proof HEAD before this documentation sync: `042e196418d8c4e9baa17d810b60d995007dc5b0`
+- key implementation commit: `042e196418d8c4e9baa17d810b60d995007dc5b0` (`fix: reconcile committed overwrite namespaces`)
+- draft PR: #6, `dev/zn-agent` -> `main`
 - `main` was not modified
-- no force push or history rewrite was requested or performed
+- no force push/history rewrite performed
 
-A HANDOFF commit cannot contain its own resulting SHA. Re-read `dev/zn-agent` after this commit and use that exact HEAD externally.
+Re-read `dev/zn-agent` after this handoff/documentation commit before starting the next implementation slice; the branch HEAD will be the documentation sync descendant of `042e1964...`.
 
-## Completed stages
+## Completed in the latest P5 slice
 
-### P1 - shared side-effect-attempt persistence owner
-Status: **COMPLETE / CI VERIFIED**
-
-```text
-ZN Work Recovery E2E 33117334326  success
-ZN CI                33117334321  success
-```
-
-### P2 - bounded cumulative accounting/learning durability
-Status: **COMPLETE / CI VERIFIED**
-Proof head `f79d4f3c81b1d7c46dcfb55b6fc923acda77b39c`.
+Added active product layer:
 
 ```text
-ZN Work Recovery E2E 33119871079  success
-ZN CI                33119871129  success
+runtime/python/zn_agent/core/atomic_overwrite_namespace_recovery_resident.py
 ```
 
-### P3 - managed-browser frontier reconciliation
-Status: **COMPLETE / CI VERIFIED**
-`SELECT_OPTION`, CHECK and UNCHECK are **VERIFIED NARROW**. `PRESS` remains OPEN.
+Updated active runtime ownership:
 
 ```text
-ZN Managed Browser E2E 33120809421  success
-ZN CI                  33120848980  success
+provider_bridge
+-> RecoveryBoundedResidentRuntime
+-> AtomicOverwriteNamespaceRecoveryResidentRuntime
+-> AtomicOverwriteRecoveryResidentRuntime
+-> OverwriteRecoveryResidentRuntime
+-> DurableBodyAccountingResidentRuntime
+-> CapabilityRecoveryResidentRuntime
+-> ...
 ```
 
-### P4 - resident-owned live-page registry
-Status: **COMPLETE / CI VERIFIED NARROW**
-Proof head `fffb0f4b84a76cef21a088167c9eb4faceb93afc`.
+The slice closes one more distinct crash/restart window (#24) and adds bounded post-commit namespace reasoning:
+
+1. A matching `namespace_commit_started=true` protocol may be used as read-only namespace evidence, never as replay authority.
+2. The exact documented `ReplaceFileW` WinError 1177 split can be recognized when target is missing, retained stage still equals the durable new payload, and retained backup still equals the durable pre-state.
+3. That split is held as `repair_retained_atomic_namespace_required`, with both artifacts preserved and replay blocked.
+4. If target independently verifies as the exact requested effect, the attempt may resolve `verified_effect` through inherited overwrite recovery.
+5. Only after that verified effect may ZN durably checkpoint cleanup ownership for exact retained deterministic artifacts.
+6. Restart after the cleanup checkpoint continues only exact artifact deletion and never repeats the overwrite.
+7. Exact artifact identity is rechecked before delayed unlink; drift removes delete authority and preserves the artifact.
+8. Matching protocol is removed only after the exact retained artifacts are absent.
+
+New tests:
 
 ```text
-ZN Managed Browser E2E 33122620361  success
-ZN CI                  33122620398  success
+tests/zn_agent/core/test_windows_atomic_overwrite_namespace_recovery.py
 ```
 
-## P5 - durable Work checkpoint / restore foundation
+Coverage includes:
 
-Status: **PARTIAL / FIVE BOUNDED SLICES CI VERIFIED**
+- 1177 split classification/preservation without replay;
+- process death after durable cleanup checkpoint before backup delete, followed by restart completion without replay;
+- retained-backup drift after checkpoint, proving ZN preserves the changed artifact instead of deleting it.
 
-### P5.1 - accepted Work ingress checkpoint (#19)
-Proof head `2c20b8bded96ce07c6ec43263cc77b7bd10a7a82`.
+Updated focused workflow:
 
 ```text
-ZN Work Recovery E2E 33124662199  success
-ZN CI                33124662367  success
+.github/workflows/zn-atomic-overwrite-e2e.yml
 ```
 
-### P5.2 - ordinary overwrite effect-present recovery (#20)
-Proof head `c4276f8b151d2c45b69368cb414f012bf0644d01`.
+## P5 status
 
-After a durable overwrite attempt exists, restart never blindly repeats the write. Exact intended current text resolves `verified_effect`; mismatch/read failure remains outside-world uncertainty and preserves the target.
+P5 is **PARTIAL / SIX BOUNDED SLICES CI VERIFIED**.
+
+Concrete crash/restart windows closed and verified: **24**.
+
+Do not describe this as general rollback/restore complete.
+
+Important prior boundary from #23 remains unchanged:
+
+- exact matching protocol;
+- stage ready with complete identity;
+- `namespace_commit_started=false`;
+- target exactly equals durable pre-dispatch identity;
+- stage exactly equals durable staged identity;
+- backup absent;
+
+Only that state can close the old attempt `verified_absent` and permit a fresh overwrite lifecycle. Once commit-start is durable, stale overwrite replay remains forbidden.
+
+## Real test / CI result
+
+Exact implementation head:
 
 ```text
-ZN Work Recovery E2E 33129111422  success
-ZN CI                33129111419  success
+042e196418d8c4e9baa17d810b60d995007dc5b0
 ```
 
-### P5.3 - overwrite pre-dispatch identity guard (#21)
-Proof head `97803f8d0616c1f2b30a61af5acc686f1256cd11`.
-
-Owner: `runtime/python/zn_agent/core/file_identity.py`.
-
-If restart occurs before Body attempt creation, exact unchanged identity may continue the inherited fresh lifecycle; drift returns to Investigation without mutation. Once a durable attempt exists, the old identity can never authorize replay.
+Focused Windows CI:
 
 ```text
-ZN Work Recovery E2E 33151244307  success  (95 tests, OK)
-ZN CI                33151244298  success
+ZN Atomic Overwrite E2E run 33159250870  success
+Ran 19 tests                           OK
 ```
 
-### P5.4 - Windows staged atomic overwrite (#22)
-Status: **BOUNDED SLICE COMPLETE / CI VERIFIED**
-
-Implementation `b3cf799ec24d8f4bb89d82752c2396e70cc6a233`; exact proof descendant `403ac14f04866380a0d32c74bd9e250226dbb780`.
+Full-tree Windows CI:
 
 ```text
-ZN Atomic Overwrite E2E 33154361936  success  (10 tests, OK)
-ZN CI                   33154361960  success
+ZN CI run 33159250929                  success
+Electron / TypeScript / Windows        success
+ZN Source Boundary / Windows           success
+ZN Kernel / Python / Windows           success
+  isolated no-model boot               success
+  compile resident core                success
+  664 core tests                       OK (skipped=5)
+Publish Windows CI statuses             success
 ```
 
-### P5.5 - durable staged-overwrite precommit reconciliation (#23)
-Status: **BOUNDED SLICE COMPLETE / CI VERIFIED**
+The 664-test suite explicitly includes all 12 earlier Windows atomic-overwrite tests plus the 3 new namespace-recovery tests.
 
-Implementation/proof head:
-
-```text
-a006ee90c9fc6e53f4b90d09f69b64ebf7ffd4c1  fix: reconcile staged overwrites before commit
-```
-
-New durable owner:
-
-```text
-runtime/python/zn_agent/core/atomic_overwrite_protocols.py
--> resident_atomic_overwrite_protocols
-```
-
-The protocol is independent of `WorkingState` and binds `event_id + Body signature + intent_id + side-effect attempt_id` to deterministic staging/backup paths, stage-ready identity, protocol version and `namespace_commit_started`.
-
-Active physical/recovery sequence:
-
-```text
-#21 exact target pre-state
--> durable side-effect attempt
--> full same-directory stage + flush + fsync
--> durable stage-ready identity linked to attempt
--> recheck #21 target identity
--> durable namespace_commit_started marker
--> ReplaceFileW / no-replace MoveFileExW
--> inherited verification/completion lifecycle
-```
-
-Restart may close the old attempt `verified_absent` only when protocol/attempt match exactly, stage-ready is durable, commit-start remains false, target equals #21 pre-state, stage equals its durable identity and deterministic backup is absent. Then only the exact stage is cleaned and a fresh lifecycle may create a new attempt.
-
-Commit-start=true, missing/legacy protocol, incomplete identity, tampered stage, target drift or unexpected backup all remain fail-closed. A large stage whose bounded identity cannot be proven exact may still complete normally while fresh; it simply cannot use #23 automatic restart reconciliation.
-
-Additional Windows proofs include backup-cleanup retry after verified completion and a real sharing handle that denies delete without mutating the target.
-
-Real focused Windows proof:
-
-```text
-ZN Atomic Overwrite E2E run 33157039949               success
-  Prepare isolated runtime                            success
-  Compile atomic overwrite path                       success
-  Verify overwrite recovery and Windows semantics     success
-```
-
-Focused log: `Ran 16 tests in 5.601s` / `OK`.
-
-Real full-tree proof on the same exact code head:
-
-```text
-ZN CI run 33157039957                                  success
-ZN Kernel / Python / Windows                           success
-  Boot isolated ZN distribution without a model       success
-  Compile resident core                               success
-  Run ZN core tests against working tree              success
-ZN Source Boundary / Windows                           success
-Electron / TypeScript / Windows                        success
-Publish Windows CI statuses                            success
-```
-
-No local repository test run is claimed for this web-maintainer slice. Repository self-hosted Windows CI is the verification authority.
+No local repository test execution is claimed for this slice. Self-hosted Windows repository CI is the verification authority.
 
 ## Relevant files
 
+- `ZN.md`
+- `AGENTS.md`
+- `docs/ZN-IMPLEMENTATION-STATUS.md`
+- `docs/ZN-SOURCE-EXTRACTION.md`
+- `docs/ZN-SELF-MAINTENANCE.md`
+- `.agent/HANDOFF.md`
 - `runtime/python/zn_agent/core/file_identity.py`
+- `runtime/python/zn_agent/core/side_effect_attempts.py`
+- `runtime/python/zn_agent/core/side_effect_body.py`
 - `runtime/python/zn_agent/core/overwrite_recovery_resident.py`
 - `runtime/python/zn_agent/core/atomic_overwrite_protocols.py`
 - `runtime/python/zn_agent/core/staged_text_write.py`
 - `runtime/python/zn_agent/core/atomic_overwrite_resident.py`
+- `runtime/python/zn_agent/core/atomic_overwrite_namespace_recovery_resident.py`
 - `runtime/python/zn_agent/core/recovery_bounded_resident.py`
-- `runtime/python/zn_agent/core/side_effect_body.py`
+- `runtime/python/zn_agent/core/provider_bridge.py`
 - `tests/zn_agent/core/test_work_overwrite_recovery.py`
 - `tests/zn_agent/core/test_windows_atomic_overwrite.py`
+- `tests/zn_agent/core/test_windows_atomic_overwrite_namespace_recovery.py`
 - `.github/workflows/zn-atomic-overwrite-e2e.yml`
-- `docs/ZN-IMPLEMENTATION-STATUS.md`
-- `.agent/HANDOFF.md`
 
-## Current risks / incomplete work
+## Risks / blockers
 
-- broader Work durability remains partial beyond twenty-three verified windows;
-- general per-task restore/rollback, arbitrary workspace checkpoints and user-visible restore points remain open;
-- post-dispatch old-state equality remains intentionally insufficient for `verified_absent`;
-- #23 proves only the precommit state where a matching durable protocol says the namespace API never started. Commit-start=true, WinError `1177`, legacy/no-protocol and incomplete-stage-identity states remain uncertainty;
-- a backup that may be the only surviving pre-state copy is preserved; broader retained-backup lifecycle/terminal cleanup is not complete;
-- deterministic artifacts outside an exact provable protocol have no general startup GC owner;
-- replacement changes file identity; uncommon metadata/named-stream behavior and host/power-loss durability remain open;
-- generic `NativeBody` remains unchanged for non-active/shared callers;
-- isolated parallel Work remains open;
-- browser `PRESS`, broader click/text replacement/ARIA checkbox mutation, explicit tab/popup/frame ownership, headed managed browser and authenticated User Browser Bridge remain incomplete;
-- Windows M8 continuity and SM1+ remain incomplete;
-- identity, long-term memory, credentials/permissions, updater/signing, rollback and destructive self-maintenance remain human-approval boundaries.
+No current CI blocker on the implementation head.
+
+Open technical risks:
+
+- A proven 1177 split is classified and preserved, but there is no automatic repair/restore action yet.
+- General workspace rollback/restore remains open.
+- There is no general startup/maintenance GC authority for retained deterministic artifacts outside an exact protocol.
+- Cross-path content-equivalence currently fails closed for zero-byte files because the bounded comparison uses truthy size fallback; zero-byte retained stage/backup cannot yet receive automatic equivalence authority.
+- Incomplete/large identities remain fail-closed.
+- Replacement file identity and uncommon Windows metadata/named-stream/power-loss behavior are not claimed solved.
+- Potentially unique backups must continue to be preserved unless stronger terminal truth and explicit cleanup authority exist.
+- Generic `NativeBody` behavior outside the active product chain remains intentionally unchanged.
+
+No secret, token, password, signing key, or production credential belongs in this file.
 
 ## Task queue
 
-### P1
-Status: **COMPLETE / CI VERIFIED**
-
-### P2
-Status: **COMPLETE / CI VERIFIED**
-
-### P3
-Status: **COMPLETE / CI VERIFIED**
-
-### P4
-Status: **COMPLETE / CI VERIFIED NARROW**
-
-### P5
-Status: **PARTIAL / IN PROGRESS**
-
-Completed bounded slices:
-
-1. accepted Work ingress checkpoint (#19);
-2. ordinary overwrite effect-present recovery/no-replay (#20);
-3. overwrite pre-dispatch identity/drift guard (#21);
-4. Windows staged atomic-overwrite process-death boundary (#22);
-5. exact staged precommit restart reconciliation / durable namespace-commit boundary (#23).
-
-Next bounded P5 audit:
-
-1. enumerate target/stage/backup namespace states once `namespace_commit_started=true`;
-2. reconcile exact durable attempt/protocol with current namespace without turning old-state equality into replay authority;
-3. preserve any potentially unique backup;
-4. define bounded retained-backup cleanup only after stronger completion/recovery truth;
-5. continue real Windows sharing/cleanup failure coverage;
-6. add #24 only for a genuinely distinct crash/restart window proven by real Windows CI.
+1. Re-read the six canonical project/handoff documents and current Git/PR/CI before coding.
+2. Fix zero-byte exact artifact content-equivalence without broadening unsafe identity assumptions; add focused Windows tests including zero-byte pre-state/new payload cases.
+3. Re-run focused atomic-overwrite CI and full `ZN CI`; fix failures before moving on.
+4. Then design an explicit 1177 repair lifecycle as a **new repair action/lifecycle**, not replay of the old overwrite attempt. It must be restart-safe, preserve unique backup data until authority is durable, and use fresh namespace evidence.
+5. Keep broader rollback/restore, isolated parallel Work, M8, and SM1+ marked incomplete until their own proofs exist.
+6. Keep PR #6 draft and keep `main` untouched unless explicitly authorized and M10 conditions are revalidated.
 
 ## Next real target
 
-Continue P5 at the **atomic-overwrite commit-start / WinError 1177 namespace reconciliation and retained-backup ownership boundary**. Keep `main` untouched.
+P5 atomic-overwrite retained namespace hardening: close the zero-byte exact-artifact identity edge first, then establish explicit 1177 repair authority that cannot be confused with stale overwrite replay.
