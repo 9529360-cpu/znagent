@@ -17,6 +17,7 @@ from .channel import ChannelAdapter, ChannelEvent, ChannelMessage
 from .channel_delivery import ChannelDeliveryLedger, ChannelMediaNomination
 from .config import load_zn_config
 from .event_ingress import enqueue_event_once, stable_external_event_id
+from .health_observation import ResidentHealthJournal
 from .models import utc_now
 
 
@@ -66,6 +67,7 @@ class ResidentChannelSupervisor:
         self.max_backoff = max(self.min_backoff, float(max_backoff))
         self.reply_failures = bool(reply_failures)
         self.ledger = ChannelDeliveryLedger(self.resident.store.path)
+        self.health = ResidentHealthJournal(self.resident.store)
         self._adapters: dict[str, ChannelAdapter] = {}
         self._states: dict[str, ChannelLoopState] = {}
         for adapter in adapters:
@@ -217,6 +219,12 @@ class ResidentChannelSupervisor:
                         state.consecutive_failures += 1
                         state.last_error_at = utc_now()
                         state.last_error = f"{type(exc).__name__}: {exc}"[:1000]
+                    try:
+                        self.health.record_failure(f"channel:{name}", exc)
+                    except Exception:
+                        # Health evidence must never become a second failure mode
+                        # that kills or stalls the communication organ itself.
+                        pass
                     if self._stop.wait(backoff):
                         break
                     backoff = min(self.max_backoff, backoff * 2.0)
@@ -232,6 +240,10 @@ class ResidentChannelSupervisor:
                     state.last_success_at = utc_now()
                     state.last_error = None
                     state.pending_deliveries = self.ledger.counts(name).get("pending", 0)
+                try:
+                    self.health.record_success(f"channel:{name}")
+                except Exception:
+                    pass
                 backoff = self.min_backoff
 
                 elapsed = time.monotonic() - started
