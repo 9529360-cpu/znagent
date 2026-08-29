@@ -7,9 +7,11 @@ on:
     paths:
       - '.github/workflows/sm4-publication-preparation-validation.yml'
       - 'runtime/python/zn_agent/core/maintenance_publication.py'
+      - 'runtime/python/zn_agent/core/maintenance_repair.py'
       - 'runtime/python/zn_agent/core/cognitive_maintenance_resident.py'
       - 'tests/zn_agent/core/test_maintenance_publication.py'
       - 'tests/zn_agent/core/test_maintenance_publication_diagnostic.py'
+      - 'tests/zn_agent/core/test_maintenance_isolated_repair.py'
   workflow_dispatch:
 
 permissions:
@@ -49,7 +51,7 @@ jobs:
       - name: Compile publication modules
         run: |
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\sm4-publication-venv\Scripts\python.exe'
-          & $python -m py_compile runtime/python/zn_agent/core/maintenance_publication.py runtime/python/zn_agent/core/cognitive_maintenance_resident.py tests/zn_agent/core/test_maintenance_publication.py tests/zn_agent/core/test_maintenance_publication_diagnostic.py
+          & $python -m py_compile runtime/python/zn_agent/core/maintenance_publication.py runtime/python/zn_agent/core/maintenance_repair.py runtime/python/zn_agent/core/cognitive_maintenance_resident.py tests/zn_agent/core/test_maintenance_publication.py tests/zn_agent/core/test_maintenance_publication_diagnostic.py tests/zn_agent/core/test_maintenance_isolated_repair.py
       - name: Run direct publication diagnostic
         run: |
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\sm4-publication-venv\Scripts\python.exe'
