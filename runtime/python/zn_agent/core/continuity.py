@@ -158,8 +158,8 @@ def compare_continuity_snapshots(
     blockers: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
 
-    before_schema = int(before.get("schema_version") or 0)
-    after_schema = int(after.get("schema_version") or 0)
+    before_schema = _schema_version(before.get("schema_version"))
+    after_schema = _schema_version(after.get("schema_version"))
     if before_schema != after_schema or before_schema != ContinuitySnapshotService.SCHEMA_VERSION:
         blockers.append(
             {
@@ -178,6 +178,14 @@ def compare_continuity_snapshots(
     after_living = _mapping(after.get("living_self"))
     _require_equal(blockers, "living_self_name_changed", before_living, after_living, "name")
     _require_equal(blockers, "living_self_birth_changed", before_living, after_living, "born_at")
+    _require_non_decreasing_counter(blockers, "wake_count_regressed", before_living, after_living, "wake_count")
+    _require_non_decreasing_counter(blockers, "pulse_count_regressed", before_living, after_living, "pulse_count")
+    _require_id_survival(
+        blockers,
+        category="learning_candidate",
+        before=before_living.get("learning_candidate_ids"),
+        after=after_living.get("learning_candidate_ids"),
+    )
 
     _require_reference_survival(
         blockers,
@@ -215,6 +223,13 @@ def compare_continuity_snapshots(
     }
 
 
+def _schema_version(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
@@ -232,6 +247,46 @@ def _require_equal(
         blockers.append({"kind": kind, "before": old, "after": new})
 
 
+def _require_non_decreasing_counter(
+    blockers: list[dict[str, Any]],
+    kind: str,
+    before: Mapping[str, Any],
+    after: Mapping[str, Any],
+    key: str,
+) -> None:
+    try:
+        old = int(before.get(key))
+        new = int(after.get(key))
+    except (TypeError, ValueError):
+        blockers.append({"kind": kind, "before": before.get(key), "after": after.get(key)})
+        return
+    if old < 0 or new < old:
+        blockers.append({"kind": kind, "before": old, "after": new})
+
+
+def _require_id_survival(
+    blockers: list[dict[str, Any]],
+    *,
+    category: str,
+    before: Any,
+    after: Any,
+) -> None:
+    if not isinstance(before, list) or not isinstance(after, list):
+        blockers.append({"kind": f"{category}_continuity_unproven", "reason": "reference set is invalid"})
+        return
+    old_refs = {str(item).strip() for item in before if str(item).strip()}
+    new_refs = {str(item).strip() for item in after if str(item).strip()}
+    missing = sorted(old_refs - new_refs)
+    if missing:
+        blockers.append(
+            {
+                "kind": f"{category}_references_lost",
+                "missing_reference_count": len(missing),
+                "missing_reference_ids": missing[:32],
+            }
+        )
+
+
 def _require_reference_survival(
     blockers: list[dict[str, Any]],
     *,
@@ -241,6 +296,14 @@ def _require_reference_survival(
     reference_key: str,
     identity,
 ) -> None:
+    if bool(before.get("references_may_be_truncated")):
+        blockers.append(
+            {
+                "kind": f"{category}_baseline_incomplete",
+                "reason": "pre-transition reference set is truncated",
+            }
+        )
+
     before_items = before.get(reference_key)
     after_items = after.get(reference_key)
     old_refs = {
