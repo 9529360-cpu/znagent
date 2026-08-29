@@ -247,7 +247,7 @@ class MaintenanceIsolatedRepairTests(unittest.TestCase):
                         source_root=source_root,
                         attempt_root=attempt_root,
                         branch_ref=branch,
-                        replacements={"ZN.md": "changed\n"},
+                        replacements={"docs/escape.py": "changed = True\n"},
                     )
                 self.assertFalse(attempt_root.exists())
                 self.assertEqual(
