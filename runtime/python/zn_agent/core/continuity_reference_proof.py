@@ -3,12 +3,14 @@ from __future__ import annotations
 """Constant-size proofs for resident-owned continuity state.
 
 The proofs commit to complete durable state without exporting Work text,
-artifact content, run details, or individual learning identifiers. They are
-exact rather than probabilistic: continuity must never accept a false positive
-because a sampled or Bloom-filter representation collided.
+artifact content, run details, resident memory payloads, or individual learning
+identifiers. They are exact rather than probabilistic: continuity must never
+accept a false positive because a sampled or Bloom-filter representation
+collided.
 """
 
 import hashlib
+import json
 import sqlite3
 from collections.abc import Sequence
 from contextlib import closing
@@ -54,6 +56,107 @@ def _proof(domain: str, sections: Sequence[tuple[str, Sequence[Sequence[Any]]]])
         "row_count": total_rows,
         "section_counts": section_counts,
         "digest": digest.hexdigest(),
+    }
+
+
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (name,),
+    ).fetchone() is not None
+
+
+def _rows(conn: sqlite3.Connection, table: str, columns: str, order_by: str) -> list[sqlite3.Row]:
+    if not _table_exists(conn, table):
+        return []
+    return conn.execute(
+        f"SELECT {columns} FROM {table} ORDER BY {order_by} ASC"
+    ).fetchall()
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _identity_anchor_rows(conn: sqlite3.Connection) -> list[tuple[Any, ...]]:
+    if not _table_exists(conn, "identity"):
+        return []
+    row = conn.execute("SELECT data FROM identity WHERE id=1").fetchone()
+    if row is None:
+        return []
+    raw = json.loads(row[0])
+    return [(
+        raw.get("name"),
+        raw.get("purpose"),
+        _canonical_json(raw.get("principles") or []),
+        raw.get("created_at"),
+    )]
+
+
+def _living_self_anchor_rows(conn: sqlite3.Connection) -> list[tuple[Any, ...]]:
+    """Return first-person fields that must survive while excluding wake volatility.
+
+    A restart legitimately changes wake/pulse counters and timestamps, mode,
+    observations, sensed body, current situation/thought, local capabilities and
+    external-brain availability. The fields below instead commit to resident-owned
+    continuity anchors that must not disappear merely because a new runtime woke.
+    """
+
+    if not _table_exists(conn, "living_self"):
+        return []
+    row = conn.execute("SELECT data FROM living_self WHERE id=1").fetchone()
+    if row is None:
+        return []
+    raw = json.loads(row[0])
+    current_impasse = raw.get("current_impasse")
+    impasse_id = (
+        current_impasse.get("impasse_id")
+        if isinstance(current_impasse, dict)
+        else None
+    )
+    return [(
+        raw.get("name"),
+        raw.get("born_at"),
+        _canonical_json(raw.get("open_questions") or []),
+        impasse_id,
+        _canonical_json(raw.get("learning_candidates") or []),
+        raw.get("last_event_id"),
+        raw.get("last_action_summary"),
+    )]
+
+
+def resident_state_proof(path: str | Path) -> dict[str, Any]:
+    """Commit to stable resident-owned durable state across a controlled restart.
+
+    This intentionally excludes lifecycle-volatile state such as resident leases,
+    runtime metrics, pulse/situation/thought history and wake-derived LivingState
+    fields. It protects durable memory, intentions/checkpoints, event truth,
+    recovery ledgers and stable Self anchors without exporting their contents.
+    """
+
+    with closing(_open_read_only(path)) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN")
+        sections = (
+            ("identity_anchor", _identity_anchor_rows(conn)),
+            ("living_self_anchor", _living_self_anchor_rows(conn)),
+            ("goals", _rows(conn, "goals", "goal_id,data", "goal_id")),
+            ("experiences", _rows(conn, "experiences", "experience_id,goal_id,data", "experience_id")),
+            ("capabilities", _rows(conn, "capabilities", "name,data", "name")),
+            ("proposals", _rows(conn, "proposals", "proposal_id,goal_id,data", "proposal_id")),
+            ("events", _rows(conn, "events", "event_id,status,priority,created_at,data", "event_id")),
+            ("event_outcomes", _rows(conn, "event_outcomes", "event_id,created_at,data", "event_id")),
+            ("working_state", _rows(conn, "working_state", "id,data", "id")),
+            ("facts", _rows(conn, "facts", "fact_key,value_json,aliases_json,created_at,updated_at", "fact_key")),
+            ("side_effect_attempts", _rows(conn, "resident_side_effect_attempts", "attempt_id,event_id,signature_hash,kind,status,started_at,completed_at,result_action_id,result_success", "attempt_id")),
+            ("life_impasses", _rows(conn, "life_impasses", "impasse_id,event_id,status,updated_at,data", "impasse_id")),
+            ("life_learning_candidates", _rows(conn, "life_learning_candidates", "candidate_id,source_impasse_id,created_at,status,data", "candidate_id")),
+        )
+        proof = _proof("resident-stable-state", sections)
+        conn.rollback()
+    return {
+        **proof,
+        "count": proof["row_count"],
     }
 
 
