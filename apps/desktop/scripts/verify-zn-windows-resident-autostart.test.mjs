@@ -76,3 +76,19 @@ test('scheduled task rejects a different ZN home even with the right runtime com
     /does not pin ZN home/
   )
 })
+
+test('scheduled task cannot satisfy home check by mentioning expected home in another argument', () => {
+  const runtimeId = '0123456789abcdef0123456789abcdef01234567'
+  const znHome = path.join(os.tmpdir(), 'ZN Home')
+  const otherHome = path.join(os.tmpdir(), 'Other Home')
+  const python = path.join(znHome, 'runtime', runtimeId, 'python', 'python.exe')
+  const xml = taskXml({
+    command: python,
+    args: `-m zn_agent.resident --home "${otherHome}" --note "${znHome}"`
+  })
+
+  assert.throws(
+    () => validateScheduledTaskXml(xml, { znHome, expectedRuntimeId: runtimeId }),
+    /does not pin ZN home/
+  )
+})
