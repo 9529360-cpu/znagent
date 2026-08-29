@@ -4,8 +4,12 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
-from zn_agent.core.continuity import compare_continuity_snapshots
+from zn_agent.core.continuity import (
+    ContinuitySnapshotService,
+    compare_continuity_snapshots,
+)
 from zn_agent.core.continuity_reference_proof import (
     verified_experience_reference_proof,
     work_reference_proof,
@@ -85,6 +89,77 @@ class ContinuityReferenceProofTests(unittest.TestCase):
             self.assertEqual(len(work["digest"]), 64)
             self.assertEqual(learning["count"], 2)
             self.assertEqual(len(learning["digest"]), 64)
+
+    def test_exact_work_reference_limit_is_not_reported_as_truncated(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "kernel.db"
+            rows = [(f"work-{index:03d}", f"2026-01-{(index % 28) + 1:02d}") for index in range(100)]
+            with sqlite3.connect(database) as conn:
+                conn.executescript(
+                    """
+                    CREATE TABLE work_threads(thread_id TEXT PRIMARY KEY, created_at TEXT NOT NULL);
+                    CREATE TABLE verified_experiences(experience_id TEXT PRIMARY KEY);
+                    """
+                )
+                conn.executemany(
+                    "INSERT INTO work_threads(thread_id,created_at) VALUES(?,?)",
+                    rows,
+                )
+                conn.commit()
+
+            threads = [
+                SimpleNamespace(thread_id=thread_id, created_at=created_at)
+                for thread_id, created_at in rows
+            ]
+            work = SimpleNamespace(
+                path=database,
+                list_threads=lambda *, limit: threads[:limit],
+            )
+            verified = SimpleNamespace(
+                path=database,
+                recent=lambda limit: [],
+                count=lambda: 0,
+            )
+            resident = SimpleNamespace(
+                identity=SimpleNamespace(
+                    name="ZN Agent",
+                    version="0.2.0",
+                    created_at="identity-born",
+                    updated_at="identity-now",
+                ),
+                life=SimpleNamespace(
+                    snapshot=lambda: SimpleNamespace(
+                        name="ZN",
+                        version="0.2.0",
+                        born_at="living-born",
+                        wake_count=1,
+                        pulse_count=1,
+                        last_event_id=None,
+                        learning_candidates=(),
+                    )
+                ),
+                verified_experiences=verified,
+            )
+            provider_settings = SimpleNamespace(
+                snapshot=lambda: {
+                    "mode": "default",
+                    "provider": "",
+                    "model": "",
+                    "credential": {},
+                    "active_routes": [],
+                    "cognition_available": False,
+                }
+            )
+
+            snapshot = ContinuitySnapshotService(
+                resident,
+                work=work,
+                provider_settings=provider_settings,
+            ).snapshot()
+
+            self.assertEqual(snapshot["work"]["reference_count"], 100)
+            self.assertEqual(snapshot["work"]["total_count"], 100)
+            self.assertFalse(snapshot["work"]["references_may_be_truncated"])
 
     def test_complete_proof_allows_bounded_diagnostic_refs_to_be_truncated(self):
         before = _base_snapshot()
