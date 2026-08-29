@@ -1,0 +1,48 @@
+name: ZN Resident Health Validation
+
+on:
+  push:
+    branches:
+      - work/resident-health-observation-validation
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI: 'true'
+  PYTHONUTF8: '1'
+  PYTHONUNBUFFERED: '1'
+  ZN_AGENT_HOME: ${{ github.workspace }}/.ci/zn-home
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+jobs:
+  resident-health:
+    name: Resident health observation / Windows
+    runs-on: [self-hosted, Windows, X64, zn-ci]
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare isolated runtime
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/runtime-venv -ErrorAction SilentlyContinue
+          uv venv .ci/runtime-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\runtime-venv\Scripts\python.exe'
+          uv pip install --python $python runtime/python
+      - name: Compile health and channel modules
+        run: |
+          .\.ci\runtime-venv\Scripts\python.exe -m py_compile runtime/python/zn_agent/core/health_observation.py runtime/python/zn_agent/core/channel_runtime.py
+      - name: Run health and channel regressions
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          & .\.ci\runtime-venv\Scripts\python.exe -m unittest -v tests.zn_agent.core.test_resident_health_observation tests.zn_agent.core.test_channel_stop_quiesce tests.zn_agent.core.test_channel_stop_lifecycle
