@@ -14,7 +14,7 @@ from typing import Any
 
 from .health_aware_resident import HealthAwareResidentRuntime
 from .maintenance_attempt_lifecycle import MaintenanceRepairAttemptLifecycle
-from .maintenance_cognitive import MaintenanceCognitiveRepairOrchestrator
+from .maintenance_cognition_journal import DurableMaintenanceCognitiveRepairOrchestrator
 from .maintenance_publication import MaintenancePublicationPreparation
 
 
@@ -23,7 +23,7 @@ class CognitiveMaintenanceResidentRuntime(HealthAwareResidentRuntime):
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
-        self.maintenance_cognition: MaintenanceCognitiveRepairOrchestrator | None = None
+        self.maintenance_cognition: DurableMaintenanceCognitiveRepairOrchestrator | None = None
         self.maintenance_attempt_lifecycle: MaintenanceRepairAttemptLifecycle | None = None
         self.maintenance_publication_preparation: MaintenancePublicationPreparation | None = None
         self._install_maintenance_cognition()
@@ -107,10 +107,11 @@ class CognitiveMaintenanceResidentRuntime(HealthAwareResidentRuntime):
         Model calls receive only bounded maintenance evidence/source context. They
         do not receive body tools, terminal/Git access, arbitrary file access,
         commit/push/merge, release, updater, replacement, or rollback authority.
-        The isolated repair operator remains the sole source-write owner. Rejected
-        candidates are eligible for bounded cleanup. Accepted candidates are
-        revalidated and may become a local-only commit; no remote publication or
-        repository credential authority is granted here.
+        Every external maintenance cognition call is durably reserved before
+        dispatch so a crash or ambiguous provider outcome cannot trigger an
+        automatic replay. Rejected candidates are eligible for bounded cleanup.
+        Accepted candidates are revalidated and may become a local-only commit; no
+        remote publication or repository credential authority is granted here.
         """
 
         result = self._maintenance_cognitive_orchestrator().derive_execute_and_review(
@@ -187,7 +188,7 @@ class CognitiveMaintenanceResidentRuntime(HealthAwareResidentRuntime):
     def _project_cognitive_status(
         self,
         data: dict[str, Any],
-        orchestrator: MaintenanceCognitiveRepairOrchestrator,
+        orchestrator: DurableMaintenanceCognitiveRepairOrchestrator,
     ) -> None:
         try:
             snapshot = orchestrator.snapshot()
@@ -226,7 +227,7 @@ class CognitiveMaintenanceResidentRuntime(HealthAwareResidentRuntime):
         if self.maintenance is None or self.maintenance_repair is None:
             return
         try:
-            self.maintenance_cognition = MaintenanceCognitiveRepairOrchestrator(
+            self.maintenance_cognition = DurableMaintenanceCognitiveRepairOrchestrator(
                 self.store,
                 self.maintenance,
                 self.maintenance_repair,
@@ -257,14 +258,14 @@ class CognitiveMaintenanceResidentRuntime(HealthAwareResidentRuntime):
         except sqlite3.Error:
             self.maintenance_publication_preparation = None
 
-    def _maintenance_cognitive_orchestrator(self) -> MaintenanceCognitiveRepairOrchestrator:
+    def _maintenance_cognitive_orchestrator(self) -> DurableMaintenanceCognitiveRepairOrchestrator:
         orchestrator = self.maintenance_cognition
         if orchestrator is not None:
             return orchestrator
         ledger = self._maintenance_ledger()
         operator = self._maintenance_repair_operator()
         try:
-            orchestrator = MaintenanceCognitiveRepairOrchestrator(
+            orchestrator = DurableMaintenanceCognitiveRepairOrchestrator(
                 self.store,
                 ledger,
                 operator,
