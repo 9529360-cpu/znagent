@@ -4,90 +4,101 @@ This is the current engineering work site and fact index, not a chat transcript 
 
 ## Current objective
 
-Continue SM1 from durable self-observation toward a safe maintenance control loop without prematurely granting autonomous source mutation or updater/replacement authority.
+Continue from broad resident self-health evidence into one real maintenance-task-driven, read-only source investigation without granting source mutation or updater/replacement authority prematurely.
 
-The connected resident-channel path is now:
+The current evidence/control path is:
 
-`real failure/success -> durable health -> conservative classification -> repeated-fingerprint evidence -> bounded maintenance task -> recovery/evidence reconciliation -> read-only resident/RPC status`
+`real organ failure/success -> durable health -> conservative classification -> bounded maintenance task -> reconciled evidence-only investigation lifecycle -> read-only resident/RPC status`
 
-Channel startup/shutdown lifecycle failures are also health-visible: checkpoint recovery is two-phase before any worker starts, and a worker that remains alive after shutdown timeout records fail-closed durable health evidence.
+Connected health boundaries now include channel/lifecycle, foreground-window Sense, visual capture, cognitive provider invocation/resource construction, and Native Body dispatch.
 
 ## Repository state
 
 - Repository: `9529360-cpu/znagent`
 - Canonical/release branch: `main`
 - Primary development branch: `dev/zn-agent`
-- Latest verified product-code dev head before this documentation reconciliation: `2703aaae5dfacee32f5609c3130f0c607d63b5b2` (PR #64 merge).
-- Canonical `main` head before the pending SM1 promotion: `67751e8d69df41eae04a74f28829faaf6304a744` (PR #58 merge).
-- `main` ZN CI run `33236277979` is fully green on `67751e8d...`.
-- Final product-code dev ZN CI run `33256153287` is fully green on `2703aaae...` across Source Boundary, Electron/TypeScript, full Kernel/Python and status publication.
-- Intermediate combined dev ZN CI run `33237362908` is also fully green on `05f9086b...` before PR #64.
-- Hosted clean-install run `33256153330` failed with `steps=null`; GitHub allocated no executable job steps, so this is infrastructure unavailability rather than product pass/fail evidence.
-
-Temporary `work/*-validation` branches contain validation-only workflows and must not be merged as product code.
+- Current product-code dev head before this docs reconciliation: `7827b155e18c561dca2f42e26d1817d653a5d03c` (PR #72 merge).
+- Canonical `main` currently: `d7d06c665daed3400b86d792dd0eeabf16611cbb` (PR #66 merge).
+- `main` ZN CI run `33262436187` is fully green on `d7d06c66...`.
+- Combined dev ZN CI run `33269095288` is fully green on `7827b155...`, covering PRs #67-#72 across Source Boundary, Electron/TypeScript and Kernel/Python.
+- Recent Windows clean-install/release-candidate push workflows still terminate before executable steps are allocated in this runner environment; treat that as infrastructure unavailability, not product evidence.
 
 ## Product reality
 
 ### Continuity / resident lifecycle
 
-Recent verified work already established:
+Previously verified continuity still matters and must not regress:
 
 - installed Windows resident desktop-independence/autostart through the real `ZN Resident` Scheduled Task;
-- durable reference continuity for resident state, Work/thread references, long-term memory and verified learning;
-- bounded atomic-overwrite recovery continuity with discharge witnesses capped at 4096 entries;
-- canonical `main` contains the first resident channel-health observation slice through PR #58.
+- durable resident state, Work/thread references, long-term memory and verified learning across restart/installed continuity proof;
+- bounded atomic-overwrite recovery continuity;
+- zero-model resident boot.
 
-Protect Self/identity, lived memory, Work/thread references, Will/intention, learning state, runtime/home/config/provider references and resident restart/install continuity while extending SM1.
+Protect Self/identity, lived memory, Work/thread references, Will/intention, learning state, runtime/home/config/provider references and resident restart/install continuity while extending self-maintenance.
 
-### SM1 resident health and maintenance evidence
+### Resident health and maintenance evidence
 
-Verified connected channel work:
+Current connected/verified slices:
 
-- PR #57: `ResidentHealthJournal` persists one privacy-safe health row per organ and the real `ResidentChannelSupervisor` records channel failure/recovery.
-- PR #59/#60: bounded repeated-fingerprint classification with fail-closed semantics. Only narrow internal invariant failures (`AssertionError`, `NotImplementedError`) may become `probable_zn_defect`; ambiguous programming/data-contract and external/environment failures do not automatically become source-maintenance candidates.
-- PR #61: repeated high-confidence evidence forms exactly one durable maintenance task per organ; recovery closes it; raw exception messages are not persisted.
-- PR #63: health truth is authoritative over derived maintenance-task projection. Task projection faults cannot roll back health observations; stale/orphaned task state is reconciled from health truth.
-- PR #62: formal resident ownership exposes bounded `resident_health` and `maintenance_tasks` through existing read-only resident/RPC `status`, without a parallel UI-owned control plane.
-- PR #64: channel checkpoint restore is all-or-nothing before worker start, checkpoint-restore failures enter durable health, and stuck shutdown workers record fail-closed `TimeoutError` health evidence while remaining owned for teardown.
+- channel failure/recovery and channel startup/shutdown lifecycle health;
+- privacy-safe conservative health classification and repeated-fingerprint maintenance candidacy;
+- bounded per-organ maintenance-task formation, dedup/reopen/closure and projection reconciliation;
+- foreground-window Sense probe health at the real probe boundary;
+- visual capture health at the real capture callable, without polling stale `last_error`;
+- provider invocation failure/recovery health at the real `resource.invoke` boundary;
+- provider resource-construction failure health before `ZNKernelRuntime` flattens factory failure;
+- Native Body dispatch exception/recovery health on the already-composed final Body object;
+- formal resident/RPC status for health, maintenance tasks and investigation projection.
 
-Current maturity:
+Maintenance investigation lifecycle is implemented and verified as evidence/control state:
 
-- channel health observation: connected + verified;
-- conservative classification: connected + verified;
-- maintenance-task formation/dedup/closure/reconciliation: connected + verified;
-- resident/RPC read-only consumption: connected + verified;
-- channel startup/shutdown lifecycle health: connected + verified;
-- visual/provider/body unified health: not yet connected;
-- maintenance-task-driven investigation/patch/regression/PR lifecycle: not yet connected;
-- updater/replacement/rollback/signing/release trust: outside SM1 authority and still human approval-gated.
+- reconciles from authoritative maintenance-task truth;
+- requires explicit baseline reference and regression oracle;
+- attempts require isolated `work/*` branch reference and evidence reference;
+- accepted evidence requires a passing regression attempt;
+- incident/contract changes reset stale attempts/acceptance;
+- rejection cannot silently reuse old evidence;
+- secondary projection damage cannot block health/task truth and can be rebuilt;
+- authority remains `evidence_only`.
 
-## Exact evidence
+This does **not** yet form a source-maintenance product loop. There is no active caller that binds an open maintenance task to a trustworthy ZN source workspace and performs bounded read-only repository/test/CI investigation.
 
-- `33235652365` — initial channel-health validation success.
-- `33236277979` — canonical main ZN CI success on `67751e8d...`.
-- `33236443127` — conservative classification validation success.
-- `33236842735` — maintenance-task formation validation success.
-- `33237072446` — formal resident/RPC maintenance-status validation success.
-- `33237199676` — maintenance-task failure-isolation/reconciliation validation success.
-- `33237362908` — combined dev ZN CI success on `05f9086b...`.
-- `33237642294` — channel lifecycle health validation success.
-- `33256153287` — final product-code dev ZN CI success on `2703aaae...`.
+### Health semantics that must remain invariant
 
-Recent hosted Windows candidate/clean-install jobs that end with `steps=null` remain infrastructure-unavailable evidence only; do not label them product passes or failures.
+- raw exception messages are not persisted in health/task tables;
+- provider route identity is privacy-safe; model text/raw route IDs do not enter resident health;
+- arbitrary Body action-kind strings are hashed before health status;
+- network/service/environment/config/input failures do not automatically become source-maintenance candidates;
+- ambiguous exceptions fail closed rather than being assumed to be ZN defects;
+- health observation is secondary and must never replace the original Sense/provider/Body result;
+- provider construction success is not provider recovery; only a real successful invocation closes that route's invocation failure streak.
+
+## Exact current evidence
+
+- `33262436187` — canonical main ZN CI success on `d7d06c66...`.
+- `33266191698` — full dev ZN CI success after foreground-window + visual-capture health integration.
+- `33267074693` — maintenance investigation lifecycle targeted validation success.
+- `33267155067` — full dev ZN CI success after maintenance investigation lifecycle merge.
+- `33268424791` — cognitive provider invocation health targeted validation success.
+- `33268678763` — Native Body dispatch health targeted validation success.
+- `33269016466` — cognitive provider resource-construction health targeted validation success.
+- `33269095288` — combined dev ZN CI success on `7827b155...` after PRs #67-#72.
+
+PR #70's full run `33268511210` was cancelled/superseded and is not passing evidence.
 
 ## Current risks / real gaps
 
-- Vision/provider/body are still outside the unified health model. Integrate only at the real failure/success boundary; for vision, do not repeatedly poll persisted `last_error` and double-count stale failures.
-- A maintenance task remains evidence/control-plane state. It does not yet own a bounded investigation, attempt ledger, regression oracle, patch or acceptance lifecycle.
-- No automatic source mutation should be triggered from ambiguous/external failures. Fail-closed classification is a safety invariant.
-- Fresh hosted installed-product evidence is currently unavailable while hosted jobs fail before step 1.
-- Actual N -> N+1 updater/replacement, failed-update recovery, rollback, release signing/trust, destructive identity/memory migration and replacement of a user's formal installation require explicit human approval.
+- The largest immediate self-maintenance gap is not another ledger: an open maintenance task still cannot bind to a trusted source workspace and gather source-state evidence under explicit read-only authority.
+- Existing `Work` workspace association is user-work context; it must not be silently reused as maintenance-source authority.
+- Existing Body `git_state`/`git_diff` are useful read-only primitives, but general terminal/file-write capabilities must not leak into a maintenance read-only investigator.
+- Unified health is still partial; persistence/life-loop/config-plan and other real boundaries should be added only where active-call evidence shows a meaningful reliability gap.
+- Actual N -> N+1 updater/replacement, failed-update recovery, rollback, release signing/trust, destructive identity/memory migration and replacement of a user's formal installation remain explicit human-approval boundaries.
 
-## Next dependency-ready candidates
+## Next dependency-ready work
 
-1. Merge this factual documentation reconciliation, verify the docs-only dev head, then normally promote the verified SM1 stage to canonical `main` and verify canonical CI.
-2. Connect another real resident organ to the same health model at its true failure/success site; vision is the strongest current candidate.
-3. Define a bounded maintenance-task investigation lifecycle with provenance, deduped attempts, regression oracle, isolated branch and acceptance state before allowing a task to initiate ordinary source work.
-4. Keep updater/replacement/rollback/signing and release trust outside this autonomous path.
+1. Merge this factual docs reconciliation, then normally promote the coherent verified dev stage to canonical `main` and verify canonical ZN CI.
+2. Trace and implement a trustworthy maintenance-source workspace binding. It must prove repository root and ZN ownership, be separate from ordinary Work context, preserve a baseline commit, and default to read-only authority.
+3. Connect one real open maintenance task through that binding to bounded repository state/diff/regression-oracle evidence. Do not grant mutation merely because investigation state exists.
+4. Only after the read-only source-investigation path is connected + verified should high-confidence maintenance tasks be allowed to initiate isolated `work/*` source attempts.
 
 No updater/replacement/rollback/signing action is authorized by this handoff.
