@@ -4,16 +4,21 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from zn_agent.core.continuity_reference_proof import resident_state_proof
+
+
+def _connect(path: Path):
+    return closing(sqlite3.connect(path))
 
 
 class ContinuityWorldFocusProofTests(unittest.TestCase):
     def test_world_focus_observation_freshness_can_advance_without_changing_continuity(self):
         with tempfile.TemporaryDirectory() as temporary:
             database = Path(temporary) / "kernel.db"
-            with sqlite3.connect(database) as conn:
+            with _connect(database) as conn:
                 conn.execute(
                     "CREATE TABLE world_focuses("
                     "focus_id TEXT PRIMARY KEY,enabled INTEGER NOT NULL,priority INTEGER NOT NULL,"
@@ -52,7 +57,7 @@ class ContinuityWorldFocusProofTests(unittest.TestCase):
                     "updated_at": "new",
                 }
             )
-            with sqlite3.connect(database) as conn:
+            with _connect(database) as conn:
                 conn.execute(
                     "UPDATE world_focuses SET updated_at=?,data=? WHERE focus_id=?",
                     ("new", json.dumps(focus), "world-1"),
@@ -65,7 +70,7 @@ class ContinuityWorldFocusProofTests(unittest.TestCase):
     def test_losing_or_rewriting_world_focus_intent_changes_continuity_proof(self):
         with tempfile.TemporaryDirectory() as temporary:
             database = Path(temporary) / "kernel.db"
-            with sqlite3.connect(database) as conn:
+            with _connect(database) as conn:
                 conn.execute(
                     "CREATE TABLE world_focuses("
                     "focus_id TEXT PRIMARY KEY,enabled INTEGER NOT NULL,priority INTEGER NOT NULL,"
@@ -93,7 +98,7 @@ class ContinuityWorldFocusProofTests(unittest.TestCase):
 
             before = resident_state_proof(database)
             focus["topic"] = "different durable topic"
-            with sqlite3.connect(database) as conn:
+            with _connect(database) as conn:
                 conn.execute(
                     "UPDATE world_focuses SET data=? WHERE focus_id=?",
                     (json.dumps(focus), "world-1"),
@@ -102,7 +107,7 @@ class ContinuityWorldFocusProofTests(unittest.TestCase):
             rewritten = resident_state_proof(database)
             self.assertNotEqual(before["digest"], rewritten["digest"])
 
-            with sqlite3.connect(database) as conn:
+            with _connect(database) as conn:
                 conn.execute("DELETE FROM world_focuses WHERE focus_id=?", ("world-1",))
                 conn.commit()
             lost = resident_state_proof(database)
