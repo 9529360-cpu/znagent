@@ -15,6 +15,7 @@ from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 from .continuity_reference_proof import (
+    long_lived_neural_reference_proof,
     resident_state_proof,
     verified_experience_reference_proof,
     work_state_proof,
@@ -40,6 +41,7 @@ class ContinuitySnapshotService:
         )
         work_proof = work_state_proof(self.work.path)
         resident_proof = resident_state_proof(self.resident.store.path)
+        neural_proof = long_lived_neural_reference_proof(self.resident.store.path)
         provider = self._provider_snapshot(self.provider_settings.snapshot())
         verified_learning = self._verified_learning_snapshot()
         return {
@@ -63,6 +65,9 @@ class ContinuitySnapshotService:
             },
             "resident_state": {
                 "full_state_proof": resident_proof,
+            },
+            "long_lived_memory": {
+                "full_reference_proof": neural_proof,
             },
             "work": {
                 "reference_count": len(threads),
@@ -214,6 +219,16 @@ def compare_continuity_snapshots(
         category="resident_state",
         before=_mapping(before.get("resident_state")),
         after=_mapping(after.get("resident_state")),
+        proof_key="full_state_proof",
+        proof_label="state proof",
+    )
+    _require_optional_state_proof(
+        blockers,
+        category="long_lived_memory",
+        before=_mapping(before.get("long_lived_memory")),
+        after=_mapping(after.get("long_lived_memory")),
+        proof_key="full_reference_proof",
+        proof_label="reference proof",
     )
     _require_reference_survival(
         blockers,
@@ -338,24 +353,26 @@ def _require_optional_state_proof(
     category: str,
     before: Mapping[str, Any],
     after: Mapping[str, Any],
+    proof_key: str,
+    proof_label: str,
 ) -> None:
-    before_raw = before.get("full_state_proof")
+    before_raw = before.get(proof_key)
     if before_raw is None:
         return
     before_proof = _reference_proof(before_raw)
-    after_proof = _reference_proof(after.get("full_state_proof"))
+    after_proof = _reference_proof(after.get(proof_key))
     if before_proof is None or after_proof is None:
         blockers.append(
             {
                 "kind": f"{category}_continuity_unproven",
-                "reason": "full state proof is invalid or missing",
+                "reason": f"full {proof_label} is invalid or missing",
             }
         )
         return
     if before_proof != after_proof:
         blockers.append(
             {
-                "kind": f"{category}_full_state_proof_changed",
+                "kind": f"{category}_{proof_key}_changed",
                 "before_count": before_proof[0],
                 "after_count": after_proof[0],
             }
