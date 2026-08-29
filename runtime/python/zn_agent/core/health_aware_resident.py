@@ -6,9 +6,11 @@ This layer does not repair source, grant maintenance authority, or mutate a
 running installation. It makes durable health/task evidence part of the formal
 resident subject, gives maintenance candidates an authority-free investigation
 lifecycle, and connects selected active resident Sense boundaries to the same
-journal without allowing journal failures to break those Senses.
+journal without allowing secondary observation failures to break those Senses or
+resident health truth.
 """
 
+import sqlite3
 from typing import Any
 
 from .browser_work_resident import BrowserWorkResidentRuntime
@@ -25,18 +27,40 @@ class HealthAwareResidentRuntime(BrowserWorkResidentRuntime):
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
         self.health = ResidentHealthJournal(self.store)
-        # Health truth/task projection is initialized first. The lifecycle ledger
-        # then installs database-local observation of that derived task surface,
-        # including tasks formed by channel supervisors that use their own
-        # ResidentHealthJournal instance against the same resident database.
-        self.maintenance = MaintenanceInvestigationLedger(self.store)
+        # Health/task truth is initialized first. The investigation projection is
+        # strictly secondary: an unavailable projection must not prevent the same
+        # resident from booting with its identity, health and work state intact.
+        try:
+            self.maintenance: MaintenanceInvestigationLedger | None = (
+                MaintenanceInvestigationLedger(self.store)
+            )
+        except sqlite3.Error:
+            self.maintenance = None
 
     def status(self) -> dict[str, Any]:
         data = super().status()
         data["resident_health"] = self.health.snapshot()
         data["maintenance_tasks"] = self.health.maintenance_tasks()
-        data["maintenance_investigations"] = self.maintenance.snapshot()
+        data["maintenance_investigations"] = self._maintenance_status()
         return data
+
+    def _maintenance_status(self) -> dict[str, Any]:
+        ledger = self.maintenance
+        if ledger is not None:
+            try:
+                snapshot = ledger.snapshot()
+            except sqlite3.Error:
+                pass
+            else:
+                return {"available": True, **snapshot}
+        return {
+            "available": False,
+            "investigation_count": 0,
+            "active_count": 0,
+            "returned_count": 0,
+            "truncated": False,
+            "investigations": [],
+        }
 
     def _probe_foreground_window(
         self,
