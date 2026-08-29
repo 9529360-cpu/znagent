@@ -3,9 +3,13 @@ import { app, ipcMain } from 'electron'
 import { ensureZnResidentAutostart } from './zn-resident-autostart'
 import { ZnResidentProcess, defaultZnResidentLaunch } from './zn-resident-process'
 import { describeZnResidentRuntime, type ZnResidentRuntimeRelation } from './zn-resident-runtime-state'
+import {
+  ZN_RUNTIME_HANDOFF_FAILURE_BUDGET_MS,
+  nextZnRuntimeHandoffDeadline,
+  znRuntimeHandoffFailureBudgetExpired
+} from './zn-runtime-handoff-policy'
 
 const RUNTIME_HANDOFF_RETRY_MS = 5_000
-const RUNTIME_HANDOFF_MAX_WAIT_MS = 10 * 60_000
 
 let resident: ZnResidentProcess | null = null
 let registered = false
@@ -36,7 +40,10 @@ function clearRuntimeHandoffTimer() {
 }
 
 function scheduleRuntimeHandoff(residentProcess: ZnResidentProcess) {
-  if (runtimeHandoffTimer || Date.now() >= runtimeHandoffDeadline) return
+  if (
+    runtimeHandoffTimer ||
+    znRuntimeHandoffFailureBudgetExpired(Date.now(), runtimeHandoffDeadline)
+  ) return
   runtimeHandoffTimer = setTimeout(() => {
     runtimeHandoffTimer = null
     void attemptRuntimeHandoff(residentProcess)
@@ -44,7 +51,7 @@ function scheduleRuntimeHandoff(residentProcess: ZnResidentProcess) {
 }
 
 async function attemptRuntimeHandoff(residentProcess: ZnResidentProcess, knownStatus?: unknown): Promise<void> {
-  if (runtimeHandoffRunning || Date.now() >= runtimeHandoffDeadline) return
+  if (runtimeHandoffRunning) return
   runtimeHandoffRunning = true
   let retry = false
 
@@ -58,7 +65,16 @@ async function attemptRuntimeHandoff(residentProcess: ZnResidentProcess, knownSt
     }
 
     if (relation.busy) {
+      runtimeHandoffDeadline = nextZnRuntimeHandoffDeadline({
+        now: Date.now(),
+        deadline: runtimeHandoffDeadline,
+        busy: true
+      })
       retry = true
+      return
+    }
+
+    if (znRuntimeHandoffFailureBudgetExpired(Date.now(), runtimeHandoffDeadline)) {
       return
     }
 
@@ -75,13 +91,13 @@ async function attemptRuntimeHandoff(residentProcess: ZnResidentProcess, knownSt
       return
     }
 
-    retry = true
+    retry = !znRuntimeHandoffFailureBudgetExpired(Date.now(), runtimeHandoffDeadline)
     console.warn(
       `[zn-resident] runtime handoff did not activate ${after.desiredRuntimeId}; ` +
         `active=${after.activeRuntimeId || after.activePython || 'unknown'}`
     )
   } catch (error) {
-    retry = true
+    retry = !znRuntimeHandoffFailureBudgetExpired(Date.now(), runtimeHandoffDeadline)
     console.error('[zn-resident] runtime handoff failed', error)
   } finally {
     runtimeHandoffRunning = false
@@ -93,7 +109,7 @@ function beginRuntimeHandoff(residentProcess: ZnResidentProcess, status: unknown
   const relation = runtimeRelation(residentProcess, status)
   if (relation.state === 'unmanaged' || relation.state === 'current') return
 
-  runtimeHandoffDeadline = Date.now() + RUNTIME_HANDOFF_MAX_WAIT_MS
+  runtimeHandoffDeadline = Date.now() + ZN_RUNTIME_HANDOFF_FAILURE_BUDGET_MS
   clearRuntimeHandoffTimer()
   void attemptRuntimeHandoff(residentProcess, status)
 }
