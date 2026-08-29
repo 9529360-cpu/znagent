@@ -56,4 +56,4 @@ jobs:
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\maintenance-investigation-venv\Scripts\python.exe'
-          & $python -m unittest tests.zn_agent.core.test_health_failure_classification tests.zn_agent.core.test_resident_health_status -v
+          & $python -m unittest tests.zn_agent.core.test_health_failure_classification tests.zn_agent.core.test_resident_maintenance_status -v
