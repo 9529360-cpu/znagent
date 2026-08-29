@@ -12,8 +12,54 @@ from zn_agent.core.continuity import (
 )
 from zn_agent.core.continuity_reference_proof import (
     verified_experience_reference_proof,
-    work_reference_proof,
+    work_state_proof,
 )
+
+
+def _init_database(path: Path) -> None:
+    with sqlite3.connect(path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE work_threads(
+                thread_id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE work_messages(
+                message_id TEXT PRIMARY KEY,
+                thread_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                text TEXT NOT NULL,
+                detail_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE work_artifacts(
+                artifact_id TEXT PRIMARY KEY,
+                thread_id TEXT NOT NULL,
+                event_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                name TEXT NOT NULL,
+                path TEXT,
+                content TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE work_runs(
+                event_id TEXT PRIMARY KEY,
+                thread_id TEXT NOT NULL,
+                message_id TEXT NOT NULL,
+                task TEXT NOT NULL,
+                ledger_state TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                finalized_at TEXT
+            );
+            CREATE TABLE verified_experiences(experience_id TEXT PRIMARY KEY);
+            """
+        )
+        conn.commit()
 
 
 def _base_snapshot():
@@ -61,49 +107,71 @@ def _base_snapshot():
 
 
 class ContinuityReferenceProofTests(unittest.TestCase):
-    def test_proofs_cover_complete_tables_and_ignore_row_order(self):
+    def test_work_proof_covers_complete_durable_state_without_exporting_content(self):
         with tempfile.TemporaryDirectory() as temporary:
             database = Path(temporary) / "kernel.db"
+            _init_database(database)
             with sqlite3.connect(database) as conn:
-                conn.executescript(
-                    """
-                    CREATE TABLE work_threads(thread_id TEXT PRIMARY KEY, created_at TEXT NOT NULL);
-                    CREATE TABLE verified_experiences(experience_id TEXT PRIMARY KEY);
-                    """
+                conn.execute(
+                    "INSERT INTO work_threads VALUES(?,?,?,?,?)",
+                    ("work-a", "title", "{}", "2026-01-01", "2026-01-02"),
                 )
-                conn.executemany(
-                    "INSERT INTO work_threads(thread_id,created_at) VALUES(?,?)",
-                    [("work-z", "2026-01-02"), ("work-a", "2026-01-01")],
+                conn.execute(
+                    "INSERT INTO work_messages VALUES(?,?,?,?,?,?)",
+                    ("msg-a", "work-a", "user", "private text", "{}", "2026-01-01"),
                 )
+                conn.execute(
+                    "INSERT INTO work_artifacts VALUES(?,?,?,?,?,?,?,?,?)",
+                    ("artifact-a", "work-a", "event-a", "text", "result", None, "private artifact", "{}", "2026-01-01"),
+                )
+                conn.execute(
+                    "INSERT INTO work_runs VALUES(?,?,?,?,?,?,?,?)",
+                    ("event-a", "work-a", "msg-a", "private task", "done", "2026-01-01", "2026-01-02", "2026-01-02"),
+                )
+                conn.commit()
+
+            before = work_state_proof(database)
+            with sqlite3.connect(database) as conn:
+                conn.execute("UPDATE work_messages SET text=? WHERE message_id=?", ("different private text", "msg-a"))
+                conn.commit()
+            after = work_state_proof(database)
+
+            self.assertEqual(before["algorithm"], "sha256")
+            self.assertEqual(before["count"], 1)
+            self.assertEqual(before["row_count"], 4)
+            self.assertEqual(before["section_counts"]["work_messages"], 1)
+            self.assertEqual(len(before["digest"]), 64)
+            self.assertNotEqual(before["digest"], after["digest"])
+            self.assertNotIn("private text", repr(before))
+            self.assertNotIn("private artifact", repr(before))
+            self.assertNotIn("private task", repr(before))
+
+    def test_learning_proof_covers_complete_id_set(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "kernel.db"
+            _init_database(database)
+            with sqlite3.connect(database) as conn:
                 conn.executemany(
                     "INSERT INTO verified_experiences(experience_id) VALUES(?)",
                     [("vx-z",), ("vx-a",)],
                 )
                 conn.commit()
 
-            work = work_reference_proof(database)
             learning = verified_experience_reference_proof(database)
 
-            self.assertEqual(work["algorithm"], "sha256")
-            self.assertEqual(work["count"], 2)
-            self.assertEqual(len(work["digest"]), 64)
+            self.assertEqual(learning["algorithm"], "sha256")
             self.assertEqual(learning["count"], 2)
             self.assertEqual(len(learning["digest"]), 64)
 
     def test_exact_work_reference_limit_is_not_reported_as_truncated(self):
         with tempfile.TemporaryDirectory() as temporary:
             database = Path(temporary) / "kernel.db"
+            _init_database(database)
             rows = [(f"work-{index:03d}", f"2026-01-{(index % 28) + 1:02d}") for index in range(100)]
             with sqlite3.connect(database) as conn:
-                conn.executescript(
-                    """
-                    CREATE TABLE work_threads(thread_id TEXT PRIMARY KEY, created_at TEXT NOT NULL);
-                    CREATE TABLE verified_experiences(experience_id TEXT PRIMARY KEY);
-                    """
-                )
                 conn.executemany(
-                    "INSERT INTO work_threads(thread_id,created_at) VALUES(?,?)",
-                    rows,
+                    "INSERT INTO work_threads VALUES(?,?,?,?,?)",
+                    [(thread_id, "title", "{}", created_at, created_at) for thread_id, created_at in rows],
                 )
                 conn.commit()
 
@@ -160,8 +228,9 @@ class ContinuityReferenceProofTests(unittest.TestCase):
             self.assertEqual(snapshot["work"]["reference_count"], 100)
             self.assertEqual(snapshot["work"]["total_count"], 100)
             self.assertFalse(snapshot["work"]["references_may_be_truncated"])
+            self.assertEqual(snapshot["work"]["full_state_proof"]["count"], 100)
 
-    def test_complete_proof_allows_bounded_diagnostic_refs_to_be_truncated(self):
+    def test_complete_proofs_allow_bounded_diagnostic_refs_to_be_truncated(self):
         before = _base_snapshot()
         after = _base_snapshot()
         proof = {"algorithm": "sha256", "count": 500, "digest": "a" * 64}
@@ -171,7 +240,7 @@ class ContinuityReferenceProofTests(unittest.TestCase):
                     "reference_count": 100,
                     "total_count": 500,
                     "references_may_be_truncated": True,
-                    "full_reference_proof": dict(proof),
+                    "full_state_proof": dict(proof),
                     "threads": [{"id": f"work-{index}", "created_at": "born"} for index in range(100)],
                 }
             )
@@ -189,25 +258,30 @@ class ContinuityReferenceProofTests(unittest.TestCase):
 
         self.assertTrue(verdict["compatible"], verdict)
 
-    def test_changed_complete_proof_blocks_positive_verdict_without_exporting_ids(self):
+    def test_changed_complete_work_state_blocks_positive_verdict_without_exporting_digest(self):
         before = _base_snapshot()
         after = _base_snapshot()
-        before["work"]["full_reference_proof"] = {
+        before["work"]["full_state_proof"] = {
             "algorithm": "sha256",
             "count": 500,
             "digest": "a" * 64,
         }
-        after["work"]["full_reference_proof"] = {
+        after["work"]["full_state_proof"] = {
             "algorithm": "sha256",
-            "count": 499,
+            "count": 500,
             "digest": "b" * 64,
         }
 
         verdict = compare_continuity_snapshots(before, after)
-        blocker = next(item for item in verdict["blockers"] if item["kind"] == "work_reference_proof_changed")
+        blocker = next(
+            item for item in verdict["blockers"]
+            if item["kind"] == "work_full_state_proof_changed"
+        )
 
         self.assertFalse(verdict["compatible"])
-        self.assertEqual(blocker, {"kind": "work_reference_proof_changed", "before_count": 500, "after_count": 499})
+        self.assertEqual(blocker["before_count"], 500)
+        self.assertEqual(blocker["after_count"], 500)
+        self.assertNotIn("digest", blocker)
 
     def test_old_schema2_baseline_without_proof_uses_bounded_fallback_against_new_snapshot(self):
         before = _base_snapshot()
@@ -216,7 +290,7 @@ class ContinuityReferenceProofTests(unittest.TestCase):
         after["work"].update(
             {
                 "threads": [{"id": "work-a", "created_at": "born"}],
-                "full_reference_proof": {
+                "full_state_proof": {
                     "algorithm": "sha256",
                     "count": 1,
                     "digest": "a" * 64,
@@ -237,7 +311,7 @@ class ContinuityReferenceProofTests(unittest.TestCase):
         before = _base_snapshot()
         after = _base_snapshot()
         before["work"]["references_may_be_truncated"] = True
-        after["work"]["full_reference_proof"] = {
+        after["work"]["full_state_proof"] = {
             "algorithm": "sha256",
             "count": 500,
             "digest": "a" * 64,
