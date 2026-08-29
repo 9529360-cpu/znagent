@@ -21,6 +21,7 @@ _ALGORITHM = "sha256"
 _DOMAIN = b"zn-atomic-overwrite-continuity-v1\x00"
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _VALID_STRATEGIES = frozenset({"replace_file_with_backup", "move_new_no_replace"})
+_DISCHARGE_WITNESS_LIMIT = 4096
 
 
 def _open_read_only(path: str | Path) -> sqlite3.Connection:
@@ -183,7 +184,9 @@ def _verified_attempt_hashes(conn: sqlite3.Connection) -> list[str]:
     rows = conn.execute(
         "SELECT event_id,attempt_id FROM resident_side_effect_attempts "
         "WHERE status IN ('verified_effect','verified_absent') "
-        "ORDER BY event_id ASC,attempt_id ASC"
+        "ORDER BY COALESCE(completed_at,started_at) DESC,started_at DESC,attempt_id DESC "
+        "LIMIT ?",
+        (_DISCHARGE_WITNESS_LIMIT,),
     ).fetchall()
     return sorted({_attempt_hash(row[0], row[1]) for row in rows})
 
@@ -194,7 +197,9 @@ def _terminal_event_hashes(conn: sqlite3.Connection) -> list[str]:
     rows = conn.execute(
         "SELECT event.event_id FROM events AS event "
         "JOIN event_outcomes AS outcome ON outcome.event_id=event.event_id "
-        "WHERE event.status IN ('completed','failed') ORDER BY event.event_id ASC"
+        "WHERE event.status IN ('completed','failed') "
+        "ORDER BY outcome.created_at DESC,event.event_id DESC LIMIT ?",
+        (_DISCHARGE_WITNESS_LIMIT,),
     ).fetchall()
     return sorted({_event_hash(row[0]) for row in rows})
 
@@ -232,7 +237,7 @@ def _native_completion_attempt_hashes(conn: sqlite3.Connection) -> list[str]:
 
 
 def atomic_overwrite_recovery_snapshot(path: str | Path) -> dict[str, Any]:
-    """Return sanitized atomic overwrite recovery authority and discharge truth."""
+    """Return sanitized atomic overwrite recovery authority and bounded discharge truth."""
 
     with closing(_open_read_only(path)) as conn:
         conn.execute("BEGIN")
@@ -251,8 +256,14 @@ def atomic_overwrite_recovery_snapshot(path: str | Path) -> dict[str, Any]:
     return result
 
 
-def _hash_list(value: Any) -> tuple[str, ...] | None:
+def _hash_list(
+    value: Any,
+    *,
+    max_length: int | None = None,
+) -> tuple[str, ...] | None:
     if not isinstance(value, list):
+        return None
+    if max_length is not None and len(value) > max_length:
         return None
     hashes = tuple(str(item) for item in value)
     if len(set(hashes)) != len(hashes):
@@ -330,12 +341,21 @@ def _parse_snapshot(value: Any) -> dict[str, Any] | None:
             "write_strategy": strategy,
         }
 
-    verified = _hash_list(value.get("verified_attempt_hashes"))
-    native_completion = _hash_list(value.get("native_completion_attempt_hashes"))
-    terminal = _hash_list(value.get("terminal_event_hashes"))
+    verified = _hash_list(
+        value.get("verified_attempt_hashes"),
+        max_length=_DISCHARGE_WITNESS_LIMIT,
+    )
+    native_completion = _hash_list(
+        value.get("native_completion_attempt_hashes"),
+        max_length=1,
+    )
+    terminal = _hash_list(
+        value.get("terminal_event_hashes"),
+        max_length=_DISCHARGE_WITNESS_LIMIT,
+    )
     if verified is None or native_completion is None or terminal is None:
         return None
-    if len(native_completion) > 1 or _snapshot_digest(value) != digest:
+    if _snapshot_digest(value) != digest:
         return None
     return {
         "protocols": protocols,
