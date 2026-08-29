@@ -62,8 +62,12 @@ export function validateContinuityBaseline(baseline) {
   if (!baseline || typeof baseline !== 'object' || Array.isArray(baseline)) {
     throw new Error('resident continuity snapshot must be an object')
   }
-  rejectUnexpectedFields(baseline, new Set(['schema_version', 'identity', 'living_self', 'work', 'provider']), 'continuity snapshot')
-  if (baseline.schema_version !== 1) throw new Error(`unsupported continuity schema: ${baseline.schema_version}`)
+  rejectUnexpectedFields(
+    baseline,
+    new Set(['schema_version', 'identity', 'living_self', 'work', 'verified_learning', 'provider']),
+    'continuity snapshot'
+  )
+  if (baseline.schema_version !== 2) throw new Error(`unsupported continuity schema: ${baseline.schema_version}`)
 
   const identity = baseline.identity
   if (!identity || typeof identity !== 'object' || Array.isArray(identity)) throw new Error('continuity identity is invalid')
@@ -98,6 +102,37 @@ export function validateContinuityBaseline(baseline) {
     rejectUnexpectedFields(thread, new Set(['id', 'created_at']), 'continuity work thread')
     requireNonEmptyString(thread.id, 'continuity work thread id')
     requireNonEmptyString(thread.created_at, 'continuity work thread created_at')
+  }
+
+  const verifiedLearning = baseline.verified_learning
+  if (!verifiedLearning || typeof verifiedLearning !== 'object' || Array.isArray(verifiedLearning)) {
+    throw new Error('continuity verified_learning is invalid')
+  }
+  rejectUnexpectedFields(
+    verifiedLearning,
+    new Set(['reference_count', 'total_count', 'reference_limit', 'references_may_be_truncated', 'experience_ids']),
+    'continuity verified_learning'
+  )
+  if (!Number.isInteger(verifiedLearning.reference_count) || verifiedLearning.reference_count < 0) {
+    throw new Error('continuity verified_learning reference_count is invalid')
+  }
+  if (!Number.isInteger(verifiedLearning.total_count) || verifiedLearning.total_count < verifiedLearning.reference_count) {
+    throw new Error('continuity verified_learning total_count is invalid')
+  }
+  if (!Number.isInteger(verifiedLearning.reference_limit) || verifiedLearning.reference_limit < 1) {
+    throw new Error('continuity verified_learning reference_limit is invalid')
+  }
+  if (typeof verifiedLearning.references_may_be_truncated !== 'boolean') {
+    throw new Error('continuity verified_learning truncation marker is invalid')
+  }
+  if (!Array.isArray(verifiedLearning.experience_ids) || verifiedLearning.experience_ids.length !== verifiedLearning.reference_count) {
+    throw new Error('continuity verified_learning references are inconsistent')
+  }
+  if (verifiedLearning.experience_ids.some(value => typeof value !== 'string' || !value.trim())) {
+    throw new Error('continuity verified_learning experience id is invalid')
+  }
+  if (new Set(verifiedLearning.experience_ids).size !== verifiedLearning.experience_ids.length) {
+    throw new Error('continuity verified_learning experience ids must be unique')
   }
 
   const provider = baseline.provider
@@ -266,6 +301,7 @@ async function main() {
   console.log(`[zn-clean-install] continuity_schema=${result.continuity.schema_version}`)
   console.log(`[zn-clean-install] continuity_born_at=${result.continuity.living_self.born_at}`)
   console.log(`[zn-clean-install] continuity_work_refs=${result.continuity.work.reference_count}`)
+  console.log(`[zn-clean-install] continuity_verified_learning_refs=${result.continuity.verified_learning.reference_count}`)
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
