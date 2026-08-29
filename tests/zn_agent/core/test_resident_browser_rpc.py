@@ -14,6 +14,7 @@ from zn_agent.core.browser import (
     BrowserSessionIdentity,
 )
 from zn_agent.core.browser_rpc import BrowserResidentRpcServer
+from zn_agent.core.daemon import ResidentRpcServer
 from zn_agent.core.models import utc_now
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
 
@@ -112,6 +113,31 @@ class ResidentBrowserRpcTests(unittest.TestCase):
             server.resident.managed_browser.close()
         finally:
             server.resident.store.close()
+
+    def test_formal_browser_rpc_status_identifies_surface_but_plain_server_does_not(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            server, _ = self._server(root)
+            try:
+                status = server.handle({"id": "formal", "method": "status", "params": {}})
+                self.assertEqual(
+                    status["result"]["resident_surface"],
+                    {"name": "zn-formal-resident", "schema": 1},
+                )
+            finally:
+                self._close(server)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            server = ResidentRpcServer(resident=resident)
+            try:
+                status = server.handle({"id": "plain", "method": "status", "params": {}})
+                self.assertNotIn("resident_surface", status["result"])
+            finally:
+                resident.store.close()
 
     def test_browser_rpc_defaults_to_observation_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

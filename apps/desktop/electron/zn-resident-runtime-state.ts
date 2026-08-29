@@ -1,12 +1,15 @@
 type UnknownRecord = Record<string, unknown>
 
+export const ZN_FORMAL_RESIDENT_SURFACE = 'zn-formal-resident'
+export const ZN_FORMAL_RESIDENT_SURFACE_SCHEMA = 1
+
 export type ZnResidentRuntimeIdentity = {
   runtimeId: string | null
   python: string | null
 }
 
 export type ZnResidentRuntimeRelation = {
-  state: 'unmanaged' | 'current' | 'pending' | 'legacy'
+  state: 'unmanaged' | 'current' | 'pending' | 'legacy' | 'surface-pending'
   desiredRuntimeId: string | null
   activeRuntimeId: string | null
   activePython: string | null
@@ -36,6 +39,15 @@ function residentBusy(status: unknown): boolean {
   return Boolean(normalize(situation?.active_event_id))
 }
 
+function hasCurrentFormalSurface(status: unknown): boolean {
+  const root = asRecord(status)
+  const surface = asRecord(root?.resident_surface)
+  return (
+    normalize(surface?.name) === ZN_FORMAL_RESIDENT_SURFACE &&
+    Number(surface?.schema) === ZN_FORMAL_RESIDENT_SURFACE_SCHEMA
+  )
+}
+
 export function describeZnResidentRuntime(
   identity: ZnResidentRuntimeIdentity,
   desiredRuntimeId: string | null | undefined,
@@ -58,7 +70,7 @@ export function describeZnResidentRuntime(
 
   if (activeRuntimeId === desired) {
     return {
-      state: 'current',
+      state: hasCurrentFormalSurface(status) ? 'current' : 'surface-pending',
       desiredRuntimeId: desired,
       activeRuntimeId,
       activePython,
