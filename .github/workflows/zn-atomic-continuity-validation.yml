@@ -1,0 +1,47 @@
+name: ZN Atomic Continuity Validation
+
+on:
+  push:
+    branches:
+      - work/atomic-recovery-continuity-validation-v2
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI: 'true'
+  PYTHONUTF8: '1'
+  PYTHONUNBUFFERED: '1'
+  ZN_AGENT_HOME: ${{ github.workspace }}/.ci/zn-home
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+jobs:
+  atomic-continuity:
+    name: Atomic recovery continuity / Windows
+    runs-on: [self-hosted, Windows, X64, zn-ci]
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare isolated runtime
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/runtime-venv -ErrorAction SilentlyContinue
+          uv venv .ci/runtime-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\runtime-venv\Scripts\python.exe'
+          uv pip install --python $python runtime/python
+      - name: Compile continuity module
+        run: .\.ci\runtime-venv\Scripts\python.exe -m py_compile runtime/python/zn_agent/core/continuity_atomic_recovery.py
+      - name: Run atomic continuity regressions
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          & .\.ci\runtime-venv\Scripts\python.exe -m unittest -v tests.zn_agent.core.test_continuity_atomic_recovery tests.zn_agent.core.test_continuity_atomic_recovery_bounds tests.zn_agent.core.test_browser_rpc_continuity
