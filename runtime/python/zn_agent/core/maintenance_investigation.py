@@ -3,11 +3,11 @@ from __future__ import annotations
 """Durable, authority-free investigation state derived from maintenance tasks.
 
 A maintenance task is evidence that ZN may need source investigation; it is not
-source-write authority.  This ledger gives every open task a bounded incident
+source-write authority. This ledger gives every open task a bounded incident
 record with explicit baseline, regression oracle, isolated-branch attempts and
 acceptance state before any future source-maintenance caller is allowed to act.
 
-The task projection remains owned by :mod:`health_observation`.  SQLite triggers
+The task projection remains owned by :mod:`health_observation`. SQLite triggers
 observe that projection in the same durable database, so tasks opened by channel
 supervisors or other resident organs enter this lifecycle without a UI polling
 loop or a second task owner.
@@ -83,7 +83,7 @@ class MaintenanceInvestigationLedger:
         baseline_ref: str,
         regression_oracle: str,
     ) -> dict[str, Any]:
-        """Admit read/investigation work only after baseline and oracle are explicit."""
+        """Admit investigation only after baseline and regression oracle are explicit."""
 
         normalized = self._task_id(task_id)
         baseline = self._required_ref(baseline_ref, "baseline_ref")
@@ -91,8 +91,8 @@ class MaintenanceInvestigationLedger:
         now = utc_now()
         with closing(self._connect()) as conn:
             row = conn.execute(
-                "SELECT source_task_status,status FROM resident_maintenance_investigations "
-                "WHERE task_id=?",
+                "SELECT source_task_status,status,baseline_ref,regression_oracle "
+                "FROM resident_maintenance_investigations WHERE task_id=?",
                 (normalized,),
             ).fetchone()
             if row is None:
@@ -104,12 +104,22 @@ class MaintenanceInvestigationLedger:
                 raise RuntimeError(
                     f"maintenance investigation cannot begin from status {status!r}"
                 )
+            changed_contract = bool(
+                str(row["baseline_ref"] or "") not in {"", baseline}
+                or str(row["regression_oracle"] or "") not in {"", oracle}
+            )
+            if changed_contract:
+                conn.execute(
+                    "DELETE FROM resident_maintenance_attempts WHERE task_id=?",
+                    (normalized,),
+                )
             conn.execute(
                 "UPDATE resident_maintenance_investigations SET "
                 "status='investigating',baseline_ref=?,regression_oracle=?,"
+                "attempt_count=CASE WHEN ? THEN 0 ELSE attempt_count END,"
                 "acceptance_state='unreviewed',accepted_attempt_key=NULL,updated_at=? "
                 "WHERE task_id=?",
-                (baseline, oracle, now, normalized),
+                (baseline, oracle, 1 if changed_contract else 0, now, normalized),
             )
             conn.commit()
         result = self.get(normalized)
@@ -149,7 +159,9 @@ class MaintenanceInvestigationLedger:
             if not str(row["baseline_ref"] or "").strip() or not str(
                 row["regression_oracle"] or ""
             ).strip():
-                raise RuntimeError("maintenance attempt requires durable baseline and regression oracle")
+                raise RuntimeError(
+                    "maintenance attempt requires durable baseline and regression oracle"
+                )
 
             conn.execute(
                 "INSERT INTO resident_maintenance_attempts("
@@ -198,6 +210,8 @@ class MaintenanceInvestigationLedger:
                 raise ValueError("maintenance investigation does not exist")
             if str(investigation["source_task_status"] or "") != "open":
                 raise RuntimeError("closed maintenance task cannot accept an attempt")
+            if str(investigation["status"] or "") != "investigating":
+                raise RuntimeError("only an active investigation can accept an attempt")
             attempt = conn.execute(
                 "SELECT regression_passed FROM resident_maintenance_attempts "
                 "WHERE task_id=? AND attempt_key=?",
@@ -373,6 +387,12 @@ class MaintenanceInvestigationLedger:
                         updated_at=excluded.updated_at,
                         closed_at=excluded.closed_at,
                         close_reason=excluded.close_reason;
+                END;
+                CREATE TRIGGER IF NOT EXISTS zn_maintenance_investigation_attempt_reset
+                BEFORE UPDATE ON resident_maintenance_tasks
+                WHEN OLD.fingerprint<>NEW.fingerprint OR OLD.status<>NEW.status
+                BEGIN
+                    DELETE FROM resident_maintenance_attempts WHERE task_id=NEW.task_id;
                 END;
                 CREATE TRIGGER IF NOT EXISTS zn_maintenance_investigation_task_update
                 AFTER UPDATE ON resident_maintenance_tasks
