@@ -9,9 +9,10 @@ are retained, together with occurrence counters, a conservative failure class,
 and timestamps.
 
 A repeated high-confidence ZN defect can form exactly one durable maintenance
-task for that organ. The task is evidence only: it does not grant source-write,
-merge, updater, replacement, or release authority. Recovery closes the task, and
-a later qualifying defect can reopen the same organ task with fresh evidence.
+task for that organ. The task is derived evidence only: it does not grant source-
+write, merge, updater, replacement, or release authority. Health truth commits
+independently from task projection, so a damaged derived task surface cannot roll
+back a real organ observation. Task state is reconstructible from health state.
 """
 
 import hashlib
@@ -35,6 +36,7 @@ class ResidentHealthJournal:
     def __init__(self, store):
         self.store = store
         self._init_schema()
+        self._repair_maintenance_tasks_best_effort()
 
     def record_failure(self, organ: str, error: BaseException) -> dict[str, Any]:
         organ_name = self._organ(organ)
@@ -80,9 +82,11 @@ class ResidentHealthJournal:
                 (organ_name,),
             ).fetchone()
             snapshot = self._snapshot(row)
-            if snapshot["maintenance_candidate"]:
-                self._upsert_maintenance_task(conn, snapshot, now=now)
             conn.commit()
+
+        # Maintenance-task projection is deliberately secondary. A task-table
+        # failure must never erase the health observation that just committed.
+        self._sync_maintenance_task_best_effort(snapshot, now=now)
         return snapshot
 
     def record_success(self, organ: str) -> dict[str, Any] | None:
@@ -95,16 +99,18 @@ class ResidentHealthJournal:
                 "WHERE organ=?",
                 (now, organ_name),
             )
-            if cursor.rowcount > 0:
-                conn.execute(
-                    "UPDATE resident_maintenance_tasks "
-                    "SET status='closed',closed_at=?,close_reason='organ_recovered',updated_at=? "
-                    "WHERE organ=? AND status='open'",
-                    (now, now, organ_name),
-                )
             conn.commit()
         if cursor.rowcount <= 0:
             return None
+
+        # Recovery truth also commits before derived task closure. A later
+        # journal construction can reconcile the task if this best-effort write
+        # is interrupted or the task projection is temporarily unavailable.
+        self._close_maintenance_task_best_effort(
+            organ_name,
+            reason="organ_recovered",
+            now=now,
+        )
         return self.get(organ_name)
 
     def get(self, organ: str) -> dict[str, Any] | None:
@@ -184,6 +190,64 @@ class ResidentHealthJournal:
             "tasks": [self._task_snapshot(row) for row in rows],
         }
 
+    def repair_maintenance_tasks(self) -> int:
+        """Rebuild the bounded derived task surface from durable health truth."""
+        repaired = 0
+        now = utc_now()
+        with closing(self._connect()) as conn:
+            health_rows = conn.execute(
+                "SELECT organ,total_failures,consecutive_failures,repeat_fingerprint_failures,"
+                "first_failure_at,last_failure_at,last_success_at,last_exception_type,"
+                "last_fingerprint,last_failure_class "
+                "FROM resident_health_observations ORDER BY organ ASC"
+            ).fetchall()
+            health_by_organ = {
+                str(row["organ"]): self._snapshot(row) for row in health_rows
+            }
+            task_rows = conn.execute(
+                "SELECT task_id,organ,status,failure_class,fingerprint,exception_type,"
+                "first_seen_at,last_seen_at,updated_at,closed_at,close_reason,occurrences "
+                "FROM resident_maintenance_tasks"
+            ).fetchall()
+            tasks_by_organ = {str(row["organ"]): row for row in task_rows}
+
+            for organ, health in health_by_organ.items():
+                task = tasks_by_organ.get(organ)
+                if health["maintenance_candidate"]:
+                    needs_update = bool(
+                        task is None
+                        or str(task["status"] or "") != "open"
+                        or str(task["fingerprint"] or "")
+                        != str(health["last_fingerprint"] or "")
+                        or int(task["occurrences"] or 0)
+                        < int(health["repeat_fingerprint_failures"] or 0)
+                    )
+                    self._upsert_maintenance_task(conn, health, now=now)
+                    if needs_update:
+                        repaired += 1
+                    continue
+
+                if task is not None and str(task["status"] or "") == "open":
+                    reason = "organ_recovered" if health["healthy"] else "evidence_changed"
+                    repaired += self._close_maintenance_task(
+                        conn,
+                        organ,
+                        reason=reason,
+                        now=now,
+                    )
+
+            for organ, task in tasks_by_organ.items():
+                if organ in health_by_organ or str(task["status"] or "") != "open":
+                    continue
+                repaired += self._close_maintenance_task(
+                    conn,
+                    organ,
+                    reason="health_evidence_missing",
+                    now=now,
+                )
+            conn.commit()
+        return repaired
+
     @staticmethod
     def _snapshot(row: sqlite3.Row) -> dict[str, Any]:
         consecutive = max(0, int(row["consecutive_failures"] or 0))
@@ -226,6 +290,68 @@ class ResidentHealthJournal:
             "occurrences": max(0, int(row["occurrences"] or 0)),
         }
 
+    def _sync_maintenance_task_best_effort(
+        self,
+        health: dict[str, Any],
+        *,
+        now: str,
+    ) -> None:
+        try:
+            with closing(self._connect()) as conn:
+                if health["maintenance_candidate"]:
+                    self._upsert_maintenance_task(conn, health, now=now)
+                else:
+                    self._close_maintenance_task(
+                        conn,
+                        str(health["organ"]),
+                        reason="evidence_changed",
+                        now=now,
+                    )
+                conn.commit()
+        except sqlite3.Error:
+            return
+
+    def _close_maintenance_task_best_effort(
+        self,
+        organ: str,
+        *,
+        reason: str,
+        now: str,
+    ) -> None:
+        try:
+            with closing(self._connect()) as conn:
+                self._close_maintenance_task(
+                    conn,
+                    organ,
+                    reason=reason,
+                    now=now,
+                )
+                conn.commit()
+        except sqlite3.Error:
+            return
+
+    def _repair_maintenance_tasks_best_effort(self) -> None:
+        try:
+            self.repair_maintenance_tasks()
+        except sqlite3.Error:
+            return
+
+    @staticmethod
+    def _close_maintenance_task(
+        conn: sqlite3.Connection,
+        organ: str,
+        *,
+        reason: str,
+        now: str,
+    ) -> int:
+        cursor = conn.execute(
+            "UPDATE resident_maintenance_tasks "
+            "SET status='closed',closed_at=?,close_reason=?,updated_at=? "
+            "WHERE organ=? AND status='open'",
+            (now, str(reason or "evidence_changed")[:128], now, organ),
+        )
+        return max(0, int(cursor.rowcount or 0))
+
     def _upsert_maintenance_task(
         self,
         conn: sqlite3.Connection,
@@ -240,7 +366,8 @@ class ResidentHealthJournal:
         repeated = max(1, int(health["repeat_fingerprint_failures"] or 1))
         task_id = self._task_id(organ)
         existing = conn.execute(
-            "SELECT fingerprint,occurrences,status FROM resident_maintenance_tasks WHERE organ=?",
+            "SELECT fingerprint,occurrences,status,first_seen_at "
+            "FROM resident_maintenance_tasks WHERE organ=?",
             (organ,),
         ).fetchone()
         if existing is None:
@@ -265,23 +392,29 @@ class ResidentHealthJournal:
             )
             return
 
-        same_fingerprint = str(existing["fingerprint"] or "") == fingerprint
-        previous_occurrences = max(0, int(existing["occurrences"] or 0))
-        occurrences = max(previous_occurrences, repeated) if same_fingerprint else repeated
+        same_open_incident = bool(
+            str(existing["status"] or "") == "open"
+            and str(existing["fingerprint"] or "") == fingerprint
+        )
+        if same_open_incident:
+            occurrences = max(max(0, int(existing["occurrences"] or 0)), repeated)
+            first_seen_at = str(existing["first_seen_at"] or now)
+        else:
+            occurrences = repeated
+            first_seen_at = now
         conn.execute(
             """
             UPDATE resident_maintenance_tasks SET
                 status='open',failure_class=?,fingerprint=?,exception_type=?,
-                first_seen_at=CASE WHEN fingerprint=? THEN first_seen_at ELSE ? END,
-                last_seen_at=?,updated_at=?,closed_at=NULL,close_reason=NULL,occurrences=?
+                first_seen_at=?,last_seen_at=?,updated_at=?,closed_at=NULL,
+                close_reason=NULL,occurrences=?
             WHERE organ=?
             """,
             (
                 failure_class,
                 fingerprint,
                 exception_type,
-                fingerprint,
-                now,
+                first_seen_at,
                 now,
                 now,
                 occurrences,
