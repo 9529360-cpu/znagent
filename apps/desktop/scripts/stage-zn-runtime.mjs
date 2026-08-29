@@ -130,9 +130,9 @@ const backendRoot = capture(pythonPath, [
   ].join('; ')
 ])
 const residentEntry = path.join(backendRoot, 'zn_agent', 'resident.py')
-const residentCore = path.join(backendRoot, 'zn_agent', 'core', 'resident_server.py')
+const residentCore = path.join(backendRoot, 'zn_agent', 'core', 'browser_resident_server.py')
 if (!fs.existsSync(residentEntry)) throw new Error(`Installed runtime is missing zn_agent/resident.py under ${backendRoot}`)
-if (!fs.existsSync(residentCore)) throw new Error(`Installed runtime is missing zn_agent/core/resident_server.py under ${backendRoot}`)
+if (!fs.existsSync(residentCore)) throw new Error(`Installed runtime is missing zn_agent/core/browser_resident_server.py under ${backendRoot}`)
 if (fs.existsSync(path.join(backendRoot, retiredPackageName))) {
   throw new Error(`ZN runtime unexpectedly contains retired package under ${backendRoot}`)
 }
@@ -146,11 +146,13 @@ run(pythonPath, [
     'import tempfile',
     'from pathlib import Path',
     'import zn_agent.resident',
+    'from zn_agent.core.browser_resident_server import main as formal_resident_main',
     'from zn_agent.core.provider_bridge import build_resident_runtime',
     'from zn_agent.core.resident_autostart import _resident_argv',
     'd = tempfile.TemporaryDirectory()',
     "argv = _resident_argv(Path(d.name) / 'home', sys.executable)",
-    "assert argv[1:3] == ['-m', 'zn_agent.core.resident_server']",
+    "assert argv[1:3] == ['-m', 'zn_agent.resident']",
+    'assert zn_agent.resident.main is formal_resident_main',
     "r = build_resident_runtime(config={'model': {}}, store_path=Path(d.name) / 'kernel.db')",
     'p = r.pulse()',
     's = r.life.snapshot()',
