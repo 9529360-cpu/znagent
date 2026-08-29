@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -287,7 +288,7 @@ class MaintenanceInvestigationLifecycleTests(unittest.TestCase):
             # Simulate loss/corruption of the secondary projection. Because the
             # ledger installs no triggers on resident_maintenance_tasks, health
             # truth and task recovery must remain independently writable.
-            with sqlite3.connect(store.path) as conn:
+            with closing(sqlite3.connect(store.path)) as conn:
                 conn.execute("DROP TABLE resident_maintenance_attempts")
                 conn.execute("DROP TABLE resident_maintenance_investigations")
                 conn.commit()
