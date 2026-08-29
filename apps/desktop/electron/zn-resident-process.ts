@@ -83,6 +83,11 @@ type Pending = {
   timer: NodeJS.Timeout
 }
 
+export function isZnResidentLoopbackHost(value: unknown): boolean {
+  const host = String(value || '').trim().toLowerCase()
+  return host === '127.0.0.1' || host === 'localhost' || host === '::1'
+}
+
 function expandHome(value: string): string {
   if (value === '~') return homedir()
   if (value.startsWith('~/') || value.startsWith('~\\')) return path.join(homedir(), value.slice(2))
@@ -251,8 +256,14 @@ export class ZnResidentProcess extends EventEmitter {
     const parsed = JSON.parse(raw) as Partial<ZnResidentEndpoint>
     const port = Number(parsed.port || 0)
     const host = String(parsed.host || '').trim()
-    if (parsed.transport !== 'tcp' || !host || !Number.isInteger(port) || port <= 0 || port > 65_535) {
-      throw new Error('ZN Resident endpoint file is invalid')
+    if (
+      parsed.transport !== 'tcp' ||
+      !isZnResidentLoopbackHost(host) ||
+      !Number.isInteger(port) ||
+      port <= 0 ||
+      port > 65_535
+    ) {
+      throw new Error('ZN Resident endpoint file is invalid or non-loopback')
     }
     return {
       version: Number(parsed.version || 1), transport: 'tcp', host, port,
