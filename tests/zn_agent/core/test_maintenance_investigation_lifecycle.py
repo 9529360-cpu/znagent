@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,14 +25,15 @@ class MaintenanceInvestigationLifecycleTests(unittest.TestCase):
         assert task is not None
         return health, task
 
-    def test_open_task_from_separate_health_journal_materializes_and_recovery_closes(self):
+    def test_separate_health_journal_task_is_reconciled_and_recovery_closes(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = self._store(tmp)
             bootstrap = ResidentHealthJournal(store)
             ledger = MaintenanceInvestigationLedger(store)
 
-            # Simulate a channel supervisor: it owns a separate journal instance
-            # against the resident DB after the lifecycle trigger is installed.
+            # Simulate a channel supervisor that owns a separate health-journal
+            # object against the same resident DB. Lifecycle read-through must
+            # discover its task without sharing an in-memory callback.
             channel_health = ResidentHealthJournal(store)
             health, task = self._open_task(channel_health)
 
@@ -211,6 +213,90 @@ class MaintenanceInvestigationLifecycleTests(unittest.TestCase):
                 evidence_ref="ci:2",
             )
             self.assertEqual(again["attempt_count"], 1)
+
+    def test_rejected_evidence_cannot_be_reaccepted_without_fresh_attempt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._store(tmp)
+            journal = ResidentHealthJournal(store)
+            ledger = MaintenanceInvestigationLedger(store)
+            _, task = self._open_task(journal)
+            task_id = task["task_id"]
+
+            ledger.begin(
+                task_id,
+                baseline_ref="commit:one",
+                regression_oracle="test:oracle-one",
+            )
+            ledger.record_attempt(
+                task_id,
+                attempt_key="attempt-accepted-before-review",
+                branch_ref="work/rejected-evidence",
+                regression_passed=True,
+                evidence_ref="ci:one",
+            )
+            rejected = ledger.reject(task_id, reason="diff_review_rejected")
+            self.assertEqual(rejected["status"], "rejected")
+
+            restarted = ledger.begin(
+                task_id,
+                baseline_ref="commit:one",
+                regression_oracle="test:oracle-one",
+            )
+            self.assertEqual(restarted["attempt_count"], 0)
+            self.assertEqual(restarted["acceptance_state"], "unreviewed")
+            with self.assertRaises(ValueError):
+                ledger.accept(task_id, attempt_key="attempt-accepted-before-review")
+
+    def test_closed_task_preserves_attempt_history_until_a_new_incident(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._store(tmp)
+            journal = ResidentHealthJournal(store)
+            ledger = MaintenanceInvestigationLedger(store)
+            _, task = self._open_task(journal)
+            task_id = task["task_id"]
+
+            ledger.begin(
+                task_id,
+                baseline_ref="commit:one",
+                regression_oracle="test:oracle-one",
+            )
+            ledger.record_attempt(
+                task_id,
+                attempt_key="attempt-history",
+                branch_ref="work/history",
+                regression_passed=True,
+                evidence_ref="ci:history",
+            )
+            ledger.accept(task_id, attempt_key="attempt-history")
+
+            journal.record_success("channel:test")
+            closed = ledger.get(task_id)
+            self.assertEqual(closed["status"], "closed")
+            self.assertEqual(closed["attempt_count"], 1)
+            self.assertEqual(closed["accepted_attempt_key"], "attempt-history")
+            self.assertEqual(closed["acceptance_state"], "accepted")
+
+    def test_damaged_investigation_projection_cannot_block_health_or_task_recovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._store(tmp)
+            journal = ResidentHealthJournal(store)
+            ledger = MaintenanceInvestigationLedger(store)
+            _, task = self._open_task(journal)
+            self.assertIsNotNone(ledger.get(task["task_id"]))
+
+            # Simulate loss/corruption of the secondary projection. Because the
+            # ledger installs no triggers on resident_maintenance_tasks, health
+            # truth and task recovery must remain independently writable.
+            with sqlite3.connect(store.path) as conn:
+                conn.execute("DROP TABLE resident_maintenance_attempts")
+                conn.execute("DROP TABLE resident_maintenance_investigations")
+                conn.commit()
+
+            recovered = journal.record_success("channel:test")
+            self.assertTrue(recovered["healthy"])
+            recovered_task = journal.maintenance_task("channel:test")
+            self.assertEqual(recovered_task["status"], "closed")
+            self.assertEqual(recovered_task["close_reason"], "organ_recovered")
 
     def test_restart_reconciles_task_that_predates_lifecycle_schema(self):
         with tempfile.TemporaryDirectory() as tmp:
