@@ -5,6 +5,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const SHA_RE = /^[0-9a-f]{7,40}$/i
+const SHA256_RE = /^[0-9a-f]{64}$/
 
 function inside(root, target) {
   const relative = path.relative(path.resolve(root), path.resolve(target))
@@ -58,13 +59,57 @@ function rejectUnexpectedFields(value, allowed, label) {
   }
 }
 
+function validateReferenceProof(proof, label, { allowThreadCount = false } = {}) {
+  if (!proof || typeof proof !== 'object' || Array.isArray(proof)) {
+    throw new Error(`${label} is invalid`)
+  }
+  const allowed = new Set(['algorithm', 'count', 'section_counts', 'digest', 'reference_hashes'])
+  if (allowThreadCount) allowed.add('thread_count')
+  rejectUnexpectedFields(proof, allowed, label)
+  if (proof.algorithm !== 'sha256') throw new Error(`${label} algorithm is invalid`)
+  if (!Number.isInteger(proof.count) || proof.count < 0) throw new Error(`${label} count is invalid`)
+  if (!SHA256_RE.test(String(proof.digest || ''))) throw new Error(`${label} digest is invalid`)
+  if (!Array.isArray(proof.reference_hashes) || proof.reference_hashes.length !== proof.count) {
+    throw new Error(`${label} reference hashes are inconsistent`)
+  }
+  if (proof.reference_hashes.some(value => typeof value !== 'string' || !SHA256_RE.test(value))) {
+    throw new Error(`${label} reference hash is invalid`)
+  }
+  if (new Set(proof.reference_hashes).size !== proof.reference_hashes.length) {
+    throw new Error(`${label} reference hashes must be unique`)
+  }
+  if (!proof.section_counts || typeof proof.section_counts !== 'object' || Array.isArray(proof.section_counts)) {
+    throw new Error(`${label} section_counts is invalid`)
+  }
+  let sectionTotal = 0
+  for (const [section, count] of Object.entries(proof.section_counts)) {
+    if (!section.trim() || !Number.isInteger(count) || count < 0) {
+      throw new Error(`${label} section count is invalid`)
+    }
+    sectionTotal += count
+  }
+  if (sectionTotal !== proof.count) throw new Error(`${label} section counts do not match count`)
+  if (allowThreadCount && (!Number.isInteger(proof.thread_count) || proof.thread_count < 0)) {
+    throw new Error(`${label} thread_count is invalid`)
+  }
+  return proof
+}
+
+function validateOptionalProofContainer(container, label, proofKey, options = {}) {
+  if (!container || typeof container !== 'object' || Array.isArray(container)) {
+    throw new Error(`${label} is invalid`)
+  }
+  rejectUnexpectedFields(container, new Set([proofKey]), label)
+  if (Object.hasOwn(container, proofKey)) validateReferenceProof(container[proofKey], `${label} ${proofKey}`, options)
+}
+
 export function validateContinuityBaseline(baseline) {
   if (!baseline || typeof baseline !== 'object' || Array.isArray(baseline)) {
     throw new Error('resident continuity snapshot must be an object')
   }
   rejectUnexpectedFields(
     baseline,
-    new Set(['schema_version', 'identity', 'living_self', 'work', 'verified_learning', 'provider']),
+    new Set(['schema_version', 'identity', 'living_self', 'resident_state', 'long_lived_memory', 'work', 'verified_learning', 'provider']),
     'continuity snapshot'
   )
   if (baseline.schema_version !== 2) throw new Error(`unsupported continuity schema: ${baseline.schema_version}`)
@@ -90,10 +135,14 @@ export function validateContinuityBaseline(baseline) {
     throw new Error('continuity learning_candidate_ids is invalid')
   }
 
+  validateOptionalProofContainer(baseline.resident_state, 'continuity resident_state', 'full_state_proof')
+  validateOptionalProofContainer(baseline.long_lived_memory, 'continuity long_lived_memory', 'full_reference_proof')
+
   const work = baseline.work
   if (!work || typeof work !== 'object' || Array.isArray(work)) throw new Error('continuity work is invalid')
-  rejectUnexpectedFields(work, new Set(['reference_count', 'reference_limit', 'references_may_be_truncated', 'threads']), 'continuity work')
+  rejectUnexpectedFields(work, new Set(['reference_count', 'total_count', 'reference_limit', 'references_may_be_truncated', 'threads', 'full_state_proof']), 'continuity work')
   if (!Number.isInteger(work.reference_count) || work.reference_count < 0) throw new Error('continuity work reference_count is invalid')
+  if (!Number.isInteger(work.total_count) || work.total_count < work.reference_count) throw new Error('continuity work total_count is invalid')
   if (!Number.isInteger(work.reference_limit) || work.reference_limit < 1) throw new Error('continuity work reference_limit is invalid')
   if (typeof work.references_may_be_truncated !== 'boolean') throw new Error('continuity work truncation marker is invalid')
   if (!Array.isArray(work.threads) || work.threads.length !== work.reference_count) throw new Error('continuity work references are inconsistent')
@@ -103,6 +152,10 @@ export function validateContinuityBaseline(baseline) {
     requireNonEmptyString(thread.id, 'continuity work thread id')
     requireNonEmptyString(thread.created_at, 'continuity work thread created_at')
   }
+  if (Object.hasOwn(work, 'full_state_proof')) {
+    const proof = validateReferenceProof(work.full_state_proof, 'continuity work full_state_proof', { allowThreadCount: true })
+    if (proof.thread_count !== work.total_count) throw new Error('continuity work proof thread_count does not match total_count')
+  }
 
   const verifiedLearning = baseline.verified_learning
   if (!verifiedLearning || typeof verifiedLearning !== 'object' || Array.isArray(verifiedLearning)) {
@@ -110,7 +163,7 @@ export function validateContinuityBaseline(baseline) {
   }
   rejectUnexpectedFields(
     verifiedLearning,
-    new Set(['reference_count', 'total_count', 'reference_limit', 'references_may_be_truncated', 'experience_ids']),
+    new Set(['reference_count', 'total_count', 'reference_limit', 'references_may_be_truncated', 'experience_ids', 'retention_capacity', 'full_reference_proof']),
     'continuity verified_learning'
   )
   if (!Number.isInteger(verifiedLearning.reference_count) || verifiedLearning.reference_count < 0) {
@@ -133,6 +186,20 @@ export function validateContinuityBaseline(baseline) {
   }
   if (new Set(verifiedLearning.experience_ids).size !== verifiedLearning.experience_ids.length) {
     throw new Error('continuity verified_learning experience ids must be unique')
+  }
+  if (Object.hasOwn(verifiedLearning, 'retention_capacity')) {
+    if (!Number.isInteger(verifiedLearning.retention_capacity) || verifiedLearning.retention_capacity < 1) {
+      throw new Error('continuity verified_learning retention_capacity is invalid')
+    }
+    if (verifiedLearning.total_count > verifiedLearning.retention_capacity) {
+      throw new Error('continuity verified_learning total_count exceeds retention_capacity')
+    }
+  }
+  if (Object.hasOwn(verifiedLearning, 'full_reference_proof')) {
+    const proof = validateReferenceProof(verifiedLearning.full_reference_proof, 'continuity verified_learning full_reference_proof')
+    if (proof.count !== verifiedLearning.total_count) {
+      throw new Error('continuity verified_learning proof count does not match total_count')
+    }
   }
 
   const provider = baseline.provider
