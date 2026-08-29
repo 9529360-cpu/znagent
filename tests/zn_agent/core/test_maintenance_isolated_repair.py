@@ -141,6 +141,19 @@ class MaintenanceIsolatedRepairTests(unittest.TestCase):
                 self.assertEqual(source_value, "VALUE = 1\n")
                 self.assertEqual(attempt_value, "VALUE = 2\n")
 
+                # Oracle execution is evidence only and must not introduce bytecode
+                # or other untracked artifacts into the isolated candidate worktree.
+                status_after_oracle = self._git(
+                    attempt_root,
+                    "status",
+                    "--porcelain=v1",
+                    "--untracked-files=all",
+                ).stdout.splitlines()
+                self.assertEqual(
+                    status_after_oracle,
+                    [" M runtime/python/zn_agent/core/repair_fixture.py"],
+                )
+
                 status = resident.status()["maintenance_repair_attempts"]
                 self.assertTrue(status["available"])
                 self.assertEqual(status["attempt_evidence_count"], 1)

@@ -193,8 +193,14 @@ class MaintenanceIsolatedRepairOperator:
         runtime_path = str(attempt / "runtime" / "python")
         existing_pythonpath = env.get("PYTHONPATH", "")
         env["PYTHONPATH"] = runtime_path + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
+        # The regression oracle is evidence, not a source mutation. Python normally
+        # writes __pycache__ files while importing the candidate and tests, which
+        # leaves a verified worktree dirty and makes later exact publication
+        # ambiguous. Fail closed on any real filesystem mutation, but prevent the
+        # interpreter's own bytecode cache side effect at the source.
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
         oracle_proc = subprocess.run(
-            [sys.executable, "-m", "unittest", "-v", module],
+            [sys.executable, "-B", "-m", "unittest", "-v", module],
             cwd=str(attempt),
             env=env,
             capture_output=True,
@@ -365,51 +371,50 @@ class MaintenanceIsolatedRepairOperator:
     def _oracle_module(oracle: str) -> str:
         relative = oracle[len("test:") :]
         if not relative.endswith(".py"):
-            raise RuntimeError("maintenance regression oracle must be a Python test file")
-        return relative[:-3].replace("/", ".").replace("\\", ".")
+            raise RuntimeError("maintenance regression oracle must be a Python unittest file")
+        module = relative[:-3].replace("/", ".").replace("\\", ".")
+        if not module or any(not part.isidentifier() for part in module.split(".")):
+            raise RuntimeError("maintenance regression oracle module is invalid")
+        return module
 
     @staticmethod
     def _repository_slug(value: str) -> str:
-        text = str(value or "").strip().replace("\\", "/")
-        if text.startswith("git@github.com:"):
-            text = text[len("git@github.com:") :]
-        elif text.startswith("ssh://git@github.com/"):
-            text = text[len("ssh://git@github.com/") :]
-        elif text.startswith("https://github.com/"):
-            text = text[len("https://github.com/") :]
-        elif text.startswith("http://github.com/"):
-            text = text[len("http://github.com/") :]
-        text = text.strip("/")
-        if text.endswith(".git"):
-            text = text[:-4]
-        parts = [part for part in text.split("/") if part]
-        if len(parts) != 2:
-            raise ValueError("maintenance repair repository must identify one GitHub repository")
-        return f"{parts[0]}/{parts[1]}"
+        raw = str(value or "").strip().rstrip("/")
+        if raw.endswith(".git"):
+            raw = raw[:-4]
+        if raw.startswith("git@github.com:"):
+            raw = raw[len("git@github.com:") :]
+        elif raw.startswith("ssh://git@github.com/"):
+            raw = raw[len("ssh://git@github.com/") :]
+        elif raw.startswith("https://github.com/"):
+            raw = raw[len("https://github.com/") :]
+        elif raw.startswith("http://github.com/"):
+            raw = raw[len("http://github.com/") :]
+        return raw.strip("/").lower()
 
     @staticmethod
     def _fingerprint(namespace: str, value: str) -> str:
         digest = hashlib.sha256()
         digest.update(namespace.encode("utf-8"))
         digest.update(b"\x00")
-        digest.update(value.encode("utf-8", errors="replace"))
+        digest.update(value.encode("utf-8"))
         return digest.hexdigest()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.store.path)
+        conn = sqlite3.connect(str(self.store.path))
         conn.row_factory = sqlite3.Row
         return conn
 
     def _init_schema(self) -> None:
         with closing(self._connect()) as conn:
             conn.execute(
-                "CREATE TABLE IF NOT EXISTS resident_maintenance_repair_attempt_evidence ("
+                "CREATE TABLE IF NOT EXISTS resident_maintenance_repair_attempt_evidence("
                 "task_id TEXT NOT NULL,attempt_key TEXT NOT NULL,branch_ref TEXT NOT NULL,"
                 "baseline_head TEXT NOT NULL,changed_files INTEGER NOT NULL,"
                 "changed_fingerprint TEXT NOT NULL,diff_fingerprint TEXT NOT NULL,"
                 "regression_oracle TEXT NOT NULL,regression_passed INTEGER NOT NULL,"
-                "diff_check_passed INTEGER NOT NULL,authority TEXT NOT NULL,created_at TEXT NOT NULL,"
-                "PRIMARY KEY(task_id,attempt_key))"
+                "diff_check_passed INTEGER NOT NULL,authority TEXT NOT NULL,"
+                "created_at TEXT NOT NULL,PRIMARY KEY(task_id,attempt_key))"
             )
             conn.commit()
 
@@ -420,8 +425,7 @@ class MaintenanceIsolatedRepairOperator:
             "attempt_key": str(row["attempt_key"]),
             "branch_ref": str(row["branch_ref"]),
             "baseline_head": str(row["baseline_head"]),
-            "baseline_head_short": str(row["baseline_head"])[:12],
-            "changed_files": max(0, int(row["changed_files"] or 0)),
+            "changed_files": int(row["changed_files"]),
             "changed_fingerprint": str(row["changed_fingerprint"]),
             "diff_fingerprint": str(row["diff_fingerprint"]),
             "regression_oracle": str(row["regression_oracle"]),
