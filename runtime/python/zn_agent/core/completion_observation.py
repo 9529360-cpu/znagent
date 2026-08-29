@@ -20,6 +20,8 @@ class CompletionObservationJournal:
     """
 
     _STAGE_LIFE = "life"
+    DEFAULT_REPAIR_BATCH = 128
+    MAX_STARTUP_REPAIR_RECORDS = 2048
 
     def __init__(self, store):
         self.store = store
@@ -60,7 +62,7 @@ class CompletionObservationJournal:
         return True
 
     def repair_life(self, resident: ZNResidentRuntime, *, limit: int = 128) -> int:
-        """Retry pending Life observations from durable completed outcomes."""
+        """Retry one bounded batch of pending Life observations."""
         repaired = 0
         try:
             pending = self.pending(stage=self._STAGE_LIFE, limit=limit)
@@ -73,6 +75,59 @@ class CompletionObservationJournal:
             if self.observe_life(resident, result):
                 repaired += 1
         return repaired
+
+    def repair_life_sweep(
+        self,
+        resident: ZNResidentRuntime,
+        *,
+        batch_size: int = DEFAULT_REPAIR_BATCH,
+        max_records: int = MAX_STARTUP_REPAIR_RECORDS,
+    ) -> int:
+        """Attempt every initially pending Life repair once, within a hard bound.
+
+        A failed retry is deferred with a fresh ``updated_at`` and therefore
+        moves behind older pending rows. Taking the initial backlog size before
+        sweeping lets finite batches rotate later records into view without
+        retrying forever on a persistent Life failure. New rows created while the
+        sweep runs wait for the next normal repair opportunity.
+        """
+
+        bounded_batch = max(1, min(2048, int(batch_size)))
+        bounded_records = max(1, min(8192, int(max_records)))
+        try:
+            initial = min(
+                self.pending_count(stage=self._STAGE_LIFE),
+                bounded_records,
+            )
+        except Exception:
+            return 0
+        if initial <= 0:
+            return 0
+
+        repaired = 0
+        remaining = initial
+        while remaining > 0:
+            current_batch = min(bounded_batch, remaining)
+            repaired += self.repair_life(resident, limit=current_batch)
+            remaining -= current_batch
+        return repaired
+
+    def pending_count(self, *, stage: str | None = None) -> int:
+        """Count outstanding repair obligations without exposing their content."""
+
+        with closing(self._connect()) as conn:
+            if stage:
+                row = conn.execute(
+                    "SELECT COUNT(*) AS count FROM resident_completion_observations "
+                    "WHERE status != 'completed' AND stage=?",
+                    (str(stage),),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT COUNT(*) AS count FROM resident_completion_observations "
+                    "WHERE status != 'completed'"
+                ).fetchone()
+        return max(0, int(row["count"] if row else 0))
 
     def health(self) -> dict[str, Any]:
         """Return a sanitized control-plane summary without raw repair errors."""
