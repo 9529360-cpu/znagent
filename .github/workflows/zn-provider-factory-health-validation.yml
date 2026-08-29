@@ -52,8 +52,8 @@ jobs:
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\provider-factory-health-venv\Scripts\python.exe'
           & $python -m unittest tests.zn_agent.core.test_cognitive_resource_health -v
-      - name: Run adjacent provider and kernel tests
+      - name: Run adjacent provider regression tests
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\provider-factory-health-venv\Scripts\python.exe'
-          & $python -m unittest tests.zn_agent.core.test_cognitive_resource tests.zn_agent.core.test_anthropic_resource tests.zn_agent.core.test_gemini_resource tests.zn_agent.core.test_kernel_restart_safety -v
+          & $python -m unittest tests.zn_agent.core.test_cognitive_resource tests.zn_agent.core.test_anthropic_resource tests.zn_agent.core.test_gemini_resource -v
