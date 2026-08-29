@@ -4,10 +4,10 @@ from __future__ import annotations
 
 This is the first source-level extraction from the mature provider stack.
 The reference implementation under ``agent/transports/chat_completions.py``
-contains years of OpenAI-compatible provider edge cases.  ZN adopts the useful
+contains years of OpenAI-compatible provider edge cases. ZN adopts the useful
 wire-level pattern here without adopting the old AIAgent/conversation owner.
 
-A resource answers one bounded cognition request.  It does not own ZN's
+A resource answers one bounded cognition request. It does not own ZN's
 identity, memory, tools, session, planning loop or final decision.
 """
 
@@ -37,11 +37,12 @@ class CognitiveResource(Protocol):
 
 ClientBuilder = Callable[..., Any]
 ResourceBuilder = Callable[[ModelRoute], CognitiveResource]
+ResourceHealthObserver = Callable[[ModelRoute, BaseException | None], None]
 
 
-# Defaults are intentionally only wire endpoints/credential names.  Product
+# Defaults are intentionally only wire endpoints/credential names. Product
 # selection/configuration belongs to ZN; these constants do not import the old
-# CLI provider registry.  More provider-specific transports are extracted into
+# CLI provider registry. More provider-specific transports are extracted into
 # their own modules rather than making this table another agent framework.
 _OPENAI_COMPAT_DEFAULTS: dict[str, tuple[str | None, str | None]] = {
     "openai": ("https://api.openai.com/v1", "OPENAI_API_KEY"),
@@ -87,7 +88,7 @@ def _infer_provider(base_url: str | None, environ: Mapping[str, str]) -> str:
     if _is_loopback_url(base_url):
         return "custom"
 
-    # Keep auto-resolution intentionally small and deterministic.  This is
+    # Keep auto-resolution intentionally small and deterministic. This is
     # extracted provider plumbing, not a resurrection of the old CLI resolver.
     for provider, env_name in (
         ("openrouter", "OPENROUTER_API_KEY"),
@@ -109,9 +110,9 @@ def resolve_openai_compatible_route(
 ) -> ModelRoute:
     """Resolve one OpenAI-compatible route without retired product imports.
 
-    Explicit ZN route metadata wins.  Standard provider credential environment
+    Explicit ZN route metadata wins. Standard provider credential environment
     variables remain supported because they are provider conventions, not
-    product identity.  Local OpenAI-compatible servers do not require a secret.
+    product identity. Local OpenAI-compatible servers do not require a secret.
     """
 
     env = environ if environ is not None else os.environ
@@ -208,10 +209,10 @@ def _usage_dict(usage: Any) -> dict[str, int]:
 class OpenAICompatibleCognitiveResource:
     """Bounded text cognition over the mature OpenAI-compatible wire shape.
 
-    The old provider transport supported full agent tool loops.  ZN deliberately
+    The old provider transport supported full agent tool loops. ZN deliberately
     extracts only the transport mechanism needed here: a system context plus one
     bounded question, provider-specific endpoint/credential resolution, response
-    normalization and usage accounting.  Tool/body execution remains resident-
+    normalization and usage accounting. Tool/body execution remains resident-
     owned and is never delegated by constructing an old AIAgent.
     """
 
@@ -282,21 +283,37 @@ class OpenAICompatibleCognitiveResource:
 
 
 class CognitiveResourceWorker:
-    """Adapter from the existing kernel Worker seam to a ZN resource."""
+    """Adapter from the kernel Worker seam to one bounded ZN resource.
 
-    def __init__(self, resource: CognitiveResource):
+    Resource exceptions are observed here while the real exception object still
+    exists. The observer is strictly secondary: it cannot replace the worker's
+    existing success/failure result or make an external provider own resident
+    health semantics.
+    """
+
+    def __init__(
+        self,
+        resource: CognitiveResource,
+        *,
+        route: ModelRoute | None = None,
+        health_observer: ResourceHealthObserver | None = None,
+    ):
         self.resource = resource
+        self.route = route
+        self.health_observer = health_observer
 
     def run(self, goal: Goal, kernel_context: str) -> WorkerResult:
         try:
             increment = self.resource.invoke(question=goal.task, context=kernel_context)
         except Exception as exc:
+            self._observe(exc)
             return WorkerResult(
                 success=False,
                 error=f"{type(exc).__name__}: {exc}",
                 metrics={"model_invoked": True, "resource_owner": "zn"},
             )
 
+        self._observe(None)
         metrics: dict[str, Any] = {
             "model_invoked": True,
             "resource_owner": "zn",
@@ -308,10 +325,35 @@ class CognitiveResourceWorker:
             metrics["finish_reason"] = increment.finish_reason
         return WorkerResult(success=True, response=increment.text, metrics=metrics)
 
+    def _observe(self, error: BaseException | None) -> None:
+        observer = self.health_observer
+        route = self.route
+        if observer is None or route is None:
+            return
+        try:
+            observer(route, error)
+        except Exception:
+            # Health observation must never replace provider behavior or worker
+            # result semantics. The provider invocation remains authoritative.
+            return
+
 
 class CognitiveResourceWorkerFactory:
-    def __init__(self, resource_builder: ResourceBuilder | None = None):
+    def __init__(
+        self,
+        resource_builder: ResourceBuilder | None = None,
+        *,
+        health_observer: ResourceHealthObserver | None = None,
+    ):
         self.resource_builder = resource_builder or OpenAICompatibleCognitiveResource
+        self.health_observer = health_observer
+
+    def set_health_observer(self, observer: ResourceHealthObserver | None) -> None:
+        self.health_observer = observer
 
     def create(self, route: ModelRoute) -> CognitiveResourceWorker:
-        return CognitiveResourceWorker(self.resource_builder(route))
+        return CognitiveResourceWorker(
+            self.resource_builder(route),
+            route=route,
+            health_observer=self.health_observer,
+        )
