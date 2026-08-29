@@ -4,77 +4,78 @@ This is the current engineering work site and fact index, not a chat summary or 
 
 ## Current goal
 
-The managed-browser + bounded Work-restore stage is now exact-head verified. Reconcile that fact into `dev/zn-agent`, keep canonical `main` reasonably current, and continue the next product gap: a read-only installed-N continuity baseline. The baseline is safe preparation for later continuity testing; an actual N -> N+1 replacement remains approval-gated.
+Move ZN from continuity/recovery hardening into the first real SM1 self-observation slice: preserve privacy-safe evidence when resident organs repeatedly fail, so a later maintenance decision can survive process restarts instead of relying on ephemeral counters.
 
 ## Repository state
 
 - Repository: `9529360-cpu/znagent`
 - Canonical/release branch: `main`
 - Primary development branch: `dev/zn-agent`
-- Verified product head for the browser/recovery stage: `5c347925490179748e44e35c43b0435ede9e1f14` (PR #35 merge).
-- Reconciliation branch: `work/browser-stage-reconcile` / PR #36.
-- Installed-N continuity work is isolated on `work/installed-n-continuity-baseline` / PR #37 until its own Windows evidence is green.
-- `main` is still at `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`; at the PR #35 merge head, `dev/zn-agent` was 103 commits ahead and 0 behind. Do not treat this divergence as a roadmap item; sync normally after ledger reconciliation.
+- Current verified development head before this work slice: `887963d848840eb6789fefdf7cbe7ce35ef101dd` (PR #55 merge).
+- Canonical `main` promotion: PR #56 merged normally at `92934464e6aabdb3f5e73b0ed80449578bc4a52a`.
+- Current isolated product branch: `work/resident-health-observation`.
+- Exact product head for this health slice before this HANDOFF update: `52be37ac6f7f1705e9a7773e922809c16831ac3d`.
+- Temporary validation branch `work/resident-health-observation-validation` exists only to run self-hosted Windows validation and must not be merged as product code.
 
 ## Product reality
 
-### Bounded Work restore
+### Resident continuity and recovery
 
-The old “read-only restore only” description is obsolete.
+Recent verified development closed several previously documented gaps:
 
-- PR #19 added the first mutation-capable restore slice for Windows: exact retained Work bytes may be restored only when the target is freshly/stably missing, through explicit `work_restore_prepare` then `work_restore_approve`.
-- Existing parent identity is bound and revalidated; same-directory staging plus a no-replace namespace move ensures a target that reappears wins the race and is never overwritten.
-- Application state is durable (`approval_required`, `applying`, `stage_ready`, `commit_started`, `completed`, `recovery_required`, `blocked`). Restart reconciliation observes reality but never silently resumes a mutation.
-- PR #21 keeps full restore context behind exact Work-thread binding.
-- PR #22 wired the bounded flow into the desktop with two explicit user actions: Prepare, then Approve exact restore. Unsafe/changed/unchanged targets stay inspection-only.
-- PR #23 proved a prepared approval can be rediscovered after resident restart while still requiring a new explicit approval action.
-- PRs #25/#26 closed desktop protocol and proposal-contract regressions.
-- This is a narrow missing-target/no-replace product slice, not general destructive restore authority.
+- PR #47 renews long Work handoff deadlines instead of allowing active long-running Work to age out incorrectly.
+- PR #49 hardens fail-closed resident continuity v2 paths.
+- PR #50 refreshes the installed resident autostart contract.
+- PR #53 proves the installed Windows resident survives desktop termination and restarts from the real `ZN Resident` Scheduled Task while preserving the same resident home/continuity.
+- PR #54 proves privacy-preserving durable reference continuity for resident state, Work/thread references, long-term memory and verified learning.
+- PR #55 proves atomic-overwrite recovery authority continuity and bounds verified-attempt/terminal-event discharge witnesses to 4096 entries so continuity proof size does not grow without bound over the resident lifetime.
 
-### Managed browser + Work
+The old HANDOFF statements that persistent autostart and installed-N continuity were still absent are no longer true.
 
-- PR #28 packages Playwright + Chromium inside the formal versioned Windows ZN runtime and verifies packaged Chromium can launch.
-- PR #29 makes the formal resident expose bounded managed-browser RPC.
-- PR #30 fixes Playwright thread affinity by owning all browser provider calls on one resident browser thread, including reconnecting TCP clients.
-- PR #31 makes browser owner shutdown atomic against late calls.
-- PR #32 wires structured `browser_navigate` into the real Work lifecycle. Permission is derived from the structured target URL; free text/model output is not browser authority.
-- Navigation is treated as a non-replayable outside-world side effect. ZN durably records the attempt and blocks blind replay when certainty is lost.
-- Provider success is not Work completion. ZN persists a `browser_url_equals` postcondition, independently re-observes the live page, closes the session, and only then finalizes Work.
-- PR #33 composes browser behavior on the mature Body stack so atomic-overwrite, namespace-recovery, keyboard/pointer and generic side-effect protocols remain intact.
-- PR #34 puts browser Work under the dedicated Work Recovery lane.
-- PR #35 fixes the MRO regression exposed by that lane: non-browser verification now delegates via instance `super()` instead of bypassing the mature verification chain.
-- Browser click/type/select/upload/download are intentionally not exposed through Work yet; they need stronger authority/replay/postcondition design.
+### SM1 resident health observation
+
+The self-maintenance architecture still marks SM1+ as incomplete. A concrete gap was found in the active caller: channel failures were counted only in `ChannelLoopState`, so a resident restart erased the evidence needed to recognize repeated failures.
+
+Current isolated implementation adds:
+
+- `ResidentHealthJournal`, a bounded one-row-per-organ durable health ledger in the resident SQLite body.
+- Raw exception messages are never persisted; only exception type plus a SHA-256 fingerprint are retained with total/consecutive failure counts and timestamps.
+- `ResidentChannelSupervisor` records real channel poll/delivery failures into the journal and marks recovery after a successful channel cycle.
+- Health-journal write failure is deliberately non-fatal to the communication organ.
+- Restart/reopen preserves historical totals, while successful recovery resets only the consecutive-failure count.
+
+This is the first connected SM1 observation slice. It does not yet classify failures, create source-maintenance tasks, modify code autonomously, or authorize updater/replacement actions.
 
 ## Verification evidence
 
-Completed exact-head evidence:
+Verified exact development/canonical evidence before the new SM1 slice:
 
-- `ZN Managed Browser E2E` run `33219726246` on implementation head `1f4da5fae6d6481375290637027fa273714bb032`: success, including real Chromium Work navigation.
-- `ZN Managed Browser E2E` run `33220567118` on PR #35 merge head `5c347925490179748e44e35c43b0435ede9e1f14`: success; browser contract tests and real local Chromium E2E both succeeded.
-- `ZN Work Recovery E2E` run `33220567184` on the same PR #35 merge head: success; the full recovery lane passed after the MRO fix, so the 19 mature non-browser recovery regressions exposed by PR #34 are resolved in actual CI.
-- `ZN CI` run `33220567183` on the same PR #35 merge head: success across Electron/TypeScript, Kernel/Python, Source Boundary and final status publication. The Python job completed the full working-tree core suite successfully after zero-model boot and resident-core compilation.
-- Prior packaged-runtime clean-install proof `33216509252`: success, including packaged Chromium launch and installed resident start.
+- Dev merge head `887963d848840eb6789fefdf7cbe7ce35ef101dd`: `ZN CI` run `33235093606` succeeded across Source Boundary, Electron/TypeScript, full Kernel/Python and final status publication.
+- Same dev merge head: managed Chromium E2E run `33235093581` succeeded, including real local Chromium E2E.
+- Final bounded atomic-continuity product head: dedicated self-hosted Windows validation run `33235058715` succeeded.
+- Hosted unsigned-candidate/clean-install jobs during this period repeatedly failed before step 1 with no job steps allocated; treat those runs as hosted-runner infrastructure unavailability, not as product-code passes or failures.
 
-Other evidence still in flight at the latest check:
+Current SM1 slice evidence:
 
-- `ZN Windows Clean Install` run `33220521263` on exact PR #35 code head `aec2dcf72d6a91878e69930c9c93dfa8d014e3f5` was still building the unsigned installer candidate. It is supplementary to the exact merge-head browser/recovery/general-CI gates above.
-- PR #37 has its own Windows clean-install evidence run on the continuity-baseline head; do not claim the installed baseline product path is verified until that exact-head run succeeds through installed resident startup, `continuity_snapshot`, evidence persistence and graceful shutdown.
+- Exact product head `52be37ac6f7f1705e9a7773e922809c16831ac3d` was copied to validation branch without product changes.
+- Self-hosted Windows validation run `33235652365` succeeded: isolated runtime preparation, compile of `health_observation.py` and `channel_runtime.py`, new durable health tests, and existing channel stop/quiesce lifecycle regressions all passed.
+- The new tests prove failure evidence survives reopening the journal, successful recovery clears consecutive failures without erasing history, and a secret-bearing raw error string is absent from both the public health snapshot and SQLite database bytes.
 
-Do not convert in-flight statements to success without fresh Actions evidence.
+Canonical `main` CI for promotion SHA `92934464e6aabdb3f5e73b0ed80449578bc4a52a` was still running at the time this handoff text was written. Source Boundary and Electron/TypeScript were already successful; Kernel/Python was still executing. Re-check the actual run before claiming canonical post-merge CI success.
 
 ## Current risks / real gaps
 
-- `main` is materially behind verified development and should now be synchronized after PR #36 lands.
-- The installed-N continuity baseline is implemented on PR #37, but it is not product-verified until a real installed resident emits the sanitized artifact in Windows clean-install CI.
-- A real N -> N+1 installation replacement, failed-update rollback, signing/release trust and user-machine replacement remain explicit human-approval boundaries.
-- Real Windows login/reboot autostart on persistent installed state remains a product gap.
-- Managed browser mutation beyond navigation remains deliberately ungranted.
+- SM1 is only partially connected: channel health now survives restart, but visual/provider/body failure observation is not yet unified into the same durable health model.
+- Durable health evidence is not yet classified into external service/network/permission/configuration versus probable ZN code defect; therefore it must not automatically create a source-maintenance task yet.
+- No maintenance-task deduplication/closure policy is implemented yet.
+- Actual N -> N+1 updater/replacement, rollback, release signing/trust, destructive identity/memory migration and replacement of a user's installed formal version remain explicit human-approval boundaries.
+- Managed browser mutation beyond the currently authorized structured navigation path remains deliberately constrained and should only expand with replay/authority/postcondition safety.
 
 ## Next candidates
 
-1. Merge PR #36 to reconcile the verified browser/recovery stage into `dev/zn-agent`.
-2. Promote the verified development stack to canonical `main` through a normal PR if merge/check requirements remain satisfied.
-3. Finish PR #37 by proving a real installed ZN emits a bounded, non-secret continuity baseline containing stable Self identity/reference, Work/thread references and sanitized provider metadata without invoking updater/replacement authority.
-4. Re-rank product gaps after that evidence. An actual N -> N+1 transition remains separately approval-gated.
+1. Merge the verified `work/resident-health-observation` slice into `dev/zn-agent`, run exact dev full CI and inspect active-caller regressions.
+2. Re-check canonical `main` post-promotion CI and keep canonical source reasonably synchronized after the health slice is verified.
+3. Extend the same health evidence model to another real resident organ (vision/provider/body) only if the active caller can distinguish new failures from stale state without double counting.
+4. Add bounded failure classification and maintenance-task formation only after the observation layer is reliable; do not jump directly from an external outage to autonomous source mutation.
 
-A later N -> N+1 transition is not authorized by this handoff.
+No updater/replacement/rollback/signing action is authorized by this handoff.
