@@ -73,6 +73,32 @@ class ResidentAutostartTests(unittest.TestCase):
                     channel_adapters=(),
                 )
 
+    def test_formal_resident_rejects_non_loopback_rpc_host_before_service_creation(self):
+        from zn_agent.core import browser_resident_server
+
+        with patch.object(browser_resident_server, "BrowserResidentRpcServer") as rpc_factory, patch.object(
+            browser_resident_server, "ResidentSocketService"
+        ) as service_factory:
+            with self.assertRaisesRegex(ValueError, "loopback-only"):
+                browser_resident_server.main(["--host", "0.0.0.0"])
+
+        rpc_factory.assert_not_called()
+        service_factory.assert_not_called()
+
+    def test_formal_resident_rejects_non_loopback_host_from_environment(self):
+        from zn_agent.core import browser_resident_server
+
+        with patch.dict(os.environ, {"ZN_RESIDENT_HOST": "192.0.2.10"}, clear=False), patch.object(
+            browser_resident_server, "BrowserResidentRpcServer"
+        ) as rpc_factory, patch.object(
+            browser_resident_server, "ResidentSocketService"
+        ) as service_factory:
+            with self.assertRaisesRegex(ValueError, "loopback-only"):
+                browser_resident_server.main([])
+
+        rpc_factory.assert_not_called()
+        service_factory.assert_not_called()
+
     def test_resident_server_home_option_pins_process_home(self):
         from zn_agent.core import resident_server
 
