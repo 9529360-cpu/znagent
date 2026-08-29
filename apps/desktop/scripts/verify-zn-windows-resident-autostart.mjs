@@ -2,6 +2,7 @@
 import { execFile } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import {
   rpcRequest,
@@ -183,7 +184,7 @@ async function main() {
   console.log(`[zn-autostart] continuity_compatible=${result.continuityVerdict.compatible}`)
 }
 
-if (process.argv[1] && import.meta.url === new URL(`file://${path.resolve(process.argv[1]).replaceAll('\\', '/')}`).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   main().catch(error => {
     console.error(error?.stack || String(error))
     process.exitCode = 1
