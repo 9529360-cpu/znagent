@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from zn_agent.core.daemon import ResidentRpcServer
@@ -140,7 +141,7 @@ class ResidentMaintenanceStatusTests(unittest.TestCase):
                 self.assertTrue(before["maintenance_investigations"]["available"])
                 self.assertEqual(before["maintenance_tasks"]["open_count"], 1)
 
-                with sqlite3.connect(database) as conn:
+                with closing(sqlite3.connect(database)) as conn:
                     conn.execute("DROP TABLE resident_maintenance_attempts")
                     conn.execute("DROP TABLE resident_maintenance_investigations")
                     conn.commit()
