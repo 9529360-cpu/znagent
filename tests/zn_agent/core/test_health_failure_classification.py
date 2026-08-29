@@ -10,7 +10,7 @@ from zn_agent.core.health_observation import ResidentHealthJournal
 
 
 class ResidentHealthFailureClassificationTests(unittest.TestCase):
-    def test_repeated_probable_defect_becomes_candidate_without_persisting_raw_message(self):
+    def test_repeated_probable_defect_becomes_candidate_and_durable_task_without_raw_message(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "kernel.db"
             journal = ResidentHealthJournal(SimpleNamespace(path=db))
@@ -27,8 +27,61 @@ class ResidentHealthFailureClassificationTests(unittest.TestCase):
             self.assertEqual(third["repeat_fingerprint_failures"], 3)
             self.assertTrue(third["maintenance_candidate"])
             self.assertEqual(len(third["last_fingerprint"]), 64)
+
+            task = journal.maintenance_task("channel:test")
+            self.assertIsNotNone(task)
+            self.assertEqual(task["status"], "open")
+            self.assertEqual(task["failure_class"], "probable_zn_defect")
+            self.assertEqual(task["fingerprint"], third["last_fingerprint"])
+            self.assertEqual(task["exception_type"], "AssertionError")
+            self.assertEqual(task["occurrences"], 3)
+            self.assertTrue(task["task_id"].startswith("maintenance-"))
             self.assertNotIn(secret, repr(journal.snapshot()))
+            self.assertNotIn(secret, repr(journal.maintenance_tasks()))
             self.assertNotIn(secret.encode("utf-8"), db.read_bytes())
+
+    def test_maintenance_task_is_one_per_organ_reopens_with_new_defect_and_closes_on_recovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "kernel.db"
+            journal = ResidentHealthJournal(SimpleNamespace(path=db))
+
+            for _ in range(3):
+                first_health = journal.record_failure("channel:test", AssertionError("invariant-a"))
+            first_task = journal.maintenance_task("channel:test")
+            self.assertIsNotNone(first_task)
+            self.assertEqual(journal.maintenance_tasks()["task_count"], 1)
+            self.assertEqual(journal.maintenance_tasks()["open_count"], 1)
+            self.assertEqual(first_task["occurrences"], 3)
+
+            fourth = journal.record_failure("channel:test", AssertionError("invariant-a"))
+            same_task = journal.maintenance_task("channel:test")
+            self.assertEqual(same_task["task_id"], first_task["task_id"])
+            self.assertEqual(same_task["fingerprint"], first_health["last_fingerprint"])
+            self.assertEqual(same_task["occurrences"], 4)
+            self.assertEqual(fourth["repeat_fingerprint_failures"], 4)
+            self.assertEqual(journal.maintenance_tasks()["task_count"], 1)
+
+            recovered = journal.record_success("channel:test")
+            self.assertIsNotNone(recovered)
+            closed = journal.maintenance_task("channel:test")
+            self.assertEqual(closed["status"], "closed")
+            self.assertEqual(closed["close_reason"], "organ_recovered")
+            self.assertIsNotNone(closed["closed_at"])
+            self.assertEqual(journal.maintenance_tasks()["open_count"], 0)
+
+            for _ in range(3):
+                second_health = journal.record_failure("channel:test", NotImplementedError("invariant-b"))
+            reopened = journal.maintenance_task("channel:test")
+            self.assertEqual(reopened["task_id"], first_task["task_id"])
+            self.assertEqual(reopened["status"], "open")
+            self.assertEqual(reopened["fingerprint"], second_health["last_fingerprint"])
+            self.assertNotEqual(reopened["fingerprint"], first_task["fingerprint"])
+            self.assertEqual(reopened["exception_type"], "NotImplementedError")
+            self.assertEqual(reopened["occurrences"], 3)
+            self.assertIsNone(reopened["closed_at"])
+            self.assertIsNone(reopened["close_reason"])
+            self.assertEqual(journal.maintenance_tasks()["task_count"], 1)
+            self.assertEqual(journal.maintenance_tasks()["open_count"], 1)
 
     def test_ambiguous_programming_or_payload_failure_stays_fail_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -40,6 +93,7 @@ class ResidentHealthFailureClassificationTests(unittest.TestCase):
             self.assertEqual(state["repeat_fingerprint_failures"], 4)
             self.assertFalse(state["maintenance_candidate"])
             self.assertEqual(journal.snapshot()["maintenance_candidate_count"], 0)
+            self.assertIsNone(journal.maintenance_task("channel:test"))
 
     def test_external_failure_never_becomes_source_maintenance_candidate(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -51,6 +105,7 @@ class ResidentHealthFailureClassificationTests(unittest.TestCase):
             self.assertEqual(state["repeat_fingerprint_failures"], 4)
             self.assertFalse(state["maintenance_candidate"])
             self.assertEqual(journal.snapshot()["maintenance_candidate_count"], 0)
+            self.assertIsNone(journal.maintenance_task("channel:test"))
 
     def test_new_fingerprint_and_recovery_reset_repeat_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -63,6 +118,7 @@ class ResidentHealthFailureClassificationTests(unittest.TestCase):
             self.assertEqual(changed["consecutive_failures"], 3)
             self.assertEqual(changed["repeat_fingerprint_failures"], 1)
             self.assertFalse(changed["maintenance_candidate"])
+            self.assertIsNone(journal.maintenance_task("channel:test"))
 
             recovered = journal.record_success("channel:test")
             self.assertIsNotNone(recovered)
@@ -103,6 +159,7 @@ class ResidentHealthFailureClassificationTests(unittest.TestCase):
             self.assertIsNotNone(migrated)
             self.assertEqual(migrated["repeat_fingerprint_failures"], 0)
             self.assertEqual(migrated["last_failure_class"], "unknown")
+            self.assertEqual(journal.maintenance_tasks()["task_count"], 0)
 
             updated = journal.record_failure("channel:test", TypeError("new-shape"))
             self.assertEqual(updated["total_failures"], 3)
@@ -110,6 +167,7 @@ class ResidentHealthFailureClassificationTests(unittest.TestCase):
             self.assertEqual(updated["repeat_fingerprint_failures"], 1)
             self.assertEqual(updated["last_failure_class"], "programming_or_data_contract")
             self.assertFalse(updated["maintenance_candidate"])
+            self.assertIsNone(journal.maintenance_task("channel:test"))
 
 
 if __name__ == "__main__":
