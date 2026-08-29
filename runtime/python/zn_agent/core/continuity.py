@@ -9,6 +9,7 @@ body state, causal episode payloads, or provider credentials.
 """
 
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 
 class ContinuitySnapshotService:
@@ -52,9 +53,6 @@ class ContinuitySnapshotService:
             "work": {
                 "reference_count": len(threads),
                 "reference_limit": self.WORK_REFERENCE_LIMIT,
-                # list_threads is deliberately bounded. Equality means callers
-                # must treat the reference set as potentially incomplete rather
-                # than claiming a false exact total.
                 "references_may_be_truncated": len(threads) >= self.WORK_REFERENCE_LIMIT,
                 "threads": [
                     {
@@ -99,6 +97,23 @@ class ContinuitySnapshotService:
         }
 
     @staticmethod
+    def _safe_base_url_origin(value: Any) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        try:
+            parsed = urlsplit(raw)
+            scheme = parsed.scheme.lower()
+            host = parsed.hostname
+            if scheme not in {"http", "https"} or not host:
+                return ""
+            display_host = f"[{host}]" if ":" in host else host
+            port = parsed.port
+            return f"{scheme}://{display_host}{f':{port}' if port is not None else ''}"
+        except (TypeError, ValueError):
+            return ""
+
+    @staticmethod
     def _provider_snapshot(raw: dict[str, Any]) -> dict[str, Any]:
         credential = raw.get("credential")
         credential = credential if isinstance(credential, dict) else {}
@@ -121,7 +136,7 @@ class ContinuitySnapshotService:
             "mode": str(raw.get("mode") or ""),
             "provider": str(raw.get("provider") or ""),
             "model": str(raw.get("model") or ""),
-            "base_url": str(raw.get("base_url") or ""),
+            "base_url": ContinuitySnapshotService._safe_base_url_origin(raw.get("base_url")),
             "credential": {
                 "configured": bool(credential.get("configured")),
                 "source": str(credential.get("source") or "none"),
@@ -138,13 +153,7 @@ def compare_continuity_snapshots(
     before: Mapping[str, Any],
     after: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Return a fail-closed, read-only continuity verdict for an N -> candidate N+1 pair.
-
-    This function never applies an update. It only decides whether the supplied
-    post-transition evidence proves that core subject references survived. A
-    truncated post snapshot is insufficient evidence for a missing reference and
-    therefore blocks a positive continuity verdict rather than guessing.
-    """
+    """Return a fail-closed, read-only continuity verdict for an N -> candidate N+1 pair."""
 
     blockers: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
