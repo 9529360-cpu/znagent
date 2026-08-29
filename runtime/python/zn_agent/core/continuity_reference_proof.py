@@ -3,10 +3,10 @@ from __future__ import annotations
 """Constant-size proofs for resident-owned continuity state.
 
 The proofs commit to durable state without exporting Work text, artifact
-content, resident memory payloads, intention descriptions, or individual
-learning identifiers. Exact proofs are used only for state that must remain
-stable across a controlled restart; mutable neural plasticity is represented by
-stable long-lived trace identities instead of mutable weights or timestamps.
+content, resident memory payloads, intention descriptions, world-focus topics,
+or individual learning identifiers. Exact proofs are used only for state that
+must remain stable across a controlled restart; mutable neural plasticity and
+world-observation freshness are normalized to stable resident-owned anchors.
 """
 
 import hashlib
@@ -119,14 +119,37 @@ def _living_self_anchor_rows(conn: sqlite3.Connection) -> list[tuple[Any, ...]]:
     )]
 
 
+def _world_focus_anchor_rows(conn: sqlite3.Connection) -> list[tuple[Any, ...]]:
+    """Commit to what ZN chose to keep noticing, not mutable observation freshness."""
+
+    if not _table_exists(conn, "world_focuses"):
+        return []
+    rows = conn.execute(
+        "SELECT focus_id,data FROM world_focuses ORDER BY focus_id ASC"
+    ).fetchall()
+    anchors: list[tuple[Any, ...]] = []
+    for row in rows:
+        raw = json.loads(row[1])
+        anchors.append((
+            row[0],
+            raw.get("topic"),
+            int(raw.get("priority") or 0),
+            int(raw.get("interval_seconds") or 0),
+            1 if bool(raw.get("enabled", True)) else 0,
+            raw.get("source"),
+            raw.get("created_at"),
+        ))
+    return anchors
+
+
 def resident_state_proof(path: str | Path) -> dict[str, Any]:
     """Commit to stable resident-owned durable state across a controlled restart.
 
     Lifecycle-volatile state is intentionally excluded: resident leases, runtime
-    metrics, pulse/situation/thought history, wake-derived LivingState fields and
-    mutable nervous-system weights. Durable Will and event-accounting journals
-    are included because losing either can erase intention or duplicate semantic
-    accounting after recovery.
+    metrics, pulse/situation/thought history, wake-derived LivingState fields,
+    mutable nervous-system weights and world-observation freshness. Durable Will,
+    chosen world attention and event-accounting journals are included because
+    losing them erases resident intention or can duplicate semantic accounting.
     """
 
     with closing(_open_read_only(path)) as conn:
@@ -135,6 +158,7 @@ def resident_state_proof(path: str | Path) -> dict[str, Any]:
         sections = (
             ("identity_anchor", _identity_anchor_rows(conn)),
             ("living_self_anchor", _living_self_anchor_rows(conn)),
+            ("world_focus_anchors", _world_focus_anchor_rows(conn)),
             ("resident_intentions", _rows(conn, "resident_intentions", "intention_id,status,priority,updated_at,data", "intention_id")),
             ("resident_event_accounting", _rows(conn, "resident_event_accounting", "event_id,kind,created_at", "event_id,kind")),
             ("goals", _rows(conn, "goals", "goal_id,data", "goal_id")),
