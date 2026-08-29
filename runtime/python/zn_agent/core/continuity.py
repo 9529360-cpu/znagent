@@ -325,11 +325,10 @@ def _require_reference_survival(
     identity,
 ) -> None:
     before_proof_raw = before.get("full_reference_proof")
-    after_proof_raw = after.get("full_reference_proof")
     before_proof = _reference_proof(before_proof_raw)
-    after_proof = _reference_proof(after_proof_raw)
 
-    if before_proof_raw is not None or after_proof_raw is not None:
+    if before_proof_raw is not None:
+        after_proof = _reference_proof(after.get("full_reference_proof"))
         if before_proof is None or after_proof is None:
             blockers.append(
                 {
