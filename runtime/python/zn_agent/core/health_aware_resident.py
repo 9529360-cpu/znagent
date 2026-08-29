@@ -4,15 +4,19 @@ from __future__ import annotations
 
 This layer does not repair source, grant maintenance authority, or mutate a
 running installation. It makes durable health/task evidence part of the formal
-resident subject and connects selected active resident Sense boundaries to the
-same journal without allowing journal failures to break those Senses.
+resident subject, gives maintenance candidates an authority-free investigation
+lifecycle, and connects selected active resident Sense boundaries to the same
+journal without allowing secondary observation failures to break those Senses or
+resident health truth.
 """
 
+import sqlite3
 from typing import Any
 
 from .browser_work_resident import BrowserWorkResidentRuntime
 from .foreground_window_sense import ForegroundWindowObservation
 from .health_observation import ResidentHealthJournal
+from .maintenance_investigation import MaintenanceInvestigationLedger
 
 
 class HealthAwareResidentRuntime(BrowserWorkResidentRuntime):
@@ -23,12 +27,52 @@ class HealthAwareResidentRuntime(BrowserWorkResidentRuntime):
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
         self.health = ResidentHealthJournal(self.store)
+        # Health/task truth is initialized first. The investigation projection is
+        # strictly secondary: an unavailable projection must not prevent the same
+        # resident from booting with its identity, health and work state intact.
+        try:
+            self.maintenance: MaintenanceInvestigationLedger | None = (
+                MaintenanceInvestigationLedger(self.store)
+            )
+        except sqlite3.Error:
+            self.maintenance = None
 
     def status(self) -> dict[str, Any]:
         data = super().status()
         data["resident_health"] = self.health.snapshot()
         data["maintenance_tasks"] = self.health.maintenance_tasks()
+        data["maintenance_investigations"] = self._maintenance_status()
         return data
+
+    def _maintenance_status(self) -> dict[str, Any]:
+        ledger = self.maintenance
+        if ledger is not None:
+            try:
+                snapshot = ledger.snapshot()
+            except sqlite3.Error:
+                ledger = None
+            else:
+                return {"available": True, **snapshot}
+
+        # The investigation surface is reconstructible from maintenance-task
+        # truth. Retry construction once so loss of a secondary table can heal
+        # in-place without requiring a resident restart. Persistent SQLite
+        # failure remains a bounded unavailable status, not a resident failure.
+        try:
+            ledger = MaintenanceInvestigationLedger(self.store)
+            snapshot = ledger.snapshot()
+        except sqlite3.Error:
+            self.maintenance = None
+            return {
+                "available": False,
+                "investigation_count": 0,
+                "active_count": 0,
+                "returned_count": 0,
+                "truncated": False,
+                "investigations": [],
+            }
+        self.maintenance = ledger
+        return {"available": True, **snapshot}
 
     def _probe_foreground_window(
         self,
