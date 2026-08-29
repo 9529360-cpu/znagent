@@ -83,6 +83,107 @@ class ResidentHealthFailureClassificationTests(unittest.TestCase):
             self.assertEqual(journal.maintenance_tasks()["task_count"], 1)
             self.assertEqual(journal.maintenance_tasks()["open_count"], 1)
 
+    def test_open_task_closes_when_current_failure_evidence_changes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = ResidentHealthJournal(SimpleNamespace(path=Path(tmp) / "kernel.db"))
+            for _ in range(3):
+                first = journal.record_failure("channel:test", AssertionError("invariant-a"))
+            opened = journal.maintenance_task("channel:test")
+            self.assertEqual(opened["status"], "open")
+            self.assertEqual(opened["fingerprint"], first["last_fingerprint"])
+
+            changed = journal.record_failure("channel:test", AssertionError("invariant-b"))
+            self.assertFalse(changed["maintenance_candidate"])
+            stale_closed = journal.maintenance_task("channel:test")
+            self.assertEqual(stale_closed["status"], "closed")
+            self.assertEqual(stale_closed["close_reason"], "evidence_changed")
+
+            journal.record_failure("channel:test", AssertionError("invariant-b"))
+            current = journal.record_failure("channel:test", AssertionError("invariant-b"))
+            reopened = journal.maintenance_task("channel:test")
+            self.assertTrue(current["maintenance_candidate"])
+            self.assertEqual(reopened["status"], "open")
+            self.assertEqual(reopened["fingerprint"], current["last_fingerprint"])
+            self.assertEqual(reopened["occurrences"], 3)
+
+    def test_task_projection_failure_does_not_rollback_health_and_restart_repairs_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "kernel.db"
+            journal = ResidentHealthJournal(SimpleNamespace(path=db))
+            conn = sqlite3.connect(db)
+            try:
+                conn.execute(
+                    """
+                    CREATE TRIGGER block_maintenance_insert
+                    BEFORE INSERT ON resident_maintenance_tasks
+                    BEGIN SELECT RAISE(ABORT, 'task projection blocked'); END
+                    """
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            for _ in range(3):
+                health = journal.record_failure("channel:test", AssertionError("durable-health"))
+
+            self.assertTrue(health["maintenance_candidate"])
+            self.assertEqual(health["consecutive_failures"], 3)
+            self.assertIsNone(journal.maintenance_task("channel:test"))
+
+            conn = sqlite3.connect(db)
+            try:
+                conn.execute("DROP TRIGGER block_maintenance_insert")
+                conn.commit()
+            finally:
+                conn.close()
+
+            repaired = ResidentHealthJournal(SimpleNamespace(path=db))
+            durable = repaired.get("channel:test")
+            task = repaired.maintenance_task("channel:test")
+            self.assertTrue(durable["maintenance_candidate"])
+            self.assertIsNotNone(task)
+            self.assertEqual(task["status"], "open")
+            self.assertEqual(task["fingerprint"], durable["last_fingerprint"])
+
+    def test_task_close_failure_does_not_rollback_recovery_and_restart_repairs_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "kernel.db"
+            journal = ResidentHealthJournal(SimpleNamespace(path=db))
+            for _ in range(3):
+                journal.record_failure("channel:test", AssertionError("durable-health"))
+            self.assertEqual(journal.maintenance_task("channel:test")["status"], "open")
+
+            conn = sqlite3.connect(db)
+            try:
+                conn.execute(
+                    """
+                    CREATE TRIGGER block_maintenance_update
+                    BEFORE UPDATE ON resident_maintenance_tasks
+                    BEGIN SELECT RAISE(ABORT, 'task close blocked'); END
+                    """
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            recovered = journal.record_success("channel:test")
+            self.assertTrue(recovered["healthy"])
+            self.assertEqual(recovered["consecutive_failures"], 0)
+            self.assertEqual(journal.maintenance_task("channel:test")["status"], "open")
+
+            conn = sqlite3.connect(db)
+            try:
+                conn.execute("DROP TRIGGER block_maintenance_update")
+                conn.commit()
+            finally:
+                conn.close()
+
+            repaired = ResidentHealthJournal(SimpleNamespace(path=db))
+            self.assertTrue(repaired.get("channel:test")["healthy"])
+            task = repaired.maintenance_task("channel:test")
+            self.assertEqual(task["status"], "closed")
+            self.assertEqual(task["close_reason"], "organ_recovered")
+
     def test_ambiguous_programming_or_payload_failure_stays_fail_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
             journal = ResidentHealthJournal(SimpleNamespace(path=Path(tmp) / "kernel.db"))
