@@ -21,7 +21,7 @@ _PROOF_DOMAIN = b"zn-continuity-reference-proof-v1\x00"
 
 def _open_read_only(path: str | Path) -> sqlite3.Connection:
     resolved = Path(path).expanduser().resolve()
-    return sqlite3.connect(f"file:{resolved.as_posix()}?mode=ro", uri=True, timeout=5.0)
+    return sqlite3.connect(f"{resolved.as_uri()}?mode=ro", uri=True, timeout=5.0)
 
 
 def _proof(domain: str, rows: Iterable[Sequence[Any]]) -> dict[str, Any]:
