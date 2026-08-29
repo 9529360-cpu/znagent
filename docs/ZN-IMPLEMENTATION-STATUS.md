@@ -10,7 +10,7 @@ This is ZN's current implementation/evidence ledger, not a roadmap or changelog.
 - Current product-code dev head before this documentation reconciliation: `7827b155e18c561dca2f42e26d1817d653a5d03c` (PR #72 merge).
 - Canonical `main` currently remains at `d7d06c665daed3400b86d792dd0eeabf16611cbb` (PR #66 merge).
 - Canonical main ZN CI run `33262436187` is fully green on `d7d06c66...`.
-- Current dev ZN CI run `33269095288` is the authoritative combined validation for PRs #67-#72; Source Boundary and Electron/TypeScript are green and the full Kernel/Python job is still running while this branch is prepared.
+- Combined dev ZN CI run `33269095288` is fully green on `7827b155...`, covering PRs #67-#72 across Source Boundary, Electron/TypeScript and Kernel/Python.
 - Hosted Windows clean-install/release-candidate push runs continue to terminate before executable steps are allocated in this runner environment. Treat `steps=null`/pre-step termination as infrastructure unavailability, not product pass/fail evidence.
 - No force push, history rewrite, destructive migration, updater replacement, rollback, release signing or production credential mutation is part of this stage.
 
@@ -110,7 +110,7 @@ Selected earlier continuity/SM1 evidence remains valid for its bounded scenarios
 - `33268424791` — cognitive provider invocation health targeted validation success.
 - `33268678763` — Native Body dispatch health targeted validation success.
 - `33269016466` — cognitive provider resource-construction health targeted validation success.
-- `33269095288` — current combined dev ZN CI on `7827b155...`; full Kernel/Python completion is pending while this documentation branch is prepared.
+- `33269095288` — combined dev ZN CI success on `7827b155...` after PRs #67-#72.
 
 PR #70's earlier full dev run `33268511210` was cancelled/superseded by a later dev push and is not counted as passing evidence. Hosted Windows candidate/clean-install jobs that terminate before step 1 remain infrastructure-unavailable evidence only.
 
@@ -123,7 +123,7 @@ PR #70's earlier full dev run `33268511210` was cancelled/superseded by a later 
 
 ## Next evidence-driven direction
 
-After the current combined dev CI is green and this factual reconciliation is merged:
+After this factual reconciliation is merged:
 
 - normally promote the coherent verified dev stage to canonical `main` and verify canonical CI;
 - define a trustworthy maintenance-source workspace binding and connect one real open maintenance task to a bounded read-only source investigation that can prove repository root, branch/head/dirty state and regression-oracle availability without granting mutation authority;
