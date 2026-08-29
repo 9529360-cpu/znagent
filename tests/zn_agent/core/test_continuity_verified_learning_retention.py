@@ -135,6 +135,26 @@ class VerifiedLearningRetentionContinuityTests(unittest.TestCase):
             {item["kind"] for item in verdict["blockers"]},
         )
 
+    def test_baseline_proof_above_capacity_blocks_even_without_hash_loss(self):
+        before = _snapshot(hashes=(self.A, self.B, self.C), capacity=2)
+        after = _snapshot(hashes=(self.A, self.B, self.C), capacity=2)
+        verdict = compare_continuity_snapshots(before, after)
+        self.assertFalse(verdict["compatible"])
+        self.assertIn(
+            "verified_learning_continuity_unproven",
+            {item["kind"] for item in verdict["blockers"]},
+        )
+
+    def test_candidate_proof_above_capacity_blocks_with_baseline_subset_intact(self):
+        before = _snapshot(hashes=(self.A, self.B), capacity=2)
+        after = _snapshot(hashes=(self.A, self.B, self.C), capacity=2)
+        verdict = compare_continuity_snapshots(before, after)
+        self.assertFalse(verdict["compatible"])
+        self.assertIn(
+            "verified_learning_continuity_unproven",
+            {item["kind"] for item in verdict["blockers"]},
+        )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
