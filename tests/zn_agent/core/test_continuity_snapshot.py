@@ -35,7 +35,7 @@ class _ProviderSettings:
             "mode": "default",
             "provider": "openai",
             "model": "gpt-test",
-            "base_url": "https://example.invalid/v1",
+            "base_url": "https://user:provider-secret@example.invalid/private/tenant?api_key=query-secret#fragment-secret",
             "credential": {
                 "configured": True,
                 "source": "secure_store",
@@ -99,6 +99,7 @@ class ContinuitySnapshotTests(unittest.TestCase):
             snapshot["living_self"]["learning_candidate_ids"],
             ["learn-a", "learn-z"],
         )
+        self.assertEqual(snapshot["provider"]["base_url"], "https://example.invalid")
         self.assertEqual(
             [item["id"] for item in snapshot["provider"]["active_routes"]],
             ["route-a", "route-z"],
@@ -112,6 +113,10 @@ class ContinuitySnapshotTests(unittest.TestCase):
             "private long description",
             "private task text",
             "private observation",
+            "provider-secret",
+            "private/tenant",
+            "query-secret",
+            "fragment-secret",
             "top-level-secret",
             "route-secret",
             "secret-backend-detail",
@@ -151,6 +156,12 @@ class ContinuitySnapshotTests(unittest.TestCase):
         ).snapshot()
         self.assertTrue(snapshot["work"]["references_may_be_truncated"])
         self.assertEqual(snapshot["work"]["reference_count"], 100)
+
+    def test_provider_origin_rejects_non_http_or_malformed_values(self):
+        safe = ContinuitySnapshotService._safe_base_url_origin
+        self.assertEqual(safe("file:///tmp/provider"), "")
+        self.assertEqual(safe("not a url"), "")
+        self.assertEqual(safe("https://[::1]:8443/private?token=secret"), "https://[::1]:8443")
 
 
 if __name__ == "__main__":
