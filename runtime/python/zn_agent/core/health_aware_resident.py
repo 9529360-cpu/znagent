@@ -4,8 +4,9 @@ from __future__ import annotations
 
 This layer does not repair source, grant maintenance authority, or mutate a
 running installation. It makes durable health/task evidence part of the formal
-resident subject and connects selected active resident Sense boundaries to the
-same journal without allowing journal failures to break those Senses.
+resident subject, gives maintenance candidates an authority-free investigation
+lifecycle, and connects selected active resident Sense boundaries to the same
+journal without allowing journal failures to break those Senses.
 """
 
 from typing import Any
@@ -13,6 +14,7 @@ from typing import Any
 from .browser_work_resident import BrowserWorkResidentRuntime
 from .foreground_window_sense import ForegroundWindowObservation
 from .health_observation import ResidentHealthJournal
+from .maintenance_investigation import MaintenanceInvestigationLedger
 
 
 class HealthAwareResidentRuntime(BrowserWorkResidentRuntime):
@@ -23,11 +25,17 @@ class HealthAwareResidentRuntime(BrowserWorkResidentRuntime):
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
         self.health = ResidentHealthJournal(self.store)
+        # Health truth/task projection is initialized first. The lifecycle ledger
+        # then installs database-local observation of that derived task surface,
+        # including tasks formed by channel supervisors that use their own
+        # ResidentHealthJournal instance against the same resident database.
+        self.maintenance = MaintenanceInvestigationLedger(self.store)
 
     def status(self) -> dict[str, Any]:
         data = super().status()
         data["resident_health"] = self.health.snapshot()
         data["maintenance_tasks"] = self.health.maintenance_tasks()
+        data["maintenance_investigations"] = self.maintenance.snapshot()
         return data
 
     def _probe_foreground_window(
