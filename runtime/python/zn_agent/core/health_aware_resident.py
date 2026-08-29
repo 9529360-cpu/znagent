@@ -50,17 +50,29 @@ class HealthAwareResidentRuntime(BrowserWorkResidentRuntime):
             try:
                 snapshot = ledger.snapshot()
             except sqlite3.Error:
-                pass
+                ledger = None
             else:
                 return {"available": True, **snapshot}
-        return {
-            "available": False,
-            "investigation_count": 0,
-            "active_count": 0,
-            "returned_count": 0,
-            "truncated": False,
-            "investigations": [],
-        }
+
+        # The investigation surface is reconstructible from maintenance-task
+        # truth. Retry construction once so loss of a secondary table can heal
+        # in-place without requiring a resident restart. Persistent SQLite
+        # failure remains a bounded unavailable status, not a resident failure.
+        try:
+            ledger = MaintenanceInvestigationLedger(self.store)
+            snapshot = ledger.snapshot()
+        except sqlite3.Error:
+            self.maintenance = None
+            return {
+                "available": False,
+                "investigation_count": 0,
+                "active_count": 0,
+                "returned_count": 0,
+                "truncated": False,
+                "investigations": [],
+            }
+        self.maintenance = ledger
+        return {"available": True, **snapshot}
 
     def _probe_foreground_window(
         self,
