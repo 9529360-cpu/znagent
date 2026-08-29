@@ -158,9 +158,7 @@ class CognitiveResourceHealthTests(unittest.TestCase):
             self.assertTrue(health["organ"].startswith("cognition:custom:"))
             self.assertEqual(health["total_failures"], 1)
             self.assertEqual(health["last_exception_type"], "ValueError")
-            self.assertEqual(
-                health["last_failure_class"], "configuration_or_environment"
-            )
+            self.assertEqual(health["last_failure_class"], "configuration_or_input")
             self.assertFalse(health["maintenance_candidate"])
             status_text = repr(resident.status())
             self.assertNotIn("private-construction-route", status_text)
