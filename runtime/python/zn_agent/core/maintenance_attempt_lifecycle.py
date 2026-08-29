@@ -201,12 +201,17 @@ class MaintenanceRepairAttemptLifecycle:
                     current = {}
                 continue
             key, _, value = line.partition(" ")
-            if key in {"worktree", "HEAD", "branch"}:
-                current[key.lower()] = value.strip()
+            value = value.strip()
+            if key == "worktree":
+                current["path"] = value
+            elif key == "HEAD":
+                current["head"] = value
+            elif key == "branch":
+                current["branch"] = value
         if current:
             records.append(current)
         matches = [row for row in records if row.get("branch") == expected_ref]
-        if len(matches) != 1:
+        if len(matches) != 1 or not matches[0].get("path"):
             return None
         return matches[0]
 
