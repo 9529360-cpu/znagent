@@ -306,16 +306,17 @@ def _require_reference_survival(
 
     before_items = before.get(reference_key)
     after_items = after.get(reference_key)
-    old_refs = {
-        identity(item)
-        for item in before_items
-        if identity(item)
-    } if isinstance(before_items, list) else set()
-    new_refs = {
-        identity(item)
-        for item in after_items
-        if identity(item)
-    } if isinstance(after_items, list) else set()
+    if not isinstance(before_items, list) or not isinstance(after_items, list):
+        blockers.append(
+            {
+                "kind": f"{category}_continuity_unproven",
+                "reason": "reference set is invalid",
+            }
+        )
+        return
+
+    old_refs = {identity(item) for item in before_items if identity(item)}
+    new_refs = {identity(item) for item in after_items if identity(item)}
     missing = sorted(old_refs - new_refs)
     if not missing:
         return
