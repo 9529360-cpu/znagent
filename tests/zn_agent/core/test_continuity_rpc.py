@@ -42,6 +42,65 @@ class ContinuityRpcTests(unittest.TestCase):
                 resident.managed_browser.close()
                 resident.store.close()
 
+    def test_formal_resident_proves_same_subject_after_real_runtime_reconstruction(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "kernel.db"
+            first = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=store_path,
+            )
+            first_server = BrowserResidentRpcServer(resident=first)
+            try:
+                first.live_once()
+                first.intend(
+                    "preserve this resident intention across process reconstruction",
+                    next_task="observe continuity",
+                )
+                first.memory.remember(
+                    "continuity-test-fact",
+                    {"meaning": "resident-owned durable memory"},
+                )
+                # Repeated neural experience is outside normal consolidation's
+                # pruning rule and therefore belongs to long-lived continuity.
+                first.nervous.perceive("world", "persistent continuity cue", features=("continuity",))
+                first.nervous.perceive("world", "persistent continuity cue", features=("continuity",))
+                baseline = first_server.handle(
+                    {"id": "snapshot", "method": "continuity_snapshot", "params": {}}
+                )["result"]
+            finally:
+                first.managed_browser.close()
+                first.store.close()
+
+            second = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=store_path,
+            )
+            second_server = BrowserResidentRpcServer(resident=second)
+            try:
+                second.live_once()
+                response = second_server.handle(
+                    {
+                        "id": "compare",
+                        "method": "continuity_compare",
+                        "params": {"baseline": baseline},
+                    }
+                )
+                self.assertTrue(response["ok"])
+                verdict = response["result"]["verdict"]
+                self.assertTrue(verdict["compatible"], verdict)
+                self.assertEqual(verdict["blockers"], [])
+                self.assertEqual(
+                    response["result"]["current"]["resident_state"]["full_state_proof"],
+                    baseline["resident_state"]["full_state_proof"],
+                )
+                self.assertEqual(
+                    response["result"]["current"]["long_lived_memory"]["full_reference_proof"],
+                    baseline["long_lived_memory"]["full_reference_proof"],
+                )
+            finally:
+                second.managed_browser.close()
+                second.store.close()
+
     def test_continuity_compare_requires_structured_baseline(self):
         with tempfile.TemporaryDirectory() as tmp:
             resident = build_resident_runtime_from_existing_stack(
