@@ -20,7 +20,7 @@ Connected health boundaries now include channel/lifecycle, foreground-window Sen
 - Current product-code dev head before this docs reconciliation: `7827b155e18c561dca2f42e26d1817d653a5d03c` (PR #72 merge).
 - Canonical `main` currently: `d7d06c665daed3400b86d792dd0eeabf16611cbb` (PR #66 merge).
 - `main` ZN CI run `33262436187` is fully green on `d7d06c66...`.
-- Current combined dev ZN CI run `33269095288` covers PRs #67-#72; Source Boundary and Electron/TypeScript are green and Kernel/Python is still running while this docs branch is prepared.
+- Combined dev ZN CI run `33269095288` is fully green on `7827b155...`, covering PRs #67-#72 across Source Boundary, Electron/TypeScript and Kernel/Python.
 - Recent Windows clean-install/release-candidate push workflows still terminate before executable steps are allocated in this runner environment; treat that as infrastructure unavailability, not product evidence.
 
 ## Product reality
@@ -82,7 +82,7 @@ This does **not** yet form a source-maintenance product loop. There is no active
 - `33268424791` — cognitive provider invocation health targeted validation success.
 - `33268678763` — Native Body dispatch health targeted validation success.
 - `33269016466` — cognitive provider resource-construction health targeted validation success.
-- `33269095288` — current combined dev ZN CI on `7827b155...`; Kernel/Python pending at docs-branch preparation time.
+- `33269095288` — combined dev ZN CI success on `7827b155...` after PRs #67-#72.
 
 PR #70's full run `33268511210` was cancelled/superseded and is not passing evidence.
 
@@ -96,10 +96,9 @@ PR #70's full run `33268511210` was cancelled/superseded and is not passing evid
 
 ## Next dependency-ready work
 
-1. Require the current combined dev CI to finish green; fix any real regression before promotion.
-2. Merge this factual docs reconciliation, then normally promote the coherent verified dev stage to canonical `main` and verify canonical ZN CI.
-3. Trace and implement a trustworthy maintenance-source workspace binding. It must prove repository root and ZN ownership, be separate from ordinary Work context, preserve a baseline commit, and default to read-only authority.
-4. Connect one real open maintenance task through that binding to bounded repository state/diff/regression-oracle evidence. Do not grant mutation merely because investigation state exists.
-5. Only after the read-only source-investigation path is connected + verified should high-confidence maintenance tasks be allowed to initiate isolated `work/*` source attempts.
+1. Merge this factual docs reconciliation, then normally promote the coherent verified dev stage to canonical `main` and verify canonical ZN CI.
+2. Trace and implement a trustworthy maintenance-source workspace binding. It must prove repository root and ZN ownership, be separate from ordinary Work context, preserve a baseline commit, and default to read-only authority.
+3. Connect one real open maintenance task through that binding to bounded repository state/diff/regression-oracle evidence. Do not grant mutation merely because investigation state exists.
+4. Only after the read-only source-investigation path is connected + verified should high-confidence maintenance tasks be allowed to initiate isolated `work/*` source attempts.
 
 No updater/replacement/rollback/signing action is authorized by this handoff.
