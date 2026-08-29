@@ -100,6 +100,21 @@ class ContinuityFailClosedTests(unittest.TestCase):
         self.assertFalse(verdict["compatible"])
         self.assertEqual(verdict["blockers"][0]["kind"], "schema_mismatch")
 
+    def test_malformed_reference_sets_cannot_pass_as_empty(self):
+        before = _snapshot()
+        after = _snapshot()
+        before["work"]["threads"] = None
+        before["work"]["reference_count"] = 0
+        after["verified_learning"]["experience_ids"] = None
+        after["verified_learning"]["reference_count"] = 0
+
+        verdict = compare_continuity_snapshots(before, after)
+        kinds = {item["kind"] for item in verdict["blockers"]}
+
+        self.assertFalse(verdict["compatible"])
+        self.assertIn("work_continuity_unproven", kinds)
+        self.assertIn("verified_learning_continuity_unproven", kinds)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
