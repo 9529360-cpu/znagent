@@ -6,26 +6,127 @@ Maintenance cognition may transiently contain source text or repair diffs that m
 not be copied into durable resident state. This orchestrator keeps those inputs in
 memory while persisting only fingerprints and route metadata around the external
 model dispatch. Once a call is reserved, the same logical call is never replayed
-automatically after a crash or ambiguous provider outcome.
+automatically after a crash or ambiguous provider outcome. Automatic semantic
+acceptance additionally requires a model route independent from the repair author.
 """
 
 import hashlib
 import json
 import sqlite3
 from contextlib import closing
-from typing import Any
+from typing import Any, Mapping
 
-from .maintenance_cognitive import MaintenanceCognitiveRepairOrchestrator
+from .maintenance_cognitive import (
+    MaintenanceCognitiveRepairOrchestrator,
+    MaintenanceRepairCandidate,
+)
 from .models import Goal, utc_now
 from .router import NoRouteAvailable
 
 
 class DurableMaintenanceCognitiveRepairOrchestrator(MaintenanceCognitiveRepairOrchestrator):
-    """Maintenance cognition with privacy-safe durable dispatch accounting."""
+    """Maintenance cognition with durable dispatch and independent acceptance."""
 
     def __init__(self, store, ledger, operator, kernel):
         super().__init__(store, ledger, operator, kernel)
         self._init_dispatch_schema()
+
+    def review_attempt(
+        self,
+        task_id: str,
+        *,
+        candidate: MaintenanceRepairCandidate,
+        source_root,
+        attempt_root,
+        attempt: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        if not bool(attempt.get("regression_passed")):
+            return super().review_attempt(
+                task_id,
+                candidate=candidate,
+                source_root=source_root,
+                attempt_root=attempt_root,
+                attempt=attempt,
+            )
+
+        author_route = str(candidate.author_route_id or "").strip()
+        if not author_route or not self._independent_review_route_available(author_route):
+            reason_code = (
+                "author_route_unavailable"
+                if not author_route
+                else "independent_route_unavailable"
+            )
+            self._record_review(
+                task_id=str(task_id),
+                attempt_key=str(attempt.get("attempt_key") or ""),
+                candidate_key=candidate.candidate_key,
+                decision="unreviewed",
+                reason_code=reason_code,
+                rationale="",
+                route_id="",
+                provider="",
+                model="",
+                independent_route=False,
+            )
+            return {
+                "reviewed": False,
+                "decision": "unreviewed",
+                "reason_code": reason_code,
+                "independent_route": False,
+                "route_id": "",
+                "investigation": self.ledger.get(str(task_id)),
+            }
+
+        review = super().review_attempt(
+            task_id,
+            candidate=candidate,
+            source_root=source_root,
+            attempt_root=attempt_root,
+            attempt=attempt,
+        )
+        # Route health/configuration can change between the availability probe and
+        # actual dispatch. Never leave an automatic acceptance behind if the real
+        # reviewer fell back to the author route during that race.
+        if review.get("decision") == "accept" and not bool(review.get("independent_route")):
+            investigation = self.ledger.reject(
+                str(task_id), reason="semantic_independence_lost"
+            )
+            self._record_review(
+                task_id=str(task_id),
+                attempt_key=str(attempt.get("attempt_key") or ""),
+                candidate_key=candidate.candidate_key,
+                decision="reject",
+                reason_code="independent_route_lost",
+                rationale="",
+                route_id=str(review.get("route_id") or ""),
+                provider="",
+                model="",
+                independent_route=False,
+            )
+            return {
+                "reviewed": True,
+                "decision": "reject",
+                "reason_code": "independent_route_lost",
+                "independent_route": False,
+                "route_id": str(review.get("route_id") or ""),
+                "investigation": investigation,
+            }
+        return review
+
+    def _independent_review_route_available(self, author_route: str) -> bool:
+        goal = Goal(
+            goal_id="maintenance-semantic-review-route-probe",
+            task="Select an independent semantic review resource.",
+            required_capabilities=("general",),
+            metadata={"maintenance_cognition": True, "phase": "semantic_review_route_probe"},
+        )
+        with self.kernel._resource_lock:
+            router = self.kernel.router
+        try:
+            route = router.select(goal, excluded={author_route})
+        except NoRouteAvailable:
+            return False
+        return bool(str(route.route_id) and str(route.route_id) != author_route)
 
     def _invoke(
         self,
