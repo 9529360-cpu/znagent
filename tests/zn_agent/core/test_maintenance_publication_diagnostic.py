@@ -30,9 +30,27 @@ class MaintenancePublicationDiagnostic(MaintenancePublicationPreparationTests):
                     branch_ref=branch,
                 )
                 self.assertEqual(result["semantic_review"]["decision"], "accept")
-                prepared = resident.prepare_accepted_maintenance_publication(
-                    task["task_id"], source_root=source_root
-                )
+                try:
+                    prepared = resident.prepare_accepted_maintenance_publication(
+                        task["task_id"], source_root=source_root
+                    )
+                except Exception:
+                    status = self._git(
+                        attempt_root, "status", "--porcelain=v1", "--untracked-files=all", check=False
+                    )
+                    others = self._git(
+                        attempt_root,
+                        "ls-files",
+                        "--others",
+                        "--exclude-standard",
+                        check=False,
+                    )
+                    print("DIAGNOSTIC_STATUS_BEGIN")
+                    print(status.stdout)
+                    print("DIAGNOSTIC_UNTRACKED_BEGIN")
+                    print(others.stdout)
+                    print("DIAGNOSTIC_END")
+                    raise
                 self.assertEqual(prepared["authority"], "local_commit_only")
             finally:
                 self._cleanup(source_root, attempt_root, branch)
