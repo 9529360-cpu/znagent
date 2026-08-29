@@ -189,6 +189,11 @@ def resident_state_proof(path: str | Path) -> dict[str, Any]:
     timestamps, current thought/body and similar fields) is intentionally not a
     leaf identity. Losing a durable entity changes the candidate set; normal
     completion or recovery can advance without invalidating the baseline.
+
+    Completion-observation journal rows are resident recovery obligations. Their
+    status, attempts and errors may advance, but the stable ``(event_id, stage)``
+    identity must survive so an already-terminal event cannot silently lose the
+    Life observation owed to it.
     """
 
     with closing(_open_read_only(path)) as conn:
@@ -208,6 +213,7 @@ def resident_state_proof(path: str | Path) -> dict[str, Any]:
             ("event_outcomes", _rows(conn, "event_outcomes", "event_id,created_at", "event_id")),
             ("facts", _rows(conn, "facts", "fact_key,created_at", "fact_key")),
             ("side_effect_attempts", _protected_side_effect_attempt_rows(conn)),
+            ("completion_observations", _rows(conn, "resident_completion_observations", "event_id,stage", "event_id,stage")),
             ("life_impasses", _rows(conn, "life_impasses", "impasse_id,event_id", "impasse_id")),
             ("life_learning_candidates", _rows(conn, "life_learning_candidates", "candidate_id,source_impasse_id,created_at", "candidate_id")),
         )
