@@ -6,6 +6,12 @@ import { app } from 'electron'
 
 import { defaultZnResidentLaunch } from './zn-resident-process'
 
+export const ZN_RESIDENT_AUTOSTART_SCHEMA = 2
+
+export function znResidentAutostartMarkerName(desktopVersion: string): string {
+  return `zn-resident-autostart-v${ZN_RESIDENT_AUTOSTART_SCHEMA}-${desktopVersion}.ok`
+}
+
 function znHomeFromEndpoint(endpointPath: string): string {
   return path.dirname(path.dirname(endpointPath))
 }
@@ -16,19 +22,23 @@ function znHomeFromEndpoint(endpointPath: string): string {
  * interpreter that successfully executed it, so the OS startup entry does not
  * later depend on Electron's PATH.
  *
- * We refresh the entry once per desktop version. That lets an app update move
- * the Python runtime or ZN home and naturally repair the next-login command,
- * without doing systemd/launchctl/schtasks work on every launch.
+ * We refresh the entry once per desktop version and autostart schema. The
+ * schema is deliberately independent from app semver: a resident launch
+ * contract can change during development or repair without a package-version
+ * bump, and an old marker must not preserve a stale OS startup command.
  */
 export async function ensureZnResidentAutostart(): Promise<void> {
   const launch = defaultZnResidentLaunch()
-  const marker = path.join(app.getPath('userData'), `zn-resident-autostart-${app.getVersion()}.ok`)
+  const marker = path.join(
+    app.getPath('userData'),
+    znResidentAutostartMarkerName(app.getVersion())
+  )
 
   try {
     await fs.access(marker)
     return
   } catch {
-    // Not installed for this desktop version yet.
+    // Not installed for this desktop version + autostart schema yet.
   }
 
   const args = [
