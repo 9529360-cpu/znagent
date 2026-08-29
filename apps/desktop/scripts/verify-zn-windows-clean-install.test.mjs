@@ -83,6 +83,9 @@ test('endpoint rejects non-loopback transport evidence', () => {
 
 const HASH_A = 'a'.repeat(64)
 const HASH_B = 'b'.repeat(64)
+const HASH_C = 'c'.repeat(64)
+const HASH_E = 'e'.repeat(64)
+const HASH_F = 'f'.repeat(64)
 
 function proof(hashes = [HASH_A], section = 'stable_refs') {
   return {
@@ -91,6 +94,26 @@ function proof(hashes = [HASH_A], section = 'stable_refs') {
     section_counts: { [section]: hashes.length },
     digest: 'd'.repeat(64),
     reference_hashes: hashes
+  }
+}
+
+function atomicRecoveryProof() {
+  return {
+    version: 1,
+    algorithm: 'sha256',
+    protocol_count: 1,
+    protocols: [{
+      reference_hash: HASH_A,
+      attempt_hash: HASH_B,
+      event_hash: HASH_C,
+      stage_rank: 2,
+      stage_identity_hash: HASH_E,
+      write_strategy: 'replace_file_with_backup'
+    }],
+    verified_attempt_hashes: [],
+    native_completion_attempt_hashes: [],
+    terminal_event_hashes: [HASH_F],
+    digest: 'd'.repeat(64)
   }
 }
 
@@ -138,6 +161,7 @@ function continuityBaseline() {
       retention_capacity: 2048,
       full_reference_proof: proof([HASH_A], 'verified_experiences')
     },
+    atomic_overwrite_recovery: atomicRecoveryProof(),
     provider: {
       mode: 'default',
       provider: 'auto',
@@ -162,6 +186,7 @@ test('continuity baseline still accepts legacy schema-2 snapshot without complet
   delete baseline.work.full_state_proof
   delete baseline.verified_learning.full_reference_proof
   delete baseline.verified_learning.retention_capacity
+  delete baseline.atomic_overwrite_recovery
   assert.equal(validateContinuityBaseline(baseline), baseline)
 })
 
@@ -217,4 +242,47 @@ test('continuity baseline rejects Work proof thread count inconsistent with dura
   const baseline = continuityBaseline()
   baseline.work.full_state_proof.thread_count = 2
   assert.throws(() => validateContinuityBaseline(baseline), /thread_count does not match total_count/)
+})
+
+test('continuity baseline rejects plaintext or extra atomic recovery fields', () => {
+  const baseline = continuityBaseline()
+  baseline.atomic_overwrite_recovery.protocols[0].staging_path = 'C:/private/stage.tmp'
+  assert.throws(() => validateContinuityBaseline(baseline), /unexpected field: staging_path/)
+})
+
+test('continuity baseline rejects malformed atomic recovery hashes', () => {
+  const baseline = continuityBaseline()
+  baseline.atomic_overwrite_recovery.protocols[0].attempt_hash = 'attempt-private'
+  assert.throws(() => validateContinuityBaseline(baseline), /attempt_hash is invalid/)
+})
+
+test('continuity baseline rejects duplicate atomic recovery protocol references', () => {
+  const baseline = continuityBaseline()
+  baseline.atomic_overwrite_recovery.protocol_count = 2
+  baseline.atomic_overwrite_recovery.protocols.push({
+    ...baseline.atomic_overwrite_recovery.protocols[0],
+    attempt_hash: HASH_C,
+    event_hash: HASH_E
+  })
+  assert.throws(() => validateContinuityBaseline(baseline), /reference hashes must be unique/)
+})
+
+test('continuity baseline rejects impossible atomic recovery rank and strategy pairs', () => {
+  const stagedWithStrategy = continuityBaseline()
+  stagedWithStrategy.atomic_overwrite_recovery.protocols[0].stage_rank = 1
+  assert.throws(() => validateContinuityBaseline(stagedWithStrategy), /unexpectedly has write_strategy/)
+
+  const commitWithoutStrategy = continuityBaseline()
+  commitWithoutStrategy.atomic_overwrite_recovery.protocols[0].write_strategy = null
+  assert.throws(() => validateContinuityBaseline(commitWithoutStrategy), /write_strategy is invalid/)
+})
+
+test('continuity baseline rejects duplicate or oversized atomic discharge witnesses', () => {
+  const duplicate = continuityBaseline()
+  duplicate.atomic_overwrite_recovery.verified_attempt_hashes = [HASH_A, HASH_A]
+  assert.throws(() => validateContinuityBaseline(duplicate), /hashes must be unique/)
+
+  const oversized = continuityBaseline()
+  oversized.atomic_overwrite_recovery.native_completion_attempt_hashes = [HASH_A, HASH_B]
+  assert.throws(() => validateContinuityBaseline(oversized), /too large/)
 })
