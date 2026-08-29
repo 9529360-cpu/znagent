@@ -103,13 +103,69 @@ function validateOptionalProofContainer(container, label, proofKey, options = {}
   if (Object.hasOwn(container, proofKey)) validateReferenceProof(container[proofKey], `${label} ${proofKey}`, options)
 }
 
+function validateHashArray(value, label, { maxLength = null } = {}) {
+  if (!Array.isArray(value)) throw new Error(`${label} is invalid`)
+  if (maxLength !== null && value.length > maxLength) throw new Error(`${label} is too large`)
+  if (value.some(item => typeof item !== 'string' || !SHA256_RE.test(item))) {
+    throw new Error(`${label} contains invalid hash`)
+  }
+  if (new Set(value).size !== value.length) throw new Error(`${label} hashes must be unique`)
+  return value
+}
+
+function validateAtomicRecoveryProof(proof) {
+  const label = 'continuity atomic_overwrite_recovery'
+  if (!proof || typeof proof !== 'object' || Array.isArray(proof)) throw new Error(`${label} is invalid`)
+  rejectUnexpectedFields(
+    proof,
+    new Set(['version', 'algorithm', 'protocol_count', 'protocols', 'verified_attempt_hashes', 'native_completion_attempt_hashes', 'terminal_event_hashes', 'digest']),
+    label
+  )
+  if (proof.version !== 1) throw new Error(`${label} version is invalid`)
+  if (proof.algorithm !== 'sha256') throw new Error(`${label} algorithm is invalid`)
+  if (!Number.isInteger(proof.protocol_count) || proof.protocol_count < 0) throw new Error(`${label} protocol_count is invalid`)
+  if (!Array.isArray(proof.protocols) || proof.protocols.length !== proof.protocol_count) {
+    throw new Error(`${label} protocols are inconsistent`)
+  }
+  const protocolHashes = []
+  for (const protocol of proof.protocols) {
+    if (!protocol || typeof protocol !== 'object' || Array.isArray(protocol)) throw new Error(`${label} protocol is invalid`)
+    rejectUnexpectedFields(
+      protocol,
+      new Set(['reference_hash', 'attempt_hash', 'event_hash', 'stage_rank', 'stage_identity_hash', 'write_strategy']),
+      `${label} protocol`
+    )
+    for (const key of ['reference_hash', 'attempt_hash', 'event_hash', 'stage_identity_hash']) {
+      if (typeof protocol[key] !== 'string' || !SHA256_RE.test(protocol[key])) {
+        throw new Error(`${label} protocol ${key} is invalid`)
+      }
+    }
+    if (![1, 2].includes(protocol.stage_rank)) throw new Error(`${label} protocol stage_rank is invalid`)
+    if (protocol.stage_rank === 1 && protocol.write_strategy !== null) {
+      throw new Error(`${label} staged protocol unexpectedly has write_strategy`)
+    }
+    if (protocol.stage_rank === 2 && !['replace_file_with_backup', 'move_new_no_replace'].includes(protocol.write_strategy)) {
+      throw new Error(`${label} commit-started protocol write_strategy is invalid`)
+    }
+    protocolHashes.push(protocol.reference_hash)
+  }
+  if (new Set(protocolHashes).size !== protocolHashes.length) {
+    throw new Error(`${label} protocol reference hashes must be unique`)
+  }
+  validateHashArray(proof.verified_attempt_hashes, `${label} verified_attempt_hashes`)
+  validateHashArray(proof.native_completion_attempt_hashes, `${label} native_completion_attempt_hashes`, { maxLength: 1 })
+  validateHashArray(proof.terminal_event_hashes, `${label} terminal_event_hashes`)
+  if (typeof proof.digest !== 'string' || !SHA256_RE.test(proof.digest)) throw new Error(`${label} digest is invalid`)
+  return proof
+}
+
 export function validateContinuityBaseline(baseline) {
   if (!baseline || typeof baseline !== 'object' || Array.isArray(baseline)) {
     throw new Error('resident continuity snapshot must be an object')
   }
   rejectUnexpectedFields(
     baseline,
-    new Set(['schema_version', 'identity', 'living_self', 'resident_state', 'long_lived_memory', 'work', 'verified_learning', 'provider']),
+    new Set(['schema_version', 'identity', 'living_self', 'resident_state', 'long_lived_memory', 'work', 'verified_learning', 'atomic_overwrite_recovery', 'provider']),
     'continuity snapshot'
   )
   if (baseline.schema_version !== 2) throw new Error(`unsupported continuity schema: ${baseline.schema_version}`)
@@ -200,6 +256,10 @@ export function validateContinuityBaseline(baseline) {
     if (proof.count !== verifiedLearning.total_count) {
       throw new Error('continuity verified_learning proof count does not match total_count')
     }
+  }
+
+  if (Object.hasOwn(baseline, 'atomic_overwrite_recovery')) {
+    validateAtomicRecoveryProof(baseline.atomic_overwrite_recovery)
   }
 
   const provider = baseline.provider
