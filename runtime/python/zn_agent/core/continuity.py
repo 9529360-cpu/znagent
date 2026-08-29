@@ -8,8 +8,14 @@ compared with a later runtime without exporting Work content, lived thoughts,
 body state, causal episode payloads, or provider credentials.
 """
 
+import re
 from typing import Any, Mapping
 from urllib.parse import urlsplit
+
+from .continuity_reference_proof import (
+    verified_experience_reference_proof,
+    work_reference_proof,
+)
 
 
 class ContinuitySnapshotService:
@@ -29,6 +35,7 @@ class ContinuitySnapshotService:
             self.work.list_threads(limit=self.WORK_REFERENCE_LIMIT),
             key=lambda item: item.thread_id,
         )
+        work_proof = work_reference_proof(self.work.path)
         provider = self._provider_snapshot(self.provider_settings.snapshot())
         verified_learning = self._verified_learning_snapshot()
         return {
@@ -52,8 +59,10 @@ class ContinuitySnapshotService:
             },
             "work": {
                 "reference_count": len(threads),
+                "total_count": int(work_proof["count"]),
                 "reference_limit": self.WORK_REFERENCE_LIMIT,
-                "references_may_be_truncated": len(threads) >= self.WORK_REFERENCE_LIMIT,
+                "references_may_be_truncated": int(work_proof["count"]) > len(threads),
+                "full_reference_proof": work_proof,
                 "threads": [
                     {
                         "id": str(thread.thread_id),
@@ -88,11 +97,17 @@ class ContinuitySnapshotService:
                 if str(getattr(record, "experience_id", "")).strip()
             }
         )
+        proof = verified_experience_reference_proof(store.path)
+        if int(proof["count"]) != total:
+            raise RuntimeError(
+                "verified learning continuity count changed while snapshotting"
+            )
         return {
             "reference_count": len(ids),
             "total_count": total,
             "reference_limit": self.VERIFIED_EXPERIENCE_REFERENCE_LIMIT,
             "references_may_be_truncated": total > len(ids),
+            "full_reference_proof": proof,
             "experience_ids": ids,
         }
 
@@ -287,6 +302,19 @@ def _require_id_survival(
         )
 
 
+def _reference_proof(value: Any) -> tuple[int, str] | None:
+    proof = _mapping(value)
+    if proof.get("algorithm") != "sha256":
+        return None
+    count = proof.get("count")
+    digest = str(proof.get("digest") or "")
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        return None
+    if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+        return None
+    return count, digest
+
+
 def _require_reference_survival(
     blockers: list[dict[str, Any]],
     *,
@@ -296,6 +324,30 @@ def _require_reference_survival(
     reference_key: str,
     identity,
 ) -> None:
+    before_proof_raw = before.get("full_reference_proof")
+    after_proof_raw = after.get("full_reference_proof")
+    before_proof = _reference_proof(before_proof_raw)
+    after_proof = _reference_proof(after_proof_raw)
+
+    if before_proof_raw is not None or after_proof_raw is not None:
+        if before_proof is None or after_proof is None:
+            blockers.append(
+                {
+                    "kind": f"{category}_continuity_unproven",
+                    "reason": "full reference proof is invalid or missing",
+                }
+            )
+            return
+        if before_proof != after_proof:
+            blockers.append(
+                {
+                    "kind": f"{category}_reference_proof_changed",
+                    "before_count": before_proof[0],
+                    "after_count": after_proof[0],
+                }
+            )
+        return
+
     if bool(before.get("references_may_be_truncated")):
         blockers.append(
             {
