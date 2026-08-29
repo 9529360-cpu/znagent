@@ -60,6 +60,11 @@ class ContinuityRpcTests(unittest.TestCase):
                     "continuity-test-fact",
                     {"meaning": "resident-owned durable memory"},
                 )
+                first.follow_world(
+                    "preserve this durable world attention across reconstruction",
+                    priority=3,
+                    interval_seconds=3600,
+                )
                 # Repeated neural experience is outside normal consolidation's
                 # pruning rule and therefore belongs to long-lived continuity.
                 first.nervous.perceive("world", "persistent continuity cue", features=("continuity",))
@@ -96,6 +101,12 @@ class ContinuityRpcTests(unittest.TestCase):
                 self.assertEqual(
                     response["result"]["current"]["long_lived_memory"]["full_reference_proof"],
                     baseline["long_lived_memory"]["full_reference_proof"],
+                )
+                focuses = second.world.focuses(enabled_only=False, limit=10)
+                self.assertEqual(len(focuses), 1)
+                self.assertEqual(
+                    focuses[0].topic,
+                    "preserve this durable world attention across reconstruction",
                 )
             finally:
                 second.managed_browser.close()
