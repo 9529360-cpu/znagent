@@ -9,6 +9,7 @@ body state, or provider credentials.
 """
 
 from typing import Any
+from urllib.parse import urlsplit
 
 
 class ContinuitySnapshotService:
@@ -66,6 +67,23 @@ class ContinuitySnapshotService:
         }
 
     @staticmethod
+    def _safe_base_url_origin(value: Any) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        try:
+            parsed = urlsplit(raw)
+            scheme = parsed.scheme.lower()
+            host = parsed.hostname
+            if scheme not in {"http", "https"} or not host:
+                return ""
+            display_host = f"[{host}]" if ":" in host else host
+            port = parsed.port
+            return f"{scheme}://{display_host}{f':{port}' if port is not None else ''}"
+        except (TypeError, ValueError):
+            return ""
+
+    @staticmethod
     def _provider_snapshot(raw: dict[str, Any]) -> dict[str, Any]:
         credential = raw.get("credential")
         credential = credential if isinstance(credential, dict) else {}
@@ -88,7 +106,10 @@ class ContinuitySnapshotService:
             "mode": str(raw.get("mode") or ""),
             "provider": str(raw.get("provider") or ""),
             "model": str(raw.get("model") or ""),
-            "base_url": str(raw.get("base_url") or ""),
+            # Provider URLs can legally contain userinfo, query tokens or
+            # sensitive tenant paths. Continuity evidence only needs endpoint
+            # identity at origin granularity, never those secret-bearing parts.
+            "base_url": ContinuitySnapshotService._safe_base_url_origin(raw.get("base_url")),
             "credential": {
                 "configured": bool(credential.get("configured")),
                 "source": str(credential.get("source") or "none"),
