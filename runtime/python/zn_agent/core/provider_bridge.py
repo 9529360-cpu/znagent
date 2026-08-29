@@ -195,6 +195,15 @@ def apply_zn_cognitive_config(
     """Hot-apply provider resources while preserving the same kernel identity/store."""
 
     plan = build_zn_cognitive_resource_plan(config, credential_store=credential_store)
+    observer = getattr(runtime, "resource_health_observer", None)
+    setter = getattr(plan.worker_factory, "set_health_observer", None)
+    if observer is not None and callable(setter):
+        try:
+            setter(observer)
+        except Exception:
+            # Health observation is secondary. A replacement provider plan must
+            # remain hot-applicable even if observer binding itself is broken.
+            pass
     runtime.reconfigure_resources(
         routes=plan.routes,
         worker_factory=plan.worker_factory,

@@ -14,6 +14,7 @@ from .cognitive_resource import (
     CognitiveResourceWorker,
     CognitiveResourceWorkerFactory,
     OpenAICompatibleCognitiveResource,
+    ResourceHealthObserver,
     resolve_openai_compatible_route,
 )
 from .gemini_resource import GeminiCognitiveResource, resolve_gemini_route
@@ -39,10 +40,11 @@ class ZNCognitiveResourceWorkerFactory(CognitiveResourceWorkerFactory):
         openai_client_builder: Any | None = None,
         anthropic_client_builder: Any | None = None,
         gemini_client: Any | None = None,
+        health_observer: ResourceHealthObserver | None = None,
     ):
         # Keep inheritance for compatibility with callers/tests that check the
         # old factory seam while moving actual resource ownership into ZN.
-        super().__init__()
+        super().__init__(health_observer=health_observer)
         self.openai_client_builder = openai_client_builder
         self.anthropic_client_builder = anthropic_client_builder
         self.gemini_client = gemini_client
@@ -64,4 +66,8 @@ class ZNCognitiveResourceWorkerFactory(CognitiveResourceWorkerFactory):
                 route,
                 client_builder=self.openai_client_builder,
             )
-        return CognitiveResourceWorker(resource)
+        return CognitiveResourceWorker(
+            resource,
+            route=route,
+            health_observer=self.health_observer,
+        )
