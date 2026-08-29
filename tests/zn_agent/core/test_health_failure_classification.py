@@ -16,9 +16,9 @@ class ResidentHealthFailureClassificationTests(unittest.TestCase):
             journal = ResidentHealthJournal(SimpleNamespace(path=db))
             secret = "secret-token-123"
 
-            first = journal.record_failure("channel:test", TypeError(f"bad shape {secret}"))
-            second = journal.record_failure("channel:test", TypeError(f"bad shape {secret}"))
-            third = journal.record_failure("channel:test", TypeError(f"bad shape {secret}"))
+            first = journal.record_failure("channel:test", AssertionError(f"broken invariant {secret}"))
+            second = journal.record_failure("channel:test", AssertionError(f"broken invariant {secret}"))
+            third = journal.record_failure("channel:test", AssertionError(f"broken invariant {secret}"))
 
             self.assertEqual(first["last_failure_class"], "probable_zn_defect")
             self.assertFalse(first["maintenance_candidate"])
@@ -29,6 +29,17 @@ class ResidentHealthFailureClassificationTests(unittest.TestCase):
             self.assertEqual(len(third["last_fingerprint"]), 64)
             self.assertNotIn(secret, repr(journal.snapshot()))
             self.assertNotIn(secret.encode("utf-8"), db.read_bytes())
+
+    def test_ambiguous_programming_or_payload_failure_stays_fail_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = ResidentHealthJournal(SimpleNamespace(path=Path(tmp) / "kernel.db"))
+            for _ in range(4):
+                state = journal.record_failure("channel:test", TypeError("unexpected payload shape"))
+
+            self.assertEqual(state["last_failure_class"], "programming_or_data_contract")
+            self.assertEqual(state["repeat_fingerprint_failures"], 4)
+            self.assertFalse(state["maintenance_candidate"])
+            self.assertEqual(journal.snapshot()["maintenance_candidate_count"], 0)
 
     def test_external_failure_never_becomes_source_maintenance_candidate(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -44,9 +55,9 @@ class ResidentHealthFailureClassificationTests(unittest.TestCase):
     def test_new_fingerprint_and_recovery_reset_repeat_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:
             journal = ResidentHealthJournal(SimpleNamespace(path=Path(tmp) / "kernel.db"))
-            journal.record_failure("channel:test", TypeError("shape-a"))
-            repeated = journal.record_failure("channel:test", TypeError("shape-a"))
-            changed = journal.record_failure("channel:test", TypeError("shape-b"))
+            journal.record_failure("channel:test", AssertionError("invariant-a"))
+            repeated = journal.record_failure("channel:test", AssertionError("invariant-a"))
+            changed = journal.record_failure("channel:test", AssertionError("invariant-b"))
 
             self.assertEqual(repeated["repeat_fingerprint_failures"], 2)
             self.assertEqual(changed["consecutive_failures"], 3)
@@ -97,7 +108,7 @@ class ResidentHealthFailureClassificationTests(unittest.TestCase):
             self.assertEqual(updated["total_failures"], 3)
             self.assertEqual(updated["consecutive_failures"], 3)
             self.assertEqual(updated["repeat_fingerprint_failures"], 1)
-            self.assertEqual(updated["last_failure_class"], "probable_zn_defect")
+            self.assertEqual(updated["last_failure_class"], "programming_or_data_contract")
             self.assertFalse(updated["maintenance_candidate"])
 
 
