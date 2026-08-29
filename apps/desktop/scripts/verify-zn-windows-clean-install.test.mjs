@@ -81,6 +81,19 @@ test('endpoint rejects non-loopback transport evidence', () => {
   }, { znHome, expectedRuntimeId: runtimeId }), /not loopback/)
 })
 
+const HASH_A = 'a'.repeat(64)
+const HASH_B = 'b'.repeat(64)
+
+function proof(hashes = [HASH_A], section = 'stable_refs') {
+  return {
+    algorithm: 'sha256',
+    count: hashes.length,
+    section_counts: { [section]: hashes.length },
+    digest: 'd'.repeat(64),
+    reference_hashes: hashes
+  }
+}
+
 function continuityBaseline() {
   return {
     schema_version: 2,
@@ -99,18 +112,31 @@ function continuityBaseline() {
       last_event_id: null,
       learning_candidate_ids: []
     },
+    resident_state: {
+      full_state_proof: proof([HASH_A], 'resident_intention_anchors')
+    },
+    long_lived_memory: {
+      full_reference_proof: proof([HASH_B], 'neural_traces')
+    },
     work: {
       reference_count: 1,
+      total_count: 1,
       reference_limit: 100,
       references_may_be_truncated: false,
-      threads: [{ id: 'work-1', created_at: '2026-01-01T00:00:00+00:00' }]
+      threads: [{ id: 'work-1', created_at: '2026-01-01T00:00:00+00:00' }],
+      full_state_proof: {
+        ...proof([HASH_A, HASH_B], 'work_messages'),
+        thread_count: 1
+      }
     },
     verified_learning: {
       reference_count: 1,
       total_count: 1,
       reference_limit: 256,
       references_may_be_truncated: false,
-      experience_ids: ['vx-1234']
+      experience_ids: ['vx-1234'],
+      retention_capacity: 2048,
+      full_reference_proof: proof([HASH_A], 'verified_experiences')
     },
     provider: {
       mode: 'default',
@@ -124,8 +150,18 @@ function continuityBaseline() {
   }
 }
 
-test('continuity baseline accepts bounded resident-owned references', () => {
+test('continuity baseline accepts complete privacy-preserving resident proofs', () => {
   const baseline = continuityBaseline()
+  assert.equal(validateContinuityBaseline(baseline), baseline)
+})
+
+test('continuity baseline still accepts legacy schema-2 snapshot without complete proofs', () => {
+  const baseline = continuityBaseline()
+  delete baseline.resident_state.full_state_proof
+  delete baseline.long_lived_memory.full_reference_proof
+  delete baseline.work.full_state_proof
+  delete baseline.verified_learning.full_reference_proof
+  delete baseline.verified_learning.retention_capacity
   assert.equal(validateContinuityBaseline(baseline), baseline)
 })
 
@@ -147,4 +183,38 @@ test('continuity baseline rejects duplicate verified learning references', () =>
   baseline.verified_learning.total_count = 2
   baseline.verified_learning.experience_ids = ['vx-1234', 'vx-1234']
   assert.throws(() => validateContinuityBaseline(baseline), /must be unique/)
+})
+
+test('continuity baseline rejects plaintext fields smuggled into proof containers', () => {
+  const baseline = continuityBaseline()
+  baseline.resident_state.private_intention = 'must stay resident-only'
+  assert.throws(() => validateContinuityBaseline(baseline), /unexpected field: private_intention/)
+})
+
+test('continuity baseline rejects malformed or duplicate hash references', () => {
+  const malformed = continuityBaseline()
+  malformed.resident_state.full_state_proof.reference_hashes = ['private-not-a-hash']
+  assert.throws(() => validateContinuityBaseline(malformed), /reference hash is invalid/)
+
+  const duplicate = continuityBaseline()
+  duplicate.resident_state.full_state_proof = proof([HASH_A, HASH_A], 'resident_intention_anchors')
+  assert.throws(() => validateContinuityBaseline(duplicate), /reference hashes must be unique/)
+})
+
+test('continuity baseline rejects proof counts inconsistent with section totals', () => {
+  const baseline = continuityBaseline()
+  baseline.long_lived_memory.full_reference_proof.section_counts.neural_traces = 2
+  assert.throws(() => validateContinuityBaseline(baseline), /section counts do not match count/)
+})
+
+test('continuity baseline rejects verified learning beyond declared retention capacity', () => {
+  const baseline = continuityBaseline()
+  baseline.verified_learning.retention_capacity = 0
+  assert.throws(() => validateContinuityBaseline(baseline), /retention_capacity is invalid/)
+})
+
+test('continuity baseline rejects Work proof thread count inconsistent with durable total', () => {
+  const baseline = continuityBaseline()
+  baseline.work.full_state_proof.thread_count = 2
+  assert.throws(() => validateContinuityBaseline(baseline), /thread_count does not match total_count/)
 })
