@@ -2,10 +2,11 @@ from __future__ import annotations
 
 """Sanitized resident-owned continuity evidence for installation transitions.
 
-The snapshot deliberately contains references and non-secret configuration
-metadata only. It is designed to be persisted by release/install evidence and
-compared with a later runtime without exporting Work content, lived thoughts,
-body state, causal episode payloads, or provider credentials.
+The snapshot exports references, counts and non-secret configuration metadata.
+Complete Work content is protected by a constant-size digest rather than being
+exported into evidence. The result is designed to be persisted by release and
+install verification without leaking Work text, artifact content, lived
+thoughts, body state, causal episode payloads, or provider credentials.
 """
 
 import re
@@ -14,7 +15,7 @@ from urllib.parse import urlsplit
 
 from .continuity_reference_proof import (
     verified_experience_reference_proof,
-    work_reference_proof,
+    work_state_proof,
 )
 
 
@@ -35,7 +36,7 @@ class ContinuitySnapshotService:
             self.work.list_threads(limit=self.WORK_REFERENCE_LIMIT),
             key=lambda item: item.thread_id,
         )
-        work_proof = work_reference_proof(self.work.path)
+        work_proof = work_state_proof(self.work.path)
         provider = self._provider_snapshot(self.provider_settings.snapshot())
         verified_learning = self._verified_learning_snapshot()
         return {
@@ -62,7 +63,7 @@ class ContinuitySnapshotService:
                 "total_count": int(work_proof["count"]),
                 "reference_limit": self.WORK_REFERENCE_LIMIT,
                 "references_may_be_truncated": int(work_proof["count"]) > len(threads),
-                "full_reference_proof": work_proof,
+                "full_state_proof": work_proof,
                 "threads": [
                     {
                         "id": str(thread.thread_id),
@@ -208,6 +209,8 @@ def compare_continuity_snapshots(
         before=_mapping(before.get("work")),
         after=_mapping(after.get("work")),
         reference_key="threads",
+        proof_key="full_state_proof",
+        proof_label="state proof",
         identity=lambda item: str(_mapping(item).get("id") or ""),
     )
     _require_reference_survival(
@@ -216,6 +219,8 @@ def compare_continuity_snapshots(
         before=_mapping(before.get("verified_learning")),
         after=_mapping(after.get("verified_learning")),
         reference_key="experience_ids",
+        proof_key="full_reference_proof",
+        proof_label="reference proof",
         identity=lambda item: str(item or ""),
     )
 
@@ -322,25 +327,27 @@ def _require_reference_survival(
     before: Mapping[str, Any],
     after: Mapping[str, Any],
     reference_key: str,
+    proof_key: str,
+    proof_label: str,
     identity,
 ) -> None:
-    before_proof_raw = before.get("full_reference_proof")
+    before_proof_raw = before.get(proof_key)
     before_proof = _reference_proof(before_proof_raw)
 
     if before_proof_raw is not None:
-        after_proof = _reference_proof(after.get("full_reference_proof"))
+        after_proof = _reference_proof(after.get(proof_key))
         if before_proof is None or after_proof is None:
             blockers.append(
                 {
                     "kind": f"{category}_continuity_unproven",
-                    "reason": "full reference proof is invalid or missing",
+                    "reason": f"full {proof_label} is invalid or missing",
                 }
             )
             return
         if before_proof != after_proof:
             blockers.append(
                 {
-                    "kind": f"{category}_reference_proof_changed",
+                    "kind": f"{category}_{proof_key}_changed",
                     "before_count": before_proof[0],
                     "after_count": after_proof[0],
                 }
