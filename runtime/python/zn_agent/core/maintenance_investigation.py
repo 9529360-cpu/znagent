@@ -390,7 +390,7 @@ class MaintenanceInvestigationLedger:
                 END;
                 CREATE TRIGGER IF NOT EXISTS zn_maintenance_investigation_attempt_reset
                 BEFORE UPDATE ON resident_maintenance_tasks
-                WHEN OLD.fingerprint<>NEW.fingerprint OR OLD.status<>NEW.status
+                WHEN OLD.fingerprint<>NEW.fingerprint OR (OLD.status<>'open' AND NEW.status='open')
                 BEGIN
                     DELETE FROM resident_maintenance_attempts WHERE task_id=NEW.task_id;
                 END;
