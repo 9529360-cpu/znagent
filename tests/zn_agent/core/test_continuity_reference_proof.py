@@ -4,6 +4,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,8 +17,12 @@ from zn_agent.core.continuity_reference_proof import (
 )
 
 
+def _connect(path: Path):
+    return closing(sqlite3.connect(path))
+
+
 def _init_database(path: Path) -> None:
-    with sqlite3.connect(path) as conn:
+    with _connect(path) as conn:
         conn.executescript(
             """
             CREATE TABLE work_threads(thread_id TEXT PRIMARY KEY,title TEXT NOT NULL,metadata_json TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
@@ -69,7 +74,7 @@ class ContinuityReferenceProofTests(unittest.TestCase):
             identity = {"name": "ZN Agent", "purpose": "private purpose", "principles": ["private principle"], "created_at": "identity-born"}
             living = {"name": "ZN", "born_at": "living-born", "wake_count": 5, "pulse_count": 10}
             intention = {"intention_id": "intent-1", "description": "private enduring intention", "source": "self", "priority": 7, "status": "active", "next_task": "private next task", "created_at": "born", "updated_at": "now"}
-            with sqlite3.connect(database) as conn:
+            with _connect(database) as conn:
                 conn.execute("INSERT INTO identity VALUES(?,?)", (1, json.dumps(identity)))
                 conn.execute("INSERT INTO living_self VALUES(?,?,?)", (1, json.dumps(living), "now"))
                 conn.execute("INSERT INTO facts VALUES(?,?,?,?,?)", ("secret-fact", '"private value"', '[]', "born", "now"))
@@ -83,7 +88,7 @@ class ContinuityReferenceProofTests(unittest.TestCase):
             self.assertNotIn("private next task", repr(before))
             self.assertNotIn("private value", repr(before))
             self.assertNotIn("secret-fact", repr(before))
-            with sqlite3.connect(database) as conn:
+            with _connect(database) as conn:
                 conn.execute("DELETE FROM resident_intentions WHERE intention_id='intent-1'")
                 conn.commit()
             after_loss = resident_state_proof(database)
@@ -96,7 +101,7 @@ class ContinuityReferenceProofTests(unittest.TestCase):
             identity = {"name": "ZN Agent", "purpose": "continue", "principles": ["preserve"], "created_at": "identity-born", "version": "0.2.0", "updated_at": "old"}
             living = {"name": "ZN", "born_at": "living-born", "wake_count": 1, "pulse_count": 1, "current_thought": None, "body": {"pid": 1}}
             intention = {"intention_id": "intent-1", "description": "keep going", "source": "self", "priority": 3, "status": "active", "current_step": None, "created_at": "born", "updated_at": "old"}
-            with sqlite3.connect(database) as conn:
+            with _connect(database) as conn:
                 conn.execute("INSERT INTO identity VALUES(?,?)", (1, json.dumps(identity)))
                 conn.execute("INSERT INTO living_self VALUES(?,?,?)", (1, json.dumps(living), "old"))
                 conn.execute("INSERT INTO resident_intentions VALUES(?,?,?,?,?)", ("intent-1", "active", 3, "old", json.dumps(intention)))
@@ -105,7 +110,7 @@ class ContinuityReferenceProofTests(unittest.TestCase):
             identity.update({"version": "0.3.0", "updated_at": "new"})
             living.update({"wake_count": 2, "pulse_count": 3, "current_thought": {"sequence": 3}, "body": {"pid": 2}})
             intention.update({"status": "completed", "current_step": "done", "updated_at": "new"})
-            with sqlite3.connect(database) as conn:
+            with _connect(database) as conn:
                 conn.execute("UPDATE identity SET data=? WHERE id=1", (json.dumps(identity),))
                 conn.execute("UPDATE living_self SET data=?,updated_at=? WHERE id=1", (json.dumps(living), "new"))
                 conn.execute("UPDATE resident_intentions SET status=?,updated_at=?,data=? WHERE intention_id=?", ("completed", "new", json.dumps(intention), "intent-1"))
@@ -113,7 +118,7 @@ class ContinuityReferenceProofTests(unittest.TestCase):
             after_progress = resident_state_proof(database)
             self.assertEqual(before["reference_hashes"], after_progress["reference_hashes"])
             intention["description"] = "rewritten identity"
-            with sqlite3.connect(database) as conn:
+            with _connect(database) as conn:
                 conn.execute("UPDATE resident_intentions SET data=? WHERE intention_id=?", (json.dumps(intention), "intent-1"))
                 conn.commit()
             self.assertNotEqual(before["reference_hashes"], resident_state_proof(database)["reference_hashes"])
@@ -122,18 +127,18 @@ class ContinuityReferenceProofTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             database = Path(temporary) / "kernel.db"
             _init_database(database)
-            with sqlite3.connect(database) as conn:
+            with _connect(database) as conn:
                 conn.execute("INSERT INTO neural_traces VALUES(?,?,?,?,?,?,?,?)", ("schema-a", "fp-a", "schema", 0.7, 0.8, 1, "t1", '{}'))
                 conn.execute("INSERT INTO neural_traces VALUES(?,?,?,?,?,?,?,?)", ("repeat-a", "fp-b", "world", 0.4, 0.5, 2, "t1", '{}'))
                 conn.commit()
             before = long_lived_neural_reference_proof(database)
-            with sqlite3.connect(database) as conn:
+            with _connect(database) as conn:
                 conn.execute("UPDATE neural_traces SET strength=?,salience=?,last_seen_at=? WHERE trace_id='schema-a'", (0.99, 0.95, "t2"))
                 conn.execute("INSERT INTO neural_traces VALUES(?,?,?,?,?,?,?,?)", ("schema-b", "fp-c", "schema", 0.6, 0.7, 1, "t2", '{}'))
                 conn.commit()
             after_growth = long_lived_neural_reference_proof(database)
             self.assertTrue(set(before["reference_hashes"]).issubset(after_growth["reference_hashes"]))
-            with sqlite3.connect(database) as conn:
+            with _connect(database) as conn:
                 conn.execute("DELETE FROM neural_traces WHERE trace_id='repeat-a'")
                 conn.commit()
             after_loss = long_lived_neural_reference_proof(database)
@@ -143,7 +148,7 @@ class ContinuityReferenceProofTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             database = Path(temporary) / "kernel.db"
             _init_database(database)
-            with sqlite3.connect(database) as conn:
+            with _connect(database) as conn:
                 conn.execute("INSERT INTO work_threads VALUES(?,?,?,?,?)", ("work-a", "title", "{}", "born", "now"))
                 conn.execute("INSERT INTO work_messages VALUES(?,?,?,?,?,?)", ("msg-a", "work-a", "user", "private text", "{}", "born"))
                 conn.execute("INSERT INTO work_artifacts VALUES(?,?,?,?,?,?,?,?,?)", ("artifact-a", "work-a", "event-a", "text", "result", None, "private artifact", "{}", "born"))
@@ -155,13 +160,13 @@ class ContinuityReferenceProofTests(unittest.TestCase):
             self.assertNotIn("private text", repr(before))
             self.assertNotIn("private artifact", repr(before))
             self.assertNotIn("private task", repr(before))
-            with sqlite3.connect(database) as conn:
+            with _connect(database) as conn:
                 conn.execute("UPDATE work_runs SET ledger_state=?,updated_at=?,finalized_at=? WHERE event_id=?", ("done", "later", "later", "event-a"))
                 conn.execute("INSERT INTO work_threads VALUES(?,?,?,?,?)", ("work-b", "new", "{}", "later", "later"))
                 conn.commit()
             after_progress = work_state_proof(database)
             self.assertTrue(set(before["reference_hashes"]).issubset(after_progress["reference_hashes"]))
-            with sqlite3.connect(database) as conn:
+            with _connect(database) as conn:
                 conn.execute("UPDATE work_messages SET text=? WHERE message_id=?", ("corrupted text", "msg-a"))
                 conn.commit()
             after_corruption = work_state_proof(database)
@@ -171,11 +176,11 @@ class ContinuityReferenceProofTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             database = Path(temporary) / "kernel.db"
             _init_database(database)
-            with sqlite3.connect(database) as conn:
+            with _connect(database) as conn:
                 conn.execute("INSERT INTO verified_experiences VALUES(?)", ("vx-a",))
                 conn.commit()
             before = verified_experience_reference_proof(database)
-            with sqlite3.connect(database) as conn:
+            with _connect(database) as conn:
                 conn.execute("INSERT INTO verified_experiences VALUES(?)", ("vx-b",))
                 conn.commit()
             after = verified_experience_reference_proof(database)
@@ -186,7 +191,7 @@ class ContinuityReferenceProofTests(unittest.TestCase):
             database = Path(temporary) / "kernel.db"
             _init_database(database)
             rows = [(f"work-{index:03d}", f"2026-01-{(index % 28) + 1:02d}") for index in range(100)]
-            with sqlite3.connect(database) as conn:
+            with _connect(database) as conn:
                 conn.executemany("INSERT INTO work_threads VALUES(?,?,?,?,?)", [(thread_id, "title", "{}", created_at, created_at) for thread_id, created_at in rows])
                 conn.commit()
             threads = [SimpleNamespace(thread_id=thread_id, created_at=created_at) for thread_id, created_at in rows]
