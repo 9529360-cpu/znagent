@@ -5,11 +5,12 @@ from __future__ import annotations
 This layer does not repair source, grant maintenance authority, or mutate a
 running installation. It makes durable health/task evidence part of the formal
 resident subject, gives maintenance candidates an authority-free investigation
-lifecycle, and connects selected active resident Sense boundaries to the same
-journal without allowing secondary observation failures to break those Senses or
-resident health truth.
+lifecycle, and connects selected active resident Sense/resource boundaries to
+the same journal without allowing secondary observation failures to break those
+organs or resident health truth.
 """
 
+import hashlib
 import sqlite3
 from typing import Any
 
@@ -17,6 +18,7 @@ from .browser_work_resident import BrowserWorkResidentRuntime
 from .foreground_window_sense import ForegroundWindowObservation
 from .health_observation import ResidentHealthJournal
 from .maintenance_investigation import MaintenanceInvestigationLedger
+from .models import ModelRoute
 
 
 class HealthAwareResidentRuntime(BrowserWorkResidentRuntime):
@@ -27,6 +29,7 @@ class HealthAwareResidentRuntime(BrowserWorkResidentRuntime):
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
         self.health = ResidentHealthJournal(self.store)
+        self._install_cognitive_resource_health_observer()
         # Health/task truth is initialized first. The investigation projection is
         # strictly secondary: an unavailable projection must not prevent the same
         # resident from booting with its identity, health and work state intact.
@@ -73,6 +76,54 @@ class HealthAwareResidentRuntime(BrowserWorkResidentRuntime):
             }
         self.maintenance = ledger
         return {"available": True, **snapshot}
+
+    def _install_cognitive_resource_health_observer(self) -> None:
+        """Bind provider observation after resident health exists.
+
+        The kernel is assembled before the resident, so provider factories cannot
+        own or construct the health journal. Bind the resident callback only after
+        the same resident/store exists, and leave the callback on the kernel so
+        the normal provider hot-reconfiguration path can bind replacement
+        factories without replacing ZN identity or health state.
+        """
+
+        observer = self._observe_cognitive_resource_health
+        setattr(self.kernel, "resource_health_observer", observer)
+        factory = getattr(self.kernel, "worker_factory", None)
+        setter = getattr(factory, "set_health_observer", None)
+        if callable(setter):
+            try:
+                setter(observer)
+            except Exception:
+                # Provider health is observational; factory behavior remains the
+                # primary path if observer binding itself is unavailable.
+                pass
+
+    def _observe_cognitive_resource_health(
+        self,
+        route: ModelRoute,
+        error: BaseException | None,
+    ) -> None:
+        organ = self._cognitive_resource_health_organ(route)
+        if error is None:
+            self.health.record_success(organ)
+        else:
+            self.health.record_failure(organ, error)
+
+    @staticmethod
+    def _cognitive_resource_health_organ(route: ModelRoute) -> str:
+        """Use a stable privacy-safe route identity without persisting model text."""
+
+        raw_provider = str(route.provider or "unknown").strip().lower() or "unknown"
+        provider = "".join(
+            char if char.isalnum() else "-" for char in raw_provider
+        ).strip("-")[:32] or "unknown"
+        digest = hashlib.sha256()
+        digest.update(b"zn-cognitive-health-route-v1\x00")
+        digest.update(raw_provider.encode("utf-8", errors="replace"))
+        digest.update(b"\x00")
+        digest.update(str(route.route_id or "").encode("utf-8", errors="replace"))
+        return f"cognition:{provider}:{digest.hexdigest()[:16]}"
 
     def _probe_foreground_window(
         self,
