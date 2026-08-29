@@ -81,9 +81,9 @@ test('endpoint rejects non-loopback transport evidence', () => {
   }, { znHome, expectedRuntimeId: runtimeId }), /not loopback/)
 })
 
-test('continuity baseline accepts bounded resident-owned references', () => {
-  const baseline = {
-    schema_version: 1,
+function continuityBaseline() {
+  return {
+    schema_version: 2,
     identity: {
       name: 'ZN Agent',
       version: '0.2.0',
@@ -105,6 +105,13 @@ test('continuity baseline accepts bounded resident-owned references', () => {
       references_may_be_truncated: false,
       threads: [{ id: 'work-1', created_at: '2026-01-01T00:00:00+00:00' }]
     },
+    verified_learning: {
+      reference_count: 1,
+      total_count: 1,
+      reference_limit: 256,
+      references_may_be_truncated: false,
+      experience_ids: ['vx-1234']
+    },
     provider: {
       mode: 'default',
       provider: 'auto',
@@ -115,28 +122,29 @@ test('continuity baseline accepts bounded resident-owned references', () => {
       cognition_available: false
     }
   }
+}
+
+test('continuity baseline accepts bounded resident-owned references', () => {
+  const baseline = continuityBaseline()
   assert.equal(validateContinuityBaseline(baseline), baseline)
 })
 
 test('continuity baseline rejects Work content beyond reference identity', () => {
-  const baseline = {
-    schema_version: 1,
-    identity: { name: 'ZN', version: '1', created_at: 'born', updated_at: 'now' },
-    living_self: {
-      name: 'ZN', version: '1', born_at: 'born', wake_count: 1, pulse_count: 1,
-      last_event_id: null, learning_candidate_ids: []
-    },
-    work: {
-      reference_count: 1,
-      reference_limit: 100,
-      references_may_be_truncated: false,
-      threads: [{ id: 'work-1', created_at: 'born', title: 'must not leave resident' }]
-    },
-    provider: {
-      mode: 'default', provider: 'auto', model: '', base_url: '',
-      credential: { configured: false, source: 'none', environment_name: null },
-      active_routes: [], cognition_available: false
-    }
-  }
+  const baseline = continuityBaseline()
+  baseline.work.threads[0].title = 'must not leave resident'
   assert.throws(() => validateContinuityBaseline(baseline), /unexpected field: title/)
+})
+
+test('continuity baseline rejects causal learning payload beyond hashed experience identity', () => {
+  const baseline = continuityBaseline()
+  baseline.verified_learning.payload = { task: 'must not leave resident' }
+  assert.throws(() => validateContinuityBaseline(baseline), /unexpected field: payload/)
+})
+
+test('continuity baseline rejects duplicate verified learning references', () => {
+  const baseline = continuityBaseline()
+  baseline.verified_learning.reference_count = 2
+  baseline.verified_learning.total_count = 2
+  baseline.verified_learning.experience_ids = ['vx-1234', 'vx-1234']
+  assert.throws(() => validateContinuityBaseline(baseline), /must be unique/)
 })
