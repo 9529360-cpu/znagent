@@ -49,7 +49,7 @@ class _ProviderSettings:
             "mode": "default",
             "provider": "openai",
             "model": "gpt-test",
-            "base_url": "https://example.invalid/v1",
+            "base_url": "https://user:provider-secret@example.invalid/private/tenant?api_key=query-secret#fragment-secret",
             "credential": {
                 "configured": True,
                 "source": "secure_store",
@@ -166,6 +166,7 @@ class ContinuitySnapshotTests(unittest.TestCase):
             ["vx-a", "vx-z"],
         )
         self.assertEqual(snapshot["verified_learning"]["total_count"], 2)
+        self.assertEqual(snapshot["provider"]["base_url"], "https://example.invalid")
         self.assertEqual(
             [item["id"] for item in snapshot["provider"]["active_routes"]],
             ["route-a", "route-z"],
@@ -181,6 +182,10 @@ class ContinuitySnapshotTests(unittest.TestCase):
             "private observation",
             "private causal task",
             "evidence",
+            "provider-secret",
+            "private/tenant",
+            "query-secret",
+            "fragment-secret",
             "top-level-secret",
             "route-secret",
             "secret-backend-detail",
@@ -221,6 +226,12 @@ class ContinuitySnapshotTests(unittest.TestCase):
         self.assertTrue(snapshot["work"]["references_may_be_truncated"])
         self.assertEqual(snapshot["work"]["reference_count"], 100)
         self.assertEqual(snapshot["verified_learning"]["reference_count"], 0)
+
+    def test_provider_origin_rejects_secret_bearing_or_non_http_components(self):
+        safe = ContinuitySnapshotService._safe_base_url_origin
+        self.assertEqual(safe("file:///tmp/provider"), "")
+        self.assertEqual(safe("not a url"), "")
+        self.assertEqual(safe("https://user:secret@[::1]:8443/private?token=secret"), "https://[::1]:8443")
 
     def test_continuity_verdict_accepts_version_change_when_subject_references_survive(self):
         before = _snapshot(work_ids=("work-a",), learning_ids=("vx-a",))
