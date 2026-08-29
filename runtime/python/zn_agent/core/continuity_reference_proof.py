@@ -86,6 +86,36 @@ def _rows(conn: sqlite3.Connection, table: str, columns: str, order_by: str) -> 
     return conn.execute(f"SELECT {columns} FROM {table} ORDER BY {order_by} ASC").fetchall()
 
 
+def _protected_side_effect_attempt_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Return attempts whose disappearance would violate replay/recovery safety.
+
+    The persistence owner intentionally capacity-prunes non-started attempt
+    history only after both a terminal event row and its EventOutcome are
+    durable. Those rows are historical diagnostics, not permanent continuity
+    identity. Everything else remains protected, including every ``started``
+    attempt and observed/recovery-verified attempts whose owner is not terminal.
+    """
+
+    if not _table_exists(conn, "resident_side_effect_attempts"):
+        return []
+    if not (_table_exists(conn, "events") and _table_exists(conn, "event_outcomes")):
+        return conn.execute(
+            "SELECT attempt_id,event_id,signature_hash,kind,started_at "
+            "FROM resident_side_effect_attempts ORDER BY attempt_id ASC"
+        ).fetchall()
+    return conn.execute(
+        "SELECT attempt.attempt_id,attempt.event_id,attempt.signature_hash,"
+        "attempt.kind,attempt.started_at "
+        "FROM resident_side_effect_attempts AS attempt "
+        "WHERE attempt.status='started' OR NOT EXISTS ("
+        "SELECT 1 FROM events AS event "
+        "JOIN event_outcomes AS outcome ON outcome.event_id=event.event_id "
+        "WHERE event.event_id=attempt.event_id "
+        "AND event.status IN ('completed','failed')) "
+        "ORDER BY attempt.attempt_id ASC"
+    ).fetchall()
+
+
 def _canonical_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -177,7 +207,7 @@ def resident_state_proof(path: str | Path) -> dict[str, Any]:
             ("events", _rows(conn, "events", "event_id,created_at", "event_id")),
             ("event_outcomes", _rows(conn, "event_outcomes", "event_id,created_at", "event_id")),
             ("facts", _rows(conn, "facts", "fact_key,created_at", "fact_key")),
-            ("side_effect_attempts", _rows(conn, "resident_side_effect_attempts", "attempt_id,event_id,signature_hash,kind,started_at", "attempt_id")),
+            ("side_effect_attempts", _protected_side_effect_attempt_rows(conn)),
             ("life_impasses", _rows(conn, "life_impasses", "impasse_id,event_id", "impasse_id")),
             ("life_learning_candidates", _rows(conn, "life_learning_candidates", "candidate_id,source_impasse_id,created_at", "candidate_id")),
         )
