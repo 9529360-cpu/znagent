@@ -36,6 +36,14 @@ function xmlText(xml, tag) {
   return match ? decodeXmlText(match[1].trim()) : ''
 }
 
+function argumentValue(args, flag) {
+  const escaped = flag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = String(args).match(
+    new RegExp(`(?:^|\\s)${escaped}\\s+(?:"([^"]*)"|(\\S+))(?=\\s|$)`, 'i')
+  )
+  return match ? (match[1] ?? match[2] ?? '') : ''
+}
+
 export function validateScheduledTaskXml(xml, { znHome, expectedRuntimeId }) {
   const command = xmlText(xml, 'Command')
   const args = xmlText(xml, 'Arguments')
@@ -46,10 +54,11 @@ export function validateScheduledTaskXml(xml, { znHome, expectedRuntimeId }) {
   if (!inside(runtimeRoot, command)) {
     throw new Error(`ZN Resident scheduled task command is outside installed runtime: ${command}`)
   }
-  if (!/(^|\s)-m(\s|$)/.test(args) || !/(^|\s)zn_agent\.resident(\s|$)/.test(args)) {
+  if (argumentValue(args, '-m') !== 'zn_agent.resident') {
     throw new Error(`ZN Resident scheduled task does not launch formal resident: ${args}`)
   }
-  if (!/(^|\s)--home(\s|$)/.test(args) || !args.toLowerCase().includes(path.resolve(znHome).toLowerCase())) {
+  const taskHome = argumentValue(args, '--home')
+  if (!taskHome || !sameWindowsPath(taskHome, znHome)) {
     throw new Error(`ZN Resident scheduled task does not pin ZN home: ${args}`)
   }
   return { command, args }
