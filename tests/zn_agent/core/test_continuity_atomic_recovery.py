@@ -58,15 +58,7 @@ class AtomicOverwriteRecoveryContinuityTests(unittest.TestCase):
                     created_at TEXT NOT NULL,
                     data TEXT NOT NULL
                 );
-                CREATE TABLE working_state(
-                    id INTEGER PRIMARY KEY,
-                    current_event_id TEXT,
-                    stage TEXT NOT NULL,
-                    next_action TEXT,
-                    blocked_by TEXT,
-                    data TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
+                CREATE TABLE working_state(id INTEGER PRIMARY KEY, data TEXT NOT NULL);
                 """
             )
             conn.commit()
@@ -150,16 +142,8 @@ class AtomicOverwriteRecoveryContinuityTests(unittest.TestCase):
         }
         with closing(sqlite3.connect(database)) as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO working_state VALUES(?,?,?,?,?,?,?)",
-                (
-                    1,
-                    state["current_event_id"],
-                    state["stage"],
-                    state["next_action"],
-                    state["blocked_by"],
-                    json.dumps(state["data"]),
-                    "now",
-                ),
+                "INSERT OR REPLACE INTO working_state(id,data) VALUES(1,?)",
+                (json.dumps(state),),
             )
             conn.commit()
 
