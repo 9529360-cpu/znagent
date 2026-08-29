@@ -1,0 +1,64 @@
+name: SM3 Cognitive Maintenance Validation
+
+on:
+  push:
+    branches:
+      - work/sm3-candidate-review
+    paths:
+      - '.github/workflows/sm3-cognitive-validation.yml'
+      - 'runtime/python/zn_agent/core/maintenance_cognitive.py'
+      - 'runtime/python/zn_agent/core/cognitive_maintenance_resident.py'
+      - 'runtime/python/zn_agent/core/provider_bridge.py'
+      - 'tests/zn_agent/core/test_maintenance_cognitive_repair.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI: 'true'
+  PYTHONUTF8: '1'
+  PYTHONUNBUFFERED: '1'
+  ZN_AGENT_HOME: ${{ github.workspace }}/.ci/zn-home-sm3-cognitive
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+jobs:
+  validate:
+    name: SM3 cognitive repair / Windows
+    runs-on: [self-hosted, Windows, X64, zn-ci]
+    timeout-minutes: 20
+    env:
+      UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
+    steps:
+      - name: Require Windows x64 ZN runner
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "SM3 validation requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare isolated runtime
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:ZN_AGENT_HOME | Out-Null
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/sm3-cognitive-venv -ErrorAction SilentlyContinue
+          uv venv .ci/sm3-cognitive-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\sm3-cognitive-venv\Scripts\python.exe'
+          uv pip install --python $python runtime/python
+      - name: Compile changed resident maintenance modules
+        run: |
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\sm3-cognitive-venv\Scripts\python.exe'
+          & $python -m py_compile runtime/python/zn_agent/core/maintenance_cognitive.py runtime/python/zn_agent/core/cognitive_maintenance_resident.py runtime/python/zn_agent/core/provider_bridge.py tests/zn_agent/core/test_maintenance_cognitive_repair.py
+      - name: Run SM3 cognitive and maintenance regression tests
+        run: |
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\sm3-cognitive-venv\Scripts\python.exe'
+          $env:PYTHONPATH = (Join-Path $env:GITHUB_WORKSPACE 'runtime\python')
+          & $python -m unittest -v tests.zn_agent.core.test_maintenance_cognitive_repair tests.zn_agent.core.test_maintenance_isolated_repair tests.zn_agent.core.test_resident_maintenance_source tests.zn_agent.core.test_maintenance_investigation_lifecycle
