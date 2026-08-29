@@ -47,6 +47,86 @@ export function validateEndpoint(endpoint, { znHome, expectedRuntimeId }) {
   return endpoint
 }
 
+function requireNonEmptyString(value, label) {
+  if (typeof value !== 'string' || !value.trim()) throw new Error(`${label} is missing`)
+  return value
+}
+
+function rejectUnexpectedFields(value, allowed, label) {
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) throw new Error(`${label} exposes unexpected field: ${key}`)
+  }
+}
+
+export function validateContinuityBaseline(baseline) {
+  if (!baseline || typeof baseline !== 'object' || Array.isArray(baseline)) {
+    throw new Error('resident continuity snapshot must be an object')
+  }
+  rejectUnexpectedFields(baseline, new Set(['schema_version', 'identity', 'living_self', 'work', 'provider']), 'continuity snapshot')
+  if (baseline.schema_version !== 1) throw new Error(`unsupported continuity schema: ${baseline.schema_version}`)
+
+  const identity = baseline.identity
+  if (!identity || typeof identity !== 'object' || Array.isArray(identity)) throw new Error('continuity identity is invalid')
+  rejectUnexpectedFields(identity, new Set(['name', 'version', 'created_at', 'updated_at']), 'continuity identity')
+  requireNonEmptyString(identity.name, 'continuity identity name')
+  requireNonEmptyString(identity.version, 'continuity identity version')
+  requireNonEmptyString(identity.created_at, 'continuity identity created_at')
+  requireNonEmptyString(identity.updated_at, 'continuity identity updated_at')
+
+  const livingSelf = baseline.living_self
+  if (!livingSelf || typeof livingSelf !== 'object' || Array.isArray(livingSelf)) throw new Error('continuity living_self is invalid')
+  rejectUnexpectedFields(livingSelf, new Set(['name', 'version', 'born_at', 'wake_count', 'pulse_count', 'last_event_id', 'learning_candidate_ids']), 'continuity living_self')
+  requireNonEmptyString(livingSelf.name, 'continuity living_self name')
+  requireNonEmptyString(livingSelf.version, 'continuity living_self version')
+  requireNonEmptyString(livingSelf.born_at, 'continuity living_self born_at')
+  if (!Number.isInteger(livingSelf.wake_count) || livingSelf.wake_count < 1) throw new Error('continuity wake_count is invalid')
+  if (!Number.isInteger(livingSelf.pulse_count) || livingSelf.pulse_count < 1) throw new Error('continuity pulse_count is invalid')
+  if (livingSelf.last_event_id !== null && typeof livingSelf.last_event_id !== 'string') throw new Error('continuity last_event_id is invalid')
+  if (!Array.isArray(livingSelf.learning_candidate_ids) || livingSelf.learning_candidate_ids.some(value => typeof value !== 'string')) {
+    throw new Error('continuity learning_candidate_ids is invalid')
+  }
+
+  const work = baseline.work
+  if (!work || typeof work !== 'object' || Array.isArray(work)) throw new Error('continuity work is invalid')
+  rejectUnexpectedFields(work, new Set(['reference_count', 'reference_limit', 'references_may_be_truncated', 'threads']), 'continuity work')
+  if (!Number.isInteger(work.reference_count) || work.reference_count < 0) throw new Error('continuity work reference_count is invalid')
+  if (!Number.isInteger(work.reference_limit) || work.reference_limit < 1) throw new Error('continuity work reference_limit is invalid')
+  if (typeof work.references_may_be_truncated !== 'boolean') throw new Error('continuity work truncation marker is invalid')
+  if (!Array.isArray(work.threads) || work.threads.length !== work.reference_count) throw new Error('continuity work references are inconsistent')
+  for (const thread of work.threads) {
+    if (!thread || typeof thread !== 'object' || Array.isArray(thread)) throw new Error('continuity work thread reference is invalid')
+    rejectUnexpectedFields(thread, new Set(['id', 'created_at']), 'continuity work thread')
+    requireNonEmptyString(thread.id, 'continuity work thread id')
+    requireNonEmptyString(thread.created_at, 'continuity work thread created_at')
+  }
+
+  const provider = baseline.provider
+  if (!provider || typeof provider !== 'object' || Array.isArray(provider)) throw new Error('continuity provider is invalid')
+  rejectUnexpectedFields(provider, new Set(['mode', 'provider', 'model', 'base_url', 'credential', 'active_routes', 'cognition_available']), 'continuity provider')
+  for (const key of ['mode', 'provider', 'model', 'base_url']) {
+    if (typeof provider[key] !== 'string') throw new Error(`continuity provider ${key} is invalid`)
+  }
+  const credential = provider.credential
+  if (!credential || typeof credential !== 'object' || Array.isArray(credential)) throw new Error('continuity provider credential metadata is invalid')
+  rejectUnexpectedFields(credential, new Set(['configured', 'source', 'environment_name']), 'continuity credential')
+  if (typeof credential.configured !== 'boolean') throw new Error('continuity credential configured flag is invalid')
+  if (typeof credential.source !== 'string') throw new Error('continuity credential source is invalid')
+  if (credential.environment_name !== null && typeof credential.environment_name !== 'string') {
+    throw new Error('continuity credential environment_name is invalid')
+  }
+  if (!Array.isArray(provider.active_routes)) throw new Error('continuity provider routes are invalid')
+  for (const route of provider.active_routes) {
+    if (!route || typeof route !== 'object' || Array.isArray(route)) throw new Error('continuity provider route is invalid')
+    rejectUnexpectedFields(route, new Set(['id', 'provider', 'model']), 'continuity provider route')
+    for (const key of ['id', 'provider', 'model']) {
+      if (typeof route[key] !== 'string') throw new Error(`continuity provider route ${key} is invalid`)
+    }
+  }
+  if (typeof provider.cognition_available !== 'boolean') throw new Error('continuity cognition flag is invalid')
+
+  return baseline
+}
+
 async function requireRegularFile(filePath, label) {
   const stat = await fs.lstat(filePath)
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`${label} is not a regular file: ${filePath}`)
@@ -118,7 +198,7 @@ export async function rpcRequest(endpoint, method, params = {}, timeoutMs = 5000
   })
 }
 
-export async function verifyZnWindowsCleanInstall({ installDir, znHome, expectedRuntimeId, timeoutMs = 60000 }) {
+export async function verifyZnWindowsCleanInstall({ installDir, znHome, expectedRuntimeId, continuityOutputPath = null, timeoutMs = 60000 }) {
   if (process.platform !== 'win32') throw new Error(`clean install proof requires win32, got ${process.platform}`)
   if (!SHA_RE.test(expectedRuntimeId)) throw new Error(`expected runtime id must be a commit-like SHA: ${expectedRuntimeId}`)
 
@@ -148,6 +228,12 @@ export async function verifyZnWindowsCleanInstall({ installDir, znHome, expected
   if (!status || typeof status !== 'object') throw new Error('installed resident status is invalid')
   const self = await rpcRequest(endpoint, 'self')
   if (!self || typeof self !== 'object') throw new Error('installed resident self snapshot is invalid')
+  const continuity = validateContinuityBaseline(await rpcRequest(endpoint, 'continuity_snapshot'))
+  if (continuityOutputPath) {
+    const outputPath = path.resolve(continuityOutputPath)
+    await fs.mkdir(path.dirname(outputPath), { recursive: true })
+    await fs.writeFile(outputPath, `${JSON.stringify(continuity, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' })
+  }
 
   await rpcRequest(endpoint, 'shutdown')
   await waitForMissing(endpointPath, Math.min(timeoutMs, 15000))
@@ -158,7 +244,8 @@ export async function verifyZnWindowsCleanInstall({ installDir, znHome, expected
     runtimeId: endpoint.runtime_id,
     python: endpoint.python,
     pulseCount: ping.pulse_count,
-    instanceId: endpoint.instance_id
+    instanceId: endpoint.instance_id,
+    continuity
   }
 }
 
@@ -166,15 +253,19 @@ async function main() {
   const installDir = String(process.argv[2] || '').trim()
   const znHome = String(process.argv[3] || '').trim()
   const expectedRuntimeId = String(process.argv[4] || '').trim().toLowerCase()
+  const continuityOutputPath = String(process.argv[5] || '').trim() || null
   if (!installDir || !znHome || !expectedRuntimeId) {
-    throw new Error('usage: verify-zn-windows-clean-install.mjs <install-dir> <zn-home> <expected-runtime-id>')
+    throw new Error('usage: verify-zn-windows-clean-install.mjs <install-dir> <zn-home> <expected-runtime-id> [continuity-output-path]')
   }
-  const result = await verifyZnWindowsCleanInstall({ installDir, znHome, expectedRuntimeId })
+  const result = await verifyZnWindowsCleanInstall({ installDir, znHome, expectedRuntimeId, continuityOutputPath })
   console.log(`[zn-clean-install] executable=${result.executable}`)
   console.log(`[zn-clean-install] runtime=${result.runtimeId}`)
   console.log(`[zn-clean-install] python=${result.python}`)
   console.log(`[zn-clean-install] pulse_count=${result.pulseCount}`)
   console.log(`[zn-clean-install] instance_id=${result.instanceId}`)
+  console.log(`[zn-clean-install] continuity_schema=${result.continuity.schema_version}`)
+  console.log(`[zn-clean-install] continuity_born_at=${result.continuity.living_self.born_at}`)
+  console.log(`[zn-clean-install] continuity_work_refs=${result.continuity.work.reference_count}`)
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
