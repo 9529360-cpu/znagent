@@ -555,6 +555,23 @@ def _require_verified_learning_survival(
             )
             return
 
+    if before_capacity is not None and old["count"] > before_capacity:
+        blockers.append(
+            {
+                "kind": "verified_learning_continuity_unproven",
+                "reason": "baseline reference proof exceeds retention capacity",
+            }
+        )
+        return
+    if after_capacity is not None and new["count"] > after_capacity:
+        blockers.append(
+            {
+                "kind": "verified_learning_continuity_unproven",
+                "reason": "candidate reference proof exceeds retention capacity",
+            }
+        )
+        return
+
     old_hashes = old["hashes"]
     new_hashes = new["hashes"]
     if old_hashes is None or new_hashes is None:
@@ -580,15 +597,6 @@ def _require_verified_learning_survival(
                 "missing_reference_count": len(missing),
                 "before_count": old["count"],
                 "after_count": new["count"],
-            }
-        )
-        return
-
-    if old["count"] > before_capacity or new["count"] > after_capacity:
-        blockers.append(
-            {
-                "kind": "verified_learning_continuity_unproven",
-                "reason": "reference proof exceeds retention capacity",
             }
         )
         return
