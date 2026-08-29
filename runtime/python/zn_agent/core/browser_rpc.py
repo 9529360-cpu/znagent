@@ -21,6 +21,10 @@ from .browser import (
     BrowserPermissionContext,
 )
 from .continuity import ContinuitySnapshotService, compare_continuity_snapshots
+from .continuity_atomic_recovery import (
+    atomic_overwrite_recovery_snapshot,
+    compare_atomic_overwrite_recovery,
+)
 from .daemon import ResidentRpcServer
 
 _T = TypeVar("_T")
@@ -155,6 +159,31 @@ class BrowserResidentRpcServer(ResidentRpcServer):
         if browser is not None:
             self.resident.managed_browser = _ResidentManagedBrowser(browser, self._browser_owner)
 
+    def _continuity_snapshot(self) -> dict[str, Any]:
+        snapshot = self.continuity.snapshot()
+        store = getattr(self.resident, "store", None)
+        store_path = getattr(store, "path", None)
+        if store_path is not None:
+            snapshot["atomic_overwrite_recovery"] = atomic_overwrite_recovery_snapshot(
+                store_path
+            )
+        return snapshot
+
+    @staticmethod
+    def _continuity_verdict(
+        baseline: dict[str, Any],
+        current: dict[str, Any],
+    ) -> dict[str, Any]:
+        verdict = compare_continuity_snapshots(baseline, current)
+        atomic_blockers = compare_atomic_overwrite_recovery(
+            baseline.get("atomic_overwrite_recovery"),
+            current.get("atomic_overwrite_recovery"),
+        )
+        if atomic_blockers:
+            verdict["blockers"] = [*verdict["blockers"], *atomic_blockers]
+            verdict["compatible"] = False
+        return verdict
+
     def handle(self, request: dict[str, Any]) -> dict[str, Any]:
         method = str(request.get("method") or "").strip()
         if method == "status":
@@ -174,7 +203,7 @@ class BrowserResidentRpcServer(ResidentRpcServer):
             params = request.get("params") or {}
             if not isinstance(params, dict):
                 raise ValueError("params must be an object")
-            current = self.continuity.snapshot()
+            current = self._continuity_snapshot()
             if method == "continuity_snapshot":
                 result = current
             else:
@@ -182,7 +211,7 @@ class BrowserResidentRpcServer(ResidentRpcServer):
                 if not isinstance(baseline, dict):
                     raise ValueError("continuity_compare requires baseline object")
                 result = {
-                    "verdict": compare_continuity_snapshots(baseline, current),
+                    "verdict": self._continuity_verdict(baseline, current),
                     "current": current,
                 }
             return {
