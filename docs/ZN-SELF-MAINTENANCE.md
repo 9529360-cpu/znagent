@@ -1,6 +1,6 @@
 # ZN 自维护、自修复与自更新架构
 
-> 状态：架构契约 / SM0 COMPLETE / SM1 PARTIAL（channel 观察→分类→维护任务→只读 status 已接通并验证）/ SM2+ 待实现
+> 状态：架构契约 / SM0 COMPLETE / SM1 PARTIAL（多类 resident health + maintenance task + evidence-only investigation lifecycle 已接通；task-driven source investigation 尚未闭环）/ SM2 起步边界待接通
 >
 > 开发分支：`dev/zn-agent`
 >
@@ -130,7 +130,7 @@ working_branch: dev/zn-agent
 canonical_branch: main
 ```
 
-M10 canonical promotion 已完成。`main` 不再是“未来目标”，而是 canonical source/release branch；`dev/zn-agent` 是固定主开发分支。普通开发和自动修复仍必须先在 `dev/zn-agent` 或隔离 work branch 验证，不能直接在 `main` 试错。
+M10 canonical promotion 已完成。`main` 是 canonical source/release branch；`dev/zn-agent` 是固定主开发分支。普通开发和自动修复仍必须先在 `dev/zn-agent` 或隔离 work branch 验证，不能直接在 `main` 试错。
 
 但是 `main` 也不能因为“不能直接开发”而永久冻结。低风险 coherent maintenance/development stage 在实现完整、相关测试及 full CI/必要 E2E 通过、diff 已审查、状态文档/HANDOFF 已对账、无未解决 blocker 且没有触及人工审批边界时，可按正常可追踪 PR / merge / promotion flow 进入 canonical source，不需要额外依赖某段聊天再次授权同一项正常 promotion。
 
@@ -173,6 +173,8 @@ ZN 应有界地观察：
 
 不能把每个普通失败都升级为源码维修任务。
 
+当前 resident health 已经不再局限于 channel。真实接通边界包括 channel/lifecycle、foreground-window Sense、visual capture、provider invocation/resource construction 与 Native Body dispatch。后续仍应按 active failure/success site 接通，不允许通过轮询陈旧错误字段制造重复失败证据。
+
 ### 5.2 判断
 
 形成源码维护任务前至少区分：
@@ -190,13 +192,39 @@ ZN 自身代码缺陷
 
 只有足够证据指向自身实现，或源码调查确有必要时，才进入维护流程。
 
+当前分类保持 fail-closed：窄范围内部 invariant failure 可以形成高置信候选；网络、外部服务、环境、配置、输入等失败不能自动升级成源码维护。
+
 ### 5.3 形成维护任务
 
 维护任务至少记录：问题、现实证据、影响、风险、已做调查、成功条件和允许的自动化级别。
 
 重复问题应合并，失效问题应关闭或降级，不能形成无限增长的任务垃圾场。
 
-### 5.4 隔离开发
+当前实现以 health truth 为权威，每个 organ 最多保留一个 bounded durable maintenance task，并能在恢复、fingerprint 变化、projection 损坏/重建时维持一致性。
+
+### 5.4 调查生命周期
+
+维护任务已经具备一个 **evidence-only** 的 bounded investigation lifecycle：
+
+```text
+authoritative maintenance task
+→ reconciled investigation projection
+→ explicit baseline_ref
+→ explicit regression_oracle
+→ work/* attempt + evidence_ref
+→ regression_passed gate
+→ accepted / rejected evidence state
+```
+
+关键约束：
+
+- investigation projection 是二级可重建状态，不得反向阻塞 health/task truth；
+- incident fingerprint 或 investigation contract 改变时，旧 attempt/acceptance 失效；
+- rejected evidence 不能在没有新 attempt 的情况下重新接受；
+- `authority = evidence_only`，绝不因为 ledger 中出现 task/attempt/accepted 状态就获得文件写入、merge、release 或 updater 权限；
+- 当前仍没有 active caller 把 maintenance task 绑定到可信 ZN source workspace，因此这还不是 source-maintenance 产品闭环。
+
+### 5.5 隔离开发
 
 真正进入开发的维护任务使用 `dev/zn-agent` 上的明确小修改，或隔离分支/工作区，例如：
 
@@ -210,9 +238,10 @@ work/self-maintenance-<issue-id>-<short-name>
 - 不直接在 `main` 试错；
 - 开始前记录基线 commit；
 - 未知 dirty state 不能覆盖；
-- 改动范围保持小而可验证。
+- 改动范围保持小而可验证；
+- 普通 Work workspace 不能被静默当成 maintenance source authority。
 
-### 5.5 调查与修复
+### 5.6 调查与修复
 
 ```text
 复现 / 收集证据
@@ -228,7 +257,9 @@ work/self-maintenance-<issue-id>-<short-name>
 
 模型生成的候选代码必须经过同样验证。
 
-### 5.6 验证
+SM2 的第一条真实路径应先闭合 **read-only source investigation**：可信 source workspace、repo root/head/branch/dirty state、bounded diff/test/CI evidence、regression oracle 可用性。只有这条路径验证以后，SM3 才能让高置信任务创建隔离 source attempt。
+
+### 5.7 验证
 
 按风险分层：
 
@@ -243,7 +274,7 @@ work/self-maintenance-<issue-id>-<short-name>
 
 不能为了通过而删除有效测试、降低断言或关闭保护机制，除非证明测试本身错误并记录理由。
 
-### 5.7 提交、PR、CI 与 promotion
+### 5.8 提交、PR、CI 与 promotion
 
 ```text
 review diff
@@ -331,29 +362,38 @@ traceable commit/tag
 
 ### SM1 — 维护事件与证据
 
-状态：**PARTIAL — resident channel early loop connected and verified**。
+状态：**PARTIAL — multi-organ evidence loop connected; source-investigation caller still missing**。
 
 目标：ZN 能从运行证据形成 bounded maintenance event，而不是每次都靠用户手工描述。
 
-当前已经真实接通并验证的 channel slice：
+当前真实接通：
 
 ```text
-真实 channel failure/success
+channel / channel lifecycle
+foreground-window Sense
+visual capture
+provider invocation + provider resource construction
+Native Body dispatch
 → privacy-safe durable health
-→ conservative failure classification
+→ conservative classification
 → same-fingerprint repeat evidence
 → fail-closed maintenance candidate
-→ one durable per-organ maintenance task
-→ recovery / evidence-change closure
-→ task projection failure isolation + restart reconciliation
+→ bounded per-organ maintenance task
+→ recovery/evidence-change reconciliation
 → formal resident/RPC read-only status
 ```
 
-当前仍未完成：其他 resident organs 的统一 health、maintenance-task 驱动的源码调查/修复生命周期，以及任何自动 updater/replacement 行为。
+并且 maintenance task 已接上 evidence-only investigation lifecycle（baseline/oracle/attempt/acceptance）。
+
+当前仍未完成：task-owned trusted source workspace、read-only source evidence collection、isolated source repair attempt 的 active product caller，以及任何自动 updater/replacement 行为。
 
 ### SM2 — 源码调查 Body/Senses
 
+状态：**NOT YET CONNECTED**。
+
 目标：ZN 能读取自己的仓库状态、diff、测试结果和 CI evidence，并保持 read-only/typed authority 边界。
+
+SM2 的进入条件不是“有一个新类”，而是一个真实 open maintenance task 能绑定可信 source workspace 并产生可验证的 bounded source evidence，同时不能通过普通 Work context、terminal 或 file-write capability 偷渡 mutation authority。
 
 ### SM3 — 隔离修复候选
 
@@ -381,20 +421,23 @@ traceable commit/tag
 - 不把模型文字当事实；
 - 不把动作 exit code 当任务完成证明；
 - 不允许 self-maintenance 修改审批规则后自动批准自己；
-- 不允许更新破坏身份、长期记忆或唯一回退路径。
+- 不允许更新破坏身份、长期记忆或唯一回退路径；
+- maintenance task / investigation ledger 本身永远不等于 mutation authority。
 
 ## 10. 当前下一步
 
-SM1 当前应继续纵向闭合真实维护场景，而不是直接扩大成自动改源码/自动更新框架。
-
-当前优先序：
+SM1 当前不应继续堆 evidence-only scaffolding。下一条纵向产品路径是把已经存在的 maintenance task/investigation truth 接到可信源码读取能力：
 
 ```text
-完成当前 channel SM1 组合头的 full CI / canonical promotion
-→ 补 channel lifecycle 尚未进入 durable health 的失败边界
-→ 在真实 failure/success site 接通另一个 resident organ（优先检查 vision）
-→ 为 maintenance task 定义 bounded investigation / attempt / regression / acceptance 生命周期
-→ 再评估是否允许高置信任务自动发起普通源码维护工作
+current combined dev CI + canonical promotion
+→ trusted maintenance-source workspace binding
+→ prove ZN repo root / baseline HEAD / branch / dirty state
+→ bounded read-only diff + regression-oracle evidence
+→ persist investigation evidence without mutation authority
+→ verify restart/recovery and stale-source rejection
+→ only then allow a high-confidence task to form an isolated work/* repair attempt
 ```
+
+普通 Work workspace 不是 maintenance-source authority；当前正式安装目录也不是源码更新目录。源码绑定必须显式、可验证、可恢复，并且默认只读。
 
 即使未来 SM2-SM4 更成熟，正式 updater/replacement、rollback、release signing/trust 和替换用户当前安装版本仍是独立的人工审批边界。
