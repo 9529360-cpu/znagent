@@ -61,13 +61,53 @@ class CompletionObservationJournal:
                 return False
         return True
 
-    def repair_life(self, resident: ZNResidentRuntime, *, limit: int = 128) -> int:
-        """Retry one bounded batch of pending Life observations."""
+    def repair_life(
+        self,
+        resident: ZNResidentRuntime,
+        *,
+        limit: int | None = None,
+    ) -> int:
+        """Retry pending Life observations.
+
+        Startup calls this without a limit and therefore performs one bounded
+        snapshot sweep. Explicit callers that supply ``limit`` keep the historic
+        one-batch behavior.
+        """
+
+        if limit is None:
+            return self.repair_life_sweep(resident)
+        return self._repair_life_items(
+            resident,
+            self._pending_safely(stage=self._STAGE_LIFE, limit=limit),
+        )
+
+    def repair_life_sweep(
+        self,
+        resident: ZNResidentRuntime,
+        *,
+        max_records: int = MAX_STARTUP_REPAIR_RECORDS,
+    ) -> int:
+        """Attempt each initially pending Life repair once, within a hard bound.
+
+        The initial queue is snapshotted before any retry mutates timestamps or
+        status. This prevents a missing EventOutcome or repeatedly failing Life
+        write from being selected again and starving later obligations. New rows
+        created while the sweep runs wait for a later repair opportunity.
+        """
+
+        bounded_records = max(1, min(2048, int(max_records)))
+        pending = self._pending_safely(
+            stage=self._STAGE_LIFE,
+            limit=bounded_records,
+        )
+        return self._repair_life_items(resident, pending)
+
+    def _repair_life_items(
+        self,
+        resident: ZNResidentRuntime,
+        pending: list[dict[str, Any]],
+    ) -> int:
         repaired = 0
-        try:
-            pending = self.pending(stage=self._STAGE_LIFE, limit=limit)
-        except Exception:
-            return 0
         for item in pending:
             result = resident.result_for(str(item["event_id"]))
             if result is None:
@@ -76,41 +116,16 @@ class CompletionObservationJournal:
                 repaired += 1
         return repaired
 
-    def repair_life_sweep(
+    def _pending_safely(
         self,
-        resident: ZNResidentRuntime,
         *,
-        batch_size: int = DEFAULT_REPAIR_BATCH,
-        max_records: int = MAX_STARTUP_REPAIR_RECORDS,
-    ) -> int:
-        """Attempt every initially pending Life repair once, within a hard bound.
-
-        A failed retry is deferred with a fresh ``updated_at`` and therefore
-        moves behind older pending rows. Taking the initial backlog size before
-        sweeping lets finite batches rotate later records into view without
-        retrying forever on a persistent Life failure. New rows created while the
-        sweep runs wait for the next normal repair opportunity.
-        """
-
-        bounded_batch = max(1, min(2048, int(batch_size)))
-        bounded_records = max(1, min(8192, int(max_records)))
+        stage: str | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
         try:
-            initial = min(
-                self.pending_count(stage=self._STAGE_LIFE),
-                bounded_records,
-            )
+            return self.pending(stage=stage, limit=limit)
         except Exception:
-            return 0
-        if initial <= 0:
-            return 0
-
-        repaired = 0
-        remaining = initial
-        while remaining > 0:
-            current_batch = min(bounded_batch, remaining)
-            repaired += self.repair_life(resident, limit=current_batch)
-            remaining -= current_batch
-        return repaired
+            return []
 
     def pending_count(self, *, stage: str | None = None) -> int:
         """Count outstanding repair obligations without exposing their content."""
