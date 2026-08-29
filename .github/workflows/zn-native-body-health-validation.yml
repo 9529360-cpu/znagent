@@ -56,4 +56,4 @@ jobs:
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\native-body-health-venv\Scripts\python.exe'
-          & $python -m unittest tests.zn_agent.core.test_native_body tests.zn_agent.core.test_pointer_body tests.zn_agent.core.test_keyboard_text_body tests.zn_agent.core.test_browser_work_lifecycle tests.zn_agent.core.test_foreground_window_health tests.zn_agent.core.test_visual_capture_health tests.zn_agent.core.test_cognitive_resource_health -v
+          & $python -m unittest tests.zn_agent.core.test_native_body tests.zn_agent.core.test_pointer_body tests.zn_agent.core.test_keyboard_text_body tests.zn_agent.core.test_browser_work_navigation tests.zn_agent.core.test_foreground_window_health tests.zn_agent.core.test_visual_capture_health tests.zn_agent.core.test_cognitive_resource_health -v
