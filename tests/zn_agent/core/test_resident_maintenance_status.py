@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -22,6 +23,7 @@ class ResidentMaintenanceStatusTests(unittest.TestCase):
                 initial = resident.status()
                 self.assertTrue(initial["resident_health"]["healthy"])
                 self.assertEqual(initial["maintenance_tasks"]["task_count"], 0)
+                self.assertTrue(initial["maintenance_investigations"]["available"])
                 self.assertEqual(
                     initial["maintenance_investigations"]["investigation_count"],
                     0,
@@ -39,6 +41,7 @@ class ResidentMaintenanceStatusTests(unittest.TestCase):
                 self.assertEqual(projected["maintenance_tasks"]["open_count"], 1)
                 self.assertEqual(projected["maintenance_tasks"]["tasks"][0]["organ"], "channel:test")
                 investigations = projected["maintenance_investigations"]
+                self.assertTrue(investigations["available"])
                 self.assertEqual(investigations["active_count"], 1)
                 self.assertEqual(investigations["investigation_count"], 1)
                 investigation = investigations["investigations"][0]
@@ -59,6 +62,7 @@ class ResidentMaintenanceStatusTests(unittest.TestCase):
                     durable["maintenance_tasks"]["tasks"][0]["organ"],
                     "channel:test",
                 )
+                self.assertTrue(durable["maintenance_investigations"]["available"])
                 self.assertEqual(
                     durable["maintenance_investigations"]["active_count"],
                     1,
@@ -76,6 +80,7 @@ class ResidentMaintenanceStatusTests(unittest.TestCase):
                     "organ_recovered",
                 )
                 closed_investigation = recovered["maintenance_investigations"]
+                self.assertTrue(closed_investigation["available"])
                 self.assertEqual(closed_investigation["active_count"], 0)
                 self.assertEqual(
                     closed_investigation["investigations"][0]["status"],
@@ -110,12 +115,51 @@ class ResidentMaintenanceStatusTests(unittest.TestCase):
                 task = status["maintenance_tasks"]["tasks"][0]
                 self.assertEqual(task["organ"], "channel:test")
                 self.assertEqual(task["failure_class"], "probable_zn_defect")
+                self.assertTrue(status["maintenance_investigations"]["available"])
                 self.assertEqual(status["maintenance_investigations"]["active_count"], 1)
                 investigation = status["maintenance_investigations"]["investigations"][0]
                 self.assertEqual(investigation["task_id"], task["task_id"])
                 self.assertEqual(investigation["authority"], "evidence_only")
                 self.assertEqual(investigation["status"], "pending")
                 self.assertNotIn("missing internal implementation", repr(status))
+            finally:
+                resident.managed_browser.close()
+                resident.store.close()
+
+    def test_damaged_investigation_projection_does_not_break_resident_health_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            database = Path(tmp) / "kernel.db"
+            resident = build_resident_runtime(config={"model": {}}, store_path=database)
+            try:
+                for _ in range(3):
+                    resident.health.record_failure(
+                        "channel:test",
+                        AssertionError("status projection invariant"),
+                    )
+                before = resident.status()
+                self.assertTrue(before["maintenance_investigations"]["available"])
+                self.assertEqual(before["maintenance_tasks"]["open_count"], 1)
+
+                with sqlite3.connect(database) as conn:
+                    conn.execute("DROP TABLE resident_maintenance_attempts")
+                    conn.execute("DROP TABLE resident_maintenance_investigations")
+                    conn.commit()
+
+                degraded = resident.status()
+                self.assertFalse(degraded["resident_health"]["healthy"])
+                self.assertEqual(degraded["maintenance_tasks"]["open_count"], 1)
+                self.assertFalse(degraded["maintenance_investigations"]["available"])
+                self.assertEqual(degraded["maintenance_investigations"]["investigations"], [])
+
+                resident.health.record_success("channel:test")
+                recovered = resident.status()
+                self.assertTrue(recovered["resident_health"]["healthy"])
+                self.assertEqual(recovered["maintenance_tasks"]["open_count"], 0)
+                self.assertEqual(
+                    recovered["maintenance_tasks"]["tasks"][0]["close_reason"],
+                    "organ_recovered",
+                )
+                self.assertFalse(recovered["maintenance_investigations"]["available"])
             finally:
                 resident.managed_browser.close()
                 resident.store.close()
