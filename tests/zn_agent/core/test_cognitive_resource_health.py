@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from zn_agent.core.cognitive_factory import ZNCognitiveResourceWorkerFactory
 from zn_agent.core.cognitive_resource import (
     CognitiveIncrement,
     CognitiveResourceWorkerFactory,
@@ -130,6 +131,69 @@ class CognitiveResourceHealthTests(unittest.TestCase):
                 resident.health.record_success = original_success
             self.assertTrue(succeeded.success)
             self.assertEqual(succeeded.response, "recovered")
+            resident.store.close()
+
+    def test_zn_resource_construction_failure_enters_health_before_kernel_flattens_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            route = ModelRoute(
+                route_id="private-construction-route",
+                provider="custom",
+                model="private-construction-model",
+                capabilities={"general": 0.8},
+            )
+            kernel = ZNKernelRuntime(
+                store=KernelStore(Path(tmp) / "kernel.db"),
+                routes=[route],
+                worker_factory=ZNCognitiveResourceWorkerFactory(),
+                max_attempts=1,
+            )
+            resident = HealthAwareResidentRuntime(kernel=kernel)
+
+            result = resident.kernel.run_goal("bounded cognition")
+
+            self.assertFalse(result.worker_result.success)
+            self.assertTrue(result.worker_result.metrics.get("worker_factory_failed"))
+            self.assertFalse(result.worker_result.metrics.get("model_invoked"))
+            health = resident.health.snapshot()["organs"][0]
+            self.assertTrue(health["organ"].startswith("cognition:custom:"))
+            self.assertEqual(health["total_failures"], 1)
+            self.assertEqual(health["last_exception_type"], "ValueError")
+            self.assertEqual(
+                health["last_failure_class"], "configuration_or_environment"
+            )
+            self.assertFalse(health["maintenance_candidate"])
+            status_text = repr(resident.status())
+            self.assertNotIn("private-construction-route", status_text)
+            self.assertNotIn("private-construction-model", status_text)
+            resident.store.close()
+
+    def test_factory_health_failure_cannot_replace_kernel_factory_failure_semantics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            route = ModelRoute(
+                route_id="factory-health-isolation",
+                provider="custom",
+                model="private-model",
+                capabilities={"general": 0.8},
+            )
+            kernel = ZNKernelRuntime(
+                store=KernelStore(Path(tmp) / "kernel.db"),
+                routes=[route],
+                worker_factory=ZNCognitiveResourceWorkerFactory(),
+                max_attempts=1,
+            )
+            resident = HealthAwareResidentRuntime(kernel=kernel)
+            original_failure = resident.health.record_failure
+            resident.health.record_failure = lambda organ, error: (_ for _ in ()).throw(
+                RuntimeError("health unavailable")
+            )
+            try:
+                result = resident.kernel.run_goal("bounded cognition")
+            finally:
+                resident.health.record_failure = original_failure
+
+            self.assertFalse(result.worker_result.success)
+            self.assertIn("ValueError", result.worker_result.error or "")
+            self.assertTrue(result.worker_result.metrics.get("worker_factory_failed"))
             resident.store.close()
 
     def test_hot_provider_reconfiguration_rebinds_existing_resident_observer(self):
