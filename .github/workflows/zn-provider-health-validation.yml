@@ -1,0 +1,59 @@
+name: ZN Provider Health Validation
+
+on:
+  push:
+    branches:
+      - work/provider-resource-health
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI: 'true'
+  TZ: UTC
+  PYTHONUTF8: '1'
+  PYTHONUNBUFFERED: '1'
+  ZN_AGENT_HOME: ${{ github.workspace }}/.ci/zn-home-provider-health
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+jobs:
+  validate:
+    name: Cognitive provider health lifecycle
+    runs-on: [self-hosted, Windows, X64, zn-ci]
+    timeout-minutes: 10
+    env:
+      UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare isolated runtime
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:ZN_AGENT_HOME | Out-Null
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/provider-health-venv -ErrorAction SilentlyContinue
+          uv venv .ci/provider-health-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\provider-health-venv\Scripts\python.exe'
+          uv pip install --python $python runtime/python
+      - name: Compile changed provider modules
+        run: |
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\provider-health-venv\Scripts\python.exe'
+          & $python -m py_compile runtime/python/zn_agent/core/cognitive_resource.py runtime/python/zn_agent/core/cognitive_factory.py runtime/python/zn_agent/core/health_aware_resident.py runtime/python/zn_agent/core/provider_bridge.py
+      - name: Run provider health regression tests
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\provider-health-venv\Scripts\python.exe'
+          & $python -m unittest tests.zn_agent.core.test_cognitive_resource_health -v
+      - name: Run adjacent cognition and resident health tests
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\provider-health-venv\Scripts\python.exe'
+          & $python -m unittest tests.zn_agent.core.test_cognitive_resource tests.zn_agent.core.test_anthropic_resource tests.zn_agent.core.test_gemini_resource tests.zn_agent.core.test_foreground_window_health tests.zn_agent.core.test_visual_capture_health -v
