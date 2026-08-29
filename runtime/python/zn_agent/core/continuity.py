@@ -3,10 +3,11 @@ from __future__ import annotations
 """Sanitized resident-owned continuity evidence for installation transitions.
 
 The snapshot exports references, counts and non-secret configuration metadata.
-Complete Work content is protected by a constant-size digest rather than being
+Complete durable state is protected by constant-size digests rather than being
 exported into evidence. The result is designed to be persisted by release and
 install verification without leaking Work text, artifact content, lived
-thoughts, body state, causal episode payloads, or provider credentials.
+thoughts, body state, causal episode payloads, resident memory contents, or
+provider credentials.
 """
 
 import re
@@ -14,6 +15,7 @@ from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 from .continuity_reference_proof import (
+    resident_state_proof,
     verified_experience_reference_proof,
     work_state_proof,
 )
@@ -37,6 +39,7 @@ class ContinuitySnapshotService:
             key=lambda item: item.thread_id,
         )
         work_proof = work_state_proof(self.work.path)
+        resident_proof = resident_state_proof(self.resident.store.path)
         provider = self._provider_snapshot(self.provider_settings.snapshot())
         verified_learning = self._verified_learning_snapshot()
         return {
@@ -57,6 +60,9 @@ class ContinuitySnapshotService:
                 "learning_candidate_ids": sorted(
                     str(value) for value in living.learning_candidates
                 ),
+            },
+            "resident_state": {
+                "full_state_proof": resident_proof,
             },
             "work": {
                 "reference_count": len(threads),
@@ -203,6 +209,12 @@ def compare_continuity_snapshots(
         after=after_living.get("learning_candidate_ids"),
     )
 
+    _require_optional_state_proof(
+        blockers,
+        category="resident_state",
+        before=_mapping(before.get("resident_state")),
+        after=_mapping(after.get("resident_state")),
+    )
     _require_reference_survival(
         blockers,
         category="work",
@@ -318,6 +330,36 @@ def _reference_proof(value: Any) -> tuple[int, str] | None:
     if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
         return None
     return count, digest
+
+
+def _require_optional_state_proof(
+    blockers: list[dict[str, Any]],
+    *,
+    category: str,
+    before: Mapping[str, Any],
+    after: Mapping[str, Any],
+) -> None:
+    before_raw = before.get("full_state_proof")
+    if before_raw is None:
+        return
+    before_proof = _reference_proof(before_raw)
+    after_proof = _reference_proof(after.get("full_state_proof"))
+    if before_proof is None or after_proof is None:
+        blockers.append(
+            {
+                "kind": f"{category}_continuity_unproven",
+                "reason": "full state proof is invalid or missing",
+            }
+        )
+        return
+    if before_proof != after_proof:
+        blockers.append(
+            {
+                "kind": f"{category}_full_state_proof_changed",
+                "before_count": before_proof[0],
+                "after_count": after_proof[0],
+            }
+        )
 
 
 def _require_reference_survival(
