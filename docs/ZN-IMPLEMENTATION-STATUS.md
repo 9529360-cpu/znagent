@@ -1,135 +1,112 @@
 # ZN Implementation Status
 
-This file is the implementation/evidence ledger for ZN. It is not a mandatory roadmap. Real code, Git state and actual test/build/CI results override this ledger when they disagree.
+This is ZN's current implementation/evidence ledger, not a roadmap or changelog. Real code, Git state and actual test/build/CI results override this file when they disagree. Historical detail remains available in Git history and merged PRs.
 
 ## Repository state
 
 - Repository: `9529360-cpu/znagent`
 - Primary development branch: `dev/zn-agent`
 - Canonical/release branch: `main`
-- Development head entering this reconciliation: `5c347925490179748e44e35c43b0435ede9e1f14` (PR #35 merge).
-- Canonical `main` is still at `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`; at that development head, `dev/zn-agent` was 103 commits ahead and 0 behind.
-- No force push or history rewrite is part of the current stage.
+- Latest verified product-code dev head before this documentation reconciliation: `2703aaae5dfacee32f5609c3130f0c607d63b5b2` (PR #64 merge).
+- Canonical `main` head before the pending SM1 promotion: `67751e8d69df41eae04a74f28829faaf6304a744` (PR #58 merge).
+- Dev ZN CI run `33256153287` is fully green on `2703aaae...` across Source Boundary, Electron/TypeScript, full Kernel/Python and status publication.
+- Canonical main ZN CI run `33236277979` is fully green on `67751e8d...`.
+- Hosted clean-install run `33256153330` ended with `steps=null`, meaning no executable job steps were allocated. Treat it as infrastructure unavailability, not product pass/fail evidence.
+- No force push, history rewrite, destructive migration, updater replacement, rollback, release signing or production credential mutation is part of this stage.
 
-## Capability ledger
+## Capability maturity ledger
 
-| Area | Current maturity | Evidence boundary |
+Use `exists -> connected -> verified -> product-closed` rather than treating file/interface presence as proof of a real product capability.
+
+| Area | Current maturity | Evidence boundary / remaining gap |
 | --- | --- | --- |
-| Resident Self / Body / Senses / Situation / Thought / Will | implemented, wired, continuously tested | ZN-owned Python resident; zero-model boot remains required |
-| Durable Work / restart recovery | implemented and regression-verified in bounded product slices | exact PR #35 Work Recovery lane is green after the browser MRO repair |
-| Work restore inspection | wired and verified | resident + desktop can inspect restore state without mutation |
-| Missing-target Work restore application | wired and verified, narrow authority | Windows-only explicit prepare -> approve, exact retained bytes, missing target only, no replacement, durable restart reconciliation |
-| Managed Chromium runtime | wired and verified | formal versioned Windows runtime packages Playwright/Chromium and launch-smokes the packaged browser |
-| Resident managed-browser RPC | wired and verified | observation by default; explicit bounded navigation; resident-owned browser thread survives reconnecting TCP clients |
-| Structured Work browser navigation | wired and real-E2E verified | structured `browser_navigate` -> durable side-effect attempt -> real Chromium -> independent URL observation -> session cleanup -> Work completion |
-| Browser mutation beyond navigation | not granted | click/type/select/upload/download are intentionally absent from Work authority |
-| Windows x64 unsigned release-candidate build | canonical narrow proof | clean hosted Windows build, packaged runtime boot, unsigned NSIS/MSI and independent manifest/hash verification |
-| Windows x64 clean install + first resident start | canonical narrow proof | real NSIS install in isolated state, installed `ZN.exe`, materialized runtime, resident RPC/life and graceful shutdown |
-| Installed-N continuity baseline | implementation in progress, not yet product-verified | PR #37 adds a resident-owned sanitized baseline and real clean-install evidence path; exact-head installed proof is still required |
-| Installed N -> N+1 continuity | approval-gated / incomplete | no formal updater/replacement transition has been executed |
-| Rollback / signing / release trust | approval-gated / incomplete | not exercised by the current stage |
-| Formal release/stable-channel publication | incomplete | no current-stage tag, GitHub Release, stable-channel advance or user-machine replacement |
-| Self-maintenance | SM0 complete; later phases incomplete | see `docs/ZN-SELF-MAINTENANCE.md` |
+| Resident Self / Body / Senses / Situation / Thought / Will | connected + repeatedly verified | ZN-owned resident; zero-model boot remains a required invariant |
+| Durable Work / restart recovery | connected + verified | mature Work/recovery path retained through later browser and continuity changes |
+| Bounded missing-target Work restore | connected + verified | explicit prepare -> approve; exact retained bytes; no overwrite/replacement authority |
+| Managed Chromium + structured navigation | product-path verified for bounded navigation | real local Chromium, durable side-effect attempt, independent URL observation and cleanup |
+| Installed resident desktop-independence/autostart | verified | real `ZN Resident` Scheduled Task restores the same resident home/continuity after desktop termination |
+| Durable resident reference continuity | verified | resident state, Work/thread references, long-term memory and verified learning survive restart/installed continuity proof |
+| Atomic-overwrite recovery continuity | verified + bounded | discharge witnesses capped at 4096 entries |
+| Resident channel health observation | connected + verified | real channel success/failure path persists privacy-safe per-organ health across restart |
+| Health failure classification | connected + verified, fail-closed | only narrow internal-invariant failures can become `probable_zn_defect`; ambiguous/external failures remain non-candidates |
+| Maintenance-task formation | connected + verified | one bounded durable task per organ with repeat threshold, dedup/reopen and recovery/evidence-change closure |
+| Maintenance-task failure isolation/reconciliation | connected + verified | health truth commits independently; derived task projection reconstructs from health after task-table faults |
+| Resident/RPC maintenance status | connected + verified | formal resident `status()` and existing RPC expose bounded health/task evidence read-only |
+| Channel startup/shutdown lifecycle health | connected + verified | all checkpoints restore before any worker starts; restore failures and stuck shutdown workers produce durable fail-closed health |
+| Maintenance-task-driven investigation/repair | not yet connected | no task-owned provenance/attempt/regression/patch/acceptance lifecycle yet |
+| Visual/provider/body unified health | incomplete | channel is the only organ currently wired into the unified journal |
+| Installed N -> N+1 update continuity | approval-gated / incomplete | no formal updater/replacement transition executed in this stage |
+| Rollback / signing / release trust | approval-gated / incomplete | high-risk release/update authority remains outside autonomous SM1 work |
 
-Use `exists -> wired -> verified -> product-closed` rather than treating the presence of code as proof that the user scenario is complete.
+## SM1 self-maintenance reality
 
-## Bounded Work restore application
+The old statement `SM0 complete; SM1+ not implemented` is obsolete. The connected channel slice now implements and verifies:
 
-The previous statement that P5 restore was only read-only is obsolete.
+```text
+real channel failure/success
+-> durable privacy-safe health evidence
+-> conservative failure class
+-> same-fingerprint repeat evidence across restart
+-> fail-closed maintenance candidate
+-> one durable per-organ maintenance task
+-> recovery/evidence-change closure
+-> reconstruction if derived task projection fails
+-> read-only formal resident/RPC status
+```
 
-PR #19 introduced the first mutation-capable recovery slice without granting general destructive restore authority:
+The channel lifecycle boundary is also closed for the currently known escape paths:
 
-- the target must be freshly and stably missing;
-- exact retained Work bytes are the only restore content;
-- the existing non-reparse parent directory is identity-bound during preparation and revalidated before commit;
-- bytes are staged in the same directory and committed using a Windows no-replace move, so a target that reappears is never overwritten;
-- application progress is durable across `approval_required`, `applying`, `stage_ready`, `commit_started`, `completed`, `recovery_required` and `blocked` states;
-- restart recovery observes actual namespace/content reality and never automatically resumes an uncertain mutation;
-- preparing and approving are separate explicit authority steps.
+```text
+start
+-> restore every adapter checkpoint
+-> if any restore fails: start zero workers + persist health + re-raise
+-> only after all restores succeed: launch workers
 
-PR #21 keeps full restore application context behind exact Work-thread ownership. PR #22 wires the flow into the desktop with separate Prepare and Approve controls while unsafe/changed/unchanged targets remain inspection-only. PR #23 proves prepared approval continuity across resident restart without converting it into automatic mutation authority. PRs #25 and #26 close desktop protocol/proposal-contract regressions.
+stop
+-> close adapters + bounded join
+-> worker still alive: retain ownership + persist fail-closed TimeoutError health
+```
 
-This means the bounded missing-target/no-replace scenario has advanced through existence, wiring and product-path verification. It does **not** authorize overwriting a changed/current target, directory replacement, model-driven automatic restore, or destructive identity/memory recovery.
+Important invariants:
 
-## Managed browser product path
+- raw exception messages are not persisted in health or maintenance-task tables;
+- network/service/environment/configuration failures do not create source-maintenance candidates;
+- ambiguous programming/data-contract exceptions remain fail-closed rather than assumed to be ZN defects;
+- maintenance-task projection is derived from health truth and cannot roll back health failure/recovery;
+- task presence grants no source-write, merge, updater, replacement, rollback, signing or release authority;
+- one per-organ task bounds task cardinality and avoids repeated-failure task spam.
 
-The browser path is no longer test-only or an uncalled module.
+SM1 is **partial**, not complete. Observation, classification, task formation/reconciliation, read-only consumption and known channel lifecycle failure observation are connected and verified. Autonomous investigation/source repair and other resident organs are not yet connected.
 
-PR #28 stages Playwright and Chromium inside the formal versioned Windows runtime, records the runtime-owned browser path, binds `PLAYWRIGHT_BROWSERS_PATH`, isolates N/N+1 runtime browser roots and launch-smokes packaged Chromium before installation.
+## Current exact evidence
 
-PR #29 makes the formal resident browser-aware and exposes a deliberately bounded RPC path. Default permission remains observation-only; navigation requires explicit permission and fresh observed authority.
+- `33235093606` — earlier bounded atomic-continuity dev ZN CI success.
+- `33235093581` — managed Chromium E2E success including real local Chromium.
+- `33235058715` — bounded atomic recovery continuity validation success.
+- `33235652365` — initial resident channel-health observation validation success.
+- `33236277979` — canonical main ZN CI success on `67751e8d...` after PR #58.
+- `33236443127` — conservative health-classification validation success.
+- `33236842735` — maintenance-task formation validation success.
+- `33237072446` — formal resident/RPC maintenance-status validation success.
+- `33237199676` — maintenance-task failure-isolation/reconciliation validation success.
+- `33237362908` — intermediate combined dev ZN CI success on `05f9086b...`.
+- `33237642294` — channel lifecycle health validation success.
+- `33256153287` — final product-code dev ZN CI success on `2703aaae...`.
 
-A real Windows reconnect E2E then exposed Playwright sync API thread affinity. PR #30 moved all provider access onto one resident-owned browser thread so session lifecycle does not depend on TCP handler thread identity. PR #31 made final browser cleanup atomic against late/reconnecting calls.
+Hosted Windows release-candidate/clean-install jobs that terminate with `steps=null` are infrastructure-unavailable evidence only. Earlier successful installed-product evidence remains valid for the bounded scenarios it exercised but is not fresh proof for the current SM1 head.
 
-PR #32 wires structured `browser_navigate` into the actual Work lifecycle:
+## Current product gaps
 
-1. a structured Body action provides the target URL;
-2. ZN derives only the minimal browser permission context required for that origin (plus optional explicit private-network allowance);
-3. navigation is classified as a non-replayable outside-world side effect and enters the existing durable attempt/recovery boundary before dispatch;
-4. provider dispatch produces effect evidence but does not complete the Work;
-5. ZN persists a `browser_url_equals` verification contract tied to the real session/page;
-6. a later resident pulse independently observes the live page, compares the URL, closes the session, and only then finalizes success/learning;
-7. uncertainty/restart blocks blind replay and enters the existing explicit recovery-decision path.
+1. **Other resident organs are outside unified health.** Vision/provider/body need integration at their actual failure/success boundaries. For vision, do not poll persisted `last_error` repeatedly and double-count stale failures.
+2. **Maintenance tasks are inspectable evidence, not yet an autonomous repair engine.** A bounded investigation/attempt/regression/patch/acceptance lifecycle is still missing.
+3. **Fresh hosted installed-product evidence is unavailable.** Recent hosted Windows jobs fail before step 1.
+4. **Installed N -> N+1 continuity remains unproven and approval-gated.** Updater/replacement, failed-update recovery, rollback, signing/trust and replacement of the user's current formal installation require explicit human approval.
 
-The formal resident constructor is the active caller. The real Windows E2E drives `work_start/work_progress` over resident TCP, lets the resident life loop execute the structured Work against real local Chromium, requires independent URL observation/cleanup, and observes finalized Work.
+## Next evidence-driven direction
 
-PR #33 corrected the browser Body composition so the final runtime inherits the mature atomic-overwrite, namespace-recovery, keyboard/pointer and generic side-effect protocols rather than replacing them with an earlier Body layer.
+After this factual documentation reconciliation and canonical promotion are clean:
 
-PR #34 added browser Work modules/tests to the dedicated Work Recovery lane. That lane exposed a second composition bug: browser verification hard-called a base class as a static function, dropping `self` from the effective procedural verification method and causing 19 mature non-browser recovery errors. PR #35 changed browser verification to instance delegation via `super()`, preserving the full MRO below the browser specialization.
-
-### Browser and recovery evidence
-
-- Windows clean-install run `33216509252`: success on the packaged-browser implementation head; packaged Chromium launch and installed resident start both succeeded.
-- `ZN Managed Browser E2E` run `33219726246`: success on implementation head `1f4da5fae6d6481375290637027fa273714bb032`, including real Chromium structured Work navigation.
-- `ZN Managed Browser E2E` run `33220567118`: success on exact PR #35 merge head `5c347925490179748e44e35c43b0435ede9e1f14`; managed-browser contract tests and real local Chromium E2E succeeded after the MRO fix.
-- `ZN Work Recovery E2E` run `33220567184`: success on the exact PR #35 merge head; the full recovery lane passed after the MRO fix, resolving the 19 mature non-browser recovery errors exposed by PR #34.
-- `ZN CI` run `33220567183`: success on the exact PR #35 merge head across Electron/TypeScript, Kernel/Python, Source Boundary and final status publication. The Python job completed zero-model boot, resident-core compilation and the full working-tree core suite successfully.
-
-Together these runs close the browser/recovery regression gate for the PR #35 product head.
-
-## Windows candidate and clean-install proof
-
-The canonical clean-install proof remains the narrow Windows x64 unsigned evidence promoted through PR #13 to `main` at `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`.
-
-Historical exact-head evidence remains valid for that bounded capability:
-
-- `ZN CI` run `33193710879`: success; Python kernel suite reported 686 tests, 5 skipped at that earlier head; Electron/TypeScript and Source Boundary also succeeded.
-- `ZN Windows Release Candidate` run `33193711016`: success.
-- `ZN Windows Clean Install` run `33193710872`: success.
-- canonical post-merge `ZN CI` run `33196441295`: success on `main`.
-
-The clean-install lane follows the real ownership chain:
-
-`installed ZN.exe -> Electron main -> packaged runtime materialization -> resident process -> Python resident TCP service`.
-
-The current verifier requires the installed executable/app.asar/bundled runtime, exact materialized runtime id, resident Python under that runtime, real `ping`, `status`, `self`, life pulse, graceful resident shutdown and endpoint retirement.
-
-PR #37 extends that proof with a resident-owned `continuity_snapshot` whose schema explicitly allowlists stable identity/living-self references, bounded Work thread references and sanitized provider metadata. The verifier independently rejects unexpected fields before persisting the evidence artifact. Until the exact PR #37 Windows clean-install run succeeds, this is an implemented/wired capability rather than a verified installed product path.
-
-It remains a clean-install/start/baseline proof, not proof of update continuity, rollback, signing, publication or user-machine replacement.
-
-## Open product gaps
-
-Known gaps that still matter after the restore/browser work include:
-
-- complete and verify the installed-N continuity baseline on a real installed resident;
-- real installed N -> N+1 application transition and continuity across it;
-- failed-update recovery and formal rollback;
-- actual Windows login/reboot autostart behavior on persistent installed state;
-- Windows code signing, trust-chain verification and release-signing policy;
-- production tag/release/stable-channel publication;
-- replacing a user's current formal installation;
-- richer browser actions, but only after authority/replay/postcondition semantics are designed strongly enough for non-replayable page mutation;
-- any higher-priority identity, memory, reliability, security, active-caller or product-path defect found in real code.
-
-Updater/replacement, formal rollback, signing/release trust and replacement of a user's formal installation remain explicit human-approval boundaries.
-
-## Current safe continuity stage
-
-The installed-N baseline is now the active safe continuity slice because “new version starts” is not enough for a resident subject; later transition work needs a pre-transition truth set capable of detecting continuity loss.
-
-The current PR #37 design keeps that baseline read-only and non-secret. The resident owns the allowlist rather than exposing raw Work/config state; the Windows verifier also fail-closes on unexpected fields before writing evidence. The baseline binds stable Self/living-state references, bounded Work thread identity/timestamps and sanitized provider/model/credential-source metadata. Exact installed/runtime identity remains separately bound by the existing endpoint/runtime-manifest clean-install evidence.
-
-It does not invoke the updater, replace installed N, mutate identity or long-term memory, alter credentials/permissions, execute rollback, change release trust, publish a release, or advance a stable channel.
-
-A later N -> N+1 experiment remains separately approval-gated and must not be inferred from completion of the baseline.
+- connect another real resident organ, preferably vision, at its true capture failure/success boundary;
+- define a bounded maintenance-task investigation contract with provenance, deduped attempts, regression oracle, isolated source branch and acceptance state;
+- only after that boundary is verified consider allowing a high-confidence task to initiate ordinary source-maintenance work;
+- updater/replacement/release mutation remains separately approval-gated regardless of SM1 source-development maturity.

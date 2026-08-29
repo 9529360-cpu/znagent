@@ -235,8 +235,8 @@ def build_resident_runtime(
     credential_store: CredentialStore | None = None,
 ):
     """Build the resident organism around the ZN-owned kernel."""
-    from .browser_work_resident import BrowserWorkResidentRuntime
     from .budget import CognitiveBudgetManager
+    from .health_aware_resident import HealthAwareResidentRuntime
 
     effective_config = config if config is not None else load_zn_config()
     kernel = build_runtime(
@@ -254,7 +254,7 @@ def build_resident_runtime(
             0.0, min(1.0, float(resident_cfg.get("high_risk_threshold", 0.8)))
         ),
     )
-    return BrowserWorkResidentRuntime(kernel=kernel, budget=budget)
+    return HealthAwareResidentRuntime(kernel=kernel, budget=budget)
 
 
 build_runtime_from_existing_stack = build_runtime
