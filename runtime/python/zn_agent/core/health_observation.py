@@ -19,15 +19,9 @@ from .models import utc_now
 _DOMAIN = b"zn-resident-health-v1\x00"
 _MAX_ORGAN_LENGTH = 128
 _MAINTENANCE_REPEAT_THRESHOLD = 3
-_PROBABLE_ZN_DEFECT_TYPES = frozenset(
-    {
-        "AssertionError",
-        "AttributeError",
-        "IndexError",
-        "KeyError",
-        "NotImplementedError",
-        "TypeError",
-    }
+_PROBABLE_ZN_DEFECT_TYPES = frozenset({"AssertionError", "NotImplementedError"})
+_PROGRAMMING_OR_DATA_CONTRACT_TYPES = frozenset(
+    {"AttributeError", "IndexError", "KeyError", "TypeError"}
 )
 
 
@@ -158,6 +152,8 @@ class ResidentHealthJournal:
         exception_type = type(error).__name__
         if exception_type in _PROBABLE_ZN_DEFECT_TYPES:
             return "probable_zn_defect"
+        if exception_type in _PROGRAMMING_OR_DATA_CONTRACT_TYPES:
+            return "programming_or_data_contract"
         if isinstance(error, (TimeoutError, ConnectionError)):
             return "network_or_service"
         if isinstance(error, PermissionError):
