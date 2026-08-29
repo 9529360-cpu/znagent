@@ -4,8 +4,8 @@ from __future__ import annotations
 
 This layer does not broaden ordinary body or Work authority. It composes the
 existing health-aware resident with maintenance-specific cognitive authoring,
-semantic review, bounded rejected-attempt cleanup, and local-only publication
-preparation for accepted repairs.
+semantic review, bounded rejected-attempt cleanup, pending-review recovery, and
+local-only publication preparation for accepted repairs.
 """
 
 import sqlite3
@@ -16,6 +16,7 @@ from .health_aware_resident import HealthAwareResidentRuntime
 from .maintenance_attempt_lifecycle import MaintenanceRepairAttemptLifecycle
 from .maintenance_cognition_journal import DurableMaintenanceCognitiveRepairOrchestrator
 from .maintenance_publication import MaintenancePublicationPreparation
+from .maintenance_review_recovery import MaintenancePendingReviewRecovery
 
 
 class CognitiveMaintenanceResidentRuntime(HealthAwareResidentRuntime):
@@ -120,6 +121,67 @@ class CognitiveMaintenanceResidentRuntime(HealthAwareResidentRuntime):
             attempt_root=attempt_root,
             branch_ref=branch_ref,
         )
+        return self._finalize_review_result(task_id, source_root=source_root, result=result)
+
+    def resume_pending_maintenance_review(
+        self,
+        task_id: str,
+        *,
+        source_root: str | Path,
+    ) -> dict[str, Any]:
+        """Resume a repair that previously lacked an independent reviewer.
+
+        Recovery is allowed only when durable evidence proves that semantic review
+        never dispatched. The isolated candidate is reconstructed from its exact
+        worktree and verified fingerprints; ambiguous/completed model calls are not
+        replayed through this path.
+        """
+
+        recovery = MaintenancePendingReviewRecovery(
+            self.store,
+            self._maintenance_ledger(),
+            self._maintenance_cognitive_orchestrator(),
+        )
+        result = recovery.review(task_id, source_root=source_root)
+        return self._finalize_review_result(task_id, source_root=source_root, result=result)
+
+    def cleanup_rejected_maintenance_repair(
+        self,
+        task_id: str,
+        *,
+        source_root: str | Path,
+    ) -> dict[str, Any]:
+        """Retry bounded cleanup for a durable rejected repair attempt."""
+
+        return self._maintenance_attempt_lifecycle_owner().cleanup_rejected(
+            task_id,
+            source_root=source_root,
+        )
+
+    def prepare_accepted_maintenance_publication(
+        self,
+        task_id: str,
+        *,
+        source_root: str | Path,
+    ) -> dict[str, Any]:
+        """Create/recover the local-only commit for one accepted repair.
+
+        This method performs no push, pull-request creation, merge, release,
+        updater/replacement, rollback, or repository credential access.
+        """
+
+        return self._maintenance_publication_preparation_owner().prepare(
+            task_id,
+            source_root=source_root,
+        )
+
+    def _finalize_review_result(
+        self,
+        task_id: str,
+        *,
+        source_root: str | Path,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
         review = result.get("semantic_review") or {}
         decision = str(review.get("decision") or "")
         if decision == "reject":
@@ -154,36 +216,6 @@ class CognitiveMaintenanceResidentRuntime(HealthAwareResidentRuntime):
             else:
                 result["publication_preparation"] = {"completed": True, **prepared}
         return result
-
-    def cleanup_rejected_maintenance_repair(
-        self,
-        task_id: str,
-        *,
-        source_root: str | Path,
-    ) -> dict[str, Any]:
-        """Retry bounded cleanup for a durable rejected repair attempt."""
-
-        return self._maintenance_attempt_lifecycle_owner().cleanup_rejected(
-            task_id,
-            source_root=source_root,
-        )
-
-    def prepare_accepted_maintenance_publication(
-        self,
-        task_id: str,
-        *,
-        source_root: str | Path,
-    ) -> dict[str, Any]:
-        """Create/recover the local-only commit for one accepted repair.
-
-        This method performs no push, pull-request creation, merge, release,
-        updater/replacement, rollback, or repository credential access.
-        """
-
-        return self._maintenance_publication_preparation_owner().prepare(
-            task_id,
-            source_root=source_root,
-        )
 
     def _project_cognitive_status(
         self,
