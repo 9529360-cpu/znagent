@@ -5,6 +5,7 @@ on:
     branches:
       - dev/zn-agent
       - main
+      - work/continuity-scalable-proof-validation-v2
   workflow_dispatch:
 
 permissions:
@@ -50,9 +51,8 @@ jobs:
       - name: Require Windows x64 headless CI runner
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
-            throw "ZN steady-state CI requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+            throw "ZN steady-state CI requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
           }
-          Write-Host "ZN CI runner: $env:RUNNER_NAME"
       - name: Checkout
         uses: actions/checkout@v7
       - name: Set up uv
@@ -91,9 +91,8 @@ jobs:
       - name: Require Windows x64 headless CI runner
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
-            throw "ZN steady-state CI requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+            throw "ZN steady-state CI requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
           }
-          Write-Host "ZN CI runner: $env:RUNNER_NAME"
       - name: Checkout
         uses: actions/checkout@v7
       - name: Set up uv
@@ -157,9 +156,8 @@ jobs:
       - name: Require Windows x64 headless CI runner
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
-            throw "ZN steady-state CI requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+            throw "ZN steady-state CI requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
           }
-          Write-Host "ZN CI runner: $env:RUNNER_NAME"
       - name: Checkout
         uses: actions/checkout@v7
       - name: Set up Node
