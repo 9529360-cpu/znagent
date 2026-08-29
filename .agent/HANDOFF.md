@@ -4,87 +4,76 @@ This is the current engineering work site and fact index, not a chat transcript 
 
 ## Current objective
 
-Advance resident self-maintenance from the now-verified trusted read-only source investigation into the smallest safe isolated `work/*` repair attempt. Do not couple this to updater/replacement, rollback, signing or release trust.
+Continue from the verified bounded SM3 isolated-repair candidate into the next missing product layer: derive a candidate from a real high-confidence maintenance incident, then semantically review/accept or reject it. Do not jump directly from a passing oracle to automatic push/merge/update.
 
-Current evidence/control path:
+Current verified path:
 
-`real organ failure/success -> durable health -> conservative classification -> bounded maintenance task -> evidence-only investigation lifecycle -> explicit trusted ZN source root -> fixed read-only Git observation -> baseline commit + regression-oracle evidence -> resident status`
-
-This is not yet a repair loop. No maintenance task can autonomously create/mutate an isolated checkout, run a patch, merge code or replace the installed body.
+`real organ failure -> durable health -> probable_zn_defect task -> investigation -> trusted ZN source evidence -> exact clean baseline -> fresh dedicated work/* worktree -> bounded declared core Python/test replacements -> fixed unittest oracle + diff check -> privacy-safe attempt evidence -> record_attempt() -> unreviewed repair candidate`
 
 ## Repository state
 
 - Repository: `9529360-cpu/znagent`
 - Canonical/release branch: `main`
 - Primary development branch: `dev/zn-agent`
-- `main`: `221da814bbab14492e82cf5d4c5e01a65250c4d6` from PR #74 promotion.
-- Product-code `dev/zn-agent`: `4cd5469edb34cb60622964e5ffa34c3804375252` from PR #75.
-- PR #75: `Connect maintenance tasks to read-only ZN source investigation`.
-- Targeted Windows self-hosted validation run `33271612132`: **success**.
-- Full dev ZN CI run `33271661045` on `4cd5469e...`: **fully green** — ZN Kernel/Python, Electron/TypeScript and ZN Source Boundary all succeeded.
-- Canonical main CI for PR #74 is run `33271494803`; keep canonical and dev evidence distinct.
-- Hosted Windows clean-install/release-candidate jobs may still terminate before executable steps are allocated; `steps=null`/pre-step termination is infrastructure unavailability, not product pass/fail evidence.
+- Canonical `main` before next promotion: `587fd3186107135d08c9a224d98fa9389cda9bca` (PR #77).
+- Product-code `dev/zn-agent`: `d74b44aded2f04db39fc48acb10feba195cd4731` (PR #78).
+- PR #78: `Connect resident self-maintenance to isolated repair attempts`.
+- Targeted SM3 validation `33273272755`: **success**.
+- Full dev ZN CI `33273363874`: **fully green** — Kernel/Python full core suite, Electron/TypeScript, Source Boundary and readable status publication all succeeded.
+- Previous canonical main ZN CI `33272468328` on `587fd318...`: **fully green**.
+- Hosted clean-install/release-candidate pre-step failures remain runner/infrastructure evidence only, not product pass/fail evidence.
 
 ## Product reality
 
-### Continuity / resident lifecycle
+### Protected continuity
 
-Previously verified continuity remains protected: installed resident desktop independence/autostart, durable Self/Work/thread/memory/learning continuity, bounded atomic-overwrite recovery and zero-model resident boot. Protect identity, lived memory, Will/intention, runtime/home/config/provider references and restart/install continuity while extending self-maintenance.
+Keep existing verified Self/identity, lived memory, Work/thread references, learning, resident lifecycle/autostart, zero-model boot and restart continuity intact. Source-maintenance maturity never grants updater/replacement authority.
 
-### Health / task / investigation
+### SM2 read-only source investigation
 
-Connected health slices include channel/lifecycle, foreground-window Sense, visual capture, provider invocation/resource construction and Native Body dispatch. Health truth is authoritative over derived maintenance-task and investigation projections.
+Formal resident can bind an open maintenance task to an explicit exact ZN repository root, verify ownership/origin, observe HEAD/branch/dirty/bounded changed paths with fixed Git argv, bind an existing `tests/zn_agent/core/...` oracle and persist privacy-safe source evidence. Ordinary Work context, terminal and file-write capability are not used as source authority.
 
-`MaintenanceInvestigationLedger` remains `authority = evidence_only`. Baseline/oracle/attempt/acceptance state never grants file write, branch, merge, release or updater authority.
+### SM3 isolated repair candidate
 
-### Trusted maintenance source investigation
+`MaintenanceIsolatedRepairOperator` is now connected through `HealthAwareResidentRuntime.run_maintenance_repair_attempt()`.
 
-PR #75 adds the first resident-owned source-reading path:
+Before any write it requires and re-verifies:
 
-- explicit `source_root`; ordinary Work workspace is not consumed as authority;
-- source must resolve exactly to the Git top-level root;
-- ZN ownership markers are required: `ZN.md`, `AGENTS.md`, `runtime/python/zn_agent/core`, `tests/zn_agent/core`;
-- `origin` must identify `9529360-cpu/znagent`;
-- observation uses fixed `git -C <root> ...` argv only, never shell/general terminal execution;
-- evidence observes HEAD, branch, dirty state and a bounded changed-path set;
-- regression oracle is restricted to an existing `test:tests/zn_agent/core/...` path;
-- durable source evidence persists privacy-safe repository/fingerprint/head/branch/dirty/count/oracle data, not the local absolute source path or changed-path list;
-- formal `HealthAwareResidentRuntime.investigate_maintenance_source()` binds an open maintenance task to this observation and begins the evidence-only investigation at `commit:<HEAD>`;
-- resident `status()` exposes the bounded persisted source-evidence projection read-only.
+- open `probable_zn_defect` task in `investigating` state;
+- evidence-only investigation + trusted read-only source evidence;
+- exact ZN repo root/origin/root fingerprint;
+- live HEAD equal to the observed baseline;
+- source still clean;
+- unchanged regression-oracle contract;
+- fresh safe `work/*` branch;
+- fresh attempt path under sibling `.zn-maintenance-worktrees`.
 
-Targeted run `33271612132` proves exact-root/origin admission, dirty-state evidence, foreign repo/subdirectory/non-test-oracle rejection, closed-task rejection, fixed Git subprocess shape, formal resident integration and status privacy. Full dev run `33271661045` proves the change survives the whole current ZN Kernel/Desktop/Source-Boundary suite.
+Mutation is limited to caller-declared existing regular `.py` files under `runtime/python/zn_agent/core` or `tests/zn_agent/core`. The source working tree remains unchanged. The operator rejects undeclared changed paths, runs `git diff --check`, executes the fixed unittest oracle in the isolated worktree, persists only bounded hashes/results and then records the attempt. Passing evidence leaves the attempt `unreviewed`.
 
-Capability maturity: **trusted read-only source investigation = connected + verified; not product-closed**. The discontinuity is now explicit source evidence -> autonomous high-confidence isolated repair attempt.
+The path does **not** commit, push, merge, create PRs, release, update the installed body, use generic shell/terminal, use NativeBody writes or treat ordinary Work as source authority.
 
-## Safety invariants
+## Exact evidence
 
-- ordinary Work context is not maintenance-source authority;
-- task/investigation/source-evidence presence never implies mutation authority;
-- source investigation does not use NativeBody writes, generic terminal commands or shell execution;
-- raw exception messages, provider/model raw route text and arbitrary Body action strings remain privacy-bounded as already implemented;
-- network/service/environment/config/input failures do not automatically become source-maintenance candidates;
-- ambiguous failures remain fail-closed;
-- updater/replacement/rollback/signing/release trust, destructive identity/long-term-memory migration and replacement of a user's installed version remain explicit human-approval boundaries.
+- `33272468328` — previous canonical main ZN CI success on `587fd318...`.
+- `33273206772` — first targeted SM3 run; production success/stale/dirty paths passed, one test expected a later guard while its input hit an earlier valid `.py` guard. Production constraints were not weakened.
+- `33273272755` — corrected targeted validation success, including 21 SM3/source/investigation/resident regressions.
+- `33273363874` — full dev ZN CI success on `d74b44ad...` across Kernel/Python, Electron/TypeScript and Source Boundary; all three commit statuses are success.
 
-## Exact current evidence
+## Current gaps / risks
 
-- `33270265444` — full dev ZN CI success on `cd2d21f...` before this source stage.
-- `33271612132` — targeted maintenance-source validation success.
-- `33271661045` — full dev ZN CI success on PR #75 merge head `4cd5469e...` across Kernel/Python, Electron/TypeScript and Source Boundary.
-
-## Current risks / real gaps
-
-1. **No isolated repair execution.** Trusted source can be read, but no resident maintenance controller creates a fresh clean `work/*` attempt, performs a bounded source write, runs a fixed oracle and records reviewed diff evidence.
-2. **Source investigation is an explicit resident entry point, not an autonomous scheduler.** SM2 read-only slice is verified; the wider self-maintenance product loop is not closed.
-3. **Stale-source protection must precede mutation.** Future repair must reject baseline drift, unexpected dirty state, wrong repo/branch/worktree ownership and oracle-contract changes before any write.
-4. **Unified health remains partial.** Add other persistence/life-loop/config-plan boundaries only at real active failure/success sites where they close a meaningful reliability gap.
-5. **Installed N -> N+1 continuity remains approval-gated and unproven for a formal replacement transition.** Source-development maturity does not grant updater authority.
+1. **Candidate derivation is missing.** The formal resident repair entry currently receives caller-provided replacement content; ZN does not yet derive a bounded patch proposal from the maintenance incident/source evidence.
+2. **Semantic acceptance is missing.** Passing the oracle/diff checks is evidence only. No product caller reviews incident intent, changed paths and resulting behavior before accepting/rejecting the attempt.
+3. **Attempt lifecycle is incomplete.** Isolated worktrees are retained for inspection; bounded retention/restart recovery/stale-attempt cleanup still needs an owner.
+4. **SM4 publication loop is missing.** No resident commit/push/PR/CI ingestion or failed-CI continuation exists yet.
+5. **Unified health remains partial.** Only add new health boundaries at real active failure/success sites where product reliability benefits.
+6. **Updater/replacement/rollback/signing/release trust remain explicit human-approval boundaries.**
 
 ## Next dependency-ready work
 
-1. Design the smallest dedicated isolated-source operator: exact observed baseline, fresh clean worktree/`work/*` branch, narrow repository-only mutation scope, no running-install writes, no `main` writes and no generic terminal authority.
-2. Require fixed regression-oracle execution, bounded diff evidence and stale-baseline/dirty-state checks before the real resident maintenance path may call `MaintenanceInvestigationLedger.record_attempt()`.
-3. Targeted-verify that isolated attempt path, then run whole-tree CI.
-4. Only after that should resident-owned PR/CI automation become the next product layer.
+1. Trace the resident cognition/source-analysis primitives that could derive a narrowly scoped repair proposal without handing the model arbitrary filesystem/terminal authority.
+2. Define a bounded typed candidate contract (task/baseline/oracle/declared paths/replacement bytes or equivalent) that the existing isolated operator can validate independently of model claims.
+3. Connect one real high-confidence incident through candidate derivation -> isolated execution -> oracle/diff -> semantic review -> explicit ledger accept/reject.
+4. Verify that path with adversarial stale/path/scope/model-output regressions and whole-tree CI.
+5. Only after semantic acceptance is real should resident-owned commit/push/PR/CI feedback become the next layer.
 
 No updater/replacement/rollback/signing action is authorized by this handoff.
