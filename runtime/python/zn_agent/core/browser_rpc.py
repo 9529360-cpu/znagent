@@ -20,6 +20,7 @@ from .browser import (
     BrowserActionKind,
     BrowserPermissionContext,
 )
+from .continuity import ContinuitySnapshotService
 from .daemon import ResidentRpcServer
 
 _T = TypeVar("_T")
@@ -138,10 +139,15 @@ class _ResidentManagedBrowser:
 
 
 class BrowserResidentRpcServer(ResidentRpcServer):
-    """Extend the normal resident RPC face with bounded managed browsing."""
+    """Extend the normal resident RPC face with continuity and managed browsing."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.continuity = ContinuitySnapshotService(
+            self.resident,
+            work=self.work,
+            provider_settings=self.provider_settings,
+        )
         self._browser_permissions: dict[str, BrowserPermissionContext] = {}
         self._browser_permissions_lock = threading.Lock()
         self._browser_owner = _BrowserOwner()
@@ -163,6 +169,16 @@ class BrowserResidentRpcServer(ResidentRpcServer):
                     },
                 }
             return response
+        if method == "continuity_snapshot":
+            request_id = request.get("id")
+            params = request.get("params") or {}
+            if not isinstance(params, dict):
+                raise ValueError("params must be an object")
+            return {
+                "id": request_id,
+                "ok": True,
+                "result": self.continuity.snapshot(),
+            }
         if not method.startswith("browser_"):
             return super().handle(request)
 
