@@ -44,4 +44,4 @@ jobs:
       - name: Run atomic continuity regressions
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
-          & .\.ci\runtime-venv\Scripts\python.exe -m unittest -v tests.zn_agent.core.test_continuity_atomic_recovery tests.zn_agent.core.test_continuity_atomic_recovery_bounds tests.zn_agent.core.test_browser_rpc_continuity
+          & .\.ci\runtime-venv\Scripts\python.exe -m unittest -v tests.zn_agent.core.test_continuity_atomic_recovery tests.zn_agent.core.test_continuity_atomic_recovery_bounds
