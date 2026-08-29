@@ -50,24 +50,48 @@ class ZNCognitiveResourceWorkerFactory(CognitiveResourceWorkerFactory):
         self.gemini_client = gemini_client
 
     def create(self, route: ModelRoute) -> CognitiveResourceWorker:
-        api_mode = str(route.metadata.get("api_mode") or "chat_completions").lower()
-        if route.provider == "anthropic" or api_mode == "anthropic_messages":
-            resource = AnthropicCognitiveResource(
-                route,
-                client_builder=self.anthropic_client_builder,
-            )
-        elif route.provider == "gemini" or api_mode == "gemini_native":
-            resource = GeminiCognitiveResource(
-                route,
-                client=self.gemini_client,
-            )
-        else:
-            resource = OpenAICompatibleCognitiveResource(
-                route,
-                client_builder=self.openai_client_builder,
-            )
+        """Construct one provider resource and observe construction failures.
+
+        ``ZNKernelRuntime`` intentionally catches factory exceptions and turns
+        them into a non-invoked WorkerResult. This is therefore the last point
+        where the original configuration/client-construction exception exists.
+        Record only failures here: successful construction is not provider
+        recovery and must not clear a prior invocation failure before a real
+        invocation succeeds.
+        """
+        try:
+            api_mode = str(route.metadata.get("api_mode") or "chat_completions").lower()
+            if route.provider == "anthropic" or api_mode == "anthropic_messages":
+                resource = AnthropicCognitiveResource(
+                    route,
+                    client_builder=self.anthropic_client_builder,
+                )
+            elif route.provider == "gemini" or api_mode == "gemini_native":
+                resource = GeminiCognitiveResource(
+                    route,
+                    client=self.gemini_client,
+                )
+            else:
+                resource = OpenAICompatibleCognitiveResource(
+                    route,
+                    client_builder=self.openai_client_builder,
+                )
+        except Exception as exc:
+            self._observe_factory_failure(route, exc)
+            raise
         return CognitiveResourceWorker(
             resource,
             route=route,
             health_observer=self.health_observer,
         )
+
+    def _observe_factory_failure(self, route: ModelRoute, error: BaseException) -> None:
+        observer = self.health_observer
+        if observer is None:
+            return
+        try:
+            observer(route, error)
+        except Exception:
+            # Health is secondary to resource construction. Preserve the exact
+            # provider/factory exception for the kernel's existing failure path.
+            return
