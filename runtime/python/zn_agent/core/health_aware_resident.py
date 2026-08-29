@@ -25,11 +25,48 @@ class HealthAwareResidentRuntime(BrowserWorkResidentRuntime):
     """Final resident composition with durable self-health inspection."""
 
     _FOREGROUND_WINDOW_HEALTH_ORGAN = "sense:foreground_window"
+    _KNOWN_BODY_ACTION_KINDS = frozenset(
+        {
+            "sense",
+            "inspect_path",
+            "path",
+            "read_text",
+            "read_file",
+            "write_text",
+            "write_file",
+            "list_directory",
+            "list_dir",
+            "process_state",
+            "process",
+            "pointer_state",
+            "pointer_move",
+            "pointer_click",
+            "git_state",
+            "git",
+            "git_diff",
+            "command",
+            "terminal",
+            "shell",
+            "terminal_poll",
+            "command_poll",
+            "terminal_stop",
+            "command_stop",
+            "terminal_input",
+            "terminal_write",
+            "command_input",
+            "terminal_resize",
+            "command_resize",
+            "browser_navigate",
+            "browser_observe",
+            "browser_close",
+        }
+    )
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
         self.health = ResidentHealthJournal(self.store)
         self._install_cognitive_resource_health_observer()
+        self._install_body_dispatch_health_observer()
         # Health/task truth is initialized first. The investigation projection is
         # strictly secondary: an unavailable projection must not prevent the same
         # resident from booting with its identity, health and work state intact.
@@ -124,6 +161,60 @@ class HealthAwareResidentRuntime(BrowserWorkResidentRuntime):
         digest.update(b"\x00")
         digest.update(str(route.route_id or "").encode("utf-8", errors="replace"))
         return f"cognition:{provider}:{digest.hexdigest()[:16]}"
+
+    def _install_body_dispatch_health_observer(self) -> None:
+        """Observe real Body dispatch exceptions before NativeBody flattens them.
+
+        The final Body is assembled by the resident inheritance chain before this
+        health journal exists. Wrap only its dispatch seam in place so the mature
+        browser/recovery/atomic-overwrite Body remains the active object. This is
+        observational: it does not change action admission, dispatch, result
+        flattening, verification, replay protection, or durable action evidence.
+        """
+
+        body = getattr(self, "body", None)
+        dispatch = getattr(body, "_dispatch", None)
+        if body is None or not callable(dispatch):
+            return
+        if bool(getattr(body, "_zn_health_dispatch_observer_installed", False)):
+            return
+
+        def observed_dispatch(action, started):
+            organ = self._body_health_organ(getattr(action, "kind", ""))
+            try:
+                result = dispatch(action, started)
+            except Exception as exc:
+                try:
+                    self.health.record_failure(organ, exc)
+                except Exception:
+                    pass
+                raise
+
+            # Only a successful concrete dispatch proves recovery. Some Body
+            # implementations intentionally return success=False as bounded task
+            # evidence without raising an exception; do not misclassify that as
+            # either an organ exception or a recovery event.
+            if bool(getattr(result, "success", False)):
+                try:
+                    self.health.record_success(organ)
+                except Exception:
+                    pass
+            return result
+
+        setattr(body, "_dispatch", observed_dispatch)
+        setattr(body, "_zn_health_dispatch_observer_installed", True)
+
+    @classmethod
+    def _body_health_organ(cls, kind: str) -> str:
+        """Keep known Body kinds readable and arbitrary caller strings private."""
+
+        normalized = str(kind or "").strip().lower()
+        if normalized in cls._KNOWN_BODY_ACTION_KINDS:
+            return f"body:{normalized}"
+        digest = hashlib.sha256()
+        digest.update(b"zn-body-health-kind-v1\x00")
+        digest.update(normalized.encode("utf-8", errors="replace"))
+        return f"body:action-{digest.hexdigest()[:16]}"
 
     def _probe_foreground_window(
         self,
