@@ -2,11 +2,11 @@ from __future__ import annotations
 
 """Constant-size proofs for resident-owned continuity state.
 
-The proofs commit to complete durable state without exporting Work text,
-artifact content, run details, resident memory payloads, or individual learning
-identifiers. They are exact rather than probabilistic: continuity must never
-accept a false positive because a sampled or Bloom-filter representation
-collided.
+The proofs commit to durable state without exporting Work text, artifact
+content, resident memory payloads, intention descriptions, or individual
+learning identifiers. Exact proofs are used only for state that must remain
+stable across a controlled restart; mutable neural plasticity is represented by
+stable long-lived trace identities instead of mutable weights or timestamps.
 """
 
 import hashlib
@@ -94,13 +94,7 @@ def _identity_anchor_rows(conn: sqlite3.Connection) -> list[tuple[Any, ...]]:
 
 
 def _living_self_anchor_rows(conn: sqlite3.Connection) -> list[tuple[Any, ...]]:
-    """Return first-person fields that must survive while excluding wake volatility.
-
-    A restart legitimately changes wake/pulse counters and timestamps, mode,
-    observations, sensed body, current situation/thought, local capabilities and
-    external-brain availability. The fields below instead commit to resident-owned
-    continuity anchors that must not disappear merely because a new runtime woke.
-    """
+    """Return first-person fields that must survive while excluding wake volatility."""
 
     if not _table_exists(conn, "living_self"):
         return []
@@ -128,10 +122,11 @@ def _living_self_anchor_rows(conn: sqlite3.Connection) -> list[tuple[Any, ...]]:
 def resident_state_proof(path: str | Path) -> dict[str, Any]:
     """Commit to stable resident-owned durable state across a controlled restart.
 
-    This intentionally excludes lifecycle-volatile state such as resident leases,
-    runtime metrics, pulse/situation/thought history and wake-derived LivingState
-    fields. It protects durable memory, intentions/checkpoints, event truth,
-    recovery ledgers and stable Self anchors without exporting their contents.
+    Lifecycle-volatile state is intentionally excluded: resident leases, runtime
+    metrics, pulse/situation/thought history, wake-derived LivingState fields and
+    mutable nervous-system weights. Durable Will and event-accounting journals
+    are included because losing either can erase intention or duplicate semantic
+    accounting after recovery.
     """
 
     with closing(_open_read_only(path)) as conn:
@@ -140,6 +135,8 @@ def resident_state_proof(path: str | Path) -> dict[str, Any]:
         sections = (
             ("identity_anchor", _identity_anchor_rows(conn)),
             ("living_self_anchor", _living_self_anchor_rows(conn)),
+            ("resident_intentions", _rows(conn, "resident_intentions", "intention_id,status,priority,updated_at,data", "intention_id")),
+            ("resident_event_accounting", _rows(conn, "resident_event_accounting", "event_id,kind,created_at", "event_id,kind")),
             ("goals", _rows(conn, "goals", "goal_id,data", "goal_id")),
             ("experiences", _rows(conn, "experiences", "experience_id,goal_id,data", "experience_id")),
             ("capabilities", _rows(conn, "capabilities", "name,data", "name")),
@@ -157,6 +154,31 @@ def resident_state_proof(path: str | Path) -> dict[str, Any]:
     return {
         **proof,
         "count": proof["row_count"],
+    }
+
+
+def long_lived_neural_reference_proof(path: str | Path) -> dict[str, Any]:
+    """Commit to neural trace identities normal consolidation must retain.
+
+    Schema traces are never pruned by the current consolidation policy and
+    repeated traces (repetitions > 1) are likewise outside its pruning rule.
+    Their mutable strengths, salience, activation timestamps and metadata are
+    deliberately not hashed, because heartbeat/consolidation may legitimately
+    evolve those values during a restart.
+    """
+
+    with closing(_open_read_only(path)) as conn:
+        if _table_exists(conn, "neural_traces"):
+            rows = conn.execute(
+                "SELECT trace_id FROM neural_traces "
+                "WHERE channel='schema' OR repetitions>1 ORDER BY trace_id ASC"
+            ).fetchall()
+        else:
+            rows = []
+    proof = _proof("long-lived-neural-references", (("neural_traces", rows),))
+    return {
+        **proof,
+        "count": len(rows),
     }
 
 
