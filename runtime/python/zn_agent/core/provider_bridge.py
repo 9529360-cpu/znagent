@@ -267,3 +267,4 @@ def build_resident_runtime(
 
 
 build_runtime_from_existing_stack = build_runtime
+build_resident_runtime_from_existing_stack = build_resident_runtime
