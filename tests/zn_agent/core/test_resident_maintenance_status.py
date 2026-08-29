@@ -126,7 +126,7 @@ class ResidentMaintenanceStatusTests(unittest.TestCase):
                 resident.managed_browser.close()
                 resident.store.close()
 
-    def test_damaged_investigation_projection_does_not_break_resident_health_status(self):
+    def test_damaged_investigation_projection_rebuilds_from_task_truth(self):
         with tempfile.TemporaryDirectory() as tmp:
             database = Path(tmp) / "kernel.db"
             resident = build_resident_runtime(config={"model": {}}, store_path=database)
@@ -145,11 +145,15 @@ class ResidentMaintenanceStatusTests(unittest.TestCase):
                     conn.execute("DROP TABLE resident_maintenance_investigations")
                     conn.commit()
 
-                degraded = resident.status()
-                self.assertFalse(degraded["resident_health"]["healthy"])
-                self.assertEqual(degraded["maintenance_tasks"]["open_count"], 1)
-                self.assertFalse(degraded["maintenance_investigations"]["available"])
-                self.assertEqual(degraded["maintenance_investigations"]["investigations"], [])
+                rebuilt = resident.status()
+                self.assertFalse(rebuilt["resident_health"]["healthy"])
+                self.assertEqual(rebuilt["maintenance_tasks"]["open_count"], 1)
+                investigations = rebuilt["maintenance_investigations"]
+                self.assertTrue(investigations["available"])
+                self.assertEqual(investigations["active_count"], 1)
+                self.assertEqual(investigations["investigation_count"], 1)
+                self.assertEqual(investigations["investigations"][0]["status"], "pending")
+                self.assertEqual(investigations["investigations"][0]["authority"], "evidence_only")
 
                 resident.health.record_success("channel:test")
                 recovered = resident.status()
@@ -159,7 +163,17 @@ class ResidentMaintenanceStatusTests(unittest.TestCase):
                     recovered["maintenance_tasks"]["tasks"][0]["close_reason"],
                     "organ_recovered",
                 )
-                self.assertFalse(recovered["maintenance_investigations"]["available"])
+                recovered_investigations = recovered["maintenance_investigations"]
+                self.assertTrue(recovered_investigations["available"])
+                self.assertEqual(recovered_investigations["active_count"], 0)
+                self.assertEqual(
+                    recovered_investigations["investigations"][0]["status"],
+                    "closed",
+                )
+                self.assertEqual(
+                    recovered_investigations["investigations"][0]["close_reason"],
+                    "organ_recovered",
+                )
             finally:
                 resident.managed_browser.close()
                 resident.store.close()
