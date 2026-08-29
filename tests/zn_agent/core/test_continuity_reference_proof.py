@@ -134,17 +134,47 @@ class ContinuityReferenceProofTests(unittest.TestCase):
         self.assertFalse(verdict["compatible"])
         self.assertEqual(blocker, {"kind": "work_reference_proof_changed", "before_count": 500, "after_count": 499})
 
-    def test_old_schema2_snapshot_without_proof_keeps_bounded_fallback(self):
+    def test_old_schema2_baseline_without_proof_uses_bounded_fallback_against_new_snapshot(self):
         before = _base_snapshot()
         after = _base_snapshot()
         before["work"]["threads"] = [{"id": "work-a", "created_at": "born"}]
-        after["work"]["threads"] = [{"id": "work-a", "created_at": "born"}]
+        after["work"].update(
+            {
+                "threads": [{"id": "work-a", "created_at": "born"}],
+                "full_reference_proof": {
+                    "algorithm": "sha256",
+                    "count": 1,
+                    "digest": "a" * 64,
+                },
+            }
+        )
+        after["verified_learning"]["full_reference_proof"] = {
+            "algorithm": "sha256",
+            "count": 0,
+            "digest": "b" * 64,
+        }
 
         verdict = compare_continuity_snapshots(before, after)
 
         self.assertTrue(verdict["compatible"], verdict)
 
-    def test_one_sided_or_malformed_proof_fails_closed(self):
+    def test_truncated_legacy_baseline_still_fails_closed_against_new_snapshot(self):
+        before = _base_snapshot()
+        after = _base_snapshot()
+        before["work"]["references_may_be_truncated"] = True
+        after["work"]["full_reference_proof"] = {
+            "algorithm": "sha256",
+            "count": 500,
+            "digest": "a" * 64,
+        }
+
+        verdict = compare_continuity_snapshots(before, after)
+        kinds = {item["kind"] for item in verdict["blockers"]}
+
+        self.assertFalse(verdict["compatible"])
+        self.assertIn("work_baseline_incomplete", kinds)
+
+    def test_invalid_baseline_proof_fails_closed(self):
         before = _base_snapshot()
         after = _base_snapshot()
         before["verified_learning"]["full_reference_proof"] = {
