@@ -103,6 +103,8 @@ class ResidentSocketService:
     window is connected.
     """
 
+    _VISUAL_CAPTURE_HEALTH_ORGAN = "sense:vision_capture"
+
     def __init__(
         self,
         rpc,
@@ -124,9 +126,10 @@ class ResidentSocketService:
             if endpoint_path is not None
             else Path(self.rpc.resident.store.path).parent / "resident-endpoint.json"
         )
+        capture = visual_capture_fn or NativeVisualSense._capture_primary_screen
         self.visual = NativeVisualSense(
             self.rpc.resident,
-            capture_fn=visual_capture_fn,
+            capture_fn=self._health_aware_visual_capture(capture),
             interval_seconds=visual_interval,
         )
         self.visual_region = NativeVisualRegionSense(probe_fn=visual_region_probe_fn)
@@ -142,6 +145,48 @@ class ResidentSocketService:
         self._server: _ResidentTcpServer | None = None
         self._visual_stop = threading.Event()
         self._visual_thread: threading.Thread | None = None
+
+    def _health_aware_visual_capture(self, capture: VisualCaptureFn) -> VisualCaptureFn:
+        """Observe actual capture attempts without polling persisted last_error.
+
+        NativeVisualSense intentionally converts capture failures into local
+        state and ``None`` observations so a missing display cannot kill ZN.
+        Wrapping the capture function is therefore the narrow point where the
+        original exception still exists and where one health observation maps to
+        exactly one real capture attempt. Health persistence remains secondary:
+        it may never replace a successful frame or mask the original failure.
+        """
+
+        def capture_with_health():
+            try:
+                frame = capture()
+            except Exception as exc:
+                self._record_visual_capture_failure(exc)
+                raise
+            self._record_visual_capture_success()
+            return frame
+
+        return capture_with_health
+
+    def _record_visual_capture_failure(self, error: BaseException) -> None:
+        health = getattr(self.rpc.resident, "health", None)
+        record = getattr(health, "record_failure", None)
+        if not callable(record):
+            return
+        try:
+            record(self._VISUAL_CAPTURE_HEALTH_ORGAN, error)
+        except Exception:
+            pass
+
+    def _record_visual_capture_success(self) -> None:
+        health = getattr(self.rpc.resident, "health", None)
+        record = getattr(health, "record_success", None)
+        if not callable(record):
+            return
+        try:
+            record(self._VISUAL_CAPTURE_HEALTH_ORGAN)
+        except Exception:
+            pass
 
     def serve_forever(self) -> int:
         try:
