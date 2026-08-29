@@ -2,15 +2,10 @@ from __future__ import annotations
 
 """Privacy-preserving continuity proof for atomic overwrite recovery authority.
 
-A staged atomic overwrite protocol is not durable identity merely because a row
-exists. Before ``stage_ready`` no outside-world side-effect boundary has been
-crossed and the protocol can be reconstructed from the durable native intent.
-Once the stage is durable, however, the protocol becomes recovery authority: it
-must advance monotonically or be discharged by exact durable evidence.
-
-The exported proof contains only SHA-256 references and small state ranks. Raw
-event/attempt/intent identifiers, signatures, paths and file identities never
-leave the resident store.
+Prepared-only protocols have not crossed the durable side-effect boundary and
+may be reconstructed from the resident intent. Once a stage is durable, the
+protocol is recovery authority: it may only advance monotonically or disappear
+when exact durable evidence proves that authority was discharged.
 """
 
 import hashlib
@@ -26,7 +21,6 @@ _ALGORITHM = "sha256"
 _DOMAIN = b"zn-atomic-overwrite-continuity-v1\x00"
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _VALID_STRATEGIES = frozenset({"replace_file_with_backup", "move_new_no_replace"})
-_VERIFIED_ATTEMPT_STATUSES = frozenset({"verified_effect", "verified_absent"})
 
 
 def _open_read_only(path: str | Path) -> sqlite3.Connection:
@@ -36,8 +30,7 @@ def _open_read_only(path: str | Path) -> sqlite3.Connection:
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
     return conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-        (name,),
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
     ).fetchone() is not None
 
 
@@ -79,9 +72,7 @@ def _safe_snapshot_payload(value: Mapping[str, Any]) -> dict[str, Any]:
         "protocol_count": value.get("protocol_count"),
         "protocols": value.get("protocols"),
         "verified_attempt_hashes": value.get("verified_attempt_hashes"),
-        "native_completion_attempt_hashes": value.get(
-            "native_completion_attempt_hashes"
-        ),
+        "native_completion_attempt_hashes": value.get("native_completion_attempt_hashes"),
         "terminal_event_hashes": value.get("terminal_event_hashes"),
     }
 
@@ -97,6 +88,12 @@ def _nonempty(value: Any, label: str) -> str:
     return text
 
 
+def _strict_flag(value: Any, label: str) -> bool:
+    if type(value) is not int or value not in {0, 1}:
+        raise RuntimeError(f"atomic overwrite continuity found invalid {label}")
+    return value == 1
+
+
 def _protocol_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     if not _table_exists(conn, "resident_atomic_overwrite_protocols"):
         return []
@@ -105,21 +102,39 @@ def _protocol_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         "staging_path,backup_path,stage_ready,stage_identity_json,"
         "namespace_commit_started,write_strategy "
         "FROM resident_atomic_overwrite_protocols "
-        "WHERE stage_ready=1 ORDER BY event_id ASC,signature_hash ASC"
+        "ORDER BY event_id ASC,signature_hash ASC"
     ).fetchall()
     result: list[dict[str, Any]] = []
     for row in rows:
         event_id = _nonempty(row[0], "protocol event id")
         signature_hash = _nonempty(row[1], "protocol signature")
-        version = int(row[2])
+        try:
+            version = int(row[2])
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("atomic overwrite continuity found invalid protocol version") from exc
         if version <= 0:
             raise RuntimeError("atomic overwrite continuity found invalid protocol version")
         intent_id = _nonempty(row[3], "protocol intent id")
-        attempt_id = _nonempty(row[4], "protocol attempt id")
         staging_path = _nonempty(row[5], "protocol staging path")
         backup_path = _nonempty(row[6], "protocol backup path")
+        stage_ready = _strict_flag(row[7], "stage_ready flag")
+        commit_started = _strict_flag(row[9], "namespace_commit_started flag")
+        attempt_raw = str(row[4] or "").strip()
+        stage_identity_raw = str(row[8] or "").strip()
+        strategy = str(row[10] or "").strip() or None
+
+        if not stage_ready:
+            if commit_started or attempt_raw or stage_identity_raw or strategy is not None:
+                raise RuntimeError(
+                    "atomic overwrite continuity found mutated prepared-only protocol"
+                )
+            continue
+
+        attempt_id = _nonempty(attempt_raw, "protocol attempt id")
+        if not stage_identity_raw:
+            raise RuntimeError("atomic overwrite continuity found missing stage identity")
         try:
-            stage_identity = json.loads(str(row[8] or ""))
+            stage_identity = json.loads(stage_identity_raw)
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
             raise RuntimeError(
                 "atomic overwrite continuity found malformed stage identity"
@@ -127,9 +142,7 @@ def _protocol_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         if not isinstance(stage_identity, dict):
             raise RuntimeError("atomic overwrite continuity stage identity must be an object")
 
-        commit_started = bool(int(row[9] or 0))
         stage_rank = 2 if commit_started else 1
-        strategy = str(row[10] or "").strip() or None
         if stage_rank == 1 and strategy is not None:
             raise RuntimeError(
                 "atomic overwrite continuity found strategy before namespace commit"
@@ -219,7 +232,7 @@ def _native_completion_attempt_hashes(conn: sqlite3.Connection) -> list[str]:
 
 
 def atomic_overwrite_recovery_snapshot(path: str | Path) -> dict[str, Any]:
-    """Return a sanitized snapshot of active atomic overwrite recovery authority."""
+    """Return sanitized atomic overwrite recovery authority and discharge truth."""
 
     with closing(_open_read_only(path)) as conn:
         conn.execute("BEGIN")
@@ -252,7 +265,7 @@ def _hash_list(value: Any) -> tuple[str, ...] | None:
 def _parse_snapshot(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, Mapping):
         return None
-    expected = {
+    if set(value) != {
         "version",
         "algorithm",
         "protocol_count",
@@ -261,8 +274,7 @@ def _parse_snapshot(value: Any) -> dict[str, Any] | None:
         "native_completion_attempt_hashes",
         "terminal_event_hashes",
         "digest",
-    }
-    if set(value) != expected:
+    }:
         return None
     if value.get("version") != _PROOF_VERSION or value.get("algorithm") != _ALGORITHM:
         return None
@@ -294,18 +306,13 @@ def _parse_snapshot(value: Any) -> dict[str, Any] | None:
         attempt_hash = str(raw.get("attempt_hash") or "")
         event_hash = str(raw.get("event_hash") or "")
         stage_identity_hash = str(raw.get("stage_identity_hash") or "")
-        rank = raw.get("stage_rank")
-        strategy = raw.get("write_strategy")
         if any(
             _SHA256_RE.fullmatch(item) is None
-            for item in (
-                reference_hash,
-                attempt_hash,
-                event_hash,
-                stage_identity_hash,
-            )
+            for item in (reference_hash, attempt_hash, event_hash, stage_identity_hash)
         ):
             return None
+        rank = raw.get("stage_rank")
+        strategy = raw.get("write_strategy")
         if isinstance(rank, bool) or rank not in {1, 2}:
             return None
         if rank == 1 and strategy is not None:
@@ -328,9 +335,7 @@ def _parse_snapshot(value: Any) -> dict[str, Any] | None:
     terminal = _hash_list(value.get("terminal_event_hashes"))
     if verified is None or native_completion is None or terminal is None:
         return None
-    if len(native_completion) > 1:
-        return None
-    if _snapshot_digest(value) != digest:
+    if len(native_completion) > 1 or _snapshot_digest(value) != digest:
         return None
     return {
         "protocols": protocols,
@@ -340,17 +345,8 @@ def _parse_snapshot(value: Any) -> dict[str, Any] | None:
     }
 
 
-def compare_atomic_overwrite_recovery(
-    before: Any,
-    after: Any,
-) -> list[dict[str, Any]]:
-    """Return blockers when atomic recovery authority regresses or vanishes.
-
-    Schema-2 snapshots created before this proof existed are intentionally
-    accepted. Once a baseline carries the proof, the candidate must provide a
-    valid proof and every staged protocol must either survive monotonically or
-    have exact durable discharge evidence.
-    """
+def compare_atomic_overwrite_recovery(before: Any, after: Any) -> list[dict[str, Any]]:
+    """Block recovery-authority loss, regression, or immutable protocol rewrite."""
 
     if before is None:
         return []
@@ -369,12 +365,11 @@ def compare_atomic_overwrite_recovery(
     for reference_hash, prior in old["protocols"].items():
         current = candidate_protocols.get(reference_hash)
         if current is None:
-            discharged = bool(
+            if not (
                 prior["attempt_hash"] in new["verified_attempt_hashes"]
                 or prior["attempt_hash"] in new["native_completion_attempt_hashes"]
                 or prior["event_hash"] in new["terminal_event_hashes"]
-            )
-            if not discharged:
+            ):
                 blockers.append(
                     {
                         "kind": "atomic_overwrite_recovery_protocol_lost",
@@ -384,7 +379,10 @@ def compare_atomic_overwrite_recovery(
                 )
             continue
 
-        if current["attempt_hash"] != prior["attempt_hash"] or current["event_hash"] != prior["event_hash"]:
+        if (
+            current["attempt_hash"] != prior["attempt_hash"]
+            or current["event_hash"] != prior["event_hash"]
+        ):
             blockers.append(
                 {
                     "kind": "atomic_overwrite_recovery_continuity_unproven",
@@ -410,7 +408,10 @@ def compare_atomic_overwrite_recovery(
                 }
             )
             continue
-        if prior["stage_rank"] == 2 and current["write_strategy"] != prior["write_strategy"]:
+        if (
+            prior["stage_rank"] == 2
+            and current["write_strategy"] != prior["write_strategy"]
+        ):
             blockers.append(
                 {
                     "kind": "atomic_overwrite_recovery_strategy_changed",
@@ -418,5 +419,4 @@ def compare_atomic_overwrite_recovery(
                     "after_stage_rank": current["stage_rank"],
                 }
             )
-
     return blockers
