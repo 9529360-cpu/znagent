@@ -97,8 +97,18 @@ class ResidentChannelSupervisor:
             if self._threads:
                 return
             self._stop.clear()
+
+            # Restore every durable transport cursor before starting any worker.
+            # Otherwise a later adapter restore failure can leave an earlier
+            # worker running even though start() reports overall failure.
             for name, adapter in self._adapters.items():
-                self._restore_adapter_checkpoint(name, adapter)
+                try:
+                    self._restore_adapter_checkpoint(name, adapter)
+                except Exception as exc:
+                    self._record_lifecycle_failure(name, exc)
+                    raise
+
+            for name, adapter in self._adapters.items():
                 thread = threading.Thread(
                     target=self._run_channel,
                     args=(name, adapter),
@@ -133,18 +143,28 @@ class ResidentChannelSupervisor:
                 for name, thread in self._threads.items()
                 if thread.is_alive()
             }
+            previously_running = {
+                name: bool(state.running)
+                for name, state in self._states.items()
+            }
             self._threads = alive
             for name, state in self._states.items():
                 thread = alive.get(name)
                 state.running = bool(thread and thread.is_alive())
                 if state.running:
-                    state.total_failures += 1
-                    state.consecutive_failures += 1
-                    state.last_error_at = utc_now()
-                    state.last_error = (
+                    failure = TimeoutError(
                         "channel worker did not stop before shutdown timeout; "
                         "worker remains owned until process teardown"
                     )
+                    state.total_failures += 1
+                    state.consecutive_failures += 1
+                    state.last_error_at = utc_now()
+                    state.last_error = str(failure)
+                    self._record_lifecycle_failure(name, failure)
+                elif previously_running.get(name):
+                    # If a previously stuck worker is finally gone, durable
+                    # health should reflect that this lifecycle failure recovered.
+                    self._record_lifecycle_success(name)
 
     def status(self) -> tuple[dict[str, Any], ...]:
         with self._lock:
@@ -252,6 +272,20 @@ class ResidentChannelSupervisor:
         finally:
             with self._lock:
                 self._states[name].running = False
+
+    def _record_lifecycle_failure(self, name: str, error: BaseException) -> None:
+        try:
+            self.health.record_failure(f"channel:{name}", error)
+        except Exception:
+            # Lifecycle health must remain observational and must never hide the
+            # original start/stop outcome or create a second teardown failure.
+            pass
+
+    def _record_lifecycle_success(self, name: str) -> None:
+        try:
+            self.health.record_success(f"channel:{name}")
+        except Exception:
+            pass
 
     def _ingest_events(self, events: Iterable[ChannelEvent]) -> tuple[int, int]:
         enqueued = 0
