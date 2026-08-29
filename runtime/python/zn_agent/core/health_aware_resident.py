@@ -12,12 +12,14 @@ organs or resident health truth.
 
 import hashlib
 import sqlite3
+from pathlib import Path
 from typing import Any
 
 from .browser_work_resident import BrowserWorkResidentRuntime
 from .foreground_window_sense import ForegroundWindowObservation
 from .health_observation import ResidentHealthJournal
 from .maintenance_investigation import MaintenanceInvestigationLedger
+from .maintenance_source import MaintenanceSourceInvestigator
 from .models import ModelRoute
 
 
@@ -76,13 +78,45 @@ class HealthAwareResidentRuntime(BrowserWorkResidentRuntime):
             )
         except sqlite3.Error:
             self.maintenance = None
+        self.maintenance_source: MaintenanceSourceInvestigator | None = None
+        if self.maintenance is not None:
+            try:
+                self.maintenance_source = MaintenanceSourceInvestigator(
+                    self.store,
+                    self.maintenance,
+                )
+            except sqlite3.Error:
+                self.maintenance_source = None
 
     def status(self) -> dict[str, Any]:
         data = super().status()
         data["resident_health"] = self.health.snapshot()
         data["maintenance_tasks"] = self.health.maintenance_tasks()
         data["maintenance_investigations"] = self._maintenance_status()
+        data["maintenance_source_evidence"] = self._maintenance_source_status()
         return data
+
+    def investigate_maintenance_source(
+        self,
+        task_id: str,
+        *,
+        source_root: str | Path,
+        regression_oracle: str,
+    ) -> dict[str, Any]:
+        """Run the resident's bounded read-only source-investigation path.
+
+        This explicit resident entry point is intentionally separate from Work
+        workspace attachment and from Body/terminal execution. It may collect
+        evidence and begin an evidence-only investigation, but it cannot write
+        source, create branches, run tests, merge, update or replace ZN.
+        """
+
+        investigator = self._maintenance_source_investigator()
+        return investigator.investigate(
+            task_id,
+            source_root=source_root,
+            regression_oracle=regression_oracle,
+        )
 
     def _maintenance_status(self) -> dict[str, Any]:
         ledger = self.maintenance
@@ -103,6 +137,7 @@ class HealthAwareResidentRuntime(BrowserWorkResidentRuntime):
             snapshot = ledger.snapshot()
         except sqlite3.Error:
             self.maintenance = None
+            self.maintenance_source = None
             return {
                 "available": False,
                 "investigation_count": 0,
@@ -112,7 +147,52 @@ class HealthAwareResidentRuntime(BrowserWorkResidentRuntime):
                 "investigations": [],
             }
         self.maintenance = ledger
+        try:
+            self.maintenance_source = MaintenanceSourceInvestigator(self.store, ledger)
+        except sqlite3.Error:
+            self.maintenance_source = None
         return {"available": True, **snapshot}
+
+    def _maintenance_source_status(self) -> dict[str, Any]:
+        investigator = self.maintenance_source
+        if investigator is not None:
+            try:
+                snapshot = investigator.snapshot()
+            except sqlite3.Error:
+                investigator = None
+            else:
+                return {"available": True, **snapshot}
+        try:
+            investigator = self._maintenance_source_investigator()
+            snapshot = investigator.snapshot()
+        except (sqlite3.Error, RuntimeError):
+            self.maintenance_source = None
+            return {
+                "available": False,
+                "evidence_count": 0,
+                "returned_count": 0,
+                "truncated": False,
+                "evidence": [],
+            }
+        return {"available": True, **snapshot}
+
+    def _maintenance_source_investigator(self) -> MaintenanceSourceInvestigator:
+        investigator = self.maintenance_source
+        if investigator is not None:
+            return investigator
+        ledger = self.maintenance
+        if ledger is None:
+            try:
+                ledger = MaintenanceInvestigationLedger(self.store)
+            except sqlite3.Error as exc:
+                raise RuntimeError("maintenance investigation ledger is unavailable") from exc
+            self.maintenance = ledger
+        try:
+            investigator = MaintenanceSourceInvestigator(self.store, ledger)
+        except sqlite3.Error as exc:
+            raise RuntimeError("maintenance source investigator is unavailable") from exc
+        self.maintenance_source = investigator
+        return investigator
 
     def _install_cognitive_resource_health_observer(self) -> None:
         """Bind provider observation after resident health exists.
