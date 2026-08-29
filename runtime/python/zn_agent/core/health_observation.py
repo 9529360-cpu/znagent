@@ -1,0 +1,156 @@
+from __future__ import annotations
+
+"""Durable, privacy-safe resident health observations.
+
+Self-maintenance cannot reason about repeated resident failures if every restart
+forgets them. This journal keeps one bounded row per resident organ. Raw error
+messages are never persisted: only the exception type and a one-way fingerprint
+are retained, together with occurrence counters and timestamps.
+"""
+
+import hashlib
+import sqlite3
+from contextlib import closing
+from typing import Any
+
+from .models import utc_now
+
+_DOMAIN = b"zn-resident-health-v1\x00"
+_MAX_ORGAN_LENGTH = 128
+
+
+class ResidentHealthJournal:
+    def __init__(self, store):
+        self.store = store
+        self._init_schema()
+
+    def record_failure(self, organ: str, error: BaseException) -> dict[str, Any]:
+        organ_name = self._organ(organ)
+        exception_type = type(error).__name__[:128]
+        fingerprint = self._fingerprint(exception_type, str(error))
+        now = utc_now()
+        with closing(self._connect()) as conn:
+            conn.execute(
+                """
+                INSERT INTO resident_health_observations(
+                    organ,total_failures,consecutive_failures,first_failure_at,
+                    last_failure_at,last_success_at,last_exception_type,last_fingerprint
+                ) VALUES(?,1,1,?,?,NULL,?,?)
+                ON CONFLICT(organ) DO UPDATE SET
+                    total_failures=total_failures+1,
+                    consecutive_failures=consecutive_failures+1,
+                    last_failure_at=excluded.last_failure_at,
+                    last_exception_type=excluded.last_exception_type,
+                    last_fingerprint=excluded.last_fingerprint
+                """,
+                (organ_name, now, now, exception_type, fingerprint),
+            )
+            conn.commit()
+        return self.get(organ_name) or {}
+
+    def record_success(self, organ: str) -> dict[str, Any] | None:
+        organ_name = self._organ(organ)
+        with closing(self._connect()) as conn:
+            cursor = conn.execute(
+                "UPDATE resident_health_observations "
+                "SET consecutive_failures=0,last_success_at=? WHERE organ=?",
+                (utc_now(), organ_name),
+            )
+            conn.commit()
+        if cursor.rowcount <= 0:
+            return None
+        return self.get(organ_name)
+
+    def get(self, organ: str) -> dict[str, Any] | None:
+        organ_name = self._organ(organ)
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT organ,total_failures,consecutive_failures,first_failure_at,"
+                "last_failure_at,last_success_at,last_exception_type,last_fingerprint "
+                "FROM resident_health_observations WHERE organ=?",
+                (organ_name,),
+            ).fetchone()
+        return self._snapshot(row) if row else None
+
+    def snapshot(self, *, limit: int = 128) -> dict[str, Any]:
+        bounded = max(1, min(512, int(limit)))
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT organ,total_failures,consecutive_failures,first_failure_at,"
+                "last_failure_at,last_success_at,last_exception_type,last_fingerprint "
+                "FROM resident_health_observations "
+                "ORDER BY consecutive_failures DESC,last_failure_at DESC,organ ASC LIMIT ?",
+                (bounded,),
+            ).fetchall()
+            total = int(
+                conn.execute("SELECT COUNT(*) FROM resident_health_observations").fetchone()[0]
+            )
+        organs = [self._snapshot(row) for row in rows]
+        unhealthy = sum(1 for item in organs if not item["healthy"])
+        return {
+            "healthy": unhealthy == 0,
+            "organ_count": total,
+            "returned_count": len(organs),
+            "unhealthy_count": unhealthy,
+            "truncated": total > len(organs),
+            "organs": organs,
+        }
+
+    @staticmethod
+    def _snapshot(row: sqlite3.Row) -> dict[str, Any]:
+        consecutive = max(0, int(row["consecutive_failures"] or 0))
+        return {
+            "organ": str(row["organ"]),
+            "healthy": consecutive == 0,
+            "total_failures": max(0, int(row["total_failures"] or 0)),
+            "consecutive_failures": consecutive,
+            "first_failure_at": row["first_failure_at"],
+            "last_failure_at": row["last_failure_at"],
+            "last_success_at": row["last_success_at"],
+            "last_exception_type": row["last_exception_type"],
+            "last_fingerprint": row["last_fingerprint"],
+        }
+
+    @staticmethod
+    def _fingerprint(exception_type: str, message: str) -> str:
+        digest = hashlib.sha256()
+        digest.update(_DOMAIN)
+        digest.update(exception_type.encode("utf-8", errors="replace"))
+        digest.update(b"\x00")
+        digest.update(str(message or "").encode("utf-8", errors="replace"))
+        return digest.hexdigest()
+
+    @staticmethod
+    def _organ(value: str) -> str:
+        organ = str(value or "").strip().lower()
+        if not organ:
+            raise ValueError("resident health organ must not be empty")
+        if len(organ) > _MAX_ORGAN_LENGTH:
+            raise ValueError("resident health organ is too long")
+        return organ
+
+    def _init_schema(self) -> None:
+        with closing(self._connect()) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS resident_health_observations(
+                    organ TEXT PRIMARY KEY,
+                    total_failures INTEGER NOT NULL DEFAULT 0,
+                    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                    first_failure_at TEXT NOT NULL,
+                    last_failure_at TEXT NOT NULL,
+                    last_success_at TEXT,
+                    last_exception_type TEXT,
+                    last_fingerprint TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_resident_health_unhealthy
+                    ON resident_health_observations(consecutive_failures,last_failure_at);
+                """
+            )
+            conn.commit()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.store.path, timeout=5.0)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=5000")
+        return conn
