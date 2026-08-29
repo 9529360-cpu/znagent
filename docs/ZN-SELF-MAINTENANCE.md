@@ -1,6 +1,6 @@
 # ZN 自维护、自修复与自更新架构
 
-> 状态：架构契约 / SM0 COMPLETE / SM1+ 待实现
+> 状态：架构契约 / SM0 COMPLETE / SM1 PARTIAL（channel 观察→分类→维护任务→只读 status 已接通并验证）/ SM2+ 待实现
 >
 > 开发分支：`dev/zn-agent`
 >
@@ -331,7 +331,25 @@ traceable commit/tag
 
 ### SM1 — 维护事件与证据
 
+状态：**PARTIAL — resident channel early loop connected and verified**。
+
 目标：ZN 能从运行证据形成 bounded maintenance event，而不是每次都靠用户手工描述。
+
+当前已经真实接通并验证的 channel slice：
+
+```text
+真实 channel failure/success
+→ privacy-safe durable health
+→ conservative failure classification
+→ same-fingerprint repeat evidence
+→ fail-closed maintenance candidate
+→ one durable per-organ maintenance task
+→ recovery / evidence-change closure
+→ task projection failure isolation + restart reconciliation
+→ formal resident/RPC read-only status
+```
+
+当前仍未完成：其他 resident organs 的统一 health、maintenance-task 驱动的源码调查/修复生命周期，以及任何自动 updater/replacement 行为。
 
 ### SM2 — 源码调查 Body/Senses
 
@@ -367,15 +385,16 @@ traceable commit/tag
 
 ## 10. 当前下一步
 
-SM1+ 不是当前唯一主线。当前实现优先级由 `ZN-IMPLEMENTATION-STATUS.md` 和 HANDOFF 决定。
+SM1 当前应继续纵向闭合真实维护场景，而不是直接扩大成自动改源码/自动更新框架。
 
-当恢复自维护工作时，优先建立：
+当前优先序：
 
 ```text
-真实故障/健康证据
-→ bounded maintenance event
-→ ZN-owned repository/CI read sense
-→ 隔离调查
+完成当前 channel SM1 组合头的 full CI / canonical promotion
+→ 补 channel lifecycle 尚未进入 durable health 的失败边界
+→ 在真实 failure/success site 接通另一个 resident organ（优先检查 vision）
+→ 为 maintenance task 定义 bounded investigation / attempt / regression / acceptance 生命周期
+→ 再评估是否允许高置信任务自动发起普通源码维护工作
 ```
 
-不要跳过这些证据层直接做“自动改自己 + 自动发布 + 自动安装”。
+即使未来 SM2-SM4 更成熟，正式 updater/replacement、rollback、release signing/trust 和替换用户当前安装版本仍是独立的人工审批边界。
