@@ -24,15 +24,7 @@ class ResidentMaintenanceSourceTests(unittest.TestCase):
         subprocess.run(["git", "-C", str(root), "add", "."], check=True)
         subprocess.run(["git", "-C", str(root), "commit", "-m", "baseline"], check=True, capture_output=True)
         subprocess.run(
-            [
-                "git",
-                "-C",
-                str(root),
-                "remote",
-                "add",
-                "origin",
-                "https://github.com/9529360-cpu/znagent.git",
-            ],
+            ["git", "-C", str(root), "remote", "add", "origin", "https://example.invalid/zn-source.git"],
             check=True,
         )
 
@@ -62,7 +54,8 @@ class ResidentMaintenanceSourceTests(unittest.TestCase):
                 )
 
                 self.assertEqual(evidence["authority"], "read_only")
-                self.assertEqual(evidence["repository"], "9529360-cpu/znagent")
+                self.assertEqual(len(evidence["origin_fingerprint"]), 64)
+                self.assertNotIn("example.invalid", repr(evidence))
                 self.assertEqual(evidence["investigation"]["status"], "investigating")
                 self.assertEqual(evidence["investigation"]["authority"], "evidence_only")
 
@@ -73,8 +66,9 @@ class ResidentMaintenanceSourceTests(unittest.TestCase):
                 projected = source_status["evidence"][0]
                 self.assertEqual(projected["task_id"], task["task_id"])
                 self.assertEqual(projected["authority"], "read_only")
-                self.assertEqual(projected["repository"], "9529360-cpu/znagent")
+                self.assertEqual(projected["origin_fingerprint"], evidence["origin_fingerprint"])
                 self.assertNotIn(str(source_root), repr(source_status))
+                self.assertNotIn("example.invalid", repr(source_status))
 
                 investigation = resident.status()["maintenance_investigations"]["investigations"][0]
                 self.assertEqual(investigation["baseline_ref"], f"commit:{evidence['head']}")

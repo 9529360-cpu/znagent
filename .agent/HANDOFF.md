@@ -4,75 +4,97 @@ This is the current engineering work site and fact index, not a chat transcript 
 
 ## Current objective
 
-Keep the now-verified resident self-maintenance source loop coherent through canonical promotion, then continue toward the next highest-value product gap without crossing credential/update approval boundaries.
+Preserve the resident self-maintenance loop while enforcing the installed-product upstream boundary:
 
-Current verified resident path:
+```text
+official public update channel -> installed ZN (read / verify / update availability)
+installed ZN -> bounded BUG / repair report channel
+maintainer environment -> private source branch / CI / review / merge / release
+```
 
-`real organ failure -> durable health -> probable_zn_defect task -> trusted source investigation -> durable cognition target selection -> bounded repair authoring -> isolated worktree repair -> fixed oracle + diff evidence -> independent semantic review -> accept/reject/unreviewed -> rejected cleanup OR pending-review recovery OR accepted local-only publication commit`
+The normal installed resident must not receive official source-repository push, PR, merge, release, signing or repository-credential authority, and its shipped runtime should not need the private source-repository slug.
 
 ## Repository state
 
 - Repository: `9529360-cpu/znagent`
 - Canonical/release branch: `main`
 - Primary development branch: `dev/zn-agent`
-- Canonical `main` before next promotion: `3b47e517ad594728b05d7346ecbb4db25cd3e115` (PR #80).
-- Verified product-code `dev/zn-agent`: `f555210c7417d4f81564ff238be65a0f82a6cc7b` (PR #86).
-- Full dev ZN CI `33277689622`: **fully green** — Source Boundary, zero-model boot, resident core compile, full Python core suite, Electron/TypeScript and readable status publication all succeeded.
-- Combined commit statuses on `f555210c...`: ZN Source Boundary / ZN Kernel-Python / Electron-TypeScript all `success`.
-- Canonical main ZN CI `33274781251` on `3b47e517...`: **fully green**.
-- Hosted clean-install `33277689670` and release-candidate `33277689603` have jobs with no executable steps; treat as runner-allocation/infrastructure failures, not product pass/fail evidence.
+- Canonical `main`: `853916aca200848ebd16da3f11e2e1f6a6d4d136`; canonical ZN CI `33280722417` fully green.
+- `dev/zn-agent`: `fb71661cda0d8269cd0e56c990a3356b73a3e2f6` after PRs #90-#91 corrected the installed-upstream authority model.
+- PR #92 is the open dev -> main promotion of the corrected authority contract; do not merge until current privacy/source work is integrated and full dev CI is green.
+- Current work branch: `work/remove-private-repo-runtime-identity`.
 
 ## Verified product reality
 
-### Candidate derivation + isolated repair
+### Source-maintenance loop
 
-Formal resident derives a bounded candidate from trusted maintenance/source evidence. Model output is constrained to existing core Python/test paths and revalidated locally. The repair operator writes only inside a fresh dedicated `.zn-maintenance-worktrees/...` worktree and runs the bound unittest oracle plus `git diff --check`. Source root stays unchanged.
+The formal source-maintenance environment can derive a bounded repair candidate, execute it in an isolated `.zn-maintenance-worktrees/...` worktree, run bound oracle/diff checks, obtain independent semantic review, retain/recover unreviewed attempts, clean rejected attempts and create a verified `local_commit_only` commit for accepted repairs.
 
-### Durable model dispatch safety
+Model calls remain bounded and durably accounted. Model cognition does not receive repository push/merge/release/updater authority.
 
-Target-selection, repair-authoring and semantic-review provider calls are durably reserved before dispatch. Journal state contains fingerprints and route/provider/model metadata only; no raw source, prompt context, diff or model response is persisted. Ambiguous provider outcomes become `outcome_uncertain` and are not automatically replayed.
+### Installed upstream boundary
 
-### Independent semantic acceptance
+Installed ZN may know the public official update channel. Current release infrastructure already supports an HTTPS `stable.json` channel and immutable release assets; update discovery does not require private source checkout or repository credentials.
 
-Automatic acceptance requires a model route distinct from the repair author. With no independent route, repair remains `unreviewed` and cannot produce a publication commit. Same-author review fallback cannot grant publication.
+Installed remote authority is limited to:
 
-### Review recovery
+- read/verify official update metadata and artifacts;
+- surface update availability;
+- eventually submit bounded privacy-safe BUG/repair reports to an operator-controlled reporting channel.
 
-A retained `unreviewed` repair caused by independent-reviewer unavailability can later be resumed without re-running author calls. Recovery re-verifies baseline/branch/HEAD/changed-path/diff fingerprints and refuses if any prior semantic provider dispatch exists for that task.
+Installed ZN must not directly push the official repository, create official PRs, merge, release, sign or promote versions.
 
-### Attempt lifecycle
+### Private source identity no longer belongs in shipped runtime
 
-Rejected exact-baseline worktrees/branches can be cleaned safely. Accepted, committed, drifted or unknown attempts are not auto-deleted.
+Current work removes the hardcoded private source-repository slug from:
 
-### Local publication preparation
+- `runtime/python/zn_agent/core/maintenance_source.py`;
+- `maintenance_repair.py`;
+- `maintenance_publication.py`;
+- `maintenance_attempt_lifecycle.py`;
+- `apps/desktop/package.json`.
 
-Accepted repair can be revalidated, staged only on accepted paths and turned into one local commit. Parent, changed paths and clean-worktree state are checked after commit. Authority is explicitly `local_commit_only`.
+Trusted source continuity now uses:
 
-No resident push, PR, merge, release, updater, rollback, signing or repository credential authority exists in this path.
+```text
+explicit source_root
+-> ZN ownership markers
+-> live origin
+-> one-way origin fingerprint
+-> later source action must match the same fingerprint
+```
+
+The resident database keeps only the fingerprint for source-origin continuity. Repair, cleanup and local-publication actions fail closed if the origin changes after investigation. `.agent/verify_zn_source_boundary.py` now permanently rejects the private source slug if it reappears in shipped resident core or desktop package metadata.
 
 ## Exact evidence
 
-- `33275068276` — candidate derivation + semantic review targeted validation success.
-- `33275525810` — corrected attempt-lifecycle targeted validation success; earlier `33275445850` found the Windows worktree parser defect.
-- `33277113466` — local publication targeted validation success after fixing oracle `__pycache__` worktree pollution.
-- `33277291497` — durable cognition dispatch / provider-disconnect no-replay validation success.
-- `33277416824` — independent semantic-review fail-closed validation success.
-- `33277598171` — pending-review recovery end-to-end validation success.
-- `33277689622` — full dev ZN CI success on `f555210c...` across all formal jobs.
+- `33275068276` — candidate derivation + semantic review targeted success.
+- `33275525810` — corrected attempt-lifecycle targeted success.
+- `33277113466` — local publication targeted success after fixing oracle `__pycache__` pollution.
+- `33277291497` — durable cognition dispatch/provider-disconnect no-replay success.
+- `33277416824` — independent semantic-review fail-closed success.
+- `33277598171` — pending-review recovery end-to-end success.
+- `33277689622` — prior full dev ZN CI success on `f555210c...`.
+- `33280722417` — canonical main ZN CI fully green on `853916ac...`.
+- PR #90 / `8c4d187...` — removed the incorrect installed-resident repository-publication request path before it reached main.
+- `33283442938` — first private-source validation attempt: source boundary + compilation green; tests did not start because the temporary workflow omitted runtime dependencies (`psutil`). Infrastructure/setup defect only.
+- `33283483244` — corrected targeted Windows validation fully green: source privacy boundary, changed-owner compilation, source investigation, isolated repair including origin-drift rejection, local publication, attempt lifecycle, review recovery and semantic-independence regressions.
 
 ## Current gaps / risks
 
-1. **Remote publication / PR / CI feedback is not connected as a resident capability.** A verified local repair commit cannot yet be pushed, opened as a PR, observed through remote CI, or continued after remote CI failure by the resident itself.
-2. **Repository credential expansion is an explicit approval boundary.** Resident-owned GitHub token/credential use must not be added silently.
-3. **Installed N -> N+1 continuity remains approval-gated.** Updater/replacement, rollback, release signing/trust and replacement of the user's current installed body are not authorized by source-maintenance maturity.
-4. **Hosted clean-install / release-candidate runner capacity is unreliable.** Pre-step failures remain infrastructure evidence.
-5. **Unified health remains partial.** Add new health owners only where a real active caller closes a meaningful reliability gap.
+1. **Current privacy/source work still needs normal PR -> dev + full dev CI.** Targeted validation is green but is not whole-tree evidence.
+2. **Installed update observation is not yet fully product-closed.** Verify the complete read/verify/update-available path from public channel through resident/UI evidence without private source access.
+3. **Upstream BUG/repair reporting is not yet product-closed.** Needs bounded privacy-safe payload, durable dedup/retry semantics, acknowledgement and maintainer intake.
+4. **Official repository publication is not an installed-resident gap.** Push/PR/merge/release belongs to trusted maintainer infrastructure.
+5. **Installed N -> N+1 continuity remains approval-gated.** Updater/replacement, rollback and release signing/trust are not authorized by source-maintenance maturity.
+6. **Hosted clean-install / release-candidate runner allocation can fail before steps.** Treat those as infrastructure evidence, not product pass/fail evidence.
 
 ## Next dependency-ready work
 
-1. Promote the coherent verified SM3/SM4 source-maintenance stage to `main` through normal PR/merge and run canonical main ZN CI.
-2. Reassess product gaps after canonical verification; do not manufacture more maintenance abstractions if a real active-call reliability gap is higher value.
-3. Before implementing resident remote publication, obtain explicit approval for narrowly scoped repository credential authority and define fail-closed token/branch/PR/CI boundaries.
-4. Keep formal updater/replacement, rollback, signing and release trust behind their existing explicit human approval gates.
+1. Merge the private-source identity removal to `dev/zn-agent` through normal PR and require full dev ZN CI green.
+2. Let PR #92 advance to the new dev head, then promote the coherent authority/privacy stage to `main` and require canonical main CI green.
+3. Implement the next safe installed-product layer: bounded upstream BUG/repair reporting without repository credentials or arbitrary remote authority.
+4. Continue closing installed read-only update observation against the public update channel.
+5. Keep official repository mutation, merge, release, updater/replacement, rollback and signing in their existing trusted/approval-gated boundaries.
 
-No credential expansion, updater/replacement, rollback or signing action is authorized by this handoff.
+No ordinary installed-resident repository write, merge, release, updater-replacement, rollback or signing authority is authorized by this handoff.

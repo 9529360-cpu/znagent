@@ -50,13 +50,7 @@ class MaintenanceIsolatedRepairTests(unittest.TestCase):
         cls._git(root, "config", "user.name", "ZN Test")
         cls._git(root, "add", ".")
         cls._git(root, "commit", "-m", "baseline")
-        cls._git(
-            root,
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/9529360-cpu/znagent.git",
-        )
+        cls._git(root, "remote", "add", "origin", "https://example.invalid/zn-source.git")
 
     @staticmethod
     def _resident(tmp: str) -> HealthAwareResidentRuntime:
@@ -110,6 +104,7 @@ class MaintenanceIsolatedRepairTests(unittest.TestCase):
                     regression_oracle="test:tests/zn_agent/core/test_regression.py",
                 )
                 self.assertFalse(observed["dirty"])
+                self.assertEqual(len(observed["origin_fingerprint"]), 64)
 
                 result = resident.run_maintenance_repair_attempt(
                     task["task_id"],
@@ -141,8 +136,6 @@ class MaintenanceIsolatedRepairTests(unittest.TestCase):
                 self.assertEqual(source_value, "VALUE = 1\n")
                 self.assertEqual(attempt_value, "VALUE = 2\n")
 
-                # Oracle execution is evidence only and must not introduce bytecode
-                # or other untracked artifacts into the isolated candidate worktree.
                 status_after_oracle = self._git(
                     attempt_root,
                     "status",
@@ -163,6 +156,42 @@ class MaintenanceIsolatedRepairTests(unittest.TestCase):
                 self.assertNotIn("VALUE = 2", repr(status))
             finally:
                 self._cleanup_worktree(source_root, attempt_root, branch)
+                resident.managed_browser.close()
+                resident.store.close()
+
+    def test_origin_drift_is_rejected_before_worktree_creation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source_root = Path(tmp) / "znagent"
+            source_root.mkdir()
+            self._make_repo(source_root)
+            resident = self._resident(tmp)
+            task = self._open_task(resident)
+            branch = f"work/self-maintenance-{task['task_id'][:12]}-origin-drift"
+            attempt_root = source_root.parent / ".zn-maintenance-worktrees" / "attempt-origin-drift"
+            try:
+                resident.investigate_maintenance_source(
+                    task["task_id"],
+                    source_root=source_root,
+                    regression_oracle="test:tests/zn_agent/core/test_regression.py",
+                )
+                self._git(source_root, "remote", "set-url", "origin", "https://example.invalid/rebound.git")
+
+                with self.assertRaisesRegex(RuntimeError, "source origin changed"):
+                    resident.run_maintenance_repair_attempt(
+                        task["task_id"],
+                        source_root=source_root,
+                        attempt_root=attempt_root,
+                        branch_ref=branch,
+                        replacements={
+                            "runtime/python/zn_agent/core/repair_fixture.py": "VALUE = 2\n"
+                        },
+                    )
+                self.assertFalse(attempt_root.exists())
+                self.assertEqual(
+                    self._git(source_root, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode,
+                    1,
+                )
+            finally:
                 resident.managed_browser.close()
                 resident.store.close()
 

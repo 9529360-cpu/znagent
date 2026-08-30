@@ -6,10 +6,6 @@
   "version": "0.17.0",
   "description": "Native desktop workbench for the ZN resident.",
   "author": "ZN Project",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/9529360-cpu/znagent.git"
-  },
   "type": "module",
   "main": "dist/electron-main.mjs",
   "engines": {
