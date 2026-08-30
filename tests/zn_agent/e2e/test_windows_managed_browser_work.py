@@ -270,7 +270,7 @@ class ManagedBrowserWorkWindowsE2E(unittest.TestCase):
         ]
         self.assertEqual(len(browser_actions), 1)
         self.assertTrue(browser_actions[0]["success"])
-        self.assertEqual(browser_actions[0]["output"], self.done_url)
+        self.assertEqual(browser_actions[0]["summary"], self.done_url)
         messages = final["thread"]["messages"]
         self.assertEqual([item["role"] for item in messages], ["user", "zn", "activity"])
         self.assertEqual(messages[1]["text"], self.done_url)
