@@ -4,17 +4,21 @@ This is the current engineering work site and fact index, not a chat transcript 
 
 ## Current objective
 
-Continue vertical product closure from the verified report/browser stage while keeping repository truth synchronized in the same coherent slice.
+Continue vertical product closure from the managed-browser ordinary Work path while keeping changed repository truth synchronized in the same coherent slice.
 
-The two newest product capabilities are:
+The newest browser product capability is deliberately narrow:
 
 ```text
-resident defect truth
--> privacy-safe durable local report outbox
-
 ordinary durable Work
--> deterministic managed-browser navigation
--> observed URL postcondition
++ one explicit HTTP(S) URL
++ one explicit #dom-id
++ unambiguous check / uncheck intent
+-> managed Chromium
+-> fresh exact checkbox target authority
+-> CHECK / UNCHECK
+-> same-exact-node checked-state postcondition
+-> session cleanup
+-> durable Work result
 ```
 
 Normal installed ZN still has no official repository push/PR/merge/release/signing authority.
@@ -23,13 +27,7 @@ Normal installed ZN still has no official repository push/PR/merge/release/signi
 
 Do not trust an exact `main`/`dev` SHA written in HANDOFF as a live oracle. Updating HANDOFF changes Git HEAD, and normal promotion adds a merge commit. A fresh maintainer must query live refs first.
 
-At the latest completed promotion checkpoint:
-
-- PR #97 reconciled implementation status and HANDOFF after product PRs #95/#96;
-- PR #98 promoted that verified stage to canonical `main`;
-- `dev/zn-agent` was then fast-forwarded, without force, to the promotion merge so the long-lived branches were equal at that checkpoint;
-- product-code head `b1c86ee2...` had full green ZN CI `33286758708` before the documentation-only reconciliation;
-- canonical/post-promotion CI status must be read live from GitHub and must not be inferred from this text.
+Exact SHAs and run IDs below are evidence checkpoints only.
 
 The maintenance invariant is:
 
@@ -47,6 +45,36 @@ If a later change makes any of those facts obsolete, update the affected durable
 
 ## Verified product reality
 
+### Managed browser ordinary Work
+
+PR #96 connected the first natural ordinary Work path: exactly one explicit safe HTTP(S) URL plus an unambiguous navigation cue forms `browser_navigate`, uses resident-owned managed Chromium, independently re-observes the current URL, and completes/fails durable Work without asking a model to invent the destination.
+
+PR #102 connects one existing provider interaction to the real Work caller rather than broadening all browser authority at once:
+
+- exactly one explicit HTTP(S) URL is required;
+- exactly one explicit `#dom-id` is required;
+- check/uncheck intent must be unambiguous in supported English/Chinese cues;
+- URL fragments are not treated as target authority;
+- no model invents destination, target or desired state;
+- permission is origin-bounded and grants only navigation + page interaction for this path;
+- text-entry, download and upload authority stay disabled;
+- after navigation, ZN freshly observes the explicit DOM-id target and requires checkbox role;
+- CHECK/UNCHECK authority is bound to that fresh observation;
+- provider success requires the same exact node to be re-observed in the requested checked state;
+- the ephemeral session closes before successful Work completion;
+- the mutation uses the durable side-effect guard, so the same event/signature is not blindly replayed after uncertainty.
+
+PR #103 adds a real local Chromium durable Work E2E for this mutation. The local fixture grants private-network authority explicitly in the structured E2E payload; natural ordinary Work does not silently gain private-network access.
+
+Capability maturity: **connected + verified for one bounded checkbox interaction class**, not browser product closure.
+
+Still missing:
+
+- user-meaningful semantic/accessibility target discovery; the current ordinary path requires a technical `#dom-id`;
+- general safe click/focus/text/form Work flows;
+- complete reconciliation of an interrupted ephemeral mutation. Current behavior fails closed and refuses blind replay, but cannot always classify the outside-world result after process loss;
+- User Browser Bridge.
+
 ### Resident defect reporting
 
 PR #95 connects repeated high-confidence `probable_zn_defect` maintenance truth to a durable privacy-safe local upstream-report outbox.
@@ -58,29 +86,10 @@ Guaranteed now:
 - restart repairs missing projection from durable maintenance-task truth;
 - external payload uses installation-scoped pseudonymous incident/component tokens;
 - raw error text, local paths, organ, task id, health fingerprint, repository identity and credentials are excluded;
-- equivalent incidents on separate installations receive unrelated tokens;
 - status is explicitly `authority=local_outbox_only`, `transport_available=false`;
-- any future external dispatch must be durably reserved first; ambiguous outcomes become `outcome_uncertain` and are not blindly replayed.
+- future external dispatch must be durably reserved first; ambiguous outcomes become `outcome_uncertain` and are not blindly replayed.
 
-This capability is connected + locally verified. Network transport, acknowledgement and maintainer intake are still missing.
-
-### Managed browser ordinary Work entry
-
-PR #96 connects one narrow natural user path to the managed-browser Body:
-
-```text
-ordinary Work
-+ exactly one explicit HTTP(S) URL
-+ unambiguous navigation cue
--> browser_navigate
--> managed Chromium
--> independently observed current URL
--> durable Work result
-```
-
-Multiple URLs, malformed URLs, embedded credentials, or prose merely discussing a URL do not create browser authority. ZN does not ask a model to invent the destination.
-
-This closes navigation only. General page sensing, click/form/text-entry authority, downloads/uploads, stale-target recovery and the separate user-browser bridge remain incomplete.
+Network transport, acknowledgement and maintainer intake are still missing.
 
 ### Source-maintenance authority
 
@@ -92,47 +101,46 @@ Ordinary installed ZN has no repository credential or official repository mutati
 
 - `33284716266` — targeted resident report-outbox validation success.
 - PR #95 — reporting-aware resident + privacy-safe durable local outbox.
-- `33286593120` — ordinary user-entry browser navigation + real local Chromium Work E2E success.
-- `33286655544` — durable `ResidentWorkLedger` user-entry path + Chromium E2E success.
+- `33286593120` / `33286655544` — ordinary managed-browser navigation user-entry + durable ledger + real Chromium evidence.
 - PR #96 — ordinary Work -> managed-browser navigation.
-- `33286758708` — full dev ZN CI green on product-code head `b1c86ee2...`.
-- PR #97 — durable documentation reconciliation after #95/#96.
-- PR #98 — canonical promotion of the report/browser stage.
-
-Read current post-promotion/main CI live before making any new verified-state claim.
-
-## Maintenance drift lesson
-
-The earlier drift was an execution failure, not a missing rule: #95/#96 reached verified dev while main and durable docs still described the earlier authority/privacy stage. That allowed a future maintainer to recover stale priorities.
-
-The correction is not "write more docs". The correction is that changed product truth, HANDOFF, promotion and branch synchronization are part of the same normal engineering closure. Dynamic Git state should be queried live rather than copied into prose that invalidates itself on the next commit.
+- `33286758708` — earlier full dev ZN CI green on product checkpoint `b1c86ee2...`.
+- PR #102 — ordinary Work -> bounded explicit checkbox mutation.
+- `33297131660` — managed-browser contract suite and real local Chromium E2E green after #102; includes browser Work checkbox core tests.
+- `33297131654` — Source Boundary, full Kernel/Python core tests and Electron/TypeScript jobs all reached success on #102 checkpoint `f5a87ed...`; workflow conclusion later became `cancelled` only because PR #103's dev push superseded the final status-publication phase. Do not misreport the workflow itself as a completed-green run.
+- PR #103 — adds real local Chromium durable Work checkbox evidence.
+- `33297795844` — managed-browser contracts + real local Chromium E2E green on #103 checkpoint `9668f883...`, including the checkbox Work E2E.
+- Read current full dev ZN CI and canonical post-promotion CI live before claiming final repository closure.
 
 ## Current product gaps
 
-1. Upstream BUG/repair reporting remains local-only; bounded transport/intake/acknowledgement/reconciliation is missing.
-2. Managed browser remains navigation-only for ordinary Work; broader fresh page observation and bounded interaction/recovery are missing.
-3. User Browser Bridge remains architecture-only.
-4. Installed public update read/verify/update-available observation remains partial.
-5. Installed N -> N+1 replacement, rollback, signing and release trust remain approval-gated.
-6. Unified health remains partial.
+1. Managed browser needs bounded fresh semantic/accessibility sensing and user-meaningful target discovery; `#dom-id` is too technical for broad product use.
+2. Browser interruption recovery is fail-closed but not fully reconciled; unknown external mutation outcomes need bounded re-sense/reclassification where possible.
+3. Broader safe click/focus/text/form Work flows remain unconnected; expand one vertical class at a time.
+4. Upstream BUG/repair reporting remains local-only; bounded operator-controlled transport/intake/acknowledgement/reconciliation is missing.
+5. User Browser Bridge remains architecture-only.
+6. Installed public update observation remains partial; installed N -> N+1 replacement, rollback, signing and release trust remain approval-gated.
+7. Unified health remains partial.
 
 ## Next dependency-ready work
 
-Re-check live Git/CI first, then choose the highest-value vertical closure from active caller evidence, most likely:
+Re-check live Git/CI first. The strongest browser continuation is currently:
+
+```text
+ordinary managed-browser Work
+-> bounded fresh accessibility/semantic observation
+-> explicit user-meaningful target selection without invented authority
+-> one controlled interaction
+-> independent postcondition
+-> interruption reconciliation / recovery
+```
+
+Before implementing it, compare active-caller value and security boundary against the alternative report path:
 
 ```text
 local report outbox
 -> bounded operator-controlled transport
--> durable dispatch/acknowledgement/reconciliation
+-> durable dispatch / acknowledgement / reconciliation
 -> maintainer intake
-
-or
-
-ordinary managed-browser navigation
--> fresh page observation
--> one bounded interaction class
--> independent postcondition
--> failure/restart recovery
 ```
 
 Do not turn repository synchronization itself into the product milestone. It is required engineering hygiene that keeps autonomous continuation trustworthy.
