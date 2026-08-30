@@ -38,8 +38,13 @@ _UNCHECK_CUES = (
     re.compile(r"\buncheck\b", re.IGNORECASE),
     re.compile(r"\buntick\b", re.IGNORECASE),
 )
+_CLICK_CUES = (
+    re.compile(r"\bclick\b", re.IGNORECASE),
+    re.compile(r"\bpress\b", re.IGNORECASE),
+)
 _CHECK_CUES_ZH = ("勾选", "选中")
 _UNCHECK_CUES_ZH = ("取消勾选", "取消选中")
+_CLICK_CUES_ZH = ("点击", "按下")
 _URL_TRAILING_PUNCTUATION = ".,;:!?)]}，。！？；：）】》"
 
 
@@ -101,6 +106,12 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
             return None
         return bool(check_requested)
 
+    @staticmethod
+    def _button_click_requested(text: str) -> bool:
+        return any(pattern.search(text) for pattern in _CLICK_CUES) or any(
+            cue in text for cue in _CLICK_CUES_ZH
+        )
+
     @classmethod
     def _looks_like_checkbox_interaction(cls, task: str) -> bool:
         remainder = str(task or "")
@@ -115,6 +126,15 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
         return bool(has_target_marker and cls._checkbox_state(remainder) is not None)
 
     @classmethod
+    def _looks_like_button_interaction(cls, task: str) -> bool:
+        remainder = str(task or "")
+        for url in cls._explicit_urls(remainder):
+            remainder = remainder.replace(url, " ")
+        lowered = remainder.lower()
+        has_target_marker = "button" in lowered or "按钮" in remainder
+        return bool(has_target_marker and cls._button_click_requested(remainder))
+
+    @classmethod
     def _natural_navigation_url(cls, event) -> str | None:
         payload = event.payload or {}
         if payload.get("body_action") or payload.get("native_action"):
@@ -124,14 +144,43 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
         lowered = task.lower()
         if not any(cue in lowered for cue in _NAVIGATION_CUES):
             return None
-        # A malformed/ambiguous checkbox mutation must fail closed rather than
-        # silently degrading into a partial navigation-only action. Ordinary
-        # phrases such as "open this page to check status" remain navigation.
-        if cls._looks_like_checkbox_interaction(task):
+        # A malformed/ambiguous mutation must fail closed rather than silently
+        # degrading into a partial navigation-only action. Ordinary phrases such
+        # as "open this page to check status" remain navigation.
+        if cls._looks_like_checkbox_interaction(task) or cls._looks_like_button_interaction(task):
             return None
 
         matches = cls._explicit_urls(task)
         return matches[0] if len(matches) == 1 else None
+
+    @classmethod
+    def _natural_named_button_request(cls, event) -> tuple[str, str, str] | None:
+        payload = event.payload or {}
+        if payload.get("body_action") or payload.get("native_action"):
+            return None
+
+        task = str(event.task or "").strip()
+        urls = cls._explicit_urls(task)
+        if len(urls) != 2:
+            return None
+        start_url, expected_url = urls
+        remainder = task
+        for url in urls:
+            remainder = remainder.replace(url, " ")
+        lowered = remainder.lower()
+        if "button" not in lowered and "按钮" not in remainder:
+            return None
+        if not cls._button_click_requested(remainder):
+            return None
+
+        names = []
+        for match in _QUOTED_NAME_RE.finditer(remainder):
+            value = match.group(1).strip()
+            if value and value not in names:
+                names.append(value)
+        if len(names) != 1:
+            return None
+        return start_url, names[0], expected_url
 
     @classmethod
     def _natural_named_checkbox_request(cls, event) -> tuple[str, str, bool] | None:
@@ -194,7 +243,8 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
     def _required_capabilities(cls, event) -> tuple[str, ...]:
         explicit = event.payload.get("required_capabilities")
         if explicit is None and (
-            cls._natural_named_checkbox_request(event) is not None
+            cls._natural_named_button_request(event) is not None
+            or cls._natural_named_checkbox_request(event) is not None
             or cls._natural_checkbox_request(event) is not None
             or cls._natural_navigation_url(event) is not None
         ):
@@ -210,6 +260,38 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
         learning_evidence,
         thought=None,
     ):
+        named_button = self._natural_named_button_request(event)
+        if named_button is not None:
+            url, target_name, expected_url = named_button
+            intent = NativeActionIntent(
+                intent_id=f"browser-named-button-{event.event_id}",
+                event_id=event.event_id,
+                kind="browser_click_named_button_to_url",
+                args={
+                    "url": url,
+                    "target_name": target_name,
+                    "expected_url": expected_url,
+                },
+                reason=(
+                    "the current user Work supplies the exact browser start URL, exact quoted "
+                    "accessible button name and explicit destination URL"
+                ),
+                source="native_deliberation",
+            )
+            if not self._action_blocked_by_current_evidence(event, state, intent):
+                self._begin_native_action_cycle(event, state, intent)
+                self.store.save_working_state(state)
+                if thought is not None:
+                    action = "perform body action: browser_click_named_button_to_url"
+                    if action not in thought.possible_actions:
+                        thought.possible_actions = (*thought.possible_actions, action)
+                    thought.reason = (
+                        f"{thought.reason}; the user supplied the exact page, semantic button "
+                        "name and destination so ZN does not need a model to invent authority"
+                    )
+                    self._persist_enriched_thought(thought)
+                return None
+
         named_checkbox = self._natural_named_checkbox_request(event)
         if named_checkbox is not None:
             url, target_name, checked = named_checkbox
