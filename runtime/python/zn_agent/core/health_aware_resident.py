@@ -58,6 +58,7 @@ class HealthAwareResidentRuntime(BrowserWorkResidentRuntime):
             "terminal_resize",
             "command_resize",
             "browser_navigate",
+            "browser_navigate_focus",
             "browser_observe",
             "browser_close",
         }

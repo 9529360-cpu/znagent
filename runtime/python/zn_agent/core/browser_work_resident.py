@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Resident Work lifecycle for bounded managed-browser navigation."""
+"""Resident Work lifecycle for bounded managed-browser navigation and focus."""
 
 import re
 from dataclasses import asdict
@@ -30,8 +30,14 @@ _NAVIGATION_CUES = (
 _URL_TRAILING_PUNCTUATION = ".,;:!?)]}，。！？；：）】》"
 
 
+_FOCUS_TARGET_RE = re.compile(
+    r'(?:focus\s+(?:element\s+)?id|\u805a\u7126(?:\u5143\u7d20)?\s*id)\s*[=:]?\s*["\']([A-Za-z][A-Za-z0-9_.:-]{0,127})["\']',
+    re.IGNORECASE,
+)
+
+
 class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
-    """Make managed navigation a real ZN Body action, not a parallel RPC feature.
+    """Make bounded managed-browser work a real ZN Body path.
 
     A normal user Work may form one navigation intent directly when its task
     contains exactly one explicit HTTP(S) URL and an unambiguous navigation cue.
@@ -39,7 +45,8 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
     requires a separate current-page observation after provider dispatch, and
     the inherited side-effect recovery lifecycle blocks blind replay if
     navigation may have crossed the outside-world boundary before a durable
-    checkpoint.
+    checkpoint. An explicit quoted DOM id may additionally authorize one fresh
+    target observation followed by focus; it never authorizes text entry.
     """
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
@@ -83,6 +90,16 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
             return ("browser",)
         return super()._required_capabilities(event)
 
+    @classmethod
+    def _natural_focus_request(cls, event) -> tuple[str, str] | None:
+        url = cls._natural_navigation_url(event)
+        if url is None:
+            return None
+        matches = _FOCUS_TARGET_RE.findall(str(event.task or ""))
+        if len(matches) != 1:
+            return None
+        return url, matches[0]
+
     def _deliberation_step(
         self,
         event,
@@ -92,13 +109,18 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
         learning_evidence,
         thought=None,
     ):
+        focus_request = self._natural_focus_request(event)
         url = self._natural_navigation_url(event)
         if url is not None:
+            kind = "browser_navigate_focus" if focus_request is not None else "browser_navigate"
+            args = {"url": url, "expected_url": url}
+            if focus_request is not None:
+                args["dom_id"] = focus_request[1]
             intent = NativeActionIntent(
                 intent_id=f"browser-{event.event_id}",
                 event_id=event.event_id,
-                kind="browser_navigate",
-                args={"url": url, "expected_url": url},
+                kind=kind,
+                args=args,
                 expected_outcome={"kind": "browser_url_equals", "url": url},
                 reason=(
                     "the current user Work contains one explicit HTTP(S) destination "
@@ -110,7 +132,7 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
                 self._begin_native_action_cycle(event, state, intent)
                 self.store.save_working_state(state)
                 if thought is not None:
-                    action = "perform body action: browser_navigate"
+                    action = f"perform body action: {kind}"
                     if action not in thought.possible_actions:
                         thought.possible_actions = (*thought.possible_actions, action)
                     thought.reason = (
@@ -130,7 +152,10 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
 
     @staticmethod
     def _generic_guarded_side_effect(intent: NativeActionIntent) -> bool:
-        if str(intent.kind or "").strip().lower() == "browser_navigate":
+        if str(intent.kind or "").strip().lower() in {
+            "browser_navigate",
+            "browser_navigate_focus",
+        }:
             return True
         return RecoveryBoundedResidentRuntime._generic_guarded_side_effect(intent)
 
@@ -141,7 +166,10 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
         *,
         result=None,
     ) -> dict[str, Any] | None:
-        if str(intent.kind or "").strip().lower() != "browser_navigate":
+        if str(intent.kind or "").strip().lower() not in {
+            "browser_navigate",
+            "browser_navigate_focus",
+        }:
             return super()._verification_contract(
                 event,
                 intent,

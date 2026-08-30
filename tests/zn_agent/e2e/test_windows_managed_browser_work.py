@@ -12,13 +12,15 @@ from pathlib import Path
 from zn_agent.core.browser_rpc import BrowserResidentRpcServer
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
 from zn_agent.core.resident_server import ResidentSocketService
+from zn_agent.core.work import ResidentWorkLedger
 
 
 class _FixtureHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         payload = (
             "<!doctype html><html><head><title>ZN Work Browser Closed Loop</title></head>"
-            "<body><main>structured Work reached resident-owned Chromium</main></body></html>"
+            "<body><main>structured Work reached resident-owned Chromium</main>"
+            '<input id="zn-work-focus" aria-label="ZN Work Focus"></body></html>'
         ).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -159,6 +161,53 @@ class ManagedBrowserWorkWindowsE2E(unittest.TestCase):
                 resident_thread.join(timeout=10.0)
                 self.assertFalse(resident_thread.is_alive())
                 self.assertFalse(endpoint_path.exists())
+
+    def test_structured_work_focuses_fresh_dom_target_in_real_chromium(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=Path(tmp) / "kernel.db"
+            )
+            ledger = ResidentWorkLedger(resident)
+            try:
+                ledger.create_thread(thread_id="managed-browser-focus-e2e")
+                (_, _messages), result = ledger.submit(
+                    "managed-browser-focus-e2e",
+                    "focus the explicit local fixture target",
+                    payload={
+                        "required_capabilities": ["browser"],
+                        "body_action": {
+                            "kind": "browser_navigate_focus",
+                            "args": {
+                                "url": self.url,
+                                "dom_id": "zn-work-focus",
+                                "allow_private_network": True,
+                            },
+                        },
+                        "expected_outcome": {
+                            "kind": "browser_url_equals",
+                            "url": self.url,
+                        },
+                        "model_policy": "never",
+                    },
+                )
+
+                self.assertTrue(
+                    result.success,
+                    f"{result.reason}; progress={ledger.progress('managed-browser-focus-e2e', result.event.event_id)}",
+                )
+                self.assertEqual(result.model_invocations, 0)
+                actions = resident.body.recent_actions()
+                composite = next(
+                    item for item in actions if item.kind == "browser_navigate_focus"
+                )
+                focus = composite.data["focus_evidence"]
+                self.assertTrue(focus["success"])
+                self.assertEqual(focus["postcondition"], "same_exact_target_focused")
+                self.assertTrue(focus["data"]["exact_node_continuity"])
+                self.assertTrue(focus["data"]["focused"])
+            finally:
+                resident.managed_browser.close()
+                resident.store.close()
 
 
 if __name__ == "__main__":

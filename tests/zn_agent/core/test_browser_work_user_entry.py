@@ -5,11 +5,14 @@ import unittest
 from pathlib import Path
 
 from zn_agent.core.browser import (
+    BrowserActionKind,
     BrowserActionAuthority,
     BrowserEffectEvidence,
     BrowserObservation,
     BrowserPlane,
     BrowserSessionIdentity,
+    BrowserTarget,
+    BrowserTargetKind,
 )
 from zn_agent.core.models import AgentEvent, utc_now
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
@@ -58,7 +61,21 @@ class _FakeManagedBrowser:
             raise AssertionError("browser action requires a prior observation")
         authority.validate_current(action, self.last_observation, self.permission)
         before = self.url
-        self.url = str(action.args["url"])
+        if action.kind is BrowserActionKind.NAVIGATE:
+            self.url = str(action.args["url"])
+        if action.kind is BrowserActionKind.FOCUS:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=utc_now(),
+                success=True,
+                page_id=action.page_id,
+                url_before=before,
+                url_after=self.url,
+                target_id=action.target.target_id,
+                postcondition="same_exact_target_focused",
+                data={"exact_node_continuity": True, "focused": True},
+            )
         return BrowserEffectEvidence(
             action_id=action.action_id,
             session_id=action.session_id,
@@ -74,6 +91,31 @@ class _FakeManagedBrowser:
                 "provider": "fake-browser",
             },
         )
+
+    def observe_target(self, session_id, query, *, page_id=""):
+        observation = self.observe(session_id, page_id=page_id)
+        target = BrowserTarget(
+            session_id=session_id,
+            page_id=observation.page_id,
+            kind=BrowserTargetKind.ELEMENT,
+            target_id=f"dom-id:{query.value}",
+            observed_at=observation.captured_at,
+            url=self.url,
+            frame_id="main",
+            role="textbox",
+            name="Search",
+        )
+        observation = BrowserObservation(
+            session=self.identity,
+            page_id=observation.page_id,
+            captured_at=observation.captured_at,
+            url=self.url,
+            title=observation.title,
+            load_state=observation.load_state,
+            target=target,
+        )
+        self.last_observation = observation
+        return observation
 
     def close_session(self, session_id: str) -> None:
         if session_id != self.identity.session_id:
@@ -131,6 +173,19 @@ class BrowserWorkUserEntryTests(unittest.TestCase):
                     ),
                     ("browser",),
                 )
+                self.assertEqual(
+                    resident._natural_focus_request(
+                        self._event(
+                            'open https://example.com/docs and focus element id "search"'
+                        )
+                    ),
+                    ("https://example.com/docs", "search"),
+                )
+                self.assertIsNone(
+                    resident._natural_focus_request(
+                        self._event("open https://example.com/docs and focus the search box")
+                    )
+                )
             finally:
                 resident.store.close()
 
@@ -170,6 +225,33 @@ class BrowserWorkUserEntryTests(unittest.TestCase):
                     browser.permission.allowed_origins,
                     ("https://example.com",),
                 )
+            finally:
+                resident.store.close()
+
+    def test_normal_work_can_focus_one_explicit_dom_id_after_navigation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            browser = _FakeManagedBrowser()
+            resident.managed_browser = browser
+            ledger = ResidentWorkLedger(resident)
+            try:
+                ledger.create_thread(thread_id="browser-user-focus")
+                (_, _messages), result = ledger.submit(
+                    "browser-user-focus",
+                    'open https://example.com/work and focus element id "search"',
+                )
+
+                self.assertTrue(result.success)
+                self.assertEqual(result.model_invocations, 0)
+                self.assertEqual(browser.open_calls, 1)
+                self.assertEqual(browser.act_calls, 2)
+                self.assertEqual(browser.close_calls, 1)
+                self.assertTrue(browser.permission.allow_navigation)
+                self.assertTrue(browser.permission.allow_page_interaction)
+                self.assertFalse(browser.permission.allow_text_entry)
             finally:
                 resident.store.close()
 

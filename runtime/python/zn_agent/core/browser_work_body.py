@@ -12,6 +12,8 @@ from .browser import (
     BrowserActionAuthority,
     BrowserActionKind,
     BrowserPermissionContext,
+    BrowserTargetQuery,
+    BrowserTargetQueryKind,
 )
 from .models import utc_now
 
@@ -26,16 +28,19 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
     """
 
     _BROWSER_NAVIGATE = "browser_navigate"
+    _BROWSER_NAVIGATE_FOCUS = "browser_navigate_focus"
 
     @classmethod
     def _requires_guard(cls, kind: str, args: dict[str, Any]) -> bool:
-        if kind == cls._BROWSER_NAVIGATE:
+        if kind in {cls._BROWSER_NAVIGATE, cls._BROWSER_NAVIGATE_FOCUS}:
             return True
         return super()._requires_guard(kind, args)
 
     def _dispatch(self, action: BodyAction, started: str) -> BodyActionResult:
         if action.kind == self._BROWSER_NAVIGATE:
             return self._browser_navigate(action, started)
+        if action.kind == self._BROWSER_NAVIGATE_FOCUS:
+            return self._browser_navigate_focus(action, started)
         if action.kind == "browser_observe":
             return self._browser_observe(action, started)
         if action.kind == "browser_close":
@@ -113,6 +118,115 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                 except Exception:
                     pass
             raise
+
+    def _browser_navigate_focus(self, action: BodyAction, started: str) -> BodyActionResult:
+        browser = self._browser()
+        url = str(action.args.get("url") or "").strip()
+        dom_id = str(action.args.get("dom_id") or "").strip()
+        if not url or not dom_id:
+            raise ValueError("browser_navigate_focus requires url and dom_id")
+
+        permission = BrowserPermissionContext(
+            allow_navigation=True,
+            allow_page_interaction=True,
+            allow_private_network=bool(action.args.get("allow_private_network", False)),
+            allowed_origins=(url,),
+        )
+        session = None
+        try:
+            session = browser.open_session(permission=permission, headless=True)
+            initial = browser.observe(session.session_id)
+            navigation = BrowserAction.create(
+                session_id=session.session_id,
+                kind=BrowserActionKind.NAVIGATE,
+                page_id=initial.page_id,
+                args={"url": url},
+                expected={"url_equals": url},
+            )
+            navigation_evidence = browser.act(
+                navigation,
+                BrowserActionAuthority.from_observation(navigation, initial, permission),
+            )
+            if not navigation_evidence.success:
+                browser.close_session(session.session_id)
+                return self._failed_composite_action(
+                    action,
+                    started,
+                    navigation_evidence.error or "managed browser navigation failed",
+                    browser_evidence=asdict(navigation_evidence),
+                )
+
+            target_observation = browser.observe_target(
+                session.session_id,
+                BrowserTargetQuery(kind=BrowserTargetQueryKind.DOM_ID, value=dom_id),
+                page_id=navigation_evidence.page_id,
+            )
+            focus = BrowserAction.create(
+                session_id=session.session_id,
+                kind=BrowserActionKind.FOCUS,
+                page_id=target_observation.page_id,
+                target=target_observation.target,
+            )
+            focus_evidence = browser.act(
+                focus,
+                BrowserActionAuthority.from_observation(
+                    focus, target_observation, permission
+                ),
+            )
+            if not focus_evidence.success:
+                browser.close_session(session.session_id)
+                return self._failed_composite_action(
+                    action,
+                    started,
+                    focus_evidence.error or "managed browser focus failed",
+                    browser_evidence=asdict(navigation_evidence),
+                    focus_evidence=asdict(focus_evidence),
+                )
+
+            target = target_observation.target
+            if target is None:
+                raise RuntimeError("managed browser focus lost target observation")
+            return BodyActionResult(
+                action_id=action.action_id,
+                kind=action.kind,
+                success=True,
+                output=focus_evidence.target_id,
+                data={
+                    "browser_session_id": session.session_id,
+                    "page_id": focus_evidence.page_id,
+                    "url_after": focus_evidence.url_after,
+                    "target_id": focus_evidence.target_id,
+                    "target_role": target.role,
+                    "target_name": target.name,
+                    "browser_evidence": asdict(navigation_evidence),
+                    "focus_evidence": asdict(focus_evidence),
+                },
+                event_id=action.event_id,
+                started_at=started,
+                completed_at=utc_now(),
+            )
+        except BaseException:
+            if session is not None:
+                try:
+                    browser.close_session(session.session_id)
+                except Exception:
+                    pass
+            raise
+
+    @staticmethod
+    def _failed_composite_action(
+        action: BodyAction, started: str, error: str, **data: Any
+    ) -> BodyActionResult:
+        return BodyActionResult(
+            action_id=action.action_id,
+            kind=action.kind,
+            success=False,
+            data=data,
+            error=error,
+            event_id=action.event_id,
+            started_at=started,
+            completed_at=utc_now(),
+        )
 
     def _browser_observe(self, action: BodyAction, started: str) -> BodyActionResult:
         browser = self._browser()

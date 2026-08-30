@@ -62,7 +62,7 @@ Use `exists -> connected -> verified -> product-closed`. File/interface presence
 | Upstream BUG / repair report formation | connected + verified locally | repeated `probable_zn_defect` truth projects to one durable privacy-safe installation-pseudonymous local outbox envelope |
 | Upstream BUG / repair report transport | missing | no network sender/endpoint yet; future transport must preserve durable reserve + ambiguous-outcome reconciliation |
 | Resident managed-browser navigation | connected + verified for narrow ordinary Work entry | explicit safe URL + explicit navigation cue -> managed Chromium -> observed URL postcondition |
-| Resident managed-browser page interaction | partial | general page sensing/click/form/text-entry/download/upload/stale-target recovery not yet closed |
+| Resident managed-browser page interaction | connected + verified for one narrow focus entry | explicit URL + quoted DOM id + explicit focus cue -> unique visible main-frame target observation -> same-node focused postcondition; general page sensing/click/form/text-entry/download/upload remain open |
 | User browser bridge | architecture only / missing | authenticated existing-browser path not product-closed |
 | Installed upstream update observation | partial | public channel infrastructure exists; installed read/verify/update-available loop still needs complete product evidence |
 | Official repository push / PR / merge | intentionally outside installed resident | maintainer-environment authority |
@@ -118,7 +118,7 @@ Older self-maintenance evidence remains valid where the underlying code has not 
 ## Current product gaps
 
 1. **BUG/repair reporting is locally connected but not remotely product-closed.** Next layer: bounded operator-controlled transport/intake/acknowledgement/reconciliation without repository credentials or general network authority.
-2. **Managed browser is navigation-only.** Add bounded fresh page observation and one interaction class with explicit authority, postcondition and failure recovery before expanding breadth.
+2. **Managed browser ordinary Work is navigation plus one narrow focus class.** Focus requires an explicit URL and quoted DOM id, uses fresh unique visible main-frame target evidence, verifies same-node focus, and retains replay blocking. General page sensing, click, form/text entry, downloads/uploads and richer target discovery remain open.
 3. **User Browser Bridge is missing.** Existing authenticated user-session reality must not be solved by copying browser credentials/profile data.
 4. **Installed update observation remains partial.** Read/verify/update-available must be proven end to end independently of private source access.
 5. **Installed N -> N+1 continuity remains approval-gated.** Update availability does not authorize body replacement, rollback or signing changes.
@@ -133,7 +133,7 @@ local report outbox -> bounded transport/intake/acknowledgement/reconciliation
 
 or
 
-ordinary browser navigation -> fresh page sensing -> one bounded interaction -> independent postcondition -> recovery
+ordinary browser navigation/focus -> bounded page sensing -> next explicitly authorized interaction -> independent postcondition -> recovery
 ```
 
 Repository synchronization and documentation reconciliation are required engineering hygiene, not product milestones.

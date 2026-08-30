@@ -241,6 +241,50 @@ class BrowserWorkNavigationTests(unittest.TestCase):
             finally:
                 resident.store.close()
 
+    def test_uncertain_navigate_focus_is_blocked_before_browser_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, browser = self._resident(Path(tmp))
+            try:
+                event = resident.enqueue(
+                    "recover interrupted managed browser focus",
+                    payload={"required_capabilities": ["browser"]},
+                )
+                self.assertIsNotNone(resident.store.claim_event(event.event_id))
+                args = {"url": "https://example.com/once", "dom_id": "search"}
+                intent = NativeActionIntent(
+                    intent_id=f"intent-{event.event_id}",
+                    event_id=event.event_id,
+                    kind="browser_navigate_focus",
+                    args=args,
+                    source="native_deliberation",
+                )
+                state = WorkingState(
+                    current_event_id=event.event_id,
+                    stage="native_action",
+                    next_action="move body: browser_navigate_focus",
+                    data={"native_action_intent": intent.to_dict()},
+                )
+                resident.store.save_working_state(state)
+                resident.body._start_attempt(
+                    attempt_id="sidefx-browser-focus-seeded",
+                    event_id=event.event_id,
+                    kind="browser_navigate_focus",
+                    signature_hash=resident.body._signature_hash(
+                        "browser_navigate_focus", args
+                    ),
+                )
+
+                self.assertIsNone(
+                    resident._native_action_step(event, state, readiness=None)
+                )
+                recovery = resident.store.get_working_state()
+                self.assertEqual(recovery.stage, "side_effect_recovery")
+                self.assertTrue(recovery.data["side_effect_recovery"]["replay_blocked"])
+                self.assertEqual(browser.open_calls, 0)
+                self.assertEqual(browser.act_calls, 0)
+            finally:
+                resident.store.close()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
