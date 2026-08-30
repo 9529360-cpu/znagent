@@ -190,7 +190,7 @@ test('formal desktop package and builder expose only ZN product identity', () =>
 
   assert.equal(packageJson.name, 'zn-desktop')
   assert.equal(packageJson.productName, 'ZN')
-  assert.equal(packageJson.repository?.url, 'git+https://github.com/9529360-cpu/znagent.git')
+  assert.equal(packageJson.repository, undefined)
   assert.equal(packageJson.build, undefined)
   assert.doesNotMatch(packageJson.scripts?.build || '', /write-build-stamp/)
   assert.match(packageJson.scripts?.builder || '', /--config electron-builder\.zn\.yml/)
