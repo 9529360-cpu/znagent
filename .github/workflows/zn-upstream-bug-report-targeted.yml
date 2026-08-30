@@ -1,0 +1,41 @@
+name: ZN Upstream Bug Report Targeted
+
+on:
+  push:
+    branches:
+      - work/upstream-bug-report
+
+permissions:
+  contents: read
+
+env:
+  CI: 'true'
+  TZ: UTC
+  PYTHONUTF8: '1'
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  targeted:
+    runs-on: [self-hosted, Windows, X64, zn-ci]
+    timeout-minutes: 10
+    env:
+      UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare isolated runtime
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/report-venv -ErrorAction SilentlyContinue
+          uv venv .ci/report-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\report-venv\Scripts\python.exe'
+          uv pip install --python $python runtime/python
+      - name: Compile report owner
+        run: .\.ci\report-venv\Scripts\python.exe -m py_compile runtime/python/zn_agent/core/upstream_bug_report.py
+      - name: Run report outbox regressions
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          & .\.ci\report-venv\Scripts\python.exe -m unittest tests.zn_agent.core.test_upstream_bug_report -v
