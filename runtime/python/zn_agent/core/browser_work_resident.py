@@ -102,6 +102,19 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
         return bool(check_requested)
 
     @classmethod
+    def _looks_like_checkbox_interaction(cls, task: str) -> bool:
+        remainder = str(task or "")
+        for url in cls._explicit_urls(remainder):
+            remainder = remainder.replace(url, " ")
+        lowered = remainder.lower()
+        has_target_marker = bool(
+            "checkbox" in lowered
+            or "复选框" in remainder
+            or _DOM_ID_RE.search(remainder)
+        )
+        return bool(has_target_marker and cls._checkbox_state(remainder) is not None)
+
+    @classmethod
     def _natural_navigation_url(cls, event) -> str | None:
         payload = event.payload or {}
         if payload.get("body_action") or payload.get("native_action"):
@@ -112,8 +125,9 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
         if not any(cue in lowered for cue in _NAVIGATION_CUES):
             return None
         # A malformed/ambiguous checkbox mutation must fail closed rather than
-        # silently degrading into a partial navigation-only action.
-        if cls._checkbox_state(task) is not None:
+        # silently degrading into a partial navigation-only action. Ordinary
+        # phrases such as "open this page to check status" remain navigation.
+        if cls._looks_like_checkbox_interaction(task):
             return None
 
         matches = cls._explicit_urls(task)
