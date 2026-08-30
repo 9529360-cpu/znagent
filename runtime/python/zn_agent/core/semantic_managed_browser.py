@@ -104,7 +104,9 @@ _SEMANTIC_TEXTBOX_EVIDENCE_SCRIPT = r"""
     .toLowerCase()
     .slice(0, 32);
   const isPassword = tag === "input" && inputType === "password";
-  const nativeTextbox = tag === "textarea" || (tag === "input" && inputType === "text");
+  const nativeTextbox = tag === "textarea" || (
+    tag === "input" && (inputType === "" || inputType === "text")
+  );
   return {
     connected,
     visible,
@@ -376,7 +378,7 @@ class SemanticPlaywrightManagedBrowser(PlaywrightManagedBrowser):
                 )
             if not bool(raw.get("native_textbox")):
                 raise ManagedBrowserError(
-                    "managed browser semantic textbox Work currently supports only input[type=text] and textarea targets"
+                    "managed browser semantic textbox Work currently supports only default/text input and textarea targets"
                 )
             if bool(raw.get("disabled")):
                 raise ManagedBrowserError("managed browser semantic textbox target is disabled")
