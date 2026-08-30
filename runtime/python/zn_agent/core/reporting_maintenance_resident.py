@@ -40,7 +40,12 @@ class ReportingMaintenanceResidentRuntime(CognitiveMaintenanceResidentRuntime):
             self.upstream_bug_reports = None
             data["upstream_bug_reports"] = self._unavailable_report_status()
         else:
-            data["upstream_bug_reports"] = {"available": True, **snapshot}
+            data["upstream_bug_reports"] = {
+                "available": True,
+                "authority": "local_outbox_only",
+                "transport_available": False,
+                **snapshot,
+            }
         return data
 
     def prepare_upstream_bug_report(self, task_id: str) -> dict[str, Any]:
@@ -123,6 +128,8 @@ class ReportingMaintenanceResidentRuntime(CognitiveMaintenanceResidentRuntime):
     def _unavailable_report_status() -> dict[str, Any]:
         return {
             "available": False,
+            "authority": "local_outbox_only",
+            "transport_available": False,
             "report_count": 0,
             "pending_count": 0,
             "outcome_uncertain_count": 0,
