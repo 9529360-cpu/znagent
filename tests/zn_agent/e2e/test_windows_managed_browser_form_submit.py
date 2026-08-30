@@ -24,11 +24,21 @@ class _FormHandler(http.server.BaseHTTPRequestHandler):
                 "<!doctype html><html><head><title>ZN Form Done</title></head>"
                 "<body><main>submitted</main></body></html>"
             ).encode("utf-8")
+        elif self.path == "/wrong":
+            payload = (
+                "<!doctype html><html><head><title>ZN Form Wrong</title></head>"
+                "<body><main>typed state was not retained</main></body></html>"
+            ).encode("utf-8")
         else:
+            expected = _TYPED.replace("\\", "\\\\").replace("'", "\\'")
             payload = (
                 "<!doctype html><html><head><title>ZN Form</title></head><body>"
-                '<label>Search <input type="text" aria-label="Search"></label>'
-                '<button type="button" onclick="location.href=\'/done\'">Continue</button>'
+                '<label>Search <input id="search" type="text" aria-label="Search"></label>'
+                '<button type="button" onclick="location.href='
+                + "'/done' if document.getElementById('search').value === '"
+                + expected
+                + "' else '/wrong'"
+                + '">Continue</button>'
                 "</body></html>"
             ).encode("utf-8")
         self.send_response(200)
