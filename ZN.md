@@ -399,7 +399,16 @@ traceable commit/tag
 → advance stable.json LAST
 ```
 
-A clean Windows machine must not require a source checkout, system Python, Node/npm or private source credentials.
+Installed ZN instances must know a bounded **upstream update identity/channel** so they can check for newer official versions and verify update metadata/artifacts. That knowledge is not repository authority. The source repository may remain private; an installed client must not require source checkout, repository read access, GitHub credentials, system Python or Node/npm in order to update.
+
+The product boundary is deliberately asymmetric:
+
+```text
+official upstream update channel -> installed ZN
+installed ZN -> bounded bug / repair report channel
+```
+
+The update direction is read/verify/download only. The report direction may send bounded diagnostic evidence or a repair proposal to an operator-controlled reporting endpoint, but it must not grant the installed resident source-repository write authority.
 
 Hashes are integrity checks, not signatures. Windows signing remains a separate release hardening gate.
 
@@ -407,9 +416,21 @@ Hashes are integrity checks, not signatures. Windows signing remains a separate 
 
 Self-maintenance follows `docs/ZN-SELF-MAINTENANCE.md`.
 
-First-stage principle: ZN may investigate, develop, test, prepare branches/PRs and release candidates, but replacing the user's currently installed body defaults to explicit user approval.
+An installed ZN may investigate itself, form and verify a bounded local repair candidate, and report a defect or repair proposal upstream. Its ordinary resident authority stops before official repository mutation.
 
-Identity, long-term memory, credentials, updater, rollback, signing and self-maintenance permission rules remain high-risk boundaries requiring conservative approval.
+The normal installed-product boundary is:
+
+```text
+observe upstream update availability
++ diagnose / locally verify a defect
++ submit a bounded upstream report
+```
+
+It does **not** include direct push to the official source repository, direct PR creation against that repository, merge, release, signing or official-version promotion. Those operations belong to the separately trusted maintainer/release environment. A maintainer may consume a report, reproduce it, create a repository `work/*` branch, run CI, review and decide whether to merge or release; that authority is not distributed with ZN installations.
+
+Repository URLs, credentials, maintainer tokens, deploy keys or source-write capabilities must never be treated as ordinary installed-resident authority. Knowing the official update channel or product upstream identity does not imply access to the private source repository.
+
+Replacing the user's currently installed body remains a separate update action governed by updater/replacement safety and continuity requirements. Identity, long-term memory, updater, rollback and signing remain high-risk boundaries requiring conservative approval and verification.
 
 ## 10. Testing contract
 
@@ -427,6 +448,7 @@ At minimum protect:
 - active ZN renderer/main/preload/protocol ownership;
 - release/runtime staging integrity;
 - repository-boundary scans that prevent historical/reference product paths, package namespaces or control planes from becoming active dependencies again;
+- installed-resident upstream authority boundaries: update observation and report submission must not imply repository write/merge/release authority;
 - managed-browser lifecycle/evidence contracts once implemented;
 - real user-browser integration and privacy/permission boundaries once implemented.
 
