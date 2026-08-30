@@ -10,7 +10,9 @@ core Python/test files, one fixed unittest oracle, and privacy-safe diff evidenc
 
 The operator never writes the observed source root, ``main``, the running installed
 body, arbitrary filesystem paths, shell commands, commits, pushes, merges, releases,
-or updater state.
+or updater state. Source-origin continuity is checked against the one-way fingerprint
+captured by the trusted-source investigation; no private repository identity is
+compiled into the installed runtime.
 """
 
 import hashlib
@@ -26,7 +28,6 @@ from typing import Any, Mapping
 from .maintenance_investigation import MaintenanceInvestigationLedger
 from .models import utc_now
 
-_EXPECTED_REPOSITORY = "9529360-cpu/znagent"
 _ATTEMPT_DIR = ".zn-maintenance-worktrees"
 _MAX_REPLACEMENTS = 12
 _MAX_FILE_BYTES = 512 * 1024
@@ -42,16 +43,9 @@ _ALLOWED_PREFIXES = (
 class MaintenanceIsolatedRepairOperator:
     """Create and verify one bounded isolated repair attempt."""
 
-    def __init__(
-        self,
-        store,
-        ledger: MaintenanceInvestigationLedger,
-        *,
-        expected_repository: str = _EXPECTED_REPOSITORY,
-    ):
+    def __init__(self, store, ledger: MaintenanceInvestigationLedger):
         self.store = store
         self.ledger = ledger
-        self.expected_repository = self._repository_slug(expected_repository)
         self._init_schema()
 
     def execute(
@@ -87,8 +81,9 @@ class MaintenanceIsolatedRepairOperator:
             raise RuntimeError("trusted maintenance source evidence is unavailable")
         if str(evidence["authority"] or "") != "read_only":
             raise RuntimeError("maintenance source evidence is not read_only")
-        if str(evidence["repository"] or "") != self.expected_repository:
-            raise RuntimeError("maintenance source evidence repository is not ZN")
+        expected_origin = str(evidence["repository"] or "").strip()
+        if not expected_origin:
+            raise RuntimeError("maintenance source origin fingerprint is unavailable")
         if bool(evidence["dirty"]):
             raise RuntimeError("maintenance repair requires a clean observed source baseline")
         if not bool(evidence["oracle_available"]):
@@ -120,7 +115,7 @@ class MaintenanceIsolatedRepairOperator:
         observed_top = Path(top.stdout.strip()).expanduser().resolve(strict=True)
         if observed_top != source:
             raise RuntimeError("maintenance repair source must remain the repository root")
-        if self._repository_slug(remote.stdout.strip()) != self.expected_repository:
+        if self._origin_fingerprint(remote.stdout.strip()) != expected_origin:
             raise RuntimeError("maintenance repair source origin changed")
         if head.stdout.strip() != baseline_head:
             raise RuntimeError("maintenance repair source HEAD drifted from observed baseline")
@@ -377,20 +372,12 @@ class MaintenanceIsolatedRepairOperator:
             raise RuntimeError("maintenance regression oracle module is invalid")
         return module
 
-    @staticmethod
-    def _repository_slug(value: str) -> str:
-        raw = str(value or "").strip().rstrip("/")
-        if raw.endswith(".git"):
-            raw = raw[:-4]
-        if raw.startswith("git@github.com:"):
-            raw = raw[len("git@github.com:") :]
-        elif raw.startswith("ssh://git@github.com/"):
-            raw = raw[len("ssh://git@github.com/") :]
-        elif raw.startswith("https://github.com/"):
-            raw = raw[len("https://github.com/") :]
-        elif raw.startswith("http://github.com/"):
-            raw = raw[len("http://github.com/") :]
-        return raw.strip("/").lower()
+    @classmethod
+    def _origin_fingerprint(cls, value: str) -> str:
+        origin = str(value or "").strip()
+        if not origin:
+            raise RuntimeError("maintenance repair source origin is unavailable")
+        return cls._fingerprint("zn-maintenance-origin-v1", origin)
 
     @staticmethod
     def _fingerprint(namespace: str, value: str) -> str:

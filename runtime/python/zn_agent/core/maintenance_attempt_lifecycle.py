@@ -3,13 +3,15 @@ from __future__ import annotations
 """Lifecycle cleanup for rejected isolated maintenance repair attempts.
 
 Rejected candidates are disposable evidence, while accepted candidates must remain
-available for a later publication stage.  This owner therefore removes only the
-exact rejected ``work/*`` worktree recorded by the maintenance ledger, only while
-its branch still points at the observed baseline commit, and only under the
-repository-adjacent maintenance worktree directory.
+available for a later publication stage. This owner removes only the exact rejected
+``work/*`` worktree recorded by the maintenance ledger, only while its branch still
+points at the observed baseline commit, and only under the repository-adjacent
+maintenance worktree directory.
 
-Unknown, accepted, committed, moved, or otherwise drifted worktrees are never
-removed automatically.
+Source-origin continuity is pinned to the opaque fingerprint captured during
+trusted-source investigation. No private repository identity is compiled into the
+installed runtime. Unknown, accepted, committed, moved, or otherwise drifted
+worktrees are never removed automatically.
 """
 
 import hashlib
@@ -22,23 +24,15 @@ from typing import Any
 from .maintenance_investigation import MaintenanceInvestigationLedger
 from .models import utc_now
 
-_EXPECTED_REPOSITORY = "9529360-cpu/znagent"
 _ATTEMPT_DIR = ".zn-maintenance-worktrees"
 
 
 class MaintenanceRepairAttemptLifecycle:
     """Safely retire one durable rejected repair worktree and local branch."""
 
-    def __init__(
-        self,
-        store,
-        ledger: MaintenanceInvestigationLedger,
-        *,
-        expected_repository: str = _EXPECTED_REPOSITORY,
-    ):
+    def __init__(self, store, ledger: MaintenanceInvestigationLedger):
         self.store = store
         self.ledger = ledger
-        self.expected_repository = self._repository_slug(expected_repository)
         self._init_schema()
 
     def cleanup_rejected(
@@ -76,6 +70,10 @@ class MaintenanceRepairAttemptLifecycle:
         if not branch.startswith("work/") or not baseline_head:
             raise RuntimeError("maintenance cleanup attempt contract is invalid")
 
+        expected_origin = self._source_origin(normalized_task)
+        if not expected_origin:
+            raise RuntimeError("maintenance cleanup source origin fingerprint is unavailable")
+
         source = Path(source_root).expanduser().resolve(strict=True)
         bounded_timeout = max(3.0, min(60.0, float(timeout)))
 
@@ -94,8 +92,8 @@ class MaintenanceRepairAttemptLifecycle:
             raise RuntimeError("maintenance cleanup source verification failed")
         if Path(top.stdout.strip()).expanduser().resolve(strict=True) != source:
             raise RuntimeError("maintenance cleanup source must be the repository root")
-        if self._repository_slug(remote.stdout.strip()) != self.expected_repository:
-            raise RuntimeError("maintenance cleanup source origin is not ZN")
+        if self._origin_fingerprint(remote.stdout.strip()) != expected_origin:
+            raise RuntimeError("maintenance cleanup source origin changed")
 
         branch_head = git("rev-parse", "--verify", f"refs/heads/{branch}")
         if branch_head.returncode != 0:
@@ -168,6 +166,17 @@ class MaintenanceRepairAttemptLifecycle:
             "cleanups": [self._row_snapshot(row) for row in rows],
         }
 
+    def _source_origin(self, task_id: str) -> str | None:
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT repository FROM resident_maintenance_source_evidence WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        value = str(row["repository"] or "").strip()
+        return value or None
+
     def _latest_attempt(self, task_id: str) -> sqlite3.Row | None:
         with closing(self._connect()) as conn:
             return conn.execute(
@@ -215,24 +224,12 @@ class MaintenanceRepairAttemptLifecycle:
             return None
         return matches[0]
 
-    @staticmethod
-    def _repository_slug(value: str) -> str:
-        text = str(value or "").strip().replace("\\", "/")
-        if text.startswith("git@github.com:"):
-            text = text[len("git@github.com:") :]
-        elif text.startswith("ssh://git@github.com/"):
-            text = text[len("ssh://git@github.com/") :]
-        elif text.startswith("https://github.com/"):
-            text = text[len("https://github.com/") :]
-        elif text.startswith("http://github.com/"):
-            text = text[len("http://github.com/") :]
-        text = text.strip("/")
-        if text.endswith(".git"):
-            text = text[:-4]
-        parts = [part for part in text.split("/") if part]
-        if len(parts) != 2:
-            raise ValueError("maintenance cleanup repository must identify one GitHub repository")
-        return f"{parts[0]}/{parts[1]}"
+    @classmethod
+    def _origin_fingerprint(cls, value: str) -> str:
+        origin = str(value or "").strip()
+        if not origin:
+            raise RuntimeError("maintenance cleanup source origin is unavailable")
+        return cls._fingerprint("zn-maintenance-origin-v1", origin)
 
     @staticmethod
     def _fingerprint(namespace: str, value: str) -> str:
