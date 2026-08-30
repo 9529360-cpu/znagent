@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,6 +20,35 @@ class ResidentUpstreamBugReportOutboxTests(unittest.TestCase):
             "exception_type": "AssertionError",
             "occurrences": occurrences,
         }
+
+    def test_outbox_owner_has_no_network_process_or_credential_dependency(self):
+        source_path = (
+            Path(__file__).resolve().parents[3]
+            / "runtime"
+            / "python"
+            / "zn_agent"
+            / "core"
+            / "upstream_bug_report.py"
+        )
+        tree = ast.parse(source_path.read_text(encoding="utf-8"))
+        imported_roots: set[str] = set()
+        relative_imports: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported_roots.update(alias.name.split(".", 1)[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:
+                    relative_imports.add(str(node.module or ""))
+                elif node.module:
+                    imported_roots.add(node.module.split(".", 1)[0])
+
+        self.assertTrue(
+            imported_roots.isdisjoint(
+                {"http", "urllib", "requests", "socket", "subprocess", "webbrowser"}
+            )
+        )
+        self.assertNotIn("credentials", relative_imports)
+        self.assertNotIn("provider_bridge", relative_imports)
 
     def test_prepare_is_idempotent_and_payload_contains_only_pseudonymous_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:
