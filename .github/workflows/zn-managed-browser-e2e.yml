@@ -8,6 +8,7 @@ on:
       - .github/workflows/zn-managed-browser-e2e.yml
       - runtime/python/pyproject.toml
       - runtime/python/zn_agent/resident.py
+      - runtime/python/zn_agent/core/action.py
       - runtime/python/zn_agent/core/browser.py
       - runtime/python/zn_agent/core/browser_form_submit_body.py
       - runtime/python/zn_agent/core/browser_form_submit_resident.py
@@ -49,6 +50,7 @@ on:
       - tests/zn_agent/core/test_semantic_managed_browser.py
       - tests/zn_agent/core/test_semantic_managed_browser_button.py
       - tests/zn_agent/core/test_semantic_managed_browser_textbox.py
+      - tests/zn_agent/core/test_structured_action_text_alias.py
       - tests/zn_agent/e2e/test_windows_managed_browser.py
       - tests/zn_agent/e2e/test_windows_managed_browser_form_submit.py
       - tests/zn_agent/e2e/test_windows_managed_browser_pages.py
@@ -110,6 +112,7 @@ jobs:
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
           & $python -m unittest discover -s tests/zn_agent/core -p 'test_*browser*.py' -v
+          & $python -m unittest tests.zn_agent.core.test_structured_action_text_alias -v
       - name: Run real local Chromium E2E
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
