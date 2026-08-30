@@ -2,26 +2,131 @@ from __future__ import annotations
 
 """Resident Work lifecycle for bounded managed-browser navigation."""
 
+import re
 from dataclasses import asdict
 from typing import Any
+from urllib.parse import urlsplit
 
 from .action import NativeActionIntent
 from .browser_work_body import BrowserSideEffectAwareBody
 from .recovery_bounded_resident import RecoveryBoundedResidentRuntime
 
 
+_URL_RE = re.compile(r"https?://[^\s<>{}\[\]\"']+", re.IGNORECASE)
+_NAVIGATION_CUES = (
+    "open ",
+    "visit ",
+    "browse ",
+    "navigate ",
+    "navigate to ",
+    "go to ",
+    "load ",
+    "打开",
+    "访问",
+    "浏览",
+    "前往",
+    "进入",
+)
+_URL_TRAILING_PUNCTUATION = ".,;:!?)]}，。！？；：）】》"
+
+
 class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
     """Make managed navigation a real ZN Body action, not a parallel RPC feature.
 
-    Only structured ``browser_navigate`` action intent is added here. Completion
-    requires a separate current-page observation after provider dispatch. The
-    inherited side-effect recovery lifecycle blocks blind replay if navigation
-    may have crossed the outside-world boundary before a durable checkpoint.
+    A normal user Work may form one navigation intent directly when its task
+    contains exactly one explicit HTTP(S) URL and an unambiguous navigation cue.
+    ZN never invents a destination from prose or model output. Completion still
+    requires a separate current-page observation after provider dispatch, and
+    the inherited side-effect recovery lifecycle blocks blind replay if
+    navigation may have crossed the outside-world boundary before a durable
+    checkpoint.
     """
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
         self.body = BrowserSideEffectAwareBody(resident=self)
+
+    @staticmethod
+    def _natural_navigation_url(event) -> str | None:
+        payload = event.payload or {}
+        if payload.get("body_action") or payload.get("native_action"):
+            return None
+
+        task = str(event.task or "").strip()
+        lowered = task.lower()
+        if not any(cue in lowered for cue in _NAVIGATION_CUES):
+            return None
+
+        matches = []
+        for raw in _URL_RE.findall(task):
+            candidate = raw.rstrip(_URL_TRAILING_PUNCTUATION)
+            if candidate and candidate not in matches:
+                matches.append(candidate)
+        if len(matches) != 1:
+            return None
+
+        candidate = matches[0]
+        try:
+            parsed = urlsplit(candidate)
+        except ValueError:
+            return None
+        if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+            return None
+        if parsed.username is not None or parsed.password is not None:
+            return None
+        return candidate
+
+    @classmethod
+    def _required_capabilities(cls, event) -> tuple[str, ...]:
+        explicit = event.payload.get("required_capabilities")
+        if explicit is None and cls._natural_navigation_url(event) is not None:
+            return ("browser",)
+        return super()._required_capabilities(event)
+
+    def _deliberation_step(
+        self,
+        event,
+        state,
+        *,
+        readiness,
+        learning_evidence,
+        thought=None,
+    ):
+        url = self._natural_navigation_url(event)
+        if url is not None:
+            intent = NativeActionIntent(
+                intent_id=f"browser-{event.event_id}",
+                event_id=event.event_id,
+                kind="browser_navigate",
+                args={"url": url, "expected_url": url},
+                expected_outcome={"kind": "browser_url_equals", "url": url},
+                reason=(
+                    "the current user Work contains one explicit HTTP(S) destination "
+                    "and an unambiguous navigation request"
+                ),
+                source="native_deliberation",
+            )
+            if not self._action_blocked_by_current_evidence(event, state, intent):
+                self._begin_native_action_cycle(event, state, intent)
+                self.store.save_working_state(state)
+                if thought is not None:
+                    action = "perform body action: browser_navigate"
+                    if action not in thought.possible_actions:
+                        thought.possible_actions = (*thought.possible_actions, action)
+                    thought.reason = (
+                        f"{thought.reason}; the user supplied the exact browser destination "
+                        "so ZN does not need a model to invent one"
+                    )
+                    self._persist_enriched_thought(thought)
+                return None
+
+        return super()._deliberation_step(
+            event,
+            state,
+            readiness=readiness,
+            learning_evidence=learning_evidence,
+            thought=thought,
+        )
 
     @staticmethod
     def _generic_guarded_side_effect(intent: NativeActionIntent) -> bool:
@@ -69,6 +174,16 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
                     "intent_id": intent.intent_id,
                     "action_signature": self._intent_signature(intent),
                 }
+        elif isinstance(intent.expected_outcome, dict) and str(
+            intent.expected_outcome.get("kind") or ""
+        ).strip().lower() == "browser_url_equals":
+            expected_url = str(
+                intent.expected_outcome.get("url")
+                or intent.expected_outcome.get("expected_url")
+                or ""
+            ).strip()
+            if not expected_url:
+                return None
         else:
             expected_url = str(intent.args.get("expected_url") or intent.args.get("url") or "").strip()
             if not expected_url:
