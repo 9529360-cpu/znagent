@@ -20,7 +20,7 @@ class ResidentUpstreamBugReportOutboxTests(unittest.TestCase):
             "occurrences": occurrences,
         }
 
-    def test_prepare_is_idempotent_and_payload_contains_only_bounded_evidence(self):
+    def test_prepare_is_idempotent_and_payload_contains_only_pseudonymous_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "kernel.db"
             outbox = ResidentUpstreamBugReportOutbox(SimpleNamespace(path=db))
@@ -39,25 +39,42 @@ class ResidentUpstreamBugReportOutboxTests(unittest.TestCase):
                     "schema",
                     "product",
                     "report_key",
-                    "component_fingerprint",
+                    "component_token",
                     "failure_class",
                     "exception_type",
-                    "incident_fingerprint",
+                    "incident_token",
                     "occurrences",
                 },
             )
-            self.assertEqual(payload["schema"], "zn-upstream-bug-report-v1")
+            self.assertEqual(payload["schema"], "zn-upstream-bug-report-v2")
             self.assertEqual(payload["product"], "ZN")
-            self.assertEqual(payload["incident_fingerprint"], task["fingerprint"])
-            self.assertEqual(len(payload["component_fingerprint"]), 64)
+            self.assertEqual(len(payload["incident_token"]), 64)
+            self.assertEqual(len(payload["component_token"]), 64)
+            self.assertNotEqual(payload["incident_token"], task["fingerprint"])
+            self.assertNotIn(task["fingerprint"], repr(payload))
             self.assertNotIn(task["organ"], repr(payload))
             self.assertNotIn(task["task_id"], repr(payload))
             self.assertNotIn("path", repr(payload).lower())
             self.assertNotIn("repository", repr(payload).lower())
-            self.assertNotIn("token", repr(payload).lower())
+            self.assertNotIn("credential", repr(payload).lower())
+            self.assertNotIn("authorization", repr(payload).lower())
+            self.assertNotIn("api_key", repr(payload).lower())
 
             raw = db.read_bytes()
             self.assertNotIn(b"body:command", raw)
+
+    def test_same_incident_is_not_correlatable_across_independent_installations(self):
+        with tempfile.TemporaryDirectory() as first_tmp, tempfile.TemporaryDirectory() as second_tmp:
+            first = ResidentUpstreamBugReportOutbox(
+                SimpleNamespace(path=Path(first_tmp) / "kernel.db")
+            ).prepare(self._task())
+            second = ResidentUpstreamBugReportOutbox(
+                SimpleNamespace(path=Path(second_tmp) / "kernel.db")
+            ).prepare(self._task())
+
+            self.assertNotEqual(first["report_key"], second["report_key"])
+            self.assertNotEqual(first["incident_token"], second["incident_token"])
+            self.assertNotEqual(first["component_token"], second["component_token"])
 
     def test_pending_incident_updates_occurrence_count_without_duplicate_report(self):
         with tempfile.TemporaryDirectory() as tmp:
