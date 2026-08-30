@@ -337,16 +337,15 @@ class ResidentUpstreamBugReportOutbox:
                 )
                 """
             )
+            conn.execute(
+                "INSERT OR IGNORE INTO resident_upstream_bug_report_identity("
+                "singleton,privacy_key,created_at) VALUES(1,?,?)",
+                (secrets.token_bytes(_PRIVACY_KEY_BYTES), utc_now()),
+            )
             row = conn.execute(
                 "SELECT privacy_key FROM resident_upstream_bug_report_identity WHERE singleton=1"
             ).fetchone()
-            if row is None:
-                conn.execute(
-                    "INSERT INTO resident_upstream_bug_report_identity(singleton,privacy_key,created_at) "
-                    "VALUES(1,?,?)",
-                    (secrets.token_bytes(_PRIVACY_KEY_BYTES), utc_now()),
-                )
-            elif len(bytes(row["privacy_key"])) != _PRIVACY_KEY_BYTES:
+            if row is None or len(bytes(row["privacy_key"])) != _PRIVACY_KEY_BYTES:
                 raise sqlite3.DatabaseError("invalid upstream bug report privacy identity")
             conn.execute(
                 """
