@@ -3,13 +3,16 @@ from __future__ import annotations
 """Read-only source investigation for resident maintenance tasks.
 
 A maintenance task may justify looking at ZN source evidence, but it never grants
-source mutation authority. This module binds one explicit local source checkout
-to the canonical ZN repository identity, observes a bounded Git state using only
-fixed read-only subprocess arguments, verifies a declared regression-oracle path,
-and records privacy-safe investigation evidence in the resident database.
+source mutation authority. This module binds one explicit local source checkout,
+observes a bounded Git state using only fixed read-only subprocess arguments,
+verifies the ZN ownership markers and a declared regression-oracle path, and
+records privacy-safe investigation evidence in the resident database.
 
-Ordinary Work workspace associations, terminal execution and NativeBody write
-capabilities are intentionally not inputs to this authority path.
+The source origin is pinned only by a one-way fingerprint. The installed runtime
+contains no canonical private-repository slug and source identity is never inferred
+from the product update channel. Ordinary Work workspace associations, terminal
+execution and NativeBody write capabilities are intentionally not inputs to this
+authority path.
 """
 
 import hashlib
@@ -23,7 +26,6 @@ from typing import Any
 from .maintenance_investigation import MaintenanceInvestigationLedger
 from .models import utc_now
 
-_EXPECTED_REPOSITORY = "9529360-cpu/znagent"
 _MAX_CHANGED_PATHS = 200
 _MAX_ORACLE = 1000
 
@@ -31,16 +33,9 @@ _MAX_ORACLE = 1000
 class MaintenanceSourceInvestigator:
     """Bind an open maintenance task to bounded, read-only ZN source evidence."""
 
-    def __init__(
-        self,
-        store,
-        ledger: MaintenanceInvestigationLedger,
-        *,
-        expected_repository: str = _EXPECTED_REPOSITORY,
-    ):
+    def __init__(self, store, ledger: MaintenanceInvestigationLedger):
         self.store = store
         self.ledger = ledger
-        self.expected_repository = self._repository_slug(expected_repository)
         self._init_schema()
 
     def investigate(
@@ -82,11 +77,9 @@ class MaintenanceSourceInvestigator:
         self._verify_zn_ownership(root)
 
         remote_proc = run("remote", "get-url", "origin")
-        if remote_proc.returncode != 0:
+        if remote_proc.returncode != 0 or not remote_proc.stdout.strip():
             raise ValueError("maintenance source requires an origin remote")
-        repository = self._repository_slug(remote_proc.stdout.strip())
-        if repository != self.expected_repository:
-            raise ValueError("maintenance source origin is not the configured ZN repository")
+        origin_fingerprint = self._origin_fingerprint(remote_proc.stdout.strip())
 
         head_proc = run("rev-parse", "--verify", "HEAD")
         branch_proc = run("branch", "--show-current")
@@ -141,7 +134,7 @@ class MaintenanceSourceInvestigator:
                 "observed_at=excluded.observed_at",
                 (
                     str(task_id),
-                    repository,
+                    origin_fingerprint,
                     root_fingerprint,
                     branch,
                     head,
@@ -163,7 +156,7 @@ class MaintenanceSourceInvestigator:
         )
         return {
             "task_id": str(task_id),
-            "repository": repository,
+            "origin_fingerprint": origin_fingerprint,
             "root": str(root),
             "root_fingerprint": root_fingerprint,
             "branch": branch,
@@ -213,26 +206,12 @@ class MaintenanceSourceInvestigator:
         digest.update(value.encode("utf-8", errors="replace"))
         return digest.hexdigest()
 
-    @staticmethod
-    def _repository_slug(value: str) -> str:
-        text = str(value or "").strip().replace("\\", "/")
-        if not text:
-            raise ValueError("maintenance source repository is required")
-        if text.startswith("git@github.com:"):
-            text = text[len("git@github.com:") :]
-        elif text.startswith("ssh://git@github.com/"):
-            text = text[len("ssh://git@github.com/") :]
-        elif text.startswith("https://github.com/"):
-            text = text[len("https://github.com/") :]
-        elif text.startswith("http://github.com/"):
-            text = text[len("http://github.com/") :]
-        text = text.strip("/")
-        if text.endswith(".git"):
-            text = text[:-4]
-        parts = [part for part in text.split("/") if part]
-        if len(parts) != 2:
-            raise ValueError("maintenance source origin must identify one GitHub repository")
-        return f"{parts[0]}/{parts[1]}"
+    @classmethod
+    def _origin_fingerprint(cls, value: str) -> str:
+        origin = str(value or "").strip()
+        if not origin:
+            raise ValueError("maintenance source origin is required")
+        return cls._fingerprint("zn-maintenance-origin-v1", origin)
 
     @staticmethod
     def _oracle(value: str) -> str:
@@ -303,7 +282,7 @@ class MaintenanceSourceInvestigator:
     def _row_snapshot(row: sqlite3.Row) -> dict[str, Any]:
         return {
             "task_id": str(row["task_id"]),
-            "repository": str(row["repository"]),
+            "origin_fingerprint": str(row["repository"]),
             "root_fingerprint": str(row["root_fingerprint"]),
             "branch": str(row["branch"]),
             "head": str(row["head"]),
