@@ -29,10 +29,15 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
 
     _BROWSER_NAVIGATE = "browser_navigate"
     _BROWSER_SET_CHECKBOX = "browser_set_checkbox"
+    _BROWSER_SET_NAMED_CHECKBOX = "browser_set_named_checkbox"
 
     @classmethod
     def _requires_guard(cls, kind: str, args: dict[str, Any]) -> bool:
-        if kind in {cls._BROWSER_NAVIGATE, cls._BROWSER_SET_CHECKBOX}:
+        if kind in {
+            cls._BROWSER_NAVIGATE,
+            cls._BROWSER_SET_CHECKBOX,
+            cls._BROWSER_SET_NAMED_CHECKBOX,
+        }:
             return True
         return super()._requires_guard(kind, args)
 
@@ -41,6 +46,8 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
             return self._browser_navigate(action, started)
         if action.kind == self._BROWSER_SET_CHECKBOX:
             return self._browser_set_checkbox(action, started)
+        if action.kind == self._BROWSER_SET_NAMED_CHECKBOX:
+            return self._browser_set_named_checkbox(action, started)
         if action.kind == "browser_observe":
             return self._browser_observe(action, started)
         if action.kind == "browser_close":
@@ -120,25 +127,62 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
             raise
 
     def _browser_set_checkbox(self, action: BodyAction, started: str) -> BodyActionResult:
-        """Navigate to one explicit page and set one explicit DOM-id checkbox.
+        """Navigate to one explicit page and set one explicit DOM-id checkbox."""
 
-        This first Work-facing interaction is deliberately narrow. The caller
-        supplies the exact HTTP(S) page, exact DOM id and desired boolean state.
-        Provider completion is accepted only when the existing managed-browser
-        adapter re-observes the same exact node and proves the requested checked
-        state. The ephemeral session is then closed before success is returned.
-        """
+        dom_id = str(action.args.get("dom_id") or "").strip()
+        if not dom_id:
+            raise ValueError("browser_set_checkbox requires dom_id")
+        return self._browser_set_checkbox_target(
+            action,
+            started,
+            query=BrowserTargetQuery(
+                kind=BrowserTargetQueryKind.DOM_ID,
+                value=dom_id,
+            ),
+            target_label=f"#{dom_id}",
+        )
+
+    def _browser_set_named_checkbox(
+        self,
+        action: BodyAction,
+        started: str,
+    ) -> BodyActionResult:
+        """Set one exact accessible-name checkbox without technical DOM authority."""
+
+        target_name = str(action.args.get("target_name") or "").strip()
+        if not target_name:
+            raise ValueError("browser_set_named_checkbox requires target_name")
+        if len(target_name) > 160:
+            raise ValueError("browser_set_named_checkbox target_name is too long")
+        if any(ord(char) < 32 or ord(char) == 127 for char in target_name):
+            raise ValueError("browser_set_named_checkbox target_name contains control characters")
+        return self._browser_set_checkbox_target(
+            action,
+            started,
+            query=BrowserTargetQuery(
+                kind=BrowserTargetQueryKind.ACCESSIBLE_CHECKBOX_NAME,
+                value=target_name,
+            ),
+            target_label=f'"{target_name}"',
+        )
+
+    def _browser_set_checkbox_target(
+        self,
+        action: BodyAction,
+        started: str,
+        *,
+        query: BrowserTargetQuery,
+        target_label: str,
+    ) -> BodyActionResult:
+        """Navigate, freshly bind one checkbox target, mutate, prove, and close."""
 
         browser = self._browser()
         url = str(action.args.get("url") or "").strip()
-        dom_id = str(action.args.get("dom_id") or "").strip()
         checked = action.args.get("checked")
         if not url:
-            raise ValueError("browser_set_checkbox requires url")
-        if not dom_id:
-            raise ValueError("browser_set_checkbox requires dom_id")
+            raise ValueError(f"{action.kind} requires url")
         if type(checked) is not bool:
-            raise ValueError("browser_set_checkbox requires boolean checked")
+            raise ValueError(f"{action.kind} requires boolean checked")
 
         permission = BrowserPermissionContext(
             allow_navigation=True,
@@ -181,17 +225,13 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                     completed_at=utc_now(),
                 )
 
-            query = BrowserTargetQuery(
-                kind=BrowserTargetQueryKind.DOM_ID,
-                value=dom_id,
-            )
             observed = browser.observe_target(
                 session.session_id,
                 query,
                 page_id=navigation_evidence.page_id,
             )
             if observed.target is None or observed.target.role != "checkbox":
-                raise ValueError("browser_set_checkbox requires a visible checkbox target")
+                raise ValueError(f"{action.kind} requires a visible checkbox target")
 
             mutation = BrowserAction.create(
                 session_id=session.session_id,
@@ -234,7 +274,7 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                 action_id=action.action_id,
                 kind=action.kind,
                 success=True,
-                output=f"checkbox #{dom_id} is {state}",
+                output=f"checkbox {target_label} is {state}",
                 data={
                     "url": mutation_evidence.url_after or navigation_evidence.url_after,
                     "page_id": mutation_evidence.page_id,
