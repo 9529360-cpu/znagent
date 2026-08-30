@@ -35,9 +35,9 @@ Use `exists -> connected -> verified -> product-closed`. Presence of an interfac
 | Exact accessible-name checkbox Work | connected + verified | unique fresh semantic checkbox target + exact-node checked-state verification |
 | Exact named button -> URL Work | connected + verified | unique native button + fresh-node revalidation + expected same-origin URL postcondition |
 | Named-button restart recovery | connected + verified | an already durable provider-verified `observed` result resumes without replay; true pre-return uncertainty remains fail-closed |
-| Exact accessible-name textbox sensing | connected; current dev verification in progress | unique visible writable native text/textarea target; password targets refused |
-| Exact named textbox text entry Work | connected; current dev verification in progress | zero-model explicit URL + quoted plaintext + quoted textbox name; provider verifies exact-node length/SHA-256 result; no secret/password authority |
-| Named-text restart recovery | connected; current dev verification in progress | durable verified result can resume without replay; `started` uncertainty remains fail-closed |
+| Exact accessible-name textbox sensing | connected + verified | unique visible writable native text/textarea target; password targets refused |
+| Exact named textbox text entry Work | connected + verified | zero-model explicit URL + quoted plaintext + quoted textbox name; provider verifies exact-node length/SHA-256 result; no secret/password authority |
+| Named-text restart recovery | connected + verified | durable verified result resumes without replay; `started` uncertainty remains fail-closed |
 | Terminal stdin replay safety | connected + verified | terminal input aliases commit pre-dispatch guard and enter explicit recovery instead of blind replay |
 | Sensitive Body action history | materially hardened + verified | command env values, terminal stdin args/echo and file-write content are redacted from durable Body history; general command strings/output still require an explicit sensitivity contract |
 | User browser bridge | architecture only / missing | authenticated existing-browser path not product-closed |
@@ -133,8 +133,11 @@ Important recent evidence:
 - `33337246757` — managed-browser contracts + real Chromium E2E success after terminal-input hardening.
 - PR #117 — exact accessible-name textbox + ordinary named-text Work + durable digest recovery.
 - PR #118 — align semantic textbox target with HTML default `<input>` text semantics.
+- first #117 browser run `33337615276` exposed one Chinese natural parser failure while Body/history/recovery tests passed.
 - PR #119 — CJK/full-width punctuation URL-boundary fix for natural named-text Work after CI exposed the parser defect.
-- Managed Browser E2E `33337761860`, Work Recovery E2E `33337761862`, and full ZN CI `33337761865` are the current verification runs for checkpoint `08e3015440d4c64ee311d8c7c6fb043ab8946726`; read their live final status before promoting or upgrading the named-text rows to verified.
+- `33337761860` — managed-browser contract suite and real local Chromium E2E success for the #117-#119 checkpoint `08e3015440d4c64ee311d8c7c6fb043ab8946726`.
+- `33337761862` — Work Recovery E2E success for the same checkpoint, including named-text durable-result restart recovery.
+- Full ZN CI `33337761865` for the same checkpoint has Electron/TypeScript and Source Boundary green while Kernel/Python core tests are still running at the time of this evidence update; query its final status live before canonical promotion.
 
 Windows Clean Install / Release Candidate workflow failures seen around these checkpoints have repeatedly allocated no runner (`runner_id=0`, no test steps) and predate these product slices. They are infrastructure failures, not permission to weaken release/update/signing integrity.
 
@@ -150,7 +153,7 @@ Windows Clean Install / Release Candidate workflow failures seen around these ch
 
 ## Next evidence-driven direction
 
-After current named-text CI and normal canonical synchronization are complete, reassess between the strongest remaining product closures rather than consuming an old roadmap mechanically. Likely high-value candidates are:
+After current full ZN CI and normal canonical synchronization are complete, reassess between the strongest remaining product closures rather than consuming an old roadmap mechanically. Likely high-value candidates are:
 
 ```text
 terminal sensitivity/retention contract
