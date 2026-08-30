@@ -4,97 +4,119 @@ This is the current engineering work site and fact index, not a chat transcript 
 
 ## Current objective
 
-Preserve the resident self-maintenance loop while enforcing the installed-product upstream boundary:
+Keep repository truth synchronized while continuing vertical product closure. The currently verified dev stage contains two important product increments beyond canonical main:
 
 ```text
-official public update channel -> installed ZN (read / verify / update availability)
-installed ZN -> bounded BUG / repair report channel
-maintainer environment -> private source branch / CI / review / merge / release
+resident defect truth
+-> privacy-safe durable local report outbox
+
+ordinary durable Work
+-> deterministic managed-browser navigation
+-> observed URL postcondition
 ```
 
-The normal installed resident must not receive official source-repository push, PR, merge, release, signing or repository-credential authority, and its shipped runtime should not need the private source-repository slug.
+Normal installed ZN still has no official repository push/PR/merge/release/signing authority.
 
 ## Repository state
 
 - Repository: `9529360-cpu/znagent`
 - Canonical/release branch: `main`
 - Primary development branch: `dev/zn-agent`
-- Canonical `main`: `853916aca200848ebd16da3f11e2e1f6a6d4d136`; canonical ZN CI `33280722417` fully green.
-- `dev/zn-agent`: `fb71661cda0d8269cd0e56c990a3356b73a3e2f6` after PRs #90-#91 corrected the installed-upstream authority model.
-- PR #92 is the open dev -> main promotion of the corrected authority contract; do not merge until current privacy/source work is integrated and full dev CI is green.
-- Current work branch: `work/remove-private-repo-runtime-identity`.
+- Canonical `main`: `4b3a7f1c1bc45565abaeb894702e96b1f1b2881d` from promotion PR #92.
+- Current `dev/zn-agent`: `b1c86ee2a20a26954d54450160144f921365617c`, 24 commits ahead of main.
+- Full dev ZN CI `33286758708` is fully green on `b1c86ee2...` across Source Boundary, Kernel/Python and Electron/TypeScript.
+- The immediate main push run after PR #92 (`33285157720`) was cancelled, so it must not be described as green canonical evidence. Fresh main CI is required after the next promotion.
+- Current reconciliation branch: `work/reconcile-dev-main-docs`.
 
 ## Verified product reality
 
-### Source-maintenance loop
+### Resident defect reporting
 
-The formal source-maintenance environment can derive a bounded repair candidate, execute it in an isolated `.zn-maintenance-worktrees/...` worktree, run bound oracle/diff checks, obtain independent semantic review, retain/recover unreviewed attempts, clean rejected attempts and create a verified `local_commit_only` commit for accepted repairs.
+PR #95 connects repeated high-confidence `probable_zn_defect` maintenance truth to a durable privacy-safe local upstream-report outbox.
 
-Model calls remain bounded and durably accounted. Model cognition does not receive repository push/merge/release/updater authority.
+Current guarantees:
 
-### Installed upstream boundary
+- health truth commits before best-effort report projection;
+- repeated matching incidents deduplicate into one local envelope;
+- restart can repair missing projection from durable maintenance-task truth;
+- external payload uses installation-scoped pseudonymous incident/component tokens;
+- raw error text, local paths, organ, task id, health fingerprint, repository identity and credentials are not exposed;
+- different installations cannot directly correlate the same incident token;
+- status explicitly says `authority=local_outbox_only`, `transport_available=false`;
+- future transport must reserve dispatch durably; ambiguous results are `outcome_uncertain` and cannot be blindly replayed.
 
-Installed ZN may know the public official update channel. Current release infrastructure already supports an HTTPS `stable.json` channel and immutable release assets; update discovery does not require private source checkout or repository credentials.
+This is connected + locally verified, but remote transport/intake/acknowledgement is still missing.
 
-Installed remote authority is limited to:
+### Managed browser ordinary Work entry
 
-- read/verify official update metadata and artifacts;
-- surface update availability;
-- eventually submit bounded privacy-safe BUG/repair reports to an operator-controlled reporting channel.
-
-Installed ZN must not directly push the official repository, create official PRs, merge, release, sign or promote versions.
-
-### Private source identity no longer belongs in shipped runtime
-
-Current work removes the hardcoded private source-repository slug from:
-
-- `runtime/python/zn_agent/core/maintenance_source.py`;
-- `maintenance_repair.py`;
-- `maintenance_publication.py`;
-- `maintenance_attempt_lifecycle.py`;
-- `apps/desktop/package.json`.
-
-Trusted source continuity now uses:
+PR #96 connects one narrow natural user path to the already-owned managed-browser Body:
 
 ```text
-explicit source_root
--> ZN ownership markers
--> live origin
--> one-way origin fingerprint
--> later source action must match the same fingerprint
+ordinary Work
++ exactly one explicit HTTP(S) URL
++ unambiguous navigation cue
+-> browser_navigate
+-> managed Chromium
+-> independently observed current URL
+-> durable Work result
 ```
 
-The resident database keeps only the fingerprint for source-origin continuity. Repair, cleanup and local-publication actions fail closed if the origin changes after investigation. `.agent/verify_zn_source_boundary.py` now permanently rejects the private source slug if it reappears in shipped resident core or desktop package metadata.
+Multiple URLs, malformed URLs, embedded credentials, or prose that only discusses a URL do not create browser authority. The model does not invent the destination.
+
+This closes navigation only. General page sensing, clicks, forms/text entry, downloads/uploads, stale-target recovery and the separate user-browser bridge remain incomplete.
+
+### Source-maintenance authority
+
+Trusted source-maintenance can still investigate, derive bounded repairs, execute in isolated `work/*`, run regression/diff checks, require independent semantic review, recover pending reviews, clean rejected attempts, and produce verified `local_commit_only` accepted-repair commits.
+
+Ordinary installed ZN has no repository credential or official repository mutation authority.
 
 ## Exact evidence
 
-- `33275068276` — candidate derivation + semantic review targeted success.
-- `33275525810` — corrected attempt-lifecycle targeted success.
-- `33277113466` — local publication targeted success after fixing oracle `__pycache__` pollution.
-- `33277291497` — durable cognition dispatch/provider-disconnect no-replay success.
-- `33277416824` — independent semantic-review fail-closed success.
-- `33277598171` — pending-review recovery end-to-end success.
-- `33277689622` — prior full dev ZN CI success on `f555210c...`.
-- `33280722417` — canonical main ZN CI fully green on `853916ac...`.
-- PR #90 / `8c4d187...` — removed the incorrect installed-resident repository-publication request path before it reached main.
-- `33283442938` — first private-source validation attempt: source boundary + compilation green; tests did not start because the temporary workflow omitted runtime dependencies (`psutil`). Infrastructure/setup defect only.
-- `33283483244` — corrected targeted Windows validation fully green: source privacy boundary, changed-owner compilation, source investigation, isolated repair including origin-drift rejection, local publication, attempt lifecycle, review recovery and semantic-independence regressions.
+- `33284716266` — targeted resident report-outbox validation success.
+- PR #95 / merge `52a53965069b714c2d5ff376ac1967b1d8df0f80` — reporting-aware resident + privacy-safe durable local outbox.
+- `33286593120` — ordinary user-entry browser navigation regressions + real local Chromium Work E2E success.
+- `33286655544` — same natural path through durable `ResidentWorkLedger` + existing Chromium E2E success.
+- PR #96 / merge `b1c86ee2a20a26954d54450160144f921365617c` — ordinary Work -> managed-browser navigation.
+- `33286758708` — full dev ZN CI fully green on `b1c86ee2...`.
+
+## Maintenance drift found in this takeover
+
+The repository rules already required documentation reconciliation and timely promotion, but execution after #95/#96 did not close those steps. Result:
+
+- `dev/zn-agent` became 24 commits ahead of `main`;
+- `docs/ZN-IMPLEMENTATION-STATUS.md` and this HANDOFF still described the #92/#93/#94 stage;
+- a fresh maintainer would therefore recover stale state and potentially duplicate or mis-prioritize work.
+
+This is being corrected as one coherent reconciliation/promotion slice. Going forward, changed product truth must be reconciled in the same verified slice; documentation and HANDOFF are not deferred cleanup after a stage is already considered complete.
 
 ## Current gaps / risks
 
-1. **Current privacy/source work still needs normal PR -> dev + full dev CI.** Targeted validation is green but is not whole-tree evidence.
-2. **Installed update observation is not yet fully product-closed.** Verify the complete read/verify/update-available path from public channel through resident/UI evidence without private source access.
-3. **Upstream BUG/repair reporting is not yet product-closed.** Needs bounded privacy-safe payload, durable dedup/retry semantics, acknowledgement and maintainer intake.
-4. **Official repository publication is not an installed-resident gap.** Push/PR/merge/release belongs to trusted maintainer infrastructure.
-5. **Installed N -> N+1 continuity remains approval-gated.** Updater/replacement, rollback and release signing/trust are not authorized by source-maintenance maturity.
-6. **Hosted clean-install / release-candidate runner allocation can fail before steps.** Treat those as infrastructure evidence, not product pass/fail evidence.
+1. Complete this reconciliation branch through normal PR -> dev, verify CI, then promote the stable dev stage to `main` and require fresh main CI.
+2. Upstream BUG/repair reporting remains local-only; bounded transport/intake/acknowledgement/reconciliation is the next missing layer if that path is chosen.
+3. Managed browser remains navigation-only for ordinary Work; broader page observation/action/postcondition/recovery is still missing.
+4. User Browser Bridge remains architecture-only.
+5. Installed public update read/verify/update-available observation is still not fully product-closed.
+6. Installed N -> N+1 replacement, rollback, signing and release trust remain approval-gated.
+7. Unified health remains partial.
 
 ## Next dependency-ready work
 
-1. Merge the private-source identity removal to `dev/zn-agent` through normal PR and require full dev ZN CI green.
-2. Let PR #92 advance to the new dev head, then promote the coherent authority/privacy stage to `main` and require canonical main CI green.
-3. Implement the next safe installed-product layer: bounded upstream BUG/repair reporting without repository credentials or arbitrary remote authority.
-4. Continue closing installed read-only update observation against the public update channel.
-5. Keep official repository mutation, merge, release, updater/replacement, rollback and signing in their existing trusted/approval-gated boundaries.
+After branch/doc/canonical synchronization is complete, re-evaluate active callers and choose the highest-value vertical closure, likely one of:
 
-No ordinary installed-resident repository write, merge, release, updater-replacement, rollback or signing authority is authorized by this handoff.
+```text
+local report outbox
+-> bounded operator-controlled transport
+-> durable dispatch/acknowledgement/reconciliation
+-> maintainer intake
+
+ordinary managed-browser navigation
+-> fresh page observation
+-> one bounded interaction class
+-> independent postcondition
+-> failure/restart recovery
+```
+
+Do not turn repository synchronization itself into the next product milestone. It is engineering hygiene required to make future autonomous continuation trustworthy.
+
+No force push, history rewrite, repository credential expansion, updater replacement, rollback, release signing or destructive identity/memory migration is authorized by this handoff.
