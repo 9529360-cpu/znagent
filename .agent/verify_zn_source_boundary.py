@@ -22,6 +22,14 @@ FORBIDDEN_MARKERS = tuple(
     )
 )
 
+# The private source repository is maintainer infrastructure, not installed
+# product identity. Keep its literal out of the shipped resident core and desktop
+# package metadata while allowing repository-internal docs/tests/release tooling to
+# identify the source repository where that is actually necessary.
+PRIVATE_SOURCE_MARKER = bytes.fromhex("393532393336302d6370752f7a6e6167656e74")
+SHIPPED_PRIVATE_SCAN_PREFIX = "runtime/python/zn_agent/core/"
+SHIPPED_PRIVATE_SCAN_FILES = {"apps/desktop/package.json"}
+
 
 def tracked_paths() -> list[Path]:
     output = subprocess.check_output(
@@ -48,6 +56,11 @@ def main() -> int:
         data = path.read_bytes()
         if is_binary(data):
             continue
+
+        private_source_scan = (
+            relative.startswith(SHIPPED_PRIVATE_SCAN_PREFIX)
+            or relative in SHIPPED_PRIVATE_SCAN_FILES
+        )
         for line_number, line in enumerate(data.splitlines(), start=1):
             lowered_line = line.lower()
             for marker in FORBIDDEN_MARKERS:
@@ -57,6 +70,10 @@ def main() -> int:
                         f"{relative}:{line_number}: retired marker {marker.hex()}: {snippet}"
                     )
                     break
+            if private_source_scan and PRIVATE_SOURCE_MARKER in lowered_line:
+                failures.append(
+                    f"{relative}:{line_number}: installed product embeds private source repository identity"
+                )
 
     if failures:
         print("ZN source-boundary verification failed:")
@@ -64,7 +81,9 @@ def main() -> int:
             print(f"- {failure}")
         return 1
 
-    print("ZN source-boundary verification passed: active tracked tree is reference-product text clean outside preserved legal attribution.")
+    print(
+        "ZN source-boundary verification passed: active tree is reference-product clean and shipped product metadata does not embed private source identity."
+    )
     return 0
 
 
