@@ -41,8 +41,15 @@ class BrowserFormSubmitBody(BrowserTextWorkBody):
         if action.kind == self._BROWSER_FILL_AND_SUBMIT and "text" in action.args:
             safe_args = dict(action.args)
             raw_text = safe_args.pop("text")
+            redacted_aliases: list[str] = []
+            for alias in ("content", "input", "data", "value"):
+                if alias in safe_args and safe_args.get(alias) == raw_text:
+                    safe_args.pop(alias)
+                    redacted_aliases.append(alias)
             safe_args["text_redacted"] = True
             safe_args["text_chars"] = len(str(raw_text))
+            if redacted_aliases:
+                safe_args["text_aliases_redacted"] = redacted_aliases
             action = BodyAction(
                 action_id=action.action_id,
                 kind=action.kind,
