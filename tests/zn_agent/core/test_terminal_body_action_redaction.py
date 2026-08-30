@@ -12,7 +12,7 @@ from zn_agent.core.side_effect_body import SideEffectAwareBody
 from zn_agent.core.store import KernelStore
 
 
-class TerminalBodyActionRedactionTests(unittest.TestCase):
+class SensitiveBodyActionRedactionTests(unittest.TestCase):
     @staticmethod
     def _persisted_action(store: KernelStore, action_id: str) -> dict:
         with closing(sqlite3.connect(store.path)) as conn:
@@ -103,6 +103,43 @@ class TerminalBodyActionRedactionTests(unittest.TestCase):
                     persisted["args"]["session_id"],
                     "terminal-session",
                 )
+            finally:
+                store.close()
+
+    def test_text_write_content_is_not_duplicated_into_body_action_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = KernelStore(Path(tmp) / "kernel.db")
+            try:
+                body = SideEffectAwareBody(store=store)
+                action = BodyAction(
+                    action_id="body-write-sensitive-content",
+                    event_id="evt-write-sensitive-content",
+                    kind="write_text",
+                    args={
+                        "path": str(Path(tmp) / "secret.txt"),
+                        "content": "private-file-payload",
+                        "encoding": "utf-8",
+                    },
+                )
+                result = BodyActionResult(
+                    action_id=action.action_id,
+                    event_id=action.event_id,
+                    kind=action.kind,
+                    success=True,
+                    output=str(Path(tmp) / "secret.txt"),
+                )
+
+                body._record(action, result)
+                persisted = self._persisted_action(store, action.action_id)
+                serialized = json.dumps(persisted, ensure_ascii=False)
+
+                self.assertNotIn("private-file-payload", serialized)
+                self.assertNotIn("content", persisted["args"])
+                self.assertNotIn("text", persisted["args"])
+                self.assertTrue(persisted["args"]["content_redacted"])
+                self.assertEqual(persisted["args"]["content_source"], "content")
+                self.assertEqual(persisted["args"]["content_chars"], 20)
+                self.assertEqual(persisted["args"]["encoding"], "utf-8")
             finally:
                 store.close()
 
