@@ -4,7 +4,7 @@ This is the current engineering work site and fact index, not a chat transcript 
 
 ## Current objective
 
-Continue vertical product closure while protecting resident continuity, non-replayable side effects and long-lived privacy boundaries. The browser path is no longer waiting for basic semantic target discovery: exact accessible-name checkbox, button and non-password textbox classes are now connected. Reassess the next product gap from active callers rather than repeating the old `#dom-id` roadmap.
+Continue vertical product closure while protecting resident continuity, non-replayable side effects and long-lived privacy boundaries. The browser path is no longer waiting for basic semantic target discovery: exact accessible-name checkbox, button and non-password textbox classes are now connected and browser/recovery E2E verified. Reassess the next product gap from active callers rather than repeating the old `#dom-id` roadmap.
 
 Normal installed ZN still has no official repository push/PR/merge/release/signing authority.
 
@@ -15,8 +15,9 @@ Never treat SHAs in this file as live refs. Query `main`, `dev/zn-agent`, open P
 Current product-code evidence checkpoint before this documentation branch:
 
 - `dev/zn-agent`: `08e3015440d4c64ee311d8c7c6fb043ab8946726`
-- current named-text verification: Managed Browser E2E `33337761860`, Work Recovery E2E `33337761862`, ZN CI `33337761865`
-- read final run status live before claiming verification or promotion.
+- Managed Browser E2E `33337761860`: success, including contract suite + real local Chromium E2E.
+- Work Recovery E2E `33337761862`: success, including named-text durable-result restart recovery.
+- ZN CI `33337761865`: Electron/TypeScript + Source Boundary success; Kernel/Python core tests still running at this handoff update. Query final status before canonical promotion.
 
 `main` was materially behind dev at takeover and must be re-compared live before normal promotion. Main sync is engineering continuity hygiene, not a product milestone.
 
@@ -82,7 +83,9 @@ Still missing: external transport, maintainer intake, acknowledgement and ambigu
 - #118 — accepts HTML default text `<input>` semantics consistently with provider TYPE_TEXT.
 - first #117 browser run `33337615276` exposed one Chinese natural parser failure while Body/history/recovery tests passed.
 - #119 — CJK/full-width punctuation URL boundary repair for the natural named-text parser.
-- current verification for #117-#119: `33337761860` / `33337761862` / `33337761865`, final status must be queried live.
+- `33337761860` — browser contracts + real local Chromium E2E green for #117-#119 checkpoint `08e3015...`.
+- `33337761862` — Work Recovery E2E green for the same checkpoint.
+- `33337761865` — current full ZN CI; query live final status before promotion.
 
 Windows Clean Install / Release Candidate jobs may fail immediately with no runner (`runner_id=0`, no steps). This pre-existing infrastructure condition must not be “fixed” by weakening updater, signing or release-integrity controls.
 
@@ -100,10 +103,9 @@ Reassess live, but current high-value candidates are:
 
 ## Immediate continuation procedure
 
-1. Read final status of current named-text Browser/Recovery/full CI and repair any code failure immediately.
-2. Reconcile this branch with actual final evidence; do not leave `in progress` claims once runs finish.
-3. Merge the fresh status/HANDOFF PR only after it matches code/CI.
-4. Fresh-compare `main` vs `dev/zn-agent`; if dev is verified and main has no conflicting work, use a normal tracked dev -> main PR/merge and verify canonical CI.
-5. Then continue the highest-value product gap above; do not stop at documentation or promotion.
+1. Read final status of `33337761865` and repair any core failure immediately.
+2. Merge the fresh status/HANDOFF PR only when it matches final code/CI evidence.
+3. Fresh-compare `main` vs `dev/zn-agent`; if dev is verified and main has no conflicting work, use a normal tracked dev -> main PR/merge and verify canonical CI.
+4. Continue the highest-value product gap above; do not stop at documentation or promotion.
 
 No force push, history rewrite, destructive database/identity/memory migration, production credential expansion, updater replacement, rollback, release signing or equivalent high-risk operation is authorized by this handoff.
