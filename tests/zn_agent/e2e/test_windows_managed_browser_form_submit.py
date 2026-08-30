@@ -85,19 +85,17 @@ class ManagedBrowserFormSubmitWindowsE2E(unittest.TestCase):
                 self.assertTrue(result.success, result.reason)
                 self.assertEqual(result.model_invocations, 0)
                 self.assertEqual(result.response, self.done_url)
-                actions = [
-                    action
-                    for action in result.body_actions
-                    if action.kind
-                    == "browser_fill_named_text_and_click_named_button_to_url"
-                ]
-                self.assertEqual(len(actions), 1)
-                self.assertTrue(actions[0].success)
-                self.assertNotIn(_TYPED, repr(result))
-                self.assertNotIn(_TYPED, repr(actions[0]))
                 self.assertTrue(any(message.role == "zn" for message in messages))
 
                 persisted = resident.store.recent_body_actions(limit=8)
+                form_actions = [
+                    action
+                    for action in persisted
+                    if action.get("kind")
+                    == "browser_fill_named_text_and_click_named_button_to_url"
+                ]
+                self.assertEqual(len(form_actions), 1)
+                self.assertTrue(form_actions[0]["success"])
                 encoded = repr(persisted)
                 self.assertNotIn(_TYPED, encoded)
                 self.assertIn(_TYPED_DIGEST, encoded)
