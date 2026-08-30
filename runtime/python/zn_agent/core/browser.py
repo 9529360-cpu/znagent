@@ -47,6 +47,7 @@ class BrowserTargetKind(str, Enum):
 
 class BrowserTargetQueryKind(str, Enum):
     DOM_ID = "dom_id"
+    ACCESSIBLE_CHECKBOX_NAME = "accessible_checkbox_name"
 
 
 _NAVIGATION_ACTIONS = frozenset(
