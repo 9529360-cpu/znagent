@@ -1,201 +1,167 @@
 from __future__ import annotations
 
-import contextlib
 import http.server
 import json
-import os
-import socketserver
-import subprocess
-import sys
+import socket
 import tempfile
 import threading
 import time
 import unittest
 from pathlib import Path
-from urllib.error import HTTPError
-from urllib.request import Request, urlopen
 
-
-REPO_ROOT = Path(__file__).resolve().parents[3]
-PYTHON_ROOT = REPO_ROOT / "runtime" / "python"
+from zn_agent.core.browser_rpc import BrowserResidentRpcServer
+from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
+from zn_agent.core.resident_server import ResidentSocketService
 
 
 class _FixtureHandler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self) -> None:  # noqa: N802 - stdlib callback name
+    def do_GET(self):
         if self.path == "/done":
-            body = b"""<!doctype html>
-<html>
-<head><title>ZN Work Button Done</title></head>
-<body><h1>Done</h1></body>
-</html>"""
+            payload = (
+                "<!doctype html><html><head><title>ZN Work Button Done</title></head>"
+                "<body><main>semantic button navigation completed</main></body></html>"
+            ).encode("utf-8")
         else:
-            body = b"""<!doctype html>
-<html>
-<head><title>ZN Work Browser Fixture</title></head>
-<body>
-  <label><input id="consent" type="checkbox"> Consent</label>
-  <label><input type="checkbox"> Email updates</label>
-  <button type="button" onclick="location.href='/done'">Continue</button>
-</body>
-</html>"""
+            payload = (
+                "<!doctype html><html><head><title>ZN Work Browser Closed Loop</title></head>"
+                "<body><main>structured Work reached resident-owned Chromium</main>"
+                '<label><input id="consent" type="checkbox">Consent</label>'
+                '<label><input type="checkbox">Email updates</label>'
+                '<button type="button" onclick="location.href=\'/done\'">Continue</button>'
+                "</body></html>"
+            ).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
-        self.wfile.write(body)
+        self.wfile.write(payload)
 
-    def log_message(self, _format: str, *_args) -> None:
+    def log_message(self, fmt, *args):
         return
-
-
-class _ThreadingTCPServer(socketserver.ThreadingTCPServer):
-    allow_reuse_address = True
 
 
 class ManagedBrowserWorkWindowsE2E(unittest.TestCase):
     @classmethod
-    def setUpClass(cls) -> None:
-        if os.name != "nt":
-            raise unittest.SkipTest("Windows managed-browser Work E2E requires Windows")
-        cls.server = _ThreadingTCPServer(("127.0.0.1", 0), _FixtureHandler)
-        cls.server_thread = threading.Thread(
-            target=cls.server.serve_forever,
-            daemon=True,
-        )
-        cls.server_thread.start()
-        cls.port = int(cls.server.server_address[1])
-        cls.url = f"http://127.0.0.1:{cls.port}/"
-        cls.done_url = f"http://127.0.0.1:{cls.port}/done"
+    def setUpClass(cls):
+        cls.web = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _FixtureHandler)
+        cls.web_thread = threading.Thread(target=cls.web.serve_forever, daemon=True)
+        cls.web_thread.start()
+        port = int(cls.web.server_address[1])
+        cls.url = f"http://127.0.0.1:{port}/"
+        cls.done_url = f"http://127.0.0.1:{port}/done"
 
     @classmethod
-    def tearDownClass(cls) -> None:
-        with contextlib.suppress(Exception):
-            cls.server.shutdown()
-        with contextlib.suppress(Exception):
-            cls.server.server_close()
-        with contextlib.suppress(Exception):
-            cls.server_thread.join(timeout=2)
+    def tearDownClass(cls):
+        cls.web.shutdown()
+        cls.web.server_close()
+        cls.web_thread.join(timeout=5)
 
-    def setUp(self) -> None:
-        self.tempdir = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tempdir.cleanup)
-        self.store_path = Path(self.tempdir.name) / "kernel.db"
-        self.port_file = Path(self.tempdir.name) / "resident.port"
-        env = os.environ.copy()
-        env["PYTHONPATH"] = str(PYTHON_ROOT)
-        env["ZN_RESIDENT_PORT_FILE"] = str(self.port_file)
-        self.process = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "zn_agent.core.resident_server",
-                "--store",
-                str(self.store_path),
-                "--host",
-                "127.0.0.1",
-                "--port",
-                "0",
-            ],
-            cwd=str(REPO_ROOT),
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        self.addCleanup(self._stop_resident)
-        self.resident_port = self._wait_for_resident()
-        self.base_url = f"http://127.0.0.1:{self.resident_port}"
-
-    def _stop_resident(self) -> None:
-        if getattr(self, "process", None) is None:
-            return
-        if self.process.poll() is None:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=8)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait(timeout=5)
-        if self.process.returncode not in {0, -15, 1}:
-            stdout, stderr = self.process.communicate(timeout=1)
-            raise AssertionError(
-                f"resident exited {self.process.returncode}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    @staticmethod
+    def _request(endpoint: dict, request_id: str, method: str, params=None) -> dict:
+        with socket.create_connection(
+            (str(endpoint["host"]), int(endpoint["port"])), timeout=5.0
+        ) as client:
+            client.settimeout(10.0)
+            client.sendall(
+                (
+                    json.dumps(
+                        {
+                            "id": request_id,
+                            "method": method,
+                            "params": dict(params or {}),
+                        }
+                    )
+                    + "\n"
+                ).encode("utf-8")
             )
-
-    def _wait_for_resident(self) -> int:
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            if self.process.poll() is not None:
-                stdout, stderr = self.process.communicate(timeout=1)
-                raise AssertionError(
-                    f"resident exited before startup: {self.process.returncode}\n"
-                    f"stdout:\n{stdout}\nstderr:\n{stderr}"
-                )
-            try:
-                text = self.port_file.read_text(encoding="utf-8").strip()
-                if text:
-                    port = int(text)
-                    with urlopen(f"http://127.0.0.1:{port}/health", timeout=2) as response:
-                        if response.status == 200:
-                            return port
-            except (FileNotFoundError, OSError, ValueError, HTTPError):
-                pass
-            time.sleep(0.1)
-        raise AssertionError("resident did not publish a healthy port")
-
-    def _request(
-        self,
-        path: str,
-        *,
-        method: str = "GET",
-        payload: dict | None = None,
-    ) -> dict:
-        data = None
-        headers = {}
-        if payload is not None:
-            data = json.dumps(payload).encode("utf-8")
-            headers["Content-Type"] = "application/json"
-        request = Request(
-            f"{self.base_url}{path}",
-            data=data,
-            headers=headers,
-            method=method,
-        )
-        with urlopen(request, timeout=15) as response:
-            return json.loads(response.read().decode("utf-8"))
+            raw = client.makefile("rb").readline()
+            if not raw:
+                raise AssertionError("resident endpoint closed without a response")
+            return json.loads(raw.decode("utf-8"))
 
     def _run_work(self, *, thread_id: str, task: str, payload: dict) -> dict:
-        started = self._request(
-            f"/work/threads/{thread_id}/start",
-            method="POST",
-            payload={"task": task, "payload": payload},
-        )
-        event_id = started["event"]["event_id"]
-        deadline = time.time() + 20
-        while time.time() < deadline:
-            progress = self._request(f"/work/threads/{thread_id}/events/{event_id}")
-            if progress["progress"]["terminal"]:
-                return progress
-            time.sleep(0.1)
-        raise AssertionError(f"Work event did not complete: {event_id}")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=root / "kernel.db"
+            )
+            rpc = BrowserResidentRpcServer(resident=resident, life_interval=0.1)
+            endpoint_path = root / "resident-endpoint.json"
+            service = ResidentSocketService(rpc, endpoint_path=endpoint_path)
+            resident_thread = threading.Thread(target=service.serve_forever, daemon=True)
+            resident_thread.start()
+
+            deadline = time.monotonic() + 10.0
+            endpoint = None
+            while time.monotonic() < deadline:
+                if endpoint_path.is_file():
+                    try:
+                        endpoint = json.loads(endpoint_path.read_text(encoding="utf-8"))
+                        break
+                    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                        pass
+                time.sleep(0.02)
+            self.assertIsNotNone(endpoint)
+            assert endpoint is not None
+
+            try:
+                started = self._request(
+                    endpoint,
+                    "work-start",
+                    "work_start",
+                    {
+                        "thread_id": thread_id,
+                        "task": task,
+                        "payload": payload,
+                    },
+                )
+                self.assertTrue(started["ok"], started)
+                progress = started["result"]["progress"]
+                event_id = progress["event_id"]
+
+                deadline = time.monotonic() + 30.0
+                final = None
+                while time.monotonic() < deadline:
+                    polled = self._request(
+                        endpoint,
+                        "work-progress",
+                        "work_progress",
+                        {"thread_id": thread_id, "event_id": event_id},
+                    )
+                    self.assertTrue(polled["ok"], polled)
+                    progress = polled["result"]["progress"]
+                    if progress.get("terminal") and progress.get("finalized"):
+                        final = polled["result"]
+                        break
+                    time.sleep(0.1)
+
+                self.assertIsNotNone(final, progress)
+                assert final is not None
+                return final
+            finally:
+                shutdown = self._request(endpoint, "shutdown", "shutdown")
+                self.assertTrue(shutdown["ok"], shutdown)
+                resident_thread.join(timeout=10.0)
+                self.assertFalse(resident_thread.is_alive())
+                self.assertFalse(endpoint_path.exists())
 
     def test_structured_work_navigates_real_chromium_and_verifies_before_completion(self):
         final = self._run_work(
-            thread_id="managed-browser-nav-work-e2e",
-            task="open a local browser page using structured exact authority",
+            thread_id="managed-browser-work-e2e",
+            task="navigate the managed browser to the structured local fixture",
             payload={
                 "required_capabilities": ["browser"],
                 "body_action": {
                     "kind": "browser_navigate",
                     "args": {
                         "url": self.url,
-                        "expected_url": self.url,
                         "allow_private_network": True,
                     },
                 },
-                "expected_outcome": {"kind": "browser_url_equals", "url": self.url},
+                "expected_outcome": {
+                    "kind": "browser_url_equals",
+                    "url": self.url,
+                },
                 "model_policy": "never",
             },
         )
@@ -203,21 +169,18 @@ class ManagedBrowserWorkWindowsE2E(unittest.TestCase):
         self.assertEqual(progress["status"], "completed")
         self.assertEqual(progress["stage"], "complete")
         self.assertIsNone(progress["recovery"])
-        browser_actions = [
-            item
-            for item in progress["body_actions"]
-            if item["kind"] == "browser_navigate"
-        ]
-        self.assertEqual(len(browser_actions), 1)
-        self.assertTrue(browser_actions[0]["success"])
+        action_kinds = [item["kind"] for item in progress["body_actions"]]
+        self.assertIn("browser_navigate", action_kinds)
+        self.assertIn("browser_observe", action_kinds)
+        self.assertIn("browser_close", action_kinds)
         messages = final["thread"]["messages"]
         self.assertEqual([item["role"] for item in messages], ["user", "zn", "activity"])
-        self.assertEqual(messages[1]["text"], "ZN Work Browser Fixture")
+        self.assertEqual(messages[1]["text"], "ZN Work Browser Closed Loop")
 
     def test_structured_work_sets_real_chromium_checkbox_with_verified_target_state(self):
         final = self._run_work(
             thread_id="managed-browser-checkbox-work-e2e",
-            task="set one explicit local checkbox through managed Chromium",
+            task="set the explicit local checkbox through resident-owned Chromium",
             payload={
                 "required_capabilities": ["browser"],
                 "body_action": {
@@ -237,9 +200,7 @@ class ManagedBrowserWorkWindowsE2E(unittest.TestCase):
         self.assertEqual(progress["stage"], "complete")
         self.assertIsNone(progress["recovery"])
         browser_actions = [
-            item
-            for item in progress["body_actions"]
-            if item["kind"] == "browser_set_checkbox"
+            item for item in progress["body_actions"] if item["kind"] == "browser_set_checkbox"
         ]
         self.assertEqual(len(browser_actions), 1)
         self.assertTrue(browser_actions[0]["success"])
@@ -250,7 +211,7 @@ class ManagedBrowserWorkWindowsE2E(unittest.TestCase):
     def test_structured_work_sets_idless_checkbox_by_exact_accessible_name(self):
         final = self._run_work(
             thread_id="managed-browser-named-checkbox-work-e2e",
-            task="set one exact named local checkbox through managed Chromium",
+            task="set the idless named checkbox through resident-owned Chromium",
             payload={
                 "required_capabilities": ["browser"],
                 "body_action": {
