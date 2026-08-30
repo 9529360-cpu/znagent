@@ -4,145 +4,131 @@ This is the current engineering work site and fact index, not a chat transcript 
 
 ## Current objective
 
-Continue vertical product closure from the managed-browser ordinary Work path while keeping changed repository truth synchronized in the same coherent slice.
+Continue vertical product closure from the verified managed-browser Work path while protecting resident continuity, replay safety and privacy. Repository synchronization is required hygiene, not the product milestone.
 
-The newest browser product capability is deliberately narrow:
+The newest browser path is:
 
 ```text
 ordinary durable Work
-+ one explicit HTTP(S) URL
-+ one explicit #dom-id
-+ unambiguous check / uncheck intent
--> managed Chromium
--> fresh exact checkbox target authority
--> CHECK / UNCHECK
--> same-exact-node checked-state postcondition
--> session cleanup
++ explicit start URL
++ quoted exact accessible button name
++ explicit click cue
++ explicit expected destination URL
+-> browser_click_named_button_to_url
+-> origin-bounded managed Chromium
+-> fresh unique native button observation
+-> exact-node revalidation
+-> click
+-> same-origin URL postcondition
 -> durable Work result
 ```
 
-Normal installed ZN still has no official repository push/PR/merge/release/signing authority.
+ZN does not ask a model to invent the destination or target. Malformed button requests fail closed instead of degrading into navigation-only Work.
 
-## Repository recovery rule
+## Live-recovery rule
 
-Do not trust an exact `main`/`dev` SHA written in HANDOFF as a live oracle. Updating HANDOFF changes Git HEAD, and normal promotion adds a merge commit. A fresh maintainer must query live refs first.
+Do not trust exact branch SHAs in this file as live oracles. A new maintainer must query `main`, `dev/zn-agent`, relevant `work/*`, open PRs and current CI first.
 
-Exact SHAs and run IDs below are evidence checkpoints only.
+At this checkpoint:
 
-The maintenance invariant is:
+- `main` was `a92ecb5364d11dbc259977f941e3444cc3cfd0f0` when compared during takeover;
+- product-code dev checkpoint after PR #111 is `ef7200976b649c5037924ee68cc9e4d8f2cbd1fb`;
+- dev was 23 commits ahead of main and 0 behind at that comparison;
+- stale PR #107 (old semantic status) and PR #101 (old pre-semantic focus implementation) were closed rather than merged into the current architecture.
 
-```text
-coherent product slice
--> targeted evidence
--> full/risk-proportional CI
--> reconcile changed status + HANDOFF now, not next session
--> normal promotion
--> canonical CI
--> branch sync
-```
+Re-read all of those facts live before acting.
 
-If a later change makes any of those facts obsolete, update the affected durable docs in that same slice. Do not leave documentation reconciliation as deferred cleanup.
+## What changed in this maintenance pass
 
-## Verified product reality
+### 1. Named-button restart recovery bug fixed
 
-### Managed browser ordinary Work
+PR #108 had correctly made `browser_click_named_button_to_url` a durable Body-side guarded side effect, but `BrowserWorkResidentRuntime._generic_guarded_side_effect()` had not been updated. After process interruption, Body would refuse replay while resident recovery could misclassify the uncertainty as an ordinary local failure.
 
-PR #96 connected the first natural ordinary Work path: exactly one explicit safe HTTP(S) URL plus an unambiguous navigation cue forms `browser_navigate`, uses resident-owned managed Chromium, independently re-observes the current URL, and completes/fails durable Work without asking a model to invent the destination.
+PR #109 fixed the ownership-layer classifier and added a restart regression that seeds a durable started attempt. The expected result is now `side_effect_recovery`, `replay_blocked=true`, `decision=user_decision_required`, with no second dispatch.
 
-PR #102 connects one existing provider interaction to the real Work caller rather than broadening all browser authority at once:
+### 2. Exact named-button action connected to ordinary Work
 
-- exactly one explicit HTTP(S) URL is required;
-- exactly one explicit `#dom-id` is required;
-- check/uncheck intent must be unambiguous in supported English/Chinese cues;
-- URL fragments are not treated as target authority;
-- no model invents destination, target or desired state;
-- permission is origin-bounded and grants only navigation + page interaction for this path;
-- text-entry, download and upload authority stay disabled;
-- after navigation, ZN freshly observes the explicit DOM-id target and requires checkbox role;
-- CHECK/UNCHECK authority is bound to that fresh observation;
-- provider success requires the same exact node to be re-observed in the requested checked state;
-- the ephemeral session closes before successful Work completion;
-- the mutation uses the durable side-effect guard, so the same event/signature is not blindly replayed after uncertainty.
+Before PR #110, the exact semantic button action existed and was reachable through structured internal `body_action`, but ordinary user Work did not form it.
 
-PR #103 adds a real local Chromium durable Work E2E for this mutation. The local fixture grants private-network authority explicitly in the structured E2E payload; natural ordinary Work does not silently gain private-network access.
+PR #110 adds one narrow natural path:
 
-Capability maturity: **connected + verified for one bounded checkbox interaction class**, not browser product closure.
+- exactly two explicit valid HTTP(S) URLs, in task order as start and expected destination;
+- exactly one quoted accessible button name;
+- explicit English/Chinese click cue;
+- browser capability inferred only when this exact shape parses;
+- zero model calls to invent target or destination;
+- missing/ambiguous authority fails closed.
 
-Still missing:
+The existing Body/provider layer remains authoritative for same-origin policy, private-network policy, exact fresh semantic target evidence, target revalidation, click dispatch and URL postcondition.
 
-- user-meaningful semantic/accessibility target discovery; the current ordinary path requires a technical `#dom-id`;
-- general safe click/focus/text/form Work flows;
-- complete reconciliation of an interrupted ephemeral mutation. Current behavior fails closed and refuses blind replay, but cannot always classify the outside-world result after process loss;
-- User Browser Bridge.
+### 3. Real Chromium E2E contract error repaired
 
-### Resident defect reporting
+After #110, Managed Browser E2E showed the actual button Work completed, then the test crashed with `KeyError: 'output'`. `ResidentWorkLedger.progress()` intentionally exposes a bounded `body_actions[].summary`, not raw/private `output`.
 
-PR #95 connects repeated high-confidence `probable_zn_defect` maintenance truth to a durable privacy-safe local upstream-report outbox.
+PR #111 changed only that assertion to `summary`. No product behavior or progress privacy boundary was broadened.
 
-Guaranteed now:
+## Verified evidence
 
-- health truth commits before best-effort report projection;
-- repeated matching incidents deduplicate into one local envelope;
-- restart repairs missing projection from durable maintenance-task truth;
-- external payload uses installation-scoped pseudonymous incident/component tokens;
-- raw error text, local paths, organ, task id, health fingerprint, repository identity and credentials are excluded;
-- status is explicitly `authority=local_outbox_only`, `transport_available=false`;
-- future external dispatch must be durably reserved first; ambiguous outcomes become `outcome_uncertain` and are not blindly replayed.
+- `33334989444` — ZN Work Recovery E2E: success on `f62c19b...`, covering durable Work restart/recovery after the ordinary named-button connection.
+- `33335159923` — ZN Managed Browser E2E: success on `ef720097...`; managed-browser contract tests and real local Chromium E2E both passed after the progress-contract repair.
+- `33335159900` — full dev ZN CI for `ef720097...`; Electron/TypeScript and Source Boundary were already green when this handoff was written, while Kernel/Python was still running. Read the run live before claiming final workflow success.
 
-Network transport, acknowledgement and maintainer intake are still missing.
+Windows Clean Install and Windows Release Candidate can currently fail before any runner/step starts (`runner_id=0`, empty steps). The same failure mode was observed on the pre-takeover `eb9d761...` checkpoint, so it is not evidence of a browser regression. Do not weaken signing/release/update trust merely to clear this infrastructure condition.
 
-### Source-maintenance authority
+## Current browser maturity
 
-Trusted source-maintenance can investigate, derive bounded repairs, execute in isolated `work/*`, run regression/diff checks, require independent semantic review, recover pending reviews, clean rejected attempts, and produce verified `local_commit_only` accepted-repair commits.
+Verified/connected ordinary Work now includes:
 
-Ordinary installed ZN has no repository credential or official repository mutation authority.
+- exact URL navigation;
+- exact DOM-id checkbox set/unset;
+- exact quoted accessible-name native checkbox set/unset;
+- exact quoted accessible-name native button click with explicit same-origin destination.
 
-## Evidence index
+Semantic sensing is deliberately bounded: exact user-supplied role/name, main frame, unique visible supported native node, no page-wide candidate enumeration.
 
-- `33284716266` — targeted resident report-outbox validation success.
-- PR #95 — reporting-aware resident + privacy-safe durable local outbox.
-- `33286593120` / `33286655544` — ordinary managed-browser navigation user-entry + durable ledger + real Chromium evidence.
-- PR #96 — ordinary Work -> managed-browser navigation.
-- `33286758708` — earlier full dev ZN CI green on product checkpoint `b1c86ee2...`.
-- PR #102 — ordinary Work -> bounded explicit checkbox mutation.
-- `33297131660` — managed-browser contract suite and real local Chromium E2E green after #102; includes browser Work checkbox core tests.
-- `33297131654` — Source Boundary, full Kernel/Python core tests and Electron/TypeScript jobs all reached success on #102 checkpoint `f5a87ed...`; workflow conclusion later became `cancelled` only because PR #103's dev push superseded the final status-publication phase. Do not misreport the workflow itself as a completed-green run.
-- PR #103 — adds real local Chromium durable Work checkbox evidence.
-- `33297795844` — managed-browser contracts + real local Chromium E2E green on #103 checkpoint `9668f883...`, including the checkbox Work E2E.
-- Read current full dev ZN CI and canonical post-promotion CI live before claiming final repository closure.
+Browser side-effect uncertainty is fail-closed and replay-blocked, but cross-process automatic outcome reconciliation is not product-closed. Ephemeral sessions may be gone after restart, so unknown outside-world results cannot always be classified safely.
 
-## Current product gaps
+## Important privacy finding before text-entry work
 
-1. Managed browser needs bounded fresh semantic/accessibility sensing and user-meaningful target discovery; `#dom-id` is too technical for broad product use.
-2. Browser interruption recovery is fail-closed but not fully reconciled; unknown external mutation outcomes need bounded re-sense/reclassification where possible.
-3. Broader safe click/focus/text/form Work flows remain unconnected; expand one vertical class at a time.
-4. Upstream BUG/repair reporting remains local-only; bounded operator-controlled transport/intake/acknowledgement/reconciliation is missing.
-5. User Browser Bridge remains architecture-only.
-6. Installed public update observation remains partial; installed N -> N+1 replacement, rollback, signing and release trust remain approval-gated.
-7. Unified health remains partial.
+Provider-level `BrowserActionKind.TYPE_TEXT` exists and has strong same-node/digest postconditions, but it is not safe to connect to ordinary Work yet.
+
+`NativeBody._record()` currently persists full `BodyAction` args to `native_body_actions.action_json`. A naive Work path would therefore durably store raw text, potentially including tokens, passwords or other sensitive values. The next text-entry slice must first define a redacted/secret-safe durable action representation and prove restart/recovery semantics without leaking the entered text.
+
+Do not bypass this by merely suppressing the public Work projection; the raw durable Body row is the relevant boundary.
+
+## Other durable product facts
+
+- Resident Self/identity, lived memory/reference continuity, Work/thread state and zero-model boot remain protected product continuity surfaces.
+- Upstream BUG/repair reporting is connected only to a local privacy-safe durable outbox; network transport/intake/acknowledgement/reconciliation remains missing.
+- User Browser Bridge remains architecture-only.
+- Installed public update observation remains partial.
+- Installed N -> N+1 replacement, rollback, signing and release trust remain approval-gated.
+- Ordinary installed ZN has no official repository write/release credential authority.
 
 ## Next dependency-ready work
 
-Re-check live Git/CI first. The strongest browser continuation is currently:
+First read live Git/CI. Then prefer the highest-value complete vertical slice, currently likely one of:
 
 ```text
-ordinary managed-browser Work
--> bounded fresh accessibility/semantic observation
--> explicit user-meaningful target selection without invented authority
--> one controlled interaction
--> independent postcondition
--> interruption reconciliation / recovery
+uncertain browser side effect
+-> persist only the minimal reconciliation evidence needed
+-> restart
+-> safe re-sense/reconcile where possible
+-> classify succeeded / failed / still uncertain
+-> never blind replay
 ```
 
-Before implementing it, compare active-caller value and security boundary against the alternative report path:
+or, after fixing the persistence boundary:
 
 ```text
-local report outbox
--> bounded operator-controlled transport
--> durable dispatch / acknowledgement / reconciliation
--> maintainer intake
+explicit user text-entry Work
+-> exact semantic target
+-> secret-safe durable action representation
+-> TYPE_TEXT
+-> same-node digest/length postcondition
+-> failure/restart recovery
 ```
 
-Do not turn repository synchronization itself into the product milestone. It is required engineering hygiene that keeps autonomous continuation trustworthy.
+Compare those against the still-open report transport/intake closure before choosing. Do not resurrect old PR #101 wholesale; if focus becomes the best next capability, re-derive it from current semantic browser ownership and tests.
 
 No force push, history rewrite, repository credential expansion, updater replacement, rollback, release signing or destructive identity/memory migration is authorized by this handoff.
