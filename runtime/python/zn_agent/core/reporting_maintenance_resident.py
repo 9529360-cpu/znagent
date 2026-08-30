@@ -11,11 +11,11 @@ repository, credential, push, PR, merge, release, updater or signing action.
 import sqlite3
 from typing import Any, Callable
 
-from .terminal_input_recovery_resident import TerminalInputRecoveryResidentRuntime
+from .browser_named_text_work_resident import BrowserNamedTextWorkResidentRuntime
 from .upstream_bug_report import ResidentUpstreamBugReportOutbox
 
 
-class ReportingMaintenanceResidentRuntime(TerminalInputRecoveryResidentRuntime):
+class ReportingMaintenanceResidentRuntime(BrowserNamedTextWorkResidentRuntime):
     """Resident with bounded automatic health -> upstream-report projection."""
 
     def __init__(self, *, kernel, capabilities=None, budget=None):

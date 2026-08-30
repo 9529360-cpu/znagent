@@ -9,9 +9,11 @@ on:
       - runtime/python/pyproject.toml
       - runtime/python/zn_agent/resident.py
       - runtime/python/zn_agent/core/browser.py
+      - runtime/python/zn_agent/core/browser_named_text_work_resident.py
       - runtime/python/zn_agent/core/browser_observed_result_recovery_resident.py
       - runtime/python/zn_agent/core/browser_rpc.py
       - runtime/python/zn_agent/core/browser_resident_server.py
+      - runtime/python/zn_agent/core/browser_text_work_body.py
       - runtime/python/zn_agent/core/browser_work_body.py
       - runtime/python/zn_agent/core/browser_work_resident.py
       - runtime/python/zn_agent/core/daemon.py
@@ -29,6 +31,8 @@ on:
       - tests/zn_agent/core/test_browser_work_button_recovery.py
       - tests/zn_agent/core/test_browser_work_named_button.py
       - tests/zn_agent/core/test_browser_work_named_checkbox.py
+      - tests/zn_agent/core/test_browser_work_named_text.py
+      - tests/zn_agent/core/test_browser_work_named_text_recovery.py
       - tests/zn_agent/core/test_browser_work_natural_button.py
       - tests/zn_agent/core/test_browser_work_navigation.py
       - tests/zn_agent/core/test_browser_work_observed_result_recovery.py
@@ -40,6 +44,7 @@ on:
       - tests/zn_agent/core/test_resident_browser_rpc.py
       - tests/zn_agent/core/test_semantic_managed_browser.py
       - tests/zn_agent/core/test_semantic_managed_browser_button.py
+      - tests/zn_agent/core/test_semantic_managed_browser_textbox.py
       - tests/zn_agent/e2e/test_windows_managed_browser.py
       - tests/zn_agent/e2e/test_windows_managed_browser_pages.py
       - tests/zn_agent/e2e/test_windows_managed_browser_select.py

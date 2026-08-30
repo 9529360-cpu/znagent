@@ -83,6 +83,41 @@ _SEMANTIC_BUTTON_EVIDENCE_SCRIPT = r"""
 }
 """
 
+_SEMANTIC_TEXTBOX_EVIDENCE_SCRIPT = r"""
+(element) => {
+  const connected = Boolean(element && element.isConnected);
+  const style = connected ? window.getComputedStyle(element) : null;
+  const rect = connected ? element.getBoundingClientRect() : null;
+  const visible = Boolean(
+    connected &&
+    !element.hidden &&
+    style &&
+    style.display !== "none" &&
+    style.visibility !== "hidden" &&
+    rect &&
+    rect.width > 0 &&
+    rect.height > 0
+  );
+  const tag = String(element && element.tagName || "").toLowerCase().slice(0, 32);
+  const inputType = String(element && element.getAttribute("type") || "")
+    .trim()
+    .toLowerCase()
+    .slice(0, 32);
+  const isPassword = tag === "input" && inputType === "password";
+  const nativeTextbox = tag === "textarea" || (tag === "input" && inputType === "text");
+  return {
+    connected,
+    visible,
+    tag,
+    input_type: inputType,
+    native_textbox: nativeTextbox,
+    is_password: isPassword,
+    disabled: Boolean(element && element.disabled),
+    read_only: Boolean(element && element.readOnly),
+  };
+}
+"""
+
 _EXACT_NODE_EQUAL_SCRIPT = r"""
 (element, other) => Boolean(element && other && element === other)
 """
@@ -95,6 +130,7 @@ class SemanticPlaywrightManagedBrowser(PlaywrightManagedBrowser):
         {
             BrowserTargetQueryKind.ACCESSIBLE_CHECKBOX_NAME,
             BrowserTargetQueryKind.ACCESSIBLE_BUTTON_NAME,
+            BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME,
         }
     )
 
@@ -307,6 +343,8 @@ class SemanticPlaywrightManagedBrowser(PlaywrightManagedBrowser):
             return "checkbox", _SEMANTIC_CHECKBOX_EVIDENCE_SCRIPT, "checkbox"
         if kind is BrowserTargetQueryKind.ACCESSIBLE_BUTTON_NAME:
             return "button", _SEMANTIC_BUTTON_EVIDENCE_SCRIPT, "button"
+        if kind is BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME:
+            return "textbox", _SEMANTIC_TEXTBOX_EVIDENCE_SCRIPT, "textbox"
         raise ManagedBrowserError(f"unsupported semantic target query: {kind.value}")
 
     @staticmethod
@@ -331,6 +369,20 @@ class SemanticPlaywrightManagedBrowser(PlaywrightManagedBrowser):
                     "managed browser semantic button Work currently supports only native button targets"
                 )
             return
+        if kind is BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME:
+            if bool(raw.get("is_password")):
+                raise ManagedBrowserError(
+                    "managed browser semantic textbox Work refuses password targets"
+                )
+            if not bool(raw.get("native_textbox")):
+                raise ManagedBrowserError(
+                    "managed browser semantic textbox Work currently supports only input[type=text] and textarea targets"
+                )
+            if bool(raw.get("disabled")):
+                raise ManagedBrowserError("managed browser semantic textbox target is disabled")
+            if bool(raw.get("read_only")):
+                raise ManagedBrowserError("managed browser semantic textbox target is read-only")
+            return
         raise ManagedBrowserError(f"unsupported semantic target query: {kind.value}")
 
     @staticmethod
@@ -351,6 +403,9 @@ class SemanticPlaywrightManagedBrowser(PlaywrightManagedBrowser):
         elif query.kind is BrowserTargetQueryKind.ACCESSIBLE_BUTTON_NAME:
             role = "button"
             selector_hint = "accessible_button_name:exact"
+        elif query.kind is BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME:
+            role = "textbox"
+            selector_hint = "accessible_textbox_name:exact"
         else:
             raise ManagedBrowserError(
                 f"unsupported semantic target query: {query.kind.value}"
