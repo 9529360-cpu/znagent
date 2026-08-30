@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import http.server
+import sqlite3
 import tempfile
 import threading
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
@@ -57,8 +59,9 @@ class ManagedBrowserFormSubmitWindowsE2E(unittest.TestCase):
 
     def test_structured_work_fills_and_submits_in_one_real_chromium_session(self):
         with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "kernel.db"
             resident = build_resident_runtime_from_existing_stack(
-                config={"model": {}}, store_path=Path(tmp) / "kernel.db"
+                config={"model": {}}, store_path=store_path
             )
             ledger = ResidentWorkLedger(resident)
             try:
@@ -87,16 +90,20 @@ class ManagedBrowserFormSubmitWindowsE2E(unittest.TestCase):
                 self.assertEqual(result.response, self.done_url)
                 self.assertTrue(any(message.role == "zn" for message in messages))
 
-                persisted = resident.store.recent_body_actions(limit=8)
-                form_actions = [
-                    action
-                    for action in persisted
-                    if action.get("kind")
+                with closing(sqlite3.connect(store_path)) as conn:
+                    rows = conn.execute(
+                        "SELECT kind,success,action_json,result_json "
+                        "FROM native_body_actions ORDER BY rowid DESC LIMIT 8"
+                    ).fetchall()
+                form_rows = [
+                    row
+                    for row in rows
+                    if str(row[0])
                     == "browser_fill_named_text_and_click_named_button_to_url"
                 ]
-                self.assertEqual(len(form_actions), 1)
-                self.assertTrue(form_actions[0]["success"])
-                encoded = repr(persisted)
+                self.assertEqual(len(form_rows), 1)
+                self.assertEqual(int(form_rows[0][1]), 1)
+                encoded = repr(form_rows)
                 self.assertNotIn(_TYPED, encoded)
                 self.assertIn(_TYPED_DIGEST, encoded)
             finally:
