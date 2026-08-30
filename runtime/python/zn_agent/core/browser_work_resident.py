@@ -308,6 +308,7 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
             "browser_navigate",
             "browser_set_checkbox",
             "browser_set_named_checkbox",
+            "browser_click_named_button_to_url",
         }:
             return True
         return RecoveryBoundedResidentRuntime._generic_guarded_side_effect(intent)
