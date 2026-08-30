@@ -16,13 +16,20 @@ from zn_agent.core.resident_server import ResidentSocketService
 
 class _FixtureHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        payload = (
-            "<!doctype html><html><head><title>ZN Work Browser Closed Loop</title></head>"
-            "<body><main>structured Work reached resident-owned Chromium</main>"
-            '<label><input id="consent" type="checkbox">Consent</label>'
-            '<label><input type="checkbox">Email updates</label>'
-            "</body></html>"
-        ).encode("utf-8")
+        if self.path == "/done":
+            payload = (
+                "<!doctype html><html><head><title>ZN Work Button Done</title></head>"
+                "<body><main>semantic button navigation completed</main></body></html>"
+            ).encode("utf-8")
+        else:
+            payload = (
+                "<!doctype html><html><head><title>ZN Work Browser Closed Loop</title></head>"
+                "<body><main>structured Work reached resident-owned Chromium</main>"
+                '<label><input id="consent" type="checkbox">Consent</label>'
+                '<label><input type="checkbox">Email updates</label>'
+                '<button type="button" onclick="location.href=\'/done\'">Continue</button>'
+                "</body></html>"
+            ).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
@@ -39,7 +46,9 @@ class ManagedBrowserWorkWindowsE2E(unittest.TestCase):
         cls.web = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _FixtureHandler)
         cls.web_thread = threading.Thread(target=cls.web.serve_forever, daemon=True)
         cls.web_thread.start()
-        cls.url = f"http://127.0.0.1:{int(cls.web.server_address[1])}/"
+        port = int(cls.web.server_address[1])
+        cls.url = f"http://127.0.0.1:{port}/"
+        cls.done_url = f"http://127.0.0.1:{port}/done"
 
     @classmethod
     def tearDownClass(cls):
@@ -231,6 +240,40 @@ class ManagedBrowserWorkWindowsE2E(unittest.TestCase):
         messages = final["thread"]["messages"]
         self.assertEqual([item["role"] for item in messages], ["user", "zn", "activity"])
         self.assertEqual(messages[1]["text"], 'checkbox "Email updates" is checked')
+
+    def test_structured_work_clicks_exact_named_button_and_verifies_destination(self):
+        final = self._run_work(
+            thread_id="managed-browser-named-button-work-e2e",
+            task="click one exact named button and verify its explicit same-origin destination",
+            payload={
+                "required_capabilities": ["browser"],
+                "body_action": {
+                    "kind": "browser_click_named_button_to_url",
+                    "args": {
+                        "url": self.url,
+                        "target_name": "Continue",
+                        "expected_url": self.done_url,
+                        "allow_private_network": True,
+                    },
+                },
+                "model_policy": "never",
+            },
+        )
+        progress = final["progress"]
+        self.assertEqual(progress["status"], "completed")
+        self.assertEqual(progress["stage"], "complete")
+        self.assertIsNone(progress["recovery"])
+        browser_actions = [
+            item
+            for item in progress["body_actions"]
+            if item["kind"] == "browser_click_named_button_to_url"
+        ]
+        self.assertEqual(len(browser_actions), 1)
+        self.assertTrue(browser_actions[0]["success"])
+        self.assertEqual(browser_actions[0]["output"], self.done_url)
+        messages = final["thread"]["messages"]
+        self.assertEqual([item["role"] for item in messages], ["user", "zn", "activity"])
+        self.assertEqual(messages[1]["text"], self.done_url)
 
 
 if __name__ == "__main__":
