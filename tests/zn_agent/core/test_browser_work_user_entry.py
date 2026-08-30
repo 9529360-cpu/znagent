@@ -13,6 +13,7 @@ from zn_agent.core.browser import (
 )
 from zn_agent.core.models import AgentEvent, utc_now
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
+from zn_agent.core.work import ResidentWorkLedger
 
 
 class _FakeManagedBrowser:
@@ -133,7 +134,7 @@ class BrowserWorkUserEntryTests(unittest.TestCase):
             finally:
                 resident.store.close()
 
-    def test_normal_user_work_navigates_without_hidden_body_action_or_model(self) -> None:
+    def test_normal_work_facade_navigates_without_hidden_body_action_or_model(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             resident = build_resident_runtime_from_existing_stack(
                 config={"model": {}},
@@ -141,12 +142,23 @@ class BrowserWorkUserEntryTests(unittest.TestCase):
             )
             browser = _FakeManagedBrowser()
             resident.managed_browser = browser
+            ledger = ResidentWorkLedger(resident)
             try:
-                result = resident.submit("打开 https://example.com/work")
+                ledger.create_thread(thread_id="browser-user-entry")
+                (_, messages), result = ledger.submit(
+                    "browser-user-entry",
+                    "打开 https://example.com/work",
+                )
 
                 self.assertTrue(result.success)
                 self.assertEqual(result.response, "User Entry Browser")
                 self.assertEqual(result.model_invocations, 0)
+                self.assertTrue(
+                    any(
+                        message.role == "zn" and message.text == "User Entry Browser"
+                        for message in messages
+                    )
+                )
                 self.assertEqual(browser.open_calls, 1)
                 self.assertEqual(browser.act_calls, 1)
                 self.assertGreaterEqual(browser.observe_calls, 2)
