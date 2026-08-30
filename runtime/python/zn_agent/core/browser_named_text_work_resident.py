@@ -26,6 +26,7 @@ _ZH_TEXT_ENTRY_RE_REVERSED = re.compile(
     r'(?:输入|填写)\s*["“]([^"”\r\n]{1,512})["”]\s*'
     r'(?:到|进|至)\s*(?:文本框|输入框|字段)\s*["“]([^"”\r\n]{1,160})["”]'
 )
+_NATURAL_URL_BOUNDARY_RE = re.compile(r"[“”‘’，。！？；：）】》]")
 
 
 class BrowserNamedTextWorkResidentRuntime(TerminalInputRecoveryResidentRuntime):
@@ -39,12 +40,20 @@ class BrowserNamedTextWorkResidentRuntime(TerminalInputRecoveryResidentRuntime):
     """
 
     _BROWSER_TYPE_NAMED_TEXT = "browser_type_named_text"
-    _TEXT_MARKERS = ("textbox", "field", "input", "文本框", "输入框", "字段")
-    _TEXT_CUES = ("type ", "enter ", "fill ", "输入", "填写")
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
         self.body = BrowserTextWorkBody(resident=self)
+
+    @staticmethod
+    def _explicit_urls(task: str) -> tuple[str, ...]:
+        # Chinese prose commonly attaches full-width punctuation directly to a
+        # URL. The shared ASCII-oriented extractor otherwise treats the following
+        # sentence text as part of the URL path. Normalize only delimiter
+        # characters for URL discovery; the original task remains untouched for
+        # target/text parsing and durable Work content.
+        bounded = _NATURAL_URL_BOUNDARY_RE.sub(" ", str(task or ""))
+        return TerminalInputRecoveryResidentRuntime._explicit_urls(bounded)
 
     @classmethod
     def _looks_like_text_interaction(cls, task: str) -> bool:
