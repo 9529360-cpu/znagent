@@ -245,7 +245,7 @@ def build_resident_runtime(
 ):
     """Build the resident organism around the ZN-owned kernel."""
     from .budget import CognitiveBudgetManager
-    from .cognitive_maintenance_resident import CognitiveMaintenanceResidentRuntime
+    from .reporting_maintenance_resident import ReportingMaintenanceResidentRuntime
 
     effective_config = config if config is not None else load_zn_config()
     kernel = build_runtime(
@@ -263,7 +263,7 @@ def build_resident_runtime(
             0.0, min(1.0, float(resident_cfg.get("high_risk_threshold", 0.8)))
         ),
     )
-    return CognitiveMaintenanceResidentRuntime(kernel=kernel, budget=budget)
+    return ReportingMaintenanceResidentRuntime(kernel=kernel, budget=budget)
 
 
 build_runtime_from_existing_stack = build_runtime
