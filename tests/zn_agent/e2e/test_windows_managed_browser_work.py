@@ -20,6 +20,7 @@ class _FixtureHandler(http.server.BaseHTTPRequestHandler):
             "<!doctype html><html><head><title>ZN Work Browser Closed Loop</title></head>"
             "<body><main>structured Work reached resident-owned Chromium</main>"
             '<label><input id="consent" type="checkbox">Consent</label>'
+            '<label><input type="checkbox">Email updates</label>'
             "</body></html>"
         ).encode("utf-8")
         self.send_response(200)
@@ -197,6 +198,39 @@ class ManagedBrowserWorkWindowsE2E(unittest.TestCase):
         messages = final["thread"]["messages"]
         self.assertEqual([item["role"] for item in messages], ["user", "zn", "activity"])
         self.assertEqual(messages[1]["text"], "checkbox #consent is checked")
+
+    def test_structured_work_sets_idless_checkbox_by_exact_accessible_name(self):
+        final = self._run_work(
+            thread_id="managed-browser-named-checkbox-work-e2e",
+            task="set the idless named checkbox through resident-owned Chromium",
+            payload={
+                "required_capabilities": ["browser"],
+                "body_action": {
+                    "kind": "browser_set_named_checkbox",
+                    "args": {
+                        "url": self.url,
+                        "target_name": "Email updates",
+                        "checked": True,
+                        "allow_private_network": True,
+                    },
+                },
+                "model_policy": "never",
+            },
+        )
+        progress = final["progress"]
+        self.assertEqual(progress["status"], "completed")
+        self.assertEqual(progress["stage"], "complete")
+        self.assertIsNone(progress["recovery"])
+        browser_actions = [
+            item
+            for item in progress["body_actions"]
+            if item["kind"] == "browser_set_named_checkbox"
+        ]
+        self.assertEqual(len(browser_actions), 1)
+        self.assertTrue(browser_actions[0]["success"])
+        messages = final["thread"]["messages"]
+        self.assertEqual([item["role"] for item in messages], ["user", "zn", "activity"])
+        self.assertEqual(messages[1]["text"], 'checkbox "Email updates" is checked')
 
 
 if __name__ == "__main__":

@@ -10,10 +10,12 @@ from urllib.parse import urlsplit
 from .action import NativeActionIntent
 from .browser_work_body import BrowserSideEffectAwareBody
 from .recovery_bounded_resident import RecoveryBoundedResidentRuntime
+from .semantic_managed_browser import SemanticPlaywrightManagedBrowser
 
 
 _URL_RE = re.compile(r"https?://[^\s<>{}\[\]\"']+", re.IGNORECASE)
 _DOM_ID_RE = re.compile(r"(?<![\w-])#([A-Za-z][A-Za-z0-9_:-]{0,127})")
+_QUOTED_NAME_RE = re.compile(r'["“]([^"”\r\n]{1,160})["”]')
 _NAVIGATION_CUES = (
     "open ",
     "visit ",
@@ -47,9 +49,10 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
     A normal user Work may form one navigation intent directly when its task
     contains exactly one explicit HTTP(S) URL and an unambiguous navigation cue.
     It may also form one deliberately narrow checkbox mutation when the task
-    supplies exactly one explicit URL, one explicit ``#dom-id`` target and an
-    unambiguous check/uncheck cue. ZN never asks a model to invent a destination,
-    target identity or desired boolean state.
+    supplies exactly one explicit URL and either one explicit ``#dom-id`` or one
+    quoted exact accessible checkbox name plus an unambiguous check/uncheck cue.
+    ZN never asks a model to invent a destination, target identity or desired
+    boolean state.
 
     Browser mutations cross the same durable side-effect boundary as navigation.
     Provider dispatch is not accepted blindly: the managed-browser adapter binds
@@ -61,6 +64,10 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
+        # The inherited managed-browser owner is lazy and has not launched a
+        # provider during construction. Replace only its adapter implementation;
+        # resident ownership and lifecycle remain unchanged.
+        self.managed_browser = SemanticPlaywrightManagedBrowser()
         self.body = BrowserSideEffectAwareBody(resident=self)
 
     @staticmethod
@@ -81,6 +88,32 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
             matches.append(candidate)
         return tuple(matches)
 
+    @staticmethod
+    def _checkbox_state(text: str) -> bool | None:
+        uncheck_requested = any(pattern.search(text) for pattern in _UNCHECK_CUES)
+        uncheck_requested = uncheck_requested or any(cue in text for cue in _UNCHECK_CUES_ZH)
+        check_text = text
+        for cue in _UNCHECK_CUES_ZH:
+            check_text = check_text.replace(cue, " ")
+        check_requested = any(pattern.search(check_text) for pattern in _CHECK_CUES)
+        check_requested = check_requested or any(cue in check_text for cue in _CHECK_CUES_ZH)
+        if check_requested == uncheck_requested:
+            return None
+        return bool(check_requested)
+
+    @classmethod
+    def _looks_like_checkbox_interaction(cls, task: str) -> bool:
+        remainder = str(task or "")
+        for url in cls._explicit_urls(remainder):
+            remainder = remainder.replace(url, " ")
+        lowered = remainder.lower()
+        has_target_marker = bool(
+            "checkbox" in lowered
+            or "复选框" in remainder
+            or _DOM_ID_RE.search(remainder)
+        )
+        return bool(has_target_marker and cls._checkbox_state(remainder) is not None)
+
     @classmethod
     def _natural_navigation_url(cls, event) -> str | None:
         payload = event.payload or {}
@@ -91,9 +124,44 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
         lowered = task.lower()
         if not any(cue in lowered for cue in _NAVIGATION_CUES):
             return None
+        # A malformed/ambiguous checkbox mutation must fail closed rather than
+        # silently degrading into a partial navigation-only action. Ordinary
+        # phrases such as "open this page to check status" remain navigation.
+        if cls._looks_like_checkbox_interaction(task):
+            return None
 
         matches = cls._explicit_urls(task)
         return matches[0] if len(matches) == 1 else None
+
+    @classmethod
+    def _natural_named_checkbox_request(cls, event) -> tuple[str, str, bool] | None:
+        payload = event.payload or {}
+        if payload.get("body_action") or payload.get("native_action"):
+            return None
+
+        task = str(event.task or "").strip()
+        urls = cls._explicit_urls(task)
+        if len(urls) != 1:
+            return None
+        url = urls[0]
+        remainder = task.replace(url, " ")
+        lowered = remainder.lower()
+        if "checkbox" not in lowered and "复选框" not in remainder:
+            return None
+        if _DOM_ID_RE.search(remainder):
+            return None
+
+        names = []
+        for match in _QUOTED_NAME_RE.finditer(remainder):
+            value = match.group(1).strip()
+            if value and value not in names:
+                names.append(value)
+        if len(names) != 1:
+            return None
+        checked = cls._checkbox_state(remainder)
+        if checked is None:
+            return None
+        return url, names[0], checked
 
     @classmethod
     def _natural_checkbox_request(cls, event) -> tuple[str, str, bool] | None:
@@ -117,26 +185,17 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
                 dom_ids.append(value)
         if len(dom_ids) != 1:
             return None
-
-        uncheck_requested = any(pattern.search(remainder) for pattern in _UNCHECK_CUES)
-        uncheck_requested = uncheck_requested or any(
-            cue in remainder for cue in _UNCHECK_CUES_ZH
-        )
-        check_text = remainder
-        for cue in _UNCHECK_CUES_ZH:
-            check_text = check_text.replace(cue, " ")
-        check_requested = any(pattern.search(check_text) for pattern in _CHECK_CUES)
-        check_requested = check_requested or any(cue in check_text for cue in _CHECK_CUES_ZH)
-        if check_requested == uncheck_requested:
+        checked = cls._checkbox_state(remainder)
+        if checked is None:
             return None
-
-        return url, dom_ids[0], bool(check_requested)
+        return url, dom_ids[0], checked
 
     @classmethod
     def _required_capabilities(cls, event) -> tuple[str, ...]:
         explicit = event.payload.get("required_capabilities")
         if explicit is None and (
-            cls._natural_checkbox_request(event) is not None
+            cls._natural_named_checkbox_request(event) is not None
+            or cls._natural_checkbox_request(event) is not None
             or cls._natural_navigation_url(event) is not None
         ):
             return ("browser",)
@@ -151,6 +210,34 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
         learning_evidence,
         thought=None,
     ):
+        named_checkbox = self._natural_named_checkbox_request(event)
+        if named_checkbox is not None:
+            url, target_name, checked = named_checkbox
+            intent = NativeActionIntent(
+                intent_id=f"browser-named-checkbox-{event.event_id}",
+                event_id=event.event_id,
+                kind="browser_set_named_checkbox",
+                args={"url": url, "target_name": target_name, "checked": checked},
+                reason=(
+                    "the current user Work supplies the exact browser destination, exact "
+                    "quoted accessible checkbox name and unambiguous requested boolean state"
+                ),
+                source="native_deliberation",
+            )
+            if not self._action_blocked_by_current_evidence(event, state, intent):
+                self._begin_native_action_cycle(event, state, intent)
+                self.store.save_working_state(state)
+                if thought is not None:
+                    action = "perform body action: browser_set_named_checkbox"
+                    if action not in thought.possible_actions:
+                        thought.possible_actions = (*thought.possible_actions, action)
+                    thought.reason = (
+                        f"{thought.reason}; the user supplied the exact page, semantic target "
+                        "name and checkbox state so ZN does not need a model to invent authority"
+                    )
+                    self._persist_enriched_thought(thought)
+                return None
+
         checkbox = self._natural_checkbox_request(event)
         if checkbox is not None:
             url, dom_id, checked = checkbox
@@ -220,6 +307,7 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
         if str(intent.kind or "").strip().lower() in {
             "browser_navigate",
             "browser_set_checkbox",
+            "browser_set_named_checkbox",
         }:
             return True
         return RecoveryBoundedResidentRuntime._generic_guarded_side_effect(intent)
