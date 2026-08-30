@@ -102,7 +102,7 @@ class ManagedBrowserFormSubmitWindowsE2E(unittest.TestCase):
                 self.assertNotIn(_TYPED, encoded)
                 self.assertIn(_TYPED_DIGEST, encoded)
             finally:
-                resident.close()
+                resident.store.close()
 
 
 if __name__ == "__main__":
