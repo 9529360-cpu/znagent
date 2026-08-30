@@ -83,6 +83,8 @@ class BrowserFormSubmitBody(BrowserTextWorkBody):
             action.args.get("button_name"), field="button_name"
         )
         text, utf16_units = self._validated_text(action.args.get("text"))
+        requested_digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        requested_length = len(text)
         if not url or not expected_url:
             raise ValueError(
                 "browser_fill_named_text_and_click_named_button_to_url requires url and expected_url"
@@ -186,10 +188,11 @@ class BrowserFormSubmitBody(BrowserTextWorkBody):
                 or not bool(text_data.get("input_sent"))
                 or text_evidence.postcondition
                 != "same_exact_target_text_equals_requested"
-                or expected_length <= 0
-                or not expected_digest
-                or int(text_data.get("text_length_after") or -1) != expected_length
-                or str(text_data.get("text_sha256_after") or "") != expected_digest
+                or expected_length != requested_length
+                or expected_digest != requested_digest
+                or int(text_data.get("expected_utf16_units") or -1) != utf16_units
+                or int(text_data.get("text_length_after") or -1) != requested_length
+                or str(text_data.get("text_sha256_after") or "") != requested_digest
             ):
                 browser.close_session(session.session_id)
                 closed = True
@@ -301,11 +304,9 @@ class BrowserFormSubmitBody(BrowserTextWorkBody):
                     "textbox_name": textbox_observation.target.name,
                     "button_target_id": button_observation.target.target_id,
                     "button_name": button_observation.target.name,
-                    "expected_text_length": expected_length,
-                    "expected_text_sha256": expected_digest,
-                    "expected_utf16_units": int(
-                        text_data.get("expected_utf16_units") or utf16_units
-                    ),
+                    "expected_text_length": requested_length,
+                    "expected_text_sha256": requested_digest,
+                    "expected_utf16_units": utf16_units,
                     "text_length_after": int(text_data.get("text_length_after") or 0),
                     "text_sha256_after": str(text_data.get("text_sha256_after") or ""),
                     "text_postcondition": text_evidence.postcondition,
