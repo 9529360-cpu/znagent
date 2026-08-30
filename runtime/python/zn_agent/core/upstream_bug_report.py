@@ -24,6 +24,7 @@ _SCHEMA = "zn-upstream-bug-report-v2"
 _PRODUCT = "ZN"
 _MIN_OCCURRENCES = 3
 _PRIVACY_KEY_BYTES = 32
+_INTERRUPTED_DISPATCH_ERROR = "InterruptedDispatch"
 
 
 class ResidentUpstreamBugReportOutbox:
@@ -369,6 +370,16 @@ class ResidentUpstreamBugReportOutbox:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_resident_upstream_bug_reports_state "
                 "ON resident_upstream_bug_reports(state,created_at)"
+            )
+            # A dispatch reservation is committed before the external side effect.
+            # If the process stops before recording its outcome, replay cannot be
+            # assumed safe on the next start. Promote every abandoned reservation
+            # to the same durable uncertainty state used for ambiguous transports.
+            conn.execute(
+                "UPDATE resident_upstream_bug_reports "
+                "SET state='outcome_uncertain',last_error_type=?,updated_at=? "
+                "WHERE state='dispatching'",
+                (_INTERRUPTED_DISPATCH_ERROR, utc_now()),
             )
             conn.commit()
 
