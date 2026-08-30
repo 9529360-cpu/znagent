@@ -11,19 +11,19 @@ repository, credential, push, PR, merge, release, updater or signing action.
 import sqlite3
 from typing import Any, Callable
 
-from .browser_named_text_work_resident import BrowserNamedTextWorkResidentRuntime
+from .browser_form_submit_resident import BrowserFormSubmitResidentRuntime
 from .upstream_bug_report import ResidentUpstreamBugReportOutbox
 
 
-class ReportingMaintenanceResidentRuntime(BrowserNamedTextWorkResidentRuntime):
+class ReportingMaintenanceResidentRuntime(BrowserFormSubmitResidentRuntime):
     """Resident with bounded automatic health -> upstream-report projection."""
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
-        # BrowserNamedTextWorkResidentRuntime installs the final BrowserTextWorkBody
-        # after the inherited HealthAwareResidentRuntime has already observed the
-        # prior Body instance. Re-bind health to the actual final active Body before
-        # report projection so native Body failures remain durable health truth.
+        # Browser form/text composition installs the final browser-aware Body after
+        # the inherited HealthAwareResidentRuntime observed an earlier Body. Re-bind
+        # health to the actual final active Body before report projection so native
+        # Body failures remain durable health truth.
         self._install_body_dispatch_health_observer()
         self.upstream_bug_reports: ResidentUpstreamBugReportOutbox | None = None
         self._install_upstream_bug_report_outbox()
