@@ -18,7 +18,9 @@ class _FixtureHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         payload = (
             "<!doctype html><html><head><title>ZN Work Browser Closed Loop</title></head>"
-            "<body><main>structured Work reached resident-owned Chromium</main></body></html>"
+            "<body><main>structured Work reached resident-owned Chromium</main>"
+            '<label><input id="consent" type="checkbox">Consent</label>'
+            "</body></html>"
         ).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -67,7 +69,7 @@ class ManagedBrowserWorkWindowsE2E(unittest.TestCase):
                 raise AssertionError("resident endpoint closed without a response")
             return json.loads(raw.decode("utf-8"))
 
-    def test_structured_work_navigates_real_chromium_and_verifies_before_completion(self):
+    def _run_work(self, *, thread_id: str, task: str, payload: dict) -> dict:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             resident = build_resident_runtime_from_existing_stack(
@@ -98,23 +100,9 @@ class ManagedBrowserWorkWindowsE2E(unittest.TestCase):
                     "work-start",
                     "work_start",
                     {
-                        "thread_id": "managed-browser-work-e2e",
-                        "task": "navigate the managed browser to the structured local fixture",
-                        "payload": {
-                            "required_capabilities": ["browser"],
-                            "body_action": {
-                                "kind": "browser_navigate",
-                                "args": {
-                                    "url": self.url,
-                                    "allow_private_network": True,
-                                },
-                            },
-                            "expected_outcome": {
-                                "kind": "browser_url_equals",
-                                "url": self.url,
-                            },
-                            "model_policy": "never",
-                        },
+                        "thread_id": thread_id,
+                        "task": task,
+                        "payload": payload,
                     },
                 )
                 self.assertTrue(started["ok"], started)
@@ -128,10 +116,7 @@ class ManagedBrowserWorkWindowsE2E(unittest.TestCase):
                         endpoint,
                         "work-progress",
                         "work_progress",
-                        {
-                            "thread_id": "managed-browser-work-e2e",
-                            "event_id": event_id,
-                        },
+                        {"thread_id": thread_id, "event_id": event_id},
                     )
                     self.assertTrue(polled["ok"], polled)
                     progress = polled["result"]["progress"]
@@ -142,23 +127,76 @@ class ManagedBrowserWorkWindowsE2E(unittest.TestCase):
 
                 self.assertIsNotNone(final, progress)
                 assert final is not None
-                progress = final["progress"]
-                self.assertEqual(progress["status"], "completed")
-                self.assertEqual(progress["stage"], "complete")
-                self.assertIsNone(progress["recovery"])
-                action_kinds = [item["kind"] for item in progress["body_actions"]]
-                self.assertIn("browser_navigate", action_kinds)
-                self.assertIn("browser_observe", action_kinds)
-                self.assertIn("browser_close", action_kinds)
-                messages = final["thread"]["messages"]
-                self.assertEqual([item["role"] for item in messages], ["user", "zn", "activity"])
-                self.assertEqual(messages[1]["text"], "ZN Work Browser Closed Loop")
+                return final
             finally:
                 shutdown = self._request(endpoint, "shutdown", "shutdown")
                 self.assertTrue(shutdown["ok"], shutdown)
                 resident_thread.join(timeout=10.0)
                 self.assertFalse(resident_thread.is_alive())
                 self.assertFalse(endpoint_path.exists())
+
+    def test_structured_work_navigates_real_chromium_and_verifies_before_completion(self):
+        final = self._run_work(
+            thread_id="managed-browser-work-e2e",
+            task="navigate the managed browser to the structured local fixture",
+            payload={
+                "required_capabilities": ["browser"],
+                "body_action": {
+                    "kind": "browser_navigate",
+                    "args": {
+                        "url": self.url,
+                        "allow_private_network": True,
+                    },
+                },
+                "expected_outcome": {
+                    "kind": "browser_url_equals",
+                    "url": self.url,
+                },
+                "model_policy": "never",
+            },
+        )
+        progress = final["progress"]
+        self.assertEqual(progress["status"], "completed")
+        self.assertEqual(progress["stage"], "complete")
+        self.assertIsNone(progress["recovery"])
+        action_kinds = [item["kind"] for item in progress["body_actions"]]
+        self.assertIn("browser_navigate", action_kinds)
+        self.assertIn("browser_observe", action_kinds)
+        self.assertIn("browser_close", action_kinds)
+        messages = final["thread"]["messages"]
+        self.assertEqual([item["role"] for item in messages], ["user", "zn", "activity"])
+        self.assertEqual(messages[1]["text"], "ZN Work Browser Closed Loop")
+
+    def test_structured_work_sets_real_chromium_checkbox_with_verified_target_state(self):
+        final = self._run_work(
+            thread_id="managed-browser-checkbox-work-e2e",
+            task="set the explicit local checkbox through resident-owned Chromium",
+            payload={
+                "required_capabilities": ["browser"],
+                "body_action": {
+                    "kind": "browser_set_checkbox",
+                    "args": {
+                        "url": self.url,
+                        "dom_id": "consent",
+                        "checked": True,
+                        "allow_private_network": True,
+                    },
+                },
+                "model_policy": "never",
+            },
+        )
+        progress = final["progress"]
+        self.assertEqual(progress["status"], "completed")
+        self.assertEqual(progress["stage"], "complete")
+        self.assertIsNone(progress["recovery"])
+        browser_actions = [
+            item for item in progress["body_actions"] if item["kind"] == "browser_set_checkbox"
+        ]
+        self.assertEqual(len(browser_actions), 1)
+        self.assertTrue(browser_actions[0]["success"])
+        messages = final["thread"]["messages"]
+        self.assertEqual([item["role"] for item in messages], ["user", "zn", "activity"])
+        self.assertEqual(messages[1]["text"], "checkbox #consent is checked")
 
 
 if __name__ == "__main__":
