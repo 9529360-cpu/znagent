@@ -6,7 +6,7 @@ This is the current engineering work site and fact index, not a chat transcript 
 
 Continue vertical product closure from the verified report/browser stage while keeping repository truth synchronized in the same coherent slice.
 
-The two newest product capabilities are:
+The newest product capabilities are:
 
 ```text
 resident defect truth
@@ -15,6 +15,10 @@ resident defect truth
 ordinary durable Work
 -> deterministic managed-browser navigation
 -> observed URL postcondition
+
+explicit URL + quoted DOM id + focus cue
+-> fresh unique visible main-frame target observation
+-> same-node focused postcondition
 ```
 
 Normal installed ZN still has no official repository push/PR/merge/release/signing authority.
@@ -82,6 +86,34 @@ Multiple URLs, malformed URLs, embedded credentials, or prose merely discussing 
 
 This closes navigation only. General page sensing, click/form/text-entry authority, downloads/uploads, stale-target recovery and the separate user-browser bridge remain incomplete.
 
+### Managed browser bounded focus entry
+
+The current work branch adds one deliberately narrow page interaction on top of
+ordinary navigation: exactly one explicit HTTP(S) URL plus a quoted DOM id and
+an explicit focus cue forms `browser_navigate_focus`. The Body grants navigation
+and page-interaction permission for that origin only, observes exactly one
+visible main-frame DOM-id target, binds authority to that fresh target, focuses
+it, and accepts success only when the provider re-observes the same exact node
+as focused. Text entry remains denied. A durable observed dispatch blocks blind
+replay after restart.
+
+Local evidence on this branch:
+
+- 7 focused Work/navigation/recovery tests: OK;
+- 24 browser contract/Work tests: OK;
+- real local Chromium structured Work focus E2E: OK, including exact-node continuity and focused postcondition.
+- Python compileall: OK.
+- full local core discovery: 841 tests, 839 passed, 5 skipped, 2 errored only
+  under the non-ASCII `D:\项目\ZNagent` checkout. Both errors were existing
+  intention/reconsolidation tests accompanied by Git Bash GBK decode failures
+  and temporary SQLite cleanup locks. The same two tests passed on clean remote
+  baseline `6550c39e` in an ASCII temporary worktree and also passed there after
+  applying this slice's production source diff. Treat GitHub Windows CI as the
+  authoritative full-suite verdict for this slice.
+
+Implementation/status checkpoint: `4016106d9b2f971cbb2a9fc4c6a941d96996f869`.
+The isolated branch still requires push, PR review and GitHub CI verification.
+
 ### Source-maintenance authority
 
 Trusted source-maintenance can investigate, derive bounded repairs, execute in isolated `work/*`, run regression/diff checks, require independent semantic review, recover pending reviews, clean rejected attempts, and produce verified `local_commit_only` accepted-repair commits.
@@ -110,7 +142,7 @@ The correction is not "write more docs". The correction is that changed product 
 ## Current product gaps
 
 1. Upstream BUG/repair reporting remains local-only; bounded transport/intake/acknowledgement/reconciliation is missing.
-2. Managed browser remains navigation-only for ordinary Work; broader fresh page observation and bounded interaction/recovery are missing.
+2. Managed browser ordinary Work has navigation and one narrow explicit DOM-id focus path; broader page observation and other interaction/recovery classes are missing.
 3. User Browser Bridge remains architecture-only.
 4. Installed public update read/verify/update-available observation remains partial.
 5. Installed N -> N+1 replacement, rollback, signing and release trust remain approval-gated.
@@ -128,9 +160,9 @@ local report outbox
 
 or
 
-ordinary managed-browser navigation
--> fresh page observation
--> one bounded interaction class
+ordinary managed-browser navigation/focus
+-> bounded page observation
+-> the next explicitly authorized interaction class
 -> independent postcondition
 -> failure/restart recovery
 ```
