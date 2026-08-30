@@ -32,6 +32,8 @@ jobs:
           uv python install 3.12
           Remove-Item -Recurse -Force .ci/upstream-privacy-venv -ErrorAction SilentlyContinue
           uv venv .ci/upstream-privacy-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\upstream-privacy-venv\Scripts\python.exe'
+          uv pip install --python $python runtime/python
       - name: Verify shipped source privacy boundary
         run: .\.ci\upstream-privacy-venv\Scripts\python.exe .agent/verify_zn_source_boundary.py
       - name: Compile changed resident owners
