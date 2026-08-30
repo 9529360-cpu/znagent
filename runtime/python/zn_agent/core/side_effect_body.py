@@ -39,16 +39,17 @@ class SideEffectAwareBody(KeyboardTextBody):
     _TERMINAL_INPUT_KINDS = frozenset(
         {"terminal_input", "terminal_write", "command_input"}
     )
-    _APPEND_KINDS = frozenset({"write_text", "write_file"})
+    _TEXT_WRITE_KINDS = frozenset({"write_text", "write_file"})
+    _APPEND_KINDS = _TEXT_WRITE_KINDS
     _RECOVERY_STATUSES = frozenset({"verified_effect", "verified_absent"})
 
     def _record(self, action: BodyAction, result: BodyActionResult) -> None:
-        """Keep terminal credentials/input out of the generic durable action row.
+        """Keep sensitive input payloads out of the generic durable action row.
 
         Replay identity is computed from the real pre-dispatch arguments before
         this method runs. The ``native_body_actions.action_json`` row is history,
-        not replay authority, so it only needs a bounded audit shape for values
-        that commonly carry credentials or interactive secrets.
+        not replay authority, so it only needs bounded audit metadata for values
+        that commonly carry credentials, interactive secrets, or full file data.
         """
 
         safe_args = dict(action.args)
@@ -69,10 +70,18 @@ class SideEffectAwareBody(KeyboardTextBody):
             source_key = "data" if "data" in safe_args else "input" if "input" in safe_args else None
             if source_key is not None:
                 raw_input = safe_args.pop(source_key)
-                rendered = str(raw_input)
                 safe_args["input_redacted"] = True
                 safe_args["input_source"] = source_key
-                safe_args["input_chars"] = len(rendered)
+                safe_args["input_chars"] = len(str(raw_input))
+                changed = True
+
+        if action.kind in self._TEXT_WRITE_KINDS:
+            source_key = "content" if "content" in safe_args else "text" if "text" in safe_args else None
+            if source_key is not None:
+                raw_content = safe_args.pop(source_key)
+                safe_args["content_redacted"] = True
+                safe_args["content_source"] = source_key
+                safe_args["content_chars"] = len(str(raw_content))
                 changed = True
 
         if changed:
