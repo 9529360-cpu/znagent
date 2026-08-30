@@ -9,7 +9,7 @@ from contextlib import closing
 from typing import Any
 
 from . import side_effect_attempts
-from .body import BodyActionResult
+from .body import BodyAction, BodyActionResult
 from .keyboard_text_body import KeyboardTextBody
 from .models import utc_now
 
@@ -36,8 +36,63 @@ class SideEffectAwareBody(KeyboardTextBody):
     _TABLE = side_effect_attempts.TABLE
     _MAX_COMPLETED_ATTEMPTS = side_effect_attempts.MAX_COMPLETED_ATTEMPTS
     _COMMAND_KINDS = frozenset({"command", "terminal", "shell"})
-    _APPEND_KINDS = frozenset({"write_text", "write_file"})
+    _TERMINAL_INPUT_KINDS = frozenset(
+        {"terminal_input", "terminal_write", "command_input"}
+    )
+    _TEXT_WRITE_KINDS = frozenset({"write_text", "write_file"})
+    _APPEND_KINDS = _TEXT_WRITE_KINDS
     _RECOVERY_STATUSES = frozenset({"verified_effect", "verified_absent"})
+
+    def _record(self, action: BodyAction, result: BodyActionResult) -> None:
+        """Keep sensitive input payloads out of the generic durable action row.
+
+        Replay identity is computed from the real pre-dispatch arguments before
+        this method runs. The ``native_body_actions.action_json`` row is history,
+        not replay authority, so it only needs bounded audit metadata for values
+        that commonly carry credentials, interactive secrets, or full file data.
+        """
+
+        safe_args = dict(action.args)
+        changed = False
+        if action.kind in self._COMMAND_KINDS and "env" in safe_args:
+            raw_env = safe_args.pop("env")
+            env_keys = (
+                sorted(str(key) for key in raw_env)
+                if isinstance(raw_env, dict)
+                else []
+            )
+            safe_args["env_redacted"] = True
+            safe_args["env_keys"] = env_keys
+            safe_args["env_count"] = len(env_keys)
+            changed = True
+
+        if action.kind in self._TERMINAL_INPUT_KINDS:
+            source_key = "data" if "data" in safe_args else "input" if "input" in safe_args else None
+            if source_key is not None:
+                raw_input = safe_args.pop(source_key)
+                safe_args["input_redacted"] = True
+                safe_args["input_source"] = source_key
+                safe_args["input_chars"] = len(str(raw_input))
+                changed = True
+
+        if action.kind in self._TEXT_WRITE_KINDS:
+            source_key = "content" if "content" in safe_args else "text" if "text" in safe_args else None
+            if source_key is not None:
+                raw_content = safe_args.pop(source_key)
+                safe_args["content_redacted"] = True
+                safe_args["content_source"] = source_key
+                safe_args["content_chars"] = len(str(raw_content))
+                changed = True
+
+        if changed:
+            action = BodyAction(
+                action_id=action.action_id,
+                kind=action.kind,
+                args=safe_args,
+                event_id=action.event_id,
+                created_at=action.created_at,
+            )
+        super()._record(action, result)
 
     def act(
         self,
