@@ -2,14 +2,15 @@ from __future__ import annotations
 
 """Prepare an accepted maintenance repair for publication without remote authority.
 
-This owner is deliberately narrower than a publisher.  It can turn one already
+This owner is deliberately narrower than a publisher. It can turn one already
 accepted, semantically reviewed isolated repair attempt into one local commit on
-the exact recorded ``work/*`` branch.  It cannot push, create a pull request,
+the exact recorded ``work/*`` branch. It cannot push, create a pull request,
 merge, release, update an installed body, or consume repository credentials.
 
 The commit is produced only after re-proving the repair evidence against the live
-worktree.  This closes the gap between an accepted dirty worktree and a stable
-publication-ready object while keeping remote repository authority separate.
+worktree. Source-origin continuity is checked against the opaque fingerprint from
+the trusted-source investigation; no private repository identity is compiled into
+the installed runtime.
 """
 
 import hashlib
@@ -23,7 +24,6 @@ from typing import Any
 from .maintenance_investigation import MaintenanceInvestigationLedger
 from .models import utc_now
 
-_EXPECTED_REPOSITORY = "9529360-cpu/znagent"
 _ATTEMPT_DIR = ".zn-maintenance-worktrees"
 _MAX_CHANGED_PATHS = 64
 
@@ -31,16 +31,9 @@ _MAX_CHANGED_PATHS = 64
 class MaintenancePublicationPreparation:
     """Create exactly one local commit from one accepted maintenance attempt."""
 
-    def __init__(
-        self,
-        store,
-        ledger: MaintenanceInvestigationLedger,
-        *,
-        expected_repository: str = _EXPECTED_REPOSITORY,
-    ):
+    def __init__(self, store, ledger: MaintenanceInvestigationLedger):
         self.store = store
         self.ledger = ledger
-        self.expected_repository = self._repository_slug(expected_repository)
         self._init_schema()
 
     def prepare(
@@ -78,6 +71,10 @@ class MaintenancePublicationPreparation:
         if review is None or str(review["decision"] or "") != "accept":
             raise RuntimeError("maintenance publication preparation requires semantic acceptance")
 
+        expected_origin = self._source_origin(normalized_task)
+        if not expected_origin:
+            raise RuntimeError("maintenance publication source origin fingerprint is unavailable")
+
         existing = self._prepared(normalized_task, attempt_key)
         source = Path(source_root).expanduser().resolve(strict=True)
         bounded_timeout = max(3.0, min(90.0, float(timeout)))
@@ -97,8 +94,8 @@ class MaintenancePublicationPreparation:
             raise RuntimeError("maintenance publication source verification failed")
         if Path(top.stdout.strip()).expanduser().resolve(strict=True) != source:
             raise RuntimeError("maintenance publication source must be repository root")
-        if self._repository_slug(remote.stdout.strip()) != self.expected_repository:
-            raise RuntimeError("maintenance publication source origin is not ZN")
+        if self._origin_fingerprint(remote.stdout.strip()) != expected_origin:
+            raise RuntimeError("maintenance publication source origin changed")
 
         branch = str(evidence["branch_ref"] or "").strip()
         baseline_head = str(evidence["baseline_head"] or "").strip()
@@ -287,6 +284,17 @@ class MaintenancePublicationPreparation:
             "prepared": [self._row_snapshot(row) for row in rows],
         }
 
+    def _source_origin(self, task_id: str) -> str | None:
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT repository FROM resident_maintenance_source_evidence WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        value = str(row["repository"] or "").strip()
+        return value or None
+
     def _attempt_evidence(self, task_id: str, attempt_key: str) -> sqlite3.Row | None:
         with closing(self._connect()) as conn:
             return conn.execute(
@@ -349,24 +357,12 @@ class MaintenancePublicationPreparation:
             return None
         return matches[0]
 
-    @staticmethod
-    def _repository_slug(value: str) -> str:
-        text = str(value or "").strip().replace("\\", "/")
-        if text.startswith("git@github.com:"):
-            text = text[len("git@github.com:") :]
-        elif text.startswith("ssh://git@github.com/"):
-            text = text[len("ssh://git@github.com/") :]
-        elif text.startswith("https://github.com/"):
-            text = text[len("https://github.com/") :]
-        elif text.startswith("http://github.com/"):
-            text = text[len("http://github.com/") :]
-        text = text.strip("/")
-        if text.endswith(".git"):
-            text = text[:-4]
-        parts = [part for part in text.split("/") if part]
-        if len(parts) != 2:
-            raise ValueError("maintenance publication repository must identify one GitHub repository")
-        return f"{parts[0]}/{parts[1]}"
+    @classmethod
+    def _origin_fingerprint(cls, value: str) -> str:
+        origin = str(value or "").strip()
+        if not origin:
+            raise RuntimeError("maintenance publication source origin is unavailable")
+        return cls._fingerprint("zn-maintenance-origin-v1", origin)
 
     @staticmethod
     def _fingerprint(namespace: str, value: str) -> str:
