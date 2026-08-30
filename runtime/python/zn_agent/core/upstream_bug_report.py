@@ -2,28 +2,32 @@ from __future__ import annotations
 
 """Durable privacy-safe outbox for upstream ZN defect reports.
 
-This owner prepares bounded incident records from already-derived resident maintenance
-Tasks. It intentionally has no network, repository, credential, push, PR, merge,
-release, updater or signing authority. A later transport may consume the payload
-only after deterministic endpoint policy is established.
+The outbox consumes already-derived resident maintenance tasks and exposes only
+installation-scoped pseudonymous incident/component tokens plus bounded counters.
+It has no network, repository, credential, push, PR, merge, release, updater or
+signing authority. The local privacy key never leaves resident storage.
 """
 
 import hashlib
+import hmac
+import secrets
 import sqlite3
 from contextlib import closing
 from typing import Any, Mapping
 
 from .models import utc_now
 
-_REPORT_KEY_DOMAIN = b"zn-upstream-bug-report-key-v1\x00"
-_COMPONENT_DOMAIN = b"zn-upstream-bug-report-component-v1\x00"
-_SCHEMA = "zn-upstream-bug-report-v1"
+_REPORT_KEY_DOMAIN = b"zn-upstream-bug-report-key-v2\x00"
+_COMPONENT_DOMAIN = b"zn-upstream-bug-report-component-v2\x00"
+_INCIDENT_DOMAIN = b"zn-upstream-bug-report-incident-v2\x00"
+_SCHEMA = "zn-upstream-bug-report-v2"
 _PRODUCT = "ZN"
 _MIN_OCCURRENCES = 3
+_PRIVACY_KEY_BYTES = 32
 
 
 class ResidentUpstreamBugReportOutbox:
-    """Prepare one bounded upstream report per stable maintenance incident."""
+    """Prepare one bounded, installation-private report per stable incident."""
 
     def __init__(self, store):
         self.store = store
@@ -34,7 +38,7 @@ class ResidentUpstreamBugReportOutbox:
         organ = str(task.get("organ") or "").strip().lower()
         status = str(task.get("status") or "").strip().lower()
         failure_class = str(task.get("failure_class") or "").strip()
-        fingerprint = str(task.get("fingerprint") or "").strip().lower()
+        source_fingerprint = str(task.get("fingerprint") or "").strip().lower()
         exception_type = str(task.get("exception_type") or "").strip()
         occurrences = max(0, int(task.get("occurrences") or 0))
 
@@ -46,23 +50,29 @@ class ResidentUpstreamBugReportOutbox:
             raise ValueError("upstream bug report task id is invalid")
         if not organ or len(organ) > 128:
             raise ValueError("upstream bug report component identity is invalid")
-        if not self._is_sha256(fingerprint):
+        if not self._is_sha256(source_fingerprint):
             raise ValueError("upstream bug report incident fingerprint is invalid")
         if not exception_type or len(exception_type) > 128:
             raise ValueError("upstream bug report exception type is invalid")
         if occurrences < _MIN_OCCURRENCES:
             raise ValueError("upstream bug report evidence is below the repeat threshold")
 
-        component_fingerprint = self._fingerprint(_COMPONENT_DOMAIN, organ)
-        report_key = self._fingerprint(
-            _REPORT_KEY_DOMAIN,
-            "\x00".join((task_id, fingerprint)),
-        )
         now = utc_now()
-
         with closing(self._connect()) as conn:
+            privacy_key = self._privacy_key(conn)
+            component_token = self._token(privacy_key, _COMPONENT_DOMAIN, organ)
+            incident_token = self._token(
+                privacy_key,
+                _INCIDENT_DOMAIN,
+                source_fingerprint,
+            )
+            report_key = self._token(
+                privacy_key,
+                _REPORT_KEY_DOMAIN,
+                "\x00".join((task_id, source_fingerprint)),
+            )
             existing = conn.execute(
-                "SELECT report_key,task_id,incident_fingerprint,component_fingerprint,"
+                "SELECT report_key,task_id,source_fingerprint,incident_token,component_token,"
                 "failure_class,exception_type,occurrences,state,dispatch_attempts,"
                 "last_error_type,created_at,updated_at "
                 "FROM resident_upstream_bug_reports WHERE report_key=?",
@@ -72,16 +82,17 @@ class ResidentUpstreamBugReportOutbox:
                 conn.execute(
                     """
                     INSERT INTO resident_upstream_bug_reports(
-                        report_key,task_id,incident_fingerprint,component_fingerprint,
+                        report_key,task_id,source_fingerprint,incident_token,component_token,
                         failure_class,exception_type,occurrences,state,dispatch_attempts,
                         last_error_type,created_at,updated_at
-                    ) VALUES(?,?,?,?,?,?,?,'pending',0,NULL,?,?)
+                    ) VALUES(?,?,?,?,?,?,?,?,'pending',0,NULL,?,?)
                     """,
                     (
                         report_key,
                         task_id,
-                        fingerprint,
-                        component_fingerprint,
+                        source_fingerprint,
+                        incident_token,
+                        component_token,
                         failure_class,
                         exception_type,
                         occurrences,
@@ -93,8 +104,9 @@ class ResidentUpstreamBugReportOutbox:
                 self._require_same_evidence(
                     existing,
                     task_id=task_id,
-                    incident_fingerprint=fingerprint,
-                    component_fingerprint=component_fingerprint,
+                    source_fingerprint=source_fingerprint,
+                    incident_token=incident_token,
+                    component_token=component_token,
                     failure_class=failure_class,
                     exception_type=exception_type,
                 )
@@ -105,13 +117,7 @@ class ResidentUpstreamBugReportOutbox:
                         (occurrences, now, report_key),
                     )
             conn.commit()
-            row = conn.execute(
-                "SELECT report_key,task_id,incident_fingerprint,component_fingerprint,"
-                "failure_class,exception_type,occurrences,state,dispatch_attempts,"
-                "last_error_type,created_at,updated_at "
-                "FROM resident_upstream_bug_reports WHERE report_key=?",
-                (report_key,),
-            ).fetchone()
+            row = self._select_report(conn, report_key)
         return self._snapshot(row)
 
     def payload(self, report_key: str) -> dict[str, Any]:
@@ -142,13 +148,7 @@ class ResidentUpstreamBugReportOutbox:
             if cursor.rowcount != 1:
                 raise RuntimeError("upstream bug report dispatch reservation raced")
             conn.commit()
-            reserved = conn.execute(
-                "SELECT report_key,task_id,incident_fingerprint,component_fingerprint,"
-                "failure_class,exception_type,occurrences,state,dispatch_attempts,"
-                "last_error_type,created_at,updated_at "
-                "FROM resident_upstream_bug_reports WHERE report_key=?",
-                (key,),
-            ).fetchone()
+            reserved = self._select_report(conn, key)
         return self._payload(reserved)
 
     def mark_delivered(self, report_key: str) -> dict[str, Any]:
@@ -165,7 +165,7 @@ class ResidentUpstreamBugReportOutbox:
         bounded = max(1, min(512, int(limit)))
         with closing(self._connect()) as conn:
             rows = conn.execute(
-                "SELECT report_key,task_id,incident_fingerprint,component_fingerprint,"
+                "SELECT report_key,task_id,source_fingerprint,incident_token,component_token,"
                 "failure_class,exception_type,occurrences,state,dispatch_attempts,"
                 "last_error_type,created_at,updated_at "
                 "FROM resident_upstream_bug_reports "
@@ -223,25 +223,23 @@ class ResidentUpstreamBugReportOutbox:
                     (state, error_type, now, key),
                 )
             conn.commit()
-            finished = conn.execute(
-                "SELECT report_key,task_id,incident_fingerprint,component_fingerprint,"
-                "failure_class,exception_type,occurrences,state,dispatch_attempts,"
-                "last_error_type,created_at,updated_at "
-                "FROM resident_upstream_bug_reports WHERE report_key=?",
-                (key,),
-            ).fetchone()
+            finished = self._select_report(conn, key)
         return self._snapshot(finished)
 
     def _row(self, report_key: str):
         key = self._report_key(report_key)
         with closing(self._connect()) as conn:
-            return conn.execute(
-                "SELECT report_key,task_id,incident_fingerprint,component_fingerprint,"
-                "failure_class,exception_type,occurrences,state,dispatch_attempts,"
-                "last_error_type,created_at,updated_at "
-                "FROM resident_upstream_bug_reports WHERE report_key=?",
-                (key,),
-            ).fetchone()
+            return self._select_report(conn, key)
+
+    @staticmethod
+    def _select_report(conn: sqlite3.Connection, report_key: str):
+        return conn.execute(
+            "SELECT report_key,task_id,source_fingerprint,incident_token,component_token,"
+            "failure_class,exception_type,occurrences,state,dispatch_attempts,"
+            "last_error_type,created_at,updated_at "
+            "FROM resident_upstream_bug_reports WHERE report_key=?",
+            (report_key,),
+        ).fetchone()
 
     @staticmethod
     def _payload(row: sqlite3.Row) -> dict[str, Any]:
@@ -249,10 +247,10 @@ class ResidentUpstreamBugReportOutbox:
             "schema": _SCHEMA,
             "product": _PRODUCT,
             "report_key": str(row["report_key"]),
-            "component_fingerprint": str(row["component_fingerprint"]),
+            "component_token": str(row["component_token"]),
             "failure_class": str(row["failure_class"]),
             "exception_type": str(row["exception_type"]),
-            "incident_fingerprint": str(row["incident_fingerprint"]),
+            "incident_token": str(row["incident_token"]),
             "occurrences": max(0, int(row["occurrences"] or 0)),
         }
 
@@ -272,22 +270,25 @@ class ResidentUpstreamBugReportOutbox:
         row: sqlite3.Row,
         *,
         task_id: str,
-        incident_fingerprint: str,
-        component_fingerprint: str,
+        source_fingerprint: str,
+        incident_token: str,
+        component_token: str,
         failure_class: str,
         exception_type: str,
     ) -> None:
         expected = (
             task_id,
-            incident_fingerprint,
-            component_fingerprint,
+            source_fingerprint,
+            incident_token,
+            component_token,
             failure_class,
             exception_type,
         )
         observed = (
             str(row["task_id"]),
-            str(row["incident_fingerprint"]),
-            str(row["component_fingerprint"]),
+            str(row["source_fingerprint"]),
+            str(row["incident_token"]),
+            str(row["component_token"]),
             str(row["failure_class"]),
             str(row["exception_type"]),
         )
@@ -295,11 +296,12 @@ class ResidentUpstreamBugReportOutbox:
             raise RuntimeError("upstream bug report evidence drifted for the same report key")
 
     @staticmethod
-    def _fingerprint(domain: bytes, value: str) -> str:
-        digest = hashlib.sha256()
-        digest.update(domain)
-        digest.update(str(value).encode("utf-8", errors="replace"))
-        return digest.hexdigest()
+    def _token(key: bytes, domain: bytes, value: str) -> str:
+        return hmac.new(
+            key,
+            domain + str(value).encode("utf-8", errors="replace"),
+            hashlib.sha256,
+        ).hexdigest()
 
     @staticmethod
     def _is_sha256(value: str) -> bool:
@@ -312,15 +314,48 @@ class ResidentUpstreamBugReportOutbox:
             raise ValueError("upstream bug report key is invalid")
         return key
 
+    @staticmethod
+    def _privacy_key(conn: sqlite3.Connection) -> bytes:
+        row = conn.execute(
+            "SELECT privacy_key FROM resident_upstream_bug_report_identity WHERE singleton=1"
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("upstream bug report privacy identity is unavailable")
+        key = bytes(row["privacy_key"])
+        if len(key) != _PRIVACY_KEY_BYTES:
+            raise RuntimeError("upstream bug report privacy identity is invalid")
+        return key
+
     def _init_schema(self) -> None:
         with closing(self._connect()) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS resident_upstream_bug_report_identity(
+                    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                    privacy_key BLOB NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            row = conn.execute(
+                "SELECT privacy_key FROM resident_upstream_bug_report_identity WHERE singleton=1"
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    "INSERT INTO resident_upstream_bug_report_identity(singleton,privacy_key,created_at) "
+                    "VALUES(1,?,?)",
+                    (secrets.token_bytes(_PRIVACY_KEY_BYTES), utc_now()),
+                )
+            elif len(bytes(row["privacy_key"])) != _PRIVACY_KEY_BYTES:
+                raise sqlite3.DatabaseError("invalid upstream bug report privacy identity")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS resident_upstream_bug_reports(
                     report_key TEXT PRIMARY KEY,
                     task_id TEXT NOT NULL,
-                    incident_fingerprint TEXT NOT NULL,
-                    component_fingerprint TEXT NOT NULL,
+                    source_fingerprint TEXT NOT NULL,
+                    incident_token TEXT NOT NULL,
+                    component_token TEXT NOT NULL,
                     failure_class TEXT NOT NULL,
                     exception_type TEXT NOT NULL,
                     occurrences INTEGER NOT NULL,
