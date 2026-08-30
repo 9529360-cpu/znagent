@@ -4,9 +4,8 @@ from __future__ import annotations
 
 This layer does not broaden ordinary body or Work authority. It composes the
 existing health-aware resident with maintenance-specific cognitive authoring,
-semantic review, bounded rejected-attempt cleanup, pending-review recovery,
-local-only publication preparation, and credentialless remote-publication request
-handoff for accepted repairs.
+semantic review, bounded rejected-attempt cleanup, pending-review recovery, and
+local-only publication preparation for accepted repairs.
 """
 
 import sqlite3
@@ -17,7 +16,6 @@ from .health_aware_resident import HealthAwareResidentRuntime
 from .maintenance_attempt_lifecycle import MaintenanceRepairAttemptLifecycle
 from .maintenance_cognition_journal import DurableMaintenanceCognitiveRepairOrchestrator
 from .maintenance_publication import MaintenancePublicationPreparation
-from .maintenance_remote_publication_request import MaintenanceRemotePublicationRequest
 from .maintenance_review_recovery import MaintenancePendingReviewRecovery
 
 
@@ -29,11 +27,9 @@ class CognitiveMaintenanceResidentRuntime(HealthAwareResidentRuntime):
         self.maintenance_cognition: DurableMaintenanceCognitiveRepairOrchestrator | None = None
         self.maintenance_attempt_lifecycle: MaintenanceRepairAttemptLifecycle | None = None
         self.maintenance_publication_preparation: MaintenancePublicationPreparation | None = None
-        self.maintenance_remote_publication_request: MaintenanceRemotePublicationRequest | None = None
         self._install_maintenance_cognition()
         self._install_maintenance_attempt_lifecycle()
         self._install_maintenance_publication_preparation()
-        self._install_maintenance_remote_publication_request()
 
     def status(self) -> dict[str, Any]:
         data = super().status()
@@ -83,13 +79,6 @@ class CognitiveMaintenanceResidentRuntime(HealthAwareResidentRuntime):
                     "truncated": False,
                     "prepared": [],
                 }
-                data["maintenance_remote_publication_requests"] = {
-                    "available": False,
-                    "request_count": 0,
-                    "returned_count": 0,
-                    "truncated": False,
-                    "requests": [],
-                }
                 return data
         try:
             snapshot = preparation.snapshot()
@@ -104,36 +93,6 @@ class CognitiveMaintenanceResidentRuntime(HealthAwareResidentRuntime):
             }
         else:
             data["maintenance_publication_preparation"] = {"available": True, **snapshot}
-
-        request_owner = self.maintenance_remote_publication_request
-        if request_owner is None:
-            try:
-                request_owner = self._maintenance_remote_publication_request_owner()
-            except (sqlite3.Error, RuntimeError):
-                data["maintenance_remote_publication_requests"] = {
-                    "available": False,
-                    "request_count": 0,
-                    "returned_count": 0,
-                    "truncated": False,
-                    "requests": [],
-                }
-                return data
-        try:
-            request_snapshot = request_owner.snapshot()
-        except sqlite3.Error:
-            self.maintenance_remote_publication_request = None
-            data["maintenance_remote_publication_requests"] = {
-                "available": False,
-                "request_count": 0,
-                "returned_count": 0,
-                "truncated": False,
-                "requests": [],
-            }
-        else:
-            data["maintenance_remote_publication_requests"] = {
-                "available": True,
-                **request_snapshot,
-            }
         return data
 
     def run_cognitive_maintenance_repair(
@@ -152,9 +111,8 @@ class CognitiveMaintenanceResidentRuntime(HealthAwareResidentRuntime):
         Every external maintenance cognition call is durably reserved before
         dispatch so a crash or ambiguous provider outcome cannot trigger an
         automatic replay. Rejected candidates are eligible for bounded cleanup.
-        Accepted candidates are revalidated and may become a local-only commit plus
-        a request-only remote publication envelope; no repository credential or
-        remote side-effect authority is granted here.
+        Accepted candidates are revalidated and may become a local-only commit; no
+        remote publication or repository credential authority is granted here.
         """
 
         result = self._maintenance_cognitive_orchestrator().derive_execute_and_review(
@@ -217,24 +175,6 @@ class CognitiveMaintenanceResidentRuntime(HealthAwareResidentRuntime):
             source_root=source_root,
         )
 
-    def request_maintenance_remote_publication(
-        self,
-        task_id: str,
-        *,
-        source_root: str | Path,
-    ) -> dict[str, Any]:
-        """Create/recover a request-only remote publication envelope.
-
-        The envelope binds the verified local commit to the ZN repository, its
-        ``work/*`` branch and the fixed ``dev/zn-agent`` PR base. It performs no
-        credential access or remote side effect.
-        """
-
-        return self._maintenance_remote_publication_request_owner().request(
-            task_id,
-            source_root=source_root,
-        )
-
     def _finalize_review_result(
         self,
         task_id: str,
@@ -275,18 +215,6 @@ class CognitiveMaintenanceResidentRuntime(HealthAwareResidentRuntime):
                 }
             else:
                 result["publication_preparation"] = {"completed": True, **prepared}
-                try:
-                    request = self._maintenance_remote_publication_request_owner().request(
-                        task_id,
-                        source_root=source_root,
-                    )
-                except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
-                    result["remote_publication_request"] = {
-                        "completed": False,
-                        "error_type": type(exc).__name__,
-                    }
-                else:
-                    result["remote_publication_request"] = {"completed": True, **request}
         return result
 
     def _project_cognitive_status(
@@ -362,17 +290,6 @@ class CognitiveMaintenanceResidentRuntime(HealthAwareResidentRuntime):
         except sqlite3.Error:
             self.maintenance_publication_preparation = None
 
-    def _install_maintenance_remote_publication_request(self) -> None:
-        if self.maintenance_publication_preparation is None:
-            return
-        try:
-            self.maintenance_remote_publication_request = MaintenanceRemotePublicationRequest(
-                self.store,
-                self.maintenance_publication_preparation,
-            )
-        except (sqlite3.Error, ValueError):
-            self.maintenance_remote_publication_request = None
-
     def _maintenance_cognitive_orchestrator(self) -> DurableMaintenanceCognitiveRepairOrchestrator:
         orchestrator = self.maintenance_cognition
         if orchestrator is not None:
@@ -413,16 +330,4 @@ class CognitiveMaintenanceResidentRuntime(HealthAwareResidentRuntime):
         except sqlite3.Error as exc:
             raise RuntimeError("maintenance publication preparation is unavailable") from exc
         self.maintenance_publication_preparation = owner
-        return owner
-
-    def _maintenance_remote_publication_request_owner(self) -> MaintenanceRemotePublicationRequest:
-        owner = self.maintenance_remote_publication_request
-        if owner is not None:
-            return owner
-        preparation = self._maintenance_publication_preparation_owner()
-        try:
-            owner = MaintenanceRemotePublicationRequest(self.store, preparation)
-        except (sqlite3.Error, ValueError) as exc:
-            raise RuntimeError("maintenance remote publication request owner is unavailable") from exc
-        self.maintenance_remote_publication_request = owner
         return owner
