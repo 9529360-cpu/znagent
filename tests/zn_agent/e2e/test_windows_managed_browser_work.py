@@ -27,6 +27,8 @@ class _FixtureHandler(http.server.BaseHTTPRequestHandler):
                 "<body><main>structured Work reached resident-owned Chromium</main>"
                 '<label><input id="consent" type="checkbox">Consent</label>'
                 '<label><input type="checkbox">Email updates</label>'
+                '<label>Search <input type="text" aria-label="Search"></label>'
+                '<input type="password" aria-label="Password" value="">'
                 '<button type="button" onclick="location.href=\'/done\'">Continue</button>'
                 "</body></html>"
             ).encode("utf-8")
@@ -274,6 +276,42 @@ class ManagedBrowserWorkWindowsE2E(unittest.TestCase):
         messages = final["thread"]["messages"]
         self.assertEqual([item["role"] for item in messages], ["user", "zn", "activity"])
         self.assertEqual(messages[1]["text"], self.done_url)
+
+    def test_structured_work_types_exact_named_textbox_and_keeps_plaintext_out_of_progress(self):
+        typed = "ZN real Chromium text ✓"
+        final = self._run_work(
+            thread_id="managed-browser-named-text-work-e2e",
+            task="type explicit non-secret text into one exact named textbox",
+            payload={
+                "required_capabilities": ["browser"],
+                "body_action": {
+                    "kind": "browser_type_named_text",
+                    "args": {
+                        "url": self.url,
+                        "target_name": "Search",
+                        "text": typed,
+                        "allow_private_network": True,
+                    },
+                },
+                "model_policy": "never",
+            },
+        )
+        progress = final["progress"]
+        self.assertEqual(progress["status"], "completed")
+        self.assertEqual(progress["stage"], "complete")
+        self.assertIsNone(progress["recovery"])
+        browser_actions = [
+            item
+            for item in progress["body_actions"]
+            if item["kind"] == "browser_type_named_text"
+        ]
+        self.assertEqual(len(browser_actions), 1)
+        self.assertTrue(browser_actions[0]["success"])
+        self.assertNotIn(typed, json.dumps(progress, ensure_ascii=False))
+        self.assertIn("typed", browser_actions[0]["summary"])
+        messages = final["thread"]["messages"]
+        self.assertEqual([item["role"] for item in messages], ["user", "zn", "activity"])
+        self.assertNotIn(typed, messages[1]["text"])
 
 
 if __name__ == "__main__":
