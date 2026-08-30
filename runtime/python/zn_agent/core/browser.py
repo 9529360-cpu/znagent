@@ -49,6 +49,7 @@ class BrowserTargetQueryKind(str, Enum):
     DOM_ID = "dom_id"
     ACCESSIBLE_CHECKBOX_NAME = "accessible_checkbox_name"
     ACCESSIBLE_BUTTON_NAME = "accessible_button_name"
+    ACCESSIBLE_TEXTBOX_NAME = "accessible_textbox_name"
 
 
 _NAVIGATION_ACTIONS = frozenset(
