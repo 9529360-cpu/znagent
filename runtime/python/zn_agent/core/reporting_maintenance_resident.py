@@ -20,6 +20,11 @@ class ReportingMaintenanceResidentRuntime(BrowserNamedTextWorkResidentRuntime):
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
+        # BrowserNamedTextWorkResidentRuntime installs the final BrowserTextWorkBody
+        # after the inherited HealthAwareResidentRuntime has already observed the
+        # prior Body instance. Re-bind health to the actual final active Body before
+        # report projection so native Body failures remain durable health truth.
+        self._install_body_dispatch_health_observer()
         self.upstream_bug_reports: ResidentUpstreamBugReportOutbox | None = None
         self._install_upstream_bug_report_outbox()
         self._install_health_report_projection()
