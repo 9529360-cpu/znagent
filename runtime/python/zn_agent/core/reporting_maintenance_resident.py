@@ -11,11 +11,11 @@ repository, credential, push, PR, merge, release, updater or signing action.
 import sqlite3
 from typing import Any, Callable
 
-from .cognitive_maintenance_resident import CognitiveMaintenanceResidentRuntime
+from .browser_observed_result_recovery_resident import BrowserObservedResultRecoveryResidentRuntime
 from .upstream_bug_report import ResidentUpstreamBugReportOutbox
 
 
-class ReportingMaintenanceResidentRuntime(CognitiveMaintenanceResidentRuntime):
+class ReportingMaintenanceResidentRuntime(BrowserObservedResultRecoveryResidentRuntime):
     """Resident with bounded automatic health -> upstream-report projection."""
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
