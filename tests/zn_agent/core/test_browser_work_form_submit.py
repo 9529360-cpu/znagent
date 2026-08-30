@@ -250,6 +250,30 @@ class BrowserWorkFormSubmitTests(unittest.TestCase):
             finally:
                 resident.store.close()
 
+    def test_cross_origin_expected_url_is_rejected_before_browser_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=Path(tmp) / "kernel.db"
+            )
+            browser = _FakeFormSubmitBrowser()
+            resident.managed_browser = browser
+            try:
+                result = resident.body.act(
+                    "browser_fill_named_text_and_click_named_button_to_url",
+                    event_id="evt-cross-origin-form-submit",
+                    url=_START_URL,
+                    textbox_name="Search",
+                    text=_FORM_TEXT,
+                    button_name="Continue",
+                    expected_url="https://other.example/done",
+                )
+                self.assertFalse(result.success)
+                self.assertIn("same-origin expected_url", str(result.error))
+                self.assertEqual(browser.actions, [])
+                self.assertIsNone(browser.permission)
+            finally:
+                resident.store.close()
+
     def test_body_history_redacts_form_plaintext_and_keeps_bounded_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store_path = Path(tmp) / "kernel.db"
