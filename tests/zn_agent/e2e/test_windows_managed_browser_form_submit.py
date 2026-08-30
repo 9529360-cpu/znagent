@@ -34,10 +34,10 @@ class _FormHandler(http.server.BaseHTTPRequestHandler):
             payload = (
                 "<!doctype html><html><head><title>ZN Form</title></head><body>"
                 '<label>Search <input id="search" type="text" aria-label="Search"></label>'
-                '<button type="button" onclick="location.href='
-                + "'/done' if document.getElementById('search').value === '"
+                '<button type="button" onclick="location.href = '
+                "document.getElementById('search').value === '"
                 + expected
-                + "' else '/wrong'"
+                + "' ? '/done' : '/wrong'"
                 + '">Continue</button>'
                 "</body></html>"
             ).encode("utf-8")
