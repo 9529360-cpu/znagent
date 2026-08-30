@@ -1,10 +1,12 @@
 # ZN Maintainer Handoff
 
-This is the current engineering work site and fact index, not a chat transcript or execution script. Real code, Git state and actual test/build/CI results override this file when they disagree.
+This is the current engineering work site and fact index, not a chat transcript or execution script. Real code, live Git refs and actual test/build/CI results override this file when they disagree.
 
 ## Current objective
 
-Keep repository truth synchronized while continuing vertical product closure. The currently verified dev stage contains two important product increments beyond canonical main:
+Continue vertical product closure from the verified report/browser stage while keeping repository truth synchronized in the same coherent slice.
+
+The two newest product capabilities are:
 
 ```text
 resident defect truth
@@ -17,16 +19,31 @@ ordinary durable Work
 
 Normal installed ZN still has no official repository push/PR/merge/release/signing authority.
 
-## Repository state
+## Repository recovery rule
 
-- Repository: `9529360-cpu/znagent`
-- Canonical/release branch: `main`
-- Primary development branch: `dev/zn-agent`
-- Canonical `main`: `4b3a7f1c1bc45565abaeb894702e96b1f1b2881d` from promotion PR #92.
-- Current `dev/zn-agent`: `b1c86ee2a20a26954d54450160144f921365617c`, 24 commits ahead of main.
-- Full dev ZN CI `33286758708` is fully green on `b1c86ee2...` across Source Boundary, Kernel/Python and Electron/TypeScript.
-- The immediate main push run after PR #92 (`33285157720`) was cancelled, so it must not be described as green canonical evidence. Fresh main CI is required after the next promotion.
-- Current reconciliation branch: `work/reconcile-dev-main-docs`.
+Do not trust an exact `main`/`dev` SHA written in HANDOFF as a live oracle. Updating HANDOFF changes Git HEAD, and normal promotion adds a merge commit. A fresh maintainer must query live refs first.
+
+At the latest completed promotion checkpoint:
+
+- PR #97 reconciled implementation status and HANDOFF after product PRs #95/#96;
+- PR #98 promoted that verified stage to canonical `main`;
+- `dev/zn-agent` was then fast-forwarded, without force, to the promotion merge so the long-lived branches were equal at that checkpoint;
+- product-code head `b1c86ee2...` had full green ZN CI `33286758708` before the documentation-only reconciliation;
+- canonical/post-promotion CI status must be read live from GitHub and must not be inferred from this text.
+
+The maintenance invariant is:
+
+```text
+coherent product slice
+-> targeted evidence
+-> full/risk-proportional CI
+-> reconcile changed status + HANDOFF now, not next session
+-> normal promotion
+-> canonical CI
+-> branch sync
+```
+
+If a later change makes any of those facts obsolete, update the affected durable docs in that same slice. Do not leave documentation reconciliation as deferred cleanup.
 
 ## Verified product reality
 
@@ -34,22 +51,22 @@ Normal installed ZN still has no official repository push/PR/merge/release/signi
 
 PR #95 connects repeated high-confidence `probable_zn_defect` maintenance truth to a durable privacy-safe local upstream-report outbox.
 
-Current guarantees:
+Guaranteed now:
 
 - health truth commits before best-effort report projection;
 - repeated matching incidents deduplicate into one local envelope;
-- restart can repair missing projection from durable maintenance-task truth;
+- restart repairs missing projection from durable maintenance-task truth;
 - external payload uses installation-scoped pseudonymous incident/component tokens;
-- raw error text, local paths, organ, task id, health fingerprint, repository identity and credentials are not exposed;
-- different installations cannot directly correlate the same incident token;
-- status explicitly says `authority=local_outbox_only`, `transport_available=false`;
-- future transport must reserve dispatch durably; ambiguous results are `outcome_uncertain` and cannot be blindly replayed.
+- raw error text, local paths, organ, task id, health fingerprint, repository identity and credentials are excluded;
+- equivalent incidents on separate installations receive unrelated tokens;
+- status is explicitly `authority=local_outbox_only`, `transport_available=false`;
+- any future external dispatch must be durably reserved first; ambiguous outcomes become `outcome_uncertain` and are not blindly replayed.
 
-This is connected + locally verified, but remote transport/intake/acknowledgement is still missing.
+This capability is connected + locally verified. Network transport, acknowledgement and maintainer intake are still missing.
 
 ### Managed browser ordinary Work entry
 
-PR #96 connects one narrow natural user path to the already-owned managed-browser Body:
+PR #96 connects one narrow natural user path to the managed-browser Body:
 
 ```text
 ordinary Work
@@ -61,54 +78,55 @@ ordinary Work
 -> durable Work result
 ```
 
-Multiple URLs, malformed URLs, embedded credentials, or prose that only discusses a URL do not create browser authority. The model does not invent the destination.
+Multiple URLs, malformed URLs, embedded credentials, or prose merely discussing a URL do not create browser authority. ZN does not ask a model to invent the destination.
 
-This closes navigation only. General page sensing, clicks, forms/text entry, downloads/uploads, stale-target recovery and the separate user-browser bridge remain incomplete.
+This closes navigation only. General page sensing, click/form/text-entry authority, downloads/uploads, stale-target recovery and the separate user-browser bridge remain incomplete.
 
 ### Source-maintenance authority
 
-Trusted source-maintenance can still investigate, derive bounded repairs, execute in isolated `work/*`, run regression/diff checks, require independent semantic review, recover pending reviews, clean rejected attempts, and produce verified `local_commit_only` accepted-repair commits.
+Trusted source-maintenance can investigate, derive bounded repairs, execute in isolated `work/*`, run regression/diff checks, require independent semantic review, recover pending reviews, clean rejected attempts, and produce verified `local_commit_only` accepted-repair commits.
 
 Ordinary installed ZN has no repository credential or official repository mutation authority.
 
-## Exact evidence
+## Evidence index
 
 - `33284716266` — targeted resident report-outbox validation success.
-- PR #95 / merge `52a53965069b714c2d5ff376ac1967b1d8df0f80` — reporting-aware resident + privacy-safe durable local outbox.
-- `33286593120` — ordinary user-entry browser navigation regressions + real local Chromium Work E2E success.
-- `33286655544` — same natural path through durable `ResidentWorkLedger` + existing Chromium E2E success.
-- PR #96 / merge `b1c86ee2a20a26954d54450160144f921365617c` — ordinary Work -> managed-browser navigation.
-- `33286758708` — full dev ZN CI fully green on `b1c86ee2...`.
+- PR #95 — reporting-aware resident + privacy-safe durable local outbox.
+- `33286593120` — ordinary user-entry browser navigation + real local Chromium Work E2E success.
+- `33286655544` — durable `ResidentWorkLedger` user-entry path + Chromium E2E success.
+- PR #96 — ordinary Work -> managed-browser navigation.
+- `33286758708` — full dev ZN CI green on product-code head `b1c86ee2...`.
+- PR #97 — durable documentation reconciliation after #95/#96.
+- PR #98 — canonical promotion of the report/browser stage.
 
-## Maintenance drift found in this takeover
+Read current post-promotion/main CI live before making any new verified-state claim.
 
-The repository rules already required documentation reconciliation and timely promotion, but execution after #95/#96 did not close those steps. Result:
+## Maintenance drift lesson
 
-- `dev/zn-agent` became 24 commits ahead of `main`;
-- `docs/ZN-IMPLEMENTATION-STATUS.md` and this HANDOFF still described the #92/#93/#94 stage;
-- a fresh maintainer would therefore recover stale state and potentially duplicate or mis-prioritize work.
+The earlier drift was an execution failure, not a missing rule: #95/#96 reached verified dev while main and durable docs still described the earlier authority/privacy stage. That allowed a future maintainer to recover stale priorities.
 
-This is being corrected as one coherent reconciliation/promotion slice. Going forward, changed product truth must be reconciled in the same verified slice; documentation and HANDOFF are not deferred cleanup after a stage is already considered complete.
+The correction is not "write more docs". The correction is that changed product truth, HANDOFF, promotion and branch synchronization are part of the same normal engineering closure. Dynamic Git state should be queried live rather than copied into prose that invalidates itself on the next commit.
 
-## Current gaps / risks
+## Current product gaps
 
-1. Complete this reconciliation branch through normal PR -> dev, verify CI, then promote the stable dev stage to `main` and require fresh main CI.
-2. Upstream BUG/repair reporting remains local-only; bounded transport/intake/acknowledgement/reconciliation is the next missing layer if that path is chosen.
-3. Managed browser remains navigation-only for ordinary Work; broader page observation/action/postcondition/recovery is still missing.
-4. User Browser Bridge remains architecture-only.
-5. Installed public update read/verify/update-available observation is still not fully product-closed.
-6. Installed N -> N+1 replacement, rollback, signing and release trust remain approval-gated.
-7. Unified health remains partial.
+1. Upstream BUG/repair reporting remains local-only; bounded transport/intake/acknowledgement/reconciliation is missing.
+2. Managed browser remains navigation-only for ordinary Work; broader fresh page observation and bounded interaction/recovery are missing.
+3. User Browser Bridge remains architecture-only.
+4. Installed public update read/verify/update-available observation remains partial.
+5. Installed N -> N+1 replacement, rollback, signing and release trust remain approval-gated.
+6. Unified health remains partial.
 
 ## Next dependency-ready work
 
-After branch/doc/canonical synchronization is complete, re-evaluate active callers and choose the highest-value vertical closure, likely one of:
+Re-check live Git/CI first, then choose the highest-value vertical closure from active caller evidence, most likely:
 
 ```text
 local report outbox
 -> bounded operator-controlled transport
 -> durable dispatch/acknowledgement/reconciliation
 -> maintainer intake
+
+or
 
 ordinary managed-browser navigation
 -> fresh page observation
@@ -117,6 +135,6 @@ ordinary managed-browser navigation
 -> failure/restart recovery
 ```
 
-Do not turn repository synchronization itself into the next product milestone. It is engineering hygiene required to make future autonomous continuation trustworthy.
+Do not turn repository synchronization itself into the product milestone. It is required engineering hygiene that keeps autonomous continuation trustworthy.
 
 No force push, history rewrite, repository credential expansion, updater replacement, rollback, release signing or destructive identity/memory migration is authorized by this handoff.
