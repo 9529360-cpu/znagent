@@ -1,5 +1,8 @@
 name: ZN Release
 
+# Windows is the only active ZN desktop release target for now.
+# Linux/macOS definitions are intentionally preserved for future work, but are
+# skipped before runner allocation unless ZN_ENABLE_NON_WINDOWS_CI=true.
 on:
   push:
     tags:
@@ -28,33 +31,29 @@ concurrency:
 jobs:
   package:
     name: Package ZN / ${{ matrix.label }}
+    if: ${{ matrix.active == true || vars.ZN_ENABLE_NON_WINDOWS_CI == 'true' }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - label: Linux
-            runs_on: [self-hosted, Linux]
+            active: false
+            os: ubuntu-latest
             builder_target: linux
             manifest_platform: linux
           - label: Windows
-            runs_on: [self-hosted, Windows, X64, zn-ci]
+            active: true
+            os: [self-hosted, Windows, X64, zn-ci]
             builder_target: win
             manifest_platform: windows
           - label: macOS
-            runs_on: [self-hosted, macOS]
+            active: false
+            os: macos-14
             builder_target: mac
             manifest_platform: macos
-    runs-on: ${{ matrix.runs_on }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
-      - name: Report self-hosted release runner
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "release.runner.name=${RUNNER_NAME:-unknown}"
-          echo "release.runner.os=${RUNNER_OS:-unknown}"
-          echo "release.runner.arch=${RUNNER_ARCH:-unknown}"
-
       - name: Checkout
         uses: actions/checkout@v7
 
@@ -153,7 +152,7 @@ jobs:
           retention-days: 14
 
   package-status:
-    name: Publish multi-OS package status
+    name: Publish Windows package status
     if: ${{ always() }}
     needs: package
     runs-on: [self-hosted, Windows, X64, zn-ci]
@@ -171,16 +170,16 @@ jobs:
               repo: context.repo.repo,
               sha: context.sha,
               state,
-              context: 'ZN Release Package / multi-OS',
-              description: `ZN release package: ${result}`.slice(0, 140),
+              context: 'ZN Release Package / Windows',
+              description: `ZN Windows release package: ${result}`.slice(0, 140),
               target_url: runUrl,
             })
 
   publish:
-    name: Publish ZN Release Channel
+    name: Publish ZN Windows Release Channel
     if: ${{ startsWith(github.ref, 'refs/tags/zn-v') }}
     needs: package
-    runs-on: [self-hosted, Linux]
+    runs-on: [self-hosted, Windows, X64, zn-ci]
     timeout-minutes: 20
     steps:
       - name: Checkout release source
@@ -188,19 +187,19 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download platform artifacts
+      - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
+          name: zn-desktop-windows
           path: dist
-          merge-multiple: true
 
       - name: Prepare public update-channel bundle
         env:
           ZN_PUBLIC_RELEASE_URL: ${{ vars.ZN_PUBLIC_RELEASE_URL }}
-        shell: bash
+        shell: powershell
         run: |
-          VERSION="${GITHUB_REF_NAME#zn-v}"
-          node apps/desktop/scripts/prepare-zn-public-channel.mjs dist "$VERSION" public-channel
+          $version = $env:GITHUB_REF_NAME -replace '^zn-v', ''
+          node apps/desktop/scripts/prepare-zn-public-channel.mjs dist $version public-channel
 
       - name: Upload public-channel audit artifact
         uses: actions/upload-artifact@v4
@@ -218,40 +217,30 @@ jobs:
           AWS_EC2_METADATA_DISABLED: 'true'
           ZN_UPDATE_S3_BUCKET: ${{ vars.ZN_UPDATE_S3_BUCKET }}
           ZN_UPDATE_S3_ENDPOINT: ${{ vars.ZN_UPDATE_S3_ENDPOINT }}
-        shell: bash
+        shell: powershell
         run: |
-          set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#zn-v}"
-          if [[ -z "$ZN_UPDATE_S3_BUCKET" || -z "$AWS_ACCESS_KEY_ID" || -z "$AWS_SECRET_ACCESS_KEY" ]]; then
-            echo "::error::Configure ZN_UPDATE_S3_BUCKET and ZN_UPDATE_S3_ACCESS_KEY_ID / ZN_UPDATE_S3_SECRET_ACCESS_KEY before formal release."
-            exit 1
-          fi
-          aws --version
-          if [[ -n "$ZN_UPDATE_S3_ENDPOINT" ]]; then
-            AWS=(aws --endpoint-url "$ZN_UPDATE_S3_ENDPOINT")
-          else
-            AWS=(aws)
-          fi
-          "${AWS[@]}" s3 cp "public-channel/releases/$VERSION/" "s3://$ZN_UPDATE_S3_BUCKET/releases/$VERSION/" \
-            --recursive \
-            --cache-control 'public,max-age=31536000,immutable' \
-            --only-show-errors
+          $version = $env:GITHUB_REF_NAME -replace '^zn-v', ''
+          if ([string]::IsNullOrWhiteSpace($env:ZN_UPDATE_S3_BUCKET) -or [string]::IsNullOrWhiteSpace($env:AWS_ACCESS_KEY_ID) -or [string]::IsNullOrWhiteSpace($env:AWS_SECRET_ACCESS_KEY)) {
+            throw 'Configure ZN update S3 credentials before formal release.'
+          }
+          $args = @('s3', 'cp', "public-channel/releases/$version/", "s3://$env:ZN_UPDATE_S3_BUCKET/releases/$version/", '--recursive', '--cache-control', 'public,max-age=31536000,immutable', '--only-show-errors')
+          if ($env:ZN_UPDATE_S3_ENDPOINT) { & aws --endpoint-url $env:ZN_UPDATE_S3_ENDPOINT @args } else { & aws @args }
+          if ($LASTEXITCODE -ne 0) { throw "immutable release asset upload failed with exit code $LASTEXITCODE" }
 
-      - name: Create release and upload archival installers
+      - name: Create release and upload archival Windows installers
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-        shell: bash
+        shell: powershell
         run: |
-          VERSION="${TAG#zn-v}"
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
-          else
-            gh release create "$TAG" dist/* \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "ZN $VERSION" \
-              --generate-notes
-          fi
+          $version = $env:TAG -replace '^zn-v', ''
+          gh release view $env:TAG --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:TAG dist/* --clobber --repo $env:GITHUB_REPOSITORY
+          } else {
+            gh release create $env:TAG dist/* --repo $env:GITHUB_REPOSITORY --title "ZN $version" --generate-notes
+          }
+          if ($LASTEXITCODE -ne 0) { throw "GitHub release publication failed with exit code $LASTEXITCODE" }
 
       - name: Advance stable update channel last
         env:
@@ -261,15 +250,8 @@ jobs:
           AWS_EC2_METADATA_DISABLED: 'true'
           ZN_UPDATE_S3_BUCKET: ${{ vars.ZN_UPDATE_S3_BUCKET }}
           ZN_UPDATE_S3_ENDPOINT: ${{ vars.ZN_UPDATE_S3_ENDPOINT }}
-        shell: bash
+        shell: powershell
         run: |
-          set -euo pipefail
-          if [[ -n "$ZN_UPDATE_S3_ENDPOINT" ]]; then
-            AWS=(aws --endpoint-url "$ZN_UPDATE_S3_ENDPOINT")
-          else
-            AWS=(aws)
-          fi
-          "${AWS[@]}" s3 cp public-channel/stable.json "s3://$ZN_UPDATE_S3_BUCKET/stable.json" \
-            --content-type 'application/json' \
-            --cache-control 'no-cache, max-age=0' \
-            --only-show-errors
+          $args = @('s3', 'cp', 'public-channel/stable.json', "s3://$env:ZN_UPDATE_S3_BUCKET/stable.json", '--content-type', 'application/json', '--cache-control', 'no-cache, max-age=0', '--only-show-errors')
+          if ($env:ZN_UPDATE_S3_ENDPOINT) { & aws --endpoint-url $env:ZN_UPDATE_S3_ENDPOINT @args } else { & aws @args }
+          if ($LASTEXITCODE -ne 0) { throw "stable update channel upload failed with exit code $LASTEXITCODE" }
