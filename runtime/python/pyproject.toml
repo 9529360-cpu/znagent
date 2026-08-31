@@ -28,6 +28,7 @@ browser = ["playwright==1.62.0"]
 
 [project.scripts]
 zn-resident = "zn_agent.resident:main"
+zn-maintainer-report-intake = "zn_agent.maintainer_intake:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
