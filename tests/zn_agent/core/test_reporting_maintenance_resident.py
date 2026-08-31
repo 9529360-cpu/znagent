@@ -9,6 +9,14 @@ from zn_agent.core.provider_bridge import build_resident_runtime
 from zn_agent.core.reporting_maintenance_resident import ReportingMaintenanceResidentRuntime
 
 
+class _CredentialStore:
+    def __init__(self, values: dict[str, str]):
+        self.values = dict(values)
+
+    def get(self, reference: str) -> str | None:
+        return self.values.get(reference)
+
+
 class ReportingMaintenanceResidentTests(unittest.TestCase):
     @staticmethod
     def _close(resident) -> None:
@@ -80,6 +88,52 @@ class ReportingMaintenanceResidentTests(unittest.TestCase):
                 self.assertEqual(status["reports"][0]["dispatch_attempts"], 0)
             finally:
                 self._close(resident)
+
+    def test_report_transport_resolves_bearer_secret_from_credential_reference(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            secret = "report-auth-secret"
+            resident = build_resident_runtime(
+                config={
+                    "model": {},
+                    "zn_resident": {
+                        "upstream_bug_report": {
+                            "endpoint": "https://reports.example.test/v1/reports",
+                            "credential_ref": "upstream-report:maintainer",
+                        }
+                    },
+                },
+                store_path=Path(tmp) / "kernel.db",
+                credential_store=_CredentialStore(
+                    {"upstream-report:maintainer": secret}
+                ),
+            )
+            try:
+                transport = resident.upstream_bug_report_transport
+                self.assertIsNotNone(transport)
+                self.assertEqual(transport.bearer_token, secret)
+                self.assertNotIn(secret, repr(transport))
+                self.assertNotIn(secret, repr(resident.status()))
+            finally:
+                self._close(resident)
+
+    def test_report_transport_credential_reference_fails_closed_when_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "kernel.db"
+            with self.assertRaises(RuntimeError):
+                build_resident_runtime(
+                    config={
+                        "model": {},
+                        "zn_resident": {
+                            "upstream_bug_report": {
+                                "endpoint": "https://reports.example.test/v1/reports",
+                                "credential_ref": "upstream-report:missing",
+                            }
+                        },
+                    },
+                    store_path=db,
+                    credential_store=_CredentialStore({}),
+                )
+            self.assertFalse(db.exists())
 
     def test_report_transport_configuration_rejects_non_https_endpoint(self):
         with tempfile.TemporaryDirectory() as tmp:
