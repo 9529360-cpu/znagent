@@ -2,9 +2,9 @@ from __future__ import annotations
 
 """Loopback-only authorization relay for the ZN browser extension.
 
-This first slice owns only user authorization state.  The extension attaches the
+This first slice owns only user authorization state. The extension attaches the
 current tab through ``chrome.debugger`` after a toolbar click and reports bounded
-tab identity here.  No DOM, cookies, storage, credentials, or page content cross
+tab identity here. No DOM, cookies, storage, credentials, or page content cross
 this relay yet.
 """
 
@@ -16,6 +16,10 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from .models import utc_now
+
+
+ZN_BROWSER_EXTENSION_ID = "likpiakgiamipheeekdgekdahafjinnh"
+ZN_BROWSER_EXTENSION_ORIGIN = f"chrome-extension://{ZN_BROWSER_EXTENSION_ID}"
 
 
 @dataclass(slots=True, frozen=True)
@@ -40,7 +44,7 @@ class ResidentUserBrowserExtensionRelay:
             raise ValueError("user-browser extension relay must bind loopback only")
         self.host = host
         self.port = int(port)
-        if not 1 <= self.port <= 65535:
+        if not 0 <= self.port <= 65535:
             raise ValueError("user-browser extension relay port is invalid")
         self._lock = threading.RLock()
         self._authorized: AuthorizedUserBrowserTab | None = None
@@ -62,6 +66,7 @@ class ResidentUserBrowserExtensionRelay:
 
                 def do_POST(self) -> None:  # noqa: N802
                     try:
+                        self._require_extension_origin()
                         body = self._json_body()
                         if self.path == "/v1/attach":
                             result = relay.authorize(
@@ -78,6 +83,13 @@ class ResidentUserBrowserExtensionRelay:
                         self._write(400, {"ok": False, "error": str(exc)})
                         return
                     self._write(200, {"ok": True, **result})
+
+                def _require_extension_origin(self) -> None:
+                    origin = str(self.headers.get("Origin") or "").strip()
+                    if origin != ZN_BROWSER_EXTENSION_ORIGIN:
+                        raise UserBrowserExtensionRelayError(
+                            "browser tab authorization requires the installed ZN extension origin"
+                        )
 
                 def _json_body(self) -> dict[str, Any]:
                     try:
@@ -111,6 +123,7 @@ class ResidentUserBrowserExtensionRelay:
 
             server = ThreadingHTTPServer((self.host, self.port), Handler)
             server.daemon_threads = True
+            self.port = int(server.server_address[1])
             self._server = server
             self._thread = threading.Thread(
                 target=server.serve_forever,
@@ -189,6 +202,7 @@ class ResidentUserBrowserExtensionRelay:
             "authorized": tab is not None,
             "protocol_version": self.protocol_version,
             "endpoint": f"http://{self.host}:{self.port}",
+            "extension_id": ZN_BROWSER_EXTENSION_ID,
             "tab": asdict(tab) if tab is not None else None,
         }
 
