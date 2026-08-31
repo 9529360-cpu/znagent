@@ -122,7 +122,7 @@ class ResidentBrowserRpcTests(unittest.TestCase):
                 status = server.handle({"id": "formal", "method": "status", "params": {}})
                 self.assertEqual(
                     status["result"]["resident_surface"],
-                    {"name": "zn-formal-resident", "schema": 1},
+                    {"name": "zn-formal-resident", "schema": 2},
                 )
             finally:
                 self._close(server)
