@@ -56,7 +56,7 @@ class UpstreamBugReportTransport:
         payload = outbox.reserve_dispatch(report_key)
         key = str(payload["report_key"])
         try:
-            response = self._client().post(
+            response = self._post(
                 self.endpoint,
                 json=payload,
                 headers={
@@ -67,7 +67,7 @@ class UpstreamBugReportTransport:
                 },
             )
             self._require_accepted_ack(response, key)
-        except BaseException as exc:
+        except Exception as exc:
             # Reservation was already durably committed. Even connect/timeout
             # failures are conservative uncertainty because the client cannot
             # prove whether the receiver observed the request.
@@ -87,11 +87,11 @@ class UpstreamBugReportTransport:
         key = outbox.require_reconciliation(report_key)
         url = f"{self.endpoint.rstrip('/')}/{key}"
         try:
-            response = self._client().get(
+            response = self._get(
                 url,
                 headers={"Accept": "application/json", "X-ZN-Report-Key": key},
             )
-        except BaseException as exc:
+        except Exception as exc:
             raise UpstreamBugReportTransportError(
                 f"upstream bug report reconciliation failed: {type(exc).__name__}"
             ) from exc
@@ -101,14 +101,31 @@ class UpstreamBugReportTransport:
         self._require_accepted_ack(response, key)
         return outbox.mark_reconciled_delivered(key)
 
-    def _client(self) -> _HttpClient:
+    def _post(
+        self,
+        url: str,
+        *,
+        json: Mapping[str, Any],
+        headers: Mapping[str, str],
+    ) -> _HttpResponse:
         if self.http_client is not None:
-            return self.http_client
-        return httpx.Client(
+            return self.http_client.post(url, json=json, headers=headers)
+        with httpx.Client(
             timeout=self.timeout_seconds,
             follow_redirects=False,
             trust_env=True,
-        )
+        ) as client:
+            return client.post(url, json=json, headers=headers)
+
+    def _get(self, url: str, *, headers: Mapping[str, str]) -> _HttpResponse:
+        if self.http_client is not None:
+            return self.http_client.get(url, headers=headers)
+        with httpx.Client(
+            timeout=self.timeout_seconds,
+            follow_redirects=False,
+            trust_env=True,
+        ) as client:
+            return client.get(url, headers=headers)
 
     @staticmethod
     def _require_accepted_ack(response: _HttpResponse, report_key: str) -> None:
