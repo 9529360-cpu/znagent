@@ -16,6 +16,11 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
         self.user_browser_extension = ResidentUserBrowserExtensionRelay()
         self.user_browser_extension.start()
 
+    def status(self) -> dict[str, Any]:
+        data = super().status()
+        data["user_browser_extension"] = self.user_browser_extension.status()
+        return data
+
     def user_browser_extension_status(self) -> dict[str, Any]:
         return self.user_browser_extension.status()
 
