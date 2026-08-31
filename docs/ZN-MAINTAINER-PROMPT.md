@@ -6,7 +6,7 @@
 >
 > Canonical source/release branch：`main`
 >
-> 本文件只保存长期稳定的启动规则。当前 milestone、HEAD、CI 和任务必须从真实仓库与 `.agent/HANDOFF.md` 恢复。
+> 本文件只保存长期稳定的启动规则。当前 milestone、live HEAD、PR、CI 和任务必须从真实仓库恢复；`.agent/HANDOFF.md` 只保存已验证检查点、仍有用的现场事实与未完成风险，不充当实时 Git 镜像。
 
 ## 可直接交给维护者的提示词
 
@@ -69,7 +69,7 @@ M10 canonical promotion 已完成。`main` 是当前 canonical source / release 
 > 对话描述
 ```
 
-如果文档和代码冲突，以真实仓库和真实验证结果决定“现在是什么”，先对账并修正文档/HANDOFF，再继续。
+如果文档和代码冲突，以真实仓库和真实验证结果决定“现在是什么”，先对账并修正文档/HANDOFF，再继续。HANDOFF 中出现的 SHA、CI run 或 branch 状态只代表写入时的检查点；接手时必须重新查询 live refs，不得把旧检查点当作当前分支 oracle。
 
 `ZN.md` 决定产品和目标架构。架构方向改变时先改 `ZN.md`；只是完成既定架构中的实现步骤时，在实现和验证后同步状态文档。
 
@@ -183,19 +183,21 @@ ZN 有具体需求
 → push
 → 检查 CI
 → CI 失败则继续修复
-→ 同步状态文档/HANDOFF
+→ 顺手同步真正发生变化的状态文档/HANDOFF 事实
 ```
+
+状态留底是完成开发闭环后的低成本收尾，不是独立产品任务，也不是每个 commit 都必须制造文档变化。未改变架构、实现成熟度或接手现场的小型修复，可以不触碰无关状态文档。
 
 当一个 coherent stage 已达到仓库定义的 promotion gate 时，不要让 `main` 因维护词本身而永久停滞。正常继续：
 
 ```text
 确认 dev HEAD / diff / PR
 → 确认相关 CI + full CI 为真实成功
-→ 确认状态文档/HANDOFF 与代码一致
+→ 确认必要状态文档/HANDOFF 没有把失效 live claim 当作当前事实
 → 确认不存在需要人工批准的高风险边界
 → 使用正常 PR / merge / promotion 流程进入 main
 → 重新验证 main / promotion 后 CI
-→ 更新 canonical HEAD 记录
+→ 只在有长期价值时记录该 verified checkpoint
 ```
 
 promotion 必须是普通可追踪 Git 历史；不得 force push、不得历史重写、不得跳过失败 CI、不得把 partial 写成 complete。
@@ -210,9 +212,17 @@ promotion 必须是普通可追踪 Git 历史；不得 force push、不得历史
 
 ### 六、维护 HANDOFF
 
-中大型任务维护 `.agent/HANDOFF.md`。它是仓库施工现场，不是聊天摘要。
+中大型任务、明确交接/中断、或一个 coherent engineering slice 改变了项目现场时维护 `.agent/HANDOFF.md`。它是轻量施工现场和事实索引，不是聊天摘要、日报，也不是实时 Git 数据库。
 
-至少记录：当前目标、当前分支和 HEAD、已完成事项、任务队列、真实测试/构建/CI、相关文件、风险、阻塞和下一步。
+正确节奏是：先完成实现与真实验证，再顺手把对下一任仍有价值的变化留底，然后继续产品工作。不要在每个 commit 后追着改 HANDOFF，也不要为了“文档完整”暂停真正的产品开发。
+
+HANDOFF 应优先记录：当前产品目标、最近有意义的 verified checkpoint、刚完成的能力变化、真实测试/构建/CI 证据、仍未闭合的风险、明确 blocker、以及下一任需要知道的少量候选工作。
+
+**不要要求 HANDOFF 永久记录“当前分支 HEAD”。** 修改 HANDOFF 本身就会产生新 commit，使内嵌 HEAD 立即成为历史。需要记录 SHA、CI run 或 branch 状态时，把它明确写成“observed/verified checkpoint”；当前 `main` / `dev/zn-agent` HEAD、ahead/behind、open PR 和 CI 必须由接手者现场重新查询。
+
+任何 `active` / `in progress` / `isolated lane` 声明都必须有可恢复的 durable evidence：至少给出 branch，并且能由 live Git 证明存在实际 delta，或给出对应 open PR；只有计划、预留 ownership、聊天安排而没有实际 branch delta/PR 时，只能写成 `planned` / `reserved`，不能写成 active。证据消失或工作已合并时，在本轮收尾中删除或降级该声明。
+
+能由 Git/GitHub 直接推导的元数据不要大段复制进 HANDOFF。文档只保存“为什么这个检查点重要、验证到哪里、还有什么风险”这些 Git 本身表达不了的语义。
 
 不得把 Token、密码、密钥、签名私钥或生产凭证写入 HANDOFF。
 
@@ -262,26 +272,25 @@ promotion 必须是普通可追踪 Git 历史；不得 force push、不得历史
 
 ### 十、每次结束前对齐
 
-准备结束当前任务前，再检查真实仓库状态，确保：
+准备结束当前任务、切换维护者或留下未完成现场前，再查询一次真实仓库状态。只同步那些确实改变了长期语义、实现成熟度或接手现场的文档事实；不要为了让 HANDOFF 追上包含 HANDOFF 自身的最新 commit 而制造无限自引用更新。
 
 ```text
-代码
-Git
-测试 / CI
-状态文档
-HANDOFF
+代码与真实行为
+Git / PR / CI live state
+必要状态文档
+HANDOFF 的语义事实
 ```
 
-保持一致。
+它们应当语义一致；live ref 数值以现场查询为准。
 
 最终汇报只区分：
 
 - 已完成且经过真实验证/CI；
 - 已完成但尚未经过某些验证；
 - 仍未完成 / blocker；
-- 当前 `dev/zn-agent` HEAD；
-- 关键提交；
-- 当前 CI；
+- 当前 `dev/zn-agent` HEAD（现场查询）；
+- 关键 verified checkpoint；
+- 当前 CI（现场查询）；
 - 下一真实目标。
 
 不要把 partial 写成 complete。
