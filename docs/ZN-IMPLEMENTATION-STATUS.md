@@ -58,7 +58,7 @@ Use `exists -> connected -> verified -> product-closed`. File/interface presence
 | Resident managed-browser semantic textbox | connected + verified | exact accessible-name writable non-password textbox, digest/length verification, durable Body plaintext redaction, restart recovery |
 | Resident managed-browser same-session form | connected + verified for one complete ordinary Work scenario | textbox entry and submit share one Chromium session; final URL depends on retained text state; guarded and recoverable from exact durable evidence |
 | Resident managed-browser broader page interaction | partial | generic discovery, tabs/popups/frames, downloads/uploads and arbitrary interaction are not product-closed |
-| User browser bridge | sensing foundation only | authenticated existing-session permission and mutation remain open; never copy profile credentials |
+| User browser bridge | bounded mutation foundation, locally verified | explicit focused UIA Edit scope can reuse the non-replayable keyboard-text lifecycle and fresh digest verification; real evidence still uses an isolated temporary Edge profile, while authenticated existing-session attachment and permission UX remain open |
 | Installed upstream update observation | partial / substantial desktop foundation | HTTPS channel parsing, version comparison, target selection, size/SHA-256 verification and desktop IPC/UI exist; formal continuity/replacement remains separate |
 | Official repository push / PR / merge | intentionally outside installed resident | maintainer-environment authority |
 | Installed N -> N+1 update continuity | approval-gated / incomplete | no formal updater/replacement transition executed |
@@ -140,6 +140,10 @@ The form Chromium E2E reaches `/done` only when the exact typed value is still p
 - ZN CI `33340676146` — full Source Boundary, Kernel/Python, Electron and final status publication success on `5f14a645...`.
 - PR #123 / merge `ac6b3846d621dd790f587cbc08311b162eba6b97` — promoted the verified development tranche to canonical `main`.
 - Canonical ZN CI `33353573721` — post-promotion run for `ac6b3846...`; read live final state before claiming canonical closure.
+- PR #125 candidate `f1ded231d44dc58e9d9a597213f8f738ea5560f4` — connects bounded focused UIA Edit text mutation to the existing non-replayable resident lifecycle.
+- Windows Interactive Desktop E2E `33354912873` — success including real installed Edge text mutation through default UIA plus keyboard input.
+- ZN CI `33354911263` — full success on the PR #125 candidate.
+- Work Recovery E2E `33354930689` — success on the PR #125 candidate.
 - Hosted Windows Clean Install / Release Candidate runs that fail with `runner_id=0` and `steps=[]` are runner-allocation infrastructure evidence, not executed-code failures.
 
 Older self-maintenance evidence remains valid where the underlying code has not changed; consult Git history and CI for exact runs when needed.
@@ -147,7 +151,7 @@ Older self-maintenance evidence remains valid where the underlying code has not 
 ## Current product gaps
 
 1. **Upstream BUG/repair transport and maintainer intake are the active isolated product stage.** Local formation and crash-safe dispatch accounting are verified; operator-controlled transport, explicit acknowledgement/reconciliation and maintainer intake are not merged yet.
-2. **User Browser Bridge is not product-closed.** Existing authenticated Edge/Chrome reality still needs explicit permission and bounded mutation; never copy cookies, passwords or profile data.
+2. **User Browser Bridge is not product-closed.** Bounded focused non-password text mutation is locally verified against a real installed Edge provider with an isolated temporary profile, but existing authenticated Edge/Chrome attachment and user-facing permission/revocation still need proof; never copy cookies, passwords or profile data.
 3. **Managed browser breadth remains partial.** Generic discovery, tabs/popups/frames, downloads/uploads and arbitrary interaction remain open.
 4. **Browser interaction recovery remains fail-closed outside proven observed results.** Unknown external mutations without sufficient durable evidence still need bounded re-sense/reclassification.
 5. **Installed update continuity remains incomplete.** Public-channel observation and artifact verification exist, but formal N -> N+1 continuity, rollback and signing/trust remain approval-gated.
