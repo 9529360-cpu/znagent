@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -128,6 +129,54 @@ function tryResolveRuntime(runtimeRoot: string, expectedRuntimeId: string): Reso
   try { return resolveRuntime(runtimeRoot, expectedRuntimeId) } catch { return null }
 }
 
+function robocopyCompleted(error: unknown): boolean {
+  if (!error || typeof error !== 'object' || !('status' in error)) return false
+  const status = (error as { status?: unknown }).status
+  // Robocopy uses 0-7 for successful copies with informational differences.
+  return typeof status === 'number' && status >= 0 && status < 8
+}
+
+function copyRuntimeTree(sourceRoot: string, targetRoot: string): void {
+  const copyWithNode = () => {
+    fs.cpSync(sourceRoot, targetRoot, { recursive: true, force: true, verbatimSymlinks: true })
+  }
+
+  if (process.platform !== 'win32') {
+    copyWithNode()
+    return
+  }
+
+  fs.mkdirSync(targetRoot, { recursive: true })
+  try {
+    execFileSync(
+      'robocopy.exe',
+      [
+        sourceRoot,
+        targetRoot,
+        '/E',
+        '/SL',
+        '/R:0',
+        '/W:0',
+        '/MT:32',
+        '/NFL',
+        '/NDL',
+        '/NJH',
+        '/NJS',
+        '/NP'
+      ],
+      { stdio: 'ignore', windowsHide: true }
+    )
+    return
+  } catch (error) {
+    if (robocopyCompleted(error)) return
+  }
+
+  // Keep the old copy path as the fail-safe oracle. Never validate or rename a
+  // partial accelerated copy after an unexpected robocopy failure.
+  fs.rmSync(targetRoot, { recursive: true, force: true })
+  copyWithNode()
+}
+
 function materializeRuntime(resourcesPath: string, znHome: string): ResolvedZnRuntime {
   const bundledRoot = path.resolve(resourcesPath, RUNTIME_DIR_NAME)
   const bundled = resolveRuntime(bundledRoot)
@@ -139,7 +188,7 @@ function materializeRuntime(resourcesPath: string, znHome: string): ResolvedZnRu
   if (fs.existsSync(targetRoot)) fs.rmSync(targetRoot, { recursive: true, force: true })
   const tempRoot = `${targetRoot}.tmp-${process.pid}-${Date.now()}`
   try {
-    fs.cpSync(bundledRoot, tempRoot, { recursive: true, force: true, verbatimSymlinks: true })
+    copyRuntimeTree(bundledRoot, tempRoot)
     const staged = resolveRuntime(tempRoot, bundled.manifest.runtime_id)
     try {
       fs.renameSync(tempRoot, targetRoot)
