@@ -183,7 +183,11 @@ class _WindowsBrowserNamedTargetReader:
                 if not foreground_title:
                     raise RuntimeError("foreground browser window has no stable title")
 
-                root = automation.ElementFromHandleBuildCache(hwnd, cache)
+                # The search root remains a short-lived live UIA reference. The
+                # exact matching descendants are still returned with Mode_None
+                # cache snapshots, so unrelated controls never become retained
+                # observation objects or page-content evidence.
+                root = automation.ElementFromHandle(hwnd)
                 if not root:
                     raise RuntimeError("Windows UI Automation returned no foreground root element")
 
