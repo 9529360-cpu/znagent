@@ -560,6 +560,11 @@ def _explicit_action(
     ):
         if key in payload and key not in args:
             args[key] = payload[key]
-    if "content" not in args and "text" in args:
+    # Only filesystem text writes require the historical text -> content alias.
+    # Browser/keyboard text movements consume `text` directly; duplicating it into
+    # `content` expands durable plaintext surface and can bypass kind-specific
+    # redaction. Keep compatibility scoped to the Body actions that actually read
+    # `content` as their write payload.
+    if kind in {"write_text", "write_file"} and "content" not in args and "text" in args:
         args["content"] = args["text"]
     return kind, args

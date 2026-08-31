@@ -9,7 +9,7 @@ from contextlib import closing
 from typing import Any
 
 from . import side_effect_attempts
-from .body import BodyActionResult
+from .body import BodyAction, BodyActionResult
 from .keyboard_text_body import KeyboardTextBody
 from .models import utc_now
 
@@ -19,25 +19,105 @@ class SideEffectAwareBody(KeyboardTextBody):
 
     Pointer clicks and focused keyboard text already own richer resident-level
     non-replayable lifecycles. This body deliberately leaves those contracts
-    unchanged. It adds only a durable pre-dispatch boundary around generic
-    command execution and append-style text writes.
+    unchanged. It adds a durable pre-dispatch boundary around generic command
+    execution, interactive terminal input, and append-style text writes.
 
     A ``started`` attempt is committed before dispatch. If the process dies after
     that commit, the next resident refuses the same event/action signature rather
     than guessing whether the outside-world side effect happened. For guarded
-    commands and append writes, an ``observed`` dispatch also remains replay-
-    blocking if a stale ``native_action`` checkpoint is reconstructed. Append
-    recovery may prove current reality; generic commands remain blocked for an
-    explicit lifecycle decision. No raw command, text, environment or other
-    action arguments are copied into this ledger; only a deterministic signature
-    hash and bounded execution metadata are persisted.
+    commands, terminal input, and append writes, an ``observed`` dispatch also
+    remains replay-blocking if a stale ``native_action`` checkpoint is reconstructed.
+    Append recovery may prove current reality; generic commands and terminal input
+    remain blocked for an explicit lifecycle decision. No raw command, text,
+    environment or other action arguments are copied into the side-effect ledger;
+    only a deterministic signature hash and bounded execution metadata are persisted.
     """
 
     _TABLE = side_effect_attempts.TABLE
     _MAX_COMPLETED_ATTEMPTS = side_effect_attempts.MAX_COMPLETED_ATTEMPTS
     _COMMAND_KINDS = frozenset({"command", "terminal", "shell"})
-    _APPEND_KINDS = frozenset({"write_text", "write_file"})
+    _TERMINAL_INPUT_KINDS = frozenset(
+        {"terminal_input", "terminal_write", "command_input"}
+    )
+    _TEXT_WRITE_KINDS = frozenset({"write_text", "write_file"})
+    _APPEND_KINDS = _TEXT_WRITE_KINDS
     _RECOVERY_STATUSES = frozenset({"verified_effect", "verified_absent"})
+
+    def _record(self, action: BodyAction, result: BodyActionResult) -> None:
+        """Keep sensitive input payloads out of generic durable Body history.
+
+        Replay identity is computed from the real pre-dispatch arguments before
+        this method runs. The ``native_body_actions.action_json`` row is history,
+        not replay authority, so it only needs bounded audit metadata for values
+        that commonly carry credentials, interactive secrets, or full file data.
+
+        Interactive stdin is additionally special because PTYs commonly echo what
+        was typed. The live caller still receives the real Body result, but the
+        durable result row drops output and terminal command text for input actions
+        so the same secret is not silently copied back into long-lived Body/Work
+        history through terminal echo.
+        """
+
+        safe_args = dict(action.args)
+        safe_result = result
+        changed = False
+        if action.kind in self._COMMAND_KINDS and "env" in safe_args:
+            raw_env = safe_args.pop("env")
+            env_keys = (
+                sorted(str(key) for key in raw_env)
+                if isinstance(raw_env, dict)
+                else []
+            )
+            safe_args["env_redacted"] = True
+            safe_args["env_keys"] = env_keys
+            safe_args["env_count"] = len(env_keys)
+            changed = True
+
+        if action.kind in self._TERMINAL_INPUT_KINDS:
+            source_key = "data" if "data" in safe_args else "input" if "input" in safe_args else None
+            if source_key is not None:
+                raw_input = safe_args.pop(source_key)
+                safe_args["input_redacted"] = True
+                safe_args["input_source"] = source_key
+                safe_args["input_chars"] = len(str(raw_input))
+                changed = True
+
+            safe_data = dict(result.data or {})
+            persisted_output = str(result.output or safe_data.get("output") or "")
+            safe_data.pop("output", None)
+            safe_data.pop("command", None)
+            safe_data["terminal_input_output_redacted"] = True
+            safe_data["terminal_input_output_chars"] = len(persisted_output)
+            safe_result = BodyActionResult(
+                action_id=result.action_id,
+                kind=result.kind,
+                success=result.success,
+                output="",
+                data=safe_data,
+                error=result.error,
+                event_id=result.event_id,
+                started_at=result.started_at,
+                completed_at=result.completed_at,
+            )
+
+        if action.kind in self._TEXT_WRITE_KINDS:
+            source_key = "content" if "content" in safe_args else "text" if "text" in safe_args else None
+            if source_key is not None:
+                raw_content = safe_args.pop(source_key)
+                safe_args["content_redacted"] = True
+                safe_args["content_source"] = source_key
+                safe_args["content_chars"] = len(str(raw_content))
+                changed = True
+
+        if changed:
+            action = BodyAction(
+                action_id=action.action_id,
+                kind=action.kind,
+                args=safe_args,
+                event_id=action.event_id,
+                created_at=action.created_at,
+            )
+        super()._record(action, safe_result)
 
     def act(
         self,
@@ -89,10 +169,10 @@ class SideEffectAwareBody(KeyboardTextBody):
         try:
             result = super().act(kind, event_id=event_id, **args)
         except Exception as exc:
-            # A normal exception cannot establish that a command/append produced
-            # no side effect. Keep the durable attempt in ``started`` state and
-            # return uncertainty as evidence so the resident investigates rather
-            # than terminalizing or replaying the movement.
+            # A normal exception cannot establish that a guarded side effect
+            # produced no outside-world effect. Keep the durable attempt in
+            # ``started`` state and return uncertainty so the resident
+            # investigates rather than terminalizing or replaying the movement.
             return self._uncertain_result(
                 normalized_kind,
                 normalized_event,
@@ -132,7 +212,7 @@ class SideEffectAwareBody(KeyboardTextBody):
 
     @classmethod
     def _requires_guard(cls, kind: str, args: dict[str, Any]) -> bool:
-        if kind in cls._COMMAND_KINDS:
+        if kind in cls._COMMAND_KINDS or kind in cls._TERMINAL_INPUT_KINDS:
             return True
         return kind in cls._APPEND_KINDS and bool(args.get("append", False))
 

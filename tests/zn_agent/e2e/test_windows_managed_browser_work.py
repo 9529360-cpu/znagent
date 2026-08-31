@@ -16,12 +16,22 @@ from zn_agent.core.resident_server import ResidentSocketService
 
 class _FixtureHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        payload = (
-            "<!doctype html><html><head><title>ZN Work Browser Closed Loop</title></head>"
-            "<body><main>structured Work reached resident-owned Chromium</main>"
-            '<label><input id="consent" type="checkbox">Consent</label>'
-            "</body></html>"
-        ).encode("utf-8")
+        if self.path == "/done":
+            payload = (
+                "<!doctype html><html><head><title>ZN Work Button Done</title></head>"
+                "<body><main>semantic button navigation completed</main></body></html>"
+            ).encode("utf-8")
+        else:
+            payload = (
+                "<!doctype html><html><head><title>ZN Work Browser Closed Loop</title></head>"
+                "<body><main>structured Work reached resident-owned Chromium</main>"
+                '<label><input id="consent" type="checkbox">Consent</label>'
+                '<label><input type="checkbox">Email updates</label>'
+                '<label>Search <input type="text" aria-label="Search"></label>'
+                '<input type="password" aria-label="Password" value="">'
+                '<button type="button" onclick="location.href=\'/done\'">Continue</button>'
+                "</body></html>"
+            ).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
@@ -38,7 +48,9 @@ class ManagedBrowserWorkWindowsE2E(unittest.TestCase):
         cls.web = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _FixtureHandler)
         cls.web_thread = threading.Thread(target=cls.web.serve_forever, daemon=True)
         cls.web_thread.start()
-        cls.url = f"http://127.0.0.1:{int(cls.web.server_address[1])}/"
+        port = int(cls.web.server_address[1])
+        cls.url = f"http://127.0.0.1:{port}/"
+        cls.done_url = f"http://127.0.0.1:{port}/done"
 
     @classmethod
     def tearDownClass(cls):
@@ -197,6 +209,109 @@ class ManagedBrowserWorkWindowsE2E(unittest.TestCase):
         messages = final["thread"]["messages"]
         self.assertEqual([item["role"] for item in messages], ["user", "zn", "activity"])
         self.assertEqual(messages[1]["text"], "checkbox #consent is checked")
+
+    def test_structured_work_sets_idless_checkbox_by_exact_accessible_name(self):
+        final = self._run_work(
+            thread_id="managed-browser-named-checkbox-work-e2e",
+            task="set the idless named checkbox through resident-owned Chromium",
+            payload={
+                "required_capabilities": ["browser"],
+                "body_action": {
+                    "kind": "browser_set_named_checkbox",
+                    "args": {
+                        "url": self.url,
+                        "target_name": "Email updates",
+                        "checked": True,
+                        "allow_private_network": True,
+                    },
+                },
+                "model_policy": "never",
+            },
+        )
+        progress = final["progress"]
+        self.assertEqual(progress["status"], "completed")
+        self.assertEqual(progress["stage"], "complete")
+        self.assertIsNone(progress["recovery"])
+        browser_actions = [
+            item
+            for item in progress["body_actions"]
+            if item["kind"] == "browser_set_named_checkbox"
+        ]
+        self.assertEqual(len(browser_actions), 1)
+        self.assertTrue(browser_actions[0]["success"])
+        messages = final["thread"]["messages"]
+        self.assertEqual([item["role"] for item in messages], ["user", "zn", "activity"])
+        self.assertEqual(messages[1]["text"], 'checkbox "Email updates" is checked')
+
+    def test_structured_work_clicks_exact_named_button_and_verifies_destination(self):
+        final = self._run_work(
+            thread_id="managed-browser-named-button-work-e2e",
+            task="click one exact named button and verify its explicit same-origin destination",
+            payload={
+                "required_capabilities": ["browser"],
+                "body_action": {
+                    "kind": "browser_click_named_button_to_url",
+                    "args": {
+                        "url": self.url,
+                        "target_name": "Continue",
+                        "expected_url": self.done_url,
+                        "allow_private_network": True,
+                    },
+                },
+                "model_policy": "never",
+            },
+        )
+        progress = final["progress"]
+        self.assertEqual(progress["status"], "completed")
+        self.assertEqual(progress["stage"], "complete")
+        self.assertIsNone(progress["recovery"])
+        browser_actions = [
+            item
+            for item in progress["body_actions"]
+            if item["kind"] == "browser_click_named_button_to_url"
+        ]
+        self.assertEqual(len(browser_actions), 1)
+        self.assertTrue(browser_actions[0]["success"])
+        self.assertEqual(browser_actions[0]["summary"], self.done_url)
+        messages = final["thread"]["messages"]
+        self.assertEqual([item["role"] for item in messages], ["user", "zn", "activity"])
+        self.assertEqual(messages[1]["text"], self.done_url)
+
+    def test_structured_work_types_exact_named_textbox_and_keeps_plaintext_out_of_progress(self):
+        typed = "ZN real Chromium text ✓"
+        final = self._run_work(
+            thread_id="managed-browser-named-text-work-e2e",
+            task="type explicit non-secret text into one exact named textbox",
+            payload={
+                "required_capabilities": ["browser"],
+                "body_action": {
+                    "kind": "browser_type_named_text",
+                    "args": {
+                        "url": self.url,
+                        "target_name": "Search",
+                        "text": typed,
+                        "allow_private_network": True,
+                    },
+                },
+                "model_policy": "never",
+            },
+        )
+        progress = final["progress"]
+        self.assertEqual(progress["status"], "completed")
+        self.assertEqual(progress["stage"], "complete")
+        self.assertIsNone(progress["recovery"])
+        browser_actions = [
+            item
+            for item in progress["body_actions"]
+            if item["kind"] == "browser_type_named_text"
+        ]
+        self.assertEqual(len(browser_actions), 1)
+        self.assertTrue(browser_actions[0]["success"])
+        self.assertNotIn(typed, json.dumps(progress, ensure_ascii=False))
+        self.assertIn("typed", browser_actions[0]["summary"])
+        messages = final["thread"]["messages"]
+        self.assertEqual([item["role"] for item in messages], ["user", "zn", "activity"])
+        self.assertNotIn(typed, messages[1]["text"])
 
 
 if __name__ == "__main__":

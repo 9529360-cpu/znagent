@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from typing import Any
+from urllib.parse import urlsplit
 
 from .atomic_overwrite_namespace_recovery_resident import AtomicOverwriteNamespaceAwareBody
 from .body import BodyAction, BodyActionResult
@@ -29,10 +30,17 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
 
     _BROWSER_NAVIGATE = "browser_navigate"
     _BROWSER_SET_CHECKBOX = "browser_set_checkbox"
+    _BROWSER_SET_NAMED_CHECKBOX = "browser_set_named_checkbox"
+    _BROWSER_CLICK_NAMED_BUTTON_TO_URL = "browser_click_named_button_to_url"
 
     @classmethod
     def _requires_guard(cls, kind: str, args: dict[str, Any]) -> bool:
-        if kind in {cls._BROWSER_NAVIGATE, cls._BROWSER_SET_CHECKBOX}:
+        if kind in {
+            cls._BROWSER_NAVIGATE,
+            cls._BROWSER_SET_CHECKBOX,
+            cls._BROWSER_SET_NAMED_CHECKBOX,
+            cls._BROWSER_CLICK_NAMED_BUTTON_TO_URL,
+        }:
             return True
         return super()._requires_guard(kind, args)
 
@@ -41,6 +49,10 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
             return self._browser_navigate(action, started)
         if action.kind == self._BROWSER_SET_CHECKBOX:
             return self._browser_set_checkbox(action, started)
+        if action.kind == self._BROWSER_SET_NAMED_CHECKBOX:
+            return self._browser_set_named_checkbox(action, started)
+        if action.kind == self._BROWSER_CLICK_NAMED_BUTTON_TO_URL:
+            return self._browser_click_named_button_to_url(action, started)
         if action.kind == "browser_observe":
             return self._browser_observe(action, started)
         if action.kind == "browser_close":
@@ -120,25 +132,62 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
             raise
 
     def _browser_set_checkbox(self, action: BodyAction, started: str) -> BodyActionResult:
-        """Navigate to one explicit page and set one explicit DOM-id checkbox.
+        """Navigate to one explicit page and set one explicit DOM-id checkbox."""
 
-        This first Work-facing interaction is deliberately narrow. The caller
-        supplies the exact HTTP(S) page, exact DOM id and desired boolean state.
-        Provider completion is accepted only when the existing managed-browser
-        adapter re-observes the same exact node and proves the requested checked
-        state. The ephemeral session is then closed before success is returned.
-        """
+        dom_id = str(action.args.get("dom_id") or "").strip()
+        if not dom_id:
+            raise ValueError("browser_set_checkbox requires dom_id")
+        return self._browser_set_checkbox_target(
+            action,
+            started,
+            query=BrowserTargetQuery(
+                kind=BrowserTargetQueryKind.DOM_ID,
+                value=dom_id,
+            ),
+            target_label=f"#{dom_id}",
+        )
+
+    def _browser_set_named_checkbox(
+        self,
+        action: BodyAction,
+        started: str,
+    ) -> BodyActionResult:
+        """Set one exact accessible-name checkbox without technical DOM authority."""
+
+        target_name = str(action.args.get("target_name") or "").strip()
+        if not target_name:
+            raise ValueError("browser_set_named_checkbox requires target_name")
+        if len(target_name) > 160:
+            raise ValueError("browser_set_named_checkbox target_name is too long")
+        if any(ord(char) < 32 or ord(char) == 127 for char in target_name):
+            raise ValueError("browser_set_named_checkbox target_name contains control characters")
+        return self._browser_set_checkbox_target(
+            action,
+            started,
+            query=BrowserTargetQuery(
+                kind=BrowserTargetQueryKind.ACCESSIBLE_CHECKBOX_NAME,
+                value=target_name,
+            ),
+            target_label=f'"{target_name}"',
+        )
+
+    def _browser_set_checkbox_target(
+        self,
+        action: BodyAction,
+        started: str,
+        *,
+        query: BrowserTargetQuery,
+        target_label: str,
+    ) -> BodyActionResult:
+        """Navigate, freshly bind one checkbox target, mutate, prove, and close."""
 
         browser = self._browser()
         url = str(action.args.get("url") or "").strip()
-        dom_id = str(action.args.get("dom_id") or "").strip()
         checked = action.args.get("checked")
         if not url:
-            raise ValueError("browser_set_checkbox requires url")
-        if not dom_id:
-            raise ValueError("browser_set_checkbox requires dom_id")
+            raise ValueError(f"{action.kind} requires url")
         if type(checked) is not bool:
-            raise ValueError("browser_set_checkbox requires boolean checked")
+            raise ValueError(f"{action.kind} requires boolean checked")
 
         permission = BrowserPermissionContext(
             allow_navigation=True,
@@ -181,17 +230,13 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                     completed_at=utc_now(),
                 )
 
-            query = BrowserTargetQuery(
-                kind=BrowserTargetQueryKind.DOM_ID,
-                value=dom_id,
-            )
             observed = browser.observe_target(
                 session.session_id,
                 query,
                 page_id=navigation_evidence.page_id,
             )
             if observed.target is None or observed.target.role != "checkbox":
-                raise ValueError("browser_set_checkbox requires a visible checkbox target")
+                raise ValueError(f"{action.kind} requires a visible checkbox target")
 
             mutation = BrowserAction.create(
                 session_id=session.session_id,
@@ -234,7 +279,7 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                 action_id=action.action_id,
                 kind=action.kind,
                 success=True,
-                output=f"checkbox #{dom_id} is {state}",
+                output=f"checkbox {target_label} is {state}",
                 data={
                     "url": mutation_evidence.url_after or navigation_evidence.url_after,
                     "page_id": mutation_evidence.page_id,
@@ -266,6 +311,205 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                 except Exception:
                     pass
             raise
+
+    def _browser_click_named_button_to_url(
+        self,
+        action: BodyAction,
+        started: str,
+    ) -> BodyActionResult:
+        """Click one exact semantic button and independently verify same-origin URL."""
+
+        browser = self._browser()
+        url = str(action.args.get("url") or "").strip()
+        expected_url = str(action.args.get("expected_url") or "").strip()
+        target_name = str(action.args.get("target_name") or "").strip()
+        if not url or not expected_url:
+            raise ValueError("browser_click_named_button_to_url requires url and expected_url")
+        if not target_name:
+            raise ValueError("browser_click_named_button_to_url requires target_name")
+        if len(target_name) > 160:
+            raise ValueError("browser_click_named_button_to_url target_name is too long")
+        if any(ord(char) < 32 or ord(char) == 127 for char in target_name):
+            raise ValueError(
+                "browser_click_named_button_to_url target_name contains control characters"
+            )
+        if not self._same_origin(url, expected_url):
+            raise ValueError(
+                "browser_click_named_button_to_url currently requires same-origin expected_url"
+            )
+
+        permission = BrowserPermissionContext(
+            allow_navigation=True,
+            allow_page_interaction=True,
+            allow_private_network=bool(action.args.get("allow_private_network", False)),
+            allowed_origins=(url,),
+        )
+        session = None
+        closed = False
+        try:
+            session = browser.open_session(permission=permission, headless=True)
+            initial = browser.observe(session.session_id)
+            navigate = BrowserAction.create(
+                session_id=session.session_id,
+                kind=BrowserActionKind.NAVIGATE,
+                page_id=initial.page_id,
+                args={"url": url},
+                expected={"url_equals": url},
+            )
+            navigate_authority = BrowserActionAuthority.from_observation(
+                navigate,
+                initial,
+                permission,
+            )
+            navigation_evidence = browser.act(navigate, navigate_authority)
+            if not navigation_evidence.success:
+                browser.close_session(session.session_id)
+                closed = True
+                return BodyActionResult(
+                    action_id=action.action_id,
+                    kind=action.kind,
+                    success=False,
+                    data={
+                        "browser_evidence": asdict(navigation_evidence),
+                        "closed": True,
+                    },
+                    error=navigation_evidence.error or "managed browser navigation failed",
+                    event_id=action.event_id,
+                    started_at=started,
+                    completed_at=utc_now(),
+                )
+
+            observed = browser.observe_target(
+                session.session_id,
+                BrowserTargetQuery(
+                    kind=BrowserTargetQueryKind.ACCESSIBLE_BUTTON_NAME,
+                    value=target_name,
+                ),
+                page_id=navigation_evidence.page_id,
+            )
+            if observed.target is None or observed.target.role != "button":
+                raise ValueError(
+                    "browser_click_named_button_to_url requires a visible button target"
+                )
+
+            click = BrowserAction.create(
+                session_id=session.session_id,
+                kind=BrowserActionKind.CLICK,
+                page_id=observed.page_id,
+                target=observed.target,
+                expected={"url_equals": expected_url},
+            )
+            click_authority = BrowserActionAuthority.from_observation(
+                click,
+                observed,
+                permission,
+            )
+            click_evidence = browser.act(click, click_authority)
+            if not click_evidence.success:
+                browser.close_session(session.session_id)
+                closed = True
+                return BodyActionResult(
+                    action_id=action.action_id,
+                    kind=action.kind,
+                    success=False,
+                    data={
+                        "target_id": observed.target.target_id,
+                        "target_name": observed.target.name,
+                        "expected_url": expected_url,
+                        "browser_evidence": asdict(click_evidence),
+                        "closed": True,
+                    },
+                    error=click_evidence.error or "managed browser button click failed",
+                    event_id=action.event_id,
+                    started_at=started,
+                    completed_at=utc_now(),
+                )
+
+            verified = browser.observe(
+                session.session_id,
+                page_id=click_evidence.page_id,
+            )
+            if verified.url != expected_url:
+                browser.close_session(session.session_id)
+                closed = True
+                return BodyActionResult(
+                    action_id=action.action_id,
+                    kind=action.kind,
+                    success=False,
+                    data={
+                        "target_id": observed.target.target_id,
+                        "target_name": observed.target.name,
+                        "expected_url": expected_url,
+                        "observed_url": verified.url,
+                        "browser_evidence": asdict(click_evidence),
+                        "closed": True,
+                    },
+                    error=(
+                        "managed browser button postcondition verification did not match "
+                        "the explicitly requested URL"
+                    ),
+                    event_id=action.event_id,
+                    started_at=started,
+                    completed_at=utc_now(),
+                )
+
+            browser.close_session(session.session_id)
+            closed = True
+            return BodyActionResult(
+                action_id=action.action_id,
+                kind=action.kind,
+                success=True,
+                output=verified.url,
+                data={
+                    "url": navigation_evidence.url_after,
+                    "expected_url": expected_url,
+                    "observed_url": verified.url,
+                    "page_id": verified.page_id,
+                    "target_id": click_evidence.target_id,
+                    "target_role": observed.target.role,
+                    "target_name": observed.target.name,
+                    "selector_hint": observed.target.selector_hint,
+                    "provider": str(
+                        click_evidence.data.get("provider")
+                        or navigation_evidence.data.get("provider")
+                        or session.provider
+                    ),
+                    "postcondition": click_evidence.postcondition,
+                    "target_revalidated_before_dispatch": bool(
+                        click_evidence.data.get("target_revalidated_before_dispatch")
+                    ),
+                    "browser_evidence": asdict(click_evidence),
+                    "closed": True,
+                },
+                event_id=action.event_id,
+                started_at=started,
+                completed_at=utc_now(),
+            )
+        except BaseException:
+            if session is not None and not closed:
+                try:
+                    browser.close_session(session.session_id)
+                except Exception:
+                    pass
+            raise
+
+    @staticmethod
+    def _same_origin(left: str, right: str) -> bool:
+        def normalized(value: str) -> tuple[str, str, int | None] | None:
+            try:
+                parsed = urlsplit(value)
+                scheme = str(parsed.scheme or "").lower()
+                host = str(parsed.hostname or "").lower().rstrip(".")
+                port = parsed.port
+            except (TypeError, ValueError):
+                return None
+            if scheme not in {"http", "https"} or not host:
+                return None
+            if port is None:
+                port = 80 if scheme == "http" else 443
+            return scheme, host, port
+
+        return normalized(left) is not None and normalized(left) == normalized(right)
 
     def _browser_observe(self, action: BodyAction, started: str) -> BodyActionResult:
         browser = self._browser()
