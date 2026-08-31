@@ -27,7 +27,7 @@ concurrency:
 jobs:
   package-candidate:
     name: Windows x64 unsigned candidate
-    runs-on: windows-latest
+    runs-on: [self-hosted, Windows, X64, zn-ci]
     timeout-minutes: 60
     steps:
       - name: Publish candidate pending status
@@ -47,7 +47,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Require clean Windows x64 hosted runner
+      - name: Require Windows x64 self-hosted runner
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
             throw "Windows release candidate requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
