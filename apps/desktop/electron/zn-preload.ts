@@ -18,6 +18,10 @@ contextBridge.exposeInMainWorld('znDesktop', {
     providerSettings: () => ipcRenderer.invoke('zn:resident:provider-settings'),
     providerSettingsUpdate: (payload?: ZnDesktopPayload) =>
       ipcRenderer.invoke('zn:resident:provider-settings-update', payload || {}),
+    upstreamBugReportDispatch: (payload?: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:upstream-bug-report-dispatch', payload || {}),
+    upstreamBugReportReconcile: (payload?: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:upstream-bug-report-reconcile', payload || {}),
     workList: (payload?: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:work-list', payload || {}),
     workCreate: (payload?: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:work-create', payload || {}),
     workGet: (payload?: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:work-get', payload || {}),

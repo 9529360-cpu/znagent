@@ -156,7 +156,7 @@ export async function verifyZnWindowsResidentAutostart({ znHome, expectedRuntime
     }
 
     const status = await rpcRequest(endpoint, 'status')
-    if (!status || status.resident_surface?.name !== 'zn-formal-resident' || status.resident_surface?.schema !== 1) {
+    if (!status || status.resident_surface?.name !== 'zn-formal-resident' || status.resident_surface?.schema !== 2) {
       throw new Error(`autostarted resident is not the formal surface: ${JSON.stringify(status?.resident_surface)}`)
     }
 
