@@ -59,10 +59,9 @@ class ResidentUserBrowserExtensionRelay:
 
             class Handler(BaseHTTPRequestHandler):
                 def do_GET(self) -> None:  # noqa: N802
-                    if self.path != "/v1/status":
-                        self._write(404, {"ok": False, "error": "not_found"})
-                        return
-                    self._write(200, {"ok": True, **relay.status()})
+                    # Browser tab identity is available through Resident status,
+                    # not through an unauthenticated HTTP read surface.
+                    self._write(404, {"ok": False, "error": "not_found"})
 
                 def do_POST(self) -> None:  # noqa: N802
                     try:
