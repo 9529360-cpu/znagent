@@ -35,6 +35,7 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
     _RESIDENT_GOAL_PROGRESS_KEY = "resident_goal_progress"
     _BROWSER_GOAL_OBSERVATION_KEY = "resident_browser_goal_observation"
     _BROWSER_GOAL_BINDING_KEY = "resident_browser_goal_binding"
+    _BROWSER_GOAL_FOCUS_VERIFICATION_KEY = "resident_browser_goal_focus_verification"
     _MAX_RESIDENT_GOAL_PROGRESS = 16
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
@@ -507,7 +508,8 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
         """Treat a verified movement as progress until the composite goal is re-sensed."""
 
         is_repo_goal = repo_text_staged_request(event) is not None
-        is_browser_goal = browser_named_text_request(event) is not None
+        browser_request = browser_named_text_request(event)
+        is_browser_goal = browser_request is not None
         if not is_repo_goal and not is_browser_goal:
             return super()._complete_successful_body_action(
                 event,
@@ -527,6 +529,65 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
                 reason=reason,
             )
 
+        progress_verification_kind = str(verification.get("kind") or "")
+        if is_browser_goal and intent.kind == "pointer_click":
+            raw_goal = intent.expected_outcome if isinstance(intent.expected_outcome, dict) else {}
+            expected_runtime = raw_goal.get("target_runtime_id")
+            if not isinstance(expected_runtime, list) or not expected_runtime:
+                return self._fail_composite_goal_investigation(
+                    event,
+                    state,
+                    reason=(
+                        "the already-dispatched browser focus click lost its exact pre-click "
+                        "RuntimeId evidence; refusing any replay"
+                    ),
+                )
+            try:
+                assert browser_request is not None
+                focused = self.browser_named_target.probe_exact_edit(
+                    browser_request["target_name"]
+                )
+            except Exception as exc:
+                return self._fail_composite_goal_investigation(
+                    event,
+                    state,
+                    reason=(
+                        "the browser focus click was already dispatched, but fresh exact-name "
+                        "focus verification is unavailable; refusing any replay: "
+                        f"{type(exc).__name__}: {exc}"
+                    ),
+                )
+            focus_verified = bool(
+                focused.has_keyboard_focus
+                and tuple(focused.runtime_id)
+                == tuple(int(value) for value in expected_runtime)
+                and focused.process_name
+                == str(raw_goal.get("process_name") or "").strip().lower()
+                and focused.foreground_title
+                == str(raw_goal.get("title_equals") or "").strip()
+            )
+            state.data[self._BROWSER_GOAL_FOCUS_VERIFICATION_KEY] = {
+                "verified": focus_verified,
+                "kind": "browser_named_target_focused",
+                "expected_runtime_id": [int(value) for value in expected_runtime],
+                "observed_runtime_id": list(focused.runtime_id),
+                "observation": asdict(focused),
+                "verified_at": utc_now(),
+            }
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            if not focus_verified:
+                return self._fail_composite_goal_investigation(
+                    event,
+                    state,
+                    reason=(
+                        "the browser focus click was already dispatched and its local visual "
+                        "effect was observed, but fresh exact-name UI Automation evidence did "
+                        "not prove that the same target gained focus; refusing automatic replay"
+                    ),
+                )
+            progress_verification_kind = "browser_named_target_focused"
+
         latest = state.data.get("latest_verified_experience")
         experience_id = (
             str(latest.get("experience_id") or "").strip()
@@ -538,7 +599,7 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
         progress.append(
             {
                 "action_kind": str(intent.kind or ""),
-                "verification_kind": str(verification.get("kind") or ""),
+                "verification_kind": progress_verification_kind,
                 "experience_id": experience_id or None,
                 "verified_at": utc_now(),
             }
@@ -581,6 +642,7 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
             "native_completion",
             "local_failure",
             self._BROWSER_GOAL_OBSERVATION_KEY,
+            self._BROWSER_GOAL_FOCUS_VERIFICATION_KEY,
             self._REPO_TEXT_BASELINE_KEY,
             self._TARGETED_TEST_EXECUTION_KEY,
             self._PROCEDURAL_INFLUENCE_KEY,
