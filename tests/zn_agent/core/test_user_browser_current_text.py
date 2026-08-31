@@ -151,7 +151,10 @@ class UserBrowserCurrentTextTests(unittest.TestCase):
                 self.assertFalse(browser.permission.allow_navigation)
                 self.assertTrue(browser.permission.allow_page_interaction)
                 self.assertTrue(browser.permission.allow_text_entry)
-                self.assertEqual(browser.permission.allowed_origins, (_URL,))
+                self.assertEqual(
+                    browser.permission.allowed_origins,
+                    ("https://example.com",),
+                )
                 self.assertEqual(result.data["browser_plane"], BrowserPlane.USER.value)
                 self.assertTrue(result.data["exact_node_continuity"])
                 self.assertTrue(result.data["input_sent"])
