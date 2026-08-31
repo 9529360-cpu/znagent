@@ -13,8 +13,10 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
+        # ResidentService starts/stops this resource only while this runtime owns
+        # the single-instance resident lease. Merely constructing a runtime must
+        # never seize the fixed browser-extension port.
         self.user_browser_extension = ResidentUserBrowserExtensionRelay()
-        self.user_browser_extension.start()
 
     def status(self) -> dict[str, Any]:
         data = super().status()
