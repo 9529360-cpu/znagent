@@ -44,6 +44,8 @@ The verified ordinary Work browser surface now includes:
 
 The structured-action compiler now limits historical `text -> content` compatibility to `write_text` / `write_file`. Browser, form and keyboard text no longer receive a duplicate plaintext `content` alias. Form Body history also retains a second defensive redaction boundary. The structured compiler and its tests are included in Managed Browser and Work Recovery workflow coverage.
 
+PR #125 is the current User Browser Bridge candidate. On candidate commit `f1ded231d44dc58e9d9a597213f8f738ea5560f4`, Windows Interactive Desktop E2E `33354912873`, full ZN CI `33354911263` and Work Recovery E2E `33354930689` all completed successfully. Hosted clean-install run `33354874932` failed before execution with `steps=[]`; it is runner-allocation evidence, not an executed candidate failure.
+
 ## Resident reliability and reporting reality
 
 PR #121 is merged. If a BUG-report dispatch was durably reserved and the resident stopped before recording delivery or uncertainty, reconstructing the outbox now promotes the abandoned `dispatching` record to `outcome_uncertain`, preserves `dispatch_attempts`, and continues to reject automatic replay. This recovery is covered by the successful Work Recovery run above.
@@ -63,7 +65,7 @@ Repository synchronization is engineering hygiene, not the product milestone. `d
 ## Current product gaps
 
 1. BUG/repair transport/intake is the active isolated product stage: local formation and crash-safe dispatch accounting are verified, but operator-controlled transport, acknowledgement/reconciliation and maintainer intake are not merged yet.
-2. User Browser Bridge is still sensing-only foundation. Attachment to an authenticated existing Edge/Chrome session, explicit permission and mutation are not product-closed. Never solve this by copying cookies, passwords or profile data.
+2. User Browser Bridge has a bounded local mutation foundation: an explicitly scoped, already-focused, empty non-password HTML Edit can receive one non-replayable text input and be independently verified by fresh UIA RuntimeId plus privacy-safe length/digest evidence. Current real Windows evidence still uses an isolated temporary Edge profile; attachment to an authenticated existing Edge/Chrome session and user-facing permission UX are not product-closed. Never solve this by copying cookies, passwords or profile data.
 3. Managed browser remains deliberately bounded. Generic target discovery, multi-tab/popup/frame authority, downloads/uploads and broad arbitrary interaction are not product-closed.
 4. Browser recovery is strong where a trustworthy durable observed result exists; unknown external mutations without sufficient evidence still fail closed and require bounded re-sense/reclassification work.
 5. Installed update observation and release machinery exist, including public-channel parsing and package verification, but formal N -> N+1 continuity, rollback and signing/trust remain approval-gated product stages.

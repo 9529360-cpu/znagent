@@ -86,7 +86,7 @@ class _IsolatedUserBrowserFixture:
   </style>
 </head>
 <body>
-  <input id="{_TARGET_ID}" type="text" value="{_TEXT}" autofocus autocomplete="off">
+  <input id="{_TARGET_ID}" type="text" value="" autofocus autocomplete="off">
   <script>
     const target = document.getElementById('{_TARGET_ID}');
     const focusTarget = () => {{
@@ -302,7 +302,7 @@ class WindowsInteractiveUserBrowserBridgeProviderE2ETests(unittest.TestCase):
         finally:
             user32.CloseDesktop(desktop)
 
-    def test_real_installed_edge_or_chrome_exposes_focused_html_edit_state(self) -> None:
+    def test_real_installed_edge_or_chrome_accepts_verified_focused_html_text(self) -> None:
         self._require_input_desktop()
         browsers = _find_installed_browsers()
         if not browsers:
@@ -387,13 +387,59 @@ class WindowsInteractiveUserBrowserBridgeProviderE2ETests(unittest.TestCase):
             self.assertFalse(text_state.is_password)
             self.assertTrue(text_state.is_value_pattern_available)
             self.assertFalse(text_state.value_is_read_only)
-            self.assertEqual(text_state.text_length, len(_TEXT))
+            self.assertEqual(text_state.text_length, 0)
             self.assertEqual(
                 text_state.text_sha256,
-                NativeFocusedAutomationTextSense.digest_text(_TEXT),
+                NativeFocusedAutomationTextSense.digest_text(""),
             )
             self.assertFalse(hasattr(text_state, "text"))
             self.assertFalse(hasattr(text_state, "value"))
+
+            event = resident.enqueue(
+                "type explicit bounded text into the currently focused user-browser textbox",
+                kind="ui_state_transition",
+                payload={
+                    "body_action": {
+                        "kind": "keyboard_text",
+                        "args": {"text": _TEXT},
+                    },
+                    "expected_outcome": {
+                        "kind": "focused_text_equals_action_text",
+                    },
+                    "completion_scope": {
+                        "kind": "focused_automation_edit_text",
+                        "process_name": expected_process,
+                        "title_equals": foreground.title,
+                        "control_type": 50004,
+                        "class_name_equals": focused.class_name,
+                        "automation_id_equals": focused.automation_id,
+                    },
+                    "action_precondition": {
+                        "kind": "foreground_window_matches",
+                        "process_name": expected_process,
+                        "title_equals": foreground.title,
+                    },
+                    "model_policy": "never",
+                },
+            )
+            result = None
+            deadline = time.monotonic() + 12.0
+            while time.monotonic() < deadline and result is None:
+                fixture.activate()
+                result = resident.live_once()
+                if result is None:
+                    time.sleep(0.05)
+            self.assertIsNotNone(result, "user-browser text Work did not reach a terminal result")
+            self.assertTrue(result.success, result)
+            self.assertEqual(result.event.event_id, event.event_id)
+            self.assertEqual(result.model_invocations, 0)
+
+            final_text_state = resident.automation_text_state.probe()
+            self.assertEqual(final_text_state.text_length, len(_TEXT))
+            self.assertEqual(
+                final_text_state.text_sha256,
+                NativeFocusedAutomationTextSense.digest_text(_TEXT),
+            )
 
             print(
                 "ZN_USER_BROWSER_BRIDGE_EVIDENCE="
@@ -410,8 +456,12 @@ class WindowsInteractiveUserBrowserBridgeProviderE2ETests(unittest.TestCase):
                         "is_value_pattern_available": focused.is_value_pattern_available,
                         "is_text_pattern_available": focused.is_text_pattern_available,
                         "value_is_read_only": focused.value_is_read_only,
-                        "text_length": text_state.text_length,
-                        "text_sha256": text_state.text_sha256,
+                        "text_length_before": text_state.text_length,
+                        "text_sha256_before": text_state.text_sha256,
+                        "text_length_after": final_text_state.text_length,
+                        "text_sha256_after": final_text_state.text_sha256,
+                        "mutation": "bounded_keyboard_text",
+                        "model_invocations": result.model_invocations,
                         "profile_scope": "isolated-temporary",
                         "forced_renderer_accessibility": False,
                     },

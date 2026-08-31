@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Typed, non-replayable text entry into one exact focused native Edit control."""
+"""Typed, non-replayable text entry into one exact focused safe Edit control."""
 
 from dataclasses import asdict
 from typing import Any
@@ -24,6 +24,7 @@ class FocusedTextEntryResidentRuntime(AutomationFocusPointerClickResidentRuntime
     """
 
     _TEXT_SCOPE_KIND = "focused_native_edit_text"
+    _AUTOMATION_TEXT_SCOPE_KIND = "focused_automation_edit_text"
     _TEXT_OUTCOME_KIND = "focused_text_equals_action_text"
     _TEXT_PRECONDITION_KEY = "native_keyboard_text_precondition"
     _TEXT_EXECUTION_KEY = "native_keyboard_text_execution"
@@ -160,9 +161,9 @@ class FocusedTextEntryResidentRuntime(AutomationFocusPointerClickResidentRuntime
                     event,
                     state,
                     scope,
-                    response="focused native Edit already matched the requested text digest",
+                    response="focused Edit already matched the requested text digest",
                     reason=(
-                        "ZN completed this ui_state_transition from fresh focused native-control, "
+                        "ZN completed this ui_state_transition from fresh focused-control, "
                         "UI Automation and text-digest evidence because the exact target already "
                         "matched the requested text; no keyboard input was sent"
                     ),
@@ -172,7 +173,7 @@ class FocusedTextEntryResidentRuntime(AutomationFocusPointerClickResidentRuntime
                     event,
                     state,
                     intent,
-                    "the focused native Edit is non-empty and differs from the requested text; "
+                    "the focused Edit is non-empty and differs from the requested text; "
                     "this first text-entry slice refuses selection, deletion or replacement",
                     thought=thought,
                 )
@@ -190,7 +191,7 @@ class FocusedTextEntryResidentRuntime(AutomationFocusPointerClickResidentRuntime
                 "prepared_at": utc_now(),
             }
             state.next_action = (
-                "reverify the exact empty focused native Edit and send one non-replayable Unicode text input"
+                "reverify the exact empty focused Edit and send one non-replayable Unicode text input"
             )
             self._sync_execution_context(event, state)
             self.store.save_working_state(state)
@@ -219,7 +220,7 @@ class FocusedTextEntryResidentRuntime(AutomationFocusPointerClickResidentRuntime
             final_error = "final focused text target recheck failed: " + str(target_error)
         elif int(target["text"].text_length) != 0:
             final_error = (
-                "focused native Edit changed after preparation and is no longer empty; refusing keyboard input"
+                "focused Edit changed after preparation and is no longer empty; refusing keyboard input"
             )
         if final_error:
             aborted = dict(state.data[self._TEXT_EXECUTION_KEY])
@@ -283,7 +284,7 @@ class FocusedTextEntryResidentRuntime(AutomationFocusPointerClickResidentRuntime
         }
         state.stage = "native_verification"
         state.next_action = (
-            "re-observe the exact focused native Edit and verify its text digest after keyboard input"
+            "re-observe the exact focused Edit and verify its text digest after keyboard input"
         )
         self._sync_execution_context(event, state)
         self.store.save_working_state(state)
@@ -371,11 +372,11 @@ class FocusedTextEntryResidentRuntime(AutomationFocusPointerClickResidentRuntime
                 state,
                 intent,
                 response=(
-                    "fresh focused native Edit digest matched the exact requested text after one bounded Unicode input"
+                    "fresh focused Edit digest matched the exact requested text after one bounded Unicode input"
                 ),
                 reason=(
-                    "ZN completed this ui_state_transition only after fresh foreground, native "
-                    "focused-control, UI Automation runtime identity and native text-digest "
+                    "ZN completed this ui_state_transition only after fresh foreground, "
+                    "focused-control/UI Automation identity and text-digest "
                     "evidence independently proved that the exact focused Edit contains the "
                     "requested action text; model text and SendInput return status were not "
                     "accepted as completion proof"
@@ -383,7 +384,7 @@ class FocusedTextEntryResidentRuntime(AutomationFocusPointerClickResidentRuntime
             )
 
         failure = (
-            "keyboard text postcondition verification failed: the exact focused native Edit "
+            "keyboard text postcondition verification failed: the exact focused Edit "
             "did not match the requested text digest after input"
             if target is not None
             else "keyboard text postcondition verification failed: fresh target evidence was unavailable ("
@@ -439,7 +440,7 @@ class FocusedTextEntryResidentRuntime(AutomationFocusPointerClickResidentRuntime
             return None, error
         if not isinstance(action_precondition, dict):
             return None, (
-                "focused native Edit text entry requires an explicit exact "
+                "focused Edit text entry requires an explicit exact "
                 "action_precondition.kind=foreground_window_matches"
             )
         if (
@@ -451,17 +452,21 @@ class FocusedTextEntryResidentRuntime(AutomationFocusPointerClickResidentRuntime
                 "process/title as completion_scope"
             )
 
-        for name, method in (
-            ("foreground-window", "probe"),
-            ("focused-control", "probe"),
-            ("focused-text", "probe"),
-        ):
+        required_senses = [("foreground-window", "probe")]
+        if scope["kind"] == self._AUTOMATION_TEXT_SCOPE_KIND:
+            required_senses.append(("automation-text-state", "probe"))
+        else:
+            required_senses.extend(
+                (("focused-control", "probe"), ("focused-text", "probe"))
+            )
+        for name, method in required_senses:
             sense = getattr(
                 self,
                 {
                     "foreground-window": "foreground_window",
                     "focused-control": "focused_control",
                     "focused-text": "focused_text",
+                    "automation-text-state": "automation_text_state",
                 }[name],
                 None,
             )
@@ -486,11 +491,16 @@ class FocusedTextEntryResidentRuntime(AutomationFocusPointerClickResidentRuntime
         self, event
     ) -> tuple[dict[str, Any] | None, str | None]:
         raw = event.payload.get("completion_scope")
-        if (
-            not isinstance(raw, dict)
-            or str(raw.get("kind") or "").strip().lower() != self._TEXT_SCOPE_KIND
-        ):
-            return None, "ui_state_transition requires completion_scope.kind=focused_native_edit_text"
+        if not isinstance(raw, dict):
+            return None, "ui_state_transition requires an explicit focused text completion_scope"
+        scope_kind = str(raw.get("kind") or "").strip().lower()
+        if scope_kind == self._AUTOMATION_TEXT_SCOPE_KIND:
+            return self._automation_text_completion_scope(raw)
+        if scope_kind != self._TEXT_SCOPE_KIND:
+            return None, (
+                "ui_state_transition requires completion_scope.kind="
+                "focused_native_edit_text or focused_automation_edit_text"
+            )
         allowed = {
             "kind",
             "process_name",
@@ -544,12 +554,61 @@ class FocusedTextEntryResidentRuntime(AutomationFocusPointerClickResidentRuntime
             "class_name_equals": class_name,
         }, None
 
+    def _automation_text_completion_scope(
+        self, raw: dict[str, Any]
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        allowed = {
+            "kind",
+            "process_name",
+            "title_equals",
+            "control_type",
+            "class_name_equals",
+            "automation_id_equals",
+        }
+        unknown = sorted(str(key) for key in raw if key not in allowed)
+        if unknown:
+            return None, (
+                "focused_automation_edit_text completion_scope contains unsupported authority fields: "
+                + ", ".join(unknown)
+            )
+        process_name = str(raw.get("process_name") or "").strip().lower()
+        title = str(raw.get("title_equals") or "").strip()
+        raw_control_type = raw.get("control_type")
+        if isinstance(raw_control_type, bool):
+            return None, "focused_automation_edit_text control_type must be 50004"
+        try:
+            control_type = int(raw_control_type)
+        except (TypeError, ValueError):
+            control_type = 0
+        class_name = str(raw.get("class_name_equals") or "").strip()
+        automation_id = str(raw.get("automation_id_equals") or "").strip()
+        if not process_name or not title or control_type != 50004:
+            return None, (
+                "focused_automation_edit_text requires exact process_name/title and "
+                "UIA Edit control_type=50004"
+            )
+        if len(class_name) > 256 or len(automation_id) > 256:
+            return None, "focused_automation_edit_text identity field exceeds 256 characters"
+        return {
+            "kind": self._AUTOMATION_TEXT_SCOPE_KIND,
+            "process_name": process_name,
+            "title_equals": title,
+            "control_type": control_type,
+            "class_name_equals": class_name,
+            "automation_id_equals": automation_id,
+        }, None
+
     def _probe_text_target(
         self,
         scope: dict[str, Any],
         *,
         expected_runtime_id: tuple[int, ...] | None = None,
     ) -> tuple[dict[str, Any] | None, str | None]:
+        if scope.get("kind") == self._AUTOMATION_TEXT_SCOPE_KIND:
+            return self._probe_automation_text_target(
+                scope,
+                expected_runtime_id=expected_runtime_id,
+            )
         foreground, error = self._probe_foreground_window()
         if foreground is None:
             return None, "foreground observation unavailable: " + str(error)
@@ -592,6 +651,78 @@ class FocusedTextEntryResidentRuntime(AutomationFocusPointerClickResidentRuntime
             "automation": automation,
             "text": text,
         }, None
+
+    def _probe_automation_text_target(
+        self,
+        scope: dict[str, Any],
+        *,
+        expected_runtime_id: tuple[int, ...] | None = None,
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        foreground, error = self._probe_foreground_window()
+        if foreground is None:
+            return None, "foreground observation unavailable: " + str(error)
+        if not self._foreground_window_matches(foreground, scope):
+            return None, "foreground window does not match the exact automation text scope"
+
+        automation, error = self._probe_focused_automation_element()
+        if automation is None:
+            return None, "focused UI Automation observation unavailable: " + str(error)
+        if not self._automation_text_identity_matches(automation, scope):
+            return None, "focused UI Automation element does not match the exact automation text scope"
+
+        text, error = self._probe_focused_automation_text()
+        if text is None:
+            return None, "focused UI Automation text digest unavailable: " + str(error)
+        if not self._automation_text_identity_matches(text, scope):
+            return None, "focused UI Automation text identity does not match the exact scope"
+        if tuple(automation.runtime_id) != tuple(text.runtime_id):
+            return None, "structural and text UI Automation observations identify different RuntimeIds"
+        if int(automation.process_id) != int(text.process_id):
+            return None, "structural and text UI Automation observations identify different processes"
+        if expected_runtime_id is not None and tuple(text.runtime_id) != tuple(
+            expected_runtime_id
+        ):
+            return None, "focused UI Automation RuntimeId changed after text-entry preparation"
+
+        # Preserve the established evidence-shape keys so the shared durable
+        # non-replayable lifecycle can serve both native and automation Edit
+        # targets without creating a second mutation state machine. Neither
+        # observation contains plaintext.
+        return {
+            "foreground": foreground,
+            "native": text,
+            "automation": automation,
+            "text": text,
+        }, None
+
+    def _probe_focused_automation_text(self):
+        sense = getattr(self, "automation_text_state", None)
+        if sense is None or not callable(getattr(sense, "probe", None)):
+            return None, "resident-owned automation-text-state Sense is unavailable"
+        try:
+            return sense.probe(), None
+        except Exception as exc:
+            return None, f"{type(exc).__name__}: {exc}"
+
+    @staticmethod
+    def _automation_text_identity_matches(observed, scope: dict[str, Any]) -> bool:
+        class_name = str(scope.get("class_name_equals") or "")
+        automation_id = str(scope.get("automation_id_equals") or "")
+        return bool(
+            str(observed.process_name or "").strip().lower() == scope["process_name"]
+            and int(observed.control_type) == int(scope["control_type"])
+            and (not class_name or str(observed.class_name or "").strip() == class_name)
+            and (
+                not automation_id
+                or str(observed.automation_id or "").strip() == automation_id
+            )
+            and bool(observed.runtime_id)
+            and observed.is_enabled
+            and observed.is_keyboard_focusable
+            and observed.has_keyboard_focus
+            and not observed.is_offscreen
+            and not observed.is_password
+        )
 
     def _probe_focused_text(
         self,
