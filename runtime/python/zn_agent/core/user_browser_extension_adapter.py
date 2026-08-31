@@ -518,7 +518,6 @@ class AuthorizedExtensionUserBrowser:
                 url_before=url_before,
                 url_after=url_after,
                 target_id=result_target or target.target_id,
-                postcondition="url_equals_after_fresh_semantic_button_click",
                 data=evidence_data,
                 error=(
                     "extension browser button click was dispatched but fresh URL evidence did not "
