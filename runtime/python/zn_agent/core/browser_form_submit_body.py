@@ -12,6 +12,7 @@ from .browser import (
     BrowserActionAuthority,
     BrowserActionKind,
     BrowserPermissionContext,
+    BrowserPlane,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
 )
@@ -23,10 +24,12 @@ class BrowserFormSubmitBody(BrowserTextWorkBody):
     """Fill one exact textbox, click one exact button, and prove the final URL.
 
     This is deliberately a single guarded Body movement. The textbox and button
-    are both rebound from fresh semantic observations in one ephemeral managed
-    browser session, so the typed state is not lost to a second navigation.
-    Plaintext input is redacted from durable Body history; only bounded digest and
-    length evidence survive outside the user-authored Work event.
+    are both rebound from fresh semantic observations in one ephemeral browser
+    session, so the typed state is not lost to a second navigation. USER-plane
+    sessions never navigate to the requested start URL: the already-authorized
+    current page must freshly equal it before any mutation. Plaintext input is
+    redacted from durable Body history; only bounded digest and length evidence
+    survive outside the user-authored Work event.
     """
 
     _BROWSER_FILL_AND_SUBMIT = "browser_fill_named_text_and_click_named_button_to_url"
@@ -101,8 +104,9 @@ class BrowserFormSubmitBody(BrowserTextWorkBody):
                 "browser_fill_named_text_and_click_named_button_to_url currently requires same-origin expected_url"
             )
 
+        user_plane = getattr(browser, "plane", None) is BrowserPlane.USER
         permission = BrowserPermissionContext(
-            allow_navigation=True,
+            allow_navigation=not user_plane,
             allow_page_interaction=True,
             allow_text_entry=True,
             allow_private_network=bool(action.args.get("allow_private_network", False)),
@@ -110,36 +114,67 @@ class BrowserFormSubmitBody(BrowserTextWorkBody):
         )
         session = None
         closed = False
+        navigation_evidence = None
         try:
-            session = browser.open_session(permission=permission, headless=True)
+            session = browser.open_session(permission=permission, headless=not user_plane)
             initial = browser.observe(session.session_id)
-            navigate = BrowserAction.create(
-                session_id=session.session_id,
-                kind=BrowserActionKind.NAVIGATE,
-                page_id=initial.page_id,
-                args={"url": url},
-                expected={"url_equals": url},
-            )
-            navigate_authority = BrowserActionAuthority.from_observation(
-                navigate, initial, permission
-            )
-            navigation_evidence = browser.act(navigate, navigate_authority)
-            if not navigation_evidence.success:
-                browser.close_session(session.session_id)
-                closed = True
-                return BodyActionResult(
-                    action_id=action.action_id,
-                    kind=action.kind,
-                    success=False,
-                    data={
-                        "browser_evidence": asdict(navigation_evidence),
-                        "closed": True,
-                    },
-                    error=navigation_evidence.error or "managed browser navigation failed",
-                    event_id=action.event_id,
-                    started_at=started,
-                    completed_at=utc_now(),
+            if user_plane:
+                if initial.url != url:
+                    browser.close_session(session.session_id)
+                    closed = True
+                    return BodyActionResult(
+                        action_id=action.action_id,
+                        kind=action.kind,
+                        success=False,
+                        data={
+                            "expected_start_url": url,
+                            "observed_start_url": initial.url,
+                            "browser_plane": BrowserPlane.USER.value,
+                            "closed": True,
+                        },
+                        error=(
+                            "authorized user browser current page does not match the explicitly "
+                            "requested start URL; refusing navigation or mutation"
+                        ),
+                        event_id=action.event_id,
+                        started_at=started,
+                        completed_at=utc_now(),
+                    )
+                start_observation = initial
+                start_url = initial.url
+            else:
+                navigate = BrowserAction.create(
+                    session_id=session.session_id,
+                    kind=BrowserActionKind.NAVIGATE,
+                    page_id=initial.page_id,
+                    args={"url": url},
+                    expected={"url_equals": url},
                 )
+                navigate_authority = BrowserActionAuthority.from_observation(
+                    navigate, initial, permission
+                )
+                navigation_evidence = browser.act(navigate, navigate_authority)
+                if not navigation_evidence.success:
+                    browser.close_session(session.session_id)
+                    closed = True
+                    return BodyActionResult(
+                        action_id=action.action_id,
+                        kind=action.kind,
+                        success=False,
+                        data={
+                            "browser_evidence": asdict(navigation_evidence),
+                            "closed": True,
+                        },
+                        error=navigation_evidence.error or "managed browser navigation failed",
+                        event_id=action.event_id,
+                        started_at=started,
+                        completed_at=utc_now(),
+                    )
+                start_observation = browser.observe(
+                    session.session_id,
+                    page_id=navigation_evidence.page_id,
+                )
+                start_url = navigation_evidence.url_after
 
             textbox_observation = browser.observe_target(
                 session.session_id,
@@ -147,7 +182,7 @@ class BrowserFormSubmitBody(BrowserTextWorkBody):
                     kind=BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME,
                     value=textbox_name,
                 ),
-                page_id=navigation_evidence.page_id,
+                page_id=start_observation.page_id,
             )
             if (
                 textbox_observation.target is None
@@ -181,7 +216,7 @@ class BrowserFormSubmitBody(BrowserTextWorkBody):
                         "text_evidence": asdict(text_evidence),
                         "closed": True,
                     },
-                    error=text_evidence.error or "managed browser text entry failed",
+                    error=text_evidence.error or "browser text entry failed",
                     event_id=action.event_id,
                     started_at=started,
                     completed_at=utc_now(),
@@ -212,7 +247,7 @@ class BrowserFormSubmitBody(BrowserTextWorkBody):
                         "text_evidence": asdict(text_evidence),
                         "closed": True,
                     },
-                    error="managed browser text postcondition was not independently proven",
+                    error="browser text postcondition was not independently proven",
                     event_id=action.event_id,
                     started_at=started,
                     completed_at=utc_now(),
@@ -224,7 +259,7 @@ class BrowserFormSubmitBody(BrowserTextWorkBody):
                     kind=BrowserTargetQueryKind.ACCESSIBLE_BUTTON_NAME,
                     value=button_name,
                 ),
-                page_id=text_evidence.page_id or navigation_evidence.page_id,
+                page_id=text_evidence.page_id or start_observation.page_id,
             )
             if (
                 button_observation.target is None
@@ -260,7 +295,7 @@ class BrowserFormSubmitBody(BrowserTextWorkBody):
                         "submit_evidence": asdict(submit_evidence),
                         "closed": True,
                     },
-                    error=submit_evidence.error or "managed browser form submission failed",
+                    error=submit_evidence.error or "browser form submission failed",
                     event_id=action.event_id,
                     started_at=started,
                     completed_at=utc_now(),
@@ -287,8 +322,8 @@ class BrowserFormSubmitBody(BrowserTextWorkBody):
                         "closed": True,
                     },
                     error=(
-                        "managed browser form submission postcondition did not match "
-                        "the explicitly requested URL"
+                        "browser form submission postcondition did not match the explicitly "
+                        "requested URL"
                     ),
                     event_id=action.event_id,
                     started_at=started,
@@ -297,16 +332,23 @@ class BrowserFormSubmitBody(BrowserTextWorkBody):
 
             browser.close_session(session.session_id)
             closed = True
+            navigation_provider = (
+                str(navigation_evidence.data.get("provider") or "")
+                if navigation_evidence is not None
+                else ""
+            )
             return BodyActionResult(
                 action_id=action.action_id,
                 kind=action.kind,
                 success=True,
                 output=verified.url,
                 data={
-                    "url": navigation_evidence.url_after,
+                    "url": start_url,
                     "expected_url": expected_url,
                     "observed_url": verified.url,
                     "page_id": verified.page_id,
+                    "browser_plane": session.plane.value,
+                    "navigation_performed": navigation_evidence is not None,
                     "textbox_target_id": textbox_observation.target.target_id,
                     "textbox_name": textbox_observation.target.name,
                     "button_target_id": button_observation.target.target_id,
@@ -327,7 +369,7 @@ class BrowserFormSubmitBody(BrowserTextWorkBody):
                     "provider": str(
                         submit_evidence.data.get("provider")
                         or text_data.get("provider")
-                        or navigation_evidence.data.get("provider")
+                        or navigation_provider
                         or session.provider
                     ),
                     "text_evidence": asdict(text_evidence),
