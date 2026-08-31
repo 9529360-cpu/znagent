@@ -13,7 +13,7 @@ At that checkpoint:
 - Managed Browser E2E `33339937362` completed successfully on `f68ff28de63bc334033b5b8f05520c96deffbc70`; later commits in the same tranche changed compiler contract tests/workflow coverage and passed Work Recovery plus full ZN CI.
 - Hosted Windows Clean Install and Release Candidate runs still fail before execution with `steps=[]` and `runner_id=0`. Treat this as runner-allocation infrastructure evidence unless a future run actually executes steps.
 
-Fresh maintainers must still query live refs, open PRs and CI before acting. Exact SHAs in this file are evidence checkpoints, not permanent branch oracles.
+PR #123 promoted the reconciled verified tranche to canonical `main`; canonical merge SHA is `ac6b3846d621dd790f587cbc08311b162eba6b97`. Fresh maintainers must still query live refs, open PRs and CI before acting. Exact SHAs in this file are evidence checkpoints, not permanent branch oracles.
 
 ## Managed-browser product reality
 
@@ -48,31 +48,32 @@ The structured-action compiler now limits historical `text -> content` compatibi
 
 PR #121 is merged. If a BUG-report dispatch was durably reserved and the resident stopped before recording delivery or uncertainty, reconstructing the outbox now promotes the abandoned `dispatching` record to `outcome_uncertain`, preserves `dispatch_attempts`, and continues to reject automatic replay. This recovery is covered by the successful Work Recovery run above.
 
-BUG/repair reporting otherwise remains local-only. There is no operator-controlled network transport, acknowledgement or maintainer intake active caller. The user has explicitly deprioritized that missing transport for the current stage.
+BUG/repair reporting otherwise remains local-only in merged product code. There is no merged operator-controlled network transport, acknowledgement or maintainer intake active caller yet.
+
+The current large-stage collaboration has an isolated transport/intake implementation lane. That lane owns the new transport/intake modules plus the related `upstream_bug_report.py` / `reporting_maintenance_resident.py` call chain until it produces a reviewable PR. The promotion/documentation lane must not concurrently edit those product files. When the isolated PR arrives, re-anchor to its live base/head/diff and verification evidence before merge.
 
 Normal installed ZN still has no official repository push, PR, merge, release or signing authority.
 
 ## Current repository hygiene
 
-At the `5f14a645...` checkpoint, `dev/zn-agent` was 56 commits ahead of and 0 commits behind `main`. This documentation had fallen behind the verified code and CI; that drift is itself a recoverability defect. Reconcile these files and promote through the normal traceable `dev -> main` flow once the live comparison still shows no reverse drift.
+The verified development tranche has been promoted through PR #123 to canonical `main`. Canonical ZN CI run `33353573721` is the post-promotion authority; inspect its live final state rather than inferring success from the dev run.
 
-Repository synchronization is engineering hygiene, not the product milestone, but canonical `main` must not remain arbitrarily detached from a fully verified development tranche.
+Repository synchronization is engineering hygiene, not the product milestone. `dev/zn-agent` may temporarily trail `main` by the promotion merge commit; reconcile normal branch ancestry without force updates and without disturbing active isolated product branches.
 
 ## Current product gaps
 
-1. User Browser Bridge is still sensing-only foundation. The real Windows proof uses an isolated temporary profile; attachment to an authenticated existing Edge/Chrome session, explicit permission and mutation are not product-closed. Never solve this by copying cookies, passwords or profile data.
-2. Managed browser remains deliberately bounded. Generic target discovery, multi-tab/popup/frame authority, downloads/uploads and broad arbitrary interaction are not product-closed.
-3. Browser recovery is strong where a trustworthy durable observed result exists; unknown external mutations without sufficient evidence still fail closed and require bounded re-sense/reclassification work.
-4. Installed update observation and release machinery exist, including public-channel parsing and package verification, but formal N -> N+1 continuity, rollback and signing/trust remain approval-gated product stages.
-5. BUG/repair transport/intake is missing but currently deprioritized by the user.
+1. BUG/repair transport/intake is the active isolated product stage: local formation and crash-safe dispatch accounting are verified, but operator-controlled transport, acknowledgement/reconciliation and maintainer intake are not merged yet.
+2. User Browser Bridge is still sensing-only foundation. Attachment to an authenticated existing Edge/Chrome session, explicit permission and mutation are not product-closed. Never solve this by copying cookies, passwords or profile data.
+3. Managed browser remains deliberately bounded. Generic target discovery, multi-tab/popup/frame authority, downloads/uploads and broad arbitrary interaction are not product-closed.
+4. Browser recovery is strong where a trustworthy durable observed result exists; unknown external mutations without sufficient evidence still fail closed and require bounded re-sense/reclassification work.
+5. Installed update observation and release machinery exist, including public-channel parsing and package verification, but formal N -> N+1 continuity, rollback and signing/trust remain approval-gated product stages.
 6. Unified health remains partial.
 
 ## Immediate continuation
 
-1. Re-read live `dev/zn-agent`, `main`, open PRs and the latest CI.
-2. Merge the documentation reconciliation without changing product claims beyond verified evidence.
-3. Promote the verified development tranche to `main` through normal PR/merge flow if live refs remain `dev ahead / behind 0`, then verify canonical CI.
-4. Resume a user-visible product stage. The strongest current candidate is a permissioned User Browser Bridge slice that operates an already-focused, non-password control in the user's existing browser without extracting profile credentials.
-5. Keep each new browser mutation bound to fresh exact target evidence, explicit user authority, independent postcondition and restart-safe semantics.
+1. Finish reading canonical ZN CI `33353573721` for PR #123's main merge and classify only executed-code failures as product failures.
+2. Preserve the transport/intake ownership boundary; do not modify its reserved product files from the promotion/documentation lane.
+3. When the isolated transport/intake PR arrives, review its live base/head/diff, authority boundaries, retry/reconciliation semantics and actual tests before merge.
+4. After that merge, re-evaluate the highest-value product gap from real code and runtime evidence rather than from this queue alone.
 
 No force push, history rewrite, repository credential expansion, updater replacement, rollback, release signing or destructive identity/memory migration is authorized by this handoff.
