@@ -4,8 +4,9 @@ from __future__ import annotations
 
 The resident health journal remains canonical. Report projection is secondary and
 best-effort: a broken outbox must never roll back or mask a real health failure.
-This layer only prepares a local durable report envelope. It performs no network,
-repository, credential, push, PR, merge, release, updater or signing action.
+Health projection only prepares a local durable report envelope. An optional
+operator-controlled transport may be invoked explicitly; it does not grant
+repository, push, PR, merge, release, updater, signing, or credential authority.
 """
 
 import sqlite3
@@ -13,12 +14,20 @@ from typing import Any, Callable
 
 from .browser_form_submit_resident import BrowserFormSubmitResidentRuntime
 from .upstream_bug_report import ResidentUpstreamBugReportOutbox
+from .upstream_bug_report_transport import UpstreamBugReportTransport
 
 
 class ReportingMaintenanceResidentRuntime(BrowserFormSubmitResidentRuntime):
     """Resident with bounded automatic health -> upstream-report projection."""
 
-    def __init__(self, *, kernel, capabilities=None, budget=None):
+    def __init__(
+        self,
+        *,
+        kernel,
+        capabilities=None,
+        budget=None,
+        report_transport: UpstreamBugReportTransport | None = None,
+    ):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
         # Browser form/text composition installs the final browser-aware Body after
         # the inherited HealthAwareResidentRuntime observed an earlier Body. Re-bind
@@ -26,6 +35,7 @@ class ReportingMaintenanceResidentRuntime(BrowserFormSubmitResidentRuntime):
         # Body failures remain durable health truth.
         self._install_body_dispatch_health_observer()
         self.upstream_bug_reports: ResidentUpstreamBugReportOutbox | None = None
+        self.upstream_bug_report_transport = report_transport
         self._install_upstream_bug_report_outbox()
         self._install_health_report_projection()
         self._repair_pending_report_projection_best_effort()
@@ -37,18 +47,27 @@ class ReportingMaintenanceResidentRuntime(BrowserFormSubmitResidentRuntime):
             try:
                 owner = self._upstream_bug_report_owner()
             except (sqlite3.Error, RuntimeError):
-                data["upstream_bug_reports"] = self._unavailable_report_status()
+                data["upstream_bug_reports"] = self._unavailable_report_status(
+                    transport_available=self.upstream_bug_report_transport is not None
+                )
                 return data
         try:
             snapshot = owner.snapshot()
         except sqlite3.Error:
             self.upstream_bug_reports = None
-            data["upstream_bug_reports"] = self._unavailable_report_status()
+            data["upstream_bug_reports"] = self._unavailable_report_status(
+                transport_available=self.upstream_bug_report_transport is not None
+            )
         else:
+            transport_available = self.upstream_bug_report_transport is not None
             data["upstream_bug_reports"] = {
                 "available": True,
-                "authority": "local_outbox_only",
-                "transport_available": False,
+                "authority": (
+                    "bounded_operator_transport"
+                    if transport_available
+                    else "local_outbox_only"
+                ),
+                "transport_available": transport_available,
                 **snapshot,
             }
         return data
@@ -58,6 +77,22 @@ class ReportingMaintenanceResidentRuntime(BrowserFormSubmitResidentRuntime):
 
         task = self._maintenance_task_by_id(task_id)
         return self._upstream_bug_report_owner().prepare(task)
+
+    def dispatch_upstream_bug_report(self, report_key: str) -> dict[str, Any]:
+        """Explicitly dispatch one pending report through configured operator transport."""
+
+        transport = self.upstream_bug_report_transport
+        if transport is None:
+            raise RuntimeError("upstream bug report transport is not configured")
+        return transport.dispatch(self._upstream_bug_report_owner(), report_key)
+
+    def reconcile_upstream_bug_report(self, report_key: str) -> dict[str, Any]:
+        """Reconcile one uncertain dispatch without blindly replaying it."""
+
+        transport = self.upstream_bug_report_transport
+        if transport is None:
+            raise RuntimeError("upstream bug report transport is not configured")
+        return transport.reconcile(self._upstream_bug_report_owner(), report_key)
 
     def _install_upstream_bug_report_outbox(self) -> None:
         try:
@@ -130,11 +165,15 @@ class ReportingMaintenanceResidentRuntime(BrowserFormSubmitResidentRuntime):
         return owner
 
     @staticmethod
-    def _unavailable_report_status() -> dict[str, Any]:
+    def _unavailable_report_status(*, transport_available: bool) -> dict[str, Any]:
         return {
             "available": False,
-            "authority": "local_outbox_only",
-            "transport_available": False,
+            "authority": (
+                "bounded_operator_transport"
+                if transport_available
+                else "local_outbox_only"
+            ),
+            "transport_available": transport_available,
             "report_count": 0,
             "pending_count": 0,
             "outcome_uncertain_count": 0,
