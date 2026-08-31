@@ -135,10 +135,19 @@ class AuthorizedCDPUserBrowser(SemanticPlaywrightManagedBrowser):
 
     def _capture(self, session: _ManagedSession, page_id: str, **kwargs: Any):
         observation = super()._capture(session, page_id, **kwargs)
+        if observation.url != "about:blank" and not self._url_allowed(
+            observation.url,
+            session.permission,
+        ):
+            session.last_observation.pop(page_id, None)
+            self._invalidate_target_binding(session, page_id)
+            raise UserBrowserBridgeError(
+                "authorized user-browser current page is outside the permitted network boundary"
+            )
         metadata = dict(observation.metadata)
         metadata["service_workers"] = "user_owned_unmodified"
         metadata["attachment"] = "authorized_existing_session"
-        metadata["network_policy"] = "user_browser_unmodified; ZN action authority enforced"
+        metadata["network_policy"] = "user_browser_unmodified; ZN observation/action scope enforced"
         user_observation = replace(observation, metadata=metadata)
         session.last_observation[page_id] = user_observation
         return user_observation
