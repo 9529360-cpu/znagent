@@ -8,6 +8,7 @@ import urllib.error
 import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from zn_agent.core.upstream_bug_report_intake_server import build_server
 
@@ -46,11 +47,24 @@ class MaintainerReportHTTPServerTests(unittest.TestCase):
                 thread.join(timeout=5)
 
     @staticmethod
-    def _request(url: str, *, method: str = "GET", payload=None, token: str | None = "test-receiver-secret"):
+    def _request(
+        url: str,
+        *,
+        method: str = "GET",
+        payload=None,
+        token: str | None = "test-receiver-secret",
+        report_key: str | None = None,
+    ):
         data = None if payload is None else json.dumps(payload).encode("utf-8")
-        headers = {}
+        if report_key is None:
+            if isinstance(payload, dict):
+                report_key = str(payload.get("report_key") or "")
+            else:
+                report_key = urlsplit(url).path.rsplit("/", 1)[-1]
+        headers = {"X-ZN-Report-Key": report_key}
         if data is not None:
             headers["Content-Type"] = "application/json"
+            headers["Idempotency-Key"] = report_key
         if token is not None:
             headers["Authorization"] = f"Bearer {token}"
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
@@ -115,6 +129,25 @@ class MaintainerReportHTTPServerTests(unittest.TestCase):
                 self.assertEqual(response, {"error": "unauthorized"})
             self.assertEqual(server.intake.snapshot()["report_count"], 0)
 
+    def test_transport_identity_headers_must_match_payload_and_path(self):
+        with self._server() as (server, _database, base_url):
+            status, response = self._request(
+                f"{base_url}/reports",
+                method="POST",
+                payload=self._payload(),
+                report_key="d" * 64,
+            )
+            self.assertEqual(status, 400)
+            self.assertEqual(response, {"error": "invalid_report"})
+            self.assertEqual(server.intake.snapshot()["report_count"], 0)
+
+            status, response = self._request(
+                f"{base_url}/reports/{'a' * 64}",
+                report_key="d" * 64,
+            )
+            self.assertEqual(status, 400)
+            self.assertEqual(response, {"error": "invalid_report_key"})
+
     def test_unbounded_fields_fail_closed_without_storage(self):
         with self._server() as (server, _database, base_url):
             payload = self._payload()
@@ -136,6 +169,8 @@ class MaintainerReportHTTPServerTests(unittest.TestCase):
                 headers={
                     "Authorization": "Bearer test-receiver-secret",
                     "Content-Type": "application/json",
+                    "X-ZN-Report-Key": "a" * 64,
+                    "Idempotency-Key": "a" * 64,
                 },
                 method="POST",
             )
