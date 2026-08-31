@@ -1,81 +1,72 @@
 # ZN Maintainer Handoff
 
-This is the current engineering work site and fact index, not a chat transcript or execution script. Real code, live Git refs and actual test/build/CI results override this file when they disagree.
+This is a lightweight engineering work site and fact index, not a chat transcript, execution script, or live Git database. Real code, live Git refs and actual test/build/CI results override this file when they disagree.
 
-## Current verified checkpoint
+SHAs, CI runs and branch states written here are **observed/verified checkpoints**. A fresh maintainer must query current `main`, `dev/zn-agent`, relevant `work/*`, open PRs and CI again instead of treating any checkpoint below as the current ref value.
 
-The latest verified development checkpoint is merge `5f14a6453aadba196060e954ce7bc674551ac3e8` on `dev/zn-agent`.
+## Recent verified checkpoint
 
-At that checkpoint:
+Observed development checkpoint: merge `f586c2fc9816e5724f4a0a33a2126a8b3eb0f81b` on `dev/zn-agent`, merging PR #127, **Connect bounded upstream BUG report transport and intake**.
 
-- ZN CI `33340676146` completed successfully across Source Boundary, Kernel/Python full core tests and Electron/TypeScript.
-- Work Recovery E2E `33340676170` completed successfully.
-- Managed Browser E2E `33339937362` completed successfully on `f68ff28de63bc334033b5b8f05520c96deffbc70`; later commits in the same tranche changed compiler contract tests/workflow coverage and passed Work Recovery plus full ZN CI.
-- Hosted Windows Clean Install and Release Candidate runs still fail before execution with `steps=[]` and `runner_id=0`. Treat this as runner-allocation infrastructure evidence unless a future run actually executes steps.
+Executable evidence for that checkpoint:
 
-PR #123 promoted the reconciled verified tranche to canonical `main`; canonical merge SHA is `ac6b3846d621dd790f587cbc08311b162eba6b97`. Fresh maintainers must still query live refs, open PRs and CI before acting. Exact SHAs in this file are evidence checkpoints, not permanent branch oracles.
+- ZN CI `33358941761` completed with conclusion `success` for head `f586c2fc9816e5724f4a0a33a2126a8b3eb0f81b`.
+- The transport/intake tranche therefore has repository-native full ZN CI evidence, not only static code review.
+- Hosted clean-install/release-candidate jobs that fail before any step executes remain runner-allocation/infrastructure evidence unless a later run actually executes product steps.
 
-## Managed-browser product reality
+Canonical `main` was observed at `0dbec575fc128bd1cc1837e7485b5a37e0ac8393` before this handoff update. Treat that SHA only as an observation checkpoint and re-query live refs before promotion or comparison.
 
-The same-session form transaction from PR #120 is merged and verified. Ordinary Work can now deterministically perform this bounded scenario:
+## Upstream BUG / repair reporting reality
 
-```text
-explicit start URL
--> fresh exact semantic textbox observation by accessible name
--> explicit bounded text entry
--> same-node length/SHA-256 verification
--> fresh exact semantic button observation by accessible name
--> submit in the same managed Chromium session
--> independent explicit same-origin final-URL verification
--> durable Work result
--> observed-result restart recovery without blind replay
-```
+The former transport/intake lane is no longer merely planned or isolated. PR #127 is merged into `dev/zn-agent` and the merged checkpoint above has full ZN CI success.
 
-The real Chromium fixture makes the final `/done` result depend on the exact text still being present when the button is clicked, proving same-session state retention rather than a sequence of disconnected primitives.
+The implemented resident-side path now includes:
 
-The verified ordinary Work browser surface now includes:
+- bounded privacy-safe local BUG report formation and durable outbox accounting;
+- explicit operator-configured HTTPS transport;
+- durable reservation before external dispatch;
+- no blind automatic replay after uncertain external outcome;
+- explicit reconciliation path;
+- maintainer-side bounded intake/deduplication primitive;
+- resident/provider configuration wiring for the transport.
 
-- safe navigation with observed URL completion;
-- exact accessible-name checkbox selection and checked-state verification;
-- exact accessible-name button click with explicit URL postcondition;
-- exact accessible-name textbox entry with same-node digest/length verification;
-- a bounded same-session textbox-plus-submit transaction;
-- durable observed-result recovery for the verified button, textbox and form paths.
+This is not yet a complete product loop. Important remaining gaps include:
 
-The structured-action compiler now limits historical `text -> content` compatibility to `write_text` / `write_file`. Browser, form and keyboard text no longer receive a duplicate plaintext `content` alias. Form Body history also retains a second defensive redaction boundary. The structured compiler and its tests are included in Managed Browser and Work Recovery workflow coverage.
-
-PR #125 is the current User Browser Bridge candidate. On candidate commit `f1ded231d44dc58e9d9a597213f8f738ea5560f4`, Windows Interactive Desktop E2E `33354912873`, full ZN CI `33354911263` and Work Recovery E2E `33354930689` all completed successfully. Hosted clean-install run `33354874932` failed before execution with `steps=[]`; it is runner-allocation evidence, not an executed candidate failure.
-
-## Resident reliability and reporting reality
-
-PR #121 is merged. If a BUG-report dispatch was durably reserved and the resident stopped before recording delivery or uncertainty, reconstructing the outbox now promotes the abandoned `dispatching` record to `outcome_uncertain`, preserves `dispatch_attempts`, and continues to reject automatic replay. This recovery is covered by the successful Work Recovery run above.
-
-BUG/repair reporting otherwise remains local-only in merged product code. There is no merged operator-controlled network transport, acknowledgement or maintainer intake active caller yet.
-
-The current large-stage collaboration has an isolated transport/intake implementation lane. That lane owns the new transport/intake modules plus the related `upstream_bug_report.py` / `reporting_maintenance_resident.py` call chain until it produces a reviewable PR. The promotion/documentation lane must not concurrently edit those product files. When the isolated PR arrives, re-anchor to its live base/head/diff and verification evidence before merge.
+1. reconciliation semantics still need review so an ambiguous HTTP 404 cannot incorrectly prove authoritative absence and unlock a duplicate external side effect;
+2. the persistent daemon/RPC/desktop control surface does not yet expose the explicit dispatch/reconcile actions;
+3. maintainer intake is a storage/protocol primitive, not yet a deployed HTTP service;
+4. authenticated transport is being developed separately and must remain credential-reference based rather than embedding secrets in resident config/status.
 
 Normal installed ZN still has no official repository push, PR, merge, release or signing authority.
 
-## Current repository hygiene
+## Active durable work
 
-The verified development tranche has been promoted through PR #123 to canonical `main`. Canonical ZN CI run `33353573721` is the post-promotion authority; inspect its live final state rather than inferring success from the dev run.
+`work/upstream-report-auth` is an **active** lane because it has durable Git evidence and an open PR: draft PR #128, **Protect upstream report transport with credential references**.
 
-Repository synchronization is engineering hygiene, not the product milestone. `dev/zn-agent` may temporarily trail `main` by the promotion merge commit; reconcile normal branch ancestry without force updates and without disturbing active isolated product branches.
+At the last observed comparison against `dev/zn-agent` checkpoint `f586c2fc...`, the branch had 4 unique commits and no behind commits. Re-query the PR and branch before editing or merging it; these counts are an observation, not a permanent live-state claim.
 
-## Current product gaps
+The lane is intended to keep maintainer endpoint credentials behind ZN's existing credential-reference boundary and out of resident config/status/database evidence. It must receive repository-native executable validation before merge.
 
-1. BUG/repair transport/intake is the active isolated product stage: local formation and crash-safe dispatch accounting are verified, but operator-controlled transport, acknowledgement/reconciliation and maintainer intake are not merged yet.
-2. User Browser Bridge has a bounded local mutation foundation: an explicitly scoped, already-focused, empty non-password HTML Edit can receive one non-replayable text input and be independently verified by fresh UIA RuntimeId plus privacy-safe length/digest evidence. Current real Windows evidence still uses an isolated temporary Edge profile; attachment to an authenticated existing Edge/Chrome session and user-facing permission UX are not product-closed. Never solve this by copying cookies, passwords or profile data.
-3. Managed browser remains deliberately bounded. Generic target discovery, multi-tab/popup/frame authority, downloads/uploads and broad arbitrary interaction are not product-closed.
-4. Browser recovery is strong where a trustworthy durable observed result exists; unknown external mutations without sufficient evidence still fail closed and require bounded re-sense/reclassification work.
-5. Installed update observation and release machinery exist, including public-channel parsing and package verification, but formal N -> N+1 continuity, rollback and signing/trust remain approval-gated product stages.
-6. Unified health remains partial.
+## Handoff discipline
 
-## Immediate continuation
+Do not write a lane as `active`, `in progress`, or `isolated` merely because a previous maintainer intended to work on it. Such claims require durable recoverable evidence: a real branch delta or corresponding open PR. Planned ownership without implementation evidence must be labeled `planned` or `reserved`.
 
-1. Finish reading canonical ZN CI `33353573721` for PR #123's main merge and classify only executed-code failures as product failures.
-2. Preserve the transport/intake ownership boundary; do not modify its reserved product files from the promotion/documentation lane.
-3. When the isolated transport/intake PR arrives, review its live base/head/diff, authority boundaries, retry/reconciliation semantics and actual tests before merge.
-4. After that merge, re-evaluate the highest-value product gap from real code and runtime evidence rather than from this queue alone.
+Do not try to keep a literal “current HEAD” permanently synchronized inside this file. Updating this file itself changes HEAD. Record meaningful verified checkpoints when useful, then let the next maintainer recover live refs from Git/GitHub.
 
-No force push, history rewrite, repository credential expansion, updater replacement, rollback, release signing or destructive identity/memory migration is authorized by this handoff.
+Update this handoff as a low-cost closeout step after a coherent engineering slice, explicit interruption/handoff, or a material change in product maturity/risk. Do not make every commit produce Markdown churn, and do not let documentation maintenance displace product work.
+
+## Current product priorities
+
+Re-rank these from live code and evidence rather than treating this list as command authority:
+
+1. preserve at-most-once external BUG-report behavior by tightening reconciliation so only explicit authoritative receiver evidence can unlock retry;
+2. complete authenticated upstream report transport without exposing repository or maintainer credentials to installed ZN;
+3. expose explicit operator dispatch/reconcile through the real resident control surface, without automatic health-driven upload;
+4. close the maintainer intake deployment/authentication path;
+5. continue broader ZN product gaps only after re-checking whether a higher-severity identity, memory, lifecycle, security or main-path issue has appeared.
+
+## Safety / authority boundary
+
+No force push, history rewrite, repository credential expansion, updater replacement, rollback, release signing, destructive identity/memory migration, or self-approval of maintenance safety rules is authorized by this handoff.
+
+Normal reversible code changes, tests, work branches, commits, pushes, PRs, CI repair and low-risk branch synchronization remain ordinary maintainer work under repository rules.
