@@ -85,6 +85,9 @@ class MaintainerReportRequestHandler(BaseHTTPRequestHandler):
             payload = json.loads(body.decode("utf-8"))
             if not isinstance(payload, dict):
                 raise ValueError("report body must be an object")
+            report_key = str(payload.get("report_key") or "").strip().lower()
+            if not self._transport_keys_match(report_key, require_idempotency=True):
+                raise ValueError("report transport identity does not match payload")
             result = self.server.intake.accept(payload)
         except (UnicodeDecodeError, json.JSONDecodeError, ValueError, TypeError):
             self._json(HTTPStatus.BAD_REQUEST, {"error": "invalid_report"})
@@ -105,9 +108,12 @@ class MaintainerReportRequestHandler(BaseHTTPRequestHandler):
         if not path.startswith(prefix):
             self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
             return
-        report_key = unquote(path[len(prefix) :])
+        report_key = unquote(path[len(prefix) :]).strip().lower()
         if not report_key or "/" in report_key:
             self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            return
+        if not self._transport_keys_match(report_key, require_idempotency=False):
+            self._json(HTTPStatus.BAD_REQUEST, {"error": "invalid_report_key"})
             return
         try:
             result = self.server.intake.reconciliation(report_key)
@@ -123,22 +129,38 @@ class MaintainerReportRequestHandler(BaseHTTPRequestHandler):
             return False
         return hmac.compare_digest(supplied.strip(), self.server.bearer_token)
 
+    def _transport_keys_match(self, report_key: str, *, require_idempotency: bool) -> bool:
+        transport_key = str(self.headers.get("X-ZN-Report-Key") or "").strip().lower()
+        if not report_key or not hmac.compare_digest(transport_key, report_key):
+            return False
+        if not require_idempotency:
+            return True
+        idempotency_key = str(self.headers.get("Idempotency-Key") or "").strip().lower()
+        return hmac.compare_digest(idempotency_key, report_key)
+
     def _unauthorized(self) -> None:
-        self.send_response(HTTPStatus.UNAUTHORIZED)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("WWW-Authenticate", 'Bearer realm="zn-maintainer-reports"')
-        body = b'{"error":"unauthorized"}'
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
+        self._respond(
+            HTTPStatus.UNAUTHORIZED,
+            b'{"error":"unauthorized"}',
+            authenticate=True,
+        )
 
     def _json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        self._respond(status, body)
+
+    def _respond(self, status: HTTPStatus, body: bytes, *, authenticate: bool = False) -> None:
+        # Close after every bounded exchange. In particular, a rejected oversized
+        # body is deliberately not consumed and therefore must not be reused as a
+        # subsequent request on the same connection.
+        self.close_connection = True
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        if authenticate:
+            self.send_header("WWW-Authenticate", 'Bearer realm="zn-maintainer-reports"')
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(body)
 
