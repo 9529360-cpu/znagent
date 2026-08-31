@@ -1,6 +1,9 @@
 name: ZN Windows Release Candidate
 
 on:
+  # Keep the dev push event temporarily so this workflow's concurrency group can
+  # cancel an older queued automatic candidate. The package job itself is manual:
+  # dev pushes already receive the stronger Clean Install package/install/start proof.
   push:
     branches:
       - dev/zn-agent
@@ -30,6 +33,7 @@ concurrency:
 
 jobs:
   package-candidate:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     name: Windows x64 unsigned candidate
     runs-on: [self-hosted, Windows, X64, zn-interactive]
     timeout-minutes: 60
