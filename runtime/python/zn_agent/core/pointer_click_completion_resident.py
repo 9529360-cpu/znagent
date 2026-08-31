@@ -11,15 +11,11 @@ probe whose whole completion scope is that same verified effect.
 from typing import Any
 
 from .action import NativeActionIntent
-from .goal_resident import ResidentGoalRuntime
 from .models import ExecutionPath, ResidentRunResult
 from .pointer_click_resident import VerifiedPointerClickResidentRuntime
 
 
-class EffectScopedPointerClickResidentRuntime(
-    ResidentGoalRuntime,
-    VerifiedPointerClickResidentRuntime,
-):
+class EffectScopedPointerClickResidentRuntime(VerifiedPointerClickResidentRuntime):
     """Active resident that never upgrades a local click effect into broad success."""
 
     _POINTER_CLICK_EVENT_KIND = "effect_probe"
