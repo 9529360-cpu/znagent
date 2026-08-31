@@ -44,6 +44,8 @@ The verified ordinary Work browser surface now includes:
 
 The structured-action compiler now limits historical `text -> content` compatibility to `write_text` / `write_file`. Browser, form and keyboard text no longer receive a duplicate plaintext `content` alias. Form Body history also retains a second defensive redaction boundary. The structured compiler and its tests are included in Managed Browser and Work Recovery workflow coverage.
 
+PR #125 is the current User Browser Bridge candidate. On candidate commit `f1ded231d44dc58e9d9a597213f8f738ea5560f4`, Windows Interactive Desktop E2E `33354912873`, full ZN CI `33354911263` and Work Recovery E2E `33354930689` all completed successfully. Hosted clean-install run `33354874932` failed before execution with `steps=[]`; it is runner-allocation evidence, not an executed candidate failure.
+
 ## Resident reliability and reporting reality
 
 PR #121 is merged. If a BUG-report dispatch was durably reserved and the resident stopped before recording delivery or uncertainty, reconstructing the outbox now promotes the abandoned `dispatching` record to `outcome_uncertain`, preserves `dispatch_attempts`, and continues to reject automatic replay. This recovery is covered by the successful Work Recovery run above.

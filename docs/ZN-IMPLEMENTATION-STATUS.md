@@ -140,6 +140,10 @@ The form Chromium E2E reaches `/done` only when the exact typed value is still p
 - ZN CI `33340676146` — full Source Boundary, Kernel/Python, Electron and final status publication success on `5f14a645...`.
 - PR #123 / merge `ac6b3846d621dd790f587cbc08311b162eba6b97` — promoted the verified development tranche to canonical `main`.
 - Canonical ZN CI `33353573721` — post-promotion run for `ac6b3846...`; read live final state before claiming canonical closure.
+- PR #125 candidate `f1ded231d44dc58e9d9a597213f8f738ea5560f4` — connects bounded focused UIA Edit text mutation to the existing non-replayable resident lifecycle.
+- Windows Interactive Desktop E2E `33354912873` — success including real installed Edge text mutation through default UIA plus keyboard input.
+- ZN CI `33354911263` — full success on the PR #125 candidate.
+- Work Recovery E2E `33354930689` — success on the PR #125 candidate.
 - Hosted Windows Clean Install / Release Candidate runs that fail with `runner_id=0` and `steps=[]` are runner-allocation infrastructure evidence, not executed-code failures.
 
 Older self-maintenance evidence remains valid where the underlying code has not changed; consult Git history and CI for exact runs when needed.
