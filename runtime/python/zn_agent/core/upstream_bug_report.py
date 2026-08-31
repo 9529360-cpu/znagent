@@ -162,6 +162,25 @@ class ResidentUpstreamBugReportOutbox:
             error_type=type(error).__name__[:128],
         )
 
+    def require_reconciliation(self, report_key: str) -> str:
+        key = self._report_key(report_key)
+        row = self._row(key)
+        if row is None:
+            raise KeyError("upstream bug report does not exist")
+        if str(row["state"]) != "outcome_uncertain":
+            raise RuntimeError("upstream bug report does not require reconciliation")
+        return key
+
+    def mark_reconciled_delivered(self, report_key: str) -> dict[str, Any]:
+        """Accept independent receiver evidence that an uncertain report exists."""
+
+        return self._finish_reconciliation(report_key, state="delivered")
+
+    def mark_reconciled_absent(self, report_key: str) -> dict[str, Any]:
+        """Unlock retry only after authoritative receiver evidence says absent."""
+
+        return self._finish_reconciliation(report_key, state="pending")
+
     def snapshot(self, *, limit: int = 128) -> dict[str, Any]:
         bounded = max(1, min(512, int(limit)))
         with closing(self._connect()) as conn:
@@ -226,6 +245,30 @@ class ResidentUpstreamBugReportOutbox:
             conn.commit()
             finished = self._select_report(conn, key)
         return self._snapshot(finished)
+
+    def _finish_reconciliation(self, report_key: str, *, state: str) -> dict[str, Any]:
+        if state not in {"delivered", "pending"}:
+            raise ValueError("invalid upstream bug report reconciliation state")
+        key = self._report_key(report_key)
+        now = utc_now()
+        with closing(self._connect()) as conn:
+            cursor = conn.execute(
+                "UPDATE resident_upstream_bug_reports "
+                "SET state=?,last_error_type=NULL,updated_at=? "
+                "WHERE report_key=? AND state='outcome_uncertain'",
+                (state, now, key),
+            )
+            if cursor.rowcount != 1:
+                row = conn.execute(
+                    "SELECT state FROM resident_upstream_bug_reports WHERE report_key=?",
+                    (key,),
+                ).fetchone()
+                if row is None:
+                    raise KeyError("upstream bug report does not exist")
+                raise RuntimeError("upstream bug report is not awaiting reconciliation")
+            conn.commit()
+            reconciled = self._select_report(conn, key)
+        return self._snapshot(reconciled)
 
     def _row(self, report_key: str):
         key = self._report_key(report_key)
