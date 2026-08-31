@@ -3,6 +3,8 @@ const PROTOCOL_VERSION = 1
 const EXTENSION_ID = 'likpiakgiamipheeekdgekdahafjinnh'
 const STORAGE_KEY = 'znAuthorizedTabId'
 
+let commandLoopTabId = null
+
 function isHttpPage(url) {
   try {
     const parsed = new URL(String(url || ''))
@@ -10,6 +12,10 @@ function isHttpPage(url) {
   } catch {
     return false
   }
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
 }
 
 async function relay(path, payload) {
@@ -58,6 +64,67 @@ async function showError(tabId, message) {
   await chrome.action.setBadgeText({ tabId, text: '!' })
   await chrome.action.setBadgeBackgroundColor({ tabId, color: '#a12828' })
   await chrome.action.setTitle({ tabId, title: `ZN browser bridge: ${message}` })
+}
+
+async function executeResidentCommand(tabId, command) {
+  const kind = String(command?.kind || '')
+  if (kind === 'probe_current_tab') {
+    const tab = await chrome.tabs.get(tabId)
+    const url = String(tab?.url || '')
+    if (!isHttpPage(url)) {
+      throw new Error('authorized tab is no longer a normal HTTP(S) page')
+    }
+    return {
+      tab_id: tabId,
+      url,
+      title: String(tab?.title || '')
+    }
+  }
+  throw new Error(`unsupported ZN browser command: ${kind}`)
+}
+
+async function commandLoop(tabId) {
+  if (commandLoopTabId === tabId) return
+  commandLoopTabId = tabId
+  try {
+    while ((await ownedTabId()) === tabId) {
+      let body
+      try {
+        body = await relay('/v1/command/next', { tab_id: tabId, wait_seconds: 20 })
+      } catch {
+        if ((await ownedTabId()) !== tabId) return
+        await sleep(500)
+        continue
+      }
+      const command = body?.command
+      if (!command) continue
+
+      let success = false
+      let result = {}
+      let error = null
+      try {
+        result = await executeResidentCommand(tabId, command)
+        success = true
+      } catch (commandError) {
+        error = commandError instanceof Error ? commandError.message : String(commandError)
+      }
+
+      try {
+        await relay('/v1/command/result', {
+          tab_id: tabId,
+          command_id: String(command.command_id || ''),
+          success,
+          result,
+          error
+        })
+      } catch {
+        // The Resident may have stopped or revoked authorization while the command
+        // was executing. Do not retry the command or its result automatically.
+      }
+    }
+  } finally {
+    if (commandLoopTabId === tabId) commandLoopTabId = null
+  }
 }
 
 async function detachOwnedTab(tabId, { notifyRelay = true } = {}) {
@@ -111,6 +178,7 @@ chrome.action.onClicked.addListener(tab => {
       })
       await rememberOwnedTab(tabId)
       await setAttachedUi(tabId, true)
+      void commandLoop(tabId)
     } catch (error) {
       try {
         await chrome.debugger.detach({ tabId })
@@ -151,3 +219,8 @@ chrome.tabs.onRemoved.addListener(tabId => {
     await forgetOwnedTab()
   })()
 })
+
+void (async () => {
+  const tabId = await ownedTabId()
+  if (tabId !== null) void commandLoop(tabId)
+})()
