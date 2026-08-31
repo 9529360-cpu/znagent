@@ -1,5 +1,8 @@
 name: ZN Linux Container Smoke
 
+# Dormant platform lane: ZN product development is Windows-only for now.
+# Keep this workflow available for future Linux work, but do not allocate a runner
+# unless the repository explicitly opts in with ZN_ENABLE_NON_WINDOWS_CI=true.
 on:
   workflow_dispatch:
 
@@ -14,16 +17,11 @@ env:
 
 jobs:
   container:
+    if: ${{ vars.ZN_ENABLE_NON_WINDOWS_CI == 'true' }}
     name: Optional Linux Container / Runtime Smoke
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Require self-hosted Linux runner
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "${RUNNER_OS:-}" == 'Linux' ]] || { echo "Linux runner required, got ${RUNNER_OS:-unknown}"; exit 1; }
-          echo "Linux container smoke runner: ${RUNNER_NAME:-unknown}"
       - name: Checkout
         uses: actions/checkout@v7
       - name: Set up Docker Buildx
