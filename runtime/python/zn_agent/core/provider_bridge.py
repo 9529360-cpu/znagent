@@ -246,6 +246,7 @@ def build_resident_runtime(
     """Build the resident organism around the ZN-owned kernel."""
     from .budget import CognitiveBudgetManager
     from .reporting_maintenance_resident import ReportingMaintenanceResidentRuntime
+    from .upstream_bug_report_transport import UpstreamBugReportTransport
 
     effective_config = config if config is not None else load_zn_config()
     kernel = build_runtime(
@@ -263,7 +264,23 @@ def build_resident_runtime(
             0.0, min(1.0, float(resident_cfg.get("high_risk_threshold", 0.8)))
         ),
     )
-    return ReportingMaintenanceResidentRuntime(kernel=kernel, budget=budget)
+
+    report_cfg = resident_cfg.get("upstream_bug_report") or {}
+    if not isinstance(report_cfg, dict):
+        raise ValueError("zn_resident.upstream_bug_report must be a mapping")
+    report_endpoint = str(report_cfg.get("endpoint") or "").strip()
+    report_transport = None
+    if report_endpoint:
+        report_transport = UpstreamBugReportTransport(
+            endpoint=report_endpoint,
+            timeout_seconds=float(report_cfg.get("timeout_seconds", 10.0)),
+        )
+
+    return ReportingMaintenanceResidentRuntime(
+        kernel=kernel,
+        budget=budget,
+        report_transport=report_transport,
+    )
 
 
 build_runtime_from_existing_stack = build_runtime
