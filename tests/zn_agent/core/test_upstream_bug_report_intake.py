@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from zn_agent.core.upstream_bug_report_intake import MaintainerBugReportIntake
@@ -41,6 +42,20 @@ class MaintainerBugReportIntakeTests(unittest.TestCase):
             self.assertEqual(found, expected_ack)
             self.assertEqual(snapshot["report_count"], 1)
             self.assertEqual(snapshot["reports"][0]["occurrences"], 7)
+
+    def test_concurrent_duplicate_delivery_remains_one_durable_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            intake = MaintainerBugReportIntake(Path(tmp) / "intake.db")
+            occurrences = [3, 4, 8, 5, 12, 7, 9, 6]
+            with ThreadPoolExecutor(max_workers=len(occurrences)) as pool:
+                acknowledgements = list(
+                    pool.map(lambda count: intake.accept(self._payload(occurrences=count)), occurrences)
+                )
+
+            self.assertTrue(all(item["accepted"] is True for item in acknowledgements))
+            snapshot = intake.snapshot()
+            self.assertEqual(snapshot["report_count"], 1)
+            self.assertEqual(snapshot["reports"][0]["occurrences"], max(occurrences))
 
     def test_reconciliation_returns_explicit_present_and_absent_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:
