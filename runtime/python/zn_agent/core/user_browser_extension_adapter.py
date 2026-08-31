@@ -23,6 +23,7 @@ from .browser import (
 from .models import utc_now
 from .user_browser_extension_relay import (
     ResidentUserBrowserExtensionRelay,
+    UserBrowserExtensionCommandUncertainError,
     UserBrowserExtensionRelayError,
 )
 
@@ -240,15 +241,40 @@ class AuthorizedExtensionUserBrowser:
             raise ExtensionUserBrowserError("extension TYPE_TEXT requires non-empty string text")
 
         expected_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        command = self._request(
-            "type_named_textbox",
-            args={
-                "target_name": target.name,
-                "target_id": target.target_id,
-                "expected_url": current.url,
-                "text": text,
-            },
-        )
+        try:
+            command = self._request(
+                "type_named_textbox",
+                args={
+                    "target_name": target.name,
+                    "target_id": target.target_id,
+                    "expected_url": current.url,
+                    "text": text,
+                },
+            )
+        except UserBrowserExtensionCommandUncertainError as exc:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=utc_now(),
+                success=False,
+                page_id=page_id,
+                url_before=current.url,
+                url_after=current.url,
+                target_id=target.target_id,
+                data={
+                    "provider": self.name,
+                    "input_sent": False,
+                    "input_may_have_been_sent": True,
+                    "command_delivery": "extension_received",
+                    "requires_fresh_resense": True,
+                    "expected_text_length": len(text),
+                    "expected_text_sha256": expected_sha,
+                },
+                error=(
+                    f"{exc}; refusing replay until a fresh browser observation proves the "
+                    "current target state"
+                ),
+            )
         if command.get("success") is not True:
             return BrowserEffectEvidence(
                 action_id=action.action_id,
@@ -350,6 +376,8 @@ class AuthorizedExtensionUserBrowser:
     def _request(self, kind: str, *, args: dict[str, Any] | None = None) -> dict[str, Any]:
         try:
             return self.relay.request_command(kind, args=args, timeout_seconds=5.0)
+        except UserBrowserExtensionCommandUncertainError:
+            raise
         except (ValueError, UserBrowserExtensionRelayError) as exc:
             raise ExtensionUserBrowserError(str(exc)) from exc
 
