@@ -27,6 +27,11 @@ type ResolvedZnRuntime = {
   manifest: ZnRuntimeManifest
 }
 
+type RuntimeCopyOptions = {
+  platform?: NodeJS.Platform
+  runRobocopy?: (sourceRoot: string, targetRoot: string) => void
+}
+
 const RUNTIME_DIR_NAME = 'zn-runtime'
 const MANIFEST_NAME = 'runtime.json'
 const RUNTIME_ID_RE = /^[0-9A-Za-z._-]{1,128}$/
@@ -132,47 +137,55 @@ function tryResolveRuntime(runtimeRoot: string, expectedRuntimeId: string): Reso
 function robocopyCompleted(error: unknown): boolean {
   if (!error || typeof error !== 'object' || !('status' in error)) return false
   const status = (error as { status?: unknown }).status
-  // Robocopy uses 0-7 for successful copies with informational differences.
   return typeof status === 'number' && status >= 0 && status < 8
 }
 
-function copyRuntimeTree(sourceRoot: string, targetRoot: string): void {
+function runWindowsRobocopy(sourceRoot: string, targetRoot: string): void {
+  execFileSync(
+    'robocopy.exe',
+    [
+      sourceRoot,
+      targetRoot,
+      '/E',
+      '/SL',
+      '/R:0',
+      '/W:0',
+      '/MT:32',
+      '/NFL',
+      '/NDL',
+      '/NJH',
+      '/NJS',
+      '/NP'
+    ],
+    { stdio: 'ignore', windowsHide: true }
+  )
+}
+
+function copyRuntimeTree(
+  sourceRoot: string,
+  targetRoot: string,
+  { platform = process.platform, runRobocopy = runWindowsRobocopy }: RuntimeCopyOptions = {}
+): void {
   const copyWithNode = () => {
     fs.cpSync(sourceRoot, targetRoot, { recursive: true, force: true, verbatimSymlinks: true })
   }
 
-  if (process.platform !== 'win32') {
+  if (platform !== 'win32') {
     copyWithNode()
     return
   }
 
   fs.mkdirSync(targetRoot, { recursive: true })
   try {
-    execFileSync(
-      'robocopy.exe',
-      [
-        sourceRoot,
-        targetRoot,
-        '/E',
-        '/SL',
-        '/R:0',
-        '/W:0',
-        '/MT:32',
-        '/NFL',
-        '/NDL',
-        '/NJH',
-        '/NJS',
-        '/NP'
-      ],
-      { stdio: 'ignore', windowsHide: true }
-    )
+    runRobocopy(sourceRoot, targetRoot)
     return
   } catch (error) {
+    // Robocopy uses 0-7 for successful copies with informational differences.
     if (robocopyCompleted(error)) return
   }
 
-  // Keep the old copy path as the fail-safe oracle. Never validate or rename a
-  // partial accelerated copy after an unexpected robocopy failure.
+  // Never validate or rename a partial accelerated copy after an unexpected
+  // robocopy failure. Remove it and preserve the previous Node copy path.
   fs.rmSync(targetRoot, { recursive: true, force: true })
   copyWithNode()
 }
@@ -227,6 +240,7 @@ function configureZnPackagedRuntime({
 
 export {
   configureZnPackagedRuntime,
+  copyRuntimeTree,
   materializeRuntime,
   resolveRuntime,
   resolveZnHome,
