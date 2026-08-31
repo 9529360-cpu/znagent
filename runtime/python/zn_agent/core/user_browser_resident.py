@@ -82,7 +82,7 @@ class UserBrowserBridgeResidentRuntime(BrowserGoalUnderstandingResidentRuntime):
     ):
         browser = self.managed_browser
         request = browser_named_text_request(event)
-        if request is None or not isinstance(browser, AuthorizedCDPUserBrowser):
+        if request is None or not self._supports_semantic_user_browser(browser):
             return super()._browser_named_goal_investigation(
                 event,
                 state,
@@ -196,7 +196,7 @@ class UserBrowserBridgeResidentRuntime(BrowserGoalUnderstandingResidentRuntime):
     ):
         request = browser_named_text_request(event)
         browser = self.managed_browser
-        if request is not None and isinstance(browser, AuthorizedCDPUserBrowser):
+        if request is not None and self._supports_semantic_user_browser(browser):
             evidence = state.data.get(self._SEMANTIC_BROWSER_GOAL_KEY)
             if not isinstance(evidence, dict) or evidence.get("phase") != "needs_text":
                 state.stage = "native_investigation"
@@ -310,6 +310,15 @@ class UserBrowserBridgeResidentRuntime(BrowserGoalUnderstandingResidentRuntime):
         self._sync_execution_context(event, state)
         self.store.save_working_state(state)
         return None
+
+    @staticmethod
+    def _supports_semantic_user_browser(adapter: Any) -> bool:
+        return bool(
+            getattr(adapter, "plane", None) is BrowserPlane.USER
+            and callable(getattr(adapter, "observe_named_text_state", None))
+            and callable(getattr(adapter, "observe_target", None))
+            and callable(getattr(adapter, "act", None))
+        )
 
     @staticmethod
     def _require_browser_adapter_idle(adapter: Any) -> None:
