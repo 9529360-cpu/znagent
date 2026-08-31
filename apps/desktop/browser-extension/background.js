@@ -234,6 +234,156 @@ async function exactNamedButton(tabId, targetName) {
   }
 }
 
+async function discoverUniqueSearchForm(tabId) {
+  const tab = await currentTabEvidence(tabId)
+  const tree = await fullAxTree(tabId)
+  const candidates = []
+
+  for (const node of tree) {
+    if (node?.ignored === true) continue
+    const role = String(node?.role?.value || '').toLowerCase()
+    if (role !== 'searchbox' && role !== 'textbox') continue
+    const backendNodeId = Number(node?.backendDOMNodeId || 0)
+    if (!Number.isInteger(backendNodeId) || backendNodeId <= 0) continue
+    if (axProperty(node, 'disabled') === true || axProperty(node, 'readonly') === true) continue
+
+    const described = await debuggerCommand(tabId, 'DOM.describeNode', { backendNodeId })
+    const domNode = described?.node || {}
+    if (String(domNode?.nodeName || '').toUpperCase() !== 'INPUT') continue
+    const attributes = attributesObject(domNode?.attributes)
+    const inputType = String(attributes.type || 'text').toLowerCase()
+    if (inputType !== 'search' && role !== 'searchbox') continue
+    if ('disabled' in attributes || 'readonly' in attributes) continue
+    const autocomplete = normalizedAutocomplete(attributes.autocomplete)
+    if (autocomplete.some(token => SENSITIVE_AUTOCOMPLETE.has(token) || token.startsWith('cc-'))) continue
+    const parameter = String(attributes.name || '').trim()
+    if (!parameter || parameter.length > 128) continue
+    const accessibleName = String(node?.name?.value || '').trim()
+    if (!accessibleName || accessibleName.length > 160) continue
+    if (String(node?.value?.value || '') !== '') continue
+
+    const resolved = await debuggerCommand(tabId, 'DOM.resolveNode', { backendNodeId })
+    const inputObjectId = String(resolved?.object?.objectId || '')
+    if (!inputObjectId) continue
+    const metadataCall = await debuggerCommand(tabId, 'Runtime.callFunctionOn', {
+      objectId: inputObjectId,
+      functionDeclaration: `function(){
+        const form = this.form;
+        if (!form) return null;
+        const method = String(form.getAttribute('method') || 'get').toLowerCase();
+        const action = new URL(form.getAttribute('action') || location.href, location.href).href;
+        const buttons = Array.from(form.querySelectorAll('button')).filter(button => {
+          if (button.disabled) return false;
+          const type = String(button.getAttribute('type') || 'submit').toLowerCase();
+          return type === 'submit';
+        });
+        const extraNamedControls = Array.from(form.elements || []).filter(element => {
+          if (element === this || element.disabled || !element.name) return false;
+          if (element.tagName === 'BUTTON' && !element.name) return false;
+          return true;
+        }).length;
+        return {
+          method,
+          action,
+          button_count: buttons.length,
+          extra_named_controls: extraNamedControls
+        };
+      }`,
+      returnByValue: true,
+      awaitPromise: false
+    })
+    if (metadataCall?.exceptionDetails) continue
+    const metadata = metadataCall?.result?.value
+    if (!metadata || typeof metadata !== 'object') continue
+    if (String(metadata.method || '').toLowerCase() !== 'get') continue
+    if (Number(metadata.button_count || 0) !== 1) continue
+    if (Number(metadata.extra_named_controls || 0) !== 0) continue
+    const actionUrl = String(metadata.action || '')
+    if (!isHttpPage(actionUrl)) continue
+    let currentOrigin
+    let actionOrigin
+    try {
+      currentOrigin = new URL(tab.url).origin
+      actionOrigin = new URL(actionUrl).origin
+    } catch {
+      continue
+    }
+    if (currentOrigin !== actionOrigin) continue
+
+    const buttonCall = await debuggerCommand(tabId, 'Runtime.callFunctionOn', {
+      objectId: inputObjectId,
+      functionDeclaration: `function(){
+        const form = this.form;
+        if (!form) return null;
+        const buttons = Array.from(form.querySelectorAll('button')).filter(button => {
+          if (button.disabled) return false;
+          const type = String(button.getAttribute('type') || 'submit').toLowerCase();
+          return type === 'submit';
+        });
+        return buttons.length === 1 ? buttons[0] : null;
+      }`,
+      returnByValue: false,
+      awaitPromise: false
+    })
+    if (buttonCall?.exceptionDetails) continue
+    const buttonObjectId = String(buttonCall?.result?.objectId || '')
+    if (!buttonObjectId) continue
+    const buttonDescription = await debuggerCommand(tabId, 'DOM.describeNode', {
+      objectId: buttonObjectId
+    })
+    const buttonBackendNodeId = Number(buttonDescription?.node?.backendNodeId || 0)
+    if (!Number.isInteger(buttonBackendNodeId) || buttonBackendNodeId <= 0) continue
+    const buttonNodes = tree.filter(candidate => {
+      return candidate?.ignored !== true &&
+        Number(candidate?.backendDOMNodeId || 0) === buttonBackendNodeId &&
+        String(candidate?.role?.value || '').toLowerCase() === 'button'
+    })
+    if (buttonNodes.length !== 1) continue
+    const buttonName = String(buttonNodes[0]?.name?.value || '').trim()
+    if (!buttonName || buttonName.length > 160) continue
+
+    candidates.push({
+      textboxBackendNodeId: backendNodeId,
+      textboxTargetId: `backend:${backendNodeId}`,
+      textboxName: accessibleName,
+      buttonBackendNodeId,
+      buttonTargetId: `backend:${buttonBackendNodeId}`,
+      buttonName,
+      actionUrl,
+      parameter
+    })
+  }
+
+  if (candidates.length !== 1) {
+    throw new Error(
+      candidates.length === 0
+        ? 'no unique safe GET search form is visible on the authorized page'
+        : 'multiple safe search forms are visible; autonomous target choice is ambiguous'
+    )
+  }
+
+  const candidate = candidates[0]
+  const exactTextbox = await exactNamedTextbox(tabId, candidate.textboxName)
+  const exactButton = await exactNamedButton(tabId, candidate.buttonName)
+  if (
+    exactTextbox.backendNodeId !== candidate.textboxBackendNodeId ||
+    exactButton.backendNodeId !== candidate.buttonBackendNodeId
+  ) {
+    throw new Error('search form target identity changed during discovery; fresh sensing is required')
+  }
+
+  return {
+    ...tab,
+    form_method: 'get',
+    form_action: candidate.actionUrl,
+    query_parameter: candidate.parameter,
+    textbox_target_id: candidate.textboxTargetId,
+    textbox_name: candidate.textboxName,
+    button_target_id: candidate.buttonTargetId,
+    button_name: candidate.buttonName
+  }
+}
+
 async function observeNamedTextbox(tabId, targetName) {
   const tab = await currentTabEvidence(tabId)
   const target = await exactNamedTextbox(tabId, targetName)
@@ -436,6 +586,9 @@ async function clickNamedButtonToUrl(tabId, args) {
 async function executeResidentCommand(tabId, command) {
   const kind = String(command?.kind || '')
   if (kind === 'probe_current_tab') {
+    if (command?.args?.discover_unique_search_form === true) {
+      return discoverUniqueSearchForm(tabId)
+    }
     return currentTabEvidence(tabId)
   }
   if (kind === 'observe_named_textbox') {
