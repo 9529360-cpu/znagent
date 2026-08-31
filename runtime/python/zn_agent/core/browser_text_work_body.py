@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Privacy-bounded managed-browser text entry owned by the resident Body."""
+"""Privacy-bounded browser text entry owned by the resident Body."""
 
 from dataclasses import asdict
 from typing import Any
@@ -11,6 +11,7 @@ from .browser import (
     BrowserActionAuthority,
     BrowserActionKind,
     BrowserPermissionContext,
+    BrowserPlane,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
 )
@@ -21,10 +22,16 @@ from .models import utc_now
 class BrowserTextWorkBody(BrowserSideEffectAwareBody):
     """Type explicit non-secret text into one exact semantic textbox.
 
-    The browser provider already enforces an empty, writable, non-password native
-    text control, exact-node continuity, and a length+digest postcondition. This
-    layer supplies resident ownership, durable side-effect guarding, session
-    lifecycle, and a durable-action redaction boundary for the plaintext input.
+    Managed-browser work may navigate to the user-supplied URL first. An authorized
+    USER-plane browser is different: ZN must preserve the user's existing session
+    and current page, so it requires the freshly observed current URL to already
+    equal the requested URL and never navigates/reloads on the user's behalf in
+    this text-entry slice.
+
+    The browser provider enforces an empty, writable, non-password native text
+    control, exact-node continuity, and a length+digest postcondition. This layer
+    supplies resident ownership, durable side-effect guarding, session lifecycle,
+    and a durable-action redaction boundary for the plaintext input.
     """
 
     _BROWSER_TYPE_NAMED_TEXT = "browser_type_named_text"
@@ -92,8 +99,9 @@ class BrowserTextWorkBody(BrowserSideEffectAwareBody):
         if any(ord(char) < 32 or ord(char) == 127 for char in target_name):
             raise ValueError("browser_type_named_text target_name contains control characters")
 
+        user_plane = getattr(browser, "plane", None) is BrowserPlane.USER
         permission = BrowserPermissionContext(
-            allow_navigation=True,
+            allow_navigation=not user_plane,
             allow_page_interaction=True,
             allow_text_entry=True,
             allow_private_network=bool(action.args.get("allow_private_network", False)),
@@ -102,36 +110,69 @@ class BrowserTextWorkBody(BrowserSideEffectAwareBody):
         session = None
         closed = False
         try:
-            session = browser.open_session(permission=permission, headless=True)
+            session = browser.open_session(permission=permission, headless=not user_plane)
             initial = browser.observe(session.session_id)
-            navigate = BrowserAction.create(
-                session_id=session.session_id,
-                kind=BrowserActionKind.NAVIGATE,
-                page_id=initial.page_id,
-                args={"url": url},
-                expected={"url_equals": url},
-            )
-            navigate_authority = BrowserActionAuthority.from_observation(
-                navigate,
-                initial,
-                permission,
-            )
-            navigation_evidence = browser.act(navigate, navigate_authority)
-            if not navigation_evidence.success:
-                browser.close_session(session.session_id)
-                closed = True
-                return BodyActionResult(
-                    action_id=action.action_id,
-                    kind=action.kind,
-                    success=False,
-                    data={
-                        "browser_evidence": asdict(navigation_evidence),
-                        "closed": True,
-                    },
-                    error=navigation_evidence.error or "managed browser navigation failed",
-                    event_id=action.event_id,
-                    started_at=started,
-                    completed_at=utc_now(),
+            current_page_id = initial.page_id
+            current_url = initial.url
+            navigation_provider = session.provider
+
+            if session.plane is BrowserPlane.USER:
+                if initial.url != url:
+                    browser.close_session(session.session_id)
+                    closed = True
+                    return BodyActionResult(
+                        action_id=action.action_id,
+                        kind=action.kind,
+                        success=False,
+                        data={
+                            "requested_url": url,
+                            "current_url": initial.url,
+                            "browser_plane": BrowserPlane.USER.value,
+                            "input_sent": False,
+                            "closed": True,
+                        },
+                        error=(
+                            "authorized user browser is not currently on the requested URL; "
+                            "ZN did not navigate or send input"
+                        ),
+                        event_id=action.event_id,
+                        started_at=started,
+                        completed_at=utc_now(),
+                    )
+            else:
+                navigate = BrowserAction.create(
+                    session_id=session.session_id,
+                    kind=BrowserActionKind.NAVIGATE,
+                    page_id=initial.page_id,
+                    args={"url": url},
+                    expected={"url_equals": url},
+                )
+                navigate_authority = BrowserActionAuthority.from_observation(
+                    navigate,
+                    initial,
+                    permission,
+                )
+                navigation_evidence = browser.act(navigate, navigate_authority)
+                if not navigation_evidence.success:
+                    browser.close_session(session.session_id)
+                    closed = True
+                    return BodyActionResult(
+                        action_id=action.action_id,
+                        kind=action.kind,
+                        success=False,
+                        data={
+                            "browser_evidence": asdict(navigation_evidence),
+                            "closed": True,
+                        },
+                        error=navigation_evidence.error or "managed browser navigation failed",
+                        event_id=action.event_id,
+                        started_at=started,
+                        completed_at=utc_now(),
+                    )
+                current_page_id = navigation_evidence.page_id
+                current_url = navigation_evidence.url_after
+                navigation_provider = str(
+                    navigation_evidence.data.get("provider") or session.provider
                 )
 
             observed = browser.observe_target(
@@ -140,7 +181,7 @@ class BrowserTextWorkBody(BrowserSideEffectAwareBody):
                     kind=BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME,
                     value=target_name,
                 ),
-                page_id=navigation_evidence.page_id,
+                page_id=current_page_id,
             )
             if observed.target is None or observed.target.role != "textbox":
                 raise ValueError(
@@ -169,14 +210,14 @@ class BrowserTextWorkBody(BrowserSideEffectAwareBody):
                     kind=action.kind,
                     success=False,
                     data={
-                        "url": navigation_evidence.url_after,
+                        "url": current_url,
                         "target_id": observed.target.target_id,
                         "target_role": observed.target.role,
                         "target_name": observed.target.name,
                         "browser_evidence": asdict(mutation_evidence),
                         "closed": True,
                     },
-                    error=mutation_evidence.error or "managed browser text entry failed",
+                    error=mutation_evidence.error or "browser text entry failed",
                     event_id=action.event_id,
                     started_at=started,
                     completed_at=utc_now(),
@@ -191,7 +232,7 @@ class BrowserTextWorkBody(BrowserSideEffectAwareBody):
                 success=True,
                 output=f'typed {int(evidence_data.get("expected_text_length") or 0)} characters into textbox "{target_name}"',
                 data={
-                    "url": mutation_evidence.url_after or navigation_evidence.url_after,
+                    "url": mutation_evidence.url_after or current_url,
                     "page_id": mutation_evidence.page_id,
                     "target_id": mutation_evidence.target_id,
                     "target_role": observed.target.role,
@@ -199,9 +240,10 @@ class BrowserTextWorkBody(BrowserSideEffectAwareBody):
                     "selector_hint": observed.target.selector_hint,
                     "provider": str(
                         evidence_data.get("provider")
-                        or navigation_evidence.data.get("provider")
+                        or navigation_provider
                         or session.provider
                     ),
+                    "browser_plane": session.plane.value,
                     "postcondition": mutation_evidence.postcondition,
                     "exact_node_continuity": bool(
                         evidence_data.get("exact_node_continuity")
