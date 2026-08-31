@@ -1,5 +1,8 @@
 name: ZN Linux AppImage Update Smoke
 
+# Dormant platform lane: ZN product development is Windows-only for now.
+# Preserve this workflow for future Linux work, but skip it before runner allocation
+# unless the repository explicitly opts in with ZN_ENABLE_NON_WINDOWS_CI=true.
 on:
   workflow_dispatch:
 
@@ -21,8 +24,9 @@ concurrency:
 
 jobs:
   appimage-update:
+    if: ${{ vars.ZN_ENABLE_NON_WINDOWS_CI == 'true' }}
     name: Real AppImage N to N+1
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - name: Publish AppImage smoke pending status
@@ -38,13 +42,6 @@ jobs:
               description: 'real AppImage N -> N+1 resident continuity: running',
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             })
-
-      - name: Require self-hosted Linux runner
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "${RUNNER_OS:-}" == 'Linux' ]] || { echo "Linux runner required, got ${RUNNER_OS:-unknown}"; exit 1; }
-          echo "Linux AppImage smoke runner: ${RUNNER_NAME:-unknown}"
 
       - name: Checkout
         uses: actions/checkout@v7
