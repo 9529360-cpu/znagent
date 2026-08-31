@@ -12,5 +12,14 @@
   },
   "action": {
     "default_title": "Allow ZN to use this tab"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y",
+        "mac": "Command+Shift+Y"
+      },
+      "description": "Authorize or revoke ZN access to the current tab"
+    }
   }
 }
