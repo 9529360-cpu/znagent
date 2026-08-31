@@ -33,20 +33,28 @@ jobs:
       matrix:
         include:
           - label: Linux
-            os: ubuntu-latest
+            runs_on: [self-hosted, Linux]
             builder_target: linux
             manifest_platform: linux
           - label: Windows
-            os: windows-latest
+            runs_on: [self-hosted, Windows, X64, zn-ci]
             builder_target: win
             manifest_platform: windows
           - label: macOS
-            os: macos-14
+            runs_on: [self-hosted, macOS]
             builder_target: mac
             manifest_platform: macos
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runs_on }}
     timeout-minutes: 60
     steps:
+      - name: Report self-hosted release runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "release.runner.name=${RUNNER_NAME:-unknown}"
+          echo "release.runner.os=${RUNNER_OS:-unknown}"
+          echo "release.runner.arch=${RUNNER_ARCH:-unknown}"
+
       - name: Checkout
         uses: actions/checkout@v7
 
@@ -148,7 +156,7 @@ jobs:
     name: Publish multi-OS package status
     if: ${{ always() }}
     needs: package
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Windows, X64, zn-ci]
     timeout-minutes: 5
     steps:
       - name: Publish package verification status
@@ -172,7 +180,7 @@ jobs:
     name: Publish ZN Release Channel
     if: ${{ startsWith(github.ref, 'refs/tags/zn-v') }}
     needs: package
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux]
     timeout-minutes: 20
     steps:
       - name: Checkout release source
