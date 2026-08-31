@@ -20,6 +20,10 @@ env:
   CI: 'true'
   NODE_OPTIONS: --max-old-space-size=4096
 
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
 concurrency:
   group: zn-windows-release-candidate-${{ github.ref }}
   cancel-in-progress: true
@@ -27,7 +31,7 @@ concurrency:
 jobs:
   package-candidate:
     name: Windows x64 unsigned candidate
-    runs-on: windows-latest
+    runs-on: [self-hosted, Windows, X64, zn-interactive]
     timeout-minutes: 60
     steps:
       - name: Publish candidate pending status
@@ -47,12 +51,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Require clean Windows x64 hosted runner
+      - name: Require dedicated interactive Windows x64 runner
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
             throw "Windows release candidate requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
           }
-          Write-Host "Windows candidate runner: $env:RUNNER_NAME"
+          if ($env:RUNNER_NAME -ne 'zn-interactive') {
+            throw "Windows release candidate requires the dedicated zn-interactive runner; got $env:RUNNER_NAME"
+          }
+          $sessionId = (Get-Process -Id $PID -ErrorAction Stop).SessionId
+          if ($sessionId -eq 0) {
+            throw 'Windows release candidate requires a logged-on interactive session, not Session 0.'
+          }
+          git config core.longpaths true
+          if ($LASTEXITCODE -ne 0) { throw "failed to enable Git long-path cleanup with exit code $LASTEXITCODE" }
+          Write-Host "Windows candidate runner: $env:RUNNER_NAME session=$sessionId"
 
       - name: Set up Node
         uses: actions/setup-node@v7
@@ -93,10 +106,26 @@ jobs:
       - name: Build renderer and Electron runtime
         run: npm run build --workspace apps/desktop
 
-      - name: Build unsigned Windows installer candidates
+      - name: Build unsigned Windows installer candidates from short path
         run: |
-          Remove-Item -Recurse -Force apps/desktop/release -ErrorAction SilentlyContinue
-          npm run builder --workspace apps/desktop -- --config electron-builder.zn.yml --win --publish never
+          $drive = 'Z:'
+          if (Test-Path "$drive\") {
+            throw "$drive is already in use; cannot create short build path"
+          }
+          & subst.exe $drive $env:GITHUB_WORKSPACE
+          if ($LASTEXITCODE -ne 0) { throw "subst failed with exit code $LASTEXITCODE" }
+          try {
+            Push-Location "$drive\apps\desktop"
+            try {
+              Remove-Item -Recurse -Force release -ErrorAction SilentlyContinue
+              node scripts/run-electron-builder.mjs --config electron-builder.zn.yml --win --publish never
+              if ($LASTEXITCODE -ne 0) { throw "electron-builder failed with exit code $LASTEXITCODE" }
+            } finally {
+              Pop-Location
+            }
+          } finally {
+            & subst.exe $drive /D
+          }
 
       - name: Verify runtime inside packaged Windows app
         env:
@@ -113,7 +142,8 @@ jobs:
           ZN_CANDIDATE_VERSION: ${{ steps.version.outputs.version }}
         run: node apps/desktop/scripts/verify-zn-windows-release-candidate.mjs apps/desktop/release $env:ZN_CANDIDATE_VERSION x64
 
-      - name: Upload unsigned candidate evidence
+      - name: Upload unsigned candidate evidence when cloud storage is enabled
+        if: ${{ vars.ZN_ENABLE_CI_ARTIFACT_UPLOAD == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: zn-windows-release-candidate-${{ github.sha }}
