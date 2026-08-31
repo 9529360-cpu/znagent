@@ -156,6 +156,25 @@ class ResidentUpstreamBugReportOutboxTests(unittest.TestCase):
                 outbox.reserve_dispatch(key)
             self.assertNotIn(b"never-persist-this", db.read_bytes())
 
+    def test_restart_promotes_abandoned_dispatch_to_uncertain_without_replay(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "kernel.db"
+            first = ResidentUpstreamBugReportOutbox(SimpleNamespace(path=db))
+            prepared = first.prepare(self._task())
+            key = prepared["report_key"]
+            first.reserve_dispatch(key)
+
+            restored = ResidentUpstreamBugReportOutbox(SimpleNamespace(path=db))
+            report = restored.snapshot()["reports"][0]
+
+            self.assertEqual(report["report_key"], key)
+            self.assertEqual(report["state"], "outcome_uncertain")
+            self.assertEqual(report["dispatch_attempts"], 1)
+            self.assertEqual(report["last_error_type"], "InterruptedDispatch")
+            self.assertEqual(restored.snapshot()["outcome_uncertain_count"], 1)
+            with self.assertRaises(RuntimeError):
+                restored.reserve_dispatch(key)
+
     def test_invalid_or_insufficient_tasks_fail_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
             outbox = ResidentUpstreamBugReportOutbox(

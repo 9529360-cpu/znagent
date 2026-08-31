@@ -59,12 +59,15 @@ Use `exists -> connected -> verified -> product-closed`. File/interface presence
 | Independent semantic review / recovery | connected + verified, fail-closed | author route cannot self-approve; pending review can resume safely |
 | Accepted local publication preparation | connected + verified, `local_commit_only` | no remote repository authority |
 | Upstream BUG / repair report formation | connected + verified locally | repeated `probable_zn_defect` truth projects to one durable privacy-safe installation-pseudonymous local outbox envelope |
-| Upstream BUG / repair report transport | missing | no network sender/endpoint yet; future transport must preserve durable reserve + ambiguous-outcome reconciliation |
+| Upstream BUG / repair report transport | missing / deprioritized | no network sender/endpoint; durable reserve, crash-to-uncertain reconciliation and no-blind-replay are verified, but the user has deprioritized remote transport |
 | Resident managed-browser navigation | connected + verified for narrow ordinary Work entry | explicit safe URL + navigation cue -> managed Chromium -> observed URL postcondition |
-| Resident managed-browser checkbox interaction | connected + verified for one bounded ordinary Work class | exactly one explicit HTTP(S) URL + one explicit `#dom-id` + unambiguous check/uncheck cue; fresh exact target authority; provider verifies same-node checked state; zero-model path; guarded against blind replay |
-| Resident managed-browser broader page interaction | partial | semantic target discovery, general click/focus/text/form workflows and interruption reconciliation are not product-closed |
-| User browser bridge | architecture only / missing | authenticated existing-browser path not product-closed |
-| Installed upstream update observation | partial | public channel infrastructure exists; installed read/verify/update-available loop still needs complete product evidence |
+| Resident managed-browser semantic checkbox | connected + verified for bounded ordinary Work | exact accessible-name target, fresh semantic authority, checked-state postcondition and zero-model Work path |
+| Resident managed-browser semantic button | connected + verified for bounded ordinary Work | exact accessible-name button, explicit same-origin URL postcondition, real Chromium evidence and observed-result restart recovery |
+| Resident managed-browser semantic textbox | connected + verified for bounded ordinary Work | exact accessible-name writable non-password textbox, privacy-safe length/digest evidence, real Chromium and restart recovery |
+| Resident managed-browser same-session form | connected + verified for one complete ordinary Work scenario | textbox entry and button submit share one live Chromium session; final URL depends on retained text state; whole transaction is guarded and recoverable from exact durable evidence |
+| Resident managed-browser broader page interaction | partial | generic discovery, multi-tab/popup/frame authority, downloads/uploads and arbitrary interaction are not product-closed |
+| User browser bridge | sensing foundation only | real Edge/Chrome UIA sensing proof uses an isolated temporary profile; authenticated existing-session permission and mutation remain open |
+| Installed upstream update observation | partial / substantial desktop foundation | HTTPS stable-channel parsing, version comparison, platform target selection, size/SHA-256 verification and desktop IPC/UI exist; formal continuity/replacement remains separate |
 | Official repository push / PR / merge | intentionally outside installed resident | maintainer-environment authority |
 | Installed N -> N+1 update continuity | approval-gated / incomplete | no formal updater/replacement transition executed |
 | Rollback / signing / release trust | approval-gated / incomplete | high-risk release/update authority remains separate |
@@ -84,9 +87,9 @@ Health truth commits before report projection, so report formation failure canno
 
 Any future transport must durably reserve dispatch before external side effects; ambiguous outcomes remain `outcome_uncertain` until explicit reconciliation.
 
-## Managed-browser ordinary Work path
+## Managed-browser ordinary Work paths
 
-Navigation remains the first closed ordinary Work browser path:
+Navigation remains a verified ordinary Work browser path:
 
 ```text
 ordinary durable Work
@@ -98,30 +101,26 @@ ordinary durable Work
 -> durable Work completion/failure
 ```
 
-PR #102 adds one deliberately narrow mutation path instead of pretending that general browser interaction is complete:
+The original technical `#dom-id` checkbox slice has since been extended with exact accessible-name semantic checkbox, button and textbox paths. The strongest current vertical slice is the same-session form transaction merged by PR #120:
 
 ```text
 ordinary durable Work
-+ exactly one explicit HTTP(S) URL
-+ exactly one explicit #dom-id
-+ unambiguous check / uncheck intent
--> deterministic browser_set_checkbox
--> origin-bounded navigation + page-interaction authority
--> fresh DOM-id target observation
--> require checkbox role
--> CHECK / UNCHECK bound to that observation
--> same-exact-node checked-state postcondition
--> close ephemeral session
--> durable Work result
++ explicit start URL and explicit same-origin expected URL
++ exact accessible names for one textbox and one button
++ explicit bounded text
+-> one managed Chromium session
+-> fresh semantic textbox observation
+-> same-node text length/SHA-256 verification
+-> fresh semantic button observation
+-> submit click
+-> independent final URL observation
+-> durable Work completion
+-> restart recovery only from exact observed-result evidence
 ```
 
-ZN does not ask a model to invent the destination, target identity or requested boolean state. Multiple/malformed URLs, embedded credentials, missing or multiple explicit target IDs, or ambiguous interaction text do not create this authority. This path does not grant text-entry, download or upload authority.
+Natural English/Chinese parsing is deterministic and does not ask a model to invent the URLs, targets, text or expected result. Password/sensitive textboxes remain refused. Ordinary Work does not silently acquire private-network authority. Browser/form/keyboard plaintext is no longer duplicated through the structured action compiler's historical `content` alias, and form Body history has a second defensive redaction boundary.
 
-The mutation crosses the existing durable side-effect replay boundary. A reconstructed same event/signature is not blindly replayed after uncertainty. Cross-process reconciliation of an interrupted ephemeral browser mutation is **not** claimed yet; current behavior fails closed rather than guessing whether the outside-world effect happened.
-
-PR #103 adds real local Chromium Work evidence for the checkbox path. The local fixture uses explicit private-network authority only inside the E2E payload; ordinary natural Work does not silently acquire private-network access.
-
-This is one connected and verified interaction class, not a complete browser product.
+These are connected and verified bounded interaction classes, not a complete browser product.
 
 ## Exact evidence that matters
 
@@ -136,31 +135,39 @@ This is one connected and verified interaction class, not a complete browser pro
 - `33297131654` — all three primary ZN CI jobs (Source Boundary, Kernel/Python including full core tests, Electron/TypeScript) reached success on PR #102 merge checkpoint `f5a87ed...`; the workflow itself was subsequently cancelled only when the next dev push superseded its final status-publication phase.
 - PR #103 — real local Chromium durable Work evidence for `browser_set_checkbox`.
 - `33297795844` — managed-browser contract suite plus real local Chromium E2E green on PR #103 merge checkpoint `9668f883...`, including the checkbox Work E2E.
+- PR #120 / merge `687d8f997f9850081c65a3767f6dbb9735276ea3` — connected the bounded same-session textbox-plus-submit form transaction to ordinary Work.
+- `33339767489` — Managed Browser E2E success after the form plaintext-history repair.
+- `33339937362` — final Managed Browser E2E success covering the structured action compiler boundary.
+- `33339955722` — Work Recovery E2E success on the final structured compiler coverage checkpoint `7450582...`.
+- `33339955736` — full ZN CI success on `7450582...`.
+- PR #121 / merge `5f14a6453aadba196060e954ce7bc674551ac3e8` — abandoned report dispatch reservations recover to `outcome_uncertain` without replay.
+- `33340676170` — Work Recovery E2E success including upstream report restart recovery.
+- `33340676146` — full ZN CI success on `5f14a645...`.
 - Current full ZN CI and canonical post-promotion CI must be read live rather than inferred from this file.
 
 Older self-maintenance evidence remains valid where the underlying code has not changed; consult Git history and CI for exact runs when needed.
 
 ## Current product gaps
 
-1. **Managed browser still lacks semantic target discovery for ordinary Work.** The new checkbox path requires a technical `#dom-id`; ZN still needs bounded fresh page/accessibility sensing that can discover a user-meaningful target without inventing authority.
-2. **Browser interaction recovery is fail-closed but not fully reconciled.** An interrupted ephemeral mutation is not blindly replayed, but ZN cannot yet reopen/re-sense enough state to classify every unknown outcome as succeeded/failed.
-3. **Broader browser interaction is partial.** General safe click/focus/text/form workflows are not connected to ordinary Work; expand vertically rather than exposing all provider primitives at once.
-4. **BUG/repair reporting is locally connected but not remotely product-closed.** Bounded operator-controlled transport/intake/acknowledgement/reconciliation remains missing.
-5. **User Browser Bridge is missing.** Existing authenticated user-session reality must not be solved by copying browser credentials/profile data.
-6. **Installed update observation remains partial; N -> N+1 replacement/rollback/signing remain approval-gated.**
-7. **Unified health remains partial.** Extend only where active-call evidence closes a meaningful reliability gap.
+1. **User Browser Bridge is not product-closed.** Existing authenticated Edge/Chrome reality still needs explicit user permission and bounded mutation; never copy cookies, passwords or profile data.
+2. **Managed browser breadth remains partial.** Generic discovery, tabs/popups/frames, downloads/uploads and arbitrary interaction remain open.
+3. **Browser interaction recovery remains fail-closed outside proven observed results.** Unknown external mutations without sufficient durable evidence still need bounded re-sense/reclassification.
+4. **Installed update continuity remains incomplete.** Public-channel observation and artifact verification exist, but formal N -> N+1 continuity, rollback and signing/trust remain approval-gated.
+5. **BUG/repair transport remains missing but is currently deprioritized by the user.** Local formation and crash-safe dispatch accounting remain valid.
+6. **Unified health remains partial.** Extend only where active-call evidence closes a meaningful reliability gap.
 
 ## Next evidence-driven direction
 
-After live branch/CI state is confirmed, the strongest browser continuation is:
+After documentation reconciliation and normal canonical promotion, the strongest product continuation is:
 
 ```text
-ordinary managed-browser Work
--> bounded fresh accessibility/semantic observation
--> deterministic user-meaningful target selection under explicit authority
--> one controlled interaction
--> independent postcondition
--> interruption reconciliation / recovery
+explicit user confirmation
+-> attach only to the current existing browser window/control
+-> no profile, cookie or password extraction
+-> fresh exact UIA/browser identity
+-> one bounded non-sensitive action
+-> independent current-state verification
+-> permission expiry/revocation and restart-safe failure
 ```
 
-Reassess this against the local-report transport gap before each new slice. Repository synchronization and documentation reconciliation are required engineering hygiene, not product milestones.
+Repository synchronization and documentation reconciliation are required engineering hygiene, not product milestones.
