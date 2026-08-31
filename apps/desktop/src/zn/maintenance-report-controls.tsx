@@ -13,7 +13,6 @@ type MaintenanceReport = {
 type MaintenanceReportStatus = {
   available: boolean
   transportAvailable: boolean
-  authority: string
   reports: MaintenanceReport[]
 }
 
@@ -47,7 +46,6 @@ function normalizeStatus(value: unknown): MaintenanceReportStatus | null {
   return {
     available: raw.available === true,
     transportAvailable: raw.transport_available === true,
-    authority: String(raw.authority || ''),
     reports
   }
 }
@@ -66,6 +64,7 @@ export function ZnMaintenanceReportControls() {
       const next = normalizeStatus(await window.znDesktop.resident.status())
       setStatus(next)
     } catch (error) {
+      setStatus(null)
       setNotice(error instanceof Error ? error.message : String(error))
     }
   }, [])
@@ -103,7 +102,7 @@ export function ZnMaintenanceReportControls() {
     }
   }, [busyKey, refresh, status?.transportAvailable])
 
-  if (!status || status.reports.length === 0) return null
+  if (!status || actionable.length === 0) return null
 
   return (
     <aside
@@ -163,9 +162,6 @@ export function ZnMaintenanceReportControls() {
           ) : null}
         </div>
       ))}
-      {actionable.length === 0 ? (
-        <div className="zn-muted zn-small">No report currently requires operator action.</div>
-      ) : null}
       {notice ? <div className="zn-setting-state" style={{ marginTop: 10 }}>{notice}</div> : null}
     </aside>
   )
