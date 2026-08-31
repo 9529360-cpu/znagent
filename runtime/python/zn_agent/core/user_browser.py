@@ -12,11 +12,12 @@ permission, fresh action authority and completion evidence remain resident-owned
 """
 
 import ipaddress
+from dataclasses import replace
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
 from .browser import BrowserPermissionContext, BrowserPlane, BrowserSessionIdentity
-from .managed_browser import ManagedBrowserError, ManagedBrowserUnavailable, _ManagedSession
+from .managed_browser import ManagedBrowserError, _ManagedSession
 from .semantic_managed_browser import SemanticPlaywrightManagedBrowser
 
 
@@ -61,7 +62,6 @@ class AuthorizedCDPUserBrowser(SemanticPlaywrightManagedBrowser):
 
         factory = self._playwright_factory or self._default_playwright_factory
         playwright = None
-        browser = None
         try:
             playwright = factory().start()
             browser = playwright.chromium.connect_over_cdp(self.endpoint)
@@ -132,6 +132,16 @@ class AuthorizedCDPUserBrowser(SemanticPlaywrightManagedBrowser):
         # those objects belong to the user. Stopping the Playwright client only
         # tears down ZN's transport connection.
         self._disconnect_only(session.playwright)
+
+    def _capture(self, session: _ManagedSession, page_id: str, **kwargs: Any):
+        observation = super()._capture(session, page_id, **kwargs)
+        metadata = dict(observation.metadata)
+        metadata["service_workers"] = "user_owned_unmodified"
+        metadata["attachment"] = "authorized_existing_session"
+        metadata["network_policy"] = "user_browser_unmodified; ZN action authority enforced"
+        user_observation = replace(observation, metadata=metadata)
+        session.last_observation[page_id] = user_observation
+        return user_observation
 
     @classmethod
     def _validate_endpoint(cls, endpoint: str) -> str:
