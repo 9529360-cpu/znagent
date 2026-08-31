@@ -42,6 +42,10 @@ class MaintainerBugReportIntake:
         report = self._validated_payload(payload)
         now = utc_now()
         with closing(self._connect()) as conn:
+            # The HTTP adapter is intentionally threaded. Serialize the short
+            # read/insert-or-update transaction so two concurrent deliveries of
+            # the same idempotency key cannot both observe an absent row.
+            conn.execute("BEGIN IMMEDIATE")
             existing = conn.execute(
                 "SELECT report_key,component_token,failure_class,exception_type,"
                 "incident_token,occurrences FROM maintainer_bug_report_intake "
