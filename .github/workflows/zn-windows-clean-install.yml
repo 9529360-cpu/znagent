@@ -186,6 +186,7 @@ jobs:
           $proof = Join-Path $env:RUNNER_TEMP 'zn-clean-install-proof.log'
           $autostartProof = Join-Path $env:RUNNER_TEMP 'zn-resident-autostart-proof.log'
           $continuity = Join-Path $env:RUNNER_TEMP 'zn-installed-continuity-baseline.json'
+          # Keep Electron's single-instance lock isolated from any live ZN in the interactive runner user session.
           $userDataDir = Join-Path $env:RUNNER_TEMP 'zn-clean-install-user-data'
           Remove-Item -Recurse -Force $userDataDir -ErrorAction SilentlyContinue
           Remove-Item -Force $continuity,$autostartProof,$stdout,$stderr,$proof -ErrorAction SilentlyContinue
@@ -212,7 +213,8 @@ jobs:
             }
             if ($verifyExit -ne 0) {
               $desktop.Refresh()
-              Write-Host "Installed desktop state after verifier failure: exited=$($desktop.HasExited) exit_code=$($desktop.ExitCode)"
+              $desktopExitCode = if ($desktop.HasExited) { [string]$desktop.ExitCode } else { 'running' }
+              Write-Host "Installed desktop state after verifier failure: exited=$($desktop.HasExited) exit_code=$desktopExitCode"
               if (Test-Path -LiteralPath $stdout) { Write-Host '--- desktop stdout ---'; Get-Content -LiteralPath $stdout -Tail 200 }
               if (Test-Path -LiteralPath $stderr) { Write-Host '--- desktop stderr ---'; Get-Content -LiteralPath $stderr -Tail 200 }
               if (Test-Path -LiteralPath $proof) { Write-Host '--- verifier proof ---'; Get-Content -LiteralPath $proof -Tail 200 }
