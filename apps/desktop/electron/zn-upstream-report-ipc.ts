@@ -4,8 +4,12 @@ import { getZnResidentProcess } from './zn-resident-ipc'
 
 let registered = false
 
-function reportKey(payload: any): string {
-  const key = String(payload?.reportKey || payload?.report_key || '').trim()
+function reportKey(payload: unknown): string {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('reportKey is required')
+  }
+  const values = payload as Record<string, unknown>
+  const key = String(values.reportKey || values.report_key || '').trim()
   if (!key) throw new Error('reportKey is required')
   return key
 }
