@@ -52,6 +52,15 @@ class UserBrowserExtensionRelayError(RuntimeError):
     pass
 
 
+class UserBrowserExtensionCommandUncertainError(UserBrowserExtensionRelayError):
+    """The extension received a command but Resident never got its final result.
+
+    This is intentionally distinct from a pre-dispatch transport failure. Callers
+    must assume a side effect may already have happened and re-sense before any
+    further movement instead of replaying the command.
+    """
+
+
 class ResidentUserBrowserExtensionRelay:
     """Keep one explicitly user-authorized browser tab on loopback only."""
 
@@ -182,7 +191,9 @@ class ResidentUserBrowserExtensionRelay:
             self._thread = None
             self._authorized = None
             self._pending.clear()
-            self._inflight.clear()
+            # Keep inflight command identities until their blocked Resident callers
+            # wake. Those callers must be told that delivery happened and the final
+            # side-effect state is therefore uncertain rather than safe to replay.
             self._results.clear()
             self._condition.notify_all()
         if server is not None:
@@ -234,7 +245,9 @@ class ResidentUserBrowserExtensionRelay:
                     )
             self._authorized = None
             self._pending.clear()
-            self._inflight.clear()
+            # Do not erase inflight identities here. A command already delivered to
+            # the extension may have crossed the side-effect boundary before the
+            # user's revocation arrived; the waiting caller must re-sense, not replay.
             self._results.clear()
             self._condition.notify_all()
         return self.status()
@@ -275,20 +288,35 @@ class ResidentUserBrowserExtensionRelay:
                     return result
                 current = self._authorized
                 if current is None or current.tab_id != command.tab_id:
+                    delivered = command.command_id in self._inflight
                     self._drop_command_locked(command.command_id)
+                    if delivered:
+                        raise UserBrowserExtensionCommandUncertainError(
+                            "user browser authority changed after command delivery; side effect may have occurred"
+                        )
                     raise UserBrowserExtensionRelayError(
-                        "user browser authorization was revoked before command completion"
+                        "user browser authorization was revoked before command delivery"
                     )
                 if self._server is None:
+                    delivered = command.command_id in self._inflight
                     self._drop_command_locked(command.command_id)
+                    if delivered:
+                        raise UserBrowserExtensionCommandUncertainError(
+                            "browser extension relay stopped after command delivery; side effect may have occurred"
+                        )
                     raise UserBrowserExtensionRelayError(
-                        "browser extension relay stopped before command completion"
+                        "browser extension relay stopped before command delivery"
                     )
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
+                    delivered = command.command_id in self._inflight
                     self._drop_command_locked(command.command_id)
+                    if delivered:
+                        raise UserBrowserExtensionCommandUncertainError(
+                            "browser extension command result was lost after delivery; side effect may have occurred"
+                        )
                     raise UserBrowserExtensionRelayError(
-                        "browser extension command did not complete before timeout"
+                        "browser extension command was not delivered before timeout"
                     )
                 self._condition.wait(timeout=remaining)
 
