@@ -32,6 +32,7 @@ class _IntakeClient:
         self.gets: list[tuple[str, dict]] = []
         self.post_error: BaseException | None = None
         self.drop_ack_after_accept = False
+        self.get_response: _Response | None = None
 
     def post(self, url: str, *, json, headers):
         self.posts.append((url, dict(json), dict(headers)))
@@ -44,9 +45,10 @@ class _IntakeClient:
 
     def get(self, url: str, *, headers):
         self.gets.append((url, dict(headers)))
+        if self.get_response is not None:
+            return self.get_response
         key = urlsplit(url).path.rsplit("/", 1)[-1]
-        ack = self.intake.lookup(key)
-        return _Response(200, ack) if ack is not None else _Response(404, None)
+        return _Response(200, self.intake.reconciliation(key))
 
 
 class _StaticClient:
@@ -174,6 +176,61 @@ class UpstreamBugReportTransportTests(unittest.TestCase):
             self.assertEqual(delivered["state"], "delivered")
             self.assertEqual(delivered["dispatch_attempts"], 2)
             self.assertEqual(intake.snapshot()["report_count"], 1)
+
+    def test_ambiguous_404_does_not_unlock_uncertain_dispatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            outbox = self._outbox(tmp)
+            prepared = outbox.prepare(self._task())
+            intake = MaintainerBugReportIntake(Path(tmp) / "intake.db")
+            client = _IntakeClient(intake)
+            client.post_error = TimeoutError("connect outcome unknown")
+            transport = UpstreamBugReportTransport(
+                "https://reports.example.test/v1/reports",
+                http_client=client,
+            )
+
+            with self.assertRaises(UpstreamBugReportTransportError):
+                transport.dispatch(outbox, prepared["report_key"])
+
+            client.get_response = _Response(404, None)
+            with self.assertRaises(UpstreamBugReportTransportError):
+                transport.reconcile(outbox, prepared["report_key"])
+
+            uncertain = outbox.snapshot()["reports"][0]
+            self.assertEqual(uncertain["state"], "outcome_uncertain")
+            self.assertEqual(uncertain["dispatch_attempts"], 1)
+            with self.assertRaises(RuntimeError):
+                transport.dispatch(outbox, prepared["report_key"])
+
+    def test_mismatched_reconciliation_evidence_does_not_unlock_retry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            outbox = self._outbox(tmp)
+            prepared = outbox.prepare(self._task())
+            intake = MaintainerBugReportIntake(Path(tmp) / "intake.db")
+            client = _IntakeClient(intake)
+            client.post_error = TimeoutError("connect outcome unknown")
+            transport = UpstreamBugReportTransport(
+                "https://reports.example.test/v1/reports",
+                http_client=client,
+            )
+
+            with self.assertRaises(UpstreamBugReportTransportError):
+                transport.dispatch(outbox, prepared["report_key"])
+
+            client.get_response = _Response(
+                200,
+                {
+                    "schema": "zn-upstream-bug-report-reconciliation-v1",
+                    "report_key": "b" * 64,
+                    "present": False,
+                },
+            )
+            with self.assertRaises(UpstreamBugReportTransportError):
+                transport.reconcile(outbox, prepared["report_key"])
+
+            uncertain = outbox.snapshot()["reports"][0]
+            self.assertEqual(uncertain["state"], "outcome_uncertain")
+            self.assertEqual(uncertain["dispatch_attempts"], 1)
 
     def test_mismatched_ack_fails_closed_as_uncertain(self):
         with tempfile.TemporaryDirectory() as tmp:

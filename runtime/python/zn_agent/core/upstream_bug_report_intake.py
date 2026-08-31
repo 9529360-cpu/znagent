@@ -16,6 +16,7 @@ from .models import utc_now
 
 _REPORT_SCHEMA = "zn-upstream-bug-report-v2"
 _ACK_SCHEMA = "zn-upstream-bug-report-ack-v1"
+_RECONCILIATION_SCHEMA = "zn-upstream-bug-report-reconciliation-v1"
 _PRODUCT = "ZN"
 _ALLOWED_KEYS = {
     "schema",
@@ -102,6 +103,21 @@ class MaintainerBugReportIntake:
         if row is None:
             return None
         return self._ack(key)
+
+    def reconciliation(self, report_key: str) -> dict[str, Any]:
+        """Return explicit receiver evidence for uncertain-dispatch reconciliation."""
+
+        key = self._digest(report_key, name="report_key")
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT report_key FROM maintainer_bug_report_intake WHERE report_key=?",
+                (key,),
+            ).fetchone()
+        return {
+            "schema": _RECONCILIATION_SCHEMA,
+            "report_key": key,
+            "present": row is not None,
+        }
 
     def snapshot(self, *, limit: int = 128) -> dict[str, Any]:
         bounded = max(1, min(512, int(limit)))

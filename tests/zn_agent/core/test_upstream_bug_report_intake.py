@@ -42,6 +42,30 @@ class MaintainerBugReportIntakeTests(unittest.TestCase):
             self.assertEqual(snapshot["report_count"], 1)
             self.assertEqual(snapshot["reports"][0]["occurrences"], 7)
 
+    def test_reconciliation_returns_explicit_present_and_absent_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            intake = MaintainerBugReportIntake(Path(tmp) / "intake.db")
+            absent = intake.reconciliation("a" * 64)
+            intake.accept(self._payload())
+            present = intake.reconciliation("a" * 64)
+
+            self.assertEqual(
+                absent,
+                {
+                    "schema": "zn-upstream-bug-report-reconciliation-v1",
+                    "report_key": "a" * 64,
+                    "present": False,
+                },
+            )
+            self.assertEqual(
+                present,
+                {
+                    "schema": "zn-upstream-bug-report-reconciliation-v1",
+                    "report_key": "a" * 64,
+                    "present": True,
+                },
+            )
+
     def test_intake_rejects_raw_or_unbounded_fields(self):
         with tempfile.TemporaryDirectory() as tmp:
             intake = MaintainerBugReportIntake(Path(tmp) / "intake.db")
