@@ -141,8 +141,12 @@ function robocopyCompleted(error: unknown): boolean {
 }
 
 function runWindowsRobocopy(sourceRoot: string, targetRoot: string): void {
+  const windowsRoot = process.env.SystemRoot || process.env.WINDIR
+  if (!windowsRoot) throw new Error('Windows system root is unavailable for runtime materialization')
+  const robocopy = path.join(windowsRoot, 'System32', 'robocopy.exe')
+  if (!fs.existsSync(robocopy)) throw new Error(`Windows system robocopy is unavailable: ${robocopy}`)
   execFileSync(
-    'robocopy.exe',
+    robocopy,
     [
       sourceRoot,
       targetRoot,
