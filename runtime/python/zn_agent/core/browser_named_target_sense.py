@@ -4,9 +4,12 @@ from __future__ import annotations
 
 The Sense does not attach to a browser profile, read cookies, inspect stored
 credentials, walk arbitrary page text, or return the accessible Name of unrelated
-controls. It asks Windows UI Automation for one exact Name + control-type match
-under the *current foreground window* and returns only structural identity and a
-bounded primary-screen target position. Ambiguous matches fail closed.
+controls. It first asks Windows UI Automation for one exact Name + control-type
+match under the *current foreground window*. Chromium may not honor Name inside a
+server-side UIA property condition for an unfocused DOM control, so a bounded
+fallback may enumerate only UIA Edit controls and compare cached Name values
+inside the worker. Unrelated names never leave that worker or become resident
+evidence. Ambiguous matches fail closed.
 """
 
 import os
@@ -18,6 +21,7 @@ from typing import Callable
 from .models import utc_now
 
 _MAX_TARGET_NAME_CHARS = 256
+_MAX_FALLBACK_EDIT_CANDIDATES = 128
 _ALLOWED_BROWSER_PROCESSES = frozenset({"chrome.exe", "msedge.exe"})
 _UIA_EDIT_CONTROL_TYPE = 50004
 
@@ -136,6 +140,7 @@ class _WindowsBrowserNamedTargetReader:
             for property_id in (
                 client.UIA_RuntimeIdPropertyId,
                 client.UIA_ProcessIdPropertyId,
+                client.UIA_NamePropertyId,
                 client.UIA_AutomationIdPropertyId,
                 client.UIA_FrameworkIdPropertyId,
                 client.UIA_ControlTypePropertyId,
@@ -184,9 +189,8 @@ class _WindowsBrowserNamedTargetReader:
                     raise RuntimeError("foreground browser window has no stable title")
 
                 # The search root remains a short-lived live UIA reference. The
-                # exact matching descendants are still returned with Mode_None
-                # cache snapshots, so unrelated controls never become retained
-                # observation objects or page-content evidence.
+                # returned descendants are Mode_None cache snapshots, so unrelated
+                # controls never become live action authorities.
                 root = automation.ElementFromHandle(hwnd)
                 if not root:
                     raise RuntimeError("Windows UI Automation returned no foreground root element")
@@ -206,12 +210,47 @@ class _WindowsBrowserNamedTargetReader:
                     cache,
                 )
                 count = int(matches.Length)
-                if count != 1:
+                if count == 1:
+                    element = matches.GetElement(0)
+                elif count == 0:
+                    # Chromium can expose an unfocused DOM Edit while declining
+                    # to evaluate its Name in a server-side condition. Fall back
+                    # only to Edit candidates. Cached Name is compared transiently
+                    # and never copied into the returned observation or any error.
+                    edit_matches = root.FindAllBuildCache(
+                        client.TreeScope_Descendants,
+                        type_condition,
+                        cache,
+                    )
+                    candidate_count = int(edit_matches.Length)
+                    if candidate_count > _MAX_FALLBACK_EDIT_CANDIDATES:
+                        raise RuntimeError(
+                            "foreground browser exposes too many Edit controls for bounded exact-name matching"
+                        )
+                    element = None
+                    exact_count = 0
+                    for index in range(candidate_count):
+                        candidate = edit_matches.GetElement(index)
+                        if not candidate:
+                            continue
+                        cached_name = str(
+                            candidate.GetCachedPropertyValue(client.UIA_NamePropertyId) or ""
+                        ).strip()
+                        if cached_name != request.name:
+                            continue
+                        exact_count += 1
+                        if exact_count == 1:
+                            element = candidate
+                    if exact_count != 1:
+                        raise RuntimeError(
+                            "exact foreground browser target is ambiguous or absent after bounded Edit-only matching: "
+                            f"matching_controls={exact_count}"
+                        )
+                else:
                     raise RuntimeError(
-                        "exact foreground browser target is ambiguous or absent: "
+                        "exact foreground browser target is ambiguous: "
                         f"matching_controls={count}"
                     )
-                element = matches.GetElement(0)
                 if not element:
                     raise RuntimeError("exact foreground browser target disappeared")
 
