@@ -23,6 +23,7 @@ from urllib.parse import unquote, urlsplit
 from .upstream_bug_report_intake import MaintainerBugReportIntake
 
 _MAX_BODY_BYTES = 4096
+_MIN_TOKEN_LENGTH = 32
 _REPORT_PATH = "/reports"
 _TOKEN_ENV = "ZN_MAINTAINER_REPORT_TOKEN"
 _DB_ENV = "ZN_MAINTAINER_REPORT_DB"
@@ -39,8 +40,8 @@ class MaintainerReportHTTPServer(ThreadingHTTPServer):
         bearer_token: str,
     ) -> None:
         token = str(bearer_token or "").strip()
-        if not token:
-            raise ValueError("maintainer report bearer token must not be empty")
+        if len(token) < _MIN_TOKEN_LENGTH:
+            raise ValueError(f"maintainer report bearer token must be at least {_MIN_TOKEN_LENGTH} characters")
         self.intake = intake
         self.bearer_token = token
         super().__init__(server_address, MaintainerReportRequestHandler)
@@ -49,11 +50,30 @@ class MaintainerReportHTTPServer(ThreadingHTTPServer):
 class MaintainerReportRequestHandler(BaseHTTPRequestHandler):
     server: MaintainerReportHTTPServer
     protocol_version = "HTTP/1.1"
+    server_version = "ZNMaintainerIntake"
+    sys_version = ""
+
+    def version_string(self) -> str:
+        return self.server_version
 
     def log_message(self, _format: str, *args: Any) -> None:
         # Report envelopes are privacy-bounded, but access logs still do not need
         # request paths, report keys, auth metadata, or client-controlled text.
         return
+
+    def send_error(
+        self,
+        code: int,
+        message: str | None = None,
+        explain: str | None = None,
+    ) -> None:
+        # Never fall back to BaseHTTPRequestHandler's implementation-detail HTML.
+        del message, explain
+        try:
+            status = HTTPStatus(code)
+        except ValueError:
+            status = HTTPStatus.INTERNAL_SERVER_ERROR
+        self._json(status, {"error": "request_rejected"})
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
         if not self._authorized():
@@ -194,8 +214,8 @@ def main(argv: list[str] | None = None) -> int:
     if not database:
         parser.error(f"--database or {_DB_ENV} is required")
     token = str(os.environ.get(_TOKEN_ENV) or "").strip()
-    if not token:
-        parser.error(f"{_TOKEN_ENV} is required")
+    if len(token) < _MIN_TOKEN_LENGTH:
+        parser.error(f"{_TOKEN_ENV} must be at least {_MIN_TOKEN_LENGTH} characters")
 
     server = build_server(
         database_path=database,
