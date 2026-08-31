@@ -31,7 +31,7 @@ concurrency:
 jobs:
   package-candidate:
     name: Windows x64 unsigned candidate
-    runs-on: [self-hosted, Windows, X64, zn-ci]
+    runs-on: [self-hosted, Windows, X64, zn-interactive]
     timeout-minutes: 60
     steps:
       - name: Publish candidate pending status
@@ -51,12 +51,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Require Windows x64 self-hosted runner
+      - name: Require dedicated interactive Windows x64 runner
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
             throw "Windows release candidate requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
           }
-          Write-Host "Windows candidate runner: $env:RUNNER_NAME"
+          if ($env:RUNNER_NAME -ne 'zn-interactive') {
+            throw "Windows release candidate requires the dedicated zn-interactive runner; got $env:RUNNER_NAME"
+          }
+          $sessionId = (Get-Process -Id $PID -ErrorAction Stop).SessionId
+          if ($sessionId -eq 0) {
+            throw 'Windows release candidate requires a logged-on interactive session, not Session 0.'
+          }
+          Write-Host "Windows candidate runner: $env:RUNNER_NAME session=$sessionId"
 
       - name: Set up Node
         uses: actions/setup-node@v7
