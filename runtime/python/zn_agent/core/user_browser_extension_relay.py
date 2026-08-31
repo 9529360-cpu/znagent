@@ -20,6 +20,7 @@ from .models import utc_now
 
 ZN_BROWSER_EXTENSION_ID = "likpiakgiamipheeekdgekdahafjinnh"
 ZN_BROWSER_EXTENSION_ORIGIN = f"chrome-extension://{ZN_BROWSER_EXTENSION_ID}"
+ZN_BROWSER_EXTENSION_HEADER = "X-ZN-Browser-Extension-Id"
 
 
 @dataclass(slots=True, frozen=True)
@@ -65,7 +66,7 @@ class ResidentUserBrowserExtensionRelay:
 
                 def do_POST(self) -> None:  # noqa: N802
                     try:
-                        self._require_extension_origin()
+                        self._require_extension_request()
                         body = self._json_body()
                         if self.path == "/v1/attach":
                             result = relay.authorize(
@@ -83,11 +84,18 @@ class ResidentUserBrowserExtensionRelay:
                         return
                     self._write(200, {"ok": True, **result})
 
-                def _require_extension_origin(self) -> None:
-                    origin = str(self.headers.get("Origin") or "").strip()
-                    if origin != ZN_BROWSER_EXTENSION_ORIGIN:
+                def _require_extension_request(self) -> None:
+                    extension_id = str(
+                        self.headers.get(ZN_BROWSER_EXTENSION_HEADER) or ""
+                    ).strip()
+                    if extension_id != ZN_BROWSER_EXTENSION_ID:
                         raise UserBrowserExtensionRelayError(
-                            "browser tab authorization requires the installed ZN extension origin"
+                            "browser tab authorization requires the installed ZN extension identity"
+                        )
+                    origin = str(self.headers.get("Origin") or "").strip()
+                    if origin and origin != ZN_BROWSER_EXTENSION_ORIGIN:
+                        raise UserBrowserExtensionRelayError(
+                            "browser tab authorization origin does not match the ZN extension"
                         )
 
                 def _json_body(self) -> dict[str, Any]:
