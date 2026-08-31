@@ -1,21 +1,109 @@
 from __future__ import annotations
 
-"""Typed world-state semantics for one foreground user-browser text goal."""
+"""Typed world-state semantics for one foreground user-browser text goal.
 
+The goal may arrive as an internal typed request or be formed from a deliberately
+bounded ordinary Work sentence. Language understanding identifies only the user's
+desired target name and text. It never supplies browser identity, coordinates,
+RuntimeId, action authority, or completion truth; those remain fresh Sense facts.
+"""
+
+import re
 from typing import Any, Mapping
 
 from .action import NativeActionIntent
-from .automation_text_state_sense import NativeFocusedAutomationTextSense
 from .browser_named_target_sense import BrowserNamedTargetObservation
 from .focused_text_sense import NativeFocusedTextSense
 from .models import AgentEvent
 
 _KIND = "user_browser_named_text"
+_QUOTED = re.compile(r'["“]([^"”\r\n]{1,4096})["”]')
+_BROWSER_CUES = (
+    "browser",
+    "chrome",
+    "edge",
+    "网页",
+    "浏览器",
+    "当前页面",
+    "这个页面",
+)
+_TARGET_FIRST_CUES = (
+    "fill",
+    "set",
+    "put",
+    "填写",
+    "填入",
+)
+_VALUE_FIRST_CUES = (
+    "type",
+    "enter",
+    "input",
+    "输入",
+)
+
+
+def _ordinary_work_request(event: AgentEvent) -> dict[str, Any] | None:
+    """Recognize one unambiguous named-field request from normal user Work.
+
+    This is intentionally a small built-in competence, not a general planner.
+    Two quoted spans are required so arbitrary prose cannot silently become text
+    input authority. Broader language can later use Thought/external cognition to
+    propose the same typed goal, but current browser reality still owns execution.
+    """
+
+    if str(event.kind or "").strip().lower() != "desktop_user_event":
+        return None
+    payload = event.payload or {}
+    if payload.get("body_action") or payload.get("native_action"):
+        return None
+    task = str(event.task or "").strip()
+    lowered = task.lower()
+    if not any(cue in lowered or cue in task for cue in _BROWSER_CUES):
+        return None
+    quoted = [match.group(1) for match in _QUOTED.finditer(task)]
+    if len(quoted) != 2:
+        return None
+
+    first_start = task.find(quoted[0])
+    second_start = task.find(quoted[1], first_start + len(quoted[0]))
+    between = task[first_start + len(quoted[0]) : second_start].lower()
+    prefix = task[:first_start].lower()
+
+    target: str | None = None
+    text: str | None = None
+    target_first = any(cue in prefix or cue in between for cue in _TARGET_FIRST_CUES)
+    value_first = any(cue in prefix or cue in between for cue in _VALUE_FIRST_CUES)
+
+    # Prefer explicit relation words over the generic verb family when both are
+    # present, e.g. `type "value" into "field"`.
+    value_relation = any(token in between for token in (" into ", " to ", "到", "进"))
+    target_relation = any(token in between for token in (" with ", "为", "内容"))
+    if value_first and value_relation and not target_relation:
+        text, target = quoted[0], quoted[1]
+    elif target_first and target_relation and not value_relation:
+        target, text = quoted[0], quoted[1]
+    elif target_first and not value_first:
+        target, text = quoted[0], quoted[1]
+    elif value_first and not target_first:
+        text, target = quoted[0], quoted[1]
+    else:
+        return None
+
+    target = str(target or "").strip()
+    if not target or len(target) > 256 or text is None:
+        return None
+    return {
+        "kind": _KIND,
+        "target_name": target,
+        "text": str(text),
+        "goal_source": "ordinary_work",
+    }
 
 
 def browser_named_text_request(event: AgentEvent) -> dict[str, Any] | None:
     payload = event.payload or {}
     raw_goal = payload.get("resident_goal")
+    goal_source = "typed_event"
     if isinstance(raw_goal, str):
         kind = raw_goal.strip().lower()
         values: Mapping[str, Any] = payload
@@ -23,7 +111,12 @@ def browser_named_text_request(event: AgentEvent) -> dict[str, Any] | None:
         kind = str(raw_goal.get("kind") or "").strip().lower()
         values = {**payload, **dict(raw_goal)}
     else:
-        return None
+        ordinary = _ordinary_work_request(event)
+        if ordinary is None:
+            return None
+        kind = _KIND
+        values = ordinary
+        goal_source = "ordinary_work"
     if kind != _KIND:
         return None
     target_name = str(values.get("target_name") or values.get("accessible_name") or "").strip()
@@ -38,6 +131,7 @@ def browser_named_text_request(event: AgentEvent) -> dict[str, Any] | None:
         "text": text,
         "expected_text_sha256": NativeFocusedTextSense.digest_text(text),
         "expected_text_chars": len(text),
+        "goal_source": goal_source,
     }
 
 
