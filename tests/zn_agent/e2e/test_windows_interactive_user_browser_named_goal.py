@@ -8,6 +8,8 @@ import unittest
 from pathlib import Path
 
 from zn_agent.core.automation_text_state_sense import NativeFocusedAutomationTextSense
+from zn_agent.core.cognitive_resource import CognitiveIncrement, CognitiveResourceWorkerFactory
+from zn_agent.core.models import ModelRoute
 from zn_agent.core.provider_bridge import build_resident_runtime
 
 from test_windows_interactive_user_browser_bridge import (
@@ -76,12 +78,33 @@ class _NamedTargetBrowserFixture(_IsolatedUserBrowserFixture):
         raise RuntimeError(f"{self.provider} did not expose named browser fixture in time")
 
 
+class _BrowserGoalProposalResource:
+    """Deterministic cognition fixture: understanding only, never browser authority."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def invoke(self, *, question: str, context: str) -> CognitiveIncrement:
+        self.calls += 1
+        return CognitiveIncrement(
+            text=json.dumps(
+                {
+                    "kind": "user_browser_named_text",
+                    "target_name": _TARGET_NAME,
+                    "text": _TEXT,
+                }
+            ),
+            provider="e2e-cognition",
+            model="bounded-language-fixture",
+        )
+
+
 class WindowsInteractiveUserBrowserNamedGoalE2ETests(unittest.TestCase):
     @staticmethod
     def _require_input_desktop() -> None:
         WindowsInteractiveUserBrowserBridgeProviderE2ETests._require_input_desktop()
 
-    def test_resident_finds_unfocused_named_edit_then_types_and_verifies(self) -> None:
+    def test_natural_work_is_understood_then_finds_types_and_verifies(self) -> None:
         self._require_input_desktop()
         browsers = _find_installed_browsers()
         if not browsers:
@@ -98,6 +121,22 @@ class WindowsInteractiveUserBrowserNamedGoalE2ETests(unittest.TestCase):
                 config={"model": {}},
                 store_path=Path(runtime_tmp.name) / "kernel.db",
             )
+            cognition = _BrowserGoalProposalResource()
+            resident.kernel.reconfigure_resources(
+                routes=[
+                    ModelRoute(
+                        route_id="e2e-browser-language-understanding",
+                        provider="fixture",
+                        model="bounded-language-fixture",
+                        capabilities={"language_understanding": 1.0, "general": 0.8},
+                    )
+                ],
+                worker_factory=CognitiveResourceWorkerFactory(
+                    resource_builder=lambda _route: cognition,
+                ),
+                max_attempts=1,
+                resource_status={"available": True, "error": None},
+            )
             fixture.activate()
 
             named_before = resident.browser_named_target.probe_exact_edit(_TARGET_NAME)
@@ -107,15 +146,9 @@ class WindowsInteractiveUserBrowserNamedGoalE2ETests(unittest.TestCase):
             )
 
             event = resident.enqueue(
-                f"In my current browser, fill the {_TARGET_NAME} field with the requested value",
-                payload={
-                    "resident_goal": {
-                        "kind": "user_browser_named_text",
-                        "target_name": _TARGET_NAME,
-                        "text": _TEXT,
-                    },
-                    "model_policy": "never",
-                },
+                f"In my current browser, put {_TEXT} in {_TARGET_NAME}.",
+                kind="desktop_user_event",
+                payload={"model_policy": "on_demand"},
             )
 
             result = None
@@ -126,10 +159,23 @@ class WindowsInteractiveUserBrowserNamedGoalE2ETests(unittest.TestCase):
                 if result is None:
                     time.sleep(0.05)
 
-            self.assertIsNotNone(result, "named user-browser goal did not reach a terminal result")
+            self.assertIsNotNone(result, "natural user-browser goal did not reach a terminal result")
             self.assertTrue(result.success, result)
             self.assertEqual(result.event.event_id, event.event_id)
-            self.assertEqual(result.model_invocations, 0)
+            self.assertEqual(result.model_invocations, 1)
+            self.assertEqual(cognition.calls, 1)
+
+            persisted = resident.store.get_event(event.event_id)
+            self.assertEqual(
+                persisted.payload.get("resident_goal"),
+                {
+                    "kind": "user_browser_named_text",
+                    "target_name": _TARGET_NAME,
+                    "text": _TEXT,
+                },
+            )
+            understanding = persisted.payload.get("_resident_goal_understanding") or {}
+            self.assertEqual(understanding.get("source"), "bounded_cognition_proposal")
 
             named_after = resident.browser_named_target.probe_exact_edit(_TARGET_NAME)
             self.assertTrue(named_after.has_keyboard_focus)
@@ -152,11 +198,13 @@ class WindowsInteractiveUserBrowserNamedGoalE2ETests(unittest.TestCase):
             self.assertGreaterEqual(len(progress), 2)
 
             print(
-                "ZN_USER_BROWSER_NAMED_GOAL_EVIDENCE="
+                "ZN_USER_BROWSER_NATURAL_GOAL_EVIDENCE="
                 + json.dumps(
                     {
                         "provider": provider,
                         "profile_scope": "isolated-temporary",
+                        "task_ingress": "ordinary-desktop-user-text",
+                        "goal_understanding": "bounded-cognition-proposal",
                         "target_name": _TARGET_NAME,
                         "initially_focused": False,
                         "final_text_chars": final_text.text_length,
