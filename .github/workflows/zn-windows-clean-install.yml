@@ -64,6 +64,8 @@ jobs:
           if ($sessionId -eq 0) {
             throw 'Windows clean-install proof requires a logged-on interactive session, not Session 0.'
           }
+          git config core.longpaths true
+          if ($LASTEXITCODE -ne 0) { throw "failed to enable Git long-path cleanup with exit code $LASTEXITCODE" }
           Write-Host "Windows clean-install runner: $env:RUNNER_NAME session=$sessionId"
 
       - name: Set up Node
@@ -116,10 +118,10 @@ jobs:
           & subst.exe $drive $env:GITHUB_WORKSPACE
           if ($LASTEXITCODE -ne 0) { throw "subst failed with exit code $LASTEXITCODE" }
           try {
-            Push-Location "$drive\"
+            Push-Location "$drive\apps\desktop"
             try {
-              Remove-Item -Recurse -Force apps/desktop/release -ErrorAction SilentlyContinue
-              npm run builder --workspace apps/desktop -- --config electron-builder.zn.yml --win --publish never
+              Remove-Item -Recurse -Force release -ErrorAction SilentlyContinue
+              node scripts/run-electron-builder.mjs --config electron-builder.zn.yml --win --publish never
               if ($LASTEXITCODE -ne 0) { throw "electron-builder failed with exit code $LASTEXITCODE" }
             } finally {
               Pop-Location
