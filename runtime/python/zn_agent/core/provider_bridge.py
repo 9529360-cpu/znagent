@@ -249,21 +249,9 @@ def build_resident_runtime(
     from .upstream_bug_report_transport import UpstreamBugReportTransport
 
     effective_config = config if config is not None else load_zn_config()
-    kernel = build_runtime(
-        config=effective_config,
-        store_path=store_path,
-        credential_store=credential_store,
-    )
     resident_cfg = effective_config.get("zn_resident") or {}
     if not isinstance(resident_cfg, dict):
         raise ValueError("zn_resident config must be a mapping")
-    budget = CognitiveBudgetManager(
-        normal_model_calls=max(1, int(resident_cfg.get("normal_model_calls", 1))),
-        high_risk_model_calls=max(1, int(resident_cfg.get("high_risk_model_calls", 2))),
-        high_risk_threshold=max(
-            0.0, min(1.0, float(resident_cfg.get("high_risk_threshold", 0.8)))
-        ),
-    )
 
     report_cfg = resident_cfg.get("upstream_bug_report") or {}
     if not isinstance(report_cfg, dict):
@@ -275,6 +263,19 @@ def build_resident_runtime(
             endpoint=report_endpoint,
             timeout_seconds=float(report_cfg.get("timeout_seconds", 10.0)),
         )
+
+    kernel = build_runtime(
+        config=effective_config,
+        store_path=store_path,
+        credential_store=credential_store,
+    )
+    budget = CognitiveBudgetManager(
+        normal_model_calls=max(1, int(resident_cfg.get("normal_model_calls", 1))),
+        high_risk_model_calls=max(1, int(resident_cfg.get("high_risk_model_calls", 2))),
+        high_risk_threshold=max(
+            0.0, min(1.0, float(resident_cfg.get("high_risk_threshold", 0.8)))
+        ),
+    )
 
     return ReportingMaintenanceResidentRuntime(
         kernel=kernel,
