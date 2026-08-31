@@ -15,6 +15,7 @@ from zn_agent.core.provider_bridge import build_resident_runtime
 from zn_agent.core.service import ResidentService
 from zn_agent.core.user_browser_extension_relay import (
     ResidentUserBrowserExtensionRelay,
+    UserBrowserExtensionCommandUncertainError,
     UserBrowserExtensionRelayError,
     ZN_BROWSER_EXTENSION_HEADER,
     ZN_BROWSER_EXTENSION_ID,
@@ -209,7 +210,11 @@ class UserBrowserExtensionRelayTests(unittest.TestCase):
             relay.revoke(tab_id=23)
             worker.join(timeout=2.0)
             self.assertFalse(worker.is_alive())
-            self.assertIsInstance(outcome.get("error"), UserBrowserExtensionRelayError)
+            self.assertIsInstance(
+                outcome.get("error"),
+                UserBrowserExtensionCommandUncertainError,
+            )
+            self.assertIn("side effect may have occurred", str(outcome.get("error")))
             self.assertNotIn("result", outcome)
             self.assertEqual(relay.status()["pending_commands"], 0)
             self.assertEqual(relay.status()["inflight_commands"], 0)
