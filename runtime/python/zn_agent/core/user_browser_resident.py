@@ -71,6 +71,13 @@ class UserBrowserBridgeResidentRuntime(BrowserGoalUnderstandingResidentRuntime):
             "browser_ownership": "resident",
         }
 
+    @staticmethod
+    def _supports_semantic_user_browser(browser: Any) -> bool:
+        return bool(
+            getattr(browser, "plane", None) is BrowserPlane.USER
+            and callable(getattr(browser, "observe_named_text_state", None))
+        )
+
     def _browser_named_goal_investigation(
         self,
         event,
@@ -81,7 +88,7 @@ class UserBrowserBridgeResidentRuntime(BrowserGoalUnderstandingResidentRuntime):
     ):
         browser = self.managed_browser
         request = browser_named_text_request(event)
-        if request is None or not isinstance(browser, AuthorizedCDPUserBrowser):
+        if request is None or not self._supports_semantic_user_browser(browser):
             return super()._browser_named_goal_investigation(
                 event,
                 state,
@@ -195,7 +202,7 @@ class UserBrowserBridgeResidentRuntime(BrowserGoalUnderstandingResidentRuntime):
     ):
         request = browser_named_text_request(event)
         browser = self.managed_browser
-        if request is not None and isinstance(browser, AuthorizedCDPUserBrowser):
+        if request is not None and self._supports_semantic_user_browser(browser):
             evidence = state.data.get(self._SEMANTIC_BROWSER_GOAL_KEY)
             if not isinstance(evidence, dict) or evidence.get("phase") != "needs_text":
                 state.stage = "native_investigation"
