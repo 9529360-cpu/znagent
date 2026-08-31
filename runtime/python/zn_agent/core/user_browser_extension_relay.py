@@ -25,7 +25,13 @@ ZN_BROWSER_EXTENSION_ORIGIN = f"chrome-extension://{ZN_BROWSER_EXTENSION_ID}"
 ZN_BROWSER_EXTENSION_HEADER = "X-ZN-Browser-Extension-Id"
 
 _ALLOWED_COMMAND_KINDS = frozenset(
-    {"probe_current_tab", "observe_named_textbox", "type_named_textbox"}
+    {
+        "probe_current_tab",
+        "observe_named_textbox",
+        "type_named_textbox",
+        "observe_named_button",
+        "click_named_button_to_url",
+    }
 )
 _MAX_RELAY_BODY = 64 * 1024
 _MAX_COMMAND_WAIT_SECONDS = 20.0
