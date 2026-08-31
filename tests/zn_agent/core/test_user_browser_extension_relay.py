@@ -6,6 +6,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -147,6 +148,39 @@ class UserBrowserExtensionRelayTests(unittest.TestCase):
                 self.assertGreater(int(running["endpoint"].rsplit(":", 1)[1]), 0)
                 service.release()
                 self.assertFalse(resident.user_browser_extension_status()["available"])
+            finally:
+                service.release()
+                resident.store.close()
+
+    def test_lease_loss_immediately_drops_browser_authorization_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            resident.user_browser_extension = ResidentUserBrowserExtensionRelay(port=0)
+            service = ResidentService(resident)
+            try:
+                service.acquire()
+                self.assertTrue(resident.user_browser_extension_status()["available"])
+                resident.user_browser_extension.authorize(
+                    tab_id=8,
+                    url="https://example.test/account",
+                    title="Account",
+                )
+                self.assertTrue(resident.user_browser_extension_status()["authorized"])
+
+                with patch.object(
+                    resident.store,
+                    "heartbeat_resident_lease",
+                    return_value=False,
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "lease was lost"):
+                        service.heartbeat()
+
+                status = resident.user_browser_extension_status()
+                self.assertFalse(status["available"])
+                self.assertFalse(status["authorized"])
             finally:
                 service.release()
                 resident.store.close()
