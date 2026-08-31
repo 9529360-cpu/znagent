@@ -98,6 +98,24 @@ class UpstreamBugReportTransportTests(unittest.TestCase):
         self.assertEqual(transport.endpoint, "https://reports.example.test/v1/reports")
         self.assertEqual(transport.timeout_seconds, 60.0)
 
+    def test_bearer_token_is_sent_but_not_exposed_by_transport_repr(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            secret = "maintainer-report-secret"
+            outbox = self._outbox(tmp)
+            prepared = outbox.prepare(self._task())
+            intake = MaintainerBugReportIntake(Path(tmp) / "intake.db")
+            client = _IntakeClient(intake)
+            transport = UpstreamBugReportTransport(
+                "https://reports.example.test/v1/reports",
+                bearer_token=secret,
+                http_client=client,
+            )
+
+            delivered = transport.dispatch(outbox, prepared["report_key"])
+            self.assertEqual(delivered["state"], "delivered")
+            self.assertEqual(client.posts[0][2]["Authorization"], f"Bearer {secret}")
+            self.assertNotIn(secret, repr(transport))
+
     def test_dispatch_commits_reservation_before_receiver_and_requires_exact_ack(self):
         with tempfile.TemporaryDirectory() as tmp:
             outbox = self._outbox(tmp)
