@@ -117,11 +117,6 @@ class BrowserNamedGoalTests(unittest.TestCase):
         self.assertIsNone(browser_named_text_intent(event, state))
 
     def test_exact_target_sense_rejects_non_browser_and_password_controls(self):
-        base = self._target(focused=False)
-        wrong_process = BrowserNamedTargetObservation(
-            **{**base.__dict__, "process_name": "notepad.exe"}
-        ) if hasattr(base, "__dict__") else None
-        # Slots deliberately prevent a mutable __dict__; use fresh observations below.
         def observation(process_name="chrome.exe", is_password=False):
             return BrowserNamedTargetObservation(
                 runtime_id=(1, 2),
