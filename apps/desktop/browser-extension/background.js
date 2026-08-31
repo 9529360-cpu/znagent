@@ -126,13 +126,17 @@ async function currentTabEvidence(tabId) {
   }
 }
 
+async function fullAxTree(tabId) {
+  const tree = await debuggerCommand(tabId, 'Accessibility.getFullAXTree')
+  return Array.isArray(tree?.nodes) ? tree.nodes : []
+}
+
 async function exactNamedTextbox(tabId, targetName) {
   const name = String(targetName || '')
   if (!name || name.length > 512) {
     throw new Error('textbox observation requires one bounded exact accessible name')
   }
-  const tree = await debuggerCommand(tabId, 'Accessibility.getFullAXTree')
-  const nodes = Array.isArray(tree?.nodes) ? tree.nodes : []
+  const nodes = await fullAxTree(tabId)
   const matches = nodes.filter(node => {
     if (node?.ignored === true) return false
     const role = String(node?.role?.value || '').toLowerCase()
@@ -186,6 +190,50 @@ async function exactNamedTextbox(tabId, targetName) {
   }
 }
 
+async function exactNamedButton(tabId, targetName) {
+  const name = String(targetName || '')
+  if (!name || name.length > 256) {
+    throw new Error('button observation requires one bounded exact accessible name')
+  }
+  const nodes = await fullAxTree(tabId)
+  const matches = nodes.filter(node => {
+    if (node?.ignored === true) return false
+    return String(node?.role?.value || '').toLowerCase() === 'button' &&
+      String(node?.name?.value || '') === name
+  })
+  if (matches.length !== 1) {
+    throw new Error(
+      matches.length === 0
+        ? 'exact accessible button target was not found'
+        : 'exact accessible button target is ambiguous'
+    )
+  }
+
+  const node = matches[0]
+  const backendNodeId = Number(node?.backendDOMNodeId || 0)
+  if (!Number.isInteger(backendNodeId) || backendNodeId <= 0) {
+    throw new Error('exact accessible button has no stable backend node identity')
+  }
+  if (axProperty(node, 'disabled') === true) {
+    throw new Error('exact accessible button is disabled')
+  }
+  const described = await debuggerCommand(tabId, 'DOM.describeNode', { backendNodeId })
+  const domNode = described?.node || {}
+  if (String(domNode?.nodeName || '').toUpperCase() !== 'BUTTON') {
+    throw new Error('safe button interaction currently requires a native button element')
+  }
+  const attributes = attributesObject(domNode?.attributes)
+  if ('disabled' in attributes) {
+    throw new Error('exact accessible button is disabled')
+  }
+  return {
+    backendNodeId,
+    targetId: `backend:${backendNodeId}`,
+    role: 'button',
+    name
+  }
+}
+
 async function observeNamedTextbox(tabId, targetName) {
   const tab = await currentTabEvidence(tabId)
   const target = await exactNamedTextbox(tabId, targetName)
@@ -196,6 +244,17 @@ async function observeNamedTextbox(tabId, targetName) {
     name: target.name,
     text_length: codePointLength(target.value),
     text_sha256: await sha256Text(target.value)
+  }
+}
+
+async function observeNamedButton(tabId, targetName) {
+  const tab = await currentTabEvidence(tabId)
+  const target = await exactNamedButton(tabId, targetName)
+  return {
+    ...tab,
+    target_id: target.targetId,
+    role: target.role,
+    name: target.name
   }
 }
 
@@ -293,6 +352,82 @@ async function typeNamedTextbox(tabId, args) {
   }
 }
 
+async function clickNamedButtonToUrl(tabId, args) {
+  const targetName = String(args?.target_name || '')
+  const targetId = String(args?.target_id || '')
+  const expectedUrlBefore = String(args?.expected_url_before || '')
+  const expectedUrlAfter = String(args?.expected_url_after || '')
+  if (!isHttpPage(expectedUrlBefore) || !isHttpPage(expectedUrlAfter)) {
+    throw new Error('button click requires fresh expected HTTP(S) URLs')
+  }
+
+  const beforeTab = await currentTabEvidence(tabId)
+  if (beforeTab.url !== expectedUrlBefore) {
+    throw new Error('authorized tab URL changed before button click; fresh sensing is required')
+  }
+  const before = await exactNamedButton(tabId, targetName)
+  if (before.targetId !== targetId) {
+    throw new Error('authorized button identity changed before click; fresh sensing is required')
+  }
+
+  let clickSent = false
+  try {
+    const resolved = await debuggerCommand(tabId, 'DOM.resolveNode', {
+      backendNodeId: before.backendNodeId
+    })
+    const objectId = String(resolved?.object?.objectId || '')
+    if (!objectId) {
+      throw new Error('exact accessible button could not be resolved for dispatch')
+    }
+    await debuggerCommand(tabId, 'Runtime.callFunctionOn', {
+      objectId,
+      functionDeclaration: 'function(){ this.click(); }',
+      returnByValue: true,
+      awaitPromise: false
+    })
+    clickSent = true
+
+    let afterTab = await currentTabEvidence(tabId)
+    const deadline = Date.now() + 3000
+    while (afterTab.url !== expectedUrlAfter && Date.now() < deadline) {
+      await sleep(50)
+      afterTab = await currentTabEvidence(tabId)
+    }
+    const verified = afterTab.url === expectedUrlAfter
+    return {
+      tab_id: tabId,
+      url_before: beforeTab.url,
+      url_after: afterTab.url,
+      target_id: before.targetId,
+      click_sent: true,
+      exact_node_continuity: true,
+      target_revalidated_before_dispatch: true,
+      expected_url: expectedUrlAfter,
+      postcondition: verified ? 'url_equals_after_fresh_semantic_button_click' : ''
+    }
+  } catch (error) {
+    if (!clickSent) throw error
+    let afterUrl = beforeTab.url
+    try {
+      afterUrl = (await currentTabEvidence(tabId)).url
+    } catch {
+      // Keep the last proven pre-click URL only as uncertainty context.
+    }
+    return {
+      tab_id: tabId,
+      url_before: beforeTab.url,
+      url_after: afterUrl,
+      target_id: before.targetId,
+      click_sent: true,
+      exact_node_continuity: true,
+      target_revalidated_before_dispatch: true,
+      expected_url: expectedUrlAfter,
+      postcondition: '',
+      verification_error: String(error instanceof Error ? error.message : error).slice(0, 512)
+    }
+  }
+}
+
 async function executeResidentCommand(tabId, command) {
   const kind = String(command?.kind || '')
   if (kind === 'probe_current_tab') {
@@ -303,6 +438,12 @@ async function executeResidentCommand(tabId, command) {
   }
   if (kind === 'type_named_textbox') {
     return typeNamedTextbox(tabId, command?.args || {})
+  }
+  if (kind === 'observe_named_button') {
+    return observeNamedButton(tabId, command?.args?.target_name)
+  }
+  if (kind === 'click_named_button_to_url') {
+    return clickNamedButtonToUrl(tabId, command?.args || {})
   }
   throw new Error(`unsupported ZN browser command: ${kind}`)
 }
