@@ -1,5 +1,8 @@
 name: ZN Linux Container Smoke
 
+# Dormant platform lane: ZN product development is Windows-only for now.
+# Keep this workflow available for future Linux work, but do not allocate a runner
+# unless the repository explicitly opts in with ZN_ENABLE_NON_WINDOWS_CI=true.
 on:
   workflow_dispatch:
 
@@ -14,6 +17,7 @@ env:
 
 jobs:
   container:
+    if: ${{ vars.ZN_ENABLE_NON_WINDOWS_CI == 'true' }}
     name: Optional Linux Container / Runtime Smoke
     runs-on: ubuntu-latest
     timeout-minutes: 60

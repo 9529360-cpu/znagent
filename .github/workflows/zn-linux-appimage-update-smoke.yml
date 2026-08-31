@@ -1,5 +1,8 @@
 name: ZN Linux AppImage Update Smoke
 
+# Dormant platform lane: ZN product development is Windows-only for now.
+# Preserve this workflow for future Linux work, but skip it before runner allocation
+# unless the repository explicitly opts in with ZN_ENABLE_NON_WINDOWS_CI=true.
 on:
   workflow_dispatch:
 
@@ -21,6 +24,7 @@ concurrency:
 
 jobs:
   appimage-update:
+    if: ${{ vars.ZN_ENABLE_NON_WINDOWS_CI == 'true' }}
     name: Real AppImage N to N+1
     runs-on: ubuntu-latest
     timeout-minutes: 45
