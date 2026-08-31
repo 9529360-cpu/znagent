@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "ZN User Browser Bridge",
+  "version": "0.1.0",
+  "description": "Explicitly authorize the current browser tab for the local ZN resident.",
+  "minimum_chrome_version": "120",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2sOguaciFWYhr2Cs+0F/YeiMNeq13vzPae+ddM/C+BlfKS2WqUzDPEOvg7UvA2CCZzwoxwR5dxFXhwPllSHe73hC3h0nDDH+W5RdE+ehtZG3sc2IQI7w4OHh66PaMpIKyRyxBk+OCWwcfjaGjs6pQ2ulAdLqE+VeCxqkjiwXj363jUwZvykIqf/n0aZgvEfvqvCmYiRaA37ZgKFNtmhdVedK9hUndf8YQ1pzZFcZSg+AEfEvsXiwleGVU3/4Fhfcx6tnM1zYZPHA5bHWV05UCXIXHW5GE0h9zK7mJatncGux9wRPaKHZCqxQtJcLFLqTETW7LS/kNAxOW7lPYPQHPQIDAQAB",
+  "permissions": ["activeTab", "debugger", "storage"],
+  "host_permissions": ["http://127.0.0.1:19991/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Allow ZN to use this tab"
+  }
+}
