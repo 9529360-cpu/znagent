@@ -6,6 +6,7 @@ The extension is only a replaceable sensing/action resource. Session identity,
 permissions, fresh action authority and effect evidence remain ZN-owned.
 """
 
+import hashlib
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -168,6 +169,8 @@ class AuthorizedExtensionUserBrowser:
         url = str(raw.get("url") or "").strip()
         self._require_url_allowed(url, session.permission)
         backend_node_id = self._backend_node_id(raw.get("backend_node_id"))
+        text_length = self._nonnegative_int(raw.get("text_length"), "textbox text length")
+        text_sha256 = self._sha256(raw.get("text_sha256"), "textbox text digest")
         captured_at = utc_now()
         target = BrowserTarget(
             session_id=session.identity.session_id,
@@ -199,8 +202,8 @@ class AuthorizedExtensionUserBrowser:
         )
         session.last_observation = observed
         return observed, {
-            "text_length": int(raw.get("text_length") or 0),
-            "text_sha256": str(raw.get("text_sha256") or ""),
+            "text_length": text_length,
+            "text_sha256": text_sha256,
         }
 
     def act(
@@ -246,6 +249,51 @@ class AuthorizedExtensionUserBrowser:
             raise ExtensionUserBrowserError(
                 "extension text result belongs to a different browser node"
             )
+
+        expected_length = len(text)
+        expected_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        expected_utf16_units = len(text.encode("utf-16-le")) // 2
+        proof = {
+            "exact_node_continuity": raw.get("exact_node_continuity") is True,
+            "input_sent": raw.get("input_sent") is True,
+            "text_length_before": self._nonnegative_int(
+                raw.get("text_length_before"), "pre-input text length"
+            ),
+            "text_sha256_before": self._sha256(
+                raw.get("text_sha256_before"), "pre-input text digest"
+            ),
+            "text_length_after": self._nonnegative_int(
+                raw.get("text_length_after"), "post-input text length"
+            ),
+            "text_sha256_after": self._sha256(
+                raw.get("text_sha256_after"), "post-input text digest"
+            ),
+            "expected_text_length": self._nonnegative_int(
+                raw.get("expected_text_length"), "expected text length"
+            ),
+            "expected_text_sha256": self._sha256(
+                raw.get("expected_text_sha256"), "expected text digest"
+            ),
+            "expected_utf16_units": self._nonnegative_int(
+                raw.get("expected_utf16_units"), "expected UTF-16 units"
+            ),
+        }
+        empty_sha = hashlib.sha256(b"").hexdigest()
+        if not bool(
+            proof["exact_node_continuity"]
+            and proof["input_sent"]
+            and proof["text_length_before"] == 0
+            and proof["text_sha256_before"] == empty_sha
+            and proof["text_length_after"] == expected_length
+            and proof["text_sha256_after"] == expected_sha
+            and proof["expected_text_length"] == expected_length
+            and proof["expected_text_sha256"] == expected_sha
+            and proof["expected_utf16_units"] == expected_utf16_units
+        ):
+            raise ExtensionUserBrowserError(
+                "extension result did not independently prove the requested text postcondition"
+            )
+
         return BrowserEffectEvidence(
             action_id=action.action_id,
             session_id=action.session_id,
@@ -256,18 +304,7 @@ class AuthorizedExtensionUserBrowser:
             url_after=after,
             target_id=target.target_id,
             postcondition="same_exact_target_text_equals_requested",
-            data={
-                "provider": self.name,
-                "exact_node_continuity": bool(raw.get("exact_node_continuity")),
-                "input_sent": bool(raw.get("input_sent")),
-                "text_length_before": int(raw.get("text_length_before") or 0),
-                "text_sha256_before": str(raw.get("text_sha256_before") or ""),
-                "text_length_after": int(raw.get("text_length_after") or 0),
-                "text_sha256_after": str(raw.get("text_sha256_after") or ""),
-                "expected_text_length": int(raw.get("expected_text_length") or 0),
-                "expected_text_sha256": str(raw.get("expected_text_sha256") or ""),
-                "expected_utf16_units": int(raw.get("expected_utf16_units") or 0),
-            },
+            data={"provider": self.name, **proof},
         )
 
     def _session(self, session_id: str) -> _ExtensionSession:
@@ -304,6 +341,23 @@ class AuthorizedExtensionUserBrowser:
             raise ExtensionUserBrowserError(
                 "authorized browser page is outside the permitted network boundary"
             )
+
+    @staticmethod
+    def _nonnegative_int(value: Any, label: str) -> int:
+        try:
+            normalized = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ExtensionUserBrowserError(f"{label} is invalid") from exc
+        if normalized < 0:
+            raise ExtensionUserBrowserError(f"{label} is invalid")
+        return normalized
+
+    @staticmethod
+    def _sha256(value: Any, label: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if len(normalized) != 64 or any(char not in "0123456789abcdef" for char in normalized):
+            raise ExtensionUserBrowserError(f"{label} is invalid")
+        return normalized
 
     @staticmethod
     def _backend_node_id(value: Any) -> int:
