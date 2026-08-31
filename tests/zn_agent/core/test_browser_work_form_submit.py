@@ -31,6 +31,8 @@ _DONE_URL = "https://example.com/done"
 
 
 class _FakeFormSubmitBrowser:
+    plane = BrowserPlane.MANAGED
+
     def __init__(self) -> None:
         self.identity = BrowserSessionIdentity.create(
             plane=BrowserPlane.MANAGED,
@@ -155,7 +157,7 @@ class _FakeFormSubmitBrowser:
                 url_before=before,
                 url_after=self.url,
                 target_id=action.target.target_id if action.target else "",
-                postcondition="url_equals",
+                postcondition="url_equals_after_fresh_semantic_button_click",
                 data={
                     "provider": "fake-form-submit-browser",
                     "target_revalidated_before_dispatch": True,
@@ -168,6 +170,20 @@ class _FakeFormSubmitBrowser:
 
     def close(self) -> None:
         self.close_calls += 1
+
+
+class _FakeUserFormSubmitBrowser(_FakeFormSubmitBrowser):
+    plane = BrowserPlane.USER
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.identity = BrowserSessionIdentity.create(
+            plane=BrowserPlane.USER,
+            provider="fake-user-form-submit-browser",
+            browser_name="chromium",
+            profile_scope="user_existing",
+        )
+        self.url = _START_URL
 
 
 class BrowserWorkFormSubmitTests(unittest.TestCase):
@@ -242,11 +258,44 @@ class BrowserWorkFormSubmitTests(unittest.TestCase):
                         BrowserTargetQueryKind.ACCESSIBLE_BUTTON_NAME,
                     ],
                 )
+                self.assertTrue(browser.permission.allow_navigation)
                 self.assertTrue(browser.permission.allow_text_entry)
                 self.assertTrue(browser.permission.allow_page_interaction)
                 self.assertFalse(browser.permission.allow_sensitive_fields)
                 self.assertEqual(browser.close_calls, 1)
                 self.assertTrue(any(message.role == "zn" for message in messages))
+            finally:
+                resident.store.close()
+
+    def test_user_plane_form_uses_current_page_without_navigation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=Path(tmp) / "kernel.db"
+            )
+            browser = _FakeUserFormSubmitBrowser()
+            resident.managed_browser = browser
+            try:
+                result = resident.body.act(
+                    "browser_fill_named_text_and_click_named_button_to_url",
+                    event_id="evt-user-form-submit",
+                    url=_START_URL,
+                    textbox_name="Search",
+                    text=_FORM_TEXT,
+                    button_name="Continue",
+                    expected_url=_DONE_URL,
+                )
+                self.assertTrue(result.success, result.error)
+                self.assertEqual(
+                    browser.actions,
+                    [BrowserActionKind.TYPE_TEXT, BrowserActionKind.CLICK],
+                )
+                self.assertFalse(browser.permission.allow_navigation)
+                self.assertTrue(browser.permission.allow_page_interaction)
+                self.assertTrue(browser.permission.allow_text_entry)
+                self.assertEqual(result.data["browser_plane"], BrowserPlane.USER.value)
+                self.assertFalse(result.data["navigation_performed"])
+                self.assertEqual(result.data["url"], _START_URL)
+                self.assertEqual(result.data["observed_url"], _DONE_URL)
             finally:
                 resident.store.close()
 
