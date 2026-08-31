@@ -49,7 +49,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Require isolated Windows x64 self-hosted runner
-        shell: pwsh
+        shell: powershell
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
             throw "Windows clean-install proof requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
@@ -82,7 +82,7 @@ jobs:
 
       - name: Resolve candidate version
         id: version
-        shell: pwsh
+        shell: powershell
         run: |
           $version = (node -p "require('./apps/desktop/package.json').version").Trim()
           if (-not $version) { throw 'desktop package version is empty' }
@@ -99,7 +99,7 @@ jobs:
         run: npm run build --workspace apps/desktop
 
       - name: Build unsigned Windows installer candidates
-        shell: pwsh
+        shell: powershell
         run: |
           Remove-Item -Recurse -Force apps/desktop/release -ErrorAction SilentlyContinue
           npm run builder --workspace apps/desktop -- --config electron-builder.zn.yml --win --publish never
@@ -107,20 +107,20 @@ jobs:
       - name: Verify packaged runtime before install
         env:
           ZN_CANDIDATE_VERSION: ${{ steps.version.outputs.version }}
-        shell: pwsh
+        shell: powershell
         run: node apps/desktop/scripts/verify-zn-packaged-runtime.mjs apps/desktop/release $env:ZN_CANDIDATE_VERSION $env:GITHUB_SHA
 
       - name: Write and verify Windows release manifest
         env:
           ZN_CANDIDATE_VERSION: ${{ steps.version.outputs.version }}
-        shell: pwsh
+        shell: powershell
         run: |
           node apps/desktop/scripts/write-zn-release-manifest.mjs windows $env:ZN_CANDIDATE_VERSION
           node apps/desktop/scripts/verify-zn-windows-release-candidate.mjs apps/desktop/release $env:ZN_CANDIDATE_VERSION x64
 
       - name: Install real NSIS candidate into isolated test state
         id: install
-        shell: pwsh
+        shell: powershell
         run: |
           $manifest = Get-Content apps/desktop/release/zn-release-windows-x64.json -Raw | ConvertFrom-Json
           $exeAssets = @($manifest.assets | Where-Object { [IO.Path]::GetExtension($_.name).ToLowerInvariant() -eq '.exe' })
@@ -150,7 +150,7 @@ jobs:
           Write-Host "Installed isolated ZN at $installDir"
 
       - name: Start installed desktop and verify resident life
-        shell: pwsh
+        shell: powershell
         env:
           ZN_INSTALL_DIR: ${{ steps.install.outputs.install_dir }}
           ZN_CLEAN_HOME: ${{ steps.install.outputs.zn_home }}
