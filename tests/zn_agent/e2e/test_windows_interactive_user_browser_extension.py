@@ -28,12 +28,37 @@ _TITLE = "ZN User Browser Bridge E2E"
 _TARGET_NAME = "Account search"
 _TEXT = "alice@example.test"
 _HOST = "zn-extension-e2e.test"
+_SESSION_COOKIE_NAME = "zn_existing_session"
+_SESSION_COOKIE_VALUE = "already-authenticated-before-zn"
+_SESSION_COOKIE = f"{_SESSION_COOKIE_NAME}={_SESSION_COOKIE_VALUE}"
 
 
 class _Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
+        if self.path == "/login":
+            self.server.login_requests += 1  # type: ignore[attr-defined]
+            self.send_response(302)
+            self.send_header(
+                "Set-Cookie",
+                f"{_SESSION_COOKIE}; Path=/; HttpOnly; SameSite=Strict",
+            )
+            self.send_header("Location", "/account")
+            self.end_headers()
+            return
+
         if self.path == "/account":
             self.server.account_requests += 1  # type: ignore[attr-defined]
+            if not self._has_existing_session():
+                self.server.unauthorized_requests += 1  # type: ignore[attr-defined]
+                body = b"existing browser login required"
+                self.send_response(401)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            self.server.authenticated_account_requests += 1  # type: ignore[attr-defined]
             body = f"""<!doctype html>
 <html>
 <head>
@@ -62,6 +87,14 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self.send_response(404)
         self.end_headers()
+
+    def _has_existing_session(self) -> bool:
+        cookies = [
+            item.strip()
+            for item in str(self.headers.get("Cookie") or "").split(";")
+            if item.strip()
+        ]
+        return _SESSION_COOKIE in cookies
 
     def log_message(self, format: str, *args) -> None:
         return None
@@ -139,7 +172,7 @@ class WindowsInteractiveUserBrowserExtensionE2ETests(unittest.TestCase):
     def _require_input_desktop() -> None:
         WindowsInteractiveUserBrowserBridgeProviderE2ETests._require_input_desktop()
 
-    def test_explicit_extension_authorization_completes_normal_named_text_task(self) -> None:
+    def test_existing_authenticated_session_completes_normal_named_text_task(self) -> None:
         self._require_input_desktop()
         browsers = _find_installed_browsers()
         if not browsers:
@@ -151,30 +184,49 @@ class WindowsInteractiveUserBrowserExtensionE2ETests(unittest.TestCase):
         self.assertTrue((extension / "background.js").is_file())
 
         server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        server.login_requests = 0  # type: ignore[attr-defined]
         server.account_requests = 0  # type: ignore[attr-defined]
+        server.authenticated_account_requests = 0  # type: ignore[attr-defined]
+        server.unauthorized_requests = 0  # type: ignore[attr-defined]
         server_thread = threading.Thread(target=server.serve_forever, daemon=True)
         server_thread.start()
         port = int(server.server_address[1])
-        url = f"http://{_HOST}:{port}/account"
+        login_url = f"http://{_HOST}:{port}/login"
 
         provider, executable = browsers[0]
-        fixture = _ExtensionBrowserFixture(provider, executable, url, extension)
+        fixture = _ExtensionBrowserFixture(provider, executable, login_url, extension)
         runtime_tmp = tempfile.TemporaryDirectory()
-        resident = build_resident_runtime(
-            config={"model": {}},
-            store_path=Path(runtime_tmp.name) / "kernel.db",
-        )
-        service = ResidentService(resident)
-        service.acquire()
+        resident = None
+        service = None
         try:
+            # Establish the authenticated browser session before Resident exists.
+            # The login endpoint sets one HttpOnly cookie and redirects into the
+            # protected account page. ZN receives no cookie/profile material.
             fixture.start()
             deadline = time.monotonic() + 10.0
             while time.monotonic() < deadline:
-                if int(server.account_requests) >= 1:  # type: ignore[attr-defined]
+                if int(server.authenticated_account_requests) >= 1:  # type: ignore[attr-defined]
                     break
                 time.sleep(0.05)
-            self.assertGreaterEqual(int(server.account_requests), 1)  # type: ignore[attr-defined]
-            initial_requests = int(server.account_requests)  # type: ignore[attr-defined]
+            self.assertGreaterEqual(int(server.login_requests), 1)  # type: ignore[attr-defined]
+            self.assertGreaterEqual(
+                int(server.authenticated_account_requests),  # type: ignore[attr-defined]
+                1,
+                "browser did not establish its own authenticated session before Resident started",
+            )
+            self.assertEqual(int(server.unauthorized_requests), 0)  # type: ignore[attr-defined]
+            initial_login_requests = int(server.login_requests)  # type: ignore[attr-defined]
+            initial_account_requests = int(server.account_requests)  # type: ignore[attr-defined]
+            initial_authenticated_requests = int(  # type: ignore[attr-defined]
+                server.authenticated_account_requests
+            )
+
+            resident = build_resident_runtime(
+                config={"model": {}},
+                store_path=Path(runtime_tmp.name) / "kernel.db",
+            )
+            service = ResidentService(resident)
+            service.acquire()
 
             fixture.activate()
             _press_extension_action_shortcut()
@@ -207,9 +259,19 @@ class WindowsInteractiveUserBrowserExtensionE2ETests(unittest.TestCase):
             self.assertTrue(result.success, result.reason)
             self.assertEqual(result.model_invocations, 0)
             self.assertEqual(
+                int(server.login_requests),  # type: ignore[attr-defined]
+                initial_login_requests,
+                "ZN task unexpectedly re-entered the login flow instead of using the existing session",
+            )
+            self.assertEqual(
                 int(server.account_requests),  # type: ignore[attr-defined]
-                initial_requests,
+                initial_account_requests,
                 "extension-backed USER task unexpectedly navigated or reloaded the page",
+            )
+            self.assertEqual(
+                int(server.authenticated_account_requests),  # type: ignore[attr-defined]
+                initial_authenticated_requests,
+                "ZN task unexpectedly created a new authenticated page request",
             )
 
             # Independent postcondition path: prove the final text through Windows UIA,
@@ -270,6 +332,10 @@ class WindowsInteractiveUserBrowserExtensionE2ETests(unittest.TestCase):
                         "transport": "chrome-extension-debugger",
                         "authorization": "explicit-extension-action-user-gesture",
                         "profile_scope": "isolated-temporary-test-user-session",
+                        "existing_authenticated_session": True,
+                        "session_established_before_resident": True,
+                        "session_cookie_http_only": True,
+                        "credential_transfer_to_zn": False,
                         "navigation_performed": False,
                         "final_text_chars": text_after.text_length,
                         "independent_verifier": "windows-uia",
@@ -279,13 +345,16 @@ class WindowsInteractiveUserBrowserExtensionE2ETests(unittest.TestCase):
                 )
             )
         finally:
-            try:
-                if resident.user_browser_extension_status().get("authorized"):
-                    resident.revoke_user_browser_extension_tab()
-            except Exception:
-                pass
-            service.release()
-            resident.store.close()
+            if resident is not None:
+                try:
+                    if resident.user_browser_extension_status().get("authorized"):
+                        resident.revoke_user_browser_extension_tab()
+                except Exception:
+                    pass
+            if service is not None:
+                service.release()
+            if resident is not None:
+                resident.store.close()
             runtime_tmp.cleanup()
             fixture.close()
             server.shutdown()
