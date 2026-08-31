@@ -1,7 +1,7 @@
 type UnknownRecord = Record<string, unknown>
 
 export const ZN_FORMAL_RESIDENT_SURFACE = 'zn-formal-resident'
-export const ZN_FORMAL_RESIDENT_SURFACE_SCHEMA = 1
+export const ZN_FORMAL_RESIDENT_SURFACE_SCHEMA = 2
 
 export type ZnResidentRuntimeIdentity = {
   runtimeId: string | null

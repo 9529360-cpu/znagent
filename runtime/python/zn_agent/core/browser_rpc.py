@@ -29,7 +29,7 @@ from .daemon import ResidentRpcServer
 
 _T = TypeVar("_T")
 _FORMAL_RESIDENT_SURFACE = "zn-formal-resident"
-_FORMAL_RESIDENT_SURFACE_SCHEMA = 1
+_FORMAL_RESIDENT_SURFACE_SCHEMA = 2
 
 
 def _jsonable(value: Any) -> Any:
