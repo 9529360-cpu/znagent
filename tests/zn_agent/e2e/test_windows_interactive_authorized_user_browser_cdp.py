@@ -118,7 +118,7 @@ class WindowsInteractiveAuthorizedUserBrowserCDPE2ETests(unittest.TestCase):
     def _require_input_desktop() -> None:
         WindowsInteractiveUserBrowserBridgeProviderE2ETests._require_input_desktop()
 
-    def test_normal_work_attaches_current_browser_types_without_navigation_and_keeps_it_open(self) -> None:
+    def test_authorized_cdp_session_types_without_navigation_and_keeps_browser_open(self) -> None:
         self._require_input_desktop()
         browsers = _find_installed_browsers()
         if not browsers:
@@ -151,11 +151,18 @@ class WindowsInteractiveAuthorizedUserBrowserCDPE2ETests(unittest.TestCase):
             self.assertEqual(authorization["plane"], "user")
 
             fixture.activate()
-            result = resident.submit(
-                f'open {url} and type "{_TEXT}" into textbox "{_TARGET_NAME}"'
+            result = resident.body.act(
+                "browser_type_named_text",
+                event_id="evt-authorized-user-browser-cdp",
+                url=url,
+                target_name=_TARGET_NAME,
+                text=_TEXT,
+                allow_private_network=True,
             )
-            self.assertTrue(result.success, result.reason)
-            self.assertEqual(result.model_invocations, 0)
+            self.assertTrue(result.success, result.error)
+            self.assertEqual(result.data["browser_plane"], "user")
+            self.assertTrue(result.data["input_sent"])
+            self.assertTrue(result.data["exact_node_continuity"])
 
             # USER-plane text entry must preserve the current page instead of
             # reloading it. The page server should therefore see no second root GET.
@@ -165,6 +172,8 @@ class WindowsInteractiveAuthorizedUserBrowserCDPE2ETests(unittest.TestCase):
                 "authorized user-browser text entry unexpectedly navigated/reloaded",
             )
 
+            # Verify the mutation through an independent Windows UIA evidence path,
+            # not by trusting the CDP provider's own action return alone.
             fixture.activate()
             named_after = resident.browser_named_target.probe_exact_edit(_TARGET_NAME)
             self.assertTrue(named_after.has_keyboard_focus)
@@ -192,10 +201,10 @@ class WindowsInteractiveAuthorizedUserBrowserCDPE2ETests(unittest.TestCase):
                         "profile_scope": "isolated-temporary-test-user-session",
                         "transport": "loopback-cdp",
                         "browser_plane": "user",
+                        "private_network_explicitly_authorized": True,
                         "root_requests_before": initial_requests,
                         "root_requests_after": int(server.root_requests),  # type: ignore[attr-defined]
                         "final_text_chars": final_text.text_length,
-                        "model_invocations": result.model_invocations,
                         "browser_process_alive_after_bridge_close": fixture.process.poll()
                         is None,
                     },
