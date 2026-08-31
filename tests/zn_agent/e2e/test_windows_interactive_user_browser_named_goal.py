@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from zn_agent.core.automation_text_state_sense import NativeFocusedAutomationTextSense
+from zn_agent.core.daemon import ResidentRpcServer
 from zn_agent.core.provider_bridge import build_resident_runtime
 
 from test_windows_interactive_user_browser_bridge import (
@@ -81,7 +82,7 @@ class WindowsInteractiveUserBrowserNamedGoalE2ETests(unittest.TestCase):
     def _require_input_desktop() -> None:
         WindowsInteractiveUserBrowserBridgeProviderE2ETests._require_input_desktop()
 
-    def test_resident_finds_unfocused_named_edit_from_ordinary_work_then_types_and_verifies(self) -> None:
+    def test_real_work_rpc_finds_unfocused_named_edit_then_types_and_verifies(self) -> None:
         self._require_input_desktop()
         browsers = _find_installed_browsers()
         if not browsers:
@@ -98,6 +99,7 @@ class WindowsInteractiveUserBrowserNamedGoalE2ETests(unittest.TestCase):
                 config={"model": {}},
                 store_path=Path(runtime_tmp.name) / "kernel.db",
             )
+            rpc = ResidentRpcServer(resident=resident)
             fixture.activate()
 
             named_before = resident.browser_named_target.probe_exact_edit(_TARGET_NAME)
@@ -106,13 +108,40 @@ class WindowsInteractiveUserBrowserNamedGoalE2ETests(unittest.TestCase):
                 "fixture must prove ZN—not the user/test—has to acquire target focus",
             )
 
-            # Match the real desktop Work boundary: no resident_goal/body/native
-            # payload. ZN itself must form the typed goal from ordinary user text.
-            event = resident.enqueue(
-                f'In my current browser, fill "{_TARGET_NAME}" with "{_TEXT}".',
-                kind="desktop_user_event",
-                payload={"model_policy": "never"},
+            thread_id = "work-user-browser-named-goal"
+            create = rpc.handle(
+                {
+                    "id": "create",
+                    "method": "work_create",
+                    "params": {"thread_id": thread_id, "title": "Browser work"},
+                }
             )
+            self.assertTrue(create["ok"], create)
+            task = f'In my current browser, fill "{_TARGET_NAME}" with "{_TEXT}".'
+            start = rpc.handle(
+                {
+                    "id": "start",
+                    "method": "work_start",
+                    "params": {
+                        "thread_id": thread_id,
+                        "task": task,
+                        "kind": "desktop_user_event",
+                        "priority": 0,
+                        # This mirrors the real desktop: no resident_goal, body_action
+                        # or native_action is supplied. `model_policy` only keeps the
+                        # E2E's no-model expectation explicit.
+                        "payload": {"model_policy": "never"},
+                    },
+                }
+            )
+            self.assertTrue(start["ok"], start)
+            progress = start["result"]["progress"]
+            event_id = str(progress["event_id"])
+            event = resident.store.get_event(event_id)
+            self.assertIsNotNone(event)
+            self.assertNotIn("resident_goal", event.payload)
+            self.assertEqual(event.kind, "desktop_user_event")
+            self.assertEqual(event.task, task)
 
             result = None
             deadline = time.monotonic() + 20.0
@@ -122,10 +151,21 @@ class WindowsInteractiveUserBrowserNamedGoalE2ETests(unittest.TestCase):
                 if result is None:
                     time.sleep(0.05)
 
-            self.assertIsNotNone(result, "named user-browser goal did not reach a terminal result")
+            self.assertIsNotNone(result, "named user-browser Work did not reach a terminal result")
             self.assertTrue(result.success, result)
-            self.assertEqual(result.event.event_id, event.event_id)
+            self.assertEqual(result.event.event_id, event_id)
             self.assertEqual(result.model_invocations, 0)
+
+            final_progress = rpc.handle(
+                {
+                    "id": "progress",
+                    "method": "work_progress",
+                    "params": {"thread_id": thread_id, "event_id": event_id},
+                }
+            )
+            self.assertTrue(final_progress["ok"], final_progress)
+            self.assertTrue(final_progress["result"]["progress"]["terminal"])
+            self.assertTrue(final_progress["result"]["progress"]["finalized"])
 
             named_after = resident.browser_named_target.probe_exact_edit(_TARGET_NAME)
             self.assertTrue(named_after.has_keyboard_focus)
@@ -140,12 +180,10 @@ class WindowsInteractiveUserBrowserNamedGoalE2ETests(unittest.TestCase):
             actions = [
                 item
                 for item in resident.body.recent_actions(80)
-                if item.event_id == event.event_id
+                if item.event_id == event_id
             ]
             self.assertEqual(sum(1 for item in actions if item.kind == "pointer_click"), 1)
             self.assertEqual(sum(1 for item in actions if item.kind == "keyboard_text"), 1)
-            progress = resident.store.get_working_state().data.get("resident_goal_progress") or []
-            self.assertGreaterEqual(len(progress), 2)
 
             print(
                 "ZN_USER_BROWSER_NAMED_GOAL_EVIDENCE="
@@ -153,6 +191,7 @@ class WindowsInteractiveUserBrowserNamedGoalE2ETests(unittest.TestCase):
                     {
                         "provider": provider,
                         "profile_scope": "isolated-temporary",
+                        "ingress": "work_rpc",
                         "goal_source": "ordinary_work",
                         "target_name": _TARGET_NAME,
                         "initially_focused": False,
