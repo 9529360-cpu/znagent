@@ -11,13 +11,13 @@ planner and stores no replayable action sequence.
 
 from typing import Any
 
+from .models import ExecutionPath, utc_now
 from .repo_goal import (
     repo_text_staged_action_intents,
     repo_text_staged_request,
     repo_text_staged_state,
 )
 from .repo_test_resident import RepositoryVerifyingResidentRuntime
-from .models import utc_now
 
 
 class ResidentGoalRuntime(RepositoryVerifyingResidentRuntime):
@@ -25,6 +25,106 @@ class ResidentGoalRuntime(RepositoryVerifyingResidentRuntime):
 
     _RESIDENT_GOAL_PROGRESS_KEY = "resident_goal_progress"
     _MAX_RESIDENT_GOAL_PROGRESS = 16
+
+    def _investigation_step(
+        self,
+        event,
+        state,
+        *,
+        readiness,
+        learning_evidence,
+        thought=None,
+    ):
+        """Do not let a satisfied subcondition terminate a composite goal."""
+
+        if repo_text_staged_request(event) is None:
+            return super()._investigation_step(
+                event,
+                state,
+                readiness=readiness,
+                learning_evidence=learning_evidence,
+                thought=thought,
+            )
+
+        local_failure = str(state.data.get("local_failure") or "").strip() or None
+        investigation = self.investigator.investigate(
+            event,
+            readiness,
+            learning_evidence=learning_evidence,
+            local_failure=local_failure,
+        )
+        goal_state = repo_text_staged_state(event, investigation.state.facts)
+
+        # The generic investigator can truthfully answer a narrower subquestion,
+        # such as "the exact text is already present". For a composite user goal
+        # that is progress, not completion. Re-open the same durable Investigation
+        # and let current evidence choose the next probe instead of publishing a
+        # false terminal outcome.
+        if investigation.resolved and not bool(goal_state and goal_state.get("satisfied")):
+            following = self.investigator._choose_next_probe(
+                event,
+                readiness,
+                facts=investigation.state.facts,
+                performed=set(investigation.state.probe_keys),
+                learning_evidence=learning_evidence,
+            )
+            investigation.state.status = "open"
+            investigation.state.resolution = None
+            investigation.state.unresolved = (
+                str((goal_state or {}).get("blocked") or "").strip()
+                or "the complete resident goal still has an unsatisfied subcondition"
+            )
+            investigation.state.next_probe = following
+            investigation.state.updated_at = utc_now()
+            self.investigator._save(investigation.state)
+            investigation.resolved = False
+            investigation.response = ""
+            investigation.can_continue = bool(following)
+
+        state.data["native_investigation"] = self._investigation_data(investigation.state)
+        self._merge_investigation_into_thought(thought, investigation)
+        if thought is not None:
+            self._persist_enriched_thought(thought)
+
+        goal_state = repo_text_staged_state(event, investigation.state.facts)
+        if goal_state is not None and goal_state.get("satisfied"):
+            domains = self.kernel.self_model.observe_native_outcome(
+                event.task,
+                self._required_capabilities(event),
+                success=True,
+                quality=0.95,
+            )
+            completion = {
+                "execution_path": ExecutionPath.INVESTIGATION.value,
+                "success": True,
+                "response": (
+                    f"{goal_state['path']}: requested repository text and staged state "
+                    "are both satisfied"
+                ),
+                "model_invocations": 0,
+                "reason": (
+                    "ZN completed the multi-step resident goal only after fresh file-content "
+                    "and structured Git observations simultaneously proved the final state"
+                ),
+            }
+            state.stage = "investigation_completion"
+            state.next_action = "publish terminal EventOutcome"
+            state.data["native_domains"] = list(domains)
+            state.data["investigation_completion"] = completion
+            self.store.record_runtime_task(model_invocations=0)
+            self.store.save_working_state(state)
+            return self._investigation_completion_result(event, completion)
+
+        if investigation.can_continue:
+            state.stage = "native_investigation"
+            state.next_action = f"run native probe {investigation.state.next_probe}"
+            self.store.save_working_state(state)
+            return None
+
+        state.stage = "native_deliberation"
+        state.next_action = "form the next bounded movement from current goal evidence"
+        self.store.save_working_state(state)
+        return None
 
     def _deliberation_step(
         self,
@@ -51,10 +151,9 @@ class ResidentGoalRuntime(RepositoryVerifyingResidentRuntime):
         intents = repo_text_staged_action_intents(event, facts)
 
         if goal_state is not None and goal_state.get("satisfied"):
-            # The normal path should have resolved during Investigation as soon as
-            # fresh text + Git facts proved the whole goal. If a persisted older
-            # Investigation reaches deliberation with the same facts, re-enter
-            # Investigation rather than manufacturing completion here.
+            # A persisted older state may reach deliberation with complete facts.
+            # Re-enter Investigation so the normal evidence-owned completion path
+            # publishes the result rather than manufacturing completion here.
             state.stage = "native_investigation"
             state.next_action = "reconfirm the complete resident goal from current reality"
             self._sync_execution_context(event, state)
