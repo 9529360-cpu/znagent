@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -14,6 +15,7 @@ from zn_agent.core.provider_bridge import build_resident_runtime
 from zn_agent.core.service import ResidentService
 from zn_agent.core.user_browser_extension_relay import (
     ResidentUserBrowserExtensionRelay,
+    UserBrowserExtensionRelayError,
     ZN_BROWSER_EXTENSION_HEADER,
     ZN_BROWSER_EXTENSION_ID,
     ZN_BROWSER_EXTENSION_ORIGIN,
@@ -41,7 +43,7 @@ class UserBrowserExtensionRelayTests(unittest.TestCase):
             headers=headers,
             method="POST",
         )
-        with urlopen(request, timeout=2.0) as response:
+        with urlopen(request, timeout=3.0) as response:
             return json.loads(response.read().decode("utf-8"))
 
     def test_only_stable_zn_extension_request_can_authorize_or_revoke(self) -> None:
@@ -68,9 +70,6 @@ class UserBrowserExtensionRelayTests(unittest.TestCase):
             self.assertEqual(blocked_origin.exception.code, 400)
             self.assertFalse(relay.status()["authorized"])
 
-            # Some privileged extension fetch paths may omit Origin. The stable
-            # extension identity header remains mandatory, and ordinary web pages
-            # cannot send it to this relay without a CORS preflight that is not served.
             attached = self._post(relay, "/v1/attach", payload, origin=None)
             self.assertTrue(attached["authorized"])
             self.assertEqual(attached["tab"]["tab_id"], 17)
@@ -111,6 +110,142 @@ class UserBrowserExtensionRelayTests(unittest.TestCase):
         finally:
             relay.close()
 
+    def test_authorized_tab_supports_one_bounded_resident_command_roundtrip(self) -> None:
+        relay = ResidentUserBrowserExtensionRelay(port=0)
+        relay.start()
+        relay.authorize(
+            tab_id=17,
+            url="https://example.test/account",
+            title="Account",
+        )
+        outcome: dict[str, object] = {}
+
+        def request_from_resident() -> None:
+            try:
+                outcome["result"] = relay.request_command(
+                    "probe_current_tab",
+                    timeout_seconds=2.0,
+                )
+            except Exception as exc:  # pragma: no cover - asserted below
+                outcome["error"] = exc
+
+        worker = threading.Thread(target=request_from_resident)
+        worker.start()
+        try:
+            command_response = self._post(
+                relay,
+                "/v1/command/next",
+                {"tab_id": 17, "wait_seconds": 1.0},
+            )
+            command = command_response["command"]
+            self.assertEqual(command["tab_id"], 17)
+            self.assertEqual(command["kind"], "probe_current_tab")
+            self.assertEqual(command["args"], {})
+            self.assertEqual(relay.status()["inflight_commands"], 1)
+
+            accepted = self._post(
+                relay,
+                "/v1/command/result",
+                {
+                    "tab_id": 17,
+                    "command_id": command["command_id"],
+                    "success": True,
+                    "result": {
+                        "tab_id": 17,
+                        "url": "https://example.test/account?fresh=1",
+                        "title": "Account fresh",
+                    },
+                    "error": None,
+                },
+            )
+            self.assertTrue(accepted["accepted"])
+            worker.join(timeout=2.0)
+            self.assertFalse(worker.is_alive())
+            self.assertNotIn("error", outcome)
+            result = outcome["result"]
+            self.assertIsInstance(result, dict)
+            self.assertTrue(result["success"])
+            self.assertEqual(result["result"]["tab_id"], 17)
+            self.assertEqual(
+                result["result"]["url"],
+                "https://example.test/account?fresh=1",
+            )
+            status = relay.status()
+            self.assertEqual(status["pending_commands"], 0)
+            self.assertEqual(status["inflight_commands"], 0)
+        finally:
+            relay.close()
+            worker.join(timeout=2.0)
+
+    def test_revocation_withdraws_inflight_command_without_replay(self) -> None:
+        relay = ResidentUserBrowserExtensionRelay(port=0)
+        relay.start()
+        relay.authorize(
+            tab_id=23,
+            url="https://example.test/secure",
+            title="Secure",
+        )
+        outcome: dict[str, object] = {}
+
+        def request_from_resident() -> None:
+            try:
+                outcome["result"] = relay.request_command(
+                    "probe_current_tab",
+                    timeout_seconds=5.0,
+                )
+            except Exception as exc:
+                outcome["error"] = exc
+
+        worker = threading.Thread(target=request_from_resident)
+        worker.start()
+        try:
+            command = self._post(
+                relay,
+                "/v1/command/next",
+                {"tab_id": 23, "wait_seconds": 1.0},
+            )["command"]
+            self.assertIsNotNone(command)
+            self.assertEqual(relay.status()["inflight_commands"], 1)
+            relay.revoke(tab_id=23)
+            worker.join(timeout=2.0)
+            self.assertFalse(worker.is_alive())
+            self.assertIsInstance(outcome.get("error"), UserBrowserExtensionRelayError)
+            self.assertNotIn("result", outcome)
+            self.assertEqual(relay.status()["pending_commands"], 0)
+            self.assertEqual(relay.status()["inflight_commands"], 0)
+            with self.assertRaises(UserBrowserExtensionRelayError):
+                relay.complete_command(
+                    tab_id=23,
+                    command_id=command["command_id"],
+                    success=True,
+                    result={"tab_id": 23},
+                )
+        finally:
+            relay.close()
+            worker.join(timeout=2.0)
+
+    def test_command_surface_is_deny_by_default_and_never_crosses_tabs(self) -> None:
+        relay = ResidentUserBrowserExtensionRelay(port=0)
+        relay.start()
+        try:
+            with self.assertRaises(UserBrowserExtensionRelayError):
+                relay.request_command("probe_current_tab", timeout_seconds=0.1)
+            relay.authorize(
+                tab_id=31,
+                url="https://example.test/",
+                title="Example",
+            )
+            with self.assertRaises(ValueError):
+                relay.request_command("arbitrary_cdp", timeout_seconds=0.1)
+            with self.assertRaises(HTTPError):
+                self._post(
+                    relay,
+                    "/v1/command/next",
+                    {"tab_id": 32, "wait_seconds": 0},
+                )
+        finally:
+            relay.close()
+
     def test_manifest_public_key_keeps_the_expected_extension_identity(self) -> None:
         repo_root = Path(__file__).resolve().parents[3]
         manifest = json.loads(
@@ -133,8 +268,6 @@ class UserBrowserExtensionRelayTests(unittest.TestCase):
                 config={"model": {}},
                 store_path=Path(tmp) / "kernel.db",
             )
-            # Use an ephemeral loopback port in the test while preserving the
-            # production object's fixed 19991 contract.
             resident.user_browser_extension = ResidentUserBrowserExtensionRelay(port=0)
             service = ResidentService(resident)
             try:
