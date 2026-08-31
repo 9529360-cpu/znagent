@@ -60,6 +60,15 @@ class ResidentService:
                 f"(pid={lease.get('pid')}, host={lease.get('hostname')})"
             )
         self._acquired = True
+        extension = getattr(self.resident, "user_browser_extension", None)
+        start_extension = getattr(extension, "start", None)
+        if callable(start_extension):
+            try:
+                start_extension()
+            except Exception:
+                self.store.release_resident_lease(self.instance_id)
+                self._acquired = False
+                raise
 
     def heartbeat(self) -> None:
         if not self._acquired:
@@ -69,7 +78,14 @@ class ResidentService:
             raise RuntimeError("resident lease was lost")
 
     def release(self) -> None:
-        if self._acquired:
+        if not self._acquired:
+            return
+        extension = getattr(self.resident, "user_browser_extension", None)
+        close_extension = getattr(extension, "close", None)
+        try:
+            if callable(close_extension):
+                close_extension()
+        finally:
             self.store.release_resident_lease(self.instance_id)
             self._acquired = False
 
