@@ -63,7 +63,7 @@ Repository synchronization is engineering hygiene, not the product milestone. `d
 ## Current product gaps
 
 1. BUG/repair transport/intake is the active isolated product stage: local formation and crash-safe dispatch accounting are verified, but operator-controlled transport, acknowledgement/reconciliation and maintainer intake are not merged yet.
-2. User Browser Bridge is still sensing-only foundation. Attachment to an authenticated existing Edge/Chrome session, explicit permission and mutation are not product-closed. Never solve this by copying cookies, passwords or profile data.
+2. User Browser Bridge has a bounded local mutation foundation: an explicitly scoped, already-focused, empty non-password HTML Edit can receive one non-replayable text input and be independently verified by fresh UIA RuntimeId plus privacy-safe length/digest evidence. Current real Windows evidence still uses an isolated temporary Edge profile; attachment to an authenticated existing Edge/Chrome session and user-facing permission UX are not product-closed. Never solve this by copying cookies, passwords or profile data.
 3. Managed browser remains deliberately bounded. Generic target discovery, multi-tab/popup/frame authority, downloads/uploads and broad arbitrary interaction are not product-closed.
 4. Browser recovery is strong where a trustworthy durable observed result exists; unknown external mutations without sufficient evidence still fail closed and require bounded re-sense/reclassification work.
 5. Installed update observation and release machinery exist, including public-channel parsing and package verification, but formal N -> N+1 continuity, rollback and signing/trust remain approval-gated product stages.
