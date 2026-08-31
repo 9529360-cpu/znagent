@@ -21,15 +21,9 @@ class BrowserNamedGoalTests(unittest.TestCase):
     def _event(text: str = "alice") -> AgentEvent:
         return AgentEvent(
             event_id="evt-browser-goal",
-            task="Fill the Account search box in my current browser with alice",
-            payload={
-                "resident_goal": {
-                    "kind": "user_browser_named_text",
-                    "target_name": "Account search",
-                    "text": text,
-                },
-                "model_policy": "never",
-            },
+            kind="desktop_user_event",
+            task=f'In my current browser, fill "Account search" with "{text}".',
+            payload={"model_policy": "never"},
         )
 
     @staticmethod
@@ -66,12 +60,34 @@ class BrowserNamedGoalTests(unittest.TestCase):
             text_sha256=NativeFocusedTextSense.digest_text(value),
         )
 
-    def test_request_is_typed_world_state_not_action_sequence(self):
+    def test_ordinary_work_forms_typed_world_state_not_action_sequence(self):
         request = browser_named_text_request(self._event())
         self.assertEqual(request["target_name"], "Account search")
         self.assertEqual(request["text"], "alice")
+        self.assertEqual(request["goal_source"], "ordinary_work")
         self.assertNotIn("actions", request)
         self.assertNotIn("coordinates", request)
+
+    def test_value_first_ordinary_work_is_also_understood(self):
+        event = AgentEvent(
+            event_id="evt-browser-goal-value-first",
+            kind="desktop_user_event",
+            task='In Chrome, type "alice" into "Account search".',
+            payload={},
+        )
+        request = browser_named_text_request(event)
+        self.assertEqual(request["target_name"], "Account search")
+        self.assertEqual(request["text"], "alice")
+        self.assertEqual(request["goal_source"], "ordinary_work")
+
+    def test_ambiguous_unquoted_work_does_not_gain_input_authority(self):
+        event = AgentEvent(
+            event_id="evt-browser-goal-ambiguous",
+            kind="desktop_user_event",
+            task="Put alice in the account search field in my browser",
+            payload={},
+        )
+        self.assertIsNone(browser_named_text_request(event))
 
     def test_unfocused_target_forms_only_current_focus_movement(self):
         event = self._event()
