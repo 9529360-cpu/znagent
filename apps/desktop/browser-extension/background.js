@@ -1,5 +1,6 @@
 const RELAY_BASE = 'http://127.0.0.1:19991'
 const PROTOCOL_VERSION = 1
+const EXTENSION_ID = 'likpiakgiamipheeekdgekdahafjinnh'
 const STORAGE_KEY = 'znAuthorizedTabId'
 
 function isHttpPage(url) {
@@ -15,7 +16,10 @@ async function relay(path, payload) {
   const response = await fetch(`${RELAY_BASE}${path}`, {
     method: 'POST',
     cache: 'no-store',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-ZN-Browser-Extension-Id': EXTENSION_ID
+    },
     body: JSON.stringify({ protocol_version: PROTOCOL_VERSION, ...payload })
   })
   const body = await response.json().catch(() => ({}))
