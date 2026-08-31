@@ -379,13 +379,18 @@ async function clickNamedButtonToUrl(tabId, args) {
     if (!objectId) {
       throw new Error('exact accessible button could not be resolved for dispatch')
     }
-    await debuggerCommand(tabId, 'Runtime.callFunctionOn', {
+    // Crossing this call is the non-replayable boundary. Navigation may destroy
+    // the execution context before CDP returns even though the click already ran.
+    clickSent = true
+    const dispatched = await debuggerCommand(tabId, 'Runtime.callFunctionOn', {
       objectId,
       functionDeclaration: 'function(){ this.click(); }',
       returnByValue: true,
       awaitPromise: false
     })
-    clickSent = true
+    if (dispatched?.exceptionDetails) {
+      throw new Error('exact accessible button click returned JavaScript exception details')
+    }
 
     let afterTab = await currentTabEvidence(tabId)
     const deadline = Date.now() + 3000
