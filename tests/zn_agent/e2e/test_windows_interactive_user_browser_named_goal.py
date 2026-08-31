@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import tempfile
 import time
@@ -11,9 +10,10 @@ from pathlib import Path
 from zn_agent.core.automation_text_state_sense import NativeFocusedAutomationTextSense
 from zn_agent.core.provider_bridge import build_resident_runtime
 
-from tests.zn_agent.e2e.test_windows_interactive_user_browser_bridge import (
+from test_windows_interactive_user_browser_bridge import (
     _IsolatedUserBrowserFixture,
     _find_installed_browsers,
+    WindowsInteractiveUserBrowserBridgeProviderE2ETests,
 )
 
 
@@ -79,10 +79,6 @@ class _NamedTargetBrowserFixture(_IsolatedUserBrowserFixture):
 class WindowsInteractiveUserBrowserNamedGoalE2ETests(unittest.TestCase):
     @staticmethod
     def _require_input_desktop() -> None:
-        from tests.zn_agent.e2e.test_windows_interactive_user_browser_bridge import (
-            WindowsInteractiveUserBrowserBridgeProviderE2ETests,
-        )
-
         WindowsInteractiveUserBrowserBridgeProviderE2ETests._require_input_desktop()
 
     def test_resident_finds_unfocused_named_edit_then_types_and_verifies(self) -> None:
