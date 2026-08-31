@@ -31,18 +31,25 @@ concurrency:
 jobs:
   package-windows:
     name: Package ZN / Windows
-    runs-on: [self-hosted, Windows, X64, zn-ci]
+    runs-on: [self-hosted, Windows, X64, zn-interactive]
     timeout-minutes: 60
     defaults:
       run:
         shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
     steps:
-      - name: Require Windows x64 self-hosted runner
+      - name: Require dedicated interactive Windows x64 runner
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
             throw "ZN Windows release requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
           }
-          Write-Host "ZN release runner: $env:RUNNER_NAME"
+          if ($env:RUNNER_NAME -ne 'zn-interactive') {
+            throw "ZN Windows release packaging requires the dedicated zn-interactive runner; got $env:RUNNER_NAME"
+          }
+          $sessionId = (Get-Process -Id $PID -ErrorAction Stop).SessionId
+          if ($sessionId -eq 0) {
+            throw 'ZN Windows release packaging requires a logged-on interactive session, not Session 0.'
+          }
+          Write-Host "ZN release packaging runner: $env:RUNNER_NAME session=$sessionId"
 
       - name: Checkout
         uses: actions/checkout@v7
