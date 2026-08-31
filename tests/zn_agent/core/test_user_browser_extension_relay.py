@@ -14,6 +14,7 @@ from zn_agent.core.provider_bridge import build_resident_runtime
 from zn_agent.core.service import ResidentService
 from zn_agent.core.user_browser_extension_relay import (
     ResidentUserBrowserExtensionRelay,
+    ZN_BROWSER_EXTENSION_HEADER,
     ZN_BROWSER_EXTENSION_ID,
     ZN_BROWSER_EXTENSION_ORIGIN,
 )
@@ -21,67 +22,66 @@ from zn_agent.core.user_browser_extension_relay import (
 
 class UserBrowserExtensionRelayTests(unittest.TestCase):
     @staticmethod
-    def _post(relay, path: str, payload: dict, *, origin: str):
+    def _post(
+        relay,
+        path: str,
+        payload: dict,
+        *,
+        origin: str | None = ZN_BROWSER_EXTENSION_ORIGIN,
+        extension_id: str | None = ZN_BROWSER_EXTENSION_ID,
+    ):
+        headers = {"Content-Type": "application/json"}
+        if origin is not None:
+            headers["Origin"] = origin
+        if extension_id is not None:
+            headers[ZN_BROWSER_EXTENSION_HEADER] = extension_id
         request = Request(
             f"{relay.status()['endpoint']}{path}",
             data=json.dumps({"protocol_version": 1, **payload}).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Origin": origin,
-            },
+            headers=headers,
             method="POST",
         )
         with urlopen(request, timeout=2.0) as response:
             return json.loads(response.read().decode("utf-8"))
 
-    def test_only_stable_zn_extension_origin_can_authorize_or_revoke(self) -> None:
+    def test_only_stable_zn_extension_request_can_authorize_or_revoke(self) -> None:
         relay = ResidentUserBrowserExtensionRelay(port=0)
         relay.start()
+        payload = {
+            "tab_id": 17,
+            "url": "https://example.test/account",
+            "title": "Account",
+        }
         try:
-            with self.assertRaises(HTTPError) as blocked:
+            with self.assertRaises(HTTPError) as missing_identity:
+                self._post(relay, "/v1/attach", payload, extension_id=None)
+            self.assertEqual(missing_identity.exception.code, 400)
+            self.assertFalse(relay.status()["authorized"])
+
+            with self.assertRaises(HTTPError) as blocked_origin:
                 self._post(
                     relay,
                     "/v1/attach",
-                    {
-                        "tab_id": 17,
-                        "url": "https://example.test/account",
-                        "title": "Account",
-                    },
+                    payload,
                     origin="chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 )
-            self.assertEqual(blocked.exception.code, 400)
+            self.assertEqual(blocked_origin.exception.code, 400)
             self.assertFalse(relay.status()["authorized"])
 
-            attached = self._post(
-                relay,
-                "/v1/attach",
-                {
-                    "tab_id": 17,
-                    "url": "https://example.test/account",
-                    "title": "Account",
-                },
-                origin=ZN_BROWSER_EXTENSION_ORIGIN,
-            )
+            # Some privileged extension fetch paths may omit Origin. The stable
+            # extension identity header remains mandatory, and ordinary web pages
+            # cannot send it to this relay without a CORS preflight that is not served.
+            attached = self._post(relay, "/v1/attach", payload, origin=None)
             self.assertTrue(attached["authorized"])
             self.assertEqual(attached["tab"]["tab_id"], 17)
             self.assertEqual(attached["tab"]["url"], "https://example.test/account")
 
             with self.assertRaises(HTTPError) as wrong_tab:
-                self._post(
-                    relay,
-                    "/v1/detach",
-                    {"tab_id": 18},
-                    origin=ZN_BROWSER_EXTENSION_ORIGIN,
-                )
+                self._post(relay, "/v1/detach", {"tab_id": 18})
             self.assertEqual(wrong_tab.exception.code, 400)
             self.assertTrue(relay.status()["authorized"])
 
-            detached = self._post(
-                relay,
-                "/v1/detach",
-                {"tab_id": 17},
-                origin=ZN_BROWSER_EXTENSION_ORIGIN,
-            )
+            detached = self._post(relay, "/v1/detach", {"tab_id": 17})
             self.assertFalse(detached["authorized"])
         finally:
             relay.close()
@@ -95,20 +95,17 @@ class UserBrowserExtensionRelayTests(unittest.TestCase):
                     relay,
                     "/v1/attach",
                     {"tab_id": 4, "url": "chrome://settings", "title": "Settings"},
-                    origin=ZN_BROWSER_EXTENSION_ORIGIN,
                 )
             self._post(
                 relay,
                 "/v1/attach",
                 {"tab_id": 4, "url": "https://one.test/", "title": "One"},
-                origin=ZN_BROWSER_EXTENSION_ORIGIN,
             )
             with self.assertRaises(HTTPError):
                 self._post(
                     relay,
                     "/v1/attach",
                     {"tab_id": 5, "url": "https://two.test/", "title": "Two"},
-                    origin=ZN_BROWSER_EXTENSION_ORIGIN,
                 )
             self.assertEqual(relay.status()["tab"]["tab_id"], 4)
         finally:
