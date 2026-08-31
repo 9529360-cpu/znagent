@@ -48,6 +48,55 @@ class ReportingMaintenanceResidentTests(unittest.TestCase):
                 self._close(resident)
             self.assertNotIn(secret.encode("utf-8"), db.read_bytes())
 
+    def test_configured_https_transport_is_connected_but_health_projection_stays_local(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "kernel.db"
+            resident = build_resident_runtime(
+                config={
+                    "model": {},
+                    "zn_resident": {
+                        "upstream_bug_report": {
+                            "endpoint": "https://reports.example.test/v1/reports",
+                            "timeout_seconds": 4,
+                        }
+                    },
+                },
+                store_path=db,
+            )
+            try:
+                self.assertIsNotNone(resident.upstream_bug_report_transport)
+                self.assertEqual(
+                    resident.upstream_bug_report_transport.endpoint,
+                    "https://reports.example.test/v1/reports",
+                )
+                for _ in range(3):
+                    resident.health.record_failure(
+                        "body:command", AssertionError("local formation only")
+                    )
+                status = resident.status()["upstream_bug_reports"]
+                self.assertTrue(status["transport_available"])
+                self.assertEqual(status["authority"], "bounded_operator_transport")
+                self.assertEqual(status["pending_count"], 1)
+                self.assertEqual(status["reports"][0]["dispatch_attempts"], 0)
+            finally:
+                self._close(resident)
+
+    def test_report_transport_configuration_rejects_non_https_endpoint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                resident = build_resident_runtime(
+                    config={
+                        "model": {},
+                        "zn_resident": {
+                            "upstream_bug_report": {
+                                "endpoint": "http://reports.example.test/v1/reports"
+                            }
+                        },
+                    },
+                    store_path=Path(tmp) / "kernel.db",
+                )
+                self._close(resident)
+
     def test_restart_repairs_missing_report_projection_without_duplication(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "kernel.db"
