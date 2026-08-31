@@ -4,7 +4,7 @@
 >
 > Architecture authority remains [`../ZN.md`](../ZN.md). Real code and real verification outrank this file.
 
-Updated: 2026-08-28
+Updated: 2026-08-31
 
 ## 1. Why this ledger exists
 
@@ -60,7 +60,7 @@ Status vocabulary:
 | Git repository sensing and actions | Body/Senses | VERIFIED/PARTIAL | repository evidence and guarded actions exist; broader collaboration flows can expand |
 | Code investigation/test/fix loop | Investigation / Action | VERIFIED/PARTIAL | repo-test semantics and evidence-based completion exist |
 | Isolated parallel worktrees/tasks | Work / Investigation | OPEN | required for mainstream multi-task parity; must be ZN-owned work isolation, not multiple identities |
-| Checkpoints / restore / rollback for work | Work / Body safety | OPEN | required for product-grade long-running edits, crash recovery and destructive recovery |
+| Checkpoints / restore / rollback for work | Work / Body safety | PARTIAL | deterministic restart recovery now exists for selected pending-action and outbox paths; general user-visible checkpoint, restore and destructive rollback remain open |
 
 ## 5. Web and browser
 
@@ -73,17 +73,18 @@ Resident Managed Browser + User Browser Bridge
 | Product need | ZN owner | Status | Current evidence / open work |
 | --- | --- | --- | --- |
 | HTTP web search/extract | Web Senses / external resources | VERIFIED/PARTIAL | Tavily/Exa/Firecrawl resources exist with resident-owned normalization/failover |
-| ZN-owned browser session/action/evidence contracts | Browser Body/Senses | FOUNDATION | session, permission, query, target, observation, action, authority and effect contracts are ZN-owned and hardened |
-| Local managed Chromium, headless | Browser Body | FOUNDATION | Playwright adapter + dedicated real Windows Chromium navigation/target/focus/toggle-click/type-text/check/uncheck/select-option and page-registry lifecycle E2E exist; lifecycle cleanup is resident-owned |
+| ZN-owned browser session/action/evidence contracts | Browser Body/Senses | PARTIAL | session, permission, semantic query/target, observation, action, authority and effect contracts are ZN-owned; the verified surface remains deliberately bounded |
+| Local managed Chromium, headless | Browser Body | PARTIAL / VERIFIED NARROW | Playwright adapter + dedicated real Windows Chromium navigation, exact semantic checkbox/button/textbox targeting, same-session form transaction and page-registry lifecycle E2E exist; lifecycle cleanup is resident-owned |
 | Local managed Chromium, headed | Browser Body | OPEN | same ZN contracts, separate real UX/evidence |
-| DOM/accessibility target sensing | Browser Senses | PARTIAL / VERIFIED NARROW | exact `DOM_ID` for one unique visible main-frame element is real-Chromium verified; iframe, generic accessibility, multi-target/disambiguation and visual fusion remain open |
+| DOM/accessibility target sensing | Browser Senses | PARTIAL / VERIFIED NARROW | exact `DOM_ID` and exact accessible-name semantic checkbox/button/textbox targets are real-Chromium verified for unique visible main-frame elements; iframe, broader roles, multi-target/disambiguation and visual fusion remain open |
 | Managed-browser focus | Browser Body | VERIFIED NARROW | exact current target authority, execution-time exact-node revalidation, `FOCUS`, and fresh `document.activeElement` evidence are real-Chromium verified |
 | Managed-browser aria-pressed toggle click | Browser Body | VERIFIED NARROW | explicit boolean expected state, exact-node continuity, fresh pre/post `aria-pressed`, and replacement rejection are real-Chromium verified |
 | Managed-browser empty-textbox TYPE_TEXT | Browser Body | VERIFIED NARROW | `allow_page_interaction + allow_text_entry`, empty writable non-password text input/textarea, <=512 UTF-16 units, same-node continuity, and fresh length+SHA-256 completion evidence are real-Chromium verified |
 | Managed-browser native CHECK | Browser Body | VERIFIED NARROW | enabled unchecked native `input[type=checkbox]`, current authority, provider `check()`, exact-node continuity and fresh `checked=true` evidence are real-Chromium verified |
 | Managed-browser native UNCHECK | Browser Body | VERIFIED NARROW | enabled checked native `input[type=checkbox]`, current authority, provider `uncheck()`, exact-node continuity and fresh `checked=false` evidence are real-Chromium verified |
 | Managed-browser native SELECT_OPTION | Browser Body | VERIFIED NARROW | enabled single-select native `select`/combobox, one explicit bounded string value, current target authority, provider `select_option`, exact-node continuity and fresh selected-value length+SHA-256 evidence are real-Chromium verified; already-selected, multi-select, replacement and no-change cases fail closed and raw requested value is not persisted |
-| PRESS / broader click / text replacement / ARIA checkbox | Browser Body | OPEN | `PRESS` exists only in the action/permission contract today; managed-provider dispatch is not implemented. No arbitrary provider-success surface: each new mutation requires a bounded independent postcondition |
+| Same-session semantic form transaction | Browser Body / Work | VERIFIED NARROW | PR #120 connects exact accessible-name textbox observation, bounded non-password text entry, exact submit-button observation/click and an independently observed explicit same-origin final URL to ordinary Work; replacement/stale targets and unsafe plaintext history fail closed |
+| PRESS / broader click / text replacement / ARIA checkbox | Browser Body | OPEN | bounded semantic button click is verified only inside the form transaction. `PRESS`, arbitrary click, text replacement and general ARIA-checkbox mutation remain unavailable; every new mutation still requires a bounded independent postcondition |
 | Multi-tab/popup/frame lifecycle | Browser Body/Senses | PARTIAL / VERIFIED NARROW | live Playwright pages are reconciled into stable monotonic ZN page IDs, provider-created pages are discovered, closed pages are evicted with stale observation/target-handle cleanup, default-page promotion is deterministic, and real Chromium E2E verifies non-reuse; popup intent/ownership, explicit tab actions, frame identities and iframe stale-target handling remain open |
 | Downloads/uploads | Browser Body + File authority | OPEN | adapter refuses these until explicit file authority exists |
 | Screenshots/visual browser sensing | Browser Senses | OPEN | integrate with visual evidence rather than making pixels completion authority by themselves |
@@ -93,7 +94,7 @@ Resident Managed Browser + User Browser Bridge
 | Companion extension/native messaging bridge | User Browser Bridge | OPEN | add only if real provider evidence shows it is needed and permission is explicit |
 | MFA/sensitive-field handling | Permission / Body | OPEN | never silently replay/extract secrets; explicit high-risk boundaries required |
 
-Managed mutation evidence remains deliberately narrow. Provider handles are disposable execution resources and never ZN identity. `FOCUS` requires exact-node continuity plus fresh focus evidence. `CLICK` is limited to explicit boolean `aria-pressed` transitions. `TYPE_TEXT` is limited to an empty writable non-password textbox with bounded Unicode input and privacy-safe length/digest evidence. Native `CHECK` and `UNCHECK` independently prove inverse boolean transitions on the same exact native checkbox. Native `SELECT_OPTION` is limited to an enabled single-select native combobox, one explicit bounded string value, exact-node continuity and privacy-safe fresh selected-value evidence. Generic click, text replacement, password entry, contenteditable, ARIA checkbox control, PRESS and arbitrary provider methods remain unavailable until independently verified.
+Managed mutation evidence remains deliberately narrow. Provider handles are disposable execution resources and never ZN identity. `FOCUS` requires exact-node continuity plus fresh focus evidence. `CLICK` includes explicit boolean `aria-pressed` transitions and one bounded exact-semantic submit-button path whose completion is a separately observed explicit final URL. `TYPE_TEXT` is limited to an empty writable non-password textbox with bounded Unicode input and privacy-safe length/digest evidence. Native `CHECK` and `UNCHECK` independently prove inverse boolean transitions on the same exact native checkbox. Native `SELECT_OPTION` is limited to an enabled single-select native combobox, one explicit bounded string value, exact-node continuity and privacy-safe fresh selected-value evidence. Generic click, text replacement, password entry, contenteditable, general ARIA checkbox control, PRESS and arbitrary provider methods remain unavailable until independently verified.
 
 Managed page identity is now resident-owned within one live session rather than derived from Python provider object identity. The adapter reconciles the provider page registry before page selection/authority checks, never reuses an evicted page ID during that session, and disposes target bindings when a page disappears. This is page-registry lifecycle only: it does not imply popup permission semantics, explicit tab switching/closing APIs, child-frame identity, or persistent browser-session recovery.
 
@@ -108,7 +109,7 @@ The User Browser Bridge provider proof remains sensing-only: it uses a temporary
 | Pointer movement/click with verification | Body + Senses | VERIFIED NARROW | real Windows interactive E2E exists |
 | Native Win32 text entry | Body + Senses | VERIFIED NARROW | real Unicode Edit E2E, empty focused native Edit only |
 | Modern UI text current-state evidence | Senses | VERIFIED NARROW | WPF read-only digest proof and real Edge focused HTML-input provider proof exist; raw text is not exported |
-| Modern app/browser mutation | Body | PARTIAL | managed browser has narrow focus, toggle click, empty-textbox type, native check/uncheck and native select-option; authenticated user-browser/general modern-app mutation remains open |
+| Modern app/browser mutation | Body | PARTIAL | managed browser has narrow focus, toggle click, empty-textbox type, native check/uncheck/select-option and the bounded semantic form transaction; authenticated user-browser/general modern-app mutation remains open |
 | Generic keyboard shortcuts/navigation | Body | OPEN | requires typed authority and effect verification |
 | Robust window/app lifecycle | Body/Senses | OPEN/PARTIAL | process/window foundations exist; product-grade cross-app lifecycle incomplete |
 
@@ -138,13 +139,13 @@ The User Browser Bridge provider proof remains sensing-only: it uses a temporary
 | Product need | ZN owner | Status | Current evidence / open work |
 | --- | --- | --- | --- |
 | Persist work across restarts | Work / resident state | PARTIAL | resident work/progress state exists |
-| Durable per-task checkpoints / restore | Work / resident state | OPEN | next major foundation after the verified narrow browser page-lifecycle checkpoint |
+| Durable per-task checkpoints / restore | Work / resident state | PARTIAL | selected pending-action and dispatch-reservation states recover deterministically after restart; general user-driven checkpoints and restore remain open |
 | Scheduled tasks | Will / resident scheduler | OPEN | must persist independently of chat/model provider |
 | Event-triggered tasks | Senses / Will | OPEN | external events become observations, not direct execution authority |
 | Conditional monitoring | Investigation / Will | OPEN | evidence-based notification lifecycle required |
 | Background task visibility/cancel | Work UI | OPEN | user must inspect/cancel active work |
 | Retry/backoff/idempotency | Action lifecycle | PARTIAL | selected paths exist; unified semantics remain open |
-| Crash recovery/resume | resident / Work | PARTIAL | resident continuity exists; per-task recovery needs broader coverage |
+| Crash recovery/resume | resident / Work | PARTIAL | resident continuity plus selected Work Recovery E2E paths exist; per-task recovery still needs broader coverage |
 
 ## 10. Parallelism / delegation / cognition
 
@@ -163,7 +164,7 @@ The User Browser Bridge provider proof remains sensing-only: it uses a temporary
 | Secret storage outside source/log/memory | credential boundary | VERIFIED | keyring/project secret boundaries exist |
 | URL/private-network safety | network Body policy | VERIFIED/PARTIAL | strong URL checks exist; DNS-rebinding/network-sandbox hardening remains open |
 | Action-specific authority | Body/Action | VERIFIED/PARTIAL | strong typed authority exists in several lifecycles; expansion remains action-specific |
-| Independent post-action evidence | Senses / Action | VERIFIED/PARTIAL | verified lifecycles include managed navigation, focus, toggle click, empty-textbox type, native check/uncheck and native select-option |
+| Independent post-action evidence | Senses / Action | VERIFIED/PARTIAL | verified lifecycles include managed navigation, focus, toggle click, empty-textbox type, native check/uncheck/select-option and an explicit observed final URL after the bounded semantic form submit |
 | Global permission center | Self/user boundary | OPEN | inspectable grants/revocation by capability/site/account |
 | Sensitive action escalation | Will / permission | OPEN/PARTIAL | release/self-maintenance rules exist; general product policy remains open |
 | Sandboxed untrusted code/content | Body | OPEN/PARTIAL | some boundaries exist; browser/code/plugin sandboxing needs unified policy |
@@ -199,7 +200,7 @@ The order is dependency- and leverage-driven, not “implement the thinnest row 
 
 ```text
 A. keep resident continuity + Windows CI trustworthy
-B. preserve Managed Browser navigation/target/focus/toggle-click/type-text/check/uncheck/select-option and page-registry lifecycle real Chromium evidence
+B. preserve Managed Browser navigation, semantic target/focus/mutation, same-session form transaction and page-registry lifecycle real Chromium evidence
 C. keep the dedicated browser proof lane aligned with every verified narrow browser contract
 D. treat stable live-page registry/eviction as the bounded browser checkpoint; leave PRESS, explicit tab/popup control and frame identity OPEN until new dependency evidence justifies returning
 E. build durable resident-owned Work / checkpoint / restore / recovery
