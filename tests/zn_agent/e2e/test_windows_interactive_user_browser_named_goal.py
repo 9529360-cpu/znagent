@@ -81,7 +81,7 @@ class WindowsInteractiveUserBrowserNamedGoalE2ETests(unittest.TestCase):
     def _require_input_desktop() -> None:
         WindowsInteractiveUserBrowserBridgeProviderE2ETests._require_input_desktop()
 
-    def test_resident_finds_unfocused_named_edit_then_types_and_verifies(self) -> None:
+    def test_resident_finds_unfocused_named_edit_from_ordinary_work_then_types_and_verifies(self) -> None:
         self._require_input_desktop()
         browsers = _find_installed_browsers()
         if not browsers:
@@ -106,16 +106,12 @@ class WindowsInteractiveUserBrowserNamedGoalE2ETests(unittest.TestCase):
                 "fixture must prove ZN—not the user/test—has to acquire target focus",
             )
 
+            # Match the real desktop Work boundary: no resident_goal/body/native
+            # payload. ZN itself must form the typed goal from ordinary user text.
             event = resident.enqueue(
-                f"In my current browser, fill the {_TARGET_NAME} field with the requested value",
-                payload={
-                    "resident_goal": {
-                        "kind": "user_browser_named_text",
-                        "target_name": _TARGET_NAME,
-                        "text": _TEXT,
-                    },
-                    "model_policy": "never",
-                },
+                f'In my current browser, fill "{_TARGET_NAME}" with "{_TEXT}".',
+                kind="desktop_user_event",
+                payload={"model_policy": "never"},
             )
 
             result = None
@@ -157,6 +153,7 @@ class WindowsInteractiveUserBrowserNamedGoalE2ETests(unittest.TestCase):
                     {
                         "provider": provider,
                         "profile_scope": "isolated-temporary",
+                        "goal_source": "ordinary_work",
                         "target_name": _TARGET_NAME,
                         "initially_focused": False,
                         "final_text_chars": final_text.text_length,
