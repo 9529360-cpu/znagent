@@ -16,7 +16,12 @@ from .cognitive_factory import (
     resolve_zn_cognitive_route,
 )
 from .config import load_zn_config
-from .credentials import CredentialStore, materialize_zn_credentials
+from .credentials import (
+    CredentialStore,
+    KeyringCredentialStore,
+    materialize_zn_credentials,
+    normalize_credential_reference,
+)
 from .home import get_zn_home
 from .models import ModelRoute
 from .runtime import ZNKernelRuntime
@@ -237,6 +242,25 @@ def build_runtime(
     )
 
 
+def _report_bearer_token(
+    report_cfg: dict[str, Any],
+    *,
+    credential_store: CredentialStore | None,
+) -> str | None:
+    reference = str(report_cfg.get("credential_ref") or "").strip()
+    if not reference:
+        return None
+    ref = normalize_credential_reference(reference)
+    store = credential_store or KeyringCredentialStore()
+    secret = store.get(ref)
+    token = str(secret or "").strip()
+    if not token:
+        raise RuntimeError(
+            "upstream bug report credential reference did not resolve to a secret"
+        )
+    return token
+
+
 def build_resident_runtime(
     *,
     config: dict[str, Any] | None = None,
@@ -262,6 +286,14 @@ def build_resident_runtime(
         report_transport = UpstreamBugReportTransport(
             endpoint=report_endpoint,
             timeout_seconds=float(report_cfg.get("timeout_seconds", 10.0)),
+            bearer_token=_report_bearer_token(
+                report_cfg,
+                credential_store=credential_store,
+            ),
+        )
+    elif str(report_cfg.get("credential_ref") or "").strip():
+        raise ValueError(
+            "zn_resident.upstream_bug_report.credential_ref requires endpoint"
         )
 
     kernel = build_runtime(
