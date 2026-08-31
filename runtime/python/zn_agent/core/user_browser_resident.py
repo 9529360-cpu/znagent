@@ -7,6 +7,7 @@ from dataclasses import asdict
 from typing import Any
 
 from .action import NativeActionIntent
+from .body import BodyActionResult
 from .browser import BrowserPermissionContext, BrowserPlane
 from .browser_goal_understanding_resident import BrowserGoalUnderstandingResidentRuntime
 from .browser_named_goal import browser_named_text_request
@@ -247,6 +248,68 @@ class UserBrowserBridgeResidentRuntime(BrowserGoalUnderstandingResidentRuntime):
             learning_evidence=learning_evidence,
             thought=thought,
         )
+
+    def _complete_successful_body_action(
+        self,
+        event,
+        state,
+        intent,
+        *,
+        response: str,
+        reason: str,
+    ):
+        """Keep a provider-verified USER-browser mutation as goal progress only."""
+
+        request = browser_named_text_request(event)
+        if request is None or str(intent.kind or "").strip().lower() != "browser_type_named_text":
+            return super()._complete_successful_body_action(
+                event,
+                state,
+                intent,
+                response=response,
+                reason=reason,
+            )
+
+        raw_result = state.data.get("native_action_result")
+        try:
+            result = BodyActionResult(**raw_result) if isinstance(raw_result, dict) else None
+        except (TypeError, ValueError):
+            result = None
+        if result is None or not self._named_text_result_proves_intent(result, intent):
+            return super()._complete_successful_body_action(
+                event,
+                state,
+                intent,
+                response=response,
+                reason=reason,
+            )
+
+        latest = state.data.get("latest_verified_experience")
+        experience_id = (
+            str(latest.get("experience_id") or "").strip()
+            if isinstance(latest, dict)
+            else ""
+        )
+        raw_progress = state.data.get(self._RESIDENT_GOAL_PROGRESS_KEY)
+        progress = list(raw_progress) if isinstance(raw_progress, list) else []
+        progress.append(
+            {
+                "action_kind": str(intent.kind or ""),
+                "verification_kind": "browser_named_text_provider_verified",
+                "experience_id": experience_id or None,
+                "verified_at": utc_now(),
+            }
+        )
+        state.data[self._RESIDENT_GOAL_PROGRESS_KEY] = progress[
+            -self._MAX_RESIDENT_GOAL_PROGRESS :
+        ]
+
+        self._reset_investigation_after_goal_substep(event, state, intent)
+        state.stage = "native_investigation"
+        state.next_action = "re-sense the authorized browser goal after the verified text movement"
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        return None
 
     @staticmethod
     def _require_browser_adapter_idle(adapter: Any) -> None:
