@@ -12,16 +12,16 @@ planner and stores no replayable action sequence.
 from dataclasses import replace
 from typing import Any
 
+from .browser_form_submit_resident import BrowserFormSubmitResidentRuntime
 from .models import ExecutionPath, utc_now
 from .repo_goal import (
     repo_text_staged_action_intents,
     repo_text_staged_request,
     repo_text_staged_state,
 )
-from .repo_test_resident import RepositoryVerifyingResidentRuntime
 
 
-class ResidentGoalRuntime(RepositoryVerifyingResidentRuntime):
+class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
     """Continue one typed goal until fresh reality proves the whole goal complete."""
 
     _RESIDENT_GOAL_PROGRESS_KEY = "resident_goal_progress"
@@ -89,11 +89,9 @@ class ResidentGoalRuntime(RepositoryVerifyingResidentRuntime):
 
         goal_state = repo_text_staged_state(event, investigation.state.facts)
         if goal_state is not None and goal_state.get("satisfied"):
-            domains = self.kernel.self_model.observe_native_outcome(
+            domains = self.kernel.self_model.infer_domains(
                 event.task,
                 self._required_capabilities(event),
-                success=True,
-                quality=0.95,
             )
             completion = {
                 "execution_path": ExecutionPath.INVESTIGATION.value,
@@ -112,8 +110,14 @@ class ResidentGoalRuntime(RepositoryVerifyingResidentRuntime):
             state.next_action = "publish terminal EventOutcome"
             state.data["native_domains"] = list(domains)
             state.data["investigation_completion"] = completion
-            self.store.record_runtime_task(model_invocations=0)
+            state.data[self._INVESTIGATION_COMPLETION_ACCOUNTING_KEY] = {
+                "version": self._ACCOUNTING_VERSION,
+                "kind": "native_investigation_success",
+                "domains": list(domains),
+                "quality": 0.95,
+            }
             self.store.save_working_state(state)
+            self._apply_investigation_completion_accounting(event, state)
             return self._investigation_completion_result(event, completion)
 
         if investigation.can_continue:
