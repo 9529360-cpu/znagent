@@ -5,7 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'vitest'
 
-import { configureZnPackagedRuntime, resolveRuntime, resolveZnHome } from './zn-packaged-runtime'
+import { configureZnPackagedRuntime, copyRuntimeTree, resolveRuntime, resolveZnHome } from './zn-packaged-runtime'
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const retiredProduct = Buffer.from('6865726d6573', 'hex').toString('utf8')
@@ -46,6 +46,51 @@ function writeBundledRuntime(resourcesPath: string, runtimeId = 'abcdef123456789
   }, null, 2)}\n`)
   return { runtimeRoot, runtimeId, backendRoot, browserRoot }
 }
+
+test('Windows runtime copy accepts robocopy informational exit codes without replaying the tree', () => {
+  const root = mkTmpRoot()
+  const source = path.join(root, 'source')
+  const target = path.join(root, 'target')
+  let calls = 0
+  try {
+    fs.mkdirSync(source, { recursive: true })
+    fs.writeFileSync(path.join(source, 'runtime.json'), 'runtime')
+    copyRuntimeTree(source, target, {
+      platform: 'win32',
+      runRobocopy: (sourceRoot, targetRoot) => {
+        calls += 1
+        fs.cpSync(sourceRoot, targetRoot, { recursive: true })
+        throw Object.assign(new Error('robocopy informational result'), { status: 1 })
+      }
+    })
+    assert.equal(calls, 1)
+    assert.equal(fs.readFileSync(path.join(target, 'runtime.json'), 'utf8'), 'runtime')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('Windows runtime copy discards partial acceleration output before Node fallback', () => {
+  const root = mkTmpRoot()
+  const source = path.join(root, 'source')
+  const target = path.join(root, 'target')
+  try {
+    fs.mkdirSync(path.join(source, 'python'), { recursive: true })
+    fs.writeFileSync(path.join(source, 'python', 'python.exe'), 'portable-python')
+    copyRuntimeTree(source, target, {
+      platform: 'win32',
+      runRobocopy: (_sourceRoot, targetRoot) => {
+        fs.mkdirSync(targetRoot, { recursive: true })
+        fs.writeFileSync(path.join(targetRoot, 'partial-only'), 'must-not-survive')
+        throw Object.assign(new Error('robocopy failed'), { status: 8 })
+      }
+    })
+    assert.equal(fs.existsSync(path.join(target, 'partial-only')), false)
+    assert.equal(fs.readFileSync(path.join(target, 'python', 'python.exe'), 'utf8'), 'portable-python')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
 
 test('packaged runtime materializes under ZN home and uses only ZN runtime entrypoints', () => {
   const root = mkTmpRoot()
