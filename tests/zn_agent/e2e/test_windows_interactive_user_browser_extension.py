@@ -119,7 +119,7 @@ def _press_extension_action_shortcut() -> None:
         wintypes.BYTE,
         wintypes.BYTE,
         wintypes.DWORD,
-        wintypes.ULONG_PTR,
+        ctypes.c_size_t,
     ]
     user32.keybd_event.restype = None
     key_up = 0x0002
