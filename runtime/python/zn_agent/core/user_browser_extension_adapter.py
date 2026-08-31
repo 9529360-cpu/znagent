@@ -45,8 +45,8 @@ class AuthorizedExtensionUserBrowser:
 
     The extension owns only the transport into the browser tab. Resident still
     owns BrowserPermissionContext, fresh target authority, action identity and
-    completion judgment. The adapter intentionally supports only the exact
-    named-textbox slice required by the current real user task.
+    completion judgment. The adapter deliberately exposes only exact named native
+    textboxes and buttons needed by selected real user tasks.
     """
 
     name = "zn-extension-user-browser"
@@ -66,7 +66,7 @@ class AuthorizedExtensionUserBrowser:
         policy = permission or BrowserPermissionContext()
         if policy.allow_navigation:
             raise ExtensionUserBrowserError(
-                "extension user-browser text slice does not grant navigation authority"
+                "extension user-browser slice does not grant direct navigation authority"
             )
         if policy.allow_downloads or policy.allow_uploads:
             raise ExtensionUserBrowserError(
@@ -106,9 +106,7 @@ class AuthorizedExtensionUserBrowser:
             raise ExtensionUserBrowserError(
                 "extension browser current page is outside the permitted origin boundary"
             )
-        title = str(result.get("title") or "").strip()
-        if len(title) > 512:
-            raise ExtensionUserBrowserError("extension browser title is too long")
+        title = self._title(result.get("title"))
         resolved_page = page_id or f"extension-tab-{tab_id}"
         observation = BrowserObservation(
             session=session.identity,
@@ -132,37 +130,53 @@ class AuthorizedExtensionUserBrowser:
         *,
         page_id: str = "",
     ) -> BrowserObservation:
-        if query.kind is not BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME:
+        if query.kind is BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME:
+            command_kind = "observe_named_textbox"
+            label = "textbox"
+        elif query.kind is BrowserTargetQueryKind.ACCESSIBLE_BUTTON_NAME:
+            command_kind = "observe_named_button"
+            label = "button"
+        else:
             raise ExtensionUserBrowserError(
-                "extension user-browser slice supports only exact accessible textbox names"
+                "extension user-browser slice supports only exact accessible textbox and button names"
             )
+
         session = self._session(session_id)
-        command = self._request(
-            "observe_named_textbox",
-            args={"target_name": query.value},
-        )
-        result = self._command_result(command, "authorized browser textbox observation")
+        command = self._request(command_kind, args={"target_name": query.value})
+        result = self._command_result(command, f"authorized browser {label} observation")
         tab_id = self._tab_id(result)
         if tab_id != session.tab_id:
-            raise ExtensionUserBrowserError("extension textbox observation changed tab identity")
+            raise ExtensionUserBrowserError(
+                f"extension {label} observation changed tab identity"
+            )
         url = self._safe_url(result.get("url"))
         if not session.permission.allows_origin(url):
             raise ExtensionUserBrowserError(
-                "extension textbox observation is outside the permitted origin boundary"
+                f"extension {label} observation is outside the permitted origin boundary"
             )
         name = str(result.get("name") or "")
         if name != query.value:
             raise ExtensionUserBrowserError(
-                "extension textbox observation did not preserve the exact requested accessible name"
+                f"extension {label} observation did not preserve the exact requested accessible name"
             )
-        role = str(result.get("role") or "").strip().lower()
-        if role not in {"textbox", "searchbox"}:
-            raise ExtensionUserBrowserError(
-                "extension textbox observation did not resolve a supported textbox role"
-            )
+        source_role = str(result.get("role") or "").strip().lower()
+        if label == "textbox":
+            if source_role not in {"textbox", "searchbox"}:
+                raise ExtensionUserBrowserError(
+                    "extension textbox observation did not resolve a supported textbox role"
+                )
+            role = "textbox"
+        else:
+            if source_role != "button":
+                raise ExtensionUserBrowserError(
+                    "extension button observation did not resolve a button role"
+                )
+            role = "button"
         target_id = str(result.get("target_id") or "").strip()
         if not target_id or len(target_id) > 256:
-            raise ExtensionUserBrowserError("extension textbox observation returned invalid target identity")
+            raise ExtensionUserBrowserError(
+                f"extension {label} observation returned invalid target identity"
+            )
         resolved_page = page_id or f"extension-tab-{tab_id}"
         observed_at = utc_now()
         target = BrowserTarget(
@@ -173,25 +187,35 @@ class AuthorizedExtensionUserBrowser:
             observed_at=observed_at,
             url=url,
             frame_id="main",
-            role="textbox",
+            role=role,
             name=name,
-            selector_hint=f"extension_accessible_{role}_name:exact",
+            selector_hint=f"extension_accessible_{source_role}_name:exact",
         )
+        metadata: dict[str, Any] = {
+            "attachment": "authorized_extension_tab",
+            "transport": "chrome_debugger_accessibility",
+            "source_role": source_role,
+        }
+        if label == "textbox":
+            metadata.update(
+                {
+                    "text_length": self._nonnegative_int(
+                        result.get("text_length"), "text length"
+                    ),
+                    "text_sha256": self._digest(
+                        result.get("text_sha256"), "text digest"
+                    ),
+                }
+            )
         observation = BrowserObservation(
             session=session.identity,
             page_id=resolved_page,
             captured_at=observed_at,
             url=url,
-            title=str(result.get("title") or "").strip(),
+            title=self._title(result.get("title")),
             load_state="complete",
             target=target,
-            metadata={
-                "attachment": "authorized_extension_tab",
-                "transport": "chrome_debugger_accessibility",
-                "source_role": role,
-                "text_length": self._nonnegative_int(result.get("text_length"), "text length"),
-                "text_sha256": self._digest(result.get("text_sha256"), "text digest"),
-            },
+            metadata=metadata,
         )
         session.last_observation[resolved_page] = observation
         return observation
@@ -222,23 +246,40 @@ class AuthorizedExtensionUserBrowser:
         authority: BrowserActionAuthority,
     ) -> BrowserEffectEvidence:
         session = self._session(action.session_id)
-        if action.kind is not BrowserActionKind.TYPE_TEXT:
-            raise ExtensionUserBrowserError(
-                "extension user-browser slice supports only TYPE_TEXT mutation"
-            )
-        page_id = action.page_id or (action.target.page_id if action.target is not None else "")
+        page_id = action.page_id or (
+            action.target.page_id if action.target is not None else ""
+        )
         current = session.last_observation.get(page_id)
         if current is None:
             raise ExtensionUserBrowserError(
                 "extension browser action has no fresh resident-owned target observation"
             )
         authority.validate_current(action, current, session.permission)
+        if action.kind is BrowserActionKind.TYPE_TEXT:
+            return self._act_type_text(session, action, current, page_id)
+        if action.kind is BrowserActionKind.CLICK:
+            return self._act_click(session, action, current, page_id)
+        raise ExtensionUserBrowserError(
+            "extension user-browser slice supports only TYPE_TEXT and exact button CLICK mutations"
+        )
+
+    def _act_type_text(
+        self,
+        session: _ExtensionSession,
+        action: BrowserAction,
+        current: BrowserObservation,
+        page_id: str,
+    ) -> BrowserEffectEvidence:
         target = action.target
         if target is None or target.role != "textbox" or not target.name:
-            raise ExtensionUserBrowserError("extension TYPE_TEXT requires one exact textbox target")
+            raise ExtensionUserBrowserError(
+                "extension TYPE_TEXT requires one exact textbox target"
+            )
         text = action.args.get("text")
         if not isinstance(text, str) or not text:
-            raise ExtensionUserBrowserError("extension TYPE_TEXT requires non-empty string text")
+            raise ExtensionUserBrowserError(
+                "extension TYPE_TEXT requires non-empty string text"
+            )
 
         expected_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
         try:
@@ -291,13 +332,17 @@ class AuthorizedExtensionUserBrowser:
         result = self._command_result(command, "authorized browser textbox mutation")
         tab_id = self._tab_id(result)
         if tab_id != session.tab_id:
-            raise ExtensionUserBrowserError("extension textbox mutation changed tab identity")
+            raise ExtensionUserBrowserError(
+                "extension textbox mutation changed tab identity"
+            )
         url_before = self._safe_url(result.get("url_before"))
         url_after = self._safe_url(result.get("url_after"))
         result_target = str(result.get("target_id") or "").strip()
         input_sent = result.get("input_sent") is True
         exact_node = result.get("exact_node_continuity") is True
-        after_length = self._nonnegative_int(result.get("text_length_after"), "final text length")
+        after_length = self._nonnegative_int(
+            result.get("text_length_after"), "final text length"
+        )
         after_sha = self._digest(result.get("text_sha256_after"), "final text digest")
         expected_length = self._nonnegative_int(
             result.get("expected_text_length"), "expected text length"
@@ -367,6 +412,134 @@ class AuthorizedExtensionUserBrowser:
             data=evidence_data,
         )
 
+    def _act_click(
+        self,
+        session: _ExtensionSession,
+        action: BrowserAction,
+        current: BrowserObservation,
+        page_id: str,
+    ) -> BrowserEffectEvidence:
+        target = action.target
+        if target is None or target.role != "button" or not target.name:
+            raise ExtensionUserBrowserError(
+                "extension CLICK requires one exact native button target"
+            )
+        expected_url = self._safe_url(action.expected.get("url_equals"))
+        if not session.permission.allows_origin(expected_url):
+            raise ExtensionUserBrowserError(
+                "extension button expected URL is outside the permitted origin boundary"
+            )
+        if expected_url == current.url:
+            raise ExtensionUserBrowserError(
+                "extension button expected URL is already observed before dispatch"
+            )
+        try:
+            command = self._request(
+                "click_named_button_to_url",
+                args={
+                    "target_name": target.name,
+                    "target_id": target.target_id,
+                    "expected_url_before": current.url,
+                    "expected_url_after": expected_url,
+                },
+            )
+        except UserBrowserExtensionCommandUncertainError as exc:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=utc_now(),
+                success=False,
+                page_id=page_id,
+                url_before=current.url,
+                url_after=current.url,
+                target_id=target.target_id,
+                data={
+                    "provider": self.name,
+                    "click_sent": False,
+                    "click_may_have_been_sent": True,
+                    "command_delivery": "extension_received",
+                    "requires_fresh_resense": True,
+                    "expected_url": expected_url,
+                },
+                error=(
+                    f"{exc}; refusing replay until a fresh browser observation proves the "
+                    "post-click page state"
+                ),
+            )
+        if command.get("success") is not True:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=str(command.get("completed_at") or utc_now()),
+                success=False,
+                page_id=page_id,
+                url_before=current.url,
+                url_after=current.url,
+                target_id=target.target_id,
+                data={"provider": self.name, "click_sent": False},
+                error=str(command.get("error") or "extension button command failed"),
+            )
+        result = self._command_result(command, "authorized browser button click")
+        tab_id = self._tab_id(result)
+        if tab_id != session.tab_id:
+            raise ExtensionUserBrowserError("extension button click changed tab identity")
+        url_before = self._safe_url(result.get("url_before"))
+        url_after = self._safe_url(result.get("url_after"))
+        result_target = str(result.get("target_id") or "").strip()
+        click_sent = result.get("click_sent") is True
+        exact_node = result.get("exact_node_continuity") is True
+        revalidated = result.get("target_revalidated_before_dispatch") is True
+        result_expected = self._safe_url(result.get("expected_url"))
+        verified = bool(
+            click_sent
+            and exact_node
+            and revalidated
+            and result_target == target.target_id
+            and url_before == current.url
+            and result_expected == expected_url
+            and url_after == expected_url
+            and str(result.get("postcondition") or "")
+            == "url_equals_after_fresh_semantic_button_click"
+        )
+        evidence_data = {
+            "provider": self.name,
+            "click_sent": click_sent,
+            "exact_node_continuity": exact_node,
+            "target_revalidated_before_dispatch": revalidated,
+            "expected_url": result_expected,
+        }
+        if not verified:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=str(command.get("completed_at") or utc_now()),
+                success=False,
+                page_id=page_id,
+                url_before=url_before,
+                url_after=url_after,
+                target_id=result_target or target.target_id,
+                postcondition="url_equals_after_fresh_semantic_button_click",
+                data=evidence_data,
+                error=(
+                    "extension browser button click was dispatched but fresh URL evidence did not "
+                    "prove the requested final page; refusing replay"
+                    if click_sent
+                    else "extension browser button click did not execute"
+                ),
+            )
+        return BrowserEffectEvidence(
+            action_id=action.action_id,
+            session_id=action.session_id,
+            observed_at=str(command.get("completed_at") or utc_now()),
+            success=True,
+            page_id=page_id,
+            url_before=url_before,
+            url_after=url_after,
+            target_id=result_target,
+            postcondition="url_equals_after_fresh_semantic_button_click",
+            data=evidence_data,
+        )
+
     def _session(self, session_id: str) -> _ExtensionSession:
         session = self._sessions.get(str(session_id or "").strip())
         if session is None:
@@ -395,9 +568,13 @@ class AuthorizedExtensionUserBrowser:
         try:
             tab_id = int(result.get("tab_id"))
         except (TypeError, ValueError) as exc:
-            raise ExtensionUserBrowserError("extension browser result has invalid tab identity") from exc
+            raise ExtensionUserBrowserError(
+                "extension browser result has invalid tab identity"
+            ) from exc
         if tab_id <= 0:
-            raise ExtensionUserBrowserError("extension browser result has invalid tab identity")
+            raise ExtensionUserBrowserError(
+                "extension browser result has invalid tab identity"
+            )
         return tab_id
 
     @staticmethod
@@ -408,10 +585,21 @@ class AuthorizedExtensionUserBrowser:
         try:
             parsed = urlsplit(raw)
         except ValueError as exc:
-            raise ExtensionUserBrowserError("extension browser result has invalid URL") from exc
+            raise ExtensionUserBrowserError(
+                "extension browser result has invalid URL"
+            ) from exc
         if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
-            raise ExtensionUserBrowserError("extension browser left the permitted HTTP(S) boundary")
+            raise ExtensionUserBrowserError(
+                "extension browser left the permitted HTTP(S) boundary"
+            )
         return raw
+
+    @staticmethod
+    def _title(value: Any) -> str:
+        title = str(value or "").strip()
+        if len(title) > 512:
+            raise ExtensionUserBrowserError("extension browser title is too long")
+        return title
 
     @staticmethod
     def _nonnegative_int(value: Any, label: str) -> int:
@@ -426,6 +614,8 @@ class AuthorizedExtensionUserBrowser:
     @staticmethod
     def _digest(value: Any, label: str) -> str:
         digest = str(value or "").strip().lower()
-        if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+        if len(digest) != 64 or any(
+            char not in "0123456789abcdef" for char in digest
+        ):
             raise ExtensionUserBrowserError(f"extension browser {label} is invalid")
         return digest
