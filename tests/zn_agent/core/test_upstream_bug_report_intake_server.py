@@ -12,6 +12,8 @@ from urllib.parse import urlsplit
 
 from zn_agent.core.upstream_bug_report_intake_server import build_server
 
+_TOKEN = "test-receiver-secret-000000000000"
+
 
 class MaintainerReportHTTPServerTests(unittest.TestCase):
     @staticmethod
@@ -33,7 +35,7 @@ class MaintainerReportHTTPServerTests(unittest.TestCase):
             database = Path(tmp) / "intake.db"
             server = build_server(
                 database_path=database,
-                bearer_token="test-receiver-secret",
+                bearer_token=_TOKEN,
                 host="127.0.0.1",
                 port=0,
             )
@@ -52,7 +54,7 @@ class MaintainerReportHTTPServerTests(unittest.TestCase):
         *,
         method: str = "GET",
         payload=None,
-        token: str | None = "test-receiver-secret",
+        token: str | None = _TOKEN,
         report_key: str | None = None,
     ):
         data = None if payload is None else json.dumps(payload).encode("utf-8")
@@ -129,6 +131,16 @@ class MaintainerReportHTTPServerTests(unittest.TestCase):
                 self.assertEqual(response, {"error": "unauthorized"})
             self.assertEqual(server.intake.snapshot()["report_count"], 0)
 
+    def test_server_rejects_short_bearer_secret_at_construction(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                build_server(
+                    database_path=Path(tmp) / "intake.db",
+                    bearer_token="too-short",
+                    host="127.0.0.1",
+                    port=0,
+                )
+
     def test_transport_identity_headers_must_match_payload_and_path(self):
         with self._server() as (server, _database, base_url):
             status, response = self._request(
@@ -167,7 +179,7 @@ class MaintainerReportHTTPServerTests(unittest.TestCase):
                 f"{base_url}/reports",
                 data=b"{" + (b"x" * 5000) + b"}",
                 headers={
-                    "Authorization": "Bearer test-receiver-secret",
+                    "Authorization": f"Bearer {_TOKEN}",
                     "Content-Type": "application/json",
                     "X-ZN-Report-Key": "a" * 64,
                     "Idempotency-Key": "a" * 64,
