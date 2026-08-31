@@ -37,6 +37,9 @@ jobs:
       run:
         shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
     steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
       - name: Require dedicated interactive Windows x64 runner
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
@@ -52,9 +55,6 @@ jobs:
           git config core.longpaths true
           if ($LASTEXITCODE -ne 0) { throw "failed to enable Git long-path cleanup with exit code $LASTEXITCODE" }
           Write-Host "ZN release packaging runner: $env:RUNNER_NAME session=$sessionId"
-
-      - name: Checkout
-        uses: actions/checkout@v7
 
       - name: Set up Node
         uses: actions/setup-node@v7
