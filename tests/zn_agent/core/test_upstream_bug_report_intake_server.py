@@ -131,15 +131,17 @@ class MaintainerReportHTTPServerTests(unittest.TestCase):
                 self.assertEqual(response, {"error": "unauthorized"})
             self.assertEqual(server.intake.snapshot()["report_count"], 0)
 
-    def test_server_rejects_short_bearer_secret_at_construction(self):
+    def test_server_rejects_short_bearer_secret_before_creating_state(self):
         with tempfile.TemporaryDirectory() as tmp:
+            database = Path(tmp) / "intake.db"
             with self.assertRaises(ValueError):
                 build_server(
-                    database_path=Path(tmp) / "intake.db",
+                    database_path=database,
                     bearer_token="too-short",
                     host="127.0.0.1",
                     port=0,
                 )
+            self.assertFalse(database.exists())
 
     def test_transport_identity_headers_must_match_payload_and_path(self):
         with self._server() as (server, _database, base_url):
