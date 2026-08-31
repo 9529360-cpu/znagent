@@ -90,7 +90,7 @@ Resident Managed Browser + User Browser Bridge
 | Screenshots/visual browser sensing | Browser Senses | OPEN | integrate with visual evidence rather than making pixels completion authority by themselves |
 | Persistent ZN-managed browser profile | Browser state | OPEN | explicitly separate from user profiles/credentials |
 | Optional cloud browser backend | Browser resource adapter | OPEN | provider may be replaceable; local browsing must not depend on it |
-| Operate user's existing Edge/Chrome login session | User Browser Bridge | FOUNDATION | real Windows interactive proof shows isolated-profile Edge exposes a focused HTML input through default UIA without forced renderer accessibility; authenticated existing-session attachment/permission/mutation remain open |
+| Operate user's existing Edge/Chrome login session | User Browser Bridge | FOUNDATION / VERIFIED NARROW | real Windows interactive proof shows isolated-profile Edge exposes and accepts one bounded explicit text mutation in an already-focused empty non-password HTML Edit through default UIA plus keyboard input, with same-RuntimeId length/digest verification and no forced renderer accessibility; authenticated existing-session attachment and permission UX remain open |
 | Companion extension/native messaging bridge | User Browser Bridge | OPEN | add only if real provider evidence shows it is needed and permission is explicit |
 | MFA/sensitive-field handling | Permission / Body | OPEN | never silently replay/extract secrets; explicit high-risk boundaries required |
 
@@ -98,7 +98,7 @@ Managed mutation evidence remains deliberately narrow. Provider handles are disp
 
 Managed page identity is now resident-owned within one live session rather than derived from Python provider object identity. The adapter reconciles the provider page registry before page selection/authority checks, never reuses an evicted page ID during that session, and disposes target bindings when a page disappears. This is page-registry lifecycle only: it does not imply popup permission semantics, explicit tab switching/closing APIs, child-frame identity, or persistent browser-session recovery.
 
-The User Browser Bridge provider proof remains sensing-only: it uses a temporary isolated profile and bounded focused-element/current-text evidence, not authenticated browser control.
+The User Browser Bridge provider proof now includes one bounded mutation but still uses a temporary isolated profile, not authenticated browser control. Authority is limited to an explicit exact foreground scope and the already-focused UIA Edit; password, read-only, non-empty-different and identity-drift targets fail closed, and interrupted input is not blindly replayed.
 
 ## 6. Desktop computer use
 
