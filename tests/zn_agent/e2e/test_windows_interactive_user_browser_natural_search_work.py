@@ -248,7 +248,9 @@ class WindowsInteractiveNaturalUserBrowserSearchWorkE2ETests(unittest.TestCase):
             messages = final["thread"]["messages"]
             self.assertEqual(messages[0]["role"], "user")
             self.assertEqual(messages[0]["text"], task)
-            self.assertEqual(messages[-1]["role"], "zn")
+            zn_messages = [message for message in messages if message["role"] == "zn"]
+            self.assertEqual(len(zn_messages), 1)
+            self.assertIn("/results?q=", zn_messages[0]["text"])
             self.assertNotIn("textbox", task.lower())
             self.assertNotIn("button", task.lower())
             self.assertNotIn("http://", task.lower())
