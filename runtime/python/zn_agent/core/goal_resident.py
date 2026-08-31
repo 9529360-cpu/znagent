@@ -9,6 +9,7 @@ Investigation before deciding what to do next. It deliberately owns no generic
 planner and stores no replayable action sequence.
 """
 
+from dataclasses import replace
 from typing import Any
 
 from .models import ExecutionPath, utc_now
@@ -194,6 +195,34 @@ class ResidentGoalRuntime(RepositoryVerifyingResidentRuntime):
             local_failure=None,
         )
         return self._checkpoint_terminal_failure(event, state, reason=reason)
+
+    def _verification_contract(self, event, intent, *, result=None):
+        """Map a composite staging substep back onto the existing typed Git verifier."""
+
+        request = repo_text_staged_request(event)
+        raw_goal = intent.expected_outcome if isinstance(intent.expected_outcome, dict) else {}
+        if (
+            request is not None
+            and intent.kind == "command"
+            and intent.source == "resident_choice"
+            and str(raw_goal.get("kind") or "").strip().lower() == "git_path_staged"
+        ):
+            staged_event = replace(
+                event,
+                payload={
+                    **dict(event.payload or {}),
+                    "expected_outcome": {
+                        "kind": "git_path_staged",
+                        "path": request["path"],
+                    },
+                },
+            )
+            return super()._verification_contract(
+                staged_event,
+                intent,
+                result=result,
+            )
+        return super()._verification_contract(event, intent, result=result)
 
     def _complete_successful_body_action(
         self,
