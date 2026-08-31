@@ -28,7 +28,7 @@ concurrency:
 jobs:
   clean-install:
     name: Windows x64 clean install and start
-    runs-on: windows-latest
+    runs-on: [self-hosted, Windows, X64, zn-ci]
     timeout-minutes: 75
     steps:
       - name: Publish clean-install pending status
@@ -48,7 +48,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Require clean Windows x64 hosted runner
+      - name: Require isolated Windows x64 self-hosted runner
         shell: pwsh
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
