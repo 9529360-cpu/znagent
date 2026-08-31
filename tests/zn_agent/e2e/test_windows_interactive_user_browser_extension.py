@@ -158,11 +158,11 @@ def _press_extension_action_shortcut() -> None:
     key_up = 0x0002
     vk_control = 0x11
     vk_shift = 0x10
-    vk_y = 0x59
+    vk_5 = 0x35
     user32.keybd_event(vk_control, 0, 0, 0)
     user32.keybd_event(vk_shift, 0, 0, 0)
-    user32.keybd_event(vk_y, 0, 0, 0)
-    user32.keybd_event(vk_y, 0, key_up, 0)
+    user32.keybd_event(vk_5, 0, 0, 0)
+    user32.keybd_event(vk_5, 0, key_up, 0)
     user32.keybd_event(vk_shift, 0, key_up, 0)
     user32.keybd_event(vk_control, 0, key_up, 0)
 
