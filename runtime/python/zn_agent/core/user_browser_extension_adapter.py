@@ -103,7 +103,7 @@ class AuthorizedExtensionUserBrowser:
     def observe(self, session_id: str, *, page_id: str = "") -> BrowserObservation:
         session = self._session(session_id)
         self._require_page_id(session, page_id)
-        current = self._require_current_tab(session)
+        self._require_current_tab(session)
         raw = self.relay.request(
             "observe_page",
             {},
@@ -111,13 +111,6 @@ class AuthorizedExtensionUserBrowser:
         )
         url = str(raw.get("url") or "").strip()
         self._require_url_allowed(url, session.permission)
-        if url != current.url:
-            # Authorization reports the URL at attach/reannounce time. A command
-            # observation is fresher, but a drift here means the tab changed since
-            # the authority was granted; stop and require a new explicit attach.
-            raise ExtensionUserBrowserError(
-                "authorized browser tab URL changed; re-authorize the current page before acting"
-            )
         observed = BrowserObservation(
             session=session.identity,
             page_id=session.page_id,
@@ -163,7 +156,7 @@ class AuthorizedExtensionUserBrowser:
     ):
         session = self._session(session_id)
         self._require_page_id(session, page_id)
-        current = self._require_current_tab(session)
+        self._require_current_tab(session)
         name = str(target_name or "").strip()
         if not name or len(name) > 256:
             raise ValueError("exact textbox name is invalid")
@@ -174,10 +167,6 @@ class AuthorizedExtensionUserBrowser:
         )
         url = str(raw.get("url") or "").strip()
         self._require_url_allowed(url, session.permission)
-        if url != current.url:
-            raise ExtensionUserBrowserError(
-                "authorized browser tab URL changed; re-authorize the current page before acting"
-            )
         backend_node_id = self._backend_node_id(raw.get("backend_node_id"))
         captured_at = utc_now()
         target = BrowserTarget(
