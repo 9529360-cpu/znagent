@@ -11,7 +11,7 @@ absent at the receiver. A lost response therefore remains outcome_uncertain and
 is never blindly replayed.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping, Protocol
 from urllib.parse import urlsplit
 
@@ -43,11 +43,14 @@ class UpstreamBugReportTransportError(RuntimeError):
 class UpstreamBugReportTransport:
     endpoint: str
     timeout_seconds: float = 10.0
-    http_client: _HttpClient | None = None
+    bearer_token: str | None = field(default=None, repr=False)
+    http_client: _HttpClient | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         self.endpoint = self._validated_endpoint(self.endpoint)
         self.timeout_seconds = max(1.0, min(60.0, float(self.timeout_seconds)))
+        normalized_token = str(self.bearer_token or "").strip()
+        self.bearer_token = normalized_token or None
 
     def dispatch(
         self,
@@ -60,12 +63,7 @@ class UpstreamBugReportTransport:
             response = self._post(
                 self.endpoint,
                 json=payload,
-                headers={
-                    "Accept": "application/json",
-                    "Content-Type": "application/json",
-                    "Idempotency-Key": key,
-                    "X-ZN-Report-Key": key,
-                },
+                headers=self._headers(key, content_type=True),
             )
             self._require_accepted_ack(response, key)
         except Exception as exc:
@@ -88,10 +86,7 @@ class UpstreamBugReportTransport:
         key = outbox.require_reconciliation(report_key)
         url = f"{self.endpoint.rstrip('/')}/{key}"
         try:
-            response = self._get(
-                url,
-                headers={"Accept": "application/json", "X-ZN-Report-Key": key},
-            )
+            response = self._get(url, headers=self._headers(key))
             present = self._require_reconciliation_evidence(response, key)
         except Exception as exc:
             if isinstance(exc, UpstreamBugReportTransportError):
@@ -103,6 +98,18 @@ class UpstreamBugReportTransport:
         if present:
             return outbox.mark_reconciled_delivered(key)
         return outbox.mark_reconciled_absent(key)
+
+    def _headers(self, report_key: str, *, content_type: bool = False) -> dict[str, str]:
+        headers = {
+            "Accept": "application/json",
+            "X-ZN-Report-Key": report_key,
+        }
+        if content_type:
+            headers["Content-Type"] = "application/json"
+            headers["Idempotency-Key"] = report_key
+        if self.bearer_token is not None:
+            headers["Authorization"] = f"Bearer {self.bearer_token}"
+        return headers
 
     def _post(
         self,
