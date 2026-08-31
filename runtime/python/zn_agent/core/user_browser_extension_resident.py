@@ -31,11 +31,18 @@ class _ResidentBoundExtensionRelay(ResidentUserBrowserExtensionRelay):
         return result
 
     def revoke(self, *, tab_id: Any = None) -> dict[str, Any]:
+        # This method is called by the extension only after it has already
+        # detached the debugger (or the browser detached it). Keeping that order
+        # prevents Resident state from claiming revocation while the extension
+        # still owns the real browser target.
         result = super().revoke(tab_id=tab_id)
         self.owner._deactivate_extension_browser()
         return result
 
     def close(self) -> None:
+        # Service shutdown drops Resident-side authority. The extension may
+        # re-announce the same user grant after Resident restart; this is
+        # continuity, not a user-requested revocation.
         super().close()
         self.owner._deactivate_extension_browser()
 
@@ -62,7 +69,11 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
         return self.user_browser_extension.status()
 
     def revoke_user_browser_extension_tab(self, tab_id: int | None = None) -> dict[str, Any]:
-        return self.user_browser_extension.revoke(tab_id=tab_id)
+        del tab_id
+        raise RuntimeError(
+            "revoke this browser grant from the ZN extension button so debugger ownership "
+            "is released before Resident authorization is cleared"
+        )
 
     def authorize_existing_user_browser(self, endpoint: str) -> dict[str, Any]:
         if self.user_browser_extension.authorized_tab() is not None:
@@ -72,16 +83,10 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
         return super().authorize_existing_user_browser(endpoint)
 
     def revoke_existing_user_browser(self) -> dict[str, Any]:
-        tab = self.user_browser_extension.authorized_tab()
-        if tab is not None:
-            result = self.user_browser_extension.revoke(tab_id=tab.tab_id)
-            return {
-                "authorized": False,
-                "revoked": True,
-                "plane": BrowserPlane.MANAGED.value,
-                "browser_ownership": "resident",
-                "extension": result,
-            }
+        if self.user_browser_extension.authorized_tab() is not None:
+            raise RuntimeError(
+                "revoke the extension-authorized browser tab from the ZN extension button"
+            )
         return super().revoke_existing_user_browser()
 
     def user_browser_authorization(self) -> dict[str, Any]:
@@ -95,6 +100,7 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
                 "endpoint_scope": "loopback_extension",
                 "browser_ownership": "user",
                 "tab_id": tab.tab_id if tab is not None else None,
+                "revoke_surface": "browser_extension_button",
             }
         return super().user_browser_authorization()
 
