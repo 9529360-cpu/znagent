@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import tempfile
 import threading
 import time
 import unittest
@@ -133,12 +134,18 @@ class WindowsInteractiveAuthorizedUserBrowserCDPE2ETests(unittest.TestCase):
         provider, executable = browsers[0]
         fixture = _CDPBrowserFixture(provider, executable, url)
         resident = None
+        runtime_tmp = None
         fixture.start()
         try:
+            time.sleep(0.25)
             initial_requests = int(server.root_requests)  # type: ignore[attr-defined]
             self.assertGreaterEqual(initial_requests, 1)
 
-            resident = build_resident_runtime(config={"model": {}})
+            runtime_tmp = tempfile.TemporaryDirectory()
+            resident = build_resident_runtime(
+                config={"model": {}},
+                store_path=Path(runtime_tmp.name) / "kernel.db",
+            )
             authorization = resident.authorize_existing_user_browser(fixture.endpoint)
             self.assertTrue(authorization["authorized"])
             self.assertEqual(authorization["plane"], "user")
@@ -202,6 +209,8 @@ class WindowsInteractiveAuthorizedUserBrowserCDPE2ETests(unittest.TestCase):
                 except Exception:
                     pass
                 resident.store.close()
+            if runtime_tmp is not None:
+                runtime_tmp.cleanup()
             fixture.close()
             server.shutdown()
             server.server_close()
