@@ -203,6 +203,41 @@ jobs:
               throw "installed ZN exited before resident endpoint was created (exit $($desktop.ExitCode))"
             }
 
+            # A clean packaged launch atomically materializes the full ZN-owned runtime, including
+            # Chromium, into the persistent home before resident startup. On slower Windows disks
+            # that copy can legitimately exceed the resident verifier's 60-second endpoint window.
+            # Wait for the atomic final runtime manifest first; do not weaken the endpoint,
+            # continuity, shutdown, or autostart proof that follows.
+            $runtimeManifest = Join-Path $env:ZN_CLEAN_HOME "runtime/$env:GITHUB_SHA/runtime.json"
+            $runtimeDeadline = (Get-Date).AddMinutes(5)
+            $runtimeWaitStarted = Get-Date
+            while ((Get-Date) -lt $runtimeDeadline) {
+              if (Test-Path -LiteralPath $runtimeManifest -PathType Leaf) { break }
+              $desktop.Refresh()
+              if ($desktop.HasExited) {
+                Write-Host "Installed desktop exited during runtime materialization with code $($desktop.ExitCode)."
+                if (Test-Path -LiteralPath $stdout) { Write-Host '--- desktop stdout ---'; Get-Content -LiteralPath $stdout -Tail 200 }
+                if (Test-Path -LiteralPath $stderr) { Write-Host '--- desktop stderr ---'; Get-Content -LiteralPath $stderr -Tail 200 }
+                throw "installed ZN exited before runtime materialization completed (exit $($desktop.ExitCode))"
+              }
+              Start-Sleep -Seconds 2
+            }
+            if (-not (Test-Path -LiteralPath $runtimeManifest -PathType Leaf)) {
+              $runtimeParent = Join-Path $env:ZN_CLEAN_HOME 'runtime'
+              $partial = @()
+              if (Test-Path -LiteralPath $runtimeParent -PathType Container) {
+                $partial = @(Get-ChildItem -LiteralPath $runtimeParent -Directory -ErrorAction SilentlyContinue |
+                  Where-Object { $_.Name -like "$($env:GITHUB_SHA).tmp-*" } |
+                  Select-Object -ExpandProperty Name)
+              }
+              Write-Host "Runtime materialization did not complete within 5 minutes; partial=$($partial -join ',')"
+              if (Test-Path -LiteralPath $stdout) { Write-Host '--- desktop stdout ---'; Get-Content -LiteralPath $stdout -Tail 200 }
+              if (Test-Path -LiteralPath $stderr) { Write-Host '--- desktop stderr ---'; Get-Content -LiteralPath $stderr -Tail 200 }
+              throw "installed ZN runtime materialization timed out: $runtimeManifest"
+            }
+            $runtimeWaitSeconds = [int]((Get-Date) - $runtimeWaitStarted).TotalSeconds
+            Write-Host "Installed runtime materialized after ${runtimeWaitSeconds}s: $runtimeManifest"
+
             $oldErrorActionPreference = $ErrorActionPreference
             $ErrorActionPreference = 'Continue'
             try {
