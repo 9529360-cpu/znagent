@@ -16,7 +16,13 @@ from dataclasses import replace
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
-from .browser import BrowserPermissionContext, BrowserPlane, BrowserSessionIdentity
+from .browser import (
+    BrowserPermissionContext,
+    BrowserPlane,
+    BrowserSessionIdentity,
+    BrowserTargetQuery,
+    BrowserTargetQueryKind,
+)
 from .managed_browser import ManagedBrowserError, _ManagedSession
 from .semantic_managed_browser import SemanticPlaywrightManagedBrowser
 
@@ -51,8 +57,6 @@ class AuthorizedCDPUserBrowser(SemanticPlaywrightManagedBrowser):
         permission: BrowserPermissionContext | None = None,
         headless: bool = False,
     ) -> BrowserSessionIdentity:
-        # ``headless`` is intentionally ignored: ZN is attaching to a browser the
-        # user already owns rather than launching a provider process.
         del headless
         policy = permission or BrowserPermissionContext()
         if policy.allow_downloads or policy.allow_uploads:
@@ -128,10 +132,36 @@ class AuthorizedCDPUserBrowser(SemanticPlaywrightManagedBrowser):
         if session is None:
             return
         self._dispose_all_target_bindings(session)
-        # Never call Browser.close() or BrowserContext.close() for a USER plane:
-        # those objects belong to the user. Stopping the Playwright client only
-        # tears down ZN's transport connection.
         self._disconnect_only(session.playwright)
+
+    def observe_named_text_state(
+        self,
+        session_id: str,
+        target_name: str,
+        *,
+        page_id: str = "",
+    ):
+        """Return exact semantic target identity plus length/digest, never plaintext."""
+
+        observed = self.observe_target(
+            session_id,
+            BrowserTargetQuery(
+                kind=BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME,
+                value=str(target_name or "").strip(),
+            ),
+            page_id=page_id,
+        )
+        session = self._session(session_id)
+        binding = session.target_bindings.get(observed.page_id)
+        if binding is None or observed.target is None or binding.target != observed.target:
+            raise UserBrowserBridgeError(
+                "authorized user-browser textbox state lost its fresh semantic target binding"
+            )
+        state = self._read_target_text_state(binding.handle)
+        return observed, {
+            "text_length": int(state["text_length"]),
+            "text_sha256": str(state["text_sha256"]),
+        }
 
     def _capture(self, session: _ManagedSession, page_id: str, **kwargs: Any):
         observation = super()._capture(session, page_id, **kwargs)
