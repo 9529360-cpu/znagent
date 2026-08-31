@@ -12,7 +12,10 @@ from zn_agent.core.browser import (
     BrowserTargetQueryKind,
 )
 from zn_agent.core.user_browser_extension_adapter import AuthorizedExtensionUserBrowser
-from zn_agent.core.user_browser_extension_relay import AuthorizedUserBrowserTab
+from zn_agent.core.user_browser_extension_relay import (
+    AuthorizedUserBrowserTab,
+    UserBrowserExtensionCommandUncertainError,
+)
 
 
 _URL = "https://example.test/account"
@@ -91,34 +94,51 @@ class _UncertainMutationRelay:
         assert args["target_name"] == _TARGET
 
 
+class _LostResultMutationRelay(_UncertainMutationRelay):
+    def request_command(self, kind, *, args=None, timeout_seconds=5.0):
+        if kind == "type_named_textbox":
+            self._expect_target(args)
+            assert args["target_id"] == _TARGET_ID
+            assert args["expected_url"] == _URL
+            assert args["text"] == _TEXT
+            raise UserBrowserExtensionCommandUncertainError(
+                "browser extension command result was lost after delivery; side effect may have occurred"
+            )
+        return super().request_command(kind, args=args, timeout_seconds=timeout_seconds)
+
+
+def _prepared_action(browser: AuthorizedExtensionUserBrowser):
+    permission = BrowserPermissionContext(
+        allow_navigation=False,
+        allow_page_interaction=True,
+        allow_text_entry=True,
+        allowed_origins=(_URL,),
+    )
+    session = browser.open_session(permission=permission)
+    initial = browser.observe(session.session_id)
+    observed = browser.observe_target(
+        session.session_id,
+        BrowserTargetQuery(
+            kind=BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME,
+            value=_TARGET,
+        ),
+        page_id=initial.page_id,
+    )
+    action = BrowserAction.create(
+        session_id=session.session_id,
+        kind=BrowserActionKind.TYPE_TEXT,
+        page_id=observed.page_id,
+        target=observed.target,
+        args={"text": _TEXT},
+    )
+    authority = BrowserActionAuthority.from_observation(action, observed, permission)
+    return session, action, authority
+
+
 class AuthorizedExtensionUserBrowserTests(unittest.TestCase):
     def test_sent_input_without_final_digest_proof_returns_uncertain_failure_evidence(self) -> None:
         browser = AuthorizedExtensionUserBrowser(_UncertainMutationRelay())
-        permission = BrowserPermissionContext(
-            allow_navigation=False,
-            allow_page_interaction=True,
-            allow_text_entry=True,
-            allowed_origins=(_URL,),
-        )
-        session = browser.open_session(permission=permission)
-        initial = browser.observe(session.session_id)
-        observed = browser.observe_target(
-            session.session_id,
-            BrowserTargetQuery(
-                kind=BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME,
-                value=_TARGET,
-            ),
-            page_id=initial.page_id,
-        )
-        self.assertIsNotNone(observed.target)
-        action = BrowserAction.create(
-            session_id=session.session_id,
-            kind=BrowserActionKind.TYPE_TEXT,
-            page_id=observed.page_id,
-            target=observed.target,
-            args={"text": _TEXT},
-        )
-        authority = BrowserActionAuthority.from_observation(action, observed, permission)
+        session, action, authority = _prepared_action(browser)
 
         evidence = browser.act(action, authority)
 
@@ -130,6 +150,22 @@ class AuthorizedExtensionUserBrowserTests(unittest.TestCase):
             evidence.data["text_sha256_after"],
             evidence.data["expected_text_sha256"],
         )
+        self.assertIn("refusing replay", str(evidence.error))
+        browser.close_session(session.session_id)
+
+    def test_lost_result_after_command_delivery_requires_fresh_resense_before_replay(self) -> None:
+        browser = AuthorizedExtensionUserBrowser(_LostResultMutationRelay())
+        session, action, authority = _prepared_action(browser)
+
+        evidence = browser.act(action, authority)
+
+        self.assertFalse(evidence.success)
+        self.assertFalse(evidence.data["input_sent"])
+        self.assertTrue(evidence.data["input_may_have_been_sent"])
+        self.assertTrue(evidence.data["requires_fresh_resense"])
+        self.assertEqual(evidence.data["command_delivery"], "extension_received")
+        self.assertEqual(evidence.data["expected_text_sha256"], _digest(_TEXT))
+        self.assertIn("side effect may have occurred", str(evidence.error))
         self.assertIn("refusing replay", str(evidence.error))
         browser.close_session(session.session_id)
 
