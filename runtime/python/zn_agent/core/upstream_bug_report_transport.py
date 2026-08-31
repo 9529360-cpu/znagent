@@ -20,6 +20,7 @@ import httpx
 from .upstream_bug_report import ResidentUpstreamBugReportOutbox
 
 _ACK_SCHEMA = "zn-upstream-bug-report-ack-v1"
+_RECONCILIATION_SCHEMA = "zn-upstream-bug-report-reconciliation-v1"
 
 
 class _HttpResponse(Protocol):
@@ -91,15 +92,17 @@ class UpstreamBugReportTransport:
                 url,
                 headers={"Accept": "application/json", "X-ZN-Report-Key": key},
             )
+            present = self._require_reconciliation_evidence(response, key)
         except Exception as exc:
+            if isinstance(exc, UpstreamBugReportTransportError):
+                raise
             raise UpstreamBugReportTransportError(
                 f"upstream bug report reconciliation failed: {type(exc).__name__}"
             ) from exc
 
-        if int(response.status_code) == 404:
-            return outbox.mark_reconciled_absent(key)
-        self._require_accepted_ack(response, key)
-        return outbox.mark_reconciled_delivered(key)
+        if present:
+            return outbox.mark_reconciled_delivered(key)
+        return outbox.mark_reconciled_absent(key)
 
     def _post(
         self,
@@ -152,6 +155,34 @@ class UpstreamBugReportTransport:
             raise UpstreamBugReportTransportError(
                 "upstream bug report receiver acknowledgement does not match dispatch"
             )
+
+    @staticmethod
+    def _require_reconciliation_evidence(response: _HttpResponse, report_key: str) -> bool:
+        status = int(response.status_code)
+        if status < 200 or status >= 300:
+            raise UpstreamBugReportTransportError(
+                f"upstream bug report reconciliation returned HTTP {status} without authoritative evidence"
+            )
+        try:
+            data = response.json()
+        except Exception as exc:
+            raise UpstreamBugReportTransportError(
+                "upstream bug report reconciliation evidence is not JSON"
+            ) from exc
+        if not isinstance(data, Mapping):
+            raise UpstreamBugReportTransportError(
+                "upstream bug report reconciliation evidence is invalid"
+            )
+        present = data.get("present")
+        if (
+            str(data.get("schema") or "") != _RECONCILIATION_SCHEMA
+            or str(data.get("report_key") or "").lower() != report_key
+            or type(present) is not bool
+        ):
+            raise UpstreamBugReportTransportError(
+                "upstream bug report reconciliation evidence does not match report"
+            )
+        return present
 
     @staticmethod
     def _validated_endpoint(value: str) -> str:
