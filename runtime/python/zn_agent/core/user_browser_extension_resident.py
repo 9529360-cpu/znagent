@@ -129,6 +129,33 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
             thought=thought,
         )
 
+    def _deliberation_step(
+        self,
+        event,
+        state,
+        *,
+        readiness,
+        learning_evidence,
+        thought=None,
+    ):
+        # Explicit form-submit Work is already resident-owned and guarded. When the
+        # user has authorized one current extension tab, run that same mature Body
+        # movement against the USER adapter rather than silently falling back to a
+        # managed browser. The USER Body path will freshly require the current URL
+        # to equal the supplied start URL and will not navigate to it.
+        if self._natural_form_submit_request(event) is not None:
+            if self.user_browser_extension.authorized_tab() is not None:
+                self._adopt_authorized_extension_browser()
+            elif self.managed_browser is self._extension_user_browser:
+                self._restore_browser_after_extension()
+        return super()._deliberation_step(
+            event,
+            state,
+            readiness=readiness,
+            learning_evidence=learning_evidence,
+            thought=thought,
+        )
+
     def _adopt_authorized_extension_browser(self) -> None:
         if self.managed_browser is self._extension_user_browser:
             return
