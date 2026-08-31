@@ -107,10 +107,26 @@ jobs:
       - name: Build renderer and Electron runtime
         run: npm run build --workspace apps/desktop
 
-      - name: Build unsigned Windows installer candidates
+      - name: Build unsigned Windows installer candidates from short path
         run: |
-          Remove-Item -Recurse -Force apps/desktop/release -ErrorAction SilentlyContinue
-          npm run builder --workspace apps/desktop -- --config electron-builder.zn.yml --win --publish never
+          $drive = 'Z:'
+          if (Test-Path "$drive\") {
+            throw "$drive is already in use; cannot create short build path"
+          }
+          & subst.exe $drive $env:GITHUB_WORKSPACE
+          if ($LASTEXITCODE -ne 0) { throw "subst failed with exit code $LASTEXITCODE" }
+          try {
+            Push-Location "$drive\"
+            try {
+              Remove-Item -Recurse -Force apps/desktop/release -ErrorAction SilentlyContinue
+              npm run builder --workspace apps/desktop -- --config electron-builder.zn.yml --win --publish never
+              if ($LASTEXITCODE -ne 0) { throw "electron-builder failed with exit code $LASTEXITCODE" }
+            } finally {
+              Pop-Location
+            }
+          } finally {
+            & subst.exe $drive /D
+          }
 
       - name: Verify packaged runtime before install
         env:
