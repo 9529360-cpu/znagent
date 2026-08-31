@@ -29,6 +29,13 @@ _TOKEN_ENV = "ZN_MAINTAINER_REPORT_TOKEN"
 _DB_ENV = "ZN_MAINTAINER_REPORT_DB"
 
 
+def _validated_token(value: str) -> str:
+    token = str(value or "").strip()
+    if len(token) < _MIN_TOKEN_LENGTH:
+        raise ValueError(f"maintainer report bearer token must be at least {_MIN_TOKEN_LENGTH} characters")
+    return token
+
+
 class MaintainerReportHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
 
@@ -39,11 +46,8 @@ class MaintainerReportHTTPServer(ThreadingHTTPServer):
         intake: MaintainerBugReportIntake,
         bearer_token: str,
     ) -> None:
-        token = str(bearer_token or "").strip()
-        if len(token) < _MIN_TOKEN_LENGTH:
-            raise ValueError(f"maintainer report bearer token must be at least {_MIN_TOKEN_LENGTH} characters")
         self.intake = intake
-        self.bearer_token = token
+        self.bearer_token = _validated_token(bearer_token)
         super().__init__(server_address, MaintainerReportRequestHandler)
 
 
@@ -192,10 +196,11 @@ def build_server(
     host: str = "127.0.0.1",
     port: int = 8787,
 ) -> MaintainerReportHTTPServer:
+    token = _validated_token(bearer_token)
     return MaintainerReportHTTPServer(
         (str(host), int(port)),
         intake=MaintainerBugReportIntake(database_path),
-        bearer_token=bearer_token,
+        bearer_token=token,
     )
 
 
@@ -214,8 +219,10 @@ def main(argv: list[str] | None = None) -> int:
     if not database:
         parser.error(f"--database or {_DB_ENV} is required")
     token = str(os.environ.get(_TOKEN_ENV) or "").strip()
-    if len(token) < _MIN_TOKEN_LENGTH:
-        parser.error(f"{_TOKEN_ENV} must be at least {_MIN_TOKEN_LENGTH} characters")
+    try:
+        token = _validated_token(token)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     server = build_server(
         database_path=database,
