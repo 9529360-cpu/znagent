@@ -10,6 +10,7 @@ on:
       - tests/zn_agent/e2e/test_windows_interactive_text_entry.py
       - tests/zn_agent/e2e/test_windows_interactive_uia_text_capability.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_bridge.py
+      - tests/zn_agent/e2e/test_windows_interactive_user_browser_named_goal.py
       - runtime/python/zn_agent/core/body.py
       - runtime/python/zn_agent/core/keyboard_text_body.py
       - runtime/python/zn_agent/core/visual_region_sense.py
@@ -18,6 +19,9 @@ on:
       - runtime/python/zn_agent/core/focused_text_sense.py
       - runtime/python/zn_agent/core/automation_element_sense.py
       - runtime/python/zn_agent/core/automation_text_state_sense.py
+      - runtime/python/zn_agent/core/browser_named_target_sense.py
+      - runtime/python/zn_agent/core/browser_named_goal.py
+      - runtime/python/zn_agent/core/goal_resident.py
       - runtime/python/zn_agent/core/pointer_click_resident.py
       - runtime/python/zn_agent/core/pointer_click_completion_resident.py
       - runtime/python/zn_agent/core/pointer_click_semantic_resident.py
