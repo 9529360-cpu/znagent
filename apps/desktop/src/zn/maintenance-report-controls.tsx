@@ -1,67 +1,25 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-type ReportState = 'pending' | 'outcome_uncertain' | 'delivered' | string
-
-type MaintenanceReport = {
-  reportKey: string
-  state: ReportState
-  dispatchAttempts: number
-  failureClass: string
-  exceptionType: string
-}
-
-type MaintenanceReportStatus = {
-  available: boolean
-  transportAvailable: boolean
-  reports: MaintenanceReport[]
-}
-
-function record(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null
-}
-
-function normalizeStatus(value: unknown): MaintenanceReportStatus | null {
-  const status = record(value)
-  const raw = record(status?.upstream_bug_reports)
-  if (!raw) return null
-
-  const reports = (Array.isArray(raw.reports) ? raw.reports : []).flatMap(value => {
-    const item = record(value)
-    if (!item) return []
-    const reportKey = String(item.report_key || '').trim()
-    const state = String(item.state || '').trim()
-    if (!reportKey || !state) return []
-    const attempts = Number(item.dispatch_attempts || 0)
-    return [{
-      reportKey,
-      state,
-      dispatchAttempts: Number.isFinite(attempts) && attempts >= 0 ? attempts : 0,
-      failureClass: String(item.failure_class || ''),
-      exceptionType: String(item.exception_type || '')
-    }]
-  })
-
-  return {
-    available: raw.available === true,
-    transportAvailable: raw.transport_available === true,
-    reports
-  }
-}
+import {
+  actionableZnMaintenanceReports,
+  normalizeZnMaintenanceReportStatus,
+  znMaintenanceReportAction,
+  type ZnMaintenanceReport,
+  type ZnMaintenanceReportStatus
+} from './maintenance-report-policy'
 
 function shortKey(value: string): string {
   return value.length > 12 ? `${value.slice(0, 12)}…` : value
 }
 
 export function ZnMaintenanceReportControls() {
-  const [status, setStatus] = useState<MaintenanceReportStatus | null>(null)
+  const [status, setStatus] = useState<ZnMaintenanceReportStatus | null>(null)
   const [busyKey, setBusyKey] = useState('')
   const [notice, setNotice] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     try {
-      const next = normalizeStatus(await window.znDesktop.resident.status())
+      const next = normalizeZnMaintenanceReportStatus(await window.znDesktop.resident.status())
       setStatus(next)
     } catch (error) {
       setStatus(null)
@@ -75,22 +33,20 @@ export function ZnMaintenanceReportControls() {
     return () => window.clearInterval(timer)
   }, [refresh])
 
-  const actionable = useMemo(
-    () => status?.reports.filter(report =>
-      report.state === 'pending' || report.state === 'outcome_uncertain'
-    ) || [],
-    [status]
-  )
+  const actionable = useMemo(() => actionableZnMaintenanceReports(status), [status])
 
-  const act = useCallback(async (report: MaintenanceReport) => {
+  const act = useCallback(async (report: ZnMaintenanceReport) => {
     if (!status?.transportAvailable || busyKey) return
+    const action = znMaintenanceReportAction(report)
+    if (!action) return
+
     setBusyKey(report.reportKey)
     setNotice(null)
     try {
-      if (report.state === 'pending') {
+      if (action === 'dispatch') {
         await window.znDesktop.resident.upstreamBugReportDispatch({ reportKey: report.reportKey })
         setNotice('Report delivery acknowledged.')
-      } else if (report.state === 'outcome_uncertain') {
+      } else {
         await window.znDesktop.resident.upstreamBugReportReconcile({ reportKey: report.reportKey })
         setNotice('Report outcome reconciled from receiver evidence.')
       }
@@ -131,37 +87,40 @@ export function ZnMaintenanceReportControls() {
       ) : !status.transportAvailable ? (
         <div className="zn-setting-state">Report transport is not configured. Reports remain local.</div>
       ) : null}
-      {actionable.map(report => (
-        <div className="zn-setting-state" key={report.reportKey} style={{ marginTop: 10 }}>
-          <div>
-            <strong>{shortKey(report.reportKey)}</strong> · {report.state}
+      {actionable.map(report => {
+        const action = znMaintenanceReportAction(report)
+        return (
+          <div className="zn-setting-state" key={report.reportKey} style={{ marginTop: 10 }}>
+            <div>
+              <strong>{shortKey(report.reportKey)}</strong> · {report.state}
+            </div>
+            <div className="zn-muted zn-small">
+              {report.failureClass || 'maintenance defect'}
+              {report.exceptionType ? ` · ${report.exceptionType}` : ''}
+              {` · attempts ${report.dispatchAttempts}`}
+            </div>
+            {action === 'dispatch' ? (
+              <button
+                type="button"
+                disabled={!status.transportAvailable || Boolean(busyKey)}
+                onClick={() => void act(report)}
+                style={{ marginTop: 8 }}
+              >
+                {busyKey === report.reportKey ? 'Sending…' : 'Send report'}
+              </button>
+            ) : action === 'reconcile' ? (
+              <button
+                type="button"
+                disabled={!status.transportAvailable || Boolean(busyKey)}
+                onClick={() => void act(report)}
+                style={{ marginTop: 8 }}
+              >
+                {busyKey === report.reportKey ? 'Reconciling…' : 'Reconcile outcome'}
+              </button>
+            ) : null}
           </div>
-          <div className="zn-muted zn-small">
-            {report.failureClass || 'maintenance defect'}
-            {report.exceptionType ? ` · ${report.exceptionType}` : ''}
-            {` · attempts ${report.dispatchAttempts}`}
-          </div>
-          {report.state === 'pending' ? (
-            <button
-              type="button"
-              disabled={!status.transportAvailable || Boolean(busyKey)}
-              onClick={() => void act(report)}
-              style={{ marginTop: 8 }}
-            >
-              {busyKey === report.reportKey ? 'Sending…' : 'Send report'}
-            </button>
-          ) : report.state === 'outcome_uncertain' ? (
-            <button
-              type="button"
-              disabled={!status.transportAvailable || Boolean(busyKey)}
-              onClick={() => void act(report)}
-              style={{ marginTop: 8 }}
-            >
-              {busyKey === report.reportKey ? 'Reconciling…' : 'Reconcile outcome'}
-            </button>
-          ) : null}
-        </div>
-      ))}
+        )
+      })}
       {notice ? <div className="zn-setting-state" style={{ marginTop: 10 }}>{notice}</div> : null}
     </aside>
   )
