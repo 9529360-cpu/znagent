@@ -452,12 +452,13 @@ class NaturalNamedDesktopInputResidentRuntime(NaturalBrowserDesktopSubmitResiden
         if isinstance(raw, dict):
             intent = NativeActionIntent.from_dict(raw)
             expected = intent.expected_outcome if isinstance(intent.expected_outcome, dict) else {}
+            expected_kind = str(expected.get("kind") or "").strip().lower()
+            original = self.store.get_event(event.event_id) or event
+
             if (
                 intent.kind == "pointer_click"
-                and str(expected.get("kind") or "").strip().lower()
-                == self._NAMED_INPUT_FOCUS_OUTCOME_KIND
+                and expected_kind == self._NAMED_INPUT_FOCUS_OUTCOME_KIND
             ):
-                original = self.store.get_event(event.event_id) or event
                 state.data[self._NAMED_INPUT_STATE_KEY] = {
                     "verified": True,
                     "input_name": str(expected.get("input_name") or ""),
@@ -474,6 +475,72 @@ class NaturalNamedDesktopInputResidentRuntime(NaturalBrowserDesktopSubmitResiden
                 self._sync_execution_context(original, state)
                 self.store.save_working_state(state)
                 return None
+
+            # FocusedTextEntry may discover that the requested text is already
+            # present before sending keyboard input. That satisfies only the text
+            # substep of a composite File -> named Edit -> Button -> final-window
+            # Work. Preserve it as verified progress rather than publishing a
+            # terminal EventOutcome and skipping the user's remaining submit step.
+            if (
+                intent.kind == "keyboard_text"
+                and expected_kind == self._FILE_TO_DESKTOP_OUTCOME_KIND
+                and self._natural_named_desktop_input_request(original) is not None
+            ):
+                investigation = self.investigator.current(original.event_id)
+                facts = dict(investigation.facts) if investigation is not None else {}
+                source = facts.get("natural_file_desktop_source")
+                destination = facts.get("natural_file_desktop_destination")
+                request = self._natural_named_desktop_input_request(original)
+                if (
+                    not isinstance(source, Mapping)
+                    or not isinstance(destination, Mapping)
+                    or not isinstance(request, dict)
+                ):
+                    return self._checkpoint_terminal_failure(
+                        original,
+                        state,
+                        reason=(
+                            "already-matching named desktop text lost its exact file/source or "
+                            "destination investigation evidence"
+                        ),
+                    )
+                completion_scope = destination.get("completion_scope")
+                action_precondition = destination.get("action_precondition")
+                if not isinstance(completion_scope, Mapping) or not isinstance(
+                    action_precondition, Mapping
+                ):
+                    return self._checkpoint_terminal_failure(
+                        original,
+                        state,
+                        reason="already-matching named desktop text lost exact application authority",
+                    )
+                process_name = str(completion_scope.get("process_name") or "").strip().lower()
+                pre_title = str(action_precondition.get("title_equals") or "").strip()
+                if not process_name or not pre_title:
+                    return self._checkpoint_terminal_failure(
+                        original,
+                        state,
+                        reason="already-matching named desktop text lost exact foreground identity",
+                    )
+                state.data[self._DESKTOP_SUBMIT_STATE_KEY] = {
+                    "typed_verified": True,
+                    "typed_at": utc_now(),
+                    "input_sent": False,
+                    "process_name": process_name,
+                    "pre_title": pre_title,
+                    "button_name": str(request["button_name"]),
+                    "expected_title": str(request["expected_title"]),
+                    "source_kind": "workspace_file",
+                    "source_text_sha256": str(source.get("text_sha256") or ""),
+                    "source_text_chars": int(source.get("text_chars") or 0),
+                }
+                state.stage = "native_investigation"
+                state.next_action = "freshly locate the named Button in the current desktop application"
+                state.data.pop("local_failure", None)
+                self._sync_execution_context(original, state)
+                self.store.save_working_state(state)
+                return None
+
         return super()._complete_ui_scope(
             event,
             state,
