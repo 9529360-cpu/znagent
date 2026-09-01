@@ -211,21 +211,33 @@ def read_target(event: "AgentEvent", body: Any, comparison: Mapping[str, Any]) -
     observed = body.act("read_text", event_id=event.event_id, path=path, max_chars=MAX_CHARS + 1)
     post = observe_file_identity(path)
     text = str(observed.output) if observed.success else ""
-    digest = hashlib.sha256(text.encode("utf-8")).hexdigest() if observed.success else None
+    text_digest = hashlib.sha256(text.encode("utf-8")).hexdigest() if observed.success else None
     count = text.count(req["old_text"]) if observed.success else 0
     if not observed.success:
         reason = str(observed.error or "target read failed")
     elif bool(observed.data.get("truncated")) or int(observed.data.get("chars") or len(text)) > MAX_CHARS:
         reason = "the exact target exceeds the bounded complete-text observation limit"
-    elif compare_file_identities(pre, post).get("exact") is not True or digest != post.get("content_sha256"):
+    elif compare_file_identities(pre, post).get("exact") is not True:
         reason = "the exact target changed while it was being read"
     elif count != 1:
         reason = "the exact target no longer has one unambiguous replacement position"
     else:
         reason = None
     complete = reason is None
-    result = {"complete": complete, "path": path, "identity": dict(post), "failure_reason": reason}
-    preview = {"path": path, "preview": text, "chars": len(text), "truncated": False} if complete else None
+    result = {
+        "complete": complete,
+        "path": path,
+        "identity": dict(post),
+        "text_sha256": text_digest,
+        "failure_reason": reason,
+    }
+    preview = {
+        "path": path,
+        "preview": text,
+        "chars": len(text),
+        "truncated": False,
+        "text_sha256": text_digest,
+    } if complete else None
     return result, preview, [f"fresh exact target read: complete={complete}", *([reason] if reason else [])]
 
 
@@ -251,7 +263,12 @@ def edit_intent(event: "AgentEvent", facts: Mapping[str, Any]):
     ):
         return None
     current = str(preview.get("preview") or "")
-    if current.count(req["old_text"]) != 1 or hashlib.sha256(current.encode("utf-8")).hexdigest() != identity.get("content_sha256"):
+    text_digest = hashlib.sha256(current.encode("utf-8")).hexdigest()
+    if (
+        current.count(req["old_text"]) != 1
+        or text_digest != target.get("text_sha256")
+        or text_digest != preview.get("text_sha256")
+    ):
         return None
     expected = current.replace(req["old_text"], req["new_text"], 1)
     from .action import NativeActionIntent
