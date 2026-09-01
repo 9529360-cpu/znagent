@@ -32,17 +32,29 @@ _FORBIDDEN_AUTHORITY_FIELDS = frozenset(
 )
 _DESTINATION_RE = re.compile(
     r"(?:填|输入|写|放)(?:到|进|入)?\s*"
-    r"(?:(?:当前|已打开的)(?:软件|程序)(?:对应的|里的|里|的)?|当前程序对应的)?\s*"
+    r"(?:(?:当前(?:打开的)?|已打开的)(?:软件|程序)(?:对应的|里的|里|的)?|当前程序对应的)?\s*"
     r"(?P<name>[A-Za-z0-9_\-\u4e00-\u9fff]{0,32}?)(?P<role>输入框|文本框|搜索框|字段)"
 )
 _SUBMIT_RE = re.compile(
-    r"(?:点|点击|按下|选择)?\s*(?P<name>[A-Za-z0-9_\-\u4e00-\u9fff]{1,32}?)(?=后|并|，|,|。|；|;|$)"
+    r"^(?:点|点击|按下|选择)?\s*(?:按钮)?\s*[\"“'‘]?"
+    r"(?P<name>[A-Za-z0-9_\-\u4e00-\u9fff]{1,32}?)[\"”'’]?"
+    r"(?=后|并|，|,|。|；|;|$)"
 )
 _VALUE_BEFORE_DESTINATION_RE = re.compile(
-    r"把\s*(?P<name>[A-Za-z0-9_\-\u4e00-\u9fff]{1,40}?)\s*(?:填|输入|写|放)(?:到|进|入)?"
+    r"把\s*(?P<name>[A-Za-z0-9_\-\u4e00-\u9fff]{1,48}?)\s*(?:填|输入|写|放)(?:到|进|入)?"
 )
 _SOURCE_HINT_RE = re.compile(
+    r"名字(?:里)?(?:像|包含|带有|带)\s*[\"“'‘]?(?P<hint>[^\"”'’‘，,。；;\r\n]{1,64}?)[\"”'’]?\s*"
+    r"的(?:那个|那份|那个文件|文件)?\s*\.?\s*txt(?=[，,。；;\s]|$)",
+    re.I,
+)
+_YESTERDAY_HINT_RE = re.compile(
     r"昨天(?:那份|那个|的)?(?P<hint>[A-Za-z0-9_\-\u4e00-\u9fff]{1,32}?)(?:资料|文件|txt)"
+)
+_FINAL_TITLE_RE = re.compile(
+    r"(?:窗口|软件|界面)(?:变成|变为|显示为|显示)\s*[\"“'‘]?"
+    r"(?P<title>[^\"”'’‘，,。；;\r\n]{1,160}?)[\"”'’]?"
+    r"(?=后|并|，|,|。|；|;|确认|$)"
 )
 
 
@@ -68,26 +80,37 @@ def desktop_task_request(event: "AgentEvent") -> dict[str, Any] | None:
     destination = _DESTINATION_RE.search(task)
     if destination is None:
         return None
+
     value_name = _value_semantic_name(task)
+    raw_target_name = _clean_semantic(destination.group("name"))
     target_name = _input_semantic_name(
-        destination.group("name"),
+        raw_target_name,
         destination.group("role"),
         value_name=value_name,
     )
-    if not target_name:
-        return None
+    target_binding = "exact_name" if target_name else "focused_safe_edit"
 
     tail = task[destination.end() :]
     submit_name = _submit_name(tail)
-    if not submit_name:
+    final_title = _final_title(task)
+    if final_title and not submit_name:
         return None
 
-    hint_match = _SOURCE_HINT_RE.search(task)
+    hint_match = _SOURCE_HINT_RE.search(task) or _YESTERDAY_HINT_RE.search(task)
     hint = _clean_semantic(hint_match.group("hint")) if hint_match else None
     modified_day = "yesterday" if "昨天" in task else None
 
+    if submit_name:
+        expected_final_state = (
+            {"kind": "foreground_title_equals", "title": final_title}
+            if final_title
+            else {"kind": "foreground_title_changed"}
+        )
+    else:
+        expected_final_state = {"kind": "text_matches"}
+
     return {
-        "kind": "desktop_value_submit",
+        "kind": "desktop_value_task",
         "source_requirement": {
             "kind": "workspace_file",
             "workspace_path": workspace,
@@ -96,9 +119,10 @@ def desktop_task_request(event: "AgentEvent") -> dict[str, Any] | None:
             "value_semantic_name": value_name or "file_text",
         },
         "destination_app_scope": {"kind": "current_foreground_non_browser"},
+        "target_input_binding": target_binding,
         "target_input_semantic_name": target_name,
         "submit_control_semantic_name": submit_name,
-        "expected_final_state": {"kind": "foreground_title_changed"},
+        "expected_final_state": expected_final_state,
     }
 
 
@@ -109,7 +133,10 @@ def _validated_proposal(
 ) -> dict[str, Any] | None:
     if any(key in proposed for key in _FORBIDDEN_AUTHORITY_FIELDS):
         return None
-    if str(proposed.get("kind") or "").strip() != "desktop_value_submit":
+    if str(proposed.get("kind") or "").strip() not in {
+        "desktop_value_task",
+        "desktop_value_submit",
+    }:
         return None
     source = proposed.get("source_requirement")
     app_scope = proposed.get("destination_app_scope")
@@ -128,17 +155,32 @@ def _validated_proposal(
         return None
     if str(app_scope.get("kind") or "").strip() != "current_foreground_non_browser":
         return None
-    if str(final.get("kind") or "").strip() != "foreground_title_changed":
+
+    binding = str(proposed.get("target_input_binding") or "exact_name").strip()
+    if binding not in {"exact_name", "focused_safe_edit"}:
+        return None
+    target_name = _clean_semantic(proposed.get("target_input_semantic_name")) or None
+    if binding == "exact_name":
+        if not target_name or not _semantic_grounded_in_task(task, target_name):
+            return None
+    elif target_name is not None:
         return None
 
-    target_name = _clean_semantic(proposed.get("target_input_semantic_name"))
-    submit_name = _clean_semantic(proposed.get("submit_control_semantic_name"))
-    if not target_name or not submit_name:
+    submit_name = _clean_semantic(proposed.get("submit_control_semantic_name")) or None
+    if submit_name and not _traceable_semantic(task, submit_name):
         return None
-    # Parser/model output may normalize a visible role (for example 订单编号 ->
-    # 订单搜索) but may not invent unrelated task concepts.
-    if not _semantic_grounded_in_task(task, target_name) or not _traceable_semantic(task, submit_name):
+
+    final_kind = str(final.get("kind") or "").strip()
+    if submit_name:
+        if final_kind not in {"foreground_title_changed", "foreground_title_equals"}:
+            return None
+    elif final_kind != "text_matches":
         return None
+    final_title = None
+    if final_kind == "foreground_title_equals":
+        final_title = _clean_semantic(final.get("title"))
+        if not final_title or not _traceable_semantic(task, final_title):
+            return None
 
     if source_kind == "workspace_file":
         workspace = str(payload.get("workspace_path") or "").strip()
@@ -172,13 +214,17 @@ def _validated_proposal(
             "require_two_sources": True,
         }
 
+    normalized_final = {"kind": final_kind}
+    if final_title:
+        normalized_final["title"] = final_title
     return {
-        "kind": "desktop_value_submit",
+        "kind": "desktop_value_task",
         "source_requirement": normalized_source,
         "destination_app_scope": {"kind": "current_foreground_non_browser"},
+        "target_input_binding": binding,
         "target_input_semantic_name": target_name,
         "submit_control_semantic_name": submit_name,
-        "expected_final_state": {"kind": "foreground_title_changed"},
+        "expected_final_state": normalized_final,
     }
 
 
@@ -192,17 +238,20 @@ def _value_semantic_name(task: str) -> str:
         "资料里的",
         "资料中的",
         "资料里",
+        "里面的",
     ):
         if value.startswith(prefix):
             value = value[len(prefix) :]
     return _clean_semantic(value)
 
 
-def _input_semantic_name(raw: str, role: str, *, value_name: str) -> str:
+def _input_semantic_name(raw: str, role: str, *, value_name: str) -> str | None:
     value = _clean_semantic(raw)
-    if not value:
+    if not value and role == "搜索框":
         value = _base_value_semantic(value_name)
-    if role == "搜索框" and value and not value.endswith("搜索"):
+    if not value:
+        return None
+    if role == "搜索框" and not value.endswith("搜索"):
         value += "搜索"
     return value[:_MAX_SEMANTIC_NAME]
 
@@ -216,20 +265,26 @@ def _base_value_semantic(value: str) -> str:
 
 
 def _submit_name(tail: str) -> str | None:
-    text = str(tail or "").strip(" ，,；;")
+    text = str(tail or "").lstrip("里中内 ，,；;")
     if not text:
         return None
     for marker in ("然后", "再", "随后", "并且"):
         if text.startswith(marker):
             text = text[len(marker) :].strip()
             break
-    text = re.sub(r"^(?:点|点击|按下|选择)\s*", "", text)
-    if text.startswith("提交"):
+    text = text.lstrip(" ，,；;")
+    normalized = re.sub(r"^(?:点|点击|按下|选择)\s*(?:按钮)?\s*", "", text)
+    if normalized.startswith("提交"):
         return "提交"
-    if text.startswith("打开结果"):
+    if normalized.startswith("打开结果"):
         return "打开结果"
     match = _SUBMIT_RE.search(text)
     return _clean_semantic(match.group("name")) if match else None
+
+
+def _final_title(task: str) -> str | None:
+    match = _FINAL_TITLE_RE.search(task)
+    return _clean_semantic(match.group("title")) if match else None
 
 
 def _clean_semantic(value: Any) -> str:
