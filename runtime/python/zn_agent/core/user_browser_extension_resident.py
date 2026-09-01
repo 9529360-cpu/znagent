@@ -33,6 +33,15 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
     """Own the loopback authorization surface used by the ZN browser extension."""
 
     _NATURAL_SEARCH_STATE_KEY = "resident_user_browser_natural_search"
+    _NATURAL_SEARCH_BINDING_FIELDS = (
+        "url",
+        "textbox_name",
+        "textbox_target_id",
+        "button_name",
+        "button_target_id",
+        "expected_url",
+        "query_parameter",
+    )
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
@@ -298,6 +307,17 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
             "source": "zn_browser_extension_search_discovery",
         }
 
+    @classmethod
+    def _same_natural_search_binding(
+        cls,
+        previous: dict[str, Any],
+        current: dict[str, Any],
+    ) -> bool:
+        return all(
+            str(previous.get(field) or "") == str(current.get(field) or "")
+            for field in cls._NATURAL_SEARCH_BINDING_FIELDS
+        )
+
     def _browser_named_goal_investigation(
         self,
         event,
@@ -342,6 +362,53 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
                 self._sync_execution_context(event, state)
                 self.store.save_working_state(state)
                 return None
+
+            # The user's request is about the current authorized page, not the page
+            # snapshot that happened to exist during the previous pulse. Refresh the
+            # exact form binding immediately before admitting any side effect. If the
+            # same authorized tab moved, rerendered, or replaced its form, treat that
+            # as new Situation evidence and re-enter Investigation rather than sending
+            # an action formed from stale URL/target facts.
+            try:
+                fresh_evidence = self._discover_unique_search_form(natural_query)
+            except Exception as exc:
+                state.data["local_failure"] = (
+                    "pre-action authorized-page re-sense could not prove the current safe search "
+                    f"form: {type(exc).__name__}: {exc}"
+                )
+                state.stage = "native_investigation"
+                state.next_action = "re-observe the changed current page before any browser input"
+                self._sync_execution_context(event, state)
+                self.store.save_working_state(state)
+                return None
+
+            if not self._same_natural_search_binding(evidence, fresh_evidence):
+                state.data[self._NATURAL_SEARCH_STATE_KEY] = fresh_evidence
+                state.data.pop("local_failure", None)
+                state.stage = "native_investigation"
+                state.next_action = (
+                    "re-evaluate the newly observed current page before forming browser input"
+                )
+                self._sync_execution_context(event, state)
+                self.store.save_working_state(state)
+                if thought is not None:
+                    known = (
+                        "the authorized tab changed after the earlier search-form observation; "
+                        "no browser mutation was admitted from stale evidence"
+                    )
+                    if known not in thought.known:
+                        thought.known = (*thought.known, known)
+                    thought.reason = (
+                        f"{thought.reason}; fresh pre-action browser evidence changed the current "
+                        "Situation, so ZN replans from the new page instead of executing the old "
+                        "form binding"
+                    )
+                    self._persist_enriched_thought(thought)
+                return None
+
+            evidence = fresh_evidence
+            state.data[self._NATURAL_SEARCH_STATE_KEY] = evidence
+            state.data.pop("local_failure", None)
             intent = NativeActionIntent(
                 intent_id=f"browser-natural-search-{event.event_id}",
                 event_id=event.event_id,
@@ -354,8 +421,9 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
                     "expected_url": str(evidence.get("expected_url") or ""),
                 },
                 reason=(
-                    "fresh authorized-page discovery proved one unique empty safe GET search form; "
-                    "the existing guarded form Body will re-observe each target and final page"
+                    "fresh pre-action authorized-page discovery proved one unique empty safe GET "
+                    "search form; the existing guarded form Body will re-observe each target and "
+                    "the final page"
                 ),
                 source="resident_choice",
             )
