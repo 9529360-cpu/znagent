@@ -163,16 +163,26 @@ class _FocusedTextStateSense:
 
 
 class _NamedButtonSense:
-    def __init__(self, *, fail: bool = False):
+    DEFAULT_RUNTIME_ID = (42, 330, 9)
+
+    def __init__(
+        self,
+        *,
+        fail: bool = False,
+        runtime_ids: list[tuple[int, ...]] | None = None,
+    ):
         self.fail = fail
         self.calls = 0
+        self.runtime_ids = list(runtime_ids or [self.DEFAULT_RUNTIME_ID])
 
     def find_unique_button(self, *, process_id: int, process_name: str, name: str):
         self.calls += 1
         if self.fail:
             raise RuntimeError("button is ambiguous")
+        index = min(self.calls - 1, len(self.runtime_ids) - 1)
+        runtime_id = tuple(self.runtime_ids[index])
         return NamedAutomationControlObservation(
-            runtime_id=(42, 330, 9),
+            runtime_id=runtime_id,
             process_id=process_id,
             process_name=process_name,
             name=name,
@@ -240,6 +250,7 @@ class NaturalFileDesktopSubmitWorkTests(unittest.TestCase):
         *,
         final_title_on_click: bool = True,
         named_button_fail: bool = False,
+        named_button_runtime_ids: list[tuple[int, ...]] | None = None,
     ):
         resident = build_resident_runtime(
             config={"model": {}},
@@ -247,7 +258,10 @@ class NaturalFileDesktopSubmitWorkTests(unittest.TestCase):
         )
         world = _DesktopWorld(final_title_on_click=final_title_on_click)
         body = _CompositeDesktopBody(resident=resident, world=world)
-        named = _NamedButtonSense(fail=named_button_fail)
+        named = _NamedButtonSense(
+            fail=named_button_fail,
+            runtime_ids=named_button_runtime_ids,
+        )
         resident.body = body
         resident.foreground_window = _DynamicForegroundSense(world)
         resident.automation_element = _FocusedEditSense()
@@ -300,6 +314,65 @@ class NaturalFileDesktopSubmitWorkTests(unittest.TestCase):
                 self.assertTrue(final.success)
                 self.assertIn("title=查询结果", final.response)
                 self.assertEqual([message.role for message in snapshot[1]], ["user", "zn", "activity"])
+            finally:
+                resident.store.close()
+
+    def test_button_replacement_before_input_is_resensed_then_new_target_is_clicked_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            workspace = base / "authorized"
+            workspace.mkdir()
+            target = workspace / "客户账号-A.txt"
+            target.write_text("A-100", encoding="utf-8")
+            self._stamp(target, -1)
+
+            first_button = (42, 330, 9)
+            replacement_button = (42, 330, 10)
+            resident, world, body, named, ledger = self._setup(
+                base,
+                workspace,
+                "button-replaced",
+                named_button_runtime_ids=[
+                    first_button,
+                    replacement_button,
+                    replacement_button,
+                    replacement_button,
+                ],
+            )
+            try:
+                _, run = ledger.submit("button-replaced", TASK)
+
+                self.assertTrue(run.success, run)
+                self.assertEqual(body.keyboard_calls, ["A-100"])
+                self.assertEqual(body.click_count, 1)
+                self.assertEqual(world.title, "查询结果")
+                self.assertGreaterEqual(named.calls, 4)
+
+                investigation = resident.investigator.current(run.event.event_id)
+                self.assertIsNotNone(investigation)
+                button_fact = investigation.facts[
+                    NaturalFileDesktopSubmitResidentRuntime._BUTTON_FACT_KEY
+                ]
+                self.assertEqual(tuple(button_fact["runtime_id"]), replacement_button)
+                self.assertGreaterEqual(investigation.rounds, 4)
+
+                records = resident.store.get_working_state().data.get(
+                    resident._FAILED_ACTION_RECORDS_KEY,
+                    [],
+                )
+                self.assertTrue(
+                    any(
+                        "RuntimeId changed before input" in str(item.get("failure") or "")
+                        for item in records
+                    ),
+                    records,
+                )
+                actions = [
+                    item
+                    for item in reversed(resident.body.recent_actions(512))
+                    if item.event_id == run.event.event_id
+                ]
+                self.assertEqual(sum(item.kind == "pointer_click" for item in actions), 1)
             finally:
                 resident.store.close()
 
