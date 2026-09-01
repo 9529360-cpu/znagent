@@ -12,12 +12,12 @@ repository, push, PR, merge, release, updater, signing, or credential authority.
 import sqlite3
 from typing import Any, Callable
 
-from .natural_file_desktop_submit_resident import NaturalFileDesktopSubmitResidentRuntime
+from .natural_browser_desktop_submit_resident import NaturalBrowserDesktopSubmitResidentRuntime
 from .upstream_bug_report import ResidentUpstreamBugReportOutbox
 from .upstream_bug_report_transport import UpstreamBugReportTransport
 
 
-class ReportingMaintenanceResidentRuntime(NaturalFileDesktopSubmitResidentRuntime):
+class ReportingMaintenanceResidentRuntime(NaturalBrowserDesktopSubmitResidentRuntime):
     """Resident with bounded automatic health -> upstream-report projection."""
 
     def __init__(
