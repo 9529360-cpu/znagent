@@ -30,15 +30,16 @@ _FORBIDDEN_AUTHORITY_FIELDS = frozenset(
         "authorized",
     }
 )
-_INPUT_ROLE_RE = re.compile(
-    r"(?P<name>[A-Za-z0-9_\-\u4e00-\u9fff]{1,48}?)(?P<role>输入框|文本框|搜索框|字段)"
+_DESTINATION_RE = re.compile(
+    r"(?:填|输入|写|放)(?:到|进|入)?\s*"
+    r"(?:(?:当前|已打开的)(?:软件|程序)(?:对应的|里的|里|的)?|当前程序对应的)?\s*"
+    r"(?P<name>[A-Za-z0-9_\-\u4e00-\u9fff]{0,32}?)(?P<role>输入框|文本框|搜索框|字段)"
 )
 _SUBMIT_RE = re.compile(
-    r"(?:然后|再|并且|随后|，|,|；|;|\s)*(?:点|点击|按下|选择)?\s*"
-    r"(?P<name>[A-Za-z0-9_\-\u4e00-\u9fff]{1,32}?)(?=后|并|，|,|。|；|;|$)"
+    r"(?:点|点击|按下|选择)?\s*(?P<name>[A-Za-z0-9_\-\u4e00-\u9fff]{1,32}?)(?=后|并|，|,|。|；|;|$)"
 )
-_SOURCE_VALUE_RE = re.compile(
-    r"(?:文件|资料)(?:里|中的|里的)?(?P<name>[A-Za-z0-9_\-\u4e00-\u9fff]{1,32}?)(?=填|输|放|写|到|进)"
+_VALUE_BEFORE_DESTINATION_RE = re.compile(
+    r"把\s*(?P<name>[A-Za-z0-9_\-\u4e00-\u9fff]{1,40}?)\s*(?:填|输入|写|放)(?:到|进|入)?"
 )
 _SOURCE_HINT_RE = re.compile(
     r"昨天(?:那份|那个|的)?(?P<hint>[A-Za-z0-9_\-\u4e00-\u9fff]{1,32}?)(?:资料|文件|txt)"
@@ -64,20 +65,23 @@ def desktop_task_request(event: "AgentEvent") -> dict[str, Any] | None:
     workspace = str(payload.get("workspace_path") or "").strip()
     if not workspace or not any(token in task for token in ("文件", "资料", "txt")):
         return None
-    input_match = _last_input_match(task)
-    if input_match is None:
+    destination = _DESTINATION_RE.search(task)
+    if destination is None:
         return None
-    target_name = _input_semantic_name(input_match.group("name"), input_match.group("role"))
+    value_name = _value_semantic_name(task)
+    target_name = _input_semantic_name(
+        destination.group("name"),
+        destination.group("role"),
+        value_name=value_name,
+    )
     if not target_name:
         return None
 
-    tail = task[input_match.end() :]
+    tail = task[destination.end() :]
     submit_name = _submit_name(tail)
     if not submit_name:
         return None
 
-    value_match = _SOURCE_VALUE_RE.search(task)
-    value_name = _clean_semantic(value_match.group("name")) if value_match else "file_text"
     hint_match = _SOURCE_HINT_RE.search(task)
     hint = _clean_semantic(hint_match.group("hint")) if hint_match else None
     modified_day = "yesterday" if "昨天" in task else None
@@ -89,7 +93,7 @@ def desktop_task_request(event: "AgentEvent") -> dict[str, Any] | None:
             "workspace_path": workspace,
             "name_hint": hint,
             "modified_day": modified_day,
-            "value_semantic_name": value_name,
+            "value_semantic_name": value_name or "file_text",
         },
         "destination_app_scope": {"kind": "current_foreground_non_browser"},
         "target_input_semantic_name": target_name,
@@ -131,7 +135,9 @@ def _validated_proposal(
     submit_name = _clean_semantic(proposed.get("submit_control_semantic_name"))
     if not target_name or not submit_name:
         return None
-    if not _traceable_semantic(task, target_name) or not _traceable_semantic(task, submit_name):
+    # Parser/model output may normalize a visible role (for example 订单编号 ->
+    # 订单搜索) but may not invent unrelated task concepts.
+    if not _semantic_grounded_in_task(task, target_name) or not _traceable_semantic(task, submit_name):
         return None
 
     if source_kind == "workspace_file":
@@ -146,16 +152,19 @@ def _validated_proposal(
             return None
         if modified_day == "yesterday" and "昨天" not in task:
             return None
+        value_name = _clean_semantic(source.get("value_semantic_name")) or "file_text"
+        if value_name != "file_text" and not _semantic_grounded_in_task(task, value_name):
+            return None
         normalized_source = {
             "kind": "workspace_file",
             "workspace_path": workspace,
             "name_hint": hint,
             "modified_day": modified_day,
-            "value_semantic_name": _clean_semantic(source.get("value_semantic_name")) or "file_text",
+            "value_semantic_name": value_name,
         }
     else:
         result_name = _clean_semantic(source.get("value_semantic_name"))
-        if not result_name or not _traceable_semantic(task, result_name):
+        if not result_name or not _semantic_grounded_in_task(task, result_name):
             return None
         normalized_source = {
             "kind": "managed_browser_research",
@@ -173,28 +182,46 @@ def _validated_proposal(
     }
 
 
-def _last_input_match(task: str):
-    matches = list(_INPUT_ROLE_RE.finditer(task))
-    return matches[-1] if matches else None
-
-
-def _input_semantic_name(raw: str, role: str) -> str:
-    value = _clean_semantic(raw)
-    for prefix in ("当前软件的", "当前程序对应的", "当前程序的", "软件里的", "程序里的"):
+def _value_semantic_name(task: str) -> str:
+    match = _VALUE_BEFORE_DESTINATION_RE.search(task)
+    value = _clean_semantic(match.group("name")) if match else ""
+    for prefix in (
+        "文件里的",
+        "文件中的",
+        "文件里",
+        "资料里的",
+        "资料中的",
+        "资料里",
+    ):
         if value.startswith(prefix):
             value = value[len(prefix) :]
+    return _clean_semantic(value)
+
+
+def _input_semantic_name(raw: str, role: str, *, value_name: str) -> str:
+    value = _clean_semantic(raw)
+    if not value:
+        value = _base_value_semantic(value_name)
     if role == "搜索框" and value and not value.endswith("搜索"):
         value += "搜索"
     return value[:_MAX_SEMANTIC_NAME]
 
 
+def _base_value_semantic(value: str) -> str:
+    text = _clean_semantic(value)
+    for suffix in ("编号", "号码", "号", "代码", "code", "Code", "CODE"):
+        if text.endswith(suffix) and len(text) > len(suffix):
+            return text[: -len(suffix)]
+    return text
+
+
 def _submit_name(tail: str) -> str | None:
-    text = str(tail or "").strip()
+    text = str(tail or "").strip(" ，,；;")
     if not text:
         return None
     for marker in ("然后", "再", "随后", "并且"):
-        if marker in text:
-            text = text.split(marker, 1)[1].strip()
+        if text.startswith(marker):
+            text = text[len(marker) :].strip()
             break
     text = re.sub(r"^(?:点|点击|按下|选择)\s*", "", text)
     if text.startswith("提交"):
@@ -211,6 +238,16 @@ def _clean_semantic(value: Any) -> str:
 
 
 def _traceable_semantic(task: str, value: str) -> bool:
-    needle = "".join(str(value or "").split())
-    haystack = "".join(str(task or "").split())
+    needle = "".join(str(value or "").split()).casefold()
+    haystack = "".join(str(task or "").split()).casefold()
     return bool(needle and needle in haystack)
+
+
+def _semantic_grounded_in_task(task: str, value: str) -> bool:
+    if _traceable_semantic(task, value):
+        return True
+    normalized = _clean_semantic(value)
+    if normalized.endswith("搜索"):
+        normalized = normalized[: -len("搜索")]
+    base = _base_value_semantic(normalized)
+    return bool(base and _traceable_semantic(task, base))
