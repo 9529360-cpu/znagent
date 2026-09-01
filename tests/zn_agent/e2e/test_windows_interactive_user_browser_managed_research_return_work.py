@@ -23,7 +23,7 @@ from test_windows_interactive_user_browser_extension import (
 )
 
 
-_INITIAL_TITLE = "ZN Managed Research A E2E"
+_INITIAL_TITLE = "ZN User Browser Bridge E2E"
 _FRESH_TITLE = "ZN Managed Research Fresh A E2E"
 _RESULT_TITLE = "ZN Managed Research Result E2E"
 _HOST = "zn-extension-e2e.test"
