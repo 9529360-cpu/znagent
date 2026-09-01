@@ -22,7 +22,7 @@ from test_windows_interactive_user_browser_extension import (
 )
 
 
-_INITIAL_TITLE = "ZN Natural Search E2E"
+_INITIAL_TITLE = "ZN User Browser Bridge E2E"
 _RESULT_TITLE = "ZN Natural Search Results E2E"
 _TEXT = "alice@example.test"
 _HOST = "zn-natural-search-e2e.test"
