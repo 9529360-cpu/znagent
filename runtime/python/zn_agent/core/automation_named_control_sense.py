@@ -12,6 +12,7 @@ from .models import utc_now
 
 
 _UIA_BUTTON_CONTROL_TYPE = 50000
+_UIA_EDIT_CONTROL_TYPE = 50004
 _MAX_NAME_CHARS = 160
 
 
@@ -32,6 +33,11 @@ class NamedAutomationControlObservation:
     center_x_fraction: float
     center_y_fraction: float
     captured_at: str
+    is_keyboard_focusable: bool = False
+    has_keyboard_focus: bool = False
+    is_password: bool = False
+    is_value_pattern_available: bool = False
+    value_is_read_only: bool | None = None
     source: str = "windows-uia-exact-name"
 
 
@@ -43,13 +49,15 @@ class _NamedControlRequest:
     process_id: int
     process_name: str
     name: str
+    control_type: int
+    role: str
     done: threading.Event | None = None
     result: NamedAutomationControlObservation | None = None
     error: str | None = None
 
 
 class _WindowsNamedControlReader:
-    """Lazy MTA UIA worker restricted to one exact named foreground Button."""
+    """Lazy MTA UIA worker restricted to one exact named foreground control."""
 
     _START_TIMEOUT_SECONDS = 10.0
     _PROBE_TIMEOUT_SECONDS = 6.0
@@ -73,13 +81,23 @@ class _WindowsNamedControlReader:
         if self._failure:
             raise RuntimeError(self._failure)
 
-    def probe(self, process_id: int, process_name: str, name: str) -> NamedAutomationControlObservation:
+    def probe(
+        self,
+        process_id: int,
+        process_name: str,
+        name: str,
+        *,
+        control_type: int,
+        role: str,
+    ) -> NamedAutomationControlObservation:
         if self._failure:
             raise RuntimeError(self._failure)
         request = _NamedControlRequest(
             process_id=int(process_id),
             process_name=str(process_name),
             name=str(name),
+            control_type=int(control_type),
+            role=str(role),
             done=threading.Event(),
         )
         try:
@@ -137,7 +155,12 @@ class _WindowsNamedControlReader:
                 client.UIA_ControlTypePropertyId,
                 client.UIA_ClassNamePropertyId,
                 client.UIA_IsEnabledPropertyId,
+                client.UIA_IsKeyboardFocusablePropertyId,
+                client.UIA_HasKeyboardFocusPropertyId,
                 client.UIA_IsOffscreenPropertyId,
+                client.UIA_IsPasswordPropertyId,
+                client.UIA_IsValuePatternAvailablePropertyId,
+                client.UIA_ValueIsReadOnlyPropertyId,
                 client.UIA_BoundingRectanglePropertyId,
             ):
                 cache.AddProperty(property_id)
@@ -166,7 +189,7 @@ class _WindowsNamedControlReader:
                 )
                 type_condition = automation.CreatePropertyCondition(
                     client.UIA_ControlTypePropertyId,
-                    _UIA_BUTTON_CONTROL_TYPE,
+                    request.control_type,
                 )
                 process_condition = automation.CreatePropertyCondition(
                     client.UIA_ProcessIdPropertyId,
@@ -184,8 +207,8 @@ class _WindowsNamedControlReader:
                 count = int(matches.Length)
                 if count != 1:
                     raise RuntimeError(
-                        "foreground application did not expose exactly one enabled UIA Button "
-                        f"with the exact requested name (matches={count})"
+                        "foreground application did not expose exactly one enabled UIA "
+                        f"{request.role} with the exact requested name (matches={count})"
                     )
                 element = matches.GetElement(0)
                 if not element:
@@ -195,10 +218,15 @@ class _WindowsNamedControlReader:
                     expected_process_id=request.process_id,
                     expected_process_name=request.process_name,
                     expected_name=request.name,
+                    expected_control_type=request.control_type,
+                    expected_role=request.role,
                     screen_width=screen_width,
                     screen_height=screen_height,
                     runtime_id_property_id=client.UIA_RuntimeIdPropertyId,
                     name_property_id=client.UIA_NamePropertyId,
+                    is_password_property_id=client.UIA_IsPasswordPropertyId,
+                    is_value_pattern_available_property_id=client.UIA_IsValuePatternAvailablePropertyId,
+                    value_is_read_only_property_id=client.UIA_ValueIsReadOnlyPropertyId,
                 )
             except Exception as exc:
                 request.error = (
@@ -208,6 +236,15 @@ class _WindowsNamedControlReader:
             finally:
                 if request.done is not None:
                     request.done.set()
+
+    @staticmethod
+    def _cached_bool(element, property_id: int, *, field_name: str) -> bool:
+        value = element.GetCachedPropertyValue(int(property_id))
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int):
+            return bool(value)
+        raise RuntimeError(f"cached UI Automation {field_name} is not boolean")
 
     @staticmethod
     def _foreground_window_for_process(expected_process_id: int):
@@ -245,10 +282,15 @@ class _WindowsNamedControlReader:
         expected_process_id: int,
         expected_process_name: str,
         expected_name: str,
+        expected_control_type: int,
+        expected_role: str,
         screen_width: int,
         screen_height: int,
         runtime_id_property_id: int,
         name_property_id: int,
+        is_password_property_id: int,
+        is_value_pattern_available_property_id: int,
+        value_is_read_only_property_id: int,
     ) -> NamedAutomationControlObservation:
         runtime_value = element.GetCachedPropertyValue(int(runtime_id_property_id))
         runtime_id = tuple(int(value) for value in runtime_value)
@@ -256,7 +298,26 @@ class _WindowsNamedControlReader:
         process_id = int(element.CachedProcessId)
         control_type = int(element.CachedControlType)
         is_enabled = bool(element.CachedIsEnabled)
+        is_keyboard_focusable = bool(element.CachedIsKeyboardFocusable)
+        has_keyboard_focus = bool(element.CachedHasKeyboardFocus)
         is_offscreen = bool(element.CachedIsOffscreen)
+        is_password = _WindowsNamedControlReader._cached_bool(
+            element,
+            is_password_property_id,
+            field_name="is_password",
+        )
+        is_value_pattern_available = _WindowsNamedControlReader._cached_bool(
+            element,
+            is_value_pattern_available_property_id,
+            field_name="is_value_pattern_available",
+        )
+        value_is_read_only = None
+        if is_value_pattern_available:
+            value_is_read_only = _WindowsNamedControlReader._cached_bool(
+                element,
+                value_is_read_only_property_id,
+                field_name="value_is_read_only",
+            )
         rectangle = element.CachedBoundingRectangle
         left = float(rectangle.left)
         top = float(rectangle.top)
@@ -274,17 +335,30 @@ class _WindowsNamedControlReader:
             process_id != int(expected_process_id)
             or process_name.lower() != str(expected_process_name or "").strip().lower()
             or name != expected_name
-            or control_type != _UIA_BUTTON_CONTROL_TYPE
+            or control_type != int(expected_control_type)
             or not runtime_id
             or not is_enabled
             or is_offscreen
             or not (right > left and bottom > top)
         ):
-            raise RuntimeError("exact named UIA Button failed bounded current-state validation")
+            raise RuntimeError(
+                f"exact named UIA {expected_role} failed bounded current-state validation"
+            )
+        if control_type == _UIA_EDIT_CONTROL_TYPE and (
+            not is_keyboard_focusable
+            or is_password
+            or value_is_read_only is True
+        ):
+            raise RuntimeError(
+                "exact named UIA Edit is not one safe focusable non-password writable target"
+            )
+
         center_x = (left + right) / 2.0
         center_y = (top + bottom) / 2.0
         if not (0 <= center_x < screen_width and 0 <= center_y < screen_height):
-            raise RuntimeError("exact named UIA Button center is outside the primary desktop")
+            raise RuntimeError(
+                f"exact named UIA {expected_role} center is outside the primary desktop"
+            )
 
         return NamedAutomationControlObservation(
             runtime_id=runtime_id,
@@ -302,22 +376,35 @@ class _WindowsNamedControlReader:
             center_x_fraction=round(center_x / float(screen_width), 6),
             center_y_fraction=round(center_y / float(screen_height), 6),
             captured_at=utc_now(),
+            is_keyboard_focusable=is_keyboard_focusable,
+            has_keyboard_focus=has_keyboard_focus,
+            is_password=is_password,
+            is_value_pattern_available=is_value_pattern_available,
+            value_is_read_only=value_is_read_only,
         )
 
 
 class NativeNamedAutomationControlSense:
-    """Find exactly one current foreground UIA Button by user-visible exact name.
+    """Find one exact named Button or safe Edit in the current foreground app.
 
-    This is a narrow read-only discovery surface for real desktop task closure,
-    not a generic UIA tree browser. Native discovery searches only the current
-    foreground window, only the current process, only Button control type 50000,
-    and only one exact bounded Name. Zero or multiple matches fail closed. It
-    returns structural identity and a bounded click point; it never reads text
-    values, passwords, arbitrary descendants, control patterns, or mutation APIs.
+    This remains a narrow read-only discovery surface for real desktop task
+    closure, not a generic UIA tree browser. Native discovery searches only the
+    current foreground window, only the current process, only one explicit
+    control type, and only one exact bounded Name. Zero or multiple matches fail
+    closed. Edit discovery additionally rejects password, explicitly read-only,
+    disabled, off-screen or non-focusable controls. No text values, arbitrary
+    tree contents, control patterns, events or UIA mutation methods are exposed.
     """
 
-    def __init__(self, *, probe_fn: NamedControlProbeFn | None = None):
+    def __init__(
+        self,
+        *,
+        probe_fn: NamedControlProbeFn | None = None,
+        edit_probe_fn: NamedControlProbeFn | None = None,
+    ):
+        # Keep probe_fn backward-compatible for existing Button tests/callers.
         self.probe_fn = probe_fn
+        self.edit_probe_fn = edit_probe_fn
         self._native_reader: _WindowsNamedControlReader | None = None
         self._reader_lock = threading.Lock()
 
@@ -328,37 +415,98 @@ class NativeNamedAutomationControlSense:
         process_name: str,
         name: str,
     ) -> NamedAutomationControlObservation:
+        return self._find_unique(
+            process_id=process_id,
+            process_name=process_name,
+            name=name,
+            control_type=_UIA_BUTTON_CONTROL_TYPE,
+            role="Button",
+            injected=self.probe_fn,
+        )
+
+    def find_unique_edit(
+        self,
+        *,
+        process_id: int,
+        process_name: str,
+        name: str,
+    ) -> NamedAutomationControlObservation:
+        return self._find_unique(
+            process_id=process_id,
+            process_name=process_name,
+            name=name,
+            control_type=_UIA_EDIT_CONTROL_TYPE,
+            role="Edit",
+            injected=self.edit_probe_fn,
+        )
+
+    def _find_unique(
+        self,
+        *,
+        process_id: int,
+        process_name: str,
+        name: str,
+        control_type: int,
+        role: str,
+        injected: NamedControlProbeFn | None,
+    ) -> NamedAutomationControlObservation:
         expected_pid = int(process_id)
         expected_process = str(process_name or "").strip()
         expected_name = " ".join(str(name or "").strip().split())
         if expected_pid <= 0 or not expected_process:
-            raise ValueError("exact named desktop Button discovery requires current process identity")
+            raise ValueError(
+                f"exact named desktop {role} discovery requires current process identity"
+            )
         if not expected_name or len(expected_name) > _MAX_NAME_CHARS:
-            raise ValueError("exact named desktop Button requires a 1..160 character accessible name")
+            raise ValueError(
+                f"exact named desktop {role} requires a 1..160 character accessible name"
+            )
 
-        if self.probe_fn is not None:
-            observation = self.probe_fn(expected_pid, expected_process, expected_name)
+        if injected is not None:
+            observation = injected(expected_pid, expected_process, expected_name)
         else:
             if os.name != "nt":
-                raise RuntimeError("exact named desktop Button discovery is available only on Windows")
+                raise RuntimeError(
+                    f"exact named desktop {role} discovery is available only on Windows"
+                )
             with self._reader_lock:
                 if self._native_reader is None:
                     self._native_reader = _WindowsNamedControlReader()
                 reader = self._native_reader
-            observation = reader.probe(expected_pid, expected_process, expected_name)
+            observation = reader.probe(
+                expected_pid,
+                expected_process,
+                expected_name,
+                control_type=control_type,
+                role=role,
+            )
 
         if not isinstance(observation, NamedAutomationControlObservation):
-            raise TypeError("named desktop control probe must return NamedAutomationControlObservation")
+            raise TypeError(
+                "named desktop control probe must return NamedAutomationControlObservation"
+            )
+        safe_edit = bool(
+            control_type != _UIA_EDIT_CONTROL_TYPE
+            or (
+                observation.is_keyboard_focusable
+                and not observation.is_password
+                and observation.value_is_read_only is not True
+            )
+        )
         if (
             int(observation.process_id) != expected_pid
-            or str(observation.process_name or "").strip().lower() != expected_process.lower()
+            or str(observation.process_name or "").strip().lower()
+            != expected_process.lower()
             or observation.name != expected_name
-            or int(observation.control_type) != _UIA_BUTTON_CONTROL_TYPE
+            or int(observation.control_type) != int(control_type)
             or not observation.runtime_id
             or not observation.is_enabled
             or observation.is_offscreen
+            or not safe_edit
             or not 0.0 <= float(observation.center_x_fraction) <= 1.0
             or not 0.0 <= float(observation.center_y_fraction) <= 1.0
         ):
-            raise ValueError("named desktop control observation did not match the exact requested Button")
+            raise ValueError(
+                f"named desktop control observation did not match the exact requested {role}"
+            )
         return observation
