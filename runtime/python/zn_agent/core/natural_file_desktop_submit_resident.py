@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Multi-step natural Work: workspace value -> desktop Edit -> exact named Button."""
 
+import hashlib
 import re
 from dataclasses import asdict, replace
 from typing import Any, Mapping
@@ -43,6 +44,7 @@ class NaturalFileDesktopSubmitResidentRuntime(NaturalFileDesktopResidentRuntime)
 
     _DESKTOP_SUBMIT_STATE_KEY = "natural_file_desktop_submit"
     _DESKTOP_CLICK_OUTCOME_KIND = "desktop_named_button_to_foreground_title"
+    _BUTTON_FACT_KEY = "natural_file_desktop_submit_button"
     _BUTTON_PROBE_LABEL = "bind one exact named Button in the current desktop app"
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
@@ -132,11 +134,11 @@ class NaturalFileDesktopSubmitResidentRuntime(NaturalFileDesktopResidentRuntime)
                 ),
             )
 
+        click_intent_prefix = self._desktop_click_intent_prefix(event.event_id)
         execution = state.data.get(self._POINTER_CLICK_EXECUTION_KEY)
-        click_intent_id = f"desktop-submit-click-{event.event_id}"
         if (
             isinstance(execution, dict)
-            and str(execution.get("intent_id") or "") == click_intent_id
+            and str(execution.get("intent_id") or "").startswith(click_intent_prefix)
             and str(execution.get("status") or "").strip().lower() in {"started", "completed"}
         ):
             return self._checkpoint_terminal_failure(
@@ -174,6 +176,14 @@ class NaturalFileDesktopSubmitResidentRuntime(NaturalFileDesktopResidentRuntime)
                 ),
             )
 
+        self._record_button_observation(
+            event,
+            state,
+            button,
+            process_name=process_name,
+            pre_title=pre_title,
+            expected_title=expected_title,
+        )
         progress = dict(progress)
         progress.update(
             {
@@ -186,6 +196,7 @@ class NaturalFileDesktopSubmitResidentRuntime(NaturalFileDesktopResidentRuntime)
         )
         state.data[self._DESKTOP_SUBMIT_STATE_KEY] = progress
 
+        click_intent_id = self._desktop_click_intent_id(event.event_id, button)
         intent = NativeActionIntent(
             intent_id=click_intent_id,
             event_id=event.event_id,
@@ -194,6 +205,13 @@ class NaturalFileDesktopSubmitResidentRuntime(NaturalFileDesktopResidentRuntime)
                 "x_fraction": float(button.center_x_fraction),
                 "y_fraction": float(button.center_y_fraction),
                 "button": "left",
+                # The native pointer primitive ignores these structural fields,
+                # but action identity does not. A replacement UIA Button at the
+                # same coordinates must not inherit the failed action signature
+                # or stale pointer preparation of the previous target instance.
+                "target_runtime_id": list(button.runtime_id),
+                "target_name": button_name,
+                "target_process_name": process_name,
             },
             expected_outcome={
                 "kind": self._DESKTOP_CLICK_OUTCOME_KIND,
@@ -405,6 +423,7 @@ class NaturalFileDesktopSubmitResidentRuntime(NaturalFileDesktopResidentRuntime)
         process_name = str(expected.get("process_name") or "").strip().lower()
         pre_title = str(expected.get("pre_title") or "").strip()
         button_name = str(expected.get("button_name") or "").strip()
+        expected_title = str(expected.get("expected_title") or "").strip()
         expected_runtime = tuple(int(value) for value in (expected.get("button_runtime_id") or ()))
         if not process_name or not pre_title or not button_name or not expected_runtime:
             return "desktop named-Button click lost its exact pre-input authority"
@@ -421,16 +440,102 @@ class NaturalFileDesktopSubmitResidentRuntime(NaturalFileDesktopResidentRuntime)
             )
         except Exception as exc:
             return f"exact named Button could not be freshly revalidated before input: {type(exc).__name__}: {exc}"
+
+        # This second Sense is not merely a precondition check. Persist it back
+        # into the active Investigation before any verdict. If the application
+        # replaced or moved the Button, the next deliberation sees genuinely new
+        # reality evidence instead of being locked by the previous failure's
+        # fingerprint.
+        self._record_button_observation(
+            event,
+            state,
+            fresh_button,
+            process_name=process_name,
+            pre_title=pre_title,
+            expected_title=expected_title,
+        )
         if tuple(fresh_button.runtime_id) != expected_runtime:
-            return "exact named Button RuntimeId changed before input; refusing a stale click target"
+            return "exact named Button RuntimeId changed before input; re-investigate the current target"
         expected_x = float(expected.get("button_center_x_fraction") or -1.0)
         expected_y = float(expected.get("button_center_y_fraction") or -1.0)
         if (
             abs(float(fresh_button.center_x_fraction) - expected_x) > 0.002
             or abs(float(fresh_button.center_y_fraction) - expected_y) > 0.002
         ):
-            return "exact named Button moved materially before input; refusing the stale click point"
+            return "exact named Button moved materially before input; re-investigate the current click point"
         return None
+
+    def _record_button_observation(
+        self,
+        event,
+        state: WorkingState,
+        button: NamedAutomationControlObservation,
+        *,
+        process_name: str,
+        pre_title: str,
+        expected_title: str,
+    ) -> None:
+        investigation = self.investigator.current(event.event_id)
+        if investigation is None:
+            return
+        facts = dict(investigation.facts)
+        fact = {
+            "process_name": str(process_name or "").strip().lower(),
+            "pre_title": str(pre_title or "").strip(),
+            "button_name": str(button.name or "").strip(),
+            "runtime_id": list(button.runtime_id),
+            "center_x_fraction": float(button.center_x_fraction),
+            "center_y_fraction": float(button.center_y_fraction),
+            "expected_title": str(expected_title or "").strip(),
+            "source": str(button.source or ""),
+            "observed_at": button.captured_at,
+        }
+        facts[self._BUTTON_FACT_KEY] = fact
+        evidence = list(investigation.evidence)
+        probes = list(investigation.probes)
+        probe_keys = list(investigation.probe_keys)
+        self._record_probe(
+            evidence,
+            probes,
+            probe_keys,
+            key=self._BUTTON_FACT_KEY,
+            label=self._BUTTON_PROBE_LABEL,
+            notes=[
+                f"fresh exact-name desktop Button: process={fact['process_name']} name={fact['button_name']}",
+                "opaque target identity and bounded center were refreshed before click authority",
+            ],
+        )
+        investigation.facts = facts
+        investigation.evidence = tuple(evidence[-96:])
+        investigation.probes = tuple(probes[-32:])
+        investigation.probe_keys = tuple(probe_keys[-32:])
+        investigation.updated_at = utc_now()
+        investigation.rounds += 1
+        self.investigator._save(investigation)
+        state.data["native_investigation"] = self._investigation_data(investigation)
+
+    @staticmethod
+    def _desktop_click_intent_prefix(event_id: str) -> str:
+        return f"desktop-submit-click-{str(event_id or '').strip()}-"
+
+    @classmethod
+    def _desktop_click_intent_id(
+        cls,
+        event_id: str,
+        button: NamedAutomationControlObservation,
+    ) -> str:
+        opaque_target = "|".join(
+            (
+                str(button.process_id),
+                str(button.process_name or "").strip().lower(),
+                str(button.name or "").strip(),
+                ",".join(str(value) for value in button.runtime_id),
+                f"{float(button.center_x_fraction):.6f}",
+                f"{float(button.center_y_fraction):.6f}",
+            )
+        )
+        suffix = hashlib.sha256(opaque_target.encode("utf-8")).hexdigest()[:12]
+        return cls._desktop_click_intent_prefix(event_id) + suffix
 
     def _complete_desktop_submit_from_fresh_foreground(
         self,
