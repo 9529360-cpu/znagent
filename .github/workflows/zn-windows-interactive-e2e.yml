@@ -17,6 +17,7 @@ on:
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_extension.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_natural_search_work.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_managed_research_return_work.py
+      - tests/zn_agent/e2e/test_windows_interactive_browser_result_file_work.py
       - runtime/python/zn_agent/core/body.py
       - runtime/python/zn_agent/core/keyboard_text_body.py
       - runtime/python/zn_agent/core/visual_region_sense.py
@@ -33,6 +34,9 @@ on:
       - runtime/python/zn_agent/core/user_browser_extension_relay.py
       - runtime/python/zn_agent/core/user_browser_extension_resident.py
       - runtime/python/zn_agent/core/user_browser_resident.py
+      - runtime/python/zn_agent/core/user_browser_managed_research_resident.py
+      - runtime/python/zn_agent/core/natural_file_goal.py
+      - runtime/python/zn_agent/core/natural_file_work_resident.py
       - runtime/python/zn_agent/core/goal_resident.py
       - runtime/python/zn_agent/core/pointer_click_resident.py
       - runtime/python/zn_agent/core/pointer_click_completion_resident.py
