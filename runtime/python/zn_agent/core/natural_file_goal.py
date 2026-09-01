@@ -60,78 +60,179 @@ def observe_candidates(event: "AgentEvent", body: Any) -> tuple[dict[str, Any], 
     req = natural_workspace_text_edit_request(event)
     if req is None:
         return _fail("not a bounded natural workspace edit")
-    try:
-        workspace = canonical_host_path(req["workspace_path"]).resolve(strict=True)
-        if not workspace.is_dir():
-            raise ValueError
-    except (OSError, RuntimeError, ValueError):
-        return _fail("the authorized workspace is unavailable")
-    listing = body.act("list_directory", event_id=event.event_id, path=str(workspace), limit=MAX_ENTRIES + 1)
-    if not listing.success:
-        return _fail(f"bounded workspace enumeration failed: {listing.error or 'unknown error'}")
-    entries = [dict(x) for x in (listing.data.get("entries") or ()) if isinstance(x, Mapping)]
-    if len(entries) > MAX_ENTRIES:
-        return _fail(
-            "bounded workspace enumeration reached its top-level entry limit; ZN will not widen the search",
-            listing_overflow=True,
-        )
-    matched = []
-    hint = req["name_hint"].casefold()
-    for item in entries:
-        name, raw = str(item.get("name") or ""), str(item.get("path") or "")
-        path = canonical_host_path(raw) if raw else None
-        if (
-            str(item.get("type") or "").lower() == "file"
-            and path is not None
-            and Path(name).suffix.casefold() == ".txt"
-            and hint in Path(name).stem.casefold()
-            and _direct_child(path, workspace)
-        ):
-            matched.append((name, str(path)))
-    if len(matched) > MAX_CANDIDATES:
-        return _fail("too many top-level filename candidates for bounded comparison")
-
+    observed, notes = _observe_workspace_text_files(
+        event,
+        body,
+        workspace_path=req["workspace_path"],
+        name_hint=req["name_hint"],
+    )
+    if observed.get("complete") is not True:
+        return observed, notes
+    rows = list(observed.get("candidates") or ())
     yesterday = datetime.now().astimezone().date() - timedelta(days=1)
-    rows, unknown = [], False
-    for name, path in matched:
-        inspected = body.act("inspect_path", event_id=event.event_id, path=path)
-        identity = observe_file_identity(path)
-        day = _day(identity)
-        unknown = unknown or day is None
-        rows.append({
-            "name": name,
-            "path": path,
-            "matches_yesterday": day == yesterday if day else None,
-            "safe": bool(
-                inspected.success
-                and inspected.data.get("exists") is True
-                and str(inspected.data.get("type") or "").lower() == "file"
-                and _exact_file(identity, path)
-                and int(identity.get("size_bytes") or 0) <= MAX_BYTES
-            ),
-            "identity": identity,
-        })
-    plausible = [x for x in rows if x["matches_yesterday"] is True]
+    unknown = any(item.get("local_date") is None for item in rows)
+    plausible = [item for item in rows if item.get("local_date") == yesterday.isoformat()]
     reason = None
     if unknown:
         reason = "a filename candidate could not be freshly dated, so it cannot be safely excluded"
-    elif not matched:
+    elif not rows:
         reason = "no top-level txt filename matches the requested name hint"
     elif not plausible:
         reason = "no filename candidate was freshly observed as modified yesterday"
     result = {
-        "workspace_path": str(workspace),
+        "workspace_path": observed["workspace_path"],
         "expected_local_date": yesterday.isoformat(),
-        "matching_name_count": len(matched),
+        "matching_name_count": len(rows),
         "yesterday_candidate_count": len(plausible),
         "complete": not unknown,
         "ready": bool(not unknown and plausible),
-        "candidates": rows,
+        "candidates": [
+            {
+                "name": item["name"],
+                "path": item["path"],
+                "matches_yesterday": (
+                    item.get("local_date") == yesterday.isoformat()
+                    if item.get("local_date") is not None
+                    else None
+                ),
+                "safe": item.get("safe") is True,
+                "identity": item.get("identity"),
+            }
+            for item in rows
+        ],
         "failure_reason": reason,
     }
     return result, [
-        f"bounded top-level enumeration: entries={len(entries)} name_matches={len(matched)} yesterday_matches={len(plausible)}",
+        *notes,
+        f"bounded top-level enumeration: entries={int(observed.get('entry_count') or 0)} "
+        f"name_matches={len(rows)} yesterday_matches={len(plausible)}",
         *([reason] if reason else []),
+    ]
+
+
+def observe_text_source(
+    event: "AgentEvent",
+    body: Any,
+    requirement: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """Bind one bounded workspace text file from typed source requirements.
+
+    The caller supplies desired-state data only: authorized workspace, optional
+    filename hint and optional relative-day constraint. File identity is always
+    established here from current reality and is never accepted from a parser or
+    model proposal.
+    """
+
+    workspace_path = str(requirement.get("workspace_path") or "").strip()
+    name_hint = str(requirement.get("name_hint") or "").strip() or None
+    modified_day = str(requirement.get("modified_day") or "").strip().lower() or None
+    if modified_day not in {None, "yesterday"}:
+        return _fail("unsupported typed workspace source day constraint")
+    observed, notes = _observe_workspace_text_files(
+        event,
+        body,
+        workspace_path=workspace_path,
+        name_hint=name_hint,
+    )
+    if observed.get("complete") is not True:
+        return observed, notes
+    rows = list(observed.get("candidates") or ())
+    expected_date = None
+    if modified_day == "yesterday":
+        expected_date = (
+            datetime.now().astimezone().date() - timedelta(days=1)
+        ).isoformat()
+        if any(item.get("local_date") is None for item in rows):
+            return _fail(
+                "a workspace text candidate could not be freshly dated, so it cannot be safely excluded"
+            )
+        rows = [item for item in rows if item.get("local_date") == expected_date]
+    safe = [item for item in rows if item.get("safe") is True]
+    if not safe:
+        reason = (
+            "no bounded safe workspace text file satisfies the typed source requirement"
+            if rows
+            else "no workspace text file satisfies the typed source requirement"
+        )
+        return _fail(reason)
+    if len(safe) != 1:
+        return _fail(
+            "more than one workspace text file satisfies the typed source requirement; ZN will not guess"
+        )
+    selected = safe[0]
+    result = {
+        "complete": True,
+        "workspace_path": observed["workspace_path"],
+        "name_hint": name_hint,
+        "modified_day": modified_day,
+        "expected_local_date": expected_date,
+        "path": selected["path"],
+        "name": selected["name"],
+        "identity": dict(selected["identity"]),
+        "candidate_count": len(safe),
+        "failure_reason": None,
+    }
+    return result, [
+        *notes,
+        f"typed workspace source binding: candidates={len(safe)} selected={selected['name']}",
+    ]
+
+
+def read_text_source(
+    event: "AgentEvent",
+    body: Any,
+    source: Mapping[str, Any],
+) -> tuple[dict[str, Any], str | None, list[str]]:
+    """Freshly materialize one already-bound text source without persisting plaintext."""
+
+    path = str(source.get("path") or "").strip()
+    workspace = str(source.get("workspace_path") or "").strip()
+    baseline = source.get("identity")
+    if not path or not workspace or not isinstance(baseline, Mapping):
+        reason = "typed workspace source lost its exact investigated file identity"
+        return {"complete": False, "failure_reason": reason}, None, [reason]
+    if not _direct_child(path, workspace):
+        reason = "typed workspace source escaped the authorized workspace"
+        return {"complete": False, "failure_reason": reason}, None, [reason]
+    pre = observe_file_identity(path)
+    if compare_file_identities(dict(baseline), pre).get("exact") is not True:
+        reason = "workspace source identity no longer matches the investigated file"
+        return {"complete": False, "failure_reason": reason}, None, [reason]
+    observed = body.act(
+        "read_text",
+        event_id=event.event_id,
+        path=path,
+        max_chars=MAX_CHARS + 1,
+    )
+    post = observe_file_identity(path)
+    text = str(observed.output) if observed.success else ""
+    if not observed.success:
+        reason = str(observed.error or "workspace source read failed")
+    elif bool(observed.data.get("truncated")) or int(
+        observed.data.get("chars") or len(text)
+    ) > MAX_CHARS:
+        reason = "workspace source exceeds the bounded complete-text observation limit"
+    elif compare_file_identities(pre, post).get("exact") is not True:
+        reason = "workspace source changed while it was being read"
+    elif "\ufffd" in text or "\x00" in text:
+        reason = "workspace source is not safe complete text"
+    else:
+        reason = None
+    if reason is not None:
+        return {"complete": False, "failure_reason": reason}, None, [reason]
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    result = {
+        "complete": True,
+        "workspace_path": workspace,
+        "path": path,
+        "name": str(source.get("name") or Path(path).name),
+        "identity": dict(post),
+        "text_sha256": digest,
+        "text_chars": len(text),
+        "failure_reason": None,
+    }
+    return result, text, [
+        f"fresh typed workspace source read: chars={len(text)} sha256={digest}"
     ]
 
 
@@ -288,6 +389,83 @@ def failure_reason(event: "AgentEvent", facts: Mapping[str, Any]) -> str | None:
         if isinstance(value, Mapping) and str(value.get("failure_reason") or "").strip():
             return str(value["failure_reason"])
     return "bounded workspace evidence could not establish one exact safe target; ZN stopped instead of guessing"
+
+
+def _observe_workspace_text_files(
+    event: "AgentEvent",
+    body: Any,
+    *,
+    workspace_path: str,
+    name_hint: str | None,
+) -> tuple[dict[str, Any], list[str]]:
+    try:
+        workspace = canonical_host_path(workspace_path).resolve(strict=True)
+        if not workspace.is_dir():
+            raise ValueError
+    except (OSError, RuntimeError, ValueError):
+        return _fail("the authorized workspace is unavailable")
+    listing = body.act(
+        "list_directory",
+        event_id=event.event_id,
+        path=str(workspace),
+        limit=MAX_ENTRIES + 1,
+    )
+    if not listing.success:
+        return _fail(f"bounded workspace enumeration failed: {listing.error or 'unknown error'}")
+    entries = [
+        dict(item)
+        for item in (listing.data.get("entries") or ())
+        if isinstance(item, Mapping)
+    ]
+    if len(entries) > MAX_ENTRIES:
+        return _fail(
+            "bounded workspace enumeration reached its top-level entry limit; ZN will not widen the search",
+            listing_overflow=True,
+        )
+    hint = str(name_hint or "").strip().casefold()
+    matched: list[dict[str, Any]] = []
+    for item in entries:
+        name = str(item.get("name") or "")
+        raw = str(item.get("path") or "")
+        path = canonical_host_path(raw) if raw else None
+        if (
+            str(item.get("type") or "").lower() != "file"
+            or path is None
+            or Path(name).suffix.casefold() != ".txt"
+            or (hint and hint not in Path(name).stem.casefold())
+            or not _direct_child(path, workspace)
+        ):
+            continue
+        if len(matched) >= MAX_CANDIDATES:
+            return _fail("too many top-level filename candidates for bounded comparison")
+        inspected = body.act("inspect_path", event_id=event.event_id, path=str(path))
+        identity = observe_file_identity(path)
+        day = _day(identity)
+        matched.append(
+            {
+                "name": name,
+                "path": str(path),
+                "local_date": day.isoformat() if day is not None else None,
+                "safe": bool(
+                    inspected.success
+                    and inspected.data.get("exists") is True
+                    and str(inspected.data.get("type") or "").lower() == "file"
+                    and _exact_file(identity, path)
+                    and int(identity.get("size_bytes") or 0) <= MAX_BYTES
+                ),
+                "identity": identity,
+            }
+        )
+    return {
+        "complete": True,
+        "ready": bool(matched),
+        "workspace_path": str(workspace),
+        "entry_count": len(entries),
+        "candidates": matched,
+        "failure_reason": None,
+    }, [
+        f"bounded workspace text enumeration: entries={len(entries)} candidates={len(matched)}"
+    ]
 
 
 def _fail(reason: str, **extra: Any):
