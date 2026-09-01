@@ -225,7 +225,7 @@ class NaturalFileDesktopWorkTests(unittest.TestCase):
             finally:
                 resident.store.close()
 
-    def test_source_identity_change_after_deliberation_blocks_keyboard_dispatch(self) -> None:
+    def test_source_identity_change_before_input_is_resensed_and_latest_value_is_used(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             workspace = base / "authorized"
@@ -245,10 +245,16 @@ class NaturalFileDesktopWorkTests(unittest.TestCase):
                     self.fail("file-to-desktop Work did not reach native_action")
 
                 target.write_text("A-CHANGED", encoding="utf-8")
+                self._stamp(target, -1)
                 run = self._run_to_terminal(resident, event.event_id)
-                self.assertFalse(run.success)
-                self.assertEqual(body.keyboard_calls, [])
-                self.assertIn("identity no longer matches", run.reason.lower())
+
+                self.assertTrue(run.success, run)
+                self.assertEqual(body.keyboard_calls, ["A-CHANGED"])
+                self.assertEqual(body.current_text, "A-CHANGED")
+                facts = resident.investigator.current(event.event_id).facts
+                source = facts["natural_file_desktop_source"]
+                self.assertEqual(source["text_chars"], len("A-CHANGED"))
+                self.assertGreaterEqual(resident.investigator.current(event.event_id).rounds, 2)
             finally:
                 resident.store.close()
 
