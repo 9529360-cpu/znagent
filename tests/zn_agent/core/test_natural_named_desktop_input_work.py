@@ -111,7 +111,7 @@ class _NamedInputDesktopBody(KeyboardTextBody):
                 self.world.title = "查询结果"
                 self.world.visual_version += 1
                 return self._ok(action, started, data={"button": "left", "effect": "submit"})
-            return self._fail(action, started, "unexpected pointer target in named-input task")
+            raise RuntimeError("unexpected pointer target in named-input task")
         return super()._dispatch(action, started)
 
 
