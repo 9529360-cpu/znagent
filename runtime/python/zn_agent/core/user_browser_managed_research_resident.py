@@ -8,12 +8,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from .action import NativeActionIntent
-from .browser import (
-    BrowserAction,
-    BrowserActionAuthority,
-    BrowserActionKind,
-    BrowserPermissionContext,
-)
+from .browser import BrowserAction, BrowserActionAuthority, BrowserActionKind, BrowserPermissionContext
 from .research_managed_browser import ResearchSemanticPlaywrightManagedBrowser
 from .user_browser_extension_relay import UserBrowserExtensionRelayError
 from .user_browser_extension_resident import UserBrowserExtensionResidentRuntime
@@ -28,14 +23,12 @@ _DETAIL_CUES = ("detail", "release", "record", "version", "详情", "明细", "�
 
 
 class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRuntime):
-    """Research bounded A-page references, then reuse the existing guarded USER submit."""
+    """Research A-page references, then reuse the guarded USER form-submit path."""
 
     _MANAGED_RESEARCH_STATE_KEY = "resident_user_browser_managed_reference_research"
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
-        # The inherited managed browser is still lazy/idle here. Keep the same owner
-        # and lifecycle, only use the readable semantic adapter for investigation.
         self.managed_browser = ResearchSemanticPlaywrightManagedBrowser()
 
     @classmethod
@@ -47,7 +40,7 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
         if not task or len(task) > 1200:
             return False
         lowered = task.lower()
-        has_reference = any(cue in lowered for cue in ("reference", "references")) or "参考" in task
+        has_reference = "reference" in lowered or "参考" in task
         has_code = "release code" in lowered or ("code" in lowered and "release" in lowered) or "代码" in task
         has_return = any(cue in lowered for cue in ("come back", "return", "back on this page")) or "回来" in task or "回到" in task
         has_search = "search" in lowered or "find" in lowered or "搜索" in task or "查找" in task
@@ -60,15 +53,7 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
             return ("browser",)
         return super()._required_capabilities(event)
 
-    def _investigation_step(
-        self,
-        event,
-        state,
-        *,
-        readiness,
-        learning_evidence,
-        thought=None,
-    ):
+    def _investigation_step(self, event, state, *, readiness, learning_evidence, thought=None):
         if not self._natural_managed_reference_search(event):
             return super()._investigation_step(
                 event,
@@ -90,18 +75,15 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
                 state,
                 reason="reference research requires one current browser tab explicitly authorized through the ZN browser bridge",
             )
-
         try:
             initial = self._discover_authorized_reference_context()
             references = self._rank_reference_candidates(initial.get("references"))
             if len(references) < 2:
-                raise UserBrowserExtensionRelayError(
-                    "the authorized page did not expose at least two bounded reference candidates"
-                )
+                raise UserBrowserExtensionRelayError("the authorized page did not expose at least two bounded reference candidates")
             research = self._research_managed_references(references)
-            release_code = str(research["release_code"])
+            code = str(research["release_code"])
             self._adopt_authorized_extension_browser()
-            fresh_search = self._discover_unique_search_form(release_code)
+            fresh_search = self._discover_unique_search_form(code)
             fresh_tab = self.probe_user_browser_extension_tab()
         except Exception as exc:
             if self.managed_browser is self._extension_user_browser:
@@ -120,8 +102,8 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
         fresh_target = str(fresh_search.get("textbox_target_id") or "")
         initial_title = str(initial.get("title") or "")
         fresh_title = str(fresh_tab.get("title") or "")
-        evidence = {
-            "release_code": release_code,
+        state.data[self._MANAGED_RESEARCH_STATE_KEY] = {
+            "release_code": code,
             "sources": research["sources"],
             "initial_authorized_page": {
                 "url": str(initial.get("url") or ""),
@@ -136,12 +118,10 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
                 "observed_at": str(fresh_tab.get("observed_at") or ""),
             },
             "authorized_page_changed_during_research": bool(
-                (initial_target and fresh_target and initial_target != fresh_target)
-                or initial_title != fresh_title
+                (initial_target and fresh_target and initial_target != fresh_target) or initial_title != fresh_title
             ),
             "search": fresh_search,
         }
-        state.data[self._MANAGED_RESEARCH_STATE_KEY] = evidence
         state.data.pop("local_failure", None)
         if thought is not None:
             known = "two independently observed managed-browser sources agreed on one release code before returning to the authorized user page"
@@ -158,15 +138,7 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
         self.store.save_working_state(state)
         return None
 
-    def _deliberation_step(
-        self,
-        event,
-        state,
-        *,
-        readiness,
-        learning_evidence,
-        thought=None,
-    ):
+    def _deliberation_step(self, event, state, *, readiness, learning_evidence, thought=None):
         if not self._natural_managed_reference_search(event):
             return super()._deliberation_step(
                 event,
@@ -236,9 +208,7 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
                 timeout_seconds=5.0,
             )
             if command.get("success") is not True:
-                raise UserBrowserExtensionRelayError(
-                    str(command.get("error") or "authorized-page reference discovery failed")
-                )
+                raise UserBrowserExtensionRelayError(str(command.get("error") or "authorized-page reference discovery failed"))
             result = command.get("result")
             if not isinstance(result, dict):
                 raise UserBrowserExtensionRelayError("authorized-page reference discovery returned no structured evidence")
@@ -280,11 +250,11 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
         browser = self.managed_browser
         if not isinstance(browser, ResearchSemanticPlaywrightManagedBrowser):
             raise RuntimeError("readable managed browser adapter is unavailable")
-        allowed = tuple(dict.fromkeys(str(item["href"]) for item in references))
+        allowed_origins = tuple(dict.fromkeys(self._origin_url(str(item["href"])) for item in references))
         permission = BrowserPermissionContext(
             allow_navigation=True,
             allow_private_network=True,
-            allowed_origins=allowed,
+            allowed_origins=allowed_origins,
         )
         session = browser.open_session(permission=permission, headless=True)
         source_evidence: list[dict[str, str]] = []
@@ -298,12 +268,7 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
                 observed_at = str(page.get("captured_at") or "")
                 if code is None:
                     for detail in self._detail_candidates(page, source_url):
-                        detail_page = self._navigate_and_read(
-                            browser,
-                            session.session_id,
-                            detail,
-                            permission,
-                        )
+                        detail_page = self._navigate_and_read(browser, session.session_id, detail, permission)
                         detail_code = self._release_code(detail_page.get("text"))
                         if detail_code is None:
                             continue
@@ -330,12 +295,7 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
             browser.close_session(session.session_id)
 
     @staticmethod
-    def _navigate_and_read(
-        browser: ResearchSemanticPlaywrightManagedBrowser,
-        session_id: str,
-        url: str,
-        permission: BrowserPermissionContext,
-    ) -> dict[str, Any]:
+    def _navigate_and_read(browser, session_id: str, url: str, permission: BrowserPermissionContext) -> dict[str, Any]:
         observation = browser.observe(session_id)
         action = BrowserAction.create(
             session_id=session_id,
@@ -352,8 +312,7 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
 
     @staticmethod
     def _release_code(value: Any) -> str | None:
-        text = str(value or "")
-        matches = [match.group(1).strip() for match in _RELEASE_CODE_RE.finditer(text)]
+        matches = [match.group(1).strip() for match in _RELEASE_CODE_RE.finditer(str(value or ""))]
         unique = list(dict.fromkeys(match for match in matches if match))
         return unique[0] if len(unique) == 1 else None
 
@@ -381,9 +340,8 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
             seen.add(href)
             haystack = f"{label} {parsed.path}".lower()
             score = sum(1 for cue in _DETAIL_CUES if cue in haystack)
-            if score <= 0:
-                continue
-            scored.append((score, -index, href))
+            if score > 0:
+                scored.append((score, -index, href))
         scored.sort(reverse=True)
         return [item[2] for item in scored[:4]]
 
@@ -391,3 +349,16 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
     def _origin(value: str) -> tuple[str, str, int | None]:
         parsed = urlsplit(value)
         return (parsed.scheme.lower(), (parsed.hostname or "").lower(), parsed.port)
+
+    @staticmethod
+    def _origin_url(value: str) -> str:
+        parsed = urlsplit(value)
+        host = parsed.hostname or ""
+        scheme = parsed.scheme.lower()
+        if not host or scheme not in {"http", "https"}:
+            raise ValueError("managed reference URL must be HTTP(S)")
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        default = 80 if scheme == "http" else 443
+        netloc = host if parsed.port in {None, default} else f"{host}:{parsed.port}"
+        return f"{scheme}://{netloc}"
