@@ -271,6 +271,43 @@ class NaturalNamedDesktopInputResidentRuntime(NaturalBrowserDesktopSubmitResiden
             intent,
         )
 
+    def _pointer_click_action_step(
+        self,
+        event,
+        state,
+        intent: NativeActionIntent,
+        *,
+        thought=None,
+    ):
+        expected = intent.expected_outcome if isinstance(intent.expected_outcome, dict) else {}
+        if (
+            intent.kind != "pointer_click"
+            or str(expected.get("kind") or "").strip().lower()
+            != self._NAMED_INPUT_FOCUS_OUTCOME_KIND
+        ):
+            return super()._pointer_click_action_step(
+                event,
+                state,
+                intent,
+                thought=thought,
+            )
+        synthetic = self._named_input_focus_event(event, expected)
+        if synthetic is None:
+            return self._fail_pointer_click_precondition(
+                event,
+                state,
+                intent,
+                "named desktop input focus lost its exact synthetic event scope",
+                thought=thought,
+            )
+        return AutomationFocusPointerClickResidentRuntime._pointer_click_action_step(
+            self,
+            synthetic,
+            state,
+            intent,
+            thought=thought,
+        )
+
     def _pointer_click_final_input_precondition(
         self,
         event,
