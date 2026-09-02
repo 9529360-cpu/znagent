@@ -12,8 +12,7 @@ from tests.zn_agent.core.test_natural_browser_desktop_submit_work import (
 
 
 class NaturalBrowserDesktopRestartWorkTests(unittest.TestCase):
-    @staticmethod
-    def _reach_durable_research_checkpoint(resident, ledger, thread_id: str):
+    def _reach_durable_research_checkpoint(self, resident, ledger, thread_id: str):
         _, event = ledger.start(thread_id, TASK)
         for _ in range(192):
             state = resident.store.get_working_state()
