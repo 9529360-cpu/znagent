@@ -205,6 +205,8 @@ class WindowsInteractiveFileDesktopGoalE2ETests(unittest.TestCase):
                     + json.dumps({
                         "stage": diagnostic_state.stage,
                         "next_action": diagnostic_state.next_action,
+                        "result": repr(result),
+                        "event_status": str(resident.store.get_event(event.event_id).status),
                         "observation_phase": diagnostic_observation.get("phase") if isinstance(diagnostic_observation, dict) else None,
                         "observation_failure": diagnostic_observation.get("failure") if isinstance(diagnostic_observation, dict) else None,
                         "actions": diagnostic_actions,
