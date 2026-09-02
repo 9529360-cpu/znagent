@@ -192,7 +192,25 @@ class WindowsInteractiveFileDesktopGoalE2ETests(unittest.TestCase):
                         stale_rejected |= "workspace source identity changed after investigation" in failure
                     if result is None: time.sleep(.03)
 
-                self.assertTrue(drifted); self.assertTrue(stale_rejected); self.assertIsNotNone(result)
+                diagnostic_state = resident.store.get_working_state()
+                diagnostic_observation = diagnostic_state.data.get("desktop_task_observation")
+                diagnostic_actions = [
+                    {"kind": action.kind, "success": action.success, "error": action.error}
+                    for action in resident.body.recent_actions(512)
+                    if action.event_id == event.event_id
+                ]
+                self.assertTrue(
+                    drifted,
+                    "source-drift barrier was never reached: "
+                    + json.dumps({
+                        "stage": diagnostic_state.stage,
+                        "next_action": diagnostic_state.next_action,
+                        "observation_phase": diagnostic_observation.get("phase") if isinstance(diagnostic_observation, dict) else None,
+                        "observation_failure": diagnostic_observation.get("failure") if isinstance(diagnostic_observation, dict) else None,
+                        "actions": diagnostic_actions,
+                    }, ensure_ascii=False, sort_keys=True),
+                )
+                self.assertTrue(stale_rejected); self.assertIsNotNone(result)
                 self.assertTrue(result.success, result); self.assertEqual(result.model_invocations, 1); self.assertEqual(proposal.calls, 1)
                 self.assertEqual(app.title(), SUCCESS_TITLE)
                 actions = [a for a in resident.body.recent_actions(512) if a.event_id == event.event_id]
