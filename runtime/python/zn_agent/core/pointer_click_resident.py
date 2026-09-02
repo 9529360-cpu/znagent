@@ -487,6 +487,22 @@ class VerifiedPointerClickResidentRuntime(RepositoryVerifyingResidentRuntime):
     ):
         message = "pointer click precondition failed: " + str(failure or "unknown failure")
         state.data["local_failure"] = message
+        investigation = self.investigator.current(event.event_id)
+        if investigation is not None:
+            investigation.facts = {
+                **dict(investigation.facts or {}),
+                "last_pointer_click_precondition_failure": {
+                    "kind": intent.kind,
+                    "failure": message,
+                    "at": utc_now(),
+                },
+            }
+            investigation.evidence = (
+                *investigation.evidence,
+                message,
+            )[-64:]
+            investigation.updated_at = utc_now()
+            self.investigator._save(investigation)
         self._record_failed_action(
             event,
             state,
