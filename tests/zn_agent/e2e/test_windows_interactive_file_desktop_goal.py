@@ -207,6 +207,8 @@ class WindowsInteractiveFileDesktopGoalE2ETests(unittest.TestCase):
                         "next_action": diagnostic_state.next_action,
                         "result": repr(result),
                         "event_status": str(resident.store.get_event(event.event_id).status),
+                        "failure_records": diagnostic_state.data.get("native_action_failure_records"),
+                        "evidence_fingerprint": resident._evidence_fingerprint(event.event_id),
                         "observation_phase": diagnostic_observation.get("phase") if isinstance(diagnostic_observation, dict) else None,
                         "observation_failure": diagnostic_observation.get("failure") if isinstance(diagnostic_observation, dict) else None,
                         "actions": diagnostic_actions,
