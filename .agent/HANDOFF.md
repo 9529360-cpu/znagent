@@ -47,12 +47,19 @@ submits and verifies the result.
 - Consolidated desktop/negative tests: 13 passed.
 - Existing resident-goal, browser-text and natural-file regression selection:
   17 passed.
-- Full core discovery: 974 tests ran; 973 passed, 7 skipped, and one existing
-  `test_browser_result_file_work` failed by falling through to bounded browser
-  cognition. That failure is outside the new file-to-desktop goal and must not
-  be reported as green. Windows subprocess-reader tests also printed GBK decode
-  exceptions while continuing; CI should determine whether that is runner-local.
-- No remote CI evidence exists yet for `7330e8d9` at this checkpoint.
+- Full core discovery initially exposed one browser-result/file route being
+  consumed by generic browser-language orientation before its existing bounded
+  handler. The branch now bypasses proposal-only browser orientation for that
+  already-typed task and retains its two-source agreement in durable
+  Investigation facts; the repaired regression plus the new desktop scenarios
+  pass locally.
+- Remote run `33652385640` proved Source Boundary and Electron jobs on
+  `43c2fa43`; its Python job predates the browser-result/file repair.
+- Windows clean-install run `33592990443` passed on `43c2fa43`.
+- Windows interactive run `33652390143` executed 18 tests: 14 passed and four
+  existing browser-session/research tests failed (ambiguous visible pages,
+  unstable title, and missing reference visits). It is real non-green evidence,
+  not a runner-allocation failure and not proof of the new desktop task.
 
 ## Next verification
 

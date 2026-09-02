@@ -145,9 +145,7 @@ class BrowserResultFileWorkTests(unittest.TestCase):
                     facts["natural_file_candidate_comparison"]["selected"]["path"],
                     str(target.resolve()),
                 )
-                research_state = resident.store.get_working_state().data.get(
-                    resident._BROWSER_FILE_RESEARCH_STATE_KEY
-                )
+                research_state = facts.get(resident._BROWSER_FILE_RESEARCH_STATE_KEY)
                 self.assertIsInstance(research_state, dict)
                 self.assertEqual(research_state["release_code"], "BUILD-91A7F")
                 self.assertEqual(len(research_state["sources"]), 2)
