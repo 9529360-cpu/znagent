@@ -27,6 +27,20 @@ START_TITLE = "ZN Desktop Order Lookup E2E"
 SUCCESS_TITLE = "ZN 订单记录已打开 #1"
 
 
+def _user32():
+    api = ctypes.WinDLL("user32", use_last_error=True)
+    api.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]; api.ShowWindow.restype = wintypes.BOOL
+    api.BringWindowToTop.argtypes = [wintypes.HWND]; api.BringWindowToTop.restype = wintypes.BOOL
+    api.SetForegroundWindow.argtypes = [wintypes.HWND]; api.SetForegroundWindow.restype = wintypes.BOOL
+    api.GetForegroundWindow.argtypes = []; api.GetForegroundWindow.restype = wintypes.HWND
+    api.GetWindowTextLengthW.argtypes = [wintypes.HWND]; api.GetWindowTextLengthW.restype = ctypes.c_int
+    api.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]; api.GetWindowTextW.restype = ctypes.c_int
+    api.IsWindowVisible.argtypes = [wintypes.HWND]; api.IsWindowVisible.restype = wintypes.BOOL
+    api.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]; api.GetWindowThreadProcessId.restype = wintypes.DWORD
+    api.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]; api.PostMessageW.restype = wintypes.BOOL
+    return api
+
+
 class _Proposal:
     def __init__(self): self.calls = 0
     def invoke(self, *, question: str, context: str) -> CognitiveIncrement:
@@ -69,7 +83,7 @@ class _OrderApp:
         raise RuntimeError("desktop fixture window was not found")
 
     def activate(self):
-        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32 = _user32()
         user32.ShowWindow(self.hwnd, 5)
         user32.BringWindowToTop(self.hwnd)
         user32.SetForegroundWindow(self.hwnd)
@@ -80,7 +94,7 @@ class _OrderApp:
         raise RuntimeError("fixture could not become foreground")
 
     def title(self):
-        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32 = _user32()
         n = user32.GetWindowTextLengthW(self.hwnd)
         buf = ctypes.create_unicode_buffer(max(1, n + 1))
         user32.GetWindowTextW(self.hwnd, buf, len(buf))
@@ -88,7 +102,7 @@ class _OrderApp:
 
     def close(self):
         if self.hwnd:
-            try: ctypes.windll.user32.PostMessageW(self.hwnd, 0x0010, 0, 0)
+            try: _user32().PostMessageW(self.hwnd, 0x0010, 0, 0)
             except Exception: pass
         if self.process:
             try: self.process.wait(timeout=3)
@@ -96,8 +110,9 @@ class _OrderApp:
                 self.process.kill(); self.process.wait(timeout=2)
 
     def _find_window(self):
-        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32 = _user32()
         callback_t = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        user32.EnumWindows.argtypes = [callback_t, wintypes.LPARAM]; user32.EnumWindows.restype = wintypes.BOOL
         matches = []
         @callback_t
         def visit(hwnd, _):
