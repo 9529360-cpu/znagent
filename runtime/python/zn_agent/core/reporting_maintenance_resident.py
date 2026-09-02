@@ -38,123 +38,146 @@ class ReportingMaintenanceResidentRuntime(NaturalFileWorkResidentRuntime):
         self.upstream_bug_report_transport = report_transport
         self._install_upstream_bug_report_outbox()
         self._install_health_report_projection()
+        self._repair_pending_report_projection_best_effort()
+
+    def status(self) -> dict[str, Any]:
+        data = super().status()
+        owner = self.upstream_bug_reports
+        if owner is None:
+            try:
+                owner = self._upstream_bug_report_owner()
+            except (sqlite3.Error, RuntimeError):
+                data["upstream_bug_reports"] = self._unavailable_report_status(
+                    transport_available=self.upstream_bug_report_transport is not None
+                )
+                return data
+        try:
+            snapshot = owner.snapshot()
+        except sqlite3.Error:
+            self.upstream_bug_reports = None
+            data["upstream_bug_reports"] = self._unavailable_report_status(
+                transport_available=self.upstream_bug_report_transport is not None
+            )
+        else:
+            transport_available = self.upstream_bug_report_transport is not None
+            data["upstream_bug_reports"] = {
+                "available": True,
+                "authority": (
+                    "bounded_operator_transport"
+                    if transport_available
+                    else "local_outbox_only"
+                ),
+                "transport_available": transport_available,
+                **snapshot,
+            }
+        return data
+
+    def prepare_upstream_bug_report(self, task_id: str) -> dict[str, Any]:
+        """Prepare/recover the bounded report for one durable maintenance task."""
+
+        task = self._maintenance_task_by_id(task_id)
+        return self._upstream_bug_report_owner().prepare(task)
+
+    def dispatch_upstream_bug_report(self, report_key: str) -> dict[str, Any]:
+        """Explicitly dispatch one pending report through configured operator transport."""
+
+        transport = self.upstream_bug_report_transport
+        if transport is None:
+            raise RuntimeError("upstream bug report transport is not configured")
+        return transport.dispatch(self._upstream_bug_report_owner(), report_key)
+
+    def reconcile_upstream_bug_report(self, report_key: str) -> dict[str, Any]:
+        """Reconcile one uncertain dispatch without blindly replaying it."""
+
+        transport = self.upstream_bug_report_transport
+        if transport is None:
+            raise RuntimeError("upstream bug report transport is not configured")
+        return transport.reconcile(self._upstream_bug_report_owner(), report_key)
 
     def _install_upstream_bug_report_outbox(self) -> None:
         try:
-            self.upstream_bug_reports = ResidentUpstreamBugReportOutbox(self)
-        except Exception as exc:
-            self._record_report_projection_failure(
-                operation="outbox_init",
-                error=exc,
-            )
+            self.upstream_bug_reports = ResidentUpstreamBugReportOutbox(self.store)
+        except sqlite3.Error:
+            self.upstream_bug_reports = None
 
     def _install_health_report_projection(self) -> None:
-        journal = getattr(self, "health", None)
-        subscribe = getattr(journal, "subscribe", None)
-        if journal is None or not callable(subscribe):
+        health = self.health
+        current = getattr(health, "record_failure", None)
+        if not callable(current):
             return
-        try:
-            subscribe(self._project_health_to_upstream_report)
-        except Exception as exc:
-            self._record_report_projection_failure(
-                operation="subscribe",
-                error=exc,
-            )
+        if bool(getattr(health, "_zn_upstream_report_projection_installed", False)):
             return
-        self._repair_health_report_projection()
 
-    def _repair_health_report_projection(self) -> None:
-        journal = getattr(self, "health", None)
-        if journal is None:
-            return
+        record_failure: Callable[..., dict[str, Any]] = current
+
+        def observed_record_failure(organ: str, error: BaseException) -> dict[str, Any]:
+            snapshot = record_failure(organ, error)
+            if bool(snapshot.get("maintenance_candidate")):
+                self._project_health_candidate_best_effort(str(snapshot.get("organ") or organ))
+            return snapshot
+
+        setattr(health, "record_failure", observed_record_failure)
+        setattr(health, "_zn_upstream_report_projection_installed", True)
+
+    def _project_health_candidate_best_effort(self, organ: str) -> None:
         try:
-            tasks = journal.maintenance_tasks(limit=256)
-        except Exception as exc:
-            self._record_report_projection_failure(
-                operation="reconcile_read",
-                error=exc,
-            )
+            task = self.health.maintenance_task(organ)
+            if task is None or str(task.get("status") or "") != "open":
+                return
+            self._upstream_bug_report_owner().prepare(task)
+        except (sqlite3.Error, RuntimeError, ValueError, KeyError):
+            return
+
+    def _repair_pending_report_projection_best_effort(self) -> None:
+        """Rebuild missing report rows from durable open maintenance-task truth."""
+
+        try:
+            tasks = self.health.maintenance_tasks(limit=512).get("tasks") or []
+        except sqlite3.Error:
             return
         for task in tasks:
-            if not isinstance(task, dict):
+            if str(task.get("status") or "") != "open":
                 continue
             try:
-                self._project_health_to_upstream_report(task)
-            except Exception as exc:
-                self._record_report_projection_failure(
-                    operation="reconcile_project",
-                    error=exc,
-                )
+                self._upstream_bug_report_owner().prepare(task)
+            except (sqlite3.Error, RuntimeError, ValueError, KeyError):
+                continue
 
-    def _project_health_to_upstream_report(self, task: dict[str, Any]) -> None:
-        outbox = self.upstream_bug_reports
-        if outbox is None:
-            return
+    def _maintenance_task_by_id(self, task_id: str) -> dict[str, Any]:
+        expected = str(task_id or "").strip()
+        if not expected:
+            raise ValueError("maintenance task id must not be empty")
+        tasks = self.health.maintenance_tasks(limit=512).get("tasks") or []
+        for task in tasks:
+            if str(task.get("task_id") or "") == expected:
+                return task
+        raise KeyError("maintenance task does not exist")
+
+    def _upstream_bug_report_owner(self) -> ResidentUpstreamBugReportOutbox:
+        owner = self.upstream_bug_reports
+        if owner is not None:
+            return owner
         try:
-            outbox.prepare(task)
-        except Exception as exc:
-            self._record_report_projection_failure(
-                operation="prepare",
-                error=exc,
-            )
+            owner = ResidentUpstreamBugReportOutbox(self.store)
+        except sqlite3.Error as exc:
+            raise RuntimeError("upstream bug report outbox is unavailable") from exc
+        self.upstream_bug_reports = owner
+        return owner
 
-    def _record_report_projection_failure(
-        self,
-        *,
-        operation: str,
-        error: BaseException,
-    ) -> None:
-        journal = getattr(self, "health", None)
-        record = getattr(journal, "record_failure", None)
-        if not callable(record):
-            return
-        try:
-            record(
-                organ="upstream_bug_report",
-                failure_kind="projection",
-                error=error,
-                source=f"reporting_maintenance:{operation}",
-            )
-        except Exception:
-            # Health truth is primary. A report projection failure is explicitly
-            # not permitted to replace or roll back the original resident event.
-            pass
-
-    def configure_upstream_bug_report_transport(
-        self,
-        transport: UpstreamBugReportTransport | None,
-    ) -> None:
-        self.upstream_bug_report_transport = transport
-
-    def dispatch_upstream_bug_report(
-        self,
-        report_key: str,
-    ) -> dict[str, Any]:
-        outbox = self.upstream_bug_reports
-        transport = self.upstream_bug_report_transport
-        if outbox is None:
-            raise RuntimeError("upstream bug report outbox is unavailable")
-        if transport is None:
-            raise RuntimeError("upstream bug report transport is not configured")
-        return transport.dispatch(outbox, report_key)
-
-    def reconcile_upstream_bug_report(
-        self,
-        report_key: str,
-    ) -> dict[str, Any]:
-        outbox = self.upstream_bug_reports
-        transport = self.upstream_bug_report_transport
-        if outbox is None:
-            raise RuntimeError("upstream bug report outbox is unavailable")
-        if transport is None:
-            raise RuntimeError("upstream bug report transport is not configured")
-        return transport.reconcile(outbox, report_key)
-
-    def list_upstream_bug_reports(self, limit: int = 64) -> list[dict[str, Any]]:
-        outbox = self.upstream_bug_reports
-        if outbox is None:
-            return []
-        try:
-            return outbox.list_reports(limit=limit)
-        except (OSError, RuntimeError, sqlite3.DatabaseError):
-            return []
+    @staticmethod
+    def _unavailable_report_status(*, transport_available: bool) -> dict[str, Any]:
+        return {
+            "available": False,
+            "authority": (
+                "bounded_operator_transport"
+                if transport_available
+                else "local_outbox_only"
+            ),
+            "transport_available": transport_available,
+            "report_count": 0,
+            "pending_count": 0,
+            "outcome_uncertain_count": 0,
+            "returned_count": 0,
+            "truncated": False,
+            "reports": [],
+        }
