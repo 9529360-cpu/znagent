@@ -63,15 +63,13 @@ class DesktopGoalEvidenceGuardTests(unittest.TestCase):
                     expected_outcome={"kind": resident._DESKTOP_EDIT_FOCUS_KIND},
                 )
 
-                first = resident._evidence_fingerprint(event.event_id)
-                resident._record_failed_action(
+                resident._fail_pointer_click_precondition(
                     event,
                     state,
                     intent,
-                    source="precondition",
-                    failure="target was not ready",
+                    "target was not ready",
                 )
-                resident.store.save_working_state(state)
+                first = resident._evidence_fingerprint(event.event_id)
                 self.assertTrue(
                     resident._action_blocked_by_current_evidence(event, state, intent)
                 )
