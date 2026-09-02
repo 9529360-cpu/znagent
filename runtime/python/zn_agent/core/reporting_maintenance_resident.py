@@ -10,8 +10,9 @@ repository, push, PR, merge, release, updater, signing, or credential authority.
 """
 
 import sqlite3
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
+from .desktop_task_goal import desktop_task_request
 from .natural_file_work_resident import NaturalFileWorkResidentRuntime
 from .upstream_bug_report import ResidentUpstreamBugReportOutbox
 from .upstream_bug_report_transport import UpstreamBugReportTransport
@@ -29,16 +30,37 @@ class ReportingMaintenanceResidentRuntime(NaturalFileWorkResidentRuntime):
         report_transport: UpstreamBugReportTransport | None = None,
     ):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
-        # Browser form/text composition installs the final browser-aware Body after
-        # the inherited HealthAwareResidentRuntime observed an earlier Body. Re-bind
-        # health to the actual final active Body before report projection so native
-        # Body failures remain durable health truth.
         self._install_body_dispatch_health_observer()
         self.upstream_bug_reports: ResidentUpstreamBugReportOutbox | None = None
         self.upstream_bug_report_transport = report_transport
         self._install_upstream_bug_report_outbox()
         self._install_health_report_projection()
         self._repair_pending_report_projection_best_effort()
+
+    def _investigation_step(
+        self,
+        event,
+        state,
+        *,
+        readiness,
+        learning_evidence,
+        thought=None,
+    ):
+        goal = desktop_task_request(event)
+        if isinstance(goal, Mapping) or self._natural_browser_result_file_request(event) is not None:
+            state.stage = "native_deliberation"
+            state.next_action = "ground the composite work against fresh source and destination evidence"
+            state.data.pop("local_failure", None)
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return None
+        return super()._investigation_step(
+            event,
+            state,
+            readiness=readiness,
+            learning_evidence=learning_evidence,
+            thought=thought,
+        )
 
     def status(self) -> dict[str, Any]:
         data = super().status()
@@ -62,33 +84,23 @@ class ReportingMaintenanceResidentRuntime(NaturalFileWorkResidentRuntime):
             transport_available = self.upstream_bug_report_transport is not None
             data["upstream_bug_reports"] = {
                 "available": True,
-                "authority": (
-                    "bounded_operator_transport"
-                    if transport_available
-                    else "local_outbox_only"
-                ),
+                "authority": "bounded_operator_transport" if transport_available else "local_outbox_only",
                 "transport_available": transport_available,
                 **snapshot,
             }
         return data
 
     def prepare_upstream_bug_report(self, task_id: str) -> dict[str, Any]:
-        """Prepare/recover the bounded report for one durable maintenance task."""
-
         task = self._maintenance_task_by_id(task_id)
         return self._upstream_bug_report_owner().prepare(task)
 
     def dispatch_upstream_bug_report(self, report_key: str) -> dict[str, Any]:
-        """Explicitly dispatch one pending report through configured operator transport."""
-
         transport = self.upstream_bug_report_transport
         if transport is None:
             raise RuntimeError("upstream bug report transport is not configured")
         return transport.dispatch(self._upstream_bug_report_owner(), report_key)
 
     def reconcile_upstream_bug_report(self, report_key: str) -> dict[str, Any]:
-        """Reconcile one uncertain dispatch without blindly replaying it."""
-
         transport = self.upstream_bug_report_transport
         if transport is None:
             raise RuntimeError("upstream bug report transport is not configured")
@@ -107,7 +119,6 @@ class ReportingMaintenanceResidentRuntime(NaturalFileWorkResidentRuntime):
             return
         if bool(getattr(health, "_zn_upstream_report_projection_installed", False)):
             return
-
         record_failure: Callable[..., dict[str, Any]] = current
 
         def observed_record_failure(organ: str, error: BaseException) -> dict[str, Any]:
@@ -129,8 +140,6 @@ class ReportingMaintenanceResidentRuntime(NaturalFileWorkResidentRuntime):
             return
 
     def _repair_pending_report_projection_best_effort(self) -> None:
-        """Rebuild missing report rows from durable open maintenance-task truth."""
-
         try:
             tasks = self.health.maintenance_tasks(limit=512).get("tasks") or []
         except sqlite3.Error:
@@ -168,11 +177,7 @@ class ReportingMaintenanceResidentRuntime(NaturalFileWorkResidentRuntime):
     def _unavailable_report_status(*, transport_available: bool) -> dict[str, Any]:
         return {
             "available": False,
-            "authority": (
-                "bounded_operator_transport"
-                if transport_available
-                else "local_outbox_only"
-            ),
+            "authority": "bounded_operator_transport" if transport_available else "local_outbox_only",
             "transport_available": transport_available,
             "report_count": 0,
             "pending_count": 0,
