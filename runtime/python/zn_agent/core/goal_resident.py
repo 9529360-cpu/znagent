@@ -9,6 +9,8 @@ deciding what to do next. It deliberately owns no generic planner and stores no
 replayable action sequence.
 """
 
+import hashlib
+import json
 import uuid
 from dataclasses import asdict, replace
 from typing import Any
@@ -53,6 +55,31 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
         self.browser_named_target = NativeBrowserNamedTargetSense()
         self.named_automation_control = NativeNamedAutomationControlSense()
+
+    def _evidence_fingerprint(self, event_id: str) -> str:
+        """Bind desktop retries to stable fresh task observations as well as Investigation."""
+
+        base = super()._evidence_fingerprint(event_id)
+        state = self.store.get_working_state()
+        observation = (
+            state.data.get(self._DESKTOP_TASK_OBSERVATION_KEY)
+            if state.current_event_id == event_id
+            else None
+        )
+        if not isinstance(observation, dict):
+            return base
+        stable_observation = self._stable_fact_value(observation)
+        encoded = json.dumps(
+            {
+                "investigation": base,
+                "desktop_task_observation": stable_observation,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
 
     def _investigation_step(
         self,
