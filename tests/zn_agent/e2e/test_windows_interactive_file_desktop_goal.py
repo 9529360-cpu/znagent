@@ -178,7 +178,7 @@ class WindowsInteractiveFileDesktopGoalE2ETests(unittest.TestCase):
                 _, event = ledger.start(thread, TASK, payload={"model_policy":"on_demand"})
                 self.assertIsNone(explicit_desktop_task_goal_hint(event))
 
-                result = None; drifted = False; stale_rejected = False
+                result = None; drifted = False; stale_rejected = False; first_failure = None
                 deadline = time.monotonic() + 35
                 while time.monotonic() < deadline and result is None:
                     state = resident.store.get_working_state(); intent = state.data.get("native_action_intent")
@@ -186,6 +186,24 @@ class WindowsInteractiveFileDesktopGoalE2ETests(unittest.TestCase):
                     if not drifted and isinstance(intent, dict) and intent.get("kind") == "keyboard_text" and not any(a.kind == "keyboard_text" for a in actions):
                         source.write_text(NEW_VALUE, encoding="utf-8"); self._yesterday(source); drifted = True
                     app.activate(); current = resident.live_once()
+                    pulse_state = resident.store.get_working_state()
+                    if first_failure is None and pulse_state.current_event_id == event.event_id:
+                        local_failure = str(pulse_state.data.get("local_failure") or "")
+                        records = list(pulse_state.data.get("native_action_failure_records") or [])
+                        terminal = pulse_state.data.get("terminal_failure")
+                        if local_failure or records or isinstance(terminal, dict):
+                            pulse_intent = pulse_state.data.get("native_action_intent")
+                            first_failure = {
+                                "stage": pulse_state.stage,
+                                "next_action": pulse_state.next_action,
+                                "local_failure": local_failure or None,
+                                "intent_kind": pulse_intent.get("kind") if isinstance(pulse_intent, dict) else None,
+                                "failure_records": records[-2:],
+                                "pointer_precondition": pulse_state.data.get("native_pointer_click_precondition"),
+                                "semantic_precondition": pulse_state.data.get("native_pointer_click_semantic_precondition"),
+                                "automation_target": pulse_state.data.get("native_pointer_click_automation_target"),
+                                "terminal_failure": terminal,
+                            }
                     if current is not None and current.event.event_id == event.event_id: result = current
                     if drifted and not any(a.kind == "keyboard_text" for a in resident.body.recent_actions(256) if a.event_id == event.event_id):
                         failure = str(resident.store.get_working_state().data.get("local_failure") or "")
@@ -193,7 +211,8 @@ class WindowsInteractiveFileDesktopGoalE2ETests(unittest.TestCase):
                     if result is None: time.sleep(.03)
 
                 diagnostic_state = resident.store.get_working_state()
-                diagnostic_observation = diagnostic_state.data.get("desktop_task_observation")
+                observation_key = getattr(resident, "_DESKTOP_TASK_OBSERVATION_KEY", "resident_desktop_task_observation")
+                diagnostic_observation = diagnostic_state.data.get(observation_key)
                 diagnostic_actions = [
                     {"kind": action.kind, "success": action.success, "error": action.error}
                     for action in resident.body.recent_actions(512)
@@ -208,11 +227,12 @@ class WindowsInteractiveFileDesktopGoalE2ETests(unittest.TestCase):
                         "result": repr(result),
                         "event_status": str(resident.store.get_event(event.event_id).status),
                         "failure_records": diagnostic_state.data.get("native_action_failure_records"),
+                        "first_failure": first_failure,
                         "evidence_fingerprint": resident._evidence_fingerprint(event.event_id),
                         "observation_phase": diagnostic_observation.get("phase") if isinstance(diagnostic_observation, dict) else None,
                         "observation_failure": diagnostic_observation.get("failure") if isinstance(diagnostic_observation, dict) else None,
                         "actions": diagnostic_actions,
-                    }, ensure_ascii=False, sort_keys=True),
+                    }, ensure_ascii=False, sort_keys=True, default=str),
                 )
                 self.assertTrue(stale_rejected); self.assertIsNotNone(result)
                 self.assertTrue(result.success, result); self.assertEqual(result.model_invocations, 1); self.assertEqual(proposal.calls, 1)
