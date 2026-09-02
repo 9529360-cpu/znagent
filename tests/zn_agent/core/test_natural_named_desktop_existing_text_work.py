@@ -38,10 +38,13 @@ class NaturalNamedDesktopExistingTextWorkTests(unittest.TestCase):
                 self.assertGreaterEqual(controls.edit_calls, 3)
                 self.assertGreaterEqual(controls.button_calls, 2)
 
-                state = resident.store.get_working_state()
-                progress = state.data.get(resident._DESKTOP_SUBMIT_STATE_KEY) or {}
-                self.assertTrue(progress.get("typed_verified"))
-                self.assertFalse(progress.get("input_sent"))
+                actions = [
+                    item
+                    for item in reversed(resident.body.recent_actions(512))
+                    if item.event_id == run.event.event_id
+                ]
+                self.assertEqual(sum(item.kind == "keyboard_text" for item in actions), 0)
+                self.assertEqual(sum(item.kind == "pointer_click" for item in actions), 2)
                 final = resident.store.get_event_outcome(run.event.event_id)
                 self.assertIsNotNone(final)
                 self.assertTrue(final.success)

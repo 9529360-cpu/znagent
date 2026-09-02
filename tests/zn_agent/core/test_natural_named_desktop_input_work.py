@@ -16,9 +16,7 @@ from zn_agent.core.body import BodyAction
 from zn_agent.core.foreground_window_sense import ForegroundWindowObservation
 from zn_agent.core.keyboard_text_body import KeyboardTextBody
 from zn_agent.core.models import utc_now
-from zn_agent.core.natural_named_desktop_input_resident import (
-    NaturalNamedDesktopInputResidentRuntime,
-)
+from zn_agent.core.goal_resident import ResidentGoalRuntime
 from zn_agent.core.provider_bridge import build_resident_runtime
 from zn_agent.core.recovery_bounded_work import RecoveryBoundedWorkLedger
 from zn_agent.core.visual_region_sense import VisualRegionObservation
@@ -354,7 +352,7 @@ class NaturalNamedDesktopInputWorkTests(unittest.TestCase):
                 "named-input",
             )
             try:
-                self.assertIsInstance(resident, NaturalNamedDesktopInputResidentRuntime)
+                self.assertIsInstance(resident, ResidentGoalRuntime)
                 self.assertNotEqual(world.focused_runtime, _EDIT_RUNTIME)
 
                 snapshot, run = ledger.submit("named-input", TASK)
@@ -411,6 +409,80 @@ class NaturalNamedDesktopInputWorkTests(unittest.TestCase):
                 self.assertIn("safe named desktop input", run.reason)
             finally:
                 resident.store.close()
+
+    def test_ambiguous_workspace_source_stops_before_desktop_side_effects(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            workspace = base / "authorized"
+            workspace.mkdir()
+            (workspace / "账号-A.txt").write_text("A-100", encoding="utf-8")
+            (workspace / "账号-B.txt").write_text("B-200", encoding="utf-8")
+            resident, _, body, controls, ledger = self._setup(
+                base,
+                workspace,
+                "ambiguous-desktop-source",
+            )
+            try:
+                _, run = ledger.submit(
+                    "ambiguous-desktop-source",
+                    "把文件里的账号填进账号输入框，然后点查询。",
+                )
+                self.assertFalse(run.success)
+                self.assertEqual(body.focus_click_count, 0)
+                self.assertEqual(body.keyboard_calls, [])
+                self.assertEqual(body.submit_click_count, 0)
+                self.assertEqual(controls.edit_calls, 0)
+                self.assertIn("ambiguous", run.reason)
+            finally:
+                resident.store.close()
+
+    def test_three_user_phrasings_share_the_same_resident_goal_path(self) -> None:
+        scenarios = (
+            (
+                "把文件里的账号填进账号输入框，然后点查询。",
+                "账号资料.txt",
+                "ACCT-901",
+                False,
+            ),
+            (
+                "把文件里的订单号填进当前软件的订单搜索框，然后打开结果。",
+                "订单编号.txt",
+                "ORDER-2207",
+                False,
+            ),
+            (
+                "找到昨天那份订单资料，把订单编号填到当前程序对应的搜索框，提交后确认结果已经打开。",
+                "订单资料.txt",
+                "ORDER-3308",
+                True,
+            ),
+        )
+        for index, (task, filename, value, yesterday) in enumerate(scenarios):
+            with self.subTest(task=task), tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp)
+                workspace = base / "authorized"
+                workspace.mkdir()
+                target = workspace / filename
+                target.write_text(value, encoding="utf-8")
+                if yesterday:
+                    self._stamp_yesterday(target)
+                resident, world, body, controls, ledger = self._setup(
+                    base,
+                    workspace,
+                    f"shared-desktop-goal-{index}",
+                )
+                try:
+                    _, run = ledger.submit(f"shared-desktop-goal-{index}", task)
+                    self.assertTrue(run.success, run)
+                    self.assertIsInstance(resident, ResidentGoalRuntime)
+                    self.assertEqual(body.keyboard_calls, [value])
+                    self.assertEqual(body.focus_click_count, 1)
+                    self.assertEqual(body.submit_click_count, 1)
+                    self.assertEqual(world.title, "查询结果")
+                    self.assertGreaterEqual(controls.edit_calls, 3)
+                    self.assertGreaterEqual(controls.button_calls, 2)
+                finally:
+                    resident.store.close()
 
 
 if __name__ == "__main__":
