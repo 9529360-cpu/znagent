@@ -385,7 +385,12 @@ class ZNResidentRuntime:
         state.current_event_id = event.event_id
         state.stage = "terminal_failure"
         state.next_action = "publish terminal EventOutcome"
-        state.data["terminal_failure"] = completion
+        state.data["terminal_failure"] = {
+            **completion,
+            "native_action_failure_records": list(
+                state.data.get("native_action_failure_records") or []
+            )[-8:],
+        }
         self.store.save_working_state(state)
         self._resident_accounting_journal().record_terminal_failure(
             event_id=event.event_id,
