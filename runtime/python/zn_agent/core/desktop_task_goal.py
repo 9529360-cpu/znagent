@@ -35,13 +35,23 @@ _DESTINATION_RE = re.compile(
     r"(?:(?:当前(?:打开的)?|已打开的)(?:软件|程序)(?:对应的|里的|里|的)?|当前程序对应的)?\s*"
     r"(?P<name>[A-Za-z0-9_\-\u4e00-\u9fff]{0,32}?)(?P<role>输入框|文本框|搜索框|字段)"
 )
+_NAMED_DESTINATION_PATTERNS = (
+    re.compile(
+        r"(?:找到|使用|选择)?\s*(?P<role>输入框|文本框|字段)\s*[\"“'‘]"
+        r"(?P<name>[^\"”'’‘，,。；;\r\n]{1,160})[\"”'’]"
+    ),
+    re.compile(
+        r"[\"“'‘](?P<name>[^\"”'’‘，,。；;\r\n]{1,160})[\"”'’]\s*"
+        r"(?P<role>输入框|文本框|字段)"
+    ),
+)
 _SUBMIT_RE = re.compile(
     r"^(?:点|点击|按下|选择)?\s*(?:按钮)?\s*[\"“'‘]?"
     r"(?P<name>[A-Za-z0-9_\-\u4e00-\u9fff]{1,32}?)[\"”'’]?"
     r"(?=后|并|，|,|。|；|;|$)"
 )
 _VALUE_BEFORE_DESTINATION_RE = re.compile(
-    r"把\s*(?P<name>[A-Za-z0-9_\-\u4e00-\u9fff]{1,48}?)\s*(?:填|输入|写|放)(?:到|进|入)?"
+    r"把\s*(?P<name>[^，,。；;\r\n]{1,64}?)\s*(?:填|输入|写|放)(?:到|进|入)?"
 )
 _SOURCE_HINT_RE = re.compile(
     r"名字(?:里)?(?:像|包含|带有|带)\s*[\"“'‘]?(?P<hint>[^\"”'’‘，,。；;\r\n]{1,64}?)[\"”'’]?\s*"
@@ -52,10 +62,11 @@ _YESTERDAY_HINT_RE = re.compile(
     r"昨天(?:那份|那个|的)?(?P<hint>[A-Za-z0-9_\-\u4e00-\u9fff]{1,32}?)(?:资料|文件|txt)"
 )
 _FINAL_TITLE_RE = re.compile(
-    r"(?:窗口|软件|界面)(?:变成|变为|显示为|显示)\s*[\"“'‘]?"
+    r"(?:窗口|软件|界面)(?:标题)?\s*(?:会)?\s*(?:变成|变为|显示为|显示成|显示)\s*[\"“'‘]?"
     r"(?P<title>[^\"”'’‘，,。；;\r\n]{1,160}?)[\"”'’]?"
     r"(?=后|并|，|,|。|；|;|确认|$)"
 )
+_FILL_CUE_RE = re.compile(r"(?:填|输入|写|放)(?:到|进|入)?")
 
 
 def desktop_task_request(event: "AgentEvent") -> dict[str, Any] | None:
@@ -74,31 +85,31 @@ def desktop_task_request(event: "AgentEvent") -> dict[str, Any] | None:
     if isinstance(proposed, Mapping):
         return _validated_proposal(task, payload, proposed)
 
-    workspace = str(payload.get("workspace_path") or "").strip()
-    if not workspace or not any(token in task for token in ("文件", "资料", "txt")):
+    source_requirement = _natural_source_requirement(task, payload)
+    if source_requirement is None:
         return None
-    destination = _DESTINATION_RE.search(task)
+    destination = _natural_destination(task)
     if destination is None:
         return None
 
-    value_name = _value_semantic_name(task)
-    raw_target_name = _clean_semantic(destination.group("name"))
+    value_name = str(source_requirement.get("value_semantic_name") or "").strip()
+    raw_target_name = _clean_semantic(destination["name"])
     target_name = _input_semantic_name(
         raw_target_name,
-        destination.group("role"),
+        destination["role"],
         value_name=value_name,
     )
     target_binding = "exact_name" if target_name else "focused_safe_edit"
 
-    tail = task[destination.end() :]
-    submit_name = _submit_name(tail)
+    fill_matches = list(_FILL_CUE_RE.finditer(task))
+    tail_start = max(
+        int(destination["end"]),
+        max((match.end() for match in fill_matches), default=int(destination["end"])),
+    )
+    submit_name = _submit_name(task[tail_start:])
     final_title = _final_title(task)
     if final_title and not submit_name:
         return None
-
-    hint_match = _SOURCE_HINT_RE.search(task) or _YESTERDAY_HINT_RE.search(task)
-    hint = _clean_semantic(hint_match.group("hint")) if hint_match else None
-    modified_day = "yesterday" if "昨天" in task else None
 
     if submit_name:
         expected_final_state = (
@@ -111,19 +122,83 @@ def desktop_task_request(event: "AgentEvent") -> dict[str, Any] | None:
 
     return {
         "kind": "desktop_value_task",
-        "source_requirement": {
-            "kind": "workspace_file",
-            "workspace_path": workspace,
-            "name_hint": hint,
-            "modified_day": modified_day,
-            "value_semantic_name": value_name or "file_text",
-        },
+        "source_requirement": source_requirement,
         "destination_app_scope": {"kind": "current_foreground_non_browser"},
         "target_input_binding": target_binding,
         "target_input_semantic_name": target_name,
         "submit_control_semantic_name": submit_name,
         "expected_final_state": expected_final_state,
     }
+
+
+def _natural_source_requirement(
+    task: str,
+    payload: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    workspace = str(payload.get("workspace_path") or "").strip()
+    if workspace and any(token in task for token in ("文件", "资料", "txt")):
+        hint_match = _SOURCE_HINT_RE.search(task) or _YESTERDAY_HINT_RE.search(task)
+        hint = _clean_semantic(hint_match.group("hint")) if hint_match else None
+        return {
+            "kind": "workspace_file",
+            "workspace_path": workspace,
+            "name_hint": hint,
+            "modified_day": "yesterday" if "昨天" in task else None,
+            "value_semantic_name": _value_semantic_name(task) or "file_text",
+        }
+
+    lowered = task.lower()
+    current_page = any(
+        cue in lowered
+        for cue in ("current browser page", "current page", "authorized page")
+    ) or any(
+        cue in task
+        for cue in ("当前浏览器页面", "当前页面", "已授权的当前浏览器", "已授权页面")
+    )
+    references = "reference" in lowered or "参考" in task
+    agreement = any(cue in lowered for cue in ("agree", "same", "consistent")) or any(
+        cue in task for cue in ("一致", "相同", "共同")
+    )
+    release_code = bool(
+        "release code" in lowered
+        or ("release" in lowered and "code" in lowered)
+        or "发布代码" in task
+        or "发行代码" in task
+    )
+    if current_page and references and agreement and release_code:
+        return {
+            "kind": "managed_browser_research",
+            "value_semantic_name": "release code",
+            "require_two_sources": True,
+        }
+    return None
+
+
+def _natural_destination(task: str) -> dict[str, Any] | None:
+    direct = _DESTINATION_RE.search(task)
+    if direct is not None:
+        return {
+            "name": direct.group("name"),
+            "role": direct.group("role"),
+            "start": direct.start(),
+            "end": direct.end(),
+        }
+    if not _FILL_CUE_RE.search(task):
+        return None
+    matches: list[dict[str, Any]] = []
+    for pattern in _NAMED_DESTINATION_PATTERNS:
+        for match in pattern.finditer(task):
+            item = {
+                "name": match.group("name"),
+                "role": match.group("role"),
+                "start": match.start(),
+                "end": match.end(),
+            }
+            if item not in matches:
+                matches.append(item)
+    if len(matches) != 1:
+        return None
+    return matches[0]
 
 
 def _validated_proposal(
@@ -239,6 +314,8 @@ def _value_semantic_name(task: str) -> str:
         "资料中的",
         "资料里",
         "里面的",
+        "查到的",
+        "确认的",
     ):
         if value.startswith(prefix):
             value = value[len(prefix) :]
@@ -265,7 +342,7 @@ def _base_value_semantic(value: str) -> str:
 
 
 def _submit_name(tail: str) -> str | None:
-    text = str(tail or "").lstrip("里中内 ，,；;")
+    text = str(tail or "").lstrip("里中内去 ，,；;")
     if not text:
         return None
     for marker in ("然后", "再", "随后", "并且"):
