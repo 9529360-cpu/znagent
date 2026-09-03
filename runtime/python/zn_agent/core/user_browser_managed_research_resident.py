@@ -27,6 +27,15 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
     """Research A-page references, then reuse the guarded USER form-submit path."""
 
     _MANAGED_RESEARCH_STATE_KEY = "resident_user_browser_managed_reference_research"
+    _USER_BROWSER_TASK_CONTEXT_KEY = "resident_user_browser_task_context"
+    _USER_BROWSER_TASK_CONTEXT_EVENT_KEY = "_resident_user_browser_task_context"
+    _USER_BROWSER_CONTEXT_ACTIONS = frozenset(
+        {
+            "browser_type_named_text",
+            "browser_click_named_button_to_url",
+            "browser_fill_named_text_and_click_named_button_to_url",
+        }
+    )
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
@@ -75,6 +84,141 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
             return ("browser",)
         return super()._required_capabilities(event)
 
+    def _semantic_lookup_investigation(self, event, state, *, readiness, thought=None):
+        try:
+            self._ensure_user_browser_task_context(event, state)
+        except Exception as exc:
+            return self._fail_composite_goal_investigation(
+                event,
+                state,
+                reason=f"authorized browser task context was lost before fresh Sense: {type(exc).__name__}: {exc}",
+            )
+        return super()._semantic_lookup_investigation(
+            event,
+            state,
+            readiness=readiness,
+            thought=thought,
+        )
+
+    def _semantic_lookup_deliberation(self, event, state, *, readiness, thought=None):
+        try:
+            self._ensure_user_browser_task_context(event, state)
+        except Exception as exc:
+            return self._fail_composite_goal_investigation(
+                event,
+                state,
+                reason=f"authorized browser task context was lost before action: {type(exc).__name__}: {exc}",
+            )
+        return super()._semantic_lookup_deliberation(
+            event,
+            state,
+            readiness=readiness,
+            thought=thought,
+        )
+
+    def _begin_native_action_cycle(self, event, state, intent):
+        context = state.data.get(self._USER_BROWSER_TASK_CONTEXT_KEY)
+        if (
+            isinstance(context, dict)
+            and str(intent.kind or "").strip().lower() in self._USER_BROWSER_CONTEXT_ACTIONS
+        ):
+            args = dict(intent.args or {})
+            args["authorized_tab_id"] = int(context["tab_id"])
+            args["authorization_attached_at"] = str(context["attached_at"])
+            intent = NativeActionIntent(
+                intent_id=intent.intent_id,
+                event_id=intent.event_id,
+                kind=intent.kind,
+                args=args,
+                expected_outcome=(
+                    dict(intent.expected_outcome)
+                    if isinstance(intent.expected_outcome, dict)
+                    else intent.expected_outcome
+                ),
+                reason=intent.reason,
+                source=intent.source,
+                created_at=intent.created_at,
+            )
+        return super()._begin_native_action_cycle(event, state, intent)
+
+    def _ensure_user_browser_task_context(self, event, state) -> dict[str, Any]:
+        raw = state.data.get(self._USER_BROWSER_TASK_CONTEXT_KEY)
+        if not isinstance(raw, dict):
+            raw = (event.payload or {}).get(self._USER_BROWSER_TASK_CONTEXT_EVENT_KEY)
+        current = self.user_browser_extension.authorized_tab()
+        if current is None:
+            raise UserBrowserExtensionRelayError(
+                "the browser tab explicitly authorized for this task is no longer available"
+            )
+
+        if isinstance(raw, dict):
+            try:
+                expected_tab_id = int(raw.get("tab_id"))
+            except (TypeError, ValueError) as exc:
+                raise UserBrowserExtensionRelayError(
+                    "stored browser task context has invalid tab identity"
+                ) from exc
+            expected_attached_at = str(raw.get("attached_at") or "").strip()
+            expected_origin = str(raw.get("origin") or "").strip()
+            if (
+                expected_tab_id != current.tab_id
+                or not expected_attached_at
+                or expected_attached_at != current.attached_at
+            ):
+                raise UserBrowserExtensionRelayError(
+                    "current browser authorization is not the authorization that owns this Work"
+                )
+            fresh = self.probe_user_browser_extension_tab()
+            after = self.user_browser_extension.authorized_tab()
+            if (
+                after is None
+                or after.tab_id != expected_tab_id
+                or after.attached_at != expected_attached_at
+                or int(fresh.get("tab_id") or 0) != expected_tab_id
+            ):
+                raise UserBrowserExtensionRelayError(
+                    "browser task authorization changed while fresh context evidence was being observed"
+                )
+            fresh_origin = self._origin_url(str(fresh.get("url") or ""))
+            if expected_origin and fresh_origin != expected_origin:
+                raise UserBrowserExtensionRelayError(
+                    "authorized browser task context left its original origin"
+                )
+            context = {
+                "tab_id": expected_tab_id,
+                "attached_at": expected_attached_at,
+                "origin": expected_origin or fresh_origin,
+                "initial_url": str(raw.get("initial_url") or fresh.get("url") or ""),
+            }
+        else:
+            before_tab_id = current.tab_id
+            before_attached_at = current.attached_at
+            fresh = self.probe_user_browser_extension_tab()
+            after = self.user_browser_extension.authorized_tab()
+            if (
+                after is None
+                or after.tab_id != before_tab_id
+                or after.attached_at != before_attached_at
+                or int(fresh.get("tab_id") or 0) != before_tab_id
+            ):
+                raise UserBrowserExtensionRelayError(
+                    "browser authorization changed while the Work was binding its task context"
+                )
+            context = {
+                "tab_id": before_tab_id,
+                "attached_at": before_attached_at,
+                "origin": self._origin_url(str(fresh.get("url") or "")),
+                "initial_url": str(fresh.get("url") or ""),
+            }
+
+        state.data[self._USER_BROWSER_TASK_CONTEXT_KEY] = dict(context)
+        event.payload = dict(event.payload or {})
+        event.payload[self._USER_BROWSER_TASK_CONTEXT_EVENT_KEY] = dict(context)
+        self.store._save_event(event)
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        return context
+
     def _investigation_step(self, event, state, *, readiness, learning_evidence, thought=None):
         if not self._natural_managed_reference_search(event):
             return super()._investigation_step(
@@ -84,6 +228,14 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
                 learning_evidence=learning_evidence,
                 thought=thought,
             )
+        try:
+            self._ensure_user_browser_task_context(event, state)
+        except Exception as exc:
+            return self._fail_composite_goal_investigation(
+                event,
+                state,
+                reason=f"reference research lost its explicitly authorized browser task context: {type(exc).__name__}: {exc}",
+            )
         existing = state.data.get(self._MANAGED_RESEARCH_STATE_KEY)
         if isinstance(existing, dict) and existing.get("release_code") and existing.get("search"):
             state.stage = "native_deliberation"
@@ -91,12 +243,6 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
             self._sync_execution_context(event, state)
             self.store.save_working_state(state)
             return None
-        if self.user_browser_extension.authorized_tab() is None:
-            return self._fail_composite_goal_investigation(
-                event,
-                state,
-                reason="reference research requires one current browser tab explicitly authorized through the ZN browser bridge",
-            )
         try:
             initial = self._discover_authorized_reference_context()
             references = self._rank_reference_candidates(initial.get("references"))
@@ -104,9 +250,11 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
                 raise UserBrowserExtensionRelayError("the authorized page did not expose at least two bounded reference candidates")
             research = self._research_managed_references(references)
             code = str(research["release_code"])
+            self._ensure_user_browser_task_context(event, state)
             self._adopt_authorized_extension_browser()
             fresh_search = self._discover_unique_search_form(code)
             fresh_tab = self.probe_user_browser_extension_tab()
+            self._ensure_user_browser_task_context(event, state)
         except Exception as exc:
             if self.managed_browser is self._extension_user_browser:
                 try:
@@ -169,6 +317,14 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
                 learning_evidence=learning_evidence,
                 thought=thought,
             )
+        try:
+            self._ensure_user_browser_task_context(event, state)
+        except Exception as exc:
+            return self._fail_composite_goal_investigation(
+                event,
+                state,
+                reason=f"the explicitly authorized browser task context is no longer available: {type(exc).__name__}: {exc}",
+            )
         evidence = state.data.get(self._MANAGED_RESEARCH_STATE_KEY)
         if not isinstance(evidence, dict):
             state.stage = "native_investigation"
@@ -184,12 +340,6 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
             self._sync_execution_context(event, state)
             self.store.save_working_state(state)
             return None
-        if self.user_browser_extension.authorized_tab() is None:
-            return self._fail_composite_goal_investigation(
-                event,
-                state,
-                reason="the explicitly authorized current browser tab is no longer available",
-            )
         self._adopt_authorized_extension_browser()
         intent = NativeActionIntent(
             intent_id=f"browser-managed-research-search-{event.event_id}",
@@ -228,6 +378,8 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
                 "probe_current_tab",
                 args={"discover_reference_context": True},
                 timeout_seconds=5.0,
+                expected_tab_id=authorized.tab_id,
+                expected_attached_at=authorized.attached_at,
             )
             if command.get("success") is not True:
                 raise UserBrowserExtensionRelayError(str(command.get("error") or "authorized-page reference discovery failed"))
