@@ -10,6 +10,7 @@ foreground application, UI Automation target, side-effect state and completion
 from fresh evidence.
 """
 
+import hashlib
 import json
 from typing import Any
 
@@ -39,6 +40,8 @@ _UNDERSTANDING_KEY = "_resident_goal_understanding"
 _BROWSER_SEMANTIC_GOAL_KEY = "_resident_user_browser_semantic_goal"
 _BROWSER_SEMANTIC_LOOKUP_KIND = "user_browser_semantic_lookup"
 _DESKTOP_SEMANTIC_GOAL_KEY = "_resident_desktop_semantic_goal"
+_DESKTOP_SEMANTIC_REGROUND_KEY = "resident_desktop_semantic_reground"
+_MAX_DESKTOP_SEMANTIC_REGROUNDS = 3
 _MAX_DESKTOP_LANGUAGE_CHARS = 1600
 _YESTERDAY_CUES = ("昨天", "昨日", "yesterday")
 _BROWSER_PROCESSES = {
@@ -274,6 +277,16 @@ def _validated_desktop_grounding_selection(
     return input_name, button_name
 
 
+def _desktop_semantic_goal(event) -> dict[str, Any] | None:
+    raw = (event.payload or {}).get(_DESKTOP_SEMANTIC_GOAL_KEY)
+    if not isinstance(raw, dict):
+        return None
+    return _validated_desktop_goal_proposal(
+        str(event.task or ""),
+        json.dumps(raw, ensure_ascii=False, sort_keys=True),
+    )
+
+
 class BrowserGoalUnderstandingResidentRuntime(ResidentGoalRuntime):
     """Use a model only to propose desired state; keep execution resident-owned."""
 
@@ -416,6 +429,268 @@ class BrowserGoalUnderstandingResidentRuntime(ResidentGoalRuntime):
             known=known,
         )
         return None
+
+    def _desktop_task_investigation(
+        self,
+        event,
+        state,
+        *,
+        readiness,
+        thought=None,
+    ):
+        """Keep semantic desktop intent when exact accessible names drift at runtime."""
+
+        goal = desktop_task_goal(event)
+        semantic_goal = _desktop_semantic_goal(event)
+        progress = state.data.get(self._DESKTOP_TASK_PROGRESS_KEY)
+        if (
+            goal is None
+            or semantic_goal is None
+            or (isinstance(progress, dict) and progress.get("submit_dispatched") is True)
+        ):
+            return super()._desktop_task_investigation(
+                event,
+                state,
+                readiness=readiness,
+                thought=thought,
+            )
+
+        foreground, _foreground_error = self._probe_foreground_window()
+        if foreground is None:
+            return super()._desktop_task_investigation(
+                event,
+                state,
+                readiness=readiness,
+                thought=thought,
+            )
+        process_name = str(foreground.process_name or "").strip().lower()
+        if not process_name or process_name in _BROWSER_PROCESSES:
+            return super()._desktop_task_investigation(
+                event,
+                state,
+                readiness=readiness,
+                thought=thought,
+            )
+
+        exact_failure = None
+        try:
+            self.named_automation_control.find_unique_edit(
+                process_id=int(foreground.process_id),
+                process_name=process_name,
+                name=goal.input_name,
+            )
+            self.named_automation_control.find_unique_button(
+                process_id=int(foreground.process_id),
+                process_name=process_name,
+                name=goal.button_name,
+            )
+        except Exception as exc:
+            exact_failure = f"{type(exc).__name__}: {exc}"
+
+        if exact_failure is None:
+            return super()._desktop_task_investigation(
+                event,
+                state,
+                readiness=readiness,
+                thought=thought,
+            )
+        return self._reground_desktop_semantic_goal(
+            event,
+            state,
+            readiness=readiness,
+            thought=thought,
+            semantic_goal=semantic_goal,
+            exact_failure=exact_failure,
+        )
+
+    def _reground_desktop_semantic_goal(
+        self,
+        event,
+        state,
+        *,
+        readiness,
+        thought,
+        semantic_goal: dict[str, Any],
+        exact_failure: str,
+    ):
+        current_goal = desktop_task_goal(event)
+        if current_goal is None:
+            return self._fail_composite_goal_investigation(
+                event,
+                state,
+                reason="desktop semantic re-ground lost the current typed goal",
+            )
+        raw_reground = state.data.get(_DESKTOP_SEMANTIC_REGROUND_KEY)
+        reground = dict(raw_reground) if isinstance(raw_reground, dict) else {}
+        count = max(0, int(reground.get("count") or 0))
+        if count >= _MAX_DESKTOP_SEMANTIC_REGROUNDS:
+            return self._fail_composite_goal_investigation(
+                event,
+                state,
+                reason=(
+                    "desktop semantic re-ground exceeded its bounded retry limit after current "
+                    "accessible names kept drifting; no further desktop input was attempted"
+                ),
+            )
+
+        foreground, foreground_error = self._probe_foreground_window()
+        if foreground is None:
+            return self._fail_composite_goal_investigation(
+                event,
+                state,
+                reason=(
+                    "fresh desktop semantic re-ground could not observe the foreground window: "
+                    + str(foreground_error or "unavailable")
+                ),
+            )
+        process_name = str(foreground.process_name or "").strip().lower()
+        if not process_name or process_name in _BROWSER_PROCESSES:
+            return self._fail_composite_goal_investigation(
+                event,
+                state,
+                reason="desktop semantic re-ground requires the current non-browser application",
+            )
+
+        try:
+            edits = self.named_automation_control.list_safe_edits(
+                process_id=int(foreground.process_id),
+                process_name=process_name,
+            )
+            buttons = self.named_automation_control.list_buttons(
+                process_id=int(foreground.process_id),
+                process_name=process_name,
+            )
+        except Exception as exc:
+            return self._fail_composite_goal_investigation(
+                event,
+                state,
+                reason=(
+                    "fresh desktop candidate Sense for semantic re-ground failed closed: "
+                    f"{type(exc).__name__}: {exc}"
+                ),
+            )
+        edit_names = tuple(item.name for item in edits)
+        button_names = tuple(item.name for item in buttons)
+        if not edit_names or not button_names:
+            return self._fail_composite_goal_investigation(
+                event,
+                state,
+                reason=(
+                    "fresh desktop semantic re-ground did not expose both safe Edit and Button "
+                    "candidates; no desktop input was attempted"
+                ),
+            )
+
+        grounding_question = (
+            "The exact accessible names selected earlier are no longer current. Keep the same "
+            "semantic user goal and choose only among the freshly observed accessible names "
+            "below. Return exactly "
+            '{"status":"selected","input_name":"ONE OBSERVED EDIT NAME",'
+            '"button_name":"ONE OBSERVED BUTTON NAME"} only when there is one clearly best '
+            "choice for each. If either choice is ambiguous, return "
+            '{"status":"ambiguous"}. Never return an index, RuntimeId, process/window identity, '
+            "coordinates, selectors, authority, actions, or completion. "
+            f"User task: {event.task}\n"
+            f"Semantic destination: {semantic_goal['input_name']}\n"
+            f"Semantic operation: {semantic_goal['button_name']}\n"
+            f"Fresh Edit names: {json.dumps(edit_names, ensure_ascii=False)}\n"
+            f"Fresh Button names: {json.dumps(button_names, ensure_ascii=False)}"
+        )
+        question_digest = hashlib.sha256(grounding_question.encode("utf-8")).hexdigest()
+        grounding_goal_id = (
+            f"goal-desktop-reground-{event.event_id}-{question_digest[:16]}"
+        )
+        grounding = self.kernel.run_goal(
+            grounding_question,
+            required_capabilities=("language_understanding",),
+            priority=event.priority,
+            metadata={
+                "resident_event_id": event.event_id,
+                "purpose": "desktop_fresh_candidate_reground_only",
+                "fresh_candidate_digest": question_digest,
+            },
+            max_attempts_override=1,
+            goal_id=grounding_goal_id,
+        )
+        invocations = self._model_invocations(grounding)
+        selection = None
+        if grounding.worker_result.success and grounding.assessment.success:
+            selection = _validated_desktop_grounding_selection(
+                grounding.worker_result.response,
+                edit_names=edit_names,
+                button_names=button_names,
+            )
+        if selection is None:
+            return self._fail_composite_goal_investigation(
+                event,
+                state,
+                reason=(
+                    "fresh desktop semantic re-ground was ambiguous or did not select one "
+                    "uniquely observed safe Edit and Button; no desktop input was attempted"
+                ),
+            )
+
+        input_name, button_name = selection
+        grounded = dict(semantic_goal)
+        grounded["input_name"] = input_name
+        grounded["button_name"] = button_name
+        event.payload = dict(event.payload or {})
+        event.payload["desktop_task_goal"] = grounded
+
+        understanding = event.payload.get(_UNDERSTANDING_KEY)
+        if isinstance(understanding, dict):
+            understanding = dict(understanding)
+            try:
+                prior_invocations = max(0, int(understanding.get("model_invocations") or 0))
+            except (TypeError, ValueError):
+                prior_invocations = 0
+            understanding["model_invocations"] = prior_invocations + invocations
+            event.payload[_UNDERSTANDING_KEY] = understanding
+            state.data[_UNDERSTANDING_KEY] = dict(understanding)
+
+        history = reground.get("history")
+        history = list(history) if isinstance(history, list) else []
+        history.append(
+            {
+                "from_input_name": current_goal.input_name,
+                "to_input_name": input_name,
+                "from_button_name": current_goal.button_name,
+                "to_button_name": button_name,
+                "fresh_candidate_digest": question_digest,
+                "grounding_goal_id": grounding_goal_id,
+                "exact_revalidation_failure": str(exact_failure),
+            }
+        )
+        state.data[_DESKTOP_SEMANTIC_REGROUND_KEY] = {
+            "count": count + 1,
+            "history": history[-_MAX_DESKTOP_SEMANTIC_REGROUNDS:],
+        }
+        state.data.pop(self._DESKTOP_TASK_OBSERVATION_KEY, None)
+        state.data.pop("local_failure", None)
+        self.store._save_event(event)
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+
+        if thought is not None:
+            known = (
+                "fresh UIA candidate Sense showed that the previously grounded accessible "
+                "names were stale while the semantic desktop goal remained unchanged"
+            )
+            if known not in thought.known:
+                thought.known = (*thought.known, known)
+            thought.reason = (
+                f"{thought.reason}; bounded semantic re-ground selected only current safe names "
+                "and Resident will bind exact UIA identity again before any movement"
+            )
+            self._persist_enriched_thought(thought)
+
+        return ResidentGoalRuntime._desktop_task_investigation(
+            self,
+            event,
+            state,
+            readiness=readiness,
+            thought=thought,
+        )
 
     def _orient_desktop_goal_from_cognition(self, event, state, *, readiness, thought=None):
         """Understand desired state, then ground it only in freshly sensed safe candidates."""

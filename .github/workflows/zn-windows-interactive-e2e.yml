@@ -20,6 +20,7 @@ on:
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_managed_research_return_work.py
       - tests/zn_agent/e2e/test_windows_interactive_browser_result_file_work.py
       - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_grounding.py
+      - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_reground.py
       - runtime/python/zn_agent/core/body.py
       - runtime/python/zn_agent/core/keyboard_text_body.py
       - runtime/python/zn_agent/core/visual_region_sense.py
