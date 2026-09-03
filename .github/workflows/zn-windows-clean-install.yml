@@ -32,6 +32,7 @@ concurrency:
 jobs:
   clean-install:
     name: Windows x64 clean install and start
+    if: ${{ github.ref == 'refs/heads/dev/zn-agent' }}
     runs-on: [self-hosted, Windows, X64, zn-interactive]
     timeout-minutes: 75
     steps:
