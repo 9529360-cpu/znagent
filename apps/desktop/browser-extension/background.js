@@ -13,6 +13,7 @@ const SENSITIVE_AUTOCOMPLETE = new Set([
   'cc-exp-year'
 ])
 const MAX_SEMANTIC_CANDIDATES = 32
+const MAX_REFERENCE_LINKS = 16
 
 let commandLoopTabId = null
 
@@ -414,6 +415,64 @@ async function observeAnchorContext(tabId, anchorText) {
   }
 }
 
+async function discoverReferenceContext(tabId) {
+  const before = await currentTabEvidence(tabId)
+  const evaluated = await debuggerCommand(tabId, 'Runtime.evaluate', {
+    expression: `(() => {
+      const visible = element => {
+        if (!element || !element.isConnected || element.hidden) return false;
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+      };
+      const links = [];
+      for (const anchor of Array.from(document.querySelectorAll('a[href]'))) {
+        if (links.length >= ${MAX_REFERENCE_LINKS} || !visible(anchor)) continue;
+        let href = '';
+        try { href = new URL(anchor.href, location.href).href; } catch { continue; }
+        if (!/^https?:/i.test(href)) continue;
+        const text = String(anchor.innerText || anchor.textContent || '')
+          .trim()
+          .replace(/\\s+/g, ' ')
+          .slice(0, 240);
+        if (!text) continue;
+        links.push({ href: href.slice(0, 2048), text });
+      }
+      return links;
+    })()`,
+    returnByValue: true,
+    awaitPromise: false
+  })
+  if (evaluated?.exceptionDetails) {
+    throw new Error('authorized page reference discovery failed')
+  }
+  const raw = Array.isArray(evaluated?.result?.value) ? evaluated.result.value : []
+  const references = []
+  const seen = new Set()
+  for (const item of raw.slice(0, MAX_REFERENCE_LINKS)) {
+    if (!item || typeof item !== 'object') continue
+    const href = String(item.href || '').trim()
+    const text = String(item.text || '').trim().replace(/\s+/g, ' ').slice(0, 240)
+    if (!href || !text || href.length > 2048 || seen.has(href) || !isHttpPage(href)) continue
+    let parsed
+    try { parsed = new URL(href) } catch { continue }
+    if (parsed.username || parsed.password) continue
+    seen.add(href)
+    references.push({ href, text })
+  }
+  const searchForm = await discoverUniqueSearchForm(tabId)
+  const after = await currentTabEvidence(tabId)
+  if (after.url !== before.url) {
+    throw new Error('authorized page changed during reference discovery; fresh sensing is required')
+  }
+  return {
+    ...after,
+    references,
+    search_form: searchForm,
+    reference_limit: MAX_REFERENCE_LINKS
+  }
+}
+
 async function discoverUniqueSearchForm(tabId) {
   const tab = await currentTabEvidence(tabId)
   const tree = await fullAxTree(tabId)
@@ -765,6 +824,9 @@ async function clickNamedButtonToUrl(tabId, args) {
 async function executeResidentCommand(tabId, command) {
   const kind = String(command?.kind || '')
   if (kind === 'probe_current_tab') {
+    if (command?.args?.discover_reference_context === true) {
+      return discoverReferenceContext(tabId)
+    }
     if (command?.args?.discover_unique_search_form === true) {
       return discoverUniqueSearchForm(tabId)
     }
