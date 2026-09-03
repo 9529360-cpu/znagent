@@ -12,6 +12,7 @@ const SENSITIVE_AUTOCOMPLETE = new Set([
   'cc-exp-month',
   'cc-exp-year'
 ])
+const MAX_SEMANTIC_CANDIDATES = 32
 
 let commandLoopTabId = null
 
@@ -103,6 +104,13 @@ function normalizedAutocomplete(value) {
     .filter(Boolean)
 }
 
+function isSensitiveTextboxAttributes(attributes) {
+  const inputType = String(attributes?.type || 'text').toLowerCase()
+  if (inputType === 'password') return true
+  const autocomplete = normalizedAutocomplete(attributes?.autocomplete)
+  return autocomplete.some(token => SENSITIVE_AUTOCOMPLETE.has(token) || token.startsWith('cc-'))
+}
+
 async function sha256Text(value) {
   const encoded = new TextEncoder().encode(String(value || ''))
   const digest = await crypto.subtle.digest('SHA-256', encoded)
@@ -167,16 +175,11 @@ async function exactNamedTextbox(tabId, targetName) {
     throw new Error('safe text entry currently requires a native input or textarea')
   }
   const attributes = attributesObject(domNode?.attributes)
-  const inputType = String(attributes.type || 'text').toLowerCase()
-  if (inputType === 'password') {
-    throw new Error('sensitive password fields are not available to autonomous text entry')
+  if (isSensitiveTextboxAttributes(attributes)) {
+    throw new Error('sensitive credential or payment fields are not available to autonomous text entry')
   }
   if ('disabled' in attributes || 'readonly' in attributes) {
     throw new Error('exact accessible textbox is disabled or read-only')
-  }
-  const autocomplete = normalizedAutocomplete(attributes.autocomplete)
-  if (autocomplete.some(token => SENSITIVE_AUTOCOMPLETE.has(token) || token.startsWith('cc-'))) {
-    throw new Error('sensitive credential or payment fields are not available to autonomous text entry')
   }
 
   const role = String(node?.role?.value || '').toLowerCase()
@@ -234,6 +237,183 @@ async function exactNamedButton(tabId, targetName) {
   }
 }
 
+async function controlFormMetadata(tabId, backendNodeId) {
+  const resolved = await debuggerCommand(tabId, 'DOM.resolveNode', { backendNodeId })
+  const objectId = String(resolved?.object?.objectId || '')
+  if (!objectId) return null
+  const call = await debuggerCommand(tabId, 'Runtime.callFunctionOn', {
+    objectId,
+    functionDeclaration: `function(){
+      const form = this.form;
+      if (!form) return null;
+      const method = String(form.getAttribute('method') || 'get').toLowerCase();
+      const action = new URL(form.getAttribute('action') || location.href, location.href).href;
+      const elements = Array.from(form.elements || []).map(element => ({
+        tag: String(element.tagName || '').toLowerCase(),
+        type: String(element.getAttribute?.('type') || '').toLowerCase(),
+        name: String(element.getAttribute?.('name') || ''),
+        aria: String(element.getAttribute?.('aria-label') || '')
+      }));
+      return {
+        method,
+        action,
+        control_name: String(this.getAttribute?.('name') || ''),
+        signature_source: JSON.stringify({ method, action, elements })
+      };
+    }`,
+    returnByValue: true,
+    awaitPromise: false
+  })
+  if (call?.exceptionDetails) return null
+  const value = call?.result?.value
+  if (!value || typeof value !== 'object') return null
+  const action = String(value.action || '')
+  if (!isHttpPage(action)) return null
+  return {
+    method: String(value.method || '').toLowerCase(),
+    action,
+    controlName: String(value.control_name || ''),
+    signature: await sha256Text(String(value.signature_source || ''))
+  }
+}
+
+async function observeSemanticCandidates(tabId) {
+  const tab = await currentTabEvidence(tabId)
+  const tree = await fullAxTree(tabId)
+  const candidates = []
+  let truncated = false
+
+  for (const node of tree) {
+    if (node?.ignored === true) continue
+    const role = String(node?.role?.value || '').toLowerCase()
+    if (!['textbox', 'searchbox', 'button'].includes(role)) continue
+    const name = String(node?.name?.value || '').trim()
+    if (!name || name.length > 160) continue
+    const backendNodeId = Number(node?.backendDOMNodeId || 0)
+    if (!Number.isInteger(backendNodeId) || backendNodeId <= 0) continue
+
+    if (candidates.length >= MAX_SEMANTIC_CANDIDATES) {
+      truncated = true
+      break
+    }
+
+    if (role === 'textbox' || role === 'searchbox') {
+      const described = await debuggerCommand(tabId, 'DOM.describeNode', { backendNodeId })
+      const domNode = described?.node || {}
+      const nodeName = String(domNode?.nodeName || '').toUpperCase()
+      if (nodeName !== 'INPUT' && nodeName !== 'TEXTAREA') continue
+      const attributes = attributesObject(domNode?.attributes)
+      const disabled = axProperty(node, 'disabled') === true || 'disabled' in attributes
+      const readonly = axProperty(node, 'readonly') === true || 'readonly' in attributes
+      const sensitive = isSensitiveTextboxAttributes(attributes)
+      if (sensitive) {
+        candidates.push({
+          role: 'textbox',
+          name,
+          enabled: !disabled,
+          visible: true,
+          editable: false,
+          clickable: false,
+          sensitive: true,
+          redacted: true,
+          text_length: 0,
+          text_sha256: await sha256Text(''),
+          form_method: '',
+          form_action: '',
+          form_signature: '',
+          query_parameter: ''
+        })
+        continue
+      }
+      const value = String(node?.value?.value || '')
+      const form = await controlFormMetadata(tabId, backendNodeId)
+      candidates.push({
+        role: 'textbox',
+        name,
+        enabled: !disabled,
+        visible: true,
+        editable: !disabled && !readonly,
+        clickable: false,
+        sensitive: false,
+        text_length: codePointLength(value),
+        text_sha256: await sha256Text(value),
+        form_method: form?.method || '',
+        form_action: form?.action || '',
+        form_signature: form?.signature || '',
+        query_parameter: form?.controlName || ''
+      })
+      continue
+    }
+
+    const described = await debuggerCommand(tabId, 'DOM.describeNode', { backendNodeId })
+    const domNode = described?.node || {}
+    if (String(domNode?.nodeName || '').toUpperCase() !== 'BUTTON') continue
+    const attributes = attributesObject(domNode?.attributes)
+    const disabled = axProperty(node, 'disabled') === true || 'disabled' in attributes
+    const form = await controlFormMetadata(tabId, backendNodeId)
+    candidates.push({
+      role: 'button',
+      name,
+      enabled: !disabled,
+      visible: true,
+      editable: false,
+      clickable: !disabled,
+      sensitive: false,
+      form_method: form?.method || '',
+      form_action: form?.action || '',
+      form_signature: form?.signature || ''
+    })
+  }
+
+  return {
+    ...tab,
+    candidates,
+    truncated,
+    candidate_limit: MAX_SEMANTIC_CANDIDATES
+  }
+}
+
+async function observeAnchorContext(tabId, anchorText) {
+  const anchor = String(anchorText || '').trim()
+  if (!anchor || anchor.length > 512 || /[\u0000-\u001f\u007f]/.test(anchor)) {
+    throw new Error('result context requires one bounded user-provided anchor')
+  }
+  const tab = await currentTabEvidence(tabId)
+  const evaluated = await debuggerCommand(tabId, 'Runtime.evaluate', {
+    expression: `(() => {
+      const anchor = ${JSON.stringify(anchor)};
+      const visible = element => {
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+      };
+      const roots = Array.from(document.querySelectorAll('tr,[role="row"],li,article'));
+      const matches = roots.filter(element => visible(element) && String(element.innerText || '').includes(anchor));
+      return matches.slice(0, 3).map(element => String(element.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 1200));
+    })()`,
+    returnByValue: true,
+    awaitPromise: false
+  })
+  if (evaluated?.exceptionDetails) {
+    throw new Error('authorized page result context evaluation failed')
+  }
+  const contexts = Array.isArray(evaluated?.result?.value)
+    ? evaluated.result.value.map(value => String(value || '').trim()).filter(Boolean)
+    : []
+  if (contexts.length !== 1) {
+    throw new Error(
+      contexts.length === 0
+        ? 'no unique visible structured result contains the requested subject'
+        : 'multiple visible structured results contain the requested subject'
+    )
+  }
+  return {
+    ...tab,
+    anchor_present: contexts[0].includes(anchor),
+    context: contexts[0]
+  }
+}
+
 async function discoverUniqueSearchForm(tabId) {
   const tab = await currentTabEvidence(tabId)
   const tree = await fullAxTree(tabId)
@@ -254,8 +434,7 @@ async function discoverUniqueSearchForm(tabId) {
     const inputType = String(attributes.type || 'text').toLowerCase()
     if (inputType !== 'search' && role !== 'searchbox') continue
     if ('disabled' in attributes || 'readonly' in attributes) continue
-    const autocomplete = normalizedAutocomplete(attributes.autocomplete)
-    if (autocomplete.some(token => SENSITIVE_AUTOCOMPLETE.has(token) || token.startsWith('cc-'))) continue
+    if (isSensitiveTextboxAttributes(attributes)) continue
     const parameter = String(attributes.name || '').trim()
     if (!parameter || parameter.length > 128) continue
     const accessibleName = String(node?.name?.value || '').trim()
@@ -588,6 +767,12 @@ async function executeResidentCommand(tabId, command) {
   if (kind === 'probe_current_tab') {
     if (command?.args?.discover_unique_search_form === true) {
       return discoverUniqueSearchForm(tabId)
+    }
+    if (command?.args?.observe_semantic_candidates === true) {
+      return observeSemanticCandidates(tabId)
+    }
+    if (typeof command?.args?.observe_anchor_context === 'string') {
+      return observeAnchorContext(tabId, command.args.observe_anchor_context)
     }
     return currentTabEvidence(tabId)
   }
