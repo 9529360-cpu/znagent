@@ -40,6 +40,7 @@ def _user32():
     api.IsWindowVisible.argtypes = [wintypes.HWND]; api.IsWindowVisible.restype = wintypes.BOOL
     api.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]; api.GetWindowThreadProcessId.restype = wintypes.DWORD
     api.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]; api.PostMessageW.restype = wintypes.BOOL
+    api.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]; api.GetCursorPos.restype = wintypes.BOOL
     return api
 
 
@@ -185,10 +186,11 @@ class WindowsInteractiveFileDesktopGoalE2ETests(unittest.TestCase):
                 result = None; drifted = False; stale_rejected = False; first_failure = None
                 state_trace = []
                 last_trace = None
+                submit_hit_trace = None
                 observation_key = getattr(resident, "_DESKTOP_TASK_OBSERVATION_KEY", "resident_desktop_task_observation")
 
                 def record_state(label: str):
-                    nonlocal last_trace
+                    nonlocal last_trace, submit_hit_trace
                     current_state = resident.store.get_working_state()
                     if current_state.current_event_id != event.event_id:
                         return
@@ -210,6 +212,61 @@ class WindowsInteractiveFileDesktopGoalE2ETests(unittest.TestCase):
                     verification = verification if isinstance(verification, dict) else {}
                     progress = current_state.data.get("resident_desktop_task_progress")
                     progress = progress if isinstance(progress, dict) else {}
+                    if progress.get("submit_dispatched") is True and submit_hit_trace is None:
+                        try:
+                            point = wintypes.POINT()
+                            pointer_ok = bool(_user32().GetCursorPos(ctypes.byref(point)))
+                            foreground_now, foreground_error = resident._probe_foreground_window()
+                            button_now = None
+                            if foreground_now is not None:
+                                button_now = resident.named_automation_control.find_unique_button(
+                                    process_id=foreground_now.process_id,
+                                    process_name=foreground_now.process_name.lower(),
+                                    name=BUTTON_NAME,
+                                )
+                            at_pointer = None; at_pointer_error = None
+                            if pointer_ok:
+                                at_pointer, at_pointer_error = resident._probe_automation_element_at_point(
+                                    int(point.x), int(point.y)
+                                )
+                            focused_now, focused_error = resident._probe_focused_automation_element()
+                            button_runtime = tuple(button_now.runtime_id) if button_now is not None else ()
+                            at_pointer_runtime = tuple(at_pointer.runtime_id) if at_pointer is not None else ()
+                            focused_runtime = tuple(focused_now.runtime_id) if focused_now is not None else ()
+                            submit_hit_trace = {
+                                "pointer_ok": pointer_ok,
+                                "pointer_x": int(point.x) if pointer_ok else None,
+                                "pointer_y": int(point.y) if pointer_ok else None,
+                                "foreground_process": foreground_now.process_name if foreground_now is not None else None,
+                                "foreground_title": foreground_now.title if foreground_now is not None else None,
+                                "foreground_error": str(foreground_error or "") or None,
+                                "button_runtime_id": list(button_runtime),
+                                "button_rect": (
+                                    [button_now.left, button_now.top, button_now.right, button_now.bottom]
+                                    if button_now is not None else None
+                                ),
+                                "button_center_fraction": (
+                                    [button_now.center_x_fraction, button_now.center_y_fraction]
+                                    if button_now is not None else None
+                                ),
+                                "element_at_pointer_runtime_id": list(at_pointer_runtime),
+                                "element_at_pointer_control_type": at_pointer.control_type if at_pointer is not None else None,
+                                "element_at_pointer_class_name": at_pointer.class_name if at_pointer is not None else None,
+                                "element_at_pointer_has_focus": at_pointer.has_keyboard_focus if at_pointer is not None else None,
+                                "element_at_pointer_error": str(at_pointer_error or "") or None,
+                                "focused_runtime_id": list(focused_runtime),
+                                "focused_control_type": focused_now.control_type if focused_now is not None else None,
+                                "focused_class_name": focused_now.class_name if focused_now is not None else None,
+                                "focused_has_focus": focused_now.has_keyboard_focus if focused_now is not None else None,
+                                "focused_error": str(focused_error or "") or None,
+                                "pointer_hits_exact_button": bool(button_runtime and at_pointer_runtime == button_runtime),
+                                "exact_button_has_focus": bool(button_runtime and focused_runtime == button_runtime),
+                                "app_title": app.title(),
+                            }
+                        except Exception as exc:
+                            submit_hit_trace = {"error": f"{type(exc).__name__}: {exc}", "app_title": app.title()}
+                        state_trace.append({"label": "submit_hit_test", **submit_hit_trace})
+                        last_trace = None
                     entry = {
                         "label": label,
                         "stage": current_state.stage,
@@ -303,6 +360,7 @@ class WindowsInteractiveFileDesktopGoalE2ETests(unittest.TestCase):
                         "event_status": str(resident.store.get_event(event.event_id).status),
                         "failure_records": diagnostic_state.data.get("native_action_failure_records"),
                         "first_failure": first_failure,
+                        "submit_hit_trace": submit_hit_trace,
                         "evidence_fingerprint": resident._evidence_fingerprint(event.event_id),
                         "observation_phase": diagnostic_observation.get("phase") if isinstance(diagnostic_observation, dict) else None,
                         "observation_failure": diagnostic_observation.get("failure") if isinstance(diagnostic_observation, dict) else None,
@@ -318,6 +376,7 @@ class WindowsInteractiveFileDesktopGoalE2ETests(unittest.TestCase):
                         "event_last_error": resident.store.get_event(event.event_id).last_error,
                         "app_title": app.title(),
                         "first_failure": first_failure,
+                        "submit_hit_trace": submit_hit_trace,
                         "actions": diagnostic_actions,
                         "state_trace": state_trace,
                     }
