@@ -306,6 +306,25 @@ async function observeSemanticCandidates(tabId) {
       const disabled = axProperty(node, 'disabled') === true || 'disabled' in attributes
       const readonly = axProperty(node, 'readonly') === true || 'readonly' in attributes
       const sensitive = isSensitiveTextboxAttributes(attributes)
+      if (sensitive) {
+        candidates.push({
+          role: 'textbox',
+          name,
+          enabled: !disabled,
+          visible: true,
+          editable: false,
+          clickable: false,
+          sensitive: true,
+          redacted: true,
+          text_length: 0,
+          text_sha256: await sha256Text(''),
+          form_method: '',
+          form_action: '',
+          form_signature: '',
+          query_parameter: ''
+        })
+        continue
+      }
       const value = String(node?.value?.value || '')
       const form = await controlFormMetadata(tabId, backendNodeId)
       candidates.push({
@@ -313,9 +332,9 @@ async function observeSemanticCandidates(tabId) {
         name,
         enabled: !disabled,
         visible: true,
-        editable: !disabled && !readonly && !sensitive,
+        editable: !disabled && !readonly,
         clickable: false,
-        sensitive,
+        sensitive: false,
         text_length: codePointLength(value),
         text_sha256: await sha256Text(value),
         form_method: form?.method || '',
