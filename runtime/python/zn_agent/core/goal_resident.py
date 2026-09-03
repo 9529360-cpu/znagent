@@ -50,6 +50,7 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
     _DESKTOP_EDIT_FOCUS_KIND = "desktop_task_edit_focused"
     _DESKTOP_TEXT_KIND = "desktop_task_text_equals"
     _DESKTOP_SUBMIT_KIND = "desktop_task_button_submitted"
+    _DESKTOP_SUBMIT_OBSERVATION_LIMIT = 12
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
@@ -191,6 +192,89 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
 
         goal = desktop_task_goal(event)
         assert goal is not None
+
+        progress = state.data.get(self._DESKTOP_TASK_PROGRESS_KEY)
+        progress = dict(progress) if isinstance(progress, dict) else {}
+        if progress.get("submit_dispatched") is True:
+            foreground, error = self._probe_foreground_window()
+            expected_process_id = int(progress.get("process_id") or 0)
+            expected_process_name = str(progress.get("process_name") or "").strip().lower()
+            pre_title = str(progress.get("pre_title") or "")
+            title = str(foreground.title or "").strip() if foreground is not None else ""
+            same_foreground = bool(
+                foreground is not None
+                and int(foreground.process_id) == expected_process_id
+                and str(foreground.process_name or "").strip().lower() == expected_process_name
+                and title
+            )
+            final_matches = bool(
+                same_foreground
+                and (
+                    title == goal.expected_title
+                    if goal.expected_title
+                    else title != pre_title
+                )
+            )
+            if final_matches:
+                return self._complete_goal_from_fresh_investigation(
+                    event,
+                    state,
+                    readiness=readiness,
+                    response=(
+                        f"foreground process={foreground.process_name} title={foreground.title}"
+                    ),
+                    reason=(
+                        "fresh foreground evidence independently proved the requested result "
+                        "after the one non-replayable submit action"
+                    ),
+                )
+
+            observations = int(progress.get("completion_observations") or 0) + 1
+            progress.update(
+                {
+                    "completion_observations": observations,
+                    "last_observed_process_id": (
+                        int(foreground.process_id) if foreground is not None else None
+                    ),
+                    "last_observed_process_name": (
+                        str(foreground.process_name or "").strip().lower()
+                        if foreground is not None
+                        else None
+                    ),
+                    "last_observed_title": title or None,
+                    "last_observation_error": str(error or "") or None,
+                    "last_observed_at": utc_now(),
+                }
+            )
+            state.data[self._DESKTOP_TASK_PROGRESS_KEY] = progress
+            state.data.pop("local_failure", None)
+            state.data.pop(self._DESKTOP_TASK_OBSERVATION_KEY, None)
+            if observations < self._DESKTOP_SUBMIT_OBSERVATION_LIMIT:
+                state.stage = "native_investigation"
+                state.next_action = (
+                    "re-observe the final desktop result after the dispatched submit; "
+                    "do not replay input"
+                )
+                self._sync_execution_context(event, state)
+                self.store.save_working_state(state)
+                return None
+
+            detail = (
+                f"foreground process={foreground.process_name} title={foreground.title}"
+                if foreground is not None
+                else str(error or "foreground observation unavailable")
+            )
+            return self._fail_composite_goal_investigation(
+                event,
+                state,
+                reason=(
+                    "the submit action was already dispatched once, but repeated fresh "
+                    "foreground observations did not prove the requested final result; "
+                    "refusing any additional desktop input: "
+                    + detail
+                ),
+            )
+
         source, failure = observe_workspace_text_source(
             event,
             self.body,
@@ -219,39 +303,6 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
                 "opera.exe",
             }:
                 failure = "this goal requires the current non-browser desktop application"
-
-        progress = state.data.get(self._DESKTOP_TASK_PROGRESS_KEY)
-        progress = dict(progress) if isinstance(progress, dict) else {}
-        if failure is None and progress.get("submit_dispatched") is True:
-            assert foreground is not None
-            pre_title = str(progress.get("pre_title") or "")
-            title = str(foreground.title or "").strip()
-            final_matches = (
-                title == goal.expected_title
-                if goal.expected_title
-                else bool(title and title != pre_title)
-            )
-            if final_matches:
-                return self._complete_goal_from_fresh_investigation(
-                    event,
-                    state,
-                    readiness=readiness,
-                    response=(
-                        f"foreground process={foreground.process_name} title={foreground.title}"
-                    ),
-                    reason=(
-                        "fresh foreground evidence independently proved the requested result "
-                        "after the one non-replayable submit action"
-                    ),
-                )
-            return self._fail_composite_goal_investigation(
-                event,
-                state,
-                reason=(
-                    "the submit action may already have been delivered but fresh foreground "
-                    "evidence did not prove the requested result; refusing automatic replay"
-                ),
-            )
 
         if failure is None:
             assert foreground is not None
@@ -974,6 +1025,94 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
             event, state, intent, contract, prepared
         )
 
+    def _verify_pointer_click_effect(
+        self,
+        event,
+        state,
+        intent,
+        contract,
+        *,
+        thought=None,
+    ):
+        """After desktop submit dispatch, verify only the task result and never replay input."""
+
+        goal = desktop_task_goal(event)
+        expected = intent.expected_outcome if isinstance(intent.expected_outcome, dict) else {}
+        desktop_kind = str(expected.get("kind") or "").strip().lower()
+        if (
+            goal is None
+            or intent.kind != "pointer_click"
+            or desktop_kind != self._DESKTOP_SUBMIT_KIND
+        ):
+            return super()._verify_pointer_click_effect(
+                event, state, intent, contract, thought=thought
+            )
+
+        execution = state.data.get(self._POINTER_CLICK_EXECUTION_KEY)
+        action_result = state.data.get("native_action_result")
+        action_id = (
+            str(execution.get("action_id") or "").strip()
+            if isinstance(execution, dict)
+            else ""
+        )
+        dispatch_proven = bool(
+            isinstance(execution, dict)
+            and str(execution.get("intent_id") or "") == intent.intent_id
+            and str(execution.get("status") or "") == "completed"
+            and execution.get("success") is True
+            and action_id
+            and isinstance(action_result, dict)
+            and str(action_result.get("action_id") or "") == action_id
+            and str(action_result.get("kind") or "").strip().lower() == "pointer_click"
+            and action_result.get("success") is True
+        )
+        if not dispatch_proven:
+            return self._fail_composite_goal_investigation(
+                event,
+                state,
+                reason=(
+                    "desktop submit reached verification without durable proof of the exact "
+                    "pointer dispatch; refusing any replay because side-effect delivery is uncertain"
+                ),
+            )
+
+        observation = state.data.get(self._DESKTOP_TASK_OBSERVATION_KEY)
+        foreground = (
+            observation.get("foreground")
+            if isinstance(observation, dict)
+            else None
+        )
+        if not isinstance(foreground, dict):
+            return self._fail_composite_goal_investigation(
+                event,
+                state,
+                reason=(
+                    "desktop submit was dispatched once but its pre-submit foreground identity "
+                    "is unavailable; refusing any replay"
+                ),
+            )
+
+        state.data[self._DESKTOP_TASK_PROGRESS_KEY] = {
+            "submit_dispatched": True,
+            "pre_title": str(expected.get("pre_title") or ""),
+            "process_id": int(foreground.get("process_id") or 0),
+            "process_name": str(expected.get("process_name") or "").strip().lower(),
+            "button_runtime_id": list(expected.get("button_runtime_id") or ()),
+            "pointer_action_id": action_id,
+            "completion_observations": 0,
+            "dispatched_at": utc_now(),
+        }
+        self._reset_investigation_after_goal_substep(event, state, intent)
+        state.data.pop(self._DESKTOP_TASK_OBSERVATION_KEY, None)
+        state.stage = "native_investigation"
+        state.next_action = (
+            "observe the final desktop result after one non-replayable submit dispatch; "
+            "do not send more input"
+        )
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        return None
+
     def _verification_contract(self, event, intent, *, result=None):
         request = repo_text_staged_request(event)
         raw_goal = intent.expected_outcome if isinstance(intent.expected_outcome, dict) else {}
@@ -1017,7 +1156,6 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
         if desktop_goal is not None and desktop_kind in {
             self._DESKTOP_EDIT_FOCUS_KIND,
             self._DESKTOP_TEXT_KIND,
-            self._DESKTOP_SUBMIT_KIND,
         }:
             verification = state.data.get("native_verification_result")
             if not isinstance(verification, dict) or verification.get("verified") is not True:
@@ -1053,13 +1191,6 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
                             f"evidence did not prove focus; refusing replay: {error or 'focus mismatch'}"
                         ),
                     )
-            if desktop_kind == self._DESKTOP_SUBMIT_KIND:
-                state.data[self._DESKTOP_TASK_PROGRESS_KEY] = {
-                    "submit_dispatched": True,
-                    "pre_title": str(expected.get("pre_title") or ""),
-                    "button_runtime_id": list(expected.get("button_runtime_id") or ()),
-                    "dispatched_at": utc_now(),
-                }
             self._reset_investigation_after_goal_substep(event, state, intent)
             state.data.pop(self._DESKTOP_TASK_OBSERVATION_KEY, None)
             state.stage = "native_investigation"
