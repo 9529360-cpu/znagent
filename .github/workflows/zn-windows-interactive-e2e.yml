@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - dev/zn-agent
+      - work/user-browser-task-context
     paths:
       - .github/workflows/zn-windows-interactive-e2e.yml
       - apps/desktop/browser-extension/background.js
@@ -33,6 +34,7 @@ on:
       - runtime/python/zn_agent/core/browser_named_goal.py
       - runtime/python/zn_agent/core/browser_work_body.py
       - runtime/python/zn_agent/core/browser_text_work_body.py
+      - runtime/python/zn_agent/core/browser_form_submit_body.py
       - runtime/python/zn_agent/core/user_browser.py
       - runtime/python/zn_agent/core/user_browser_extension_adapter.py
       - runtime/python/zn_agent/core/user_browser_extension_relay.py
@@ -48,6 +50,9 @@ on:
       - tests/zn_agent/e2e/test_windows_interactive_file_desktop_goal.py
       - tests/zn_agent/core/test_desktop_goal_understanding_resident.py
       - tests/zn_agent/core/test_natural_named_desktop_input_work.py
+      - tests/zn_agent/core/test_user_browser_extension_relay.py
+      - tests/zn_agent/core/test_user_browser_extension_adapter.py
+      - tests/zn_agent/core/test_user_browser_task_context_identity.py
       - runtime/python/zn_agent/core/pointer_click_resident.py
       - runtime/python/zn_agent/core/pointer_click_completion_resident.py
       - runtime/python/zn_agent/core/pointer_click_semantic_resident.py
@@ -100,6 +105,11 @@ jobs:
           uv venv .ci/interactive-e2e-venv --python 3.12
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-e2e-venv\Scripts\python.exe'
           uv pip install --python $python "runtime/python[browser]"
+      - name: Run browser task-context core regressions
+        shell: powershell
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          & .\.ci\interactive-e2e-venv\Scripts\python.exe -m unittest tests.zn_agent.core.test_user_browser_extension_relay tests.zn_agent.core.test_user_browser_extension_adapter tests.zn_agent.core.test_user_browser_task_context_identity -v
       - name: Run real interactive computer-use E2Es
         shell: powershell
         run: |
