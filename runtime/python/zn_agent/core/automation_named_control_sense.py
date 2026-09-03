@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Bounded exact-name UIA discovery inside the current foreground desktop app."""
+"""Bounded UIA discovery inside the current foreground desktop app."""
 
 import os
 import queue
@@ -14,6 +14,7 @@ from .models import utc_now
 _UIA_BUTTON_CONTROL_TYPE = 50000
 _UIA_EDIT_CONTROL_TYPE = 50004
 _MAX_NAME_CHARS = 160
+_MAX_CANDIDATES = 24
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,26 +39,30 @@ class NamedAutomationControlObservation:
     is_password: bool = False
     is_value_pattern_available: bool = False
     value_is_read_only: bool | None = None
-    source: str = "windows-uia-exact-name"
+    source: str = "windows-uia-foreground-control"
 
 
 NamedControlProbeFn = Callable[[int, str, str], NamedAutomationControlObservation]
+CandidateControlProbeFn = Callable[
+    [int, str, int], tuple[NamedAutomationControlObservation, ...]
+]
 
 
 @dataclass(slots=True)
 class _NamedControlRequest:
     process_id: int
     process_name: str
-    name: str
+    name: str | None
     control_type: int
     role: str
+    collect_candidates: bool = False
     done: threading.Event | None = None
-    result: NamedAutomationControlObservation | None = None
+    result: NamedAutomationControlObservation | tuple[NamedAutomationControlObservation, ...] | None = None
     error: str | None = None
 
 
 class _WindowsNamedControlReader:
-    """Lazy MTA UIA worker restricted to one exact named foreground control."""
+    """Lazy MTA UIA worker restricted to the current foreground process."""
 
     _START_TIMEOUT_SECONDS = 10.0
     _PROBE_TIMEOUT_SECONDS = 6.0
@@ -90,14 +95,57 @@ class _WindowsNamedControlReader:
         control_type: int,
         role: str,
     ) -> NamedAutomationControlObservation:
+        result = self._request(
+            process_id=process_id,
+            process_name=process_name,
+            name=name,
+            control_type=control_type,
+            role=role,
+            collect_candidates=False,
+        )
+        if not isinstance(result, NamedAutomationControlObservation):
+            raise RuntimeError("Windows UI Automation exact-name probe returned no observation")
+        return result
+
+    def candidates(
+        self,
+        process_id: int,
+        process_name: str,
+        *,
+        control_type: int,
+        role: str,
+    ) -> tuple[NamedAutomationControlObservation, ...]:
+        result = self._request(
+            process_id=process_id,
+            process_name=process_name,
+            name=None,
+            control_type=control_type,
+            role=role,
+            collect_candidates=True,
+        )
+        if not isinstance(result, tuple):
+            raise RuntimeError("Windows UI Automation candidate probe returned no collection")
+        return result
+
+    def _request(
+        self,
+        *,
+        process_id: int,
+        process_name: str,
+        name: str | None,
+        control_type: int,
+        role: str,
+        collect_candidates: bool,
+    ):
         if self._failure:
             raise RuntimeError(self._failure)
         request = _NamedControlRequest(
             process_id=int(process_id),
             process_name=str(process_name),
-            name=str(name),
+            name=None if name is None else str(name),
             control_type=int(control_type),
             role=str(role),
+            collect_candidates=bool(collect_candidates),
             done=threading.Event(),
         )
         try:
@@ -106,12 +154,10 @@ class _WindowsNamedControlReader:
             raise RuntimeError("Windows UI Automation named-control worker is busy") from exc
         assert request.done is not None
         if not request.done.wait(self._PROBE_TIMEOUT_SECONDS):
-            self._failure = "Windows UI Automation exact-name probe exceeded its bounded timeout"
+            self._failure = "Windows UI Automation foreground-control probe exceeded its bounded timeout"
             raise RuntimeError(self._failure)
         if request.error:
             raise RuntimeError(request.error)
-        if request.result is None:
-            raise RuntimeError("Windows UI Automation exact-name probe returned no observation")
         return request.result
 
     def _run(self) -> None:
@@ -183,10 +229,6 @@ class _WindowsNamedControlReader:
                 if not root:
                     raise RuntimeError("Windows UI Automation could not bind the foreground window")
 
-                name_condition = automation.CreatePropertyCondition(
-                    client.UIA_NamePropertyId,
-                    request.name,
-                )
                 type_condition = automation.CreatePropertyCondition(
                     client.UIA_ControlTypePropertyId,
                     request.control_type,
@@ -195,42 +237,89 @@ class _WindowsNamedControlReader:
                     client.UIA_ProcessIdPropertyId,
                     request.process_id,
                 )
-                condition = automation.CreateAndCondition(
-                    automation.CreateAndCondition(name_condition, type_condition),
-                    process_condition,
-                )
+                condition = automation.CreateAndCondition(type_condition, process_condition)
+                if not request.collect_candidates:
+                    assert request.name is not None
+                    name_condition = automation.CreatePropertyCondition(
+                        client.UIA_NamePropertyId,
+                        request.name,
+                    )
+                    condition = automation.CreateAndCondition(condition, name_condition)
+
                 matches = root.FindAllBuildCache(
                     client.TreeScope_Descendants,
                     condition,
                     cache,
                 )
                 count = int(matches.Length)
-                if count != 1:
-                    raise RuntimeError(
-                        "foreground application did not expose exactly one enabled UIA "
-                        f"{request.role} with the exact requested name (matches={count})"
+                if request.collect_candidates:
+                    if count > _MAX_CANDIDATES:
+                        raise RuntimeError(
+                            "foreground application exposed too many UIA "
+                            f"{request.role} candidates for bounded grounding (matches={count})"
+                        )
+                    candidates: list[NamedAutomationControlObservation] = []
+                    for index in range(count):
+                        element = matches.GetElement(index)
+                        if not element:
+                            continue
+                        candidate_name = " ".join(
+                            str(
+                                element.GetCachedPropertyValue(client.UIA_NamePropertyId) or ""
+                            ).strip().split()
+                        )
+                        if not candidate_name or len(candidate_name) > _MAX_NAME_CHARS:
+                            continue
+                        try:
+                            candidate = self._snapshot(
+                                element,
+                                expected_process_id=request.process_id,
+                                expected_process_name=request.process_name,
+                                expected_name=candidate_name,
+                                expected_control_type=request.control_type,
+                                expected_role=request.role,
+                                screen_width=screen_width,
+                                screen_height=screen_height,
+                                runtime_id_property_id=client.UIA_RuntimeIdPropertyId,
+                                name_property_id=client.UIA_NamePropertyId,
+                                is_password_property_id=client.UIA_IsPasswordPropertyId,
+                                is_value_pattern_available_property_id=client.UIA_IsValuePatternAvailablePropertyId,
+                                value_is_read_only_property_id=client.UIA_ValueIsReadOnlyPropertyId,
+                            )
+                        except RuntimeError:
+                            continue
+                        candidates.append(candidate)
+                    request.result = tuple(candidates)
+                else:
+                    if count != 1:
+                        raise RuntimeError(
+                            "foreground application did not expose exactly one enabled UIA "
+                            f"{request.role} with the exact requested name (matches={count})"
+                        )
+                    element = matches.GetElement(0)
+                    if not element:
+                        raise RuntimeError(
+                            "Windows UI Automation exact-name collection returned no element"
+                        )
+                    assert request.name is not None
+                    request.result = self._snapshot(
+                        element,
+                        expected_process_id=request.process_id,
+                        expected_process_name=request.process_name,
+                        expected_name=request.name,
+                        expected_control_type=request.control_type,
+                        expected_role=request.role,
+                        screen_width=screen_width,
+                        screen_height=screen_height,
+                        runtime_id_property_id=client.UIA_RuntimeIdPropertyId,
+                        name_property_id=client.UIA_NamePropertyId,
+                        is_password_property_id=client.UIA_IsPasswordPropertyId,
+                        is_value_pattern_available_property_id=client.UIA_IsValuePatternAvailablePropertyId,
+                        value_is_read_only_property_id=client.UIA_ValueIsReadOnlyPropertyId,
                     )
-                element = matches.GetElement(0)
-                if not element:
-                    raise RuntimeError("Windows UI Automation exact-name collection returned no element")
-                request.result = self._snapshot(
-                    element,
-                    expected_process_id=request.process_id,
-                    expected_process_name=request.process_name,
-                    expected_name=request.name,
-                    expected_control_type=request.control_type,
-                    expected_role=request.role,
-                    screen_width=screen_width,
-                    screen_height=screen_height,
-                    runtime_id_property_id=client.UIA_RuntimeIdPropertyId,
-                    name_property_id=client.UIA_NamePropertyId,
-                    is_password_property_id=client.UIA_IsPasswordPropertyId,
-                    is_value_pattern_available_property_id=client.UIA_IsValuePatternAvailablePropertyId,
-                    value_is_read_only_property_id=client.UIA_ValueIsReadOnlyPropertyId,
-                )
             except Exception as exc:
                 request.error = (
-                    "Windows UI Automation exact-name probe failed: "
+                    "Windows UI Automation foreground-control probe failed: "
                     f"{type(exc).__name__}: {exc}"
                 )
             finally:
@@ -268,7 +357,7 @@ class _WindowsNamedControlReader:
         process_id = wintypes.DWORD(0)
         thread_id = int(user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id)))
         if thread_id <= 0 or int(process_id.value) != int(expected_process_id):
-            raise RuntimeError("foreground window process changed before exact-name discovery")
+            raise RuntimeError("foreground window process changed before UIA discovery")
         width = int(user32.GetSystemMetrics(0))
         height = int(user32.GetSystemMetrics(1))
         if width <= 0 or height <= 0:
@@ -294,7 +383,9 @@ class _WindowsNamedControlReader:
     ) -> NamedAutomationControlObservation:
         runtime_value = element.GetCachedPropertyValue(int(runtime_id_property_id))
         runtime_id = tuple(int(value) for value in runtime_value)
-        name = str(element.GetCachedPropertyValue(int(name_property_id)) or "").strip()
+        name = " ".join(
+            str(element.GetCachedPropertyValue(int(name_property_id)) or "").strip().split()
+        )
         process_id = int(element.CachedProcessId)
         control_type = int(element.CachedControlType)
         is_enabled = bool(element.CachedIsEnabled)
@@ -342,7 +433,7 @@ class _WindowsNamedControlReader:
             or not (right > left and bottom > top)
         ):
             raise RuntimeError(
-                f"exact named UIA {expected_role} failed bounded current-state validation"
+                f"UIA {expected_role} failed bounded current-state validation"
             )
         if control_type == _UIA_EDIT_CONTROL_TYPE and (
             not is_keyboard_focusable
@@ -350,14 +441,14 @@ class _WindowsNamedControlReader:
             or value_is_read_only is True
         ):
             raise RuntimeError(
-                "exact named UIA Edit is not one safe focusable non-password writable target"
+                "UIA Edit is not one safe focusable non-password writable target"
             )
 
         center_x = (left + right) / 2.0
         center_y = (top + bottom) / 2.0
         if not (0 <= center_x < screen_width and 0 <= center_y < screen_height):
             raise RuntimeError(
-                f"exact named UIA {expected_role} center is outside the primary desktop"
+                f"UIA {expected_role} center is outside the primary desktop"
             )
 
         return NamedAutomationControlObservation(
@@ -385,15 +476,13 @@ class _WindowsNamedControlReader:
 
 
 class NativeNamedAutomationControlSense:
-    """Find one exact named Button or safe Edit in the current foreground app.
+    """Observe bounded safe controls in the current foreground app.
 
-    This remains a narrow read-only discovery surface for real desktop task
-    closure, not a generic UIA tree browser. Native discovery searches only the
-    current foreground window, only the current process, only one explicit
-    control type, and only one exact bounded Name. Zero or multiple matches fail
-    closed. Edit discovery additionally rejects password, explicitly read-only,
-    disabled, off-screen or non-focusable controls. No text values, arbitrary
-    tree contents, control patterns, events or UIA mutation methods are exposed.
+    Exact-name discovery remains the fast path used by existing callers. Candidate
+    discovery exists only so Resident can ground a semantic user goal in freshly
+    observed UIA objects. It is still restricted to the current foreground
+    window/process and one explicit control type, returns at most 24 safe named
+    controls, never reads text values, and exposes no mutation surface.
     """
 
     def __init__(
@@ -401,10 +490,11 @@ class NativeNamedAutomationControlSense:
         *,
         probe_fn: NamedControlProbeFn | None = None,
         edit_probe_fn: NamedControlProbeFn | None = None,
+        candidate_probe_fn: CandidateControlProbeFn | None = None,
     ):
-        # Keep probe_fn backward-compatible for existing Button tests/callers.
         self.probe_fn = probe_fn
         self.edit_probe_fn = edit_probe_fn
+        self.candidate_probe_fn = candidate_probe_fn
         self._native_reader: _WindowsNamedControlReader | None = None
         self._reader_lock = threading.Lock()
 
@@ -440,6 +530,75 @@ class NativeNamedAutomationControlSense:
             injected=self.edit_probe_fn,
         )
 
+    def list_safe_edits(
+        self,
+        *,
+        process_id: int,
+        process_name: str,
+    ) -> tuple[NamedAutomationControlObservation, ...]:
+        return self._list_candidates(
+            process_id=process_id,
+            process_name=process_name,
+            control_type=_UIA_EDIT_CONTROL_TYPE,
+            role="Edit",
+        )
+
+    def list_buttons(
+        self,
+        *,
+        process_id: int,
+        process_name: str,
+    ) -> tuple[NamedAutomationControlObservation, ...]:
+        return self._list_candidates(
+            process_id=process_id,
+            process_name=process_name,
+            control_type=_UIA_BUTTON_CONTROL_TYPE,
+            role="Button",
+        )
+
+    def _list_candidates(
+        self,
+        *,
+        process_id: int,
+        process_name: str,
+        control_type: int,
+        role: str,
+    ) -> tuple[NamedAutomationControlObservation, ...]:
+        expected_pid = int(process_id)
+        expected_process = str(process_name or "").strip()
+        if expected_pid <= 0 or not expected_process:
+            raise ValueError(
+                f"desktop {role} candidate discovery requires current process identity"
+            )
+        if self.candidate_probe_fn is not None:
+            observations = self.candidate_probe_fn(
+                expected_pid,
+                expected_process,
+                int(control_type),
+            )
+        else:
+            reader = self._reader(role)
+            observations = reader.candidates(
+                expected_pid,
+                expected_process,
+                control_type=control_type,
+                role=role,
+            )
+        if not isinstance(observations, tuple) or len(observations) > _MAX_CANDIDATES:
+            raise ValueError("desktop candidate probe exceeded its bounded collection contract")
+        checked: list[NamedAutomationControlObservation] = []
+        for observation in observations:
+            self._validate_observation(
+                observation,
+                expected_pid=expected_pid,
+                expected_process=expected_process,
+                expected_name=None,
+                control_type=control_type,
+                role=role,
+            )
+            checked.append(observation)
+        return tuple(checked)
+
     def _find_unique(
         self,
         *,
@@ -465,22 +624,43 @@ class NativeNamedAutomationControlSense:
         if injected is not None:
             observation = injected(expected_pid, expected_process, expected_name)
         else:
-            if os.name != "nt":
-                raise RuntimeError(
-                    f"exact named desktop {role} discovery is available only on Windows"
-                )
-            with self._reader_lock:
-                if self._native_reader is None:
-                    self._native_reader = _WindowsNamedControlReader()
-                reader = self._native_reader
-            observation = reader.probe(
+            observation = self._reader(role).probe(
                 expected_pid,
                 expected_process,
                 expected_name,
                 control_type=control_type,
                 role=role,
             )
+        self._validate_observation(
+            observation,
+            expected_pid=expected_pid,
+            expected_process=expected_process,
+            expected_name=expected_name,
+            control_type=control_type,
+            role=role,
+        )
+        return observation
 
+    def _reader(self, role: str) -> _WindowsNamedControlReader:
+        if os.name != "nt":
+            raise RuntimeError(
+                f"desktop {role} UI Automation discovery is available only on Windows"
+            )
+        with self._reader_lock:
+            if self._native_reader is None:
+                self._native_reader = _WindowsNamedControlReader()
+            return self._native_reader
+
+    @staticmethod
+    def _validate_observation(
+        observation,
+        *,
+        expected_pid: int,
+        expected_process: str,
+        expected_name: str | None,
+        control_type: int,
+        role: str,
+    ) -> None:
         if not isinstance(observation, NamedAutomationControlObservation):
             raise TypeError(
                 "named desktop control probe must return NamedAutomationControlObservation"
@@ -493,11 +673,14 @@ class NativeNamedAutomationControlSense:
                 and observation.value_is_read_only is not True
             )
         )
+        normalized_name = " ".join(str(observation.name or "").strip().split())
         if (
             int(observation.process_id) != expected_pid
             or str(observation.process_name or "").strip().lower()
             != expected_process.lower()
-            or observation.name != expected_name
+            or not normalized_name
+            or len(normalized_name) > _MAX_NAME_CHARS
+            or (expected_name is not None and normalized_name != expected_name)
             or int(observation.control_type) != int(control_type)
             or not observation.runtime_id
             or not observation.is_enabled
@@ -507,6 +690,5 @@ class NativeNamedAutomationControlSense:
             or not 0.0 <= float(observation.center_y_fraction) <= 1.0
         ):
             raise ValueError(
-                f"named desktop control observation did not match the exact requested {role}"
+                f"desktop control observation did not match the bounded safe {role} contract"
             )
-        return observation
