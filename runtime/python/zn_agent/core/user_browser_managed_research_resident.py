@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 
 from .action import NativeActionIntent
 from .browser import BrowserAction, BrowserActionAuthority, BrowserActionKind, BrowserPermissionContext
+from .goal_resident import ResidentGoalRuntime
 from .research_managed_browser import ResearchSemanticPlaywrightManagedBrowser
 from .user_browser_extension_relay import UserBrowserExtensionRelayError
 from .user_browser_extension_resident import UserBrowserExtensionResidentRuntime
@@ -45,6 +46,27 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
         has_return = any(cue in lowered for cue in ("come back", "return", "back on this page")) or "回来" in task or "回到" in task
         has_search = "search" in lowered or "find" in lowered or "搜索" in task or "查找" in task
         return bool(has_reference and has_code and has_return and has_search)
+
+    def _orient_step(self, event, state, *, readiness, thought=None):
+        # This task is already fully bounded by Resident-owned language rules and
+        # is intentionally supported with model_policy=never. Do not let the more
+        # generic foreground-browser cognition router consume it first merely
+        # because the user says "this page". Enter the existing Resident goal
+        # lifecycle directly; fresh browser evidence still owns every world fact.
+        if self._natural_managed_reference_search(event):
+            return ResidentGoalRuntime._orient_step(
+                self,
+                event,
+                state,
+                readiness=readiness,
+                thought=thought,
+            )
+        return super()._orient_step(
+            event,
+            state,
+            readiness=readiness,
+            thought=thought,
+        )
 
     @classmethod
     def _required_capabilities(cls, event) -> tuple[str, ...]:
