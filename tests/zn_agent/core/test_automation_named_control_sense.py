@@ -147,7 +147,7 @@ class NamedAutomationControlSenseTests(unittest.TestCase):
             unsafe(focusable=False),
         ):
             sense = NativeNamedAutomationControlSense(edit_probe_fn=probe)
-            with self.assertRaisesRegex(ValueError, "requested Edit"):
+            with self.assertRaisesRegex(ValueError, "safe Edit"):
                 sense.find_unique_edit(
                     process_id=330,
                     process_name="customerapp.exe",
