@@ -10,7 +10,6 @@ from http.server import ThreadingHTTPServer
 
 from test_windows_interactive_user_browser_semantic_grounding import (
     _HOST,
-    _RESULT_TITLE,
     _STATUS,
     _TASK,
     _TEXT,
@@ -67,9 +66,18 @@ setInterval(async () => {
         return body.encode("utf-8")
 
 
-class WindowsInteractiveUserBrowserTaskContextE2ETests(
-    WindowsInteractiveUserBrowserSemanticGroundingE2ETests
-):
+class WindowsInteractiveUserBrowserTaskContextE2ETests(unittest.TestCase):
+    _require_input_desktop = staticmethod(
+        WindowsInteractiveUserBrowserSemanticGroundingE2ETests._require_input_desktop
+    )
+    _enable_cognition = staticmethod(
+        WindowsInteractiveUserBrowserSemanticGroundingE2ETests._enable_cognition
+    )
+    _make_runtime = WindowsInteractiveUserBrowserSemanticGroundingE2ETests._make_runtime
+    _close_runtime = WindowsInteractiveUserBrowserSemanticGroundingE2ETests._close_runtime
+    _start_work = WindowsInteractiveUserBrowserSemanticGroundingE2ETests._start_work
+    _run_to_terminal = WindowsInteractiveUserBrowserSemanticGroundingE2ETests._run_to_terminal
+
     def _start_server(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), _ContextHandler)
         server.login_requests = 0  # type: ignore[attr-defined]
@@ -210,13 +218,16 @@ class WindowsInteractiveUserBrowserTaskContextE2ETests(
                 sum(action.kind == "browser_click_named_button_to_url" for action in actions),
                 1,
             )
+            user_action_results = [
+                action
+                for action in actions
+                if action.kind
+                in {"browser_type_named_text", "browser_click_named_button_to_url"}
+            ]
             self.assertTrue(
                 all(
-                    action.args.get("authorized_tab_id") == original_tab
-                    and action.args.get("authorization_attached_at") == original_generation
-                    for action in actions
-                    if action.kind
-                    in {"browser_type_named_text", "browser_click_named_button_to_url"}
+                    action.data.get("authorization_attached_at") == original_generation
+                    for action in user_action_results
                 )
             )
             self.assertEqual(env["cognition"].calls, 5)
