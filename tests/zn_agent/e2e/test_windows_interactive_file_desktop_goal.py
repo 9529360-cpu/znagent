@@ -45,18 +45,30 @@ def _user32():
 
 
 class _Proposal:
-    def __init__(self): self.calls = 0
+    def __init__(self):
+        self.calls = 0
+        self.questions: list[str] = []
+
     def invoke(self, *, question: str, context: str) -> CognitiveIncrement:
         self.calls += 1
-        return CognitiveIncrement(
-            text=json.dumps({
+        self.questions.append(question)
+        if "Fresh Edit names:" in question:
+            value = {
+                "status": "selected",
+                "input_name": INPUT_NAME,
+                "button_name": BUTTON_NAME,
+            }
+        else:
+            value = {
                 "kind": DESKTOP_TASK_GOAL_KIND,
                 "source_name_hint": "订单",
                 "input_name": INPUT_NAME,
                 "button_name": BUTTON_NAME,
                 "expected_title": None,
                 "source_modified_yesterday": True,
-            }, ensure_ascii=False),
+            }
+        return CognitiveIncrement(
+            text=json.dumps(value, ensure_ascii=False),
             provider="e2e-cognition",
             model="bounded-language-fixture",
         )
@@ -387,7 +399,7 @@ class WindowsInteractiveFileDesktopGoalE2ETests(unittest.TestCase):
                         "desktop goal failed after source-drift recovery: "
                         + json.dumps(failure_evidence, ensure_ascii=False, sort_keys=True, default=str)
                     )
-                self.assertEqual(result.model_invocations, 1); self.assertEqual(proposal.calls, 1)
+                self.assertEqual(result.model_invocations, 2); self.assertEqual(proposal.calls, 2)
                 self.assertEqual(app.title(), SUCCESS_TITLE)
                 actions = [a for a in resident.body.recent_actions(512) if a.event_id == event.event_id]
                 self.assertEqual(sum(a.kind == "keyboard_text" for a in actions), 1)
