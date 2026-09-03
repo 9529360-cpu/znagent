@@ -84,7 +84,15 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
             return ("browser",)
         return super()._required_capabilities(event)
 
-    def _semantic_lookup_investigation(self, event, state, *, readiness, thought=None):
+    def _semantic_lookup_investigation(
+        self,
+        event,
+        state,
+        goal: dict[str, str],
+        *,
+        readiness,
+        thought=None,
+    ):
         try:
             self._ensure_user_browser_task_context(event, state)
         except Exception as exc:
@@ -96,11 +104,19 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
         return super()._semantic_lookup_investigation(
             event,
             state,
+            goal,
             readiness=readiness,
             thought=thought,
         )
 
-    def _semantic_lookup_deliberation(self, event, state, *, readiness, thought=None):
+    def _semantic_lookup_deliberation(
+        self,
+        event,
+        state,
+        goal: dict[str, str],
+        *,
+        thought=None,
+    ):
         try:
             self._ensure_user_browser_task_context(event, state)
         except Exception as exc:
@@ -112,7 +128,7 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
         return super()._semantic_lookup_deliberation(
             event,
             state,
-            readiness=readiness,
+            goal,
             thought=thought,
         )
 
