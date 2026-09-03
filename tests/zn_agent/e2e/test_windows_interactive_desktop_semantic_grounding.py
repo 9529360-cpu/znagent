@@ -12,10 +12,12 @@ from datetime import datetime, time as dt_time, timedelta
 from pathlib import Path
 
 from zn_agent.core.cognitive_resource import CognitiveIncrement, CognitiveResourceWorkerFactory
+from zn_agent.core.daemon import ResidentRpcServer
 from zn_agent.core.desktop_task_goal import DESKTOP_TASK_GOAL_KIND, explicit_desktop_task_goal_hint
 from zn_agent.core.models import ModelRoute
 from zn_agent.core.provider_bridge import build_resident_runtime
 from zn_agent.core.recovery_bounded_work import RecoveryBoundedWorkLedger
+from zn_agent.core.resident_server import ResidentSocketService
 from test_windows_interactive_text_entry import WindowsInteractiveTextEntryE2ETests
 
 
@@ -330,6 +332,8 @@ class WindowsInteractiveDesktopSemanticGroundingE2ETests(unittest.TestCase):
                     config={"model": {}},
                     store_path=root / "kernel.db",
                 )
+                service = ResidentSocketService(ResidentRpcServer(resident=resident))
+                self.assertIs(resident.visual_region, service.visual_region)
                 proposal = _SemanticProposal()
                 self._enable_cognition(resident, proposal)
                 ledger = RecoveryBoundedWorkLedger(resident)
@@ -557,6 +561,8 @@ class WindowsInteractiveDesktopSemanticGroundingE2ETests(unittest.TestCase):
                     config={"model": {}},
                     store_path=root / "kernel.db",
                 )
+                service = ResidentSocketService(ResidentRpcServer(resident=resident))
+                self.assertIs(resident.visual_region, service.visual_region)
                 proposal = _SemanticProposal()
                 self._enable_cognition(resident, proposal)
                 ledger = RecoveryBoundedWorkLedger(resident)
