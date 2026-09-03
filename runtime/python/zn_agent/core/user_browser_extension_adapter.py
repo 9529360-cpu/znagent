@@ -123,6 +123,96 @@ class AuthorizedExtensionUserBrowser:
         session.last_observation[resolved_page] = observation
         return observation
 
+    def observe_semantic_candidates(self) -> dict[str, Any]:
+        """Return bounded privacy-safe candidates from only the exact authorized tab."""
+
+        command = self._request(
+            "probe_current_tab",
+            args={"observe_semantic_candidates": True},
+        )
+        result = self._authorized_command_result(command, "semantic candidate observation")
+        raw_candidates = result.get("candidates")
+        if not isinstance(raw_candidates, list) or len(raw_candidates) > 32:
+            raise ExtensionUserBrowserError(
+                "extension semantic candidate observation exceeded the bounded candidate set"
+            )
+        candidates: list[dict[str, Any]] = []
+        for raw in raw_candidates:
+            if not isinstance(raw, dict):
+                raise ExtensionUserBrowserError(
+                    "extension semantic candidate observation returned invalid candidate evidence"
+                )
+            role = str(raw.get("role") or "").strip().lower()
+            if role not in {"textbox", "button"}:
+                raise ExtensionUserBrowserError(
+                    "extension semantic candidate observation returned unsupported role"
+                )
+            name = self._bounded_text(raw.get("name"), "candidate name", 160)
+            candidate: dict[str, Any] = {
+                "role": role,
+                "name": name,
+                "enabled": raw.get("enabled") is True,
+                "visible": raw.get("visible") is True,
+                "editable": raw.get("editable") is True,
+                "clickable": raw.get("clickable") is True,
+                "sensitive": raw.get("sensitive") is True,
+                "form_method": str(raw.get("form_method") or "").strip().lower(),
+                "form_action": str(raw.get("form_action") or "").strip(),
+                "form_signature": str(raw.get("form_signature") or "").strip(),
+            }
+            if candidate["form_action"]:
+                candidate["form_action"] = self._safe_url(candidate["form_action"])
+            if candidate["form_signature"]:
+                candidate["form_signature"] = self._digest(
+                    candidate["form_signature"], "form signature"
+                )
+            if role == "textbox":
+                candidate.update(
+                    {
+                        "query_parameter": self._optional_bounded_text(
+                            raw.get("query_parameter"), "query parameter", 128
+                        ),
+                        "text_length": self._nonnegative_int(
+                            raw.get("text_length"), "candidate text length"
+                        ),
+                        "text_sha256": self._digest(
+                            raw.get("text_sha256"), "candidate text digest"
+                        ),
+                    }
+                )
+            candidates.append(candidate)
+        return {
+            "tab_id": self._tab_id(result),
+            "url": self._safe_url(result.get("url")),
+            "title": self._title(result.get("title")),
+            "candidates": candidates,
+            "truncated": result.get("truncated") is True,
+            "observed_at": str(command.get("completed_at") or ""),
+            "source": "zn_browser_extension_semantic_candidates",
+        }
+
+    def observe_anchor_context(self, anchor_text: str) -> dict[str, Any]:
+        anchor = self._bounded_text(anchor_text, "result anchor", 512)
+        command = self._request(
+            "probe_current_tab",
+            args={"observe_anchor_context": anchor},
+        )
+        result = self._authorized_command_result(command, "anchored result observation")
+        context = self._bounded_text(result.get("context"), "result context", 1200)
+        if result.get("anchor_present") is not True or anchor not in context:
+            raise ExtensionUserBrowserError(
+                "extension anchored result observation did not prove the requested subject"
+            )
+        return {
+            "tab_id": self._tab_id(result),
+            "url": self._safe_url(result.get("url")),
+            "title": self._title(result.get("title")),
+            "context": context,
+            "anchor_present": True,
+            "observed_at": str(command.get("completed_at") or ""),
+            "source": "zn_browser_extension_anchor_context",
+        }
+
     def observe_target(
         self,
         session_id: str,
@@ -539,6 +629,20 @@ class AuthorizedExtensionUserBrowser:
             data=evidence_data,
         )
 
+    def _authorized_command_result(self, command: dict[str, Any], label: str) -> dict[str, Any]:
+        result = self._command_result(command, label)
+        authorized = self.relay.authorized_tab()
+        if authorized is None:
+            raise ExtensionUserBrowserError(
+                "extension user-browser authority disappeared before observation completed"
+            )
+        tab_id = self._tab_id(result)
+        if tab_id != authorized.tab_id:
+            raise ExtensionUserBrowserError(
+                "extension user-browser observation returned evidence for a different tab"
+            )
+        return result
+
     def _session(self, session_id: str) -> _ExtensionSession:
         session = self._sessions.get(str(session_id or "").strip())
         if session is None:
@@ -599,6 +703,26 @@ class AuthorizedExtensionUserBrowser:
         if len(title) > 512:
             raise ExtensionUserBrowserError("extension browser title is too long")
         return title
+
+    @staticmethod
+    def _bounded_text(value: Any, label: str, limit: int) -> str:
+        text = str(value or "").strip()
+        if not text or len(text) > limit:
+            raise ExtensionUserBrowserError(f"extension browser {label} is invalid")
+        if any(ord(char) < 32 or ord(char) == 127 for char in text):
+            raise ExtensionUserBrowserError(
+                f"extension browser {label} contains control characters"
+            )
+        return text
+
+    @staticmethod
+    def _optional_bounded_text(value: Any, label: str, limit: int) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        if len(text) > limit or any(ord(char) < 32 or ord(char) == 127 for char in text):
+            raise ExtensionUserBrowserError(f"extension browser {label} is invalid")
+        return text
 
     @staticmethod
     def _nonnegative_int(value: Any, label: str) -> int:
