@@ -12,10 +12,12 @@ from datetime import datetime, time as dt_time, timedelta
 from pathlib import Path
 
 from zn_agent.core.cognitive_resource import CognitiveIncrement, CognitiveResourceWorkerFactory
+from zn_agent.core.daemon import ResidentRpcServer
 from zn_agent.core.desktop_task_goal import DESKTOP_TASK_GOAL_KIND, explicit_desktop_task_goal_hint
 from zn_agent.core.models import ModelRoute
 from zn_agent.core.provider_bridge import build_resident_runtime
 from zn_agent.core.recovery_bounded_work import RecoveryBoundedWorkLedger
+from zn_agent.core.resident_server import ResidentSocketService
 from test_windows_interactive_text_entry import WindowsInteractiveTextEntryE2ETests
 
 TASK = "找到昨天那份订单资料，把里面的编号拿到我现在开的软件里，帮我把对应记录查出来并确认结果出来了。"
@@ -162,6 +164,8 @@ class WindowsInteractiveFileDesktopGoalE2ETests(unittest.TestCase):
             app = _OrderApp(root); app.start(); resident = None
             try:
                 resident = build_resident_runtime(config={"model": {}}, store_path=root / "kernel.db")
+                service = ResidentSocketService(ResidentRpcServer(resident=resident))
+                self.assertIs(resident.visual_region, service.visual_region)
                 proposal = _Proposal()
                 resident.kernel.reconfigure_resources(
                     routes=[ModelRoute(route_id="e2e-language", provider="fixture", model="bounded-language-fixture", capabilities={"language_understanding":1.0,"general":.8})],
