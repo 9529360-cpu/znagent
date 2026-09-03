@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - dev/zn-agent
-      - work/desktop-task-resident-goal
     paths:
       - .github/workflows/zn-windows-interactive-e2e.yml
       - apps/desktop/browser-extension/background.js
