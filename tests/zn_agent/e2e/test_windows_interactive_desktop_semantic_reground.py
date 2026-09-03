@@ -351,10 +351,9 @@ class WindowsInteractiveDesktopSemanticRegroundE2ETests(unittest.TestCase):
                 semantic_goal = final_event.payload.get("_resident_desktop_semantic_goal") or {}
                 self.assertEqual(semantic_goal.get("input_name"), "用于识别对应订单的字段")
                 self.assertEqual(semantic_goal.get("button_name"), "执行查找对应记录的操作")
-                reground = resident.store.get_working_state().data.get(
-                    "resident_desktop_semantic_reground"
-                ) or {}
-                self.assertEqual(reground.get("count"), 1)
+                final_grounded = final_event.payload.get("desktop_task_goal") or {}
+                self.assertEqual(final_grounded.get("input_name"), FRESH_INPUT_NAME)
+                self.assertEqual(final_grounded.get("button_name"), FRESH_BUTTON_NAME)
                 print(
                     "ZN_DESKTOP_SEMANTIC_REGROUND_E2E_EVIDENCE="
                     + json.dumps(
