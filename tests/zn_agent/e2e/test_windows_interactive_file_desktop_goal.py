@@ -183,13 +183,85 @@ class WindowsInteractiveFileDesktopGoalE2ETests(unittest.TestCase):
                 self.assertIsNone(explicit_desktop_task_goal_hint(event))
 
                 result = None; drifted = False; stale_rejected = False; first_failure = None
+                state_trace = []
+                last_trace = None
+                observation_key = getattr(resident, "_DESKTOP_TASK_OBSERVATION_KEY", "resident_desktop_task_observation")
+
+                def record_state(label: str):
+                    nonlocal last_trace
+                    current_state = resident.store.get_working_state()
+                    if current_state.current_event_id != event.event_id:
+                        return
+                    observation = current_state.data.get(observation_key)
+                    observation = observation if isinstance(observation, dict) else {}
+                    source_observation = observation.get("source")
+                    source_observation = source_observation if isinstance(source_observation, dict) else {}
+                    focused_observation = observation.get("focused")
+                    focused_observation = focused_observation if isinstance(focused_observation, dict) else {}
+                    intent_observation = current_state.data.get("native_action_intent")
+                    intent_observation = intent_observation if isinstance(intent_observation, dict) else {}
+                    failures = list(current_state.data.get("native_action_failure_records") or [])
+                    latest_failure = failures[-1] if failures else {}
+                    pointer_execution = current_state.data.get("native_pointer_click_execution")
+                    pointer_execution = pointer_execution if isinstance(pointer_execution, dict) else {}
+                    text_execution = current_state.data.get("native_keyboard_text_execution")
+                    text_execution = text_execution if isinstance(text_execution, dict) else {}
+                    verification = current_state.data.get("native_verification_result")
+                    verification = verification if isinstance(verification, dict) else {}
+                    progress = current_state.data.get("resident_desktop_task_progress")
+                    progress = progress if isinstance(progress, dict) else {}
+                    entry = {
+                        "label": label,
+                        "stage": current_state.stage,
+                        "next_action": current_state.next_action,
+                        "intent_kind": intent_observation.get("kind"),
+                        "observation_phase": observation.get("phase"),
+                        "source_sha256": source_observation.get("text_sha256"),
+                        "target_has_focus": focused_observation.get("has_keyboard_focus"),
+                        "local_failure": str(current_state.data.get("local_failure") or "") or None,
+                        "latest_failure": {
+                            "kind": latest_failure.get("kind"),
+                            "source": latest_failure.get("source"),
+                            "failure": latest_failure.get("failure"),
+                            "evidence_fingerprint": latest_failure.get("evidence_fingerprint"),
+                        } if latest_failure else None,
+                        "pointer_execution": {
+                            "status": pointer_execution.get("status"),
+                            "input_sent": pointer_execution.get("input_sent"),
+                            "success": pointer_execution.get("success"),
+                            "error": pointer_execution.get("error"),
+                        } if pointer_execution else None,
+                        "text_execution": {
+                            "status": text_execution.get("status"),
+                            "input_sent": text_execution.get("input_sent"),
+                            "success": text_execution.get("success"),
+                            "error": text_execution.get("error"),
+                        } if text_execution else None,
+                        "verification": {
+                            "kind": verification.get("kind"),
+                            "verified": verification.get("verified"),
+                            "error": verification.get("error"),
+                        } if verification else None,
+                        "submit_dispatched": progress.get("submit_dispatched"),
+                        "app_title": app.title(),
+                        "evidence_fingerprint": resident._evidence_fingerprint(event.event_id),
+                    }
+                    signature = json.dumps(entry, ensure_ascii=False, sort_keys=True, default=str)
+                    if signature != last_trace:
+                        state_trace.append(entry)
+                        last_trace = signature
+
                 deadline = time.monotonic() + 35
                 while time.monotonic() < deadline and result is None:
                     state = resident.store.get_working_state(); intent = state.data.get("native_action_intent")
                     actions = [a for a in resident.body.recent_actions(256) if a.event_id == event.event_id]
+                    record_state("before_pulse")
                     if not drifted and isinstance(intent, dict) and intent.get("kind") == "keyboard_text" and not any(a.kind == "keyboard_text" for a in actions):
                         source.write_text(NEW_VALUE, encoding="utf-8"); self._yesterday(source); drifted = True
+                        state_trace.append({"label":"source_mutated_before_keyboard", "app_title":app.title()})
+                        last_trace = None
                     app.activate(); current = resident.live_once()
+                    record_state("after_pulse")
                     pulse_state = resident.store.get_working_state()
                     if first_failure is None and pulse_state.current_event_id == event.event_id:
                         local_failure = str(pulse_state.data.get("local_failure") or "")
@@ -215,11 +287,10 @@ class WindowsInteractiveFileDesktopGoalE2ETests(unittest.TestCase):
                     if result is None: time.sleep(.03)
 
                 diagnostic_state = resident.store.get_working_state()
-                observation_key = getattr(resident, "_DESKTOP_TASK_OBSERVATION_KEY", "resident_desktop_task_observation")
                 diagnostic_observation = diagnostic_state.data.get(observation_key)
                 diagnostic_actions = [
                     {"kind": action.kind, "success": action.success, "error": action.error}
-                    for action in resident.body.recent_actions(512)
+                    for action in reversed(resident.body.recent_actions(512))
                     if action.event_id == event.event_id
                 ]
                 self.assertTrue(
@@ -236,10 +307,28 @@ class WindowsInteractiveFileDesktopGoalE2ETests(unittest.TestCase):
                         "observation_phase": diagnostic_observation.get("phase") if isinstance(diagnostic_observation, dict) else None,
                         "observation_failure": diagnostic_observation.get("failure") if isinstance(diagnostic_observation, dict) else None,
                         "actions": diagnostic_actions,
+                        "state_trace": state_trace,
                     }, ensure_ascii=False, sort_keys=True, default=str),
                 )
                 self.assertTrue(stale_rejected); self.assertIsNotNone(result)
-                self.assertTrue(result.success, result); self.assertEqual(result.model_invocations, 1); self.assertEqual(proposal.calls, 1)
+                if not result.success:
+                    failure_evidence = {
+                        "result_reason": result.reason,
+                        "event_status": str(resident.store.get_event(event.event_id).status),
+                        "event_last_error": resident.store.get_event(event.event_id).last_error,
+                        "app_title": app.title(),
+                        "first_failure": first_failure,
+                        "actions": diagnostic_actions,
+                        "state_trace": state_trace,
+                    }
+                    print("ZN_FILE_DESKTOP_GOAL_FAILURE_TRACE=" + json.dumps(
+                        failure_evidence, ensure_ascii=False, sort_keys=True, default=str
+                    ))
+                    self.fail(
+                        "desktop goal failed after source-drift recovery: "
+                        + json.dumps(failure_evidence, ensure_ascii=False, sort_keys=True, default=str)
+                    )
+                self.assertEqual(result.model_invocations, 1); self.assertEqual(proposal.calls, 1)
                 self.assertEqual(app.title(), SUCCESS_TITLE)
                 actions = [a for a in resident.body.recent_actions(512) if a.event_id == event.event_id]
                 self.assertEqual(sum(a.kind == "keyboard_text" for a in actions), 1)
