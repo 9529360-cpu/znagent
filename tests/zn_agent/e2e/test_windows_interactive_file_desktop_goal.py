@@ -137,15 +137,15 @@ Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 $form=New-Object System.Windows.Forms.Form
 $form.Text='{START_TITLE}'; $form.StartPosition='CenterScreen'; $form.ClientSize='720,330'
-$input=New-Object System.Windows.Forms.TextBox
-$input.AccessibleName='{INPUT_NAME}'; $input.Location='70,105'; $input.Size='430,45'; $input.Font='Segoe UI,16'
+$script:orderBox=New-Object System.Windows.Forms.TextBox
+$script:orderBox.AccessibleName='{INPUT_NAME}'; $script:orderBox.Location='70,105'; $script:orderBox.Size='430,45'; $script:orderBox.Font='Segoe UI,16'
 $search=New-Object System.Windows.Forms.Button
 $search.AccessibleName='{BUTTON_NAME}'; $search.Text='{BUTTON_NAME}'; $search.Location='520,103'; $search.Size='125,48'
 $other=New-Object System.Windows.Forms.Button
 $other.AccessibleName='其它操作'; $other.Text='其它操作'; $other.Location='70,205'; $other.Size='125,42'
-$form.Controls.AddRange(@($input,$search,$other))
+$form.Controls.AddRange(@($script:orderBox,$search,$other))
 $script:n=0
-$search.Add_Click({{$script:n+=1; if($input.Text -eq '{NEW_VALUE}'){{$form.Text='ZN 订单记录已打开 #' + $script:n}}}})
+$search.Add_Click({{$script:n+=1; if($script:orderBox.Text -eq '{NEW_VALUE}'){{$form.Text='ZN 订单记录已打开 #' + $script:n}}}})
 $form.Add_Shown({{$other.Focus()}})
 [System.Windows.Forms.Application]::Run($form)'''
 
