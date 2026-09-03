@@ -39,6 +39,10 @@ class _SemanticBrowserCognition:
         self.calls = 0
         self.questions: list[str] = []
 
+    @staticmethod
+    def _observed_name(question: str, name: str) -> bool:
+        return f'"name": "{name}"' in question
+
     def invoke(self, *, question: str, context: str) -> CognitiveIncrement:
         del context
         self.calls += 1
@@ -52,15 +56,21 @@ class _SemanticBrowserCognition:
                 "desired_result": "确认当前订单状态",
             }
         elif "Select the one safe textbox" in question:
-            if "安全代码" in question:
+            if self._observed_name(question, "安全代码"):
                 value = {"status": "selected", "name": "安全代码"}
-            elif "客户账号" in question:
+            elif self._observed_name(question, "客户账号"):
                 value = {"status": "selected", "name": "客户账号"}
-            else:
+            elif self._observed_name(question, "客户邮箱"):
                 value = {"status": "selected", "name": "客户邮箱"}
+            else:
+                value = {"status": "ambiguous"}
         elif "Select the button" in question:
-            name = "查询订单" if "查询订单" in question else "搜索订单"
-            value = {"status": "selected", "name": name}
+            if self._observed_name(question, "查询订单"):
+                value = {"status": "selected", "name": "查询订单"}
+            elif self._observed_name(question, "搜索订单"):
+                value = {"status": "selected", "name": "搜索订单"}
+            else:
+                value = {"status": "ambiguous"}
         elif "extract the business fact" in question:
             value = {"status": "verified", "result": _STATUS}
         else:
@@ -350,6 +360,7 @@ class WindowsInteractiveUserBrowserSemanticGroundingE2ETests(unittest.TestCase):
             if hook is not None:
                 hook(state, semantic, actions)
             current = resident.live_once()
+            current_for_event = current if current is not None and current.event.event_id == event_id else None
             post = resident.store.get_working_state()
             post_semantic = post.data.get(getattr(resident, "_SEMANTIC_LOOKUP_STATE_KEY", "resident_user_browser_semantic_lookup"))
             post_semantic = post_semantic if isinstance(post_semantic, dict) else {}
@@ -361,9 +372,11 @@ class WindowsInteractiveUserBrowserSemanticGroundingE2ETests(unittest.TestCase):
                 "regrounds": post_semantic.get("regrounds"),
                 "actions": [action.kind for action in resident.body.recent_actions(512) if action.event_id == event_id],
                 "local_failure": str(post.data.get("local_failure") or "") or None,
+                "result_success": current_for_event.success if current_for_event is not None else None,
+                "result_reason": current_for_event.reason if current_for_event is not None else None,
             })
-            if current is not None and current.event.event_id == event_id:
-                result = current
+            if current_for_event is not None:
+                result = current_for_event
             if result is None:
                 time.sleep(0.03)
         return result, trace
