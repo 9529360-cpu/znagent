@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - dev/zn-agent
-      - work/desktop-semantic-reground
     paths:
       - .github/workflows/zn-windows-interactive-e2e.yml
       - apps/desktop/browser-extension/background.js
@@ -48,7 +47,6 @@ on:
       - runtime/python/zn_agent/core/automation_named_control_sense.py
       - tests/zn_agent/e2e/test_windows_interactive_file_desktop_goal.py
       - tests/zn_agent/core/test_desktop_goal_understanding_resident.py
-      - tests/zn_agent/core/test_desktop_semantic_reground_resident.py
       - tests/zn_agent/core/test_natural_named_desktop_input_work.py
       - runtime/python/zn_agent/core/pointer_click_resident.py
       - runtime/python/zn_agent/core/pointer_click_completion_resident.py
