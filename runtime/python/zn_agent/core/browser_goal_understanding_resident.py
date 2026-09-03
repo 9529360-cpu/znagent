@@ -34,8 +34,16 @@ _BROWSER_TASK_CUES = (
     "这个页面",
 )
 _UNDERSTANDING_KEY = "_resident_goal_understanding"
+_DESKTOP_SEMANTIC_GOAL_KEY = "_resident_desktop_semantic_goal"
 _MAX_DESKTOP_LANGUAGE_CHARS = 1600
 _YESTERDAY_CUES = ("昨天", "昨日", "yesterday")
+_BROWSER_PROCESSES = {
+    "chrome.exe",
+    "msedge.exe",
+    "firefox.exe",
+    "brave.exe",
+    "opera.exe",
+}
 
 
 def _looks_like_foreground_browser_task(event) -> bool:
@@ -149,9 +157,6 @@ def _validated_desktop_goal_proposal(task: str, model_text: str) -> dict[str, An
     ):
         return None
 
-    # The model may generalize semantic control descriptions, but it may not
-    # invent the workspace-selection premise or a completion title. Those values
-    # directly narrow real-world evidence, so keep them user-grounded.
     task_text = " ".join(str(task or "").strip().split())
     if source_name_hint.casefold() not in task_text.casefold():
         return None
@@ -175,12 +180,32 @@ def _validated_desktop_goal_proposal(task: str, model_text: str) -> dict[str, An
     )
 
 
+def _validated_desktop_grounding_selection(
+    model_text: str,
+    *,
+    edit_names: tuple[str, ...],
+    button_names: tuple[str, ...],
+) -> tuple[str, str] | None:
+    """Accept only two uniquely observed accessible names, never model-minted identity."""
+
+    value = _extract_json_object(model_text)
+    if value is None or set(value).difference({"status", "input_name", "button_name"}):
+        return None
+    if str(value.get("status") or "").strip().lower() != "selected":
+        return None
+    input_name = " ".join(str(value.get("input_name") or "").strip().split())
+    button_name = " ".join(str(value.get("button_name") or "").strip().split())
+    if not input_name or not button_name:
+        return None
+    if edit_names.count(input_name) != 1 or button_names.count(button_name) != 1:
+        return None
+    return input_name, button_name
+
+
 class BrowserGoalUnderstandingResidentRuntime(ResidentGoalRuntime):
     """Use a model only to propose desired state; keep execution resident-owned."""
 
     def _orient_step(self, event, state, *, readiness, thought=None):
-        # Internal typed callers and the explicit deterministic desktop fast path
-        # keep their existing zero-model route.
         if browser_named_text_request(event) is not None or desktop_task_goal(event) is not None:
             return super()._orient_step(event, state, readiness=readiness, thought=thought)
 
@@ -278,7 +303,7 @@ class BrowserGoalUnderstandingResidentRuntime(ResidentGoalRuntime):
         return None
 
     def _orient_desktop_goal_from_cognition(self, event, state, *, readiness, thought=None):
-        """Return False only when this broad workspace task should keep normal routing."""
+        """Understand desired state, then ground it only in freshly sensed safe candidates."""
 
         decision = self.budget.decide(
             event,
@@ -286,9 +311,6 @@ class BrowserGoalUnderstandingResidentRuntime(ResidentGoalRuntime):
             local_capability_available=False,
         )
         if not decision.use_model:
-            # A workspace may belong to another deterministic resident path. The
-            # generic desktop proposal is a fallback, so lack of a model must not
-            # steal or terminate those existing zero-model tasks.
             return False
 
         cognition_goal_id = f"goal-desktop-understanding-{event.event_id}"
@@ -299,16 +321,16 @@ class BrowserGoalUnderstandingResidentRuntime(ResidentGoalRuntime):
             "application to find or submit a result, return "
             '{"kind":"workspace_to_foreground_desktop",'
             '"source_name_hint":"SHORT PHRASE COPIED FROM THE USER TASK",'
-            '"input_name":"SEMANTIC ACCESSIBLE NAME FOR THE INPUT",'
-            '"button_name":"SEMANTIC ACCESSIBLE NAME FOR THE SUBMIT/SEARCH BUTTON",'
+            '"input_name":"SEMANTIC DESCRIPTION OF THE DESTINATION FIELD",'
+            '"button_name":"SEMANTIC DESCRIPTION OF THE FIND/SUBMIT OPERATION",'
             '"expected_title":null,"source_modified_yesterday":false}. '
             "Set source_modified_yesterday=true only when the user explicitly says yesterday. "
             "Set expected_title only when the user explicitly supplies that exact visible title; "
-            "otherwise use null. input_name and button_name are semantic target descriptions "
-            "only; Resident will freshly bind and validate the real controls. Otherwise return "
-            '{"kind":"not_applicable"}. Never return file paths, process/window identity, '
-            "UIA RuntimeIds, automation ids, coordinates, selectors, text-field contents, "
-            "credentials, authority, action sequences, side-effect state, or completion claims. "
+            "otherwise use null. input_name and button_name are semantic descriptions, not "
+            "claims about controls that exist. Otherwise return {\"kind\":\"not_applicable\"}. "
+            "Never return file paths, process/window identity, UIA RuntimeIds, automation ids, "
+            "coordinates, selectors, text-field contents, credentials, authority, action "
+            "sequences, side-effect state, or completion claims. "
             f"User task: {event.task}"
         )
         result = self.kernel.run_goal(
@@ -330,9 +352,6 @@ class BrowserGoalUnderstandingResidentRuntime(ResidentGoalRuntime):
         )
         raw_kind = str((raw or {}).get("kind") or "").strip().lower()
         if raw_kind != DESKTOP_TASK_GOAL_KIND:
-            # not_applicable or unrelated output leaves the ordinary Resident
-            # routing untouched instead of turning the broad workspace entrance
-            # into a hidden task classifier.
             return False
 
         proposal = _validated_desktop_goal_proposal(
@@ -349,8 +368,105 @@ class BrowserGoalUnderstandingResidentRuntime(ResidentGoalRuntime):
                 ),
             )
 
+        foreground, foreground_error = self._probe_foreground_window()
+        if foreground is None:
+            return self._checkpoint_terminal_failure(
+                event,
+                state,
+                reason=(
+                    "fresh desktop grounding could not observe the current foreground window: "
+                    + str(foreground_error or "unavailable")
+                ),
+            )
+        process_name = str(foreground.process_name or "").strip().lower()
+        if not process_name or process_name in _BROWSER_PROCESSES:
+            return self._checkpoint_terminal_failure(
+                event,
+                state,
+                reason="fresh desktop grounding requires the current non-browser application",
+            )
+
+        try:
+            edits = self.named_automation_control.list_safe_edits(
+                process_id=int(foreground.process_id),
+                process_name=process_name,
+            )
+            buttons = self.named_automation_control.list_buttons(
+                process_id=int(foreground.process_id),
+                process_name=process_name,
+            )
+        except Exception as exc:
+            return self._checkpoint_terminal_failure(
+                event,
+                state,
+                reason=(
+                    "fresh desktop candidate Sense failed closed before any input: "
+                    f"{type(exc).__name__}: {exc}"
+                ),
+            )
+        edit_names = tuple(item.name for item in edits)
+        button_names = tuple(item.name for item in buttons)
+        if not edit_names or not button_names:
+            return self._checkpoint_terminal_failure(
+                event,
+                state,
+                reason=(
+                    "fresh desktop candidate Sense did not expose both a safe Edit candidate "
+                    "and a Button candidate; no desktop input was attempted"
+                ),
+            )
+
+        grounding_goal_id = f"goal-desktop-grounding-{event.event_id}"
+        grounding_question = (
+            "Choose only among the freshly observed accessible names below. Match the semantic "
+            "destination field and operation to the user's goal. Return exactly "
+            '{"status":"selected","input_name":"ONE OBSERVED EDIT NAME",'
+            '"button_name":"ONE OBSERVED BUTTON NAME"} only when there is one clearly best '
+            "choice for each. If either choice is ambiguous, return "
+            '{"status":"ambiguous"}. Never return an index, RuntimeId, process/window identity, '
+            "coordinates, selectors, authority, actions, or completion. "
+            f"User task: {event.task}\n"
+            f"Semantic destination: {proposal['input_name']}\n"
+            f"Semantic operation: {proposal['button_name']}\n"
+            f"Fresh Edit names: {json.dumps(edit_names, ensure_ascii=False)}\n"
+            f"Fresh Button names: {json.dumps(button_names, ensure_ascii=False)}"
+        )
+        grounding = self.kernel.run_goal(
+            grounding_question,
+            required_capabilities=("language_understanding",),
+            priority=event.priority,
+            metadata={
+                "resident_event_id": event.event_id,
+                "purpose": "desktop_fresh_candidate_grounding_only",
+            },
+            max_attempts_override=1,
+            goal_id=grounding_goal_id,
+        )
+        invocations += self._model_invocations(grounding)
+        selection = None
+        if grounding.worker_result.success and grounding.assessment.success:
+            selection = _validated_desktop_grounding_selection(
+                grounding.worker_result.response,
+                edit_names=edit_names,
+                button_names=button_names,
+            )
+        if selection is None:
+            return self._checkpoint_terminal_failure(
+                event,
+                state,
+                reason=(
+                    "fresh desktop semantic grounding was ambiguous or did not select one "
+                    "uniquely observed safe Edit and Button; no desktop input was attempted"
+                ),
+            )
+
+        input_name, button_name = selection
+        grounded = dict(proposal)
+        grounded["input_name"] = input_name
+        grounded["button_name"] = button_name
         event.payload = dict(event.payload or {})
-        event.payload["desktop_task_goal"] = dict(proposal)
+        event.payload[_DESKTOP_SEMANTIC_GOAL_KEY] = dict(proposal)
+        event.payload["desktop_task_goal"] = grounded
         self._persist_understanding(
             event,
             state,
@@ -358,12 +474,15 @@ class BrowserGoalUnderstandingResidentRuntime(ResidentGoalRuntime):
             invocations=invocations,
             route_id=str(result.goal.route_id or ""),
             goal_kind=DESKTOP_TASK_GOAL_KIND,
-            next_action="freshly ground the proposed desktop goal in workspace and UI evidence",
+            next_action=(
+                "freshly bind the selected accessible names to exact current UIA targets and "
+                "continue one bounded movement"
+            ),
             thought=thought,
             known=(
-                "bounded cognition proposed only semantic workspace-to-desktop goal data; "
-                "fresh Resident Sense still owns file identity, app/control identity, "
-                "side-effect authority and completion"
+                "bounded cognition proposed semantic goal data and then selected only names "
+                "from Resident fresh safe candidate Sense; Resident still owns exact UIA "
+                "identity, action authority, side-effect state and completion"
             ),
         )
         return None
@@ -388,8 +507,6 @@ class BrowserGoalUnderstandingResidentRuntime(ResidentGoalRuntime):
             "model_invocations": invocations,
             "route_id": route_id,
         }
-        # Persist resident-owned semantic enrichment before any Body action. A
-        # restart can reuse the proposal but must still re-sense current reality.
         self.store._save_event(event)
         state.data[_UNDERSTANDING_KEY] = dict(event.payload[_UNDERSTANDING_KEY])
         state.stage = "native_investigation"
