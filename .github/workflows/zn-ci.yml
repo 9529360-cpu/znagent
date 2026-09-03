@@ -5,7 +5,6 @@ on:
     branches:
       - dev/zn-agent
       - main
-      - work/desktop-semantic-grounding
   workflow_dispatch:
 
 permissions:
@@ -130,10 +129,10 @@ jobs:
           '@ | & $python -I -
       - name: Compile resident core
         run: .\.ci\runtime-venv\Scripts\python.exe -m compileall -q runtime/python/zn_agent/core
-      - name: Run relevant desktop semantic grounding tests
+      - name: Run ZN core tests against working tree
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
-          & .\.ci\runtime-venv\Scripts\python.exe -m unittest -v tests.zn_agent.core.test_automation_named_control_sense tests.zn_agent.core.test_desktop_goal_understanding_resident tests.zn_agent.core.test_natural_named_desktop_input_work tests.zn_agent.core.test_desktop_goal_evidence_guard tests.zn_agent.core.test_desktop_goal_submit_dispatch
+          & .\.ci\runtime-venv\Scripts\python.exe -m unittest discover -s tests/zn_agent/core -p 'test_*.py' -v
 
   desktop:
     name: Electron / TypeScript / Windows
