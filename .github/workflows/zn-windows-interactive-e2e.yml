@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - dev/zn-agent
+      - work/user-browser-managed-research-return-v2
     paths:
       - .github/workflows/zn-windows-interactive-e2e.yml
       - apps/desktop/browser-extension/background.js
