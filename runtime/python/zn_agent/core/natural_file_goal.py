@@ -290,6 +290,151 @@ def failure_reason(event: "AgentEvent", facts: Mapping[str, Any]) -> str | None:
     return "bounded workspace evidence could not establish one exact safe target; ZN stopped instead of guessing"
 
 
+def observe_workspace_text_source(
+    event: "AgentEvent",
+    body: Any,
+    *,
+    workspace_path: str,
+    name_hint: str,
+    modified_yesterday: bool,
+) -> tuple[dict[str, Any], str | None]:
+    """Bind one safe complete text source for a cross-application goal.
+
+    This is the read-only counterpart of the edit-specific evidence functions
+    above.  Keeping both here gives file selection one authority boundary while
+    allowing callers to decide whether the observed text will be edited, typed,
+    compared, or otherwise used.
+    """
+
+    try:
+        workspace = canonical_host_path(workspace_path).resolve(strict=True)
+        if not workspace.is_dir():
+            raise ValueError
+    except (OSError, RuntimeError, ValueError):
+        return {}, "the authorized workspace is unavailable"
+    listing = body.act(
+        "list_directory",
+        event_id=event.event_id,
+        path=str(workspace),
+        limit=MAX_ENTRIES + 1,
+    )
+    if not listing.success:
+        return {}, str(listing.error or "bounded workspace enumeration failed")
+    entries = [
+        dict(item)
+        for item in (listing.data.get("entries") or ())
+        if isinstance(item, Mapping)
+    ]
+    if len(entries) > MAX_ENTRIES:
+        return {}, "bounded workspace enumeration reached its top-level entry limit"
+
+    hint = str(name_hint or "").strip().casefold()
+    yesterday = datetime.now().astimezone().date() - timedelta(days=1)
+    candidates: list[dict[str, Any]] = []
+    for item in entries:
+        name = str(item.get("name") or "")
+        raw_path = str(item.get("path") or "")
+        if str(item.get("type") or "").lower() != "file" or not raw_path:
+            continue
+        path = canonical_host_path(raw_path)
+        if Path(name).suffix.casefold() != ".txt" or hint not in Path(name).stem.casefold():
+            continue
+        if not _direct_child(path, workspace):
+            continue
+        if len(candidates) >= MAX_CANDIDATES:
+            return {}, "too many top-level filename candidates for bounded selection"
+        identity = observe_file_identity(path)
+        day = _day(identity)
+        if day is None:
+            return {}, "a filename candidate could not be freshly dated"
+        if modified_yesterday and day != yesterday:
+            continue
+        inspected = body.act("inspect_path", event_id=event.event_id, path=str(path))
+        if not (
+            inspected.success
+            and inspected.data.get("exists") is True
+            and str(inspected.data.get("type") or "").lower() == "file"
+            and _exact_file(identity, path)
+            and int(identity.get("size_bytes") or 0) <= MAX_BYTES
+        ):
+            return {}, "a matching workspace file is not one bounded safe text source"
+        candidates.append({"name": name, "path": str(path), "identity": identity})
+    if len(candidates) != 1:
+        return {}, (
+            "the requested workspace text source is ambiguous"
+            if candidates
+            else "no workspace txt file matches the requested source"
+        )
+
+    selected = candidates[0]
+    path = str(selected["path"])
+    baseline = selected["identity"]
+    pre = observe_file_identity(path)
+    if compare_file_identities(baseline, pre).get("exact") is not True:
+        return {}, "the selected workspace source changed before it could be read"
+    observed = body.act("read_text", event_id=event.event_id, path=path, max_chars=MAX_CHARS + 1)
+    post = observe_file_identity(path)
+    text = str(observed.output) if observed.success else ""
+    if not observed.success or bool(observed.data.get("truncated")):
+        return {}, str(observed.error or "the workspace source could not be fully read")
+    if compare_file_identities(pre, post).get("exact") is not True:
+        return {}, "the workspace source changed while it was being read"
+    from .keyboard_text_body import KeyboardTextBody
+
+    try:
+        validated, units = KeyboardTextBody.validate_text(text)
+    except ValueError as exc:
+        return {}, f"workspace source is not safe bounded keyboard text: {exc}"
+    digest = hashlib.sha256(validated.encode("utf-8")).hexdigest()
+    return {
+        "path": path,
+        "workspace_path": str(workspace),
+        "identity": dict(post),
+        "text_sha256": digest,
+        "text_chars": len(validated),
+        "utf16_units": len(units),
+    }, None
+
+
+def fresh_workspace_text(
+    event: "AgentEvent",
+    body: Any,
+    source: Mapping[str, Any],
+) -> tuple[str | None, str | None]:
+    """Re-read the exact source at the final keyboard-input boundary."""
+
+    path = str(source.get("path") or "")
+    workspace = str(source.get("workspace_path") or "")
+    baseline = source.get("identity")
+    if not path or not workspace or not isinstance(baseline, Mapping):
+        return None, "desktop task lost its exact workspace source authority"
+    if not _direct_child(path, workspace):
+        return None, "desktop task source escaped the attached workspace"
+    pre = observe_file_identity(path)
+    if compare_file_identities(dict(baseline), pre).get("exact") is not True:
+        return None, "workspace source identity changed after investigation"
+    observed = body.act("read_text", event_id=event.event_id, path=path, max_chars=MAX_CHARS + 1)
+    post = observe_file_identity(path)
+    if not observed.success or bool(observed.data.get("truncated")):
+        return None, str(observed.error or "fresh workspace source read failed")
+    if compare_file_identities(pre, post).get("exact") is not True:
+        return None, "workspace source changed during the action-time read"
+    text = str(observed.output)
+    from .keyboard_text_body import KeyboardTextBody
+
+    try:
+        validated, _ = KeyboardTextBody.validate_text(text)
+    except ValueError as exc:
+        return None, f"workspace source is no longer safe keyboard text: {exc}"
+    if (
+        hashlib.sha256(validated.encode("utf-8")).hexdigest()
+        != str(source.get("text_sha256") or "")
+        or len(validated) != int(source.get("text_chars") or -1)
+    ):
+        return None, "workspace source content drifted after investigation"
+    return validated, None
+
+
 def _fail(reason: str, **extra: Any):
     return {**extra, "complete": False, "ready": False, "failure_reason": reason}, [reason]
 

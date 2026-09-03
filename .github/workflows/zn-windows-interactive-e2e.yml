@@ -38,6 +38,12 @@ on:
       - runtime/python/zn_agent/core/natural_file_goal.py
       - runtime/python/zn_agent/core/natural_file_work_resident.py
       - runtime/python/zn_agent/core/goal_resident.py
+      - runtime/python/zn_agent/core/desktop_task_goal.py
+      - runtime/python/zn_agent/core/browser_goal_understanding_resident.py
+      - runtime/python/zn_agent/core/automation_named_control_sense.py
+      - tests/zn_agent/e2e/test_windows_interactive_file_desktop_goal.py
+      - tests/zn_agent/core/test_desktop_goal_understanding_resident.py
+      - tests/zn_agent/core/test_natural_named_desktop_input_work.py
       - runtime/python/zn_agent/core/pointer_click_resident.py
       - runtime/python/zn_agent/core/pointer_click_completion_resident.py
       - runtime/python/zn_agent/core/pointer_click_semantic_resident.py

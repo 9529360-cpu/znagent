@@ -16,6 +16,7 @@ from .natural_file_goal import (
     observe_candidates,
     read_target,
 )
+from .goal_resident import ResidentGoalRuntime
 from .user_browser_managed_research_resident import UserBrowserManagedResearchResidentRuntime
 
 
@@ -52,6 +53,26 @@ class NaturalFileWorkResidentRuntime(UserBrowserManagedResearchResidentRuntime):
         "freshly read the exact selected workspace file",
     )
     _BROWSER_FILE_RESEARCH_STATE_KEY = "resident_browser_result_file_edit"
+
+    def _orient_step(self, event, state, *, readiness, thought=None):
+        # This is already a resident-owned, strictly bounded browser-evidence +
+        # workspace goal.  Do not let the generic foreground-browser language
+        # proposal route consume it before this class can ground the two-source
+        # research and exact file edit in deliberation.
+        if self._natural_browser_result_file_request(event) is not None:
+            return ResidentGoalRuntime._orient_step(
+                self,
+                event,
+                state,
+                readiness=readiness,
+                thought=thought,
+            )
+        return super()._orient_step(
+            event,
+            state,
+            readiness=readiness,
+            thought=thought,
+        )
 
     @classmethod
     def _natural_browser_result_file_request(cls, event) -> dict[str, str] | None:
@@ -138,6 +159,12 @@ class NaturalFileWorkResidentRuntime(UserBrowserManagedResearchResidentRuntime):
             )
 
         facts = dict(investigation.facts)
+        research_evidence = state.data.get(self._BROWSER_FILE_RESEARCH_STATE_KEY)
+        if browser_file_request is not None and isinstance(research_evidence, dict):
+            # WorkingState returns to idle after terminal publication. Preserve
+            # the bounded source agreement with the Investigation facts that
+            # already retain the selected file and fresh postcondition evidence.
+            facts[self._BROWSER_FILE_RESEARCH_STATE_KEY] = dict(research_evidence)
         evidence = list(investigation.evidence)
         probes = list(investigation.probes)
         probe_keys = list(investigation.probe_keys)
