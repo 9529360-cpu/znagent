@@ -18,6 +18,7 @@ on:
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_extension.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_natural_search_work.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_semantic_grounding.py
+      - tests/zn_agent/e2e/test_windows_interactive_user_browser_task_context.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_managed_research_return_work.py
       - tests/zn_agent/e2e/test_windows_interactive_browser_result_file_work.py
       - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_grounding.py
