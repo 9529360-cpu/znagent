@@ -834,13 +834,19 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
             raise UserBrowserExtensionRelayError(
                 "semantic candidate comparison requires bounded language understanding and model use is disabled"
             )
+        normalized_question = question.strip()
+        input_sha256 = hashlib.sha256(normalized_question.encode("utf-8")).hexdigest()
         result = self.kernel.run_goal(
-            question,
+            normalized_question,
             required_capabilities=("language_understanding",),
             priority=event.priority,
-            metadata={"resident_event_id": event.event_id, "purpose": purpose},
+            metadata={
+                "resident_event_id": event.event_id,
+                "purpose": purpose,
+                "input_sha256": input_sha256,
+            },
             max_attempts_override=1,
-            goal_id=f"goal-{purpose}-{event.event_id}",
+            goal_id=f"goal-{purpose}-{event.event_id}-{input_sha256[:16]}",
         )
         self._add_semantic_model_invocations(event, self._model_invocations(result))
         if not (result.worker_result.success and result.assessment.success):
