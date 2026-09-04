@@ -29,6 +29,40 @@ class _ContextHandler(_Handler):
                 f"<title>{_DECOY_TITLE}</title>".encode("utf-8"),
                 1,
             )
+        if mode == "popup-drift":
+            body = """<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>ZN Popup Task Root E2E</title>
+<style>body{font-family:sans-serif} form{display:grid;gap:12px;width:720px} input,textarea,button{padding:14px;font-size:20px}</style>
+</head>
+<body>
+<h1>Customer order portal</h1>
+<form id="orders" action="/results" method="get" target="_blank">
+<label>客户名称<input aria-label="客户名称" type="text" autocomplete="off"></label>
+<label>客户邮箱<input aria-label="客户邮箱" name="customer" type="text" autocomplete="off"></label>
+<label>备注<textarea aria-label="备注"></textarea></label>
+<button type="submit" aria-label="搜索订单">搜索订单</button>
+</form>
+<script>
+let changed = false;
+setInterval(async () => {
+  if (changed) return;
+  const response = await fetch('/drift', {cache: 'no-store'});
+  const state = await response.json();
+  if (!state.drift) return;
+  changed = true;
+  document.title = 'ZN Popup Task Root Drifted E2E';
+  const form = document.getElementById('orders');
+  form.innerHTML = `
+    <label>客户<input aria-label="客户" type="text" autocomplete="off"></label>
+    <label>客户账号<input aria-label="客户账号" name="customer" type="text" autocomplete="off"></label>
+    <label>备注信息<textarea aria-label="备注信息"></textarea></label>
+    <button type="submit" aria-label="查询订单">查询订单</button>`;
+  await fetch('/drift-applied', {cache: 'no-store'});
+}, 50);
+</script>
+</body></html>"""
+            return body.encode("utf-8")
         if mode != "drift-ambiguous":
             return super()._account_page(mode)
         body = """<!doctype html>
@@ -252,6 +286,152 @@ class WindowsInteractiveUserBrowserTaskContextE2ETests(unittest.TestCase):
                         "text_side_effects": 1,
                         "submit_side_effects": 1,
                         "fresh_anchored_result": f"{_TEXT}: {_STATUS}",
+                        "independent_server_result_requests": 1,
+                        "no_cookie_or_profile_copy": True,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            )
+        finally:
+            if decoy_process is not None and decoy_process.poll() is None:
+                try:
+                    decoy_process.terminate()
+                except Exception:
+                    pass
+            self._close_runtime(env)
+
+    def test_same_work_continues_into_action_proven_direct_child_without_authority_transfer(self) -> None:
+        self._require_input_desktop()
+        env = self._make_runtime("popup-drift")
+        decoy_process = None
+        try:
+            resident = env["resident"]
+            authorized = resident.user_browser_extension.authorized_tab()
+            self.assertIsNotNone(authorized)
+            original_tab = authorized.tab_id
+            original_generation = authorized.attached_at
+            original_root_url = authorized.url
+            event_id = self._start_work(env, "direct-child-popup")
+            drifted = False
+            decoy_opened = False
+            regrounded = False
+            child_sensed = False
+            old_target = ""
+
+            def hook(_state, semantic, actions):
+                nonlocal drifted, decoy_opened, decoy_process, regrounded, child_sensed, old_target
+                if (
+                    not drifted
+                    and semantic.get("phase") == "input_grounded"
+                    and semantic.get("input_name") == "客户邮箱"
+                ):
+                    self.assertEqual(actions, [])
+                    old_target = str(semantic.get("input_target_id") or "")
+                    self.assertTrue(old_target)
+                    env["server"].enable_drift = True  # type: ignore[attr-defined]
+                    deadline = time.monotonic() + 5
+                    while time.monotonic() < deadline:
+                        if int(env["server"].drift_applied) >= 1:  # type: ignore[attr-defined]
+                            drifted = True
+                            break
+                        time.sleep(0.05)
+                    self.assertTrue(drifted)
+                    decoy_process = self._launch_decoy(env)
+                    decoy_opened = True
+                    time.sleep(0.25)
+                if (
+                    drifted
+                    and semantic.get("phase") == "input_grounded"
+                    and semantic.get("input_name") == "客户账号"
+                ):
+                    regrounded = True
+                    self.assertNotEqual(str(semantic.get("input_target_id") or ""), old_target)
+                if semantic.get("phase") == "button_grounded":
+                    child_sensed = semantic.get("opens_direct_child") is True
+
+            result, trace = self._run_to_terminal(
+                env,
+                event_id,
+                hook=hook,
+                timeout=55.0,
+            )
+            self.assertTrue(drifted, json.dumps(trace[-24:], ensure_ascii=False, default=str))
+            self.assertTrue(decoy_opened)
+            self.assertTrue(regrounded, json.dumps(trace[-24:], ensure_ascii=False, default=str))
+            self.assertTrue(child_sensed, json.dumps(trace[-24:], ensure_ascii=False, default=str))
+            self.assertIsNotNone(result, json.dumps(trace[-28:], ensure_ascii=False, default=str))
+            self.assertTrue(result.success, result.reason)
+            self.assertEqual(result.response, f"{_TEXT}: {_STATUS}")
+
+            current = resident.user_browser_extension.authorized_tab()
+            self.assertIsNotNone(current)
+            self.assertEqual(current.tab_id, original_tab)
+            self.assertEqual(current.attached_at, original_generation)
+            fresh_root = resident.probe_user_browser_extension_tab()
+            self.assertEqual(fresh_root["tab_id"], original_tab)
+            self.assertEqual(fresh_root["url"], original_root_url)
+            final_event = resident.store.get_event(event_id)
+            context = final_event.payload.get("_resident_user_browser_task_context") or {}
+            self.assertEqual(context.get("tab_id"), original_tab)
+            self.assertEqual(context.get("attached_at"), original_generation)
+            self.assertEqual(env["server"].result_requests["authorized"], 1)  # type: ignore[attr-defined]
+            self.assertEqual(env["server"].result_queries["authorized"], [_TEXT])  # type: ignore[attr-defined]
+            self.assertEqual(env["server"].result_requests["decoy"], 0)  # type: ignore[attr-defined]
+
+            actions = [
+                action
+                for action in resident.body.recent_actions(512)
+                if action.event_id == event_id
+            ]
+            text_actions = [item for item in actions if item.kind == "browser_type_named_text"]
+            submit_actions = [
+                item for item in actions if item.kind == "browser_click_named_button_to_url"
+            ]
+            self.assertEqual(len(text_actions), 1)
+            self.assertEqual(len(submit_actions), 1)
+            submit = submit_actions[0]
+            self.assertTrue(submit.success, submit.error)
+            self.assertTrue(submit.data.get("direct_child"))
+            self.assertEqual(submit.data.get("opener_tab_id"), original_tab)
+            child_tab_id = int(submit.data.get("task_tab_id") or 0)
+            self.assertGreater(child_tab_id, 0)
+            self.assertNotEqual(child_tab_id, original_tab)
+            self.assertEqual(submit.data.get("authorization_tab_id"), original_tab)
+            self.assertEqual(submit.data.get("authorization_attached_at"), original_generation)
+            self.assertEqual(
+                submit.data.get("postcondition"),
+                "direct_child_url_equals_after_fresh_semantic_button_click",
+            )
+            self.assertGreaterEqual(
+                int(resident.user_browser_extension_status().get("authorized_child_pages") or 0),
+                1,
+            )
+            self.assertEqual(env["cognition"].calls, 5)
+            self.assertNotIn("tab_id", "\n".join(env["cognition"].questions))
+            self.assertNotIn("attached_at", "\n".join(env["cognition"].questions))
+            print(
+                "ZN_USER_BROWSER_DIRECT_CHILD_CONTEXT_E2E_EVIDENCE="
+                + json.dumps(
+                    {
+                        "ordinary_language_task": _TASK,
+                        "existing_authenticated_session": True,
+                        "root_authorization_generation_preserved": True,
+                        "root_tab_id": original_tab,
+                        "action_proven_child_tab_id": child_tab_id,
+                        "root_page_not_navigated": True,
+                        "direct_child_opened_by_exact_submit": True,
+                        "foreground_decoy_opened": True,
+                        "decoy_result_side_effects": 0,
+                        "semantic_label_drift": [
+                            "客户邮箱->客户账号",
+                            "搜索订单->查询订单",
+                        ],
+                        "stale_target_rejected": True,
+                        "semantic_reground": True,
+                        "text_side_effects": 1,
+                        "submit_side_effects": 1,
+                        "fresh_anchored_result_from_child": f"{_TEXT}: {_STATUS}",
                         "independent_server_result_requests": 1,
                         "no_cookie_or_profile_copy": True,
                     },
