@@ -17,6 +17,7 @@ on:
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_extension.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_natural_search_work.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_semantic_grounding.py
+      - tests/zn_agent/e2e/test_windows_interactive_user_browser_task_context.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_managed_research_return_work.py
       - tests/zn_agent/e2e/test_windows_interactive_browser_result_file_work.py
       - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_grounding.py
@@ -33,6 +34,7 @@ on:
       - runtime/python/zn_agent/core/browser_named_goal.py
       - runtime/python/zn_agent/core/browser_work_body.py
       - runtime/python/zn_agent/core/browser_text_work_body.py
+      - runtime/python/zn_agent/core/browser_form_submit_body.py
       - runtime/python/zn_agent/core/user_browser.py
       - runtime/python/zn_agent/core/user_browser_extension_adapter.py
       - runtime/python/zn_agent/core/user_browser_extension_relay.py

@@ -49,6 +49,7 @@ class AuthorizedUserBrowserTab:
 class UserBrowserExtensionCommand:
     command_id: str
     tab_id: int
+    authorization_attached_at: str
     kind: str
     args: dict[str, Any]
     issued_at: str
@@ -264,6 +265,8 @@ class ResidentUserBrowserExtensionRelay:
         *,
         args: dict[str, Any] | None = None,
         timeout_seconds: float = 5.0,
+        expected_tab_id: int | None = None,
+        expected_attached_at: str | None = None,
     ) -> dict[str, Any]:
         normalized_kind = str(kind or "").strip()
         if normalized_kind not in _ALLOWED_COMMAND_KINDS:
@@ -278,9 +281,19 @@ class ResidentUserBrowserExtensionRelay:
             current = self._authorized
             if current is None:
                 raise UserBrowserExtensionRelayError("no user browser tab is currently authorized")
+            if expected_tab_id is not None and int(expected_tab_id) != current.tab_id:
+                raise UserBrowserExtensionRelayError(
+                    "current browser authorization is not the task-owned tab"
+                )
+            expected_generation = str(expected_attached_at or "").strip()
+            if expected_generation and expected_generation != current.attached_at:
+                raise UserBrowserExtensionRelayError(
+                    "current browser authorization is a different authorization generation"
+                )
             command = UserBrowserExtensionCommand(
                 command_id=f"browser-extension-command-{uuid.uuid4().hex[:12]}",
                 tab_id=current.tab_id,
+                authorization_attached_at=current.attached_at,
                 kind=normalized_kind,
                 args=normalized_args,
                 issued_at=utc_now(),
@@ -293,7 +306,7 @@ class ResidentUserBrowserExtensionRelay:
                 if result is not None:
                     return result
                 current = self._authorized
-                if current is None or current.tab_id != command.tab_id:
+                if not self._same_authorization(current, command):
                     delivered = command.command_id in self._inflight
                     self._drop_command_locked(command.command_id)
                     if delivered:
@@ -301,7 +314,7 @@ class ResidentUserBrowserExtensionRelay:
                             "user browser authority changed after command delivery; side effect may have occurred"
                         )
                     raise UserBrowserExtensionRelayError(
-                        "user browser authorization was revoked before command delivery"
+                        "user browser authorization changed before command delivery"
                     )
                 if self._server is None:
                     delivered = command.command_id in self._inflight
@@ -335,8 +348,12 @@ class ResidentUserBrowserExtensionRelay:
         with self._condition:
             while True:
                 self._require_current_tab_id_locked(normalized_tab_id)
-                for index, command in enumerate(self._pending):
+                current = self._authorized
+                for index, command in enumerate(tuple(self._pending)):
                     if command.tab_id != normalized_tab_id:
+                        continue
+                    if not self._same_authorization(current, command):
+                        self._pending.pop(index)
                         continue
                     self._pending.pop(index)
                     self._inflight[command.command_id] = command
@@ -373,14 +390,21 @@ class ResidentUserBrowserExtensionRelay:
 
         with self._condition:
             self._require_current_tab_id_locked(normalized_tab_id)
-            command = self._inflight.pop(normalized_command_id, None)
-            if command is None or command.tab_id != normalized_tab_id:
+            command = self._inflight.get(normalized_command_id)
+            current = self._authorized
+            if (
+                command is None
+                or command.tab_id != normalized_tab_id
+                or not self._same_authorization(current, command)
+            ):
                 raise UserBrowserExtensionRelayError(
-                    "browser extension command result does not match one inflight command"
+                    "browser extension command result does not match the current authorization generation"
                 )
+            self._inflight.pop(normalized_command_id, None)
             self._results[normalized_command_id] = {
                 "command_id": normalized_command_id,
                 "tab_id": normalized_tab_id,
+                "authorization_attached_at": command.authorization_attached_at,
                 "kind": command.kind,
                 "success": success,
                 "result": normalized_result,
@@ -426,6 +450,17 @@ class ResidentUserBrowserExtensionRelay:
             raise UserBrowserExtensionRelayError(
                 "browser extension command must use the currently authorized tab"
             )
+
+    @staticmethod
+    def _same_authorization(
+        current: AuthorizedUserBrowserTab | None,
+        command: UserBrowserExtensionCommand,
+    ) -> bool:
+        return bool(
+            current is not None
+            and current.tab_id == command.tab_id
+            and current.attached_at == command.authorization_attached_at
+        )
 
     def _drop_command_locked(self, command_id: str) -> None:
         self._pending = [item for item in self._pending if item.command_id != command_id]
