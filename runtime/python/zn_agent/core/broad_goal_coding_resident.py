@@ -201,7 +201,11 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
 
     def _verification_contract(self, event, intent, *, result=None):
         raw = intent.expected_outcome
-        if intent.kind != "command" or not isinstance(raw, dict):
+        if (
+            intent.source != "resident_broad_goal_choice"
+            or intent.kind != "command"
+            or not isinstance(raw, dict)
+        ):
             return super()._verification_contract(event, intent, result=result)
         if str(raw.get("kind") or "").strip().lower() != "command":
             return super()._verification_contract(event, intent, result=result)
@@ -259,8 +263,30 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
             readiness=readiness,
             thought=thought,
         )
-        self._block_failed_rolling_child(state)
+        self._reconcile_failed_rolling_step(event, state)
         return result
+
+    def _investigation_step(
+        self,
+        event,
+        state,
+        *,
+        readiness,
+        learning_evidence,
+        thought=None,
+    ):
+        # Recovery boundary: the mature Body persists native_investigation before
+        # this rolling layer records its child/failure semantics. Reconcile from
+        # that durable truth on the next pulse instead of leaving a running child
+        # or a stale resolved_external investigation after a crash.
+        self._reconcile_failed_rolling_step(event, state)
+        return super()._investigation_step(
+            event,
+            state,
+            readiness=readiness,
+            learning_evidence=learning_evidence,
+            thought=thought,
+        )
 
     def _fail_postcondition_verification(
         self,
@@ -278,8 +304,30 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
             failure=failure,
             thought=thought,
         )
-        self._block_failed_rolling_child(state)
+        self._reconcile_failed_rolling_step(event, state)
         return result
+
+    def _reconcile_failed_rolling_step(self, event, state) -> None:
+        failure = str(state.data.get("local_failure") or "").strip()
+        rolling = state.data.get(self._ROLLING_STEP_KEY)
+        if not failure or not isinstance(rolling, dict):
+            return
+        self._block_failed_rolling_child(state)
+
+        investigation = self.investigator.current(event.event_id)
+        if investigation is None or investigation.status != "resolved_external":
+            return
+        evidence = list(investigation.evidence)
+        failure_evidence = f"new local failure after external cognition: {failure[:1000]}"
+        if failure_evidence not in evidence:
+            evidence.append(failure_evidence)
+        investigation.status = "open"
+        investigation.resolution = None
+        investigation.unresolved = failure[:1000]
+        investigation.next_probe = None
+        investigation.updated_at = utc_now()
+        investigation.evidence = tuple(evidence[-64:])
+        self.investigator._save(investigation)
 
     def _block_failed_rolling_child(self, state) -> None:
         rolling = state.data.get(self._ROLLING_STEP_KEY)
