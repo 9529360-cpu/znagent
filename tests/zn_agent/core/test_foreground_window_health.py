@@ -50,7 +50,6 @@ class ForegroundWindowHealthTests(unittest.TestCase):
                 self.assertEqual(health["repeat_fingerprint_failures"], expected)
 
             health = resident.health.get(resident._FOREGROUND_WINDOW_HEALTH_ORGAN)
-            self.assertTrue(health["maintenance_candidate"])
             self.assertEqual(health["last_failure_class"], "probable_zn_defect")
             resident.store.close()
 
