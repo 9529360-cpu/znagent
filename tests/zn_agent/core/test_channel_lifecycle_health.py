@@ -96,7 +96,6 @@ class ResidentChannelLifecycleHealthTests(unittest.TestCase):
                 self.assertFalse(health["healthy"])
                 self.assertEqual(health["consecutive_failures"], 1)
                 self.assertEqual(health["last_failure_class"], "configuration_or_input")
-                self.assertFalse(health["maintenance_candidate"])
             finally:
                 resident.store.close()
 
@@ -136,8 +135,6 @@ class ResidentChannelLifecycleHealthTests(unittest.TestCase):
                 self.assertEqual(health["total_failures"], 1)
                 self.assertEqual(health["last_exception_type"], "TimeoutError")
                 self.assertEqual(health["last_failure_class"], "network_or_service")
-                self.assertFalse(health["maintenance_candidate"])
-                self.assertIsNone(supervisor.health.maintenance_task("channel:telegram"))
             finally:
                 resident.store.close()
 

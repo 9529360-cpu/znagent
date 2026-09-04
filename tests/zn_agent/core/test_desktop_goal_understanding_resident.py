@@ -392,7 +392,11 @@ class DesktopGoalUnderstandingTests(unittest.TestCase):
                 self.assertEqual(body.focus_click_count, 0)
                 self.assertEqual(body.keyboard_calls, [])
                 self.assertEqual(body.submit_click_count, 0)
-                self.assertEqual(controls.edit_calls, 0)
+                self.assertGreaterEqual(
+                    controls.edit_calls,
+                    1,
+                    "read-only UIA semantic sensing is allowed before the workspace ambiguity is surfaced",
+                )
                 self.assertIn("ambiguous", run.reason)
             finally:
                 resident.store.close()

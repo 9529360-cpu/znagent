@@ -46,6 +46,9 @@ class BrowserFormSubmitResidentRuntime(BrowserNamedTextWorkResidentRuntime):
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
         self.body = BrowserFormSubmitBody(resident=self)
+        installer = getattr(self, "_install_body_dispatch_health_observer", None)
+        if callable(installer):
+            installer()
 
     @classmethod
     def _natural_form_submit_request(

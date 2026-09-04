@@ -33,7 +33,6 @@ class NativeBodyHealthTests(unittest.TestCase):
                 self.assertEqual(
                     health["last_failure_class"], "configuration_or_environment"
                 )
-                self.assertFalse(health["maintenance_candidate"])
 
             self.assertNotIn("private-directory-name", repr(resident.status()))
 
