@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from zn_agent.core.daemon import ResidentRpcServer
 from zn_agent.core.models import EventOutcome, EventStatus, ExecutionPath, utc_now
@@ -41,8 +42,6 @@ class ActiveWorkSteeringTests(unittest.TestCase):
                     "开发个人记账产品，先做登录和核心记账，界面做完整一点",
                 )
 
-                # A previously accepted result belongs to the Root Work, not to
-                # the active plan mutation. Steering must not destroy it.
                 accepted = WorkItem(
                     work_item_id="item-accepted-research",
                     work_thread_id="product",
@@ -245,6 +244,158 @@ class ActiveWorkSteeringTests(unittest.TestCase):
                 self.assertEqual(ledger.list_messages("shell"), [])
             finally:
                 resident.store.close()
+
+    def test_restart_recovers_steering_after_atomic_intent_before_ingress_materialization(self) -> None:
+        """A crash after plan commit must not lose the exact next-plan event intent."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "kernel.db"
+            first = self._runtime(db)
+            control = RestoreAwareWorkControl(RecoveryBoundedWorkLedger(first))
+            ledger = control.ledger
+            ledger.create_thread(thread_id="product", title="Product")
+            _, old_event = ledger.start("product", "旧计划：登录和记账一起做")
+            old_event_id = old_event.event_id
+            self._make_yesterday(ledger, "product")
+            ledger.create_thread(thread_id="shell", title="New work")
+            before_event_ids = {
+                event.event_id for event in first.store.list_events(limit=64)
+            }
+
+            with patch.object(
+                ledger,
+                "reconcile_ingress_checkpoints",
+                side_effect=RuntimeError("crash after steering intent"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "crash after steering intent"):
+                    control.start("shell", STEERING)
+
+            self.assertEqual(ledger.plan_version("product"), 2)
+            self.assertEqual(ledger.get_run(old_event_id).ledger_state, "stale")
+            self.assertEqual(first.store.get_event(old_event_id).status, EventStatus.PENDING)
+            self.assertEqual(
+                {event.event_id for event in first.store.list_events(limit=64)},
+                before_event_ids,
+            )
+            self.assertTrue(
+                any(
+                    item.plan_version == 2 and item.status == "running"
+                    for item in ledger.list_work_items("product")
+                )
+            )
+            first.store.close()
+
+            restored = self._runtime(db)
+            try:
+                restored_control = RestoreAwareWorkControl(
+                    RecoveryBoundedWorkLedger(restored)
+                )
+                restored_ledger = restored_control.ledger
+                current = restored_ledger._active_run_for_thread("product")
+                self.assertIsNotNone(current)
+                self.assertNotEqual(current.event_id, old_event_id)
+                current_event_id = current.event_id
+                self.assertEqual(restored_ledger.plan_version("product"), 2)
+                self.assertEqual(
+                    restored_ledger.get_run(old_event_id).ledger_state,
+                    "stale_finalized",
+                )
+                old_persisted = restored.store.get_event(old_event_id)
+                self.assertEqual(old_persisted.status, EventStatus.FAILED)
+                old_outcome = restored.store.get_event_outcome(old_event_id)
+                self.assertEqual(old_outcome.execution_path, ExecutionPath.CONTROL)
+                current_event = restored.store.get_event(current_event_id)
+                self.assertEqual(current_event.status, EventStatus.PENDING)
+                self.assertEqual(current_event.payload["work_plan_version"], 2)
+                self.assertEqual(
+                    current_event.payload["work_steering"]["previous_event_id"],
+                    old_event_id,
+                )
+                self.assertEqual(
+                    {event.event_id for event in restored.store.list_events(limit=64)}
+                    - before_event_ids,
+                    {current_event_id},
+                )
+
+                restored_ledger.create_thread(thread_id="restart-ui", title="New work")
+                snapshot, resumed = restored_control.start(
+                    "restart-ui",
+                    "上次那个继续",
+                )
+                self.assertEqual(snapshot[0].thread_id, "product")
+                self.assertEqual(resumed.event_id, current_event_id)
+            finally:
+                restored.store.close()
+
+    def test_restart_recovers_after_new_event_materialized_before_old_event_superseded(self) -> None:
+        """A crash after new ingress exists must preserve that exact event and finish old-plan supersession."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "kernel.db"
+            first = self._runtime(db)
+            control = RestoreAwareWorkControl(RecoveryBoundedWorkLedger(first))
+            ledger = control.ledger
+            ledger.create_thread(thread_id="product", title="Product")
+            _, old_event = ledger.start("product", "旧计划：登录和记账一起做")
+            old_event_id = old_event.event_id
+            self._make_yesterday(ledger, "product")
+            ledger.create_thread(thread_id="shell", title="New work")
+
+            with patch.object(
+                ledger,
+                "_supersede_resident_event",
+                side_effect=RuntimeError("crash after new steering event"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "crash after new steering event"):
+                    control.start("shell", STEERING)
+
+            current = ledger._active_run_for_thread("product")
+            self.assertIsNotNone(current)
+            current_event_id = current.event_id
+            self.assertNotEqual(current_event_id, old_event_id)
+            self.assertEqual(ledger.plan_version("product"), 2)
+            self.assertEqual(ledger.get_run(old_event_id).ledger_state, "stale")
+            self.assertEqual(first.store.get_event(old_event_id).status, EventStatus.PENDING)
+            self.assertEqual(first.store.get_event(current_event_id).status, EventStatus.PENDING)
+            before_restart_ids = {
+                event.event_id for event in first.store.list_events(limit=64)
+            }
+            self.assertEqual(before_restart_ids, {old_event_id, current_event_id})
+            first.store.close()
+
+            restored = self._runtime(db)
+            try:
+                restored_control = RestoreAwareWorkControl(
+                    RecoveryBoundedWorkLedger(restored)
+                )
+                restored_ledger = restored_control.ledger
+                active = restored_ledger._active_run_for_thread("product")
+                self.assertIsNotNone(active)
+                self.assertEqual(active.event_id, current_event_id)
+                self.assertEqual(
+                    restored_ledger.get_run(old_event_id).ledger_state,
+                    "stale_finalized",
+                )
+                self.assertEqual(
+                    restored.store.get_event(old_event_id).status,
+                    EventStatus.FAILED,
+                )
+                self.assertEqual(
+                    restored.store.get_event(current_event_id).status,
+                    EventStatus.PENDING,
+                )
+                self.assertEqual(
+                    {event.event_id for event in restored.store.list_events(limit=64)},
+                    before_restart_ids,
+                )
+                self.assertEqual(
+                    restored_ledger.work_item_for_event(current_event_id).plan_version,
+                    2,
+                )
+                self.assertEqual(
+                    restored.store.get_event(current_event_id).payload["work_steering"]["previous_event_id"],
+                    old_event_id,
+                )
+            finally:
+                restored.store.close()
 
     def test_steered_plan_survives_restart_and_bare_continue_reuses_new_event(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
