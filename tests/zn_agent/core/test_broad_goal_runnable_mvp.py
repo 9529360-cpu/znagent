@@ -217,10 +217,20 @@ class BroadGoalRunnableMvpTests(unittest.TestCase):
                 assert root_item is not None
 
                 terminal = None
+                verified_child = None
                 for _ in range(32):
                     candidate = resident.live_once()
                     if candidate is not None and candidate.event.event_id == event.event_id:
                         terminal = candidate
+                        break
+                    children = [
+                        item
+                        for item in ledger.list_work_items("rolling-step")
+                        if item.parent_work_item_id == root_item.work_item_id
+                    ]
+                    completed = [item for item in children if item.status == "completed"]
+                    if completed:
+                        verified_child = completed[0]
                         break
 
                 target = workspace / "rolling-probe.txt"
@@ -246,6 +256,7 @@ class BroadGoalRunnableMvpTests(unittest.TestCase):
                     1,
                     "one bounded cognition proposal should materialize as one durable child WorkItem",
                 )
+                self.assertIsNotNone(verified_child)
                 self.assertEqual(children[0].status, "completed")
                 self.assertEqual(
                     children[0].acceptance_criteria,
@@ -264,6 +275,10 @@ class BroadGoalRunnableMvpTests(unittest.TestCase):
                 self.assertIsNone(
                     terminal,
                     "Resident must keep the Root Work live after one rolling child step",
+                )
+                self.assertEqual(
+                    resident.store.get_working_state().stage,
+                    "native_deliberation",
                 )
             finally:
                 resident.store.close()
