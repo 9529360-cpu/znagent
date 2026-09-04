@@ -2,9 +2,9 @@
 
 > Current intended platform: Windows x64
 >
-> Development branch: `dev/zn-agent`
+> Canonical integration/source/release branch: `main`
 >
-> Canonical source/release branch: `main`
+> Development branches: short-lived `work/*` branches created from current `main` and merged through PR.
 
 ## Purpose
 
@@ -14,31 +14,35 @@ The runner is infrastructure, not ZN identity and not a specific maintainer mach
 
 ## Automatic behavior
 
-`.github/workflows/zn-ci.yml` runs automatically on every push to:
+`.github/workflows/zn-ci.yml` runs automatically on:
 
-- `dev/zn-agent`;
-- `main`.
+- pull requests targeting `main`, so the candidate is verified before merge;
+- pushes to `main`, so the merged canonical source is verified again.
 
 It may also be started manually with `workflow_dispatch`.
 
-The required checks are:
+The required core checks are:
 
 - ZN source boundary;
 - isolated Python runtime install, zero-model boot and core tests;
 - Electron/TypeScript dependency audit, typecheck, bundle and retained desktop/release tests.
 
+Applicable product E2E workflows such as managed-browser, Work-recovery and Windows interactive computer-use are also configured to run on relevant pull requests targeting `main`, with path filters so unrelated changes do not consume scarce runners unnecessarily.
+
+`dev/zn-agent` is a historical compatibility branch only. It is not a CI integration target for new product development and should not accumulate independent work.
+
 Linux Container and Linux AppImage checks are optional manual workflows and do not block normal Windows development.
 
 ## Runner selection
 
-The workflow dispatches to the generic GitHub Actions `self-hosted` label, then immediately verifies:
+The workflow dispatches to the generic GitHub Actions `self-hosted` label plus the repository's Windows/x64 project labels, then immediately verifies the actual runner OS/architecture where appropriate.
 
 ```text
 RUNNER_OS   = Windows
 RUNNER_ARCH = X64
 ```
 
-This deliberately avoids binding the project to a runner name, computer name, user profile or installation path.
+This deliberately avoids making a maintainer's personal computer identity part of the product contract. The dedicated interactive runner remains a special resource only for tests that genuinely require a logged-on desktop session.
 
 If additional non-Windows self-hosted runners are ever added to this repository, runner groups or dedicated project labels should be introduced before enabling them for unrelated workloads.
 
@@ -56,9 +60,9 @@ Settings
 
 Run GitHub's generated registration commands locally on that computer. The registration token is short-lived infrastructure credential material: never commit it, put it in HANDOFF, paste it into ordinary logs, or make it part of ZN resident memory.
 
-After registration, keep the runner listener online. For unattended CI across logout/reboot, install/run the GitHub Actions runner using the supported Windows service mode on the runner host.
+After registration, keep the runner listener online. For unattended CI across logout/reboot, install/run the GitHub Actions runner using the supported Windows service mode on the runner host where that mode matches the workload. Interactive desktop E2E still requires a real logged-on interactive session.
 
-Then verify repository connectivity with `.github/workflows/zn-self-hosted-runner-check.yml` and confirm a normal push produces real step execution in `ZN CI`.
+Then verify repository connectivity with `.github/workflows/zn-self-hosted-runner-check.yml` and confirm a pull request to `main` produces real step execution in `ZN CI`.
 
 ## Host safety boundary
 
@@ -71,7 +75,7 @@ A self-hosted runner executes repository-controlled code with the operating-syst
 - keep workflow `GITHUB_TOKEN` permissions minimal;
 - treat changes that expand runner permissions or secret access as security-sensitive review items.
 
-The steady-state development workflow currently uses repository contents read access and commit-status write access only.
+The steady-state core development workflow currently uses repository contents read access and commit-status write access only.
 
 ## Observability
 
@@ -86,6 +90,8 @@ success/failure/error = terminal repository-visible evidence
 ```
 
 A queued workflow without any pending status is infrastructure availability evidence, not a code-test failure.
+
+For a pull request, the merge decision must use the checks for the current PR head. A green result from an older commit is not a substitute after the branch changes. Post-merge `main` CI is canonical confirmation, not the first merge gate.
 
 ## Secondary platforms
 

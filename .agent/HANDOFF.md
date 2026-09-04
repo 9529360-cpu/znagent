@@ -2,7 +2,7 @@
 
 这是一份施工现场说明，不是产品路线的永久命令。
 
-真实代码、真实 Git、真实测试和真实 CI 高于这份文档。接手时必须重新查询 `main`、`dev/zn-agent`、相关 work branch、open PR 和 CI，不能把这里写的 SHA 或状态当成永远正确。
+真实代码、真实 Git、真实测试和真实 CI 高于这份文档。接手时必须重新查询 `main`、相关 `work/*`、open PR 和 CI；只有历史任务仍明确引用 `dev/zn-agent` 时才把它作为兼容分支检查，不能再把它当新的开发主线。
 
 ## 当前产品定位
 
@@ -69,9 +69,11 @@ resident deterministic / learned competence
 
 ## 当前真实仓库现场
 
-- `dev/zn-agent` 是固定主开发分支；`main` 是 canonical/release branch。
+- `main` 是唯一长期集成主线、canonical source 和 release branch。
+- 新开发固定从最新 `main` 拉短命 `work/*`，PR 直接以 `main` 为 base；核心 CI 和适用真实 E2E 必须在 PR 阶段运行并通过，合并后的 `main` CI 只做 canonical 复核。
+- `dev/zn-agent` 只保留为历史兼容分支，不再接收新的产品开发或作为新 PR base；在仍保留期间应与 `main` 对齐，不能再次积累独立产品提交。
 - 专用 self-maintenance / self-repair / upstream BUG-report 产品路线已经废弃，不要恢复。
-- open PR #166：`Continue durable Work from natural references and fresh follow-ups`。它处理“刚才/上次/昨天那个继续”等 durable Work continuity，并明确把 **active task steering** 留作独立未解决产品问题。接手时必须重新查询该 PR 的实际 mergeability/base/head，不要依赖这里的历史状态。
+- open PR #166：`Continue durable Work from natural references and fresh follow-ups`。它处理“刚才/上次/昨天那个继续”等 durable Work continuity，并明确把 **active task steering** 留作独立未解决产品问题。该 PR 应直接以 `main` 为 base，并按新的 PR CI/E2E 流程验证，不再经过 `dev/zn-agent` 集成。
 - 2026-09-04 已完成 delegated Work / model routing、OS-level assistant industry research、长期 Personal Intelligence Layer blueprint 等产品调研与设计文档，但这些是设计事实，不等于 runtime 已实现。
 
 ## 已完成的策划/调研文档

@@ -1,9 +1,9 @@
 name: ZN Windows Interactive Desktop E2E
 
 on:
-  push:
+  pull_request:
     branches:
-      - dev/zn-agent
+      - main
     paths:
       - .github/workflows/zn-windows-interactive-e2e.yml
       - apps/desktop/browser-extension/background.js
@@ -12,8 +12,6 @@ on:
       - tests/zn_agent/e2e/test_windows_interactive_text_entry.py
       - tests/zn_agent/e2e/test_windows_interactive_uia_text_capability.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_bridge.py
-      - tests/zn_agent/e2e/test_windows_interactive_user_browser_named_goal.py
-      - tests/zn_agent/e2e/test_windows_interactive_authorized_user_browser_cdp.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_extension.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_natural_search_work.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_semantic_grounding.py
@@ -22,6 +20,7 @@ on:
       - tests/zn_agent/e2e/test_windows_interactive_browser_result_file_work.py
       - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_grounding.py
       - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_reground.py
+      - tests/zn_agent/e2e/test_windows_interactive_file_desktop_goal.py
       - runtime/python/zn_agent/core/body.py
       - runtime/python/zn_agent/core/keyboard_text_body.py
       - runtime/python/zn_agent/core/visual_region_sense.py
@@ -47,7 +46,61 @@ on:
       - runtime/python/zn_agent/core/desktop_task_goal.py
       - runtime/python/zn_agent/core/browser_goal_understanding_resident.py
       - runtime/python/zn_agent/core/automation_named_control_sense.py
+      - tests/zn_agent/core/test_desktop_goal_understanding_resident.py
+      - tests/zn_agent/core/test_natural_named_desktop_input_work.py
+      - runtime/python/zn_agent/core/pointer_click_resident.py
+      - runtime/python/zn_agent/core/pointer_click_completion_resident.py
+      - runtime/python/zn_agent/core/pointer_click_semantic_resident.py
+      - runtime/python/zn_agent/core/pointer_click_focused_control_resident.py
+      - runtime/python/zn_agent/core/pointer_click_automation_focus_resident.py
+      - runtime/python/zn_agent/core/focused_text_entry_resident.py
+      - runtime/python/zn_agent/core/focused_modern_text_resident.py
+      - runtime/python/zn_agent/core/provider_bridge.py
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/zn-windows-interactive-e2e.yml
+      - apps/desktop/browser-extension/background.js
+      - apps/desktop/browser-extension/manifest.json
+      - tests/zn_agent/e2e/test_windows_interactive_pointer_uia.py
+      - tests/zn_agent/e2e/test_windows_interactive_text_entry.py
+      - tests/zn_agent/e2e/test_windows_interactive_uia_text_capability.py
+      - tests/zn_agent/e2e/test_windows_interactive_user_browser_bridge.py
+      - tests/zn_agent/e2e/test_windows_interactive_user_browser_extension.py
+      - tests/zn_agent/e2e/test_windows_interactive_user_browser_natural_search_work.py
+      - tests/zn_agent/e2e/test_windows_interactive_user_browser_semantic_grounding.py
+      - tests/zn_agent/e2e/test_windows_interactive_user_browser_task_context.py
+      - tests/zn_agent/e2e/test_windows_interactive_user_browser_managed_research_return_work.py
+      - tests/zn_agent/e2e/test_windows_interactive_browser_result_file_work.py
+      - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_grounding.py
+      - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_reground.py
       - tests/zn_agent/e2e/test_windows_interactive_file_desktop_goal.py
+      - runtime/python/zn_agent/core/body.py
+      - runtime/python/zn_agent/core/keyboard_text_body.py
+      - runtime/python/zn_agent/core/visual_region_sense.py
+      - runtime/python/zn_agent/core/foreground_window_sense.py
+      - runtime/python/zn_agent/core/focused_control_sense.py
+      - runtime/python/zn_agent/core/focused_text_sense.py
+      - runtime/python/zn_agent/core/automation_element_sense.py
+      - runtime/python/zn_agent/core/automation_text_state_sense.py
+      - runtime/python/zn_agent/core/browser_named_target_sense.py
+      - runtime/python/zn_agent/core/browser_named_goal.py
+      - runtime/python/zn_agent/core/browser_work_body.py
+      - runtime/python/zn_agent/core/browser_text_work_body.py
+      - runtime/python/zn_agent/core/browser_form_submit_body.py
+      - runtime/python/zn_agent/core/user_browser.py
+      - runtime/python/zn_agent/core/user_browser_extension_adapter.py
+      - runtime/python/zn_agent/core/user_browser_extension_relay.py
+      - runtime/python/zn_agent/core/user_browser_extension_resident.py
+      - runtime/python/zn_agent/core/user_browser_resident.py
+      - runtime/python/zn_agent/core/user_browser_managed_research_resident.py
+      - runtime/python/zn_agent/core/natural_file_goal.py
+      - runtime/python/zn_agent/core/natural_file_work_resident.py
+      - runtime/python/zn_agent/core/goal_resident.py
+      - runtime/python/zn_agent/core/desktop_task_goal.py
+      - runtime/python/zn_agent/core/browser_goal_understanding_resident.py
+      - runtime/python/zn_agent/core/automation_named_control_sense.py
       - tests/zn_agent/core/test_desktop_goal_understanding_resident.py
       - tests/zn_agent/core/test_natural_named_desktop_input_work.py
       - runtime/python/zn_agent/core/pointer_click_resident.py
@@ -69,9 +122,9 @@ concurrency:
 
 jobs:
   interactive-desktop-e2e:
-    name: Windows interactive computer-use E2E
+    name: Windows interactive product E2E
     runs-on: [self-hosted, Windows, X64, zn-interactive]
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       CI: 'true'
       TZ: UTC
@@ -102,8 +155,67 @@ jobs:
           uv venv .ci/interactive-e2e-venv --python 3.12
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-e2e-venv\Scripts\python.exe'
           uv pip install --python $python "runtime/python[browser]"
-      - name: Run real interactive computer-use E2Es
+      - name: Run current product-route interactive E2Es in isolated modules
         shell: powershell
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
-          & .\.ci\interactive-e2e-venv\Scripts\python.exe -m unittest discover -s tests/zn_agent/e2e -p 'test_windows_interactive_*.py' -v
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-e2e-venv\Scripts\python.exe'
+          $excluded = @(
+            'test_windows_interactive_authorized_user_browser_cdp.py',
+            'test_windows_interactive_user_browser_named_goal.py'
+          )
+          $tests = Get-ChildItem tests/zn_agent/e2e/test_windows_interactive_*.py |
+            Where-Object { $_.Name -notin $excluded } |
+            Sort-Object Name
+          if (-not $tests) {
+            throw 'No current product-route interactive E2E modules were discovered'
+          }
+          foreach ($test in $tests) {
+            Write-Host "=== interactive module: $($test.Name) ==="
+            & $python $test.FullName -v
+            if ($LASTEXITCODE -ne 0) {
+              throw "Interactive E2E module failed: $($test.Name)"
+            }
+          }
+
+  legacy-interactive-diagnostics:
+    name: Legacy/full interactive diagnostics
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: [interactive-desktop-e2e]
+    runs-on: [self-hosted, Windows, X64, zn-interactive]
+    timeout-minutes: 20
+    env:
+      CI: 'true'
+      TZ: UTC
+      PYTHONUTF8: '1'
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - name: Require Windows x64 interactive runner
+        shell: powershell
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "ZN full interactive diagnostics require Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+          if ($env:RUNNER_NAME -ne 'zn-interactive') {
+            throw "ZN full interactive diagnostics require zn-interactive; got $env:RUNNER_NAME"
+          }
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare isolated runtime
+        shell: powershell
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/interactive-diagnostics-venv -ErrorAction SilentlyContinue
+          uv venv .ci/interactive-diagnostics-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-diagnostics-venv\Scripts\python.exe'
+          uv pip install --python $python "runtime/python[browser]"
+      - name: Run full interactive diagnostic suite including legacy paths
+        shell: powershell
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          & .\.ci\interactive-diagnostics-venv\Scripts\python.exe -m unittest discover -s tests/zn_agent/e2e -p 'test_windows_interactive_*.py' -v

@@ -256,42 +256,52 @@ class WindowsInteractiveUserBrowserSemanticGroundingE2ETests(unittest.TestCase):
         provider, executable = browsers[0]
         fixture = _ExtensionBrowserFixture(provider, executable, login_url, extension)
         runtime_tmp = tempfile.TemporaryDirectory()
-        fixture.start()
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            if server.account_requests.get(mode, 0) >= 1:  # type: ignore[attr-defined]
-                break
-            time.sleep(0.05)
-        self.assertGreaterEqual(server.account_requests.get(mode, 0), 1)  # type: ignore[attr-defined]
-        resident = build_resident_runtime(
-            config={"model": {}},
-            store_path=Path(runtime_tmp.name) / "kernel.db",
-        )
-        rpc = ResidentRpcServer(resident=resident)
-        rpc.service.acquire()
         cognition = _SemanticBrowserCognition()
-        self._enable_cognition(resident, cognition)
-        fixture.activate()
-        _press_extension_action_shortcut()
-        deadline = time.monotonic() + 8
-        while time.monotonic() < deadline:
-            authorization = resident.user_browser_authorization()
-            if authorization.get("provider") == "zn-extension-user-browser":
-                break
-            time.sleep(0.05)
-        self.assertEqual(resident.user_browser_authorization().get("provider"), "zn-extension-user-browser")
-        return {
+        env = {
             "server": server,
             "server_thread": server_thread,
             "fixture": fixture,
             "runtime_tmp": runtime_tmp,
-            "resident": resident,
-            "rpc": rpc,
+            "resident": None,
+            "rpc": None,
             "cognition": cognition,
             "provider": provider,
             "executable": executable,
             "port": port,
         }
+        try:
+            fixture.start()
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                if server.account_requests.get(mode, 0) >= 1:  # type: ignore[attr-defined]
+                    break
+                time.sleep(0.05)
+            self.assertGreaterEqual(server.account_requests.get(mode, 0), 1)  # type: ignore[attr-defined]
+            resident = build_resident_runtime(
+                config={"model": {}},
+                store_path=Path(runtime_tmp.name) / "kernel.db",
+            )
+            env["resident"] = resident
+            rpc = ResidentRpcServer(resident=resident)
+            env["rpc"] = rpc
+            rpc.service.acquire()
+            self._enable_cognition(resident, cognition)
+            fixture.activate()
+            _press_extension_action_shortcut()
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                authorization = resident.user_browser_authorization()
+                if authorization.get("provider") == "zn-extension-user-browser":
+                    break
+                time.sleep(0.05)
+            self.assertEqual(
+                resident.user_browser_authorization().get("provider"),
+                "zn-extension-user-browser",
+            )
+            return env
+        except BaseException:
+            self._close_runtime(env)
+            raise
 
     def _close_runtime(self, env) -> None:
         resident = env.get("resident")
@@ -313,16 +323,29 @@ class WindowsInteractiveUserBrowserSemanticGroundingE2ETests(unittest.TestCase):
                 resident.store.close()
             except Exception:
                 pass
-        if env.get("runtime_tmp") is not None:
-            env["runtime_tmp"].cleanup()
         if fixture is not None:
-            fixture.close()
+            try:
+                fixture.close()
+            except Exception:
+                pass
         if server is not None:
-            server.shutdown()
-            server.server_close()
+            try:
+                server.shutdown()
+                server.server_close()
+            except Exception:
+                pass
         thread = env.get("server_thread")
         if thread is not None:
-            thread.join(timeout=2)
+            try:
+                thread.join(timeout=2)
+            except Exception:
+                pass
+        runtime_tmp = env.get("runtime_tmp")
+        if runtime_tmp is not None:
+            try:
+                runtime_tmp.cleanup()
+            except Exception:
+                pass
 
     def _start_work(self, env, suffix: str) -> str:
         rpc = env["rpc"]
@@ -545,6 +568,10 @@ class WindowsInteractiveUserBrowserSemanticGroundingE2ETests(unittest.TestCase):
             if decoy_process is not None and decoy_process.poll() is None:
                 try:
                     decoy_process.terminate()
+                    decoy_process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    decoy_process.kill()
+                    decoy_process.wait(timeout=2)
                 except Exception:
                     pass
             self._close_runtime(env)

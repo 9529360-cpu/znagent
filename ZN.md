@@ -1,8 +1,10 @@
 # ZN — Product and Engineering Contract
 
-> Active development branch: `dev/zn-agent`
+> Canonical integration/source/release branch: `main`
 >
-> Canonical source/release branch: `main`
+> Short-lived development branches: `work/*`, always created from current `main` and merged back through PR.
+>
+> Historical compatibility branch: `dev/zn-agent`; it is no longer the primary development or integration branch and must not accumulate independent product work.
 >
 > This file is the current architecture contract. Real code and Git state determine what exists; tests/CI determine what has been verified; `.agent/HANDOFF.md` records the current work site.
 
@@ -22,39 +24,46 @@ real code and Git state
 Normal engineering loop:
 
 ```text
-inspect repository + branch + CI
+inspect main + open PRs + CI
 → identify entry / owner / state / lifecycle / dependency / tests / active caller
 → update ZN.md first when architecture direction changes
-→ implement the smallest coherent ZN-owned step on dev/zn-agent or an isolated work branch
+→ create one short-lived work/* branch from current main
+→ implement the smallest coherent ZN-owned product slice
 → add or update tests
-→ run relevant verification
-→ inspect diff
+→ run focused verification
 → commit / push
-→ verify real CI
-→ synchronize status docs and HANDOFF
+→ open PR with base=main
+→ run required CI / applicable real E2E on the PR head
+→ fix failures on the same work branch until the required gates pass
+→ inspect diff / authority / continuity / regression risk
+→ merge normally into main
+→ main post-merge CI confirms the canonical result
+→ retire/delete the completed work branch
+→ synchronize status docs and HANDOFF only where facts actually changed
 ```
 
-M10 canonical promotion is complete. `main` is the canonical source/release branch; `dev/zn-agent` is the fixed primary development branch.
+`main` is the single long-lived integration and canonical source/release branch. Ordinary development, investigation and experiments must not be performed directly on `main`; they belong on short-lived `work/*` branches created from the latest `main`.
 
-Ordinary development, investigation and experiments must not be performed directly on `main`. They belong on `dev/zn-agent` or an isolated work branch.
+`dev/zn-agent` is retained only as a historical compatibility reference while old links or tooling may still mention it. New product work, new PRs and CI integration must not target it, and while it remains present it should stay aligned with `main` instead of becoming a second accumulating trunk.
 
-That restriction does not freeze `main`. A coherent low-risk engineering stage may be promoted through the repository's normal PR/merge/promotion flow when all applicable gates are true:
+A coherent engineering slice may merge to `main` only when all applicable gates are true:
 
 ```text
 implementation complete for the claimed slice
-→ relevant tests pass
-→ full CI / required E2E pass
+→ relevant focused tests pass
+→ required PR CI / applicable real E2E pass on the current PR head
 → diff reviewed
-→ status docs + HANDOFF match real code and CI
-→ no unresolved promotion blocker
+→ no unresolved merge blocker
 → no high-risk boundary requiring human approval
-→ normal traceable PR / merge / promotion
+→ normal traceable PR / merge
 → main becomes the new verified canonical source
 ```
 
-A normal low-risk promotion that satisfies these repository gates does not require an extra chat-only approval sentence. High-risk boundaries still require explicit human approval, including identity, long-term memory, destructive data migration, credentials/permissions, updater/rollback/signing trust, and replacement of the user's currently installed formal version.
+A normal low-risk merge that satisfies these repository gates does not require an extra chat-only approval sentence. High-risk boundaries still require explicit human approval, including identity, long-term memory, destructive data migration, credentials/permissions, updater/rollback/signing trust, and replacement of the user's currently installed formal version.
 
-Promotion must never use force push, Git history rewrite, disabled CI, bypassed failed checks, or false completion claims.
+The merge gate must be exercised before merge. `main` is not the place where a product branch first discovers whether it passes core CI or a required product E2E. Post-merge CI is a canonical verification pass, not a substitute for PR validation.
+
+Normal development must never use force push, Git history rewrite, disabled CI, bypassed failed checks, or false completion claims on `main`.
 
 ## 1. Product definition
 
