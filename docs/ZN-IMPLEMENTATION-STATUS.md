@@ -1,177 +1,79 @@
 # ZN Implementation Status
 
-This is ZN's implementation/evidence ledger, not a roadmap or changelog. Real code, live Git refs and actual test/build/CI results override this file when they disagree.
+这是一份当前实现事实表，不是 roadmap。真实代码、真实 Git、真实测试和真实 CI 高于本文件。
 
-## Repository state contract
+## 仓库状态规则
 
-- Repository: `9529360-cpu/znagent`
-- Primary development branch: `dev/zn-agent`
-- Canonical/release branch: `main`
-- Exact SHAs below are evidence checkpoints, not permanent branch oracles. Fresh maintainers must query live refs, PRs and CI.
-- No force push, history rewrite, destructive identity/memory migration, updater replacement, rollback, release signing or production credential mutation is authorized by this stage.
+- 主开发分支：`dev/zn-agent`
+- canonical / release 分支：`main`
+- 文档里的 SHA 和 CI run 只能当历史检查点，接手时必须重新查询。
+- Git/CI/main 同步属于工程卫生，不是产品里程碑。
 
-Maintenance rule:
+## 已废弃方向
 
-```text
-verified coherent product slice
--> reconcile changed implementation truth + HANDOFF
--> normal dev -> main promotion
--> verify canonical CI
--> keep long-lived branches reasonably synchronized
-```
+专用“自我维护 / 自我修复 / upstream BUG report”产品路线已经明确废弃并从当前代码树中移除。
 
-Repository synchronization is engineering hygiene, not a product milestone.
+它不再属于 ZN 的现役能力，不再属于产品缺口，不再属于后续优先级。
 
-## Installed-upstream authority contract
+不要重新增加 maintenance runtime、maintenance cognition、maintenance repair、专用 BUG report transport/intake/reconcile、maintenance UI/IPC/RPC，或任何因为目标仓库是 ZN 就自动扩大权限的特殊路径。
 
-Normal installed ZN may know and verify its official update channel and may form bounded privacy-safe BUG/repair reports. That does not grant private source-repository credentials or official push/PR/merge/release/signing authority.
+详细说明见 `docs/ZN-RETIRED-DIRECTIONS.md`。
 
-```text
-official upstream update channel -> installed ZN
-installed ZN -> bounded BUG / repair report channel
-```
+通用 Health、Recovery、Work、Memory、File、Terminal、Git、Browser、Desktop、Computer Use 和 Update 架构继续保留。
 
-## Capability maturity ledger
+## 当前能力事实
 
-Use `exists -> connected -> verified -> product-closed`. File/interface presence is not proof of product closure.
-
-| Area | Current maturity | Evidence boundary / remaining gap |
+| 区域 | 当前状态 | 还缺什么 |
 | --- | --- | --- |
-| Resident Self / Body / Senses / Situation / Thought / Will | connected + repeatedly verified | ZN-owned resident; zero-model boot remains required |
-| Durable Work / restart recovery | connected + verified | Work/thread continuity retained |
-| Installed resident desktop-independence/autostart | verified | resident lifecycle evidence exists |
-| Durable resident reference continuity | verified | identity/state/reference continuity survives restart evidence |
-| Resident health classification/task formation | connected + verified, fail-closed | only narrow repeated internal defects become maintenance candidates |
-| Multi-organ health observation | materially connected + verified | unified health remains partial |
-| Trusted maintenance source investigation | connected + verified, read-only | explicit source + opaque origin fingerprint |
-| Isolated maintenance repair | connected + verified | bounded `work/*`, oracle/diff evidence, origin drift fails closed |
-| Autonomous bounded candidate derivation | connected + verified | model confined to bounded source catalog/replacement contract |
-| Maintenance cognition dispatch accounting | connected + verified, fail-closed | ambiguous provider outcomes are not blindly replayed |
-| Independent semantic review / recovery | connected + verified, fail-closed | author route cannot self-approve; pending review can resume safely |
-| Accepted local publication preparation | connected + verified, `local_commit_only` | no remote repository authority |
-| Upstream BUG / repair report formation | connected + verified locally | repeated `probable_zn_defect` truth projects to one durable privacy-safe installation-pseudonymous local outbox envelope |
-| Upstream BUG / repair dispatch recovery | connected + verified, fail-closed | abandoned `dispatching` reservations become `outcome_uncertain` on restart; attempt count preserved; automatic replay blocked |
-| Upstream BUG / repair transport / maintainer intake | missing in merged product; active isolated stage | operator-controlled transport, acknowledgement/reconciliation and maintainer intake are under separate isolated development and must be reviewed before merge |
-| Resident managed-browser navigation | connected + verified | explicit safe URL -> managed Chromium -> independently observed URL |
-| Resident managed-browser semantic checkbox | connected + verified | exact accessible-name target, fresh semantic authority, same-node checked-state postcondition |
-| Resident managed-browser semantic button | connected + verified | exact accessible-name button, explicit same-origin URL postcondition, observed-result restart recovery |
-| Resident managed-browser semantic textbox | connected + verified | exact accessible-name writable non-password textbox, digest/length verification, durable Body plaintext redaction, restart recovery |
-| Resident managed-browser same-session form | connected + verified for one complete ordinary Work scenario | textbox entry and submit share one Chromium session; final URL depends on retained text state; guarded and recoverable from exact durable evidence |
-| Resident managed-browser broader page interaction | partial | generic discovery, tabs/popups/frames, downloads/uploads and arbitrary interaction are not product-closed |
-| User browser bridge | bounded mutation foundation, locally verified | explicit focused UIA Edit scope can reuse the non-replayable keyboard-text lifecycle and fresh digest verification; real evidence still uses an isolated temporary Edge profile, while authenticated existing-session attachment and permission UX remain open |
-| Installed upstream update observation | partial / substantial desktop foundation | HTTPS channel parsing, version comparison, target selection, size/SHA-256 verification and desktop IPC/UI exist; formal continuity/replacement remains separate |
-| Official repository push / PR / merge | intentionally outside installed resident | maintainer-environment authority |
-| Installed N -> N+1 update continuity | approval-gated / incomplete | no formal updater/replacement transition executed |
-| Rollback / signing / release trust | approval-gated / incomplete | high-risk release/update authority remains separate |
+| Resident Self / Body / Senses / Situation / Thought / Will | 已接通并有多轮验证 | 真实任务广度仍需继续扩大 |
+| Durable Work / restart recovery | 已接通并验证 | 需要继续转化成普通用户可感知的长期连续性 |
+| Managed Browser | 多个受限语义动作已验证 | 更广泛页面变化、弹窗、frame、下载上传等仍不完整 |
+| User Browser Bridge | 已有真实 existing-session 授权路径和语义控制基础 | 仍需扩大真实网站覆盖、权限 UX、漂移后的稳定重规划 |
+| File / workspace tasks | 已有自然语言文件任务和跨 surface 闭环证据 | 歧义来源、复杂整理和更广任务类型仍需加强 |
+| Desktop computer use | 多个窄场景已真实验证 | 通用跨应用连续任务、窗口变化和目标漂移仍需加强 |
+| Browser + File / Browser + Desktop | 已有代表性真实闭环 | 三个 surface 联合、复杂重规划仍是缺口 |
+| Work continuity | 有 durable ledger 和恢复基础 | “刚才那个继续”“昨天那个继续”以及 active task steering 仍需产品化 |
+| Autonomous Investigation / replanning | 已有基础机制和部分语义 re-ground | 仍偏已知模式驱动，需要更通用地处理目标不存在、状态冲突和替代路径 |
+| Installed N -> N+1 continuity | 不完整 | 真实升级过程中身份、数据、Work 和不确定副作用连续性尚未产品闭环 |
 
-## Current self-maintenance / reporting path
+## 当前产品缺口
 
-```text
-real organ failure/success
--> durable privacy-safe health
--> conservative probable_zn_defect task
--> best-effort local privacy-safe report projection
--> durable deduplicated local outbox envelope
--> durable dispatch reservation
--> crash-safe unknown-outcome classification
--> merged product currently stops before transport/intake
-```
+当前优先级只围绕“普通用户真实任务能不能完成”排序：
 
-Health truth commits before report projection. Report payload excludes raw error text, local paths, repository identity, credentials, task id, organ name and local health fingerprint. Installation-scoped pseudonyms prevent direct cross-install incident correlation.
+1. **真实任务自主闭环还不够广。** ZN 已经能完成多个真实 E2E，但仍不能稳定覆盖更多普通用户的模糊、多步骤、会变化的任务。
+2. **自主 Investigation / replanning 仍不够通用。** 页面、文件、窗口、目标或环境变化时，部分路径仍容易依赖既有模式，而不是主动重新调查。
+3. **长期 Work 连续性还没成为完整用户体验。** Durable state 已存在，但自然引用、active task steering、跨重启继续仍需闭合。
+4. **多 surface 联合任务仍不够强。** Browser + File、Browser + Desktop 已有验证，下一步要继续向 Browser + File + Desktop 等真实任务扩展。
+5. **安装后长期连续性仍未闭环。** N -> N+1 时身份、Memory、Work、配置和不确定外部副作用需要真实环境证明。
 
-Dispatch semantics are fail-closed: `reserve_dispatch()` commits `pending -> dispatching` and increments `dispatch_attempts` before any external effect. If the process restarts with an abandoned reservation, outbox construction promotes it to `outcome_uncertain`, records interruption evidence, preserves the prior attempt count and keeps automatic replay blocked.
+## 判断产品完成的标准
 
-## Managed-browser ordinary Work reality
+不要把下面这些当成“产品已经完成”：
 
-The current verified bounded surface includes:
+- 有代码；
+- 有测试；
+- CI green；
+- 有 installer；
+- 有 recovery module；
+- 有新的抽象或 provider；
+- 某个 primitive 单独 verified。
+
+真正要看的是：
 
 ```text
-navigation:
-explicit URL -> managed Chromium -> independent URL observation
-
-semantic checkbox:
-explicit URL + exact accessible name + explicit desired state
--> fresh semantic observation
--> exact-target CHECK/UNCHECK
--> same-node checked-state verification
-
-semantic button:
-explicit URL + exact accessible button name + explicit expected URL
--> fresh semantic observation
--> exact-target click
--> independent final URL observation
--> durable observed-result recovery
-
-semantic textbox:
-explicit URL + exact accessible textbox name + explicit bounded text
--> fresh semantic observation
--> exact-target text entry
--> digest/length + exact-node continuity verification
--> durable Body plaintext redaction
--> durable observed-result recovery
-
-same-session form transaction:
-explicit start URL
--> exact textbox observation
--> bounded text entry
--> text postcondition verification
--> fresh exact button observation
--> click in the same browser session
--> independent explicit same-origin final URL observation
--> durable result / crash recovery without blind replay
+普通用户给正常人类任务
+-> ZN 自己理解
+-> 自己 Sense 当前电脑状态
+-> 自己选择 Browser / Desktop / File / Terminal / 网络资源
+-> 自己拆解并执行
+-> 状态变化后重新观察和判断
+-> 保留 authority / fresh evidence / non-replay
+-> 独立验证真实结果
+-> 中断后能继续
 ```
 
-Natural Work does not gain private-network authority. Password/sensitive textbox targets remain refused. Structured action compilation no longer duplicates browser/keyboard plaintext from `text` into generic `content`; legacy compatibility remains scoped to file-write actions only.
+## 当前开发原则
 
-The form Chromium E2E reaches `/done` only when the exact typed value is still present at click time, proving same-session state retention rather than merely sequential actions.
+选择一个高价值真实用户任务，找到它真正缺的能力，只补这些缺口，打通完整 E2E，再进入下一个更难任务。
 
-## Evidence checkpoints
-
-- `fb720e3a6facf3514fd8ff2952751082460487bd` — restored Body health observation after final browser Body composition.
-- ZN CI `33338816909` — full Source Boundary, Kernel/Python and Electron validation success for that repair checkpoint.
-- Managed Browser E2E `33338816911` — success.
-- Work Recovery E2E `33338816913` — success.
-- PR #120 / merge `687d8f997f9850081c65a3767f6dbb9735276ea3` — same-session managed-browser form transaction.
-- Managed Browser E2E `33339937362` — contract suite + real local Chromium E2E success after structured text alias scoping.
-- Work Recovery E2E `33339955722` — success on the final structured compiler/recovery checkpoint.
-- ZN CI `33339955736` — full success on `7450582...`.
-- PR #121 / merge `5f14a6453aadba196060e954ce7bc674551ac3e8` — interrupted upstream-report dispatch recovery.
-- Work Recovery E2E `33340676170` — complete success including upstream-report restart regression.
-- ZN CI `33340676146` — full Source Boundary, Kernel/Python, Electron and final status publication success on `5f14a645...`.
-- PR #123 / merge `ac6b3846d621dd790f587cbc08311b162eba6b97` — promoted the verified development tranche to canonical `main`.
-- Canonical ZN CI `33353573721` — post-promotion run for `ac6b3846...`; read live final state before claiming canonical closure.
-- PR #125 candidate `f1ded231d44dc58e9d9a597213f8f738ea5560f4` — connects bounded focused UIA Edit text mutation to the existing non-replayable resident lifecycle.
-- Windows Interactive Desktop E2E `33354912873` — success including real installed Edge text mutation through default UIA plus keyboard input.
-- ZN CI `33354911263` — full success on the PR #125 candidate.
-- Work Recovery E2E `33354930689` — success on the PR #125 candidate.
-- Hosted Windows Clean Install / Release Candidate runs that fail with `runner_id=0` and `steps=[]` are runner-allocation infrastructure evidence, not executed-code failures.
-
-Older self-maintenance evidence remains valid where the underlying code has not changed; consult Git history and CI for exact runs when needed.
-
-## Current product gaps
-
-1. **Upstream BUG/repair transport and maintainer intake are the active isolated product stage.** Local formation and crash-safe dispatch accounting are verified; operator-controlled transport, explicit acknowledgement/reconciliation and maintainer intake are not merged yet.
-2. **User Browser Bridge is not product-closed.** Bounded focused non-password text mutation is locally verified against a real installed Edge provider with an isolated temporary profile, but existing authenticated Edge/Chrome attachment and user-facing permission/revocation still need proof; never copy cookies, passwords or profile data.
-3. **Managed browser breadth remains partial.** Generic discovery, tabs/popups/frames, downloads/uploads and arbitrary interaction remain open.
-4. **Browser interaction recovery remains fail-closed outside proven observed results.** Unknown external mutations without sufficient durable evidence still need bounded re-sense/reclassification.
-5. **Installed update continuity remains incomplete.** Public-channel observation and artifact verification exist, but formal N -> N+1 continuity, rollback and signing/trust remain approval-gated.
-6. **Unified health remains partial.** Extend only where active-call evidence closes a meaningful reliability gap.
-
-## Current parallel ownership boundary
-
-For the current large-stage collaboration, the report transport/intake implementation lane owns its new product modules and the related `upstream_bug_report.py` / `reporting_maintenance_resident.py` active-caller chain. Documentation/promotion work must not concurrently modify those product files. When the isolated PR arrives, review its live base/head/diff, authority boundary, retry/reconciliation semantics and actual tests before merge.
-
-## Next evidence-driven direction
-
-Finish canonical CI verification for PR #123 while preserving the isolated report lane. The active product candidate is:
-
-```text
-pending report
--> durable reserve
--> operator-controlled transport
--> explicit acknowledgement / reconciliation
--> durable terminal state
--> maintainer intake evidence
-```
-
-The installed resident must not become a generic GitHub/repository write client. Unknown external effects remain non-replayable until explicitly reconciled.
+不要重新回到“单个 capability -> 大量 contract/test/CI -> 下一个 capability”的开发方式。
