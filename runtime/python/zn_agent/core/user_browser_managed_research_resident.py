@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from .action import NativeActionIntent
+from .body import BodyActionResult
 from .browser import BrowserAction, BrowserActionAuthority, BrowserActionKind, BrowserPermissionContext
 from .goal_resident import ResidentGoalRuntime
 from .research_managed_browser import ResearchSemanticPlaywrightManagedBrowser
@@ -57,11 +58,6 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
         return bool(has_reference and has_code and has_return and has_search)
 
     def _orient_step(self, event, state, *, readiness, thought=None):
-        # This task is already fully bounded by Resident-owned language rules and
-        # is intentionally supported with model_policy=never. Do not let the more
-        # generic foreground-browser cognition router consume it first merely
-        # because the user says "this page". Enter the existing Resident goal
-        # lifecycle directly; fresh browser evidence still owns every world fact.
         if self._natural_managed_reference_search(event):
             return ResidentGoalRuntime._orient_step(
                 self,
@@ -94,13 +90,58 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
         thought=None,
     ):
         try:
-            self._ensure_user_browser_task_context(event, state)
+            context = self._ensure_user_browser_task_context(event, state)
         except Exception as exc:
             return self._fail_composite_goal_investigation(
                 event,
                 state,
                 reason=f"authorized browser task context was lost before fresh Sense: {type(exc).__name__}: {exc}",
             )
+        raw_semantic = state.data.get(self._SEMANTIC_LOOKUP_STATE_KEY)
+        semantic = dict(raw_semantic) if isinstance(raw_semantic, dict) else {}
+        if str(semantic.get("phase") or "") == "verify_result":
+            try:
+                task_tab_id = int(semantic.get("task_tab_id") or context["tab_id"])
+            except (TypeError, ValueError) as exc:
+                return self._fail_composite_goal_investigation(
+                    event,
+                    state,
+                    reason=f"browser task page identity was invalid before result verification: {type(exc).__name__}: {exc}",
+                )
+            if task_tab_id != int(context["tab_id"]):
+                try:
+                    observed = self._extension_user_browser.observe_anchor_context(
+                        goal["subject_value"],
+                        target_tab_id=task_tab_id,
+                        expected_tab_id=int(context["tab_id"]),
+                        expected_attached_at=str(context["attached_at"]),
+                    )
+                    expected_url = str(semantic.get("expected_url") or "").strip()
+                    if not expected_url or observed["url"] != expected_url:
+                        raise UserBrowserExtensionRelayError(
+                            "fresh child result observation is not on the Resident-verified submitted URL"
+                        )
+                    result_text = self._interpret_semantic_result(event, goal, observed["context"])
+                except Exception as exc:
+                    return self._fail_composite_goal_investigation(
+                        event,
+                        state,
+                        reason=(
+                            "fresh action-proven child result verification did not prove the requested "
+                            f"business fact: {type(exc).__name__}: {exc}"
+                        ),
+                    )
+                return self._complete_goal_from_fresh_investigation(
+                    event,
+                    state,
+                    readiness=readiness,
+                    response=result_text,
+                    reason=(
+                        "ZN completed the browser goal only after the explicit root authorization "
+                        "remained current, the exact submit action proved one unique direct child "
+                        "task page, and fresh anchored result evidence was observed from that page"
+                    ),
+                )
         return super()._semantic_lookup_investigation(
             event,
             state,
@@ -132,6 +173,22 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
             thought=thought,
         )
 
+    def _ground_semantic_button(self, event, goal, sense):
+        grounded = super()._ground_semantic_button(event, goal, sense)
+        button_name = str(grounded.get("button_name") or "")
+        matches = [
+            item
+            for item in list(sense.get("candidates") or [])
+            if str(item.get("role") or "") == "button"
+            and str(item.get("name") or "") == button_name
+        ]
+        if len(matches) != 1:
+            raise UserBrowserExtensionRelayError(
+                "fresh submit browsing-context evidence is ambiguous"
+            )
+        grounded["opens_direct_child"] = matches[0].get("opens_direct_child") is True
+        return grounded
+
     def _begin_native_action_cycle(self, event, state, intent):
         context = state.data.get(self._USER_BROWSER_TASK_CONTEXT_KEY)
         if (
@@ -141,6 +198,10 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
             args = dict(intent.args or {})
             args["authorized_tab_id"] = int(context["tab_id"])
             args["authorization_attached_at"] = str(context["attached_at"])
+            if str(intent.kind or "").strip().lower() == "browser_click_named_button_to_url":
+                semantic = state.data.get(self._SEMANTIC_LOOKUP_STATE_KEY)
+                if isinstance(semantic, dict) and semantic.get("opens_direct_child") is True:
+                    args["expect_direct_child"] = True
             intent = NativeActionIntent(
                 intent_id=intent.intent_id,
                 event_id=intent.event_id,
@@ -156,6 +217,81 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
                 created_at=intent.created_at,
             )
         return super()._begin_native_action_cycle(event, state, intent)
+
+    def _complete_successful_body_action(
+        self,
+        event,
+        state,
+        intent,
+        *,
+        response: str,
+        reason: str,
+    ):
+        raw_semantic = state.data.get(self._SEMANTIC_LOOKUP_STATE_KEY)
+        semantic = dict(raw_semantic) if isinstance(raw_semantic, dict) else {}
+        if (
+            str(intent.kind or "").strip().lower() == "browser_click_named_button_to_url"
+            and semantic.get("opens_direct_child") is True
+        ):
+            raw_result = state.data.get("native_action_result")
+            try:
+                result = BodyActionResult(**raw_result) if isinstance(raw_result, dict) else None
+            except (TypeError, ValueError):
+                result = None
+            data = dict(result.data or {}) if result is not None else {}
+            context = state.data.get(self._USER_BROWSER_TASK_CONTEXT_KEY)
+            expected_url = str(semantic.get("expected_url") or "")
+            try:
+                root_tab_id = int(context.get("tab_id")) if isinstance(context, dict) else 0
+                task_tab_id = int(data.get("task_tab_id") or 0)
+                opener_tab_id = int(data.get("opener_tab_id") or 0)
+            except (TypeError, ValueError):
+                root_tab_id = task_tab_id = opener_tab_id = 0
+            if not (
+                result is not None
+                and result.success
+                and data.get("postcondition")
+                == "direct_child_url_equals_after_fresh_semantic_button_click"
+                and data.get("target_revalidated_before_dispatch") is True
+                and data.get("direct_child") is True
+                and root_tab_id > 0
+                and task_tab_id > 0
+                and task_tab_id != root_tab_id
+                and opener_tab_id == root_tab_id
+                and str(data.get("observed_url") or "") == expected_url
+            ):
+                return self._fail_composite_goal_investigation(
+                    event,
+                    state,
+                    reason=(
+                        "the submit action claimed a child task page without complete fresh opener, "
+                        "URL and exact-click evidence; ZN stopped instead of transferring authority"
+                    ),
+                )
+            semantic["task_tab_id"] = task_tab_id
+            semantic["phase"] = "verify_result"
+            state.data[self._SEMANTIC_LOOKUP_STATE_KEY] = semantic
+            self._record_semantic_progress(
+                state,
+                "browser_click_named_button_to_url",
+                "browser_semantic_direct_child_submit_provider_verified",
+            )
+            self._reset_investigation_after_goal_substep(event, state, intent)
+            state.stage = "native_investigation"
+            state.next_action = (
+                "freshly observe the action-proven child task page while preserving the original "
+                "user authorization generation"
+            )
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return None
+        return super()._complete_successful_body_action(
+            event,
+            state,
+            intent,
+            response=response,
+            reason=reason,
+        )
 
     def _ensure_user_browser_task_context(self, event, state) -> dict[str, Any]:
         raw = state.data.get(self._USER_BROWSER_TASK_CONTEXT_KEY)
