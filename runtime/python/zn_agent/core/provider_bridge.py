@@ -18,9 +18,7 @@ from .cognitive_factory import (
 from .config import load_zn_config
 from .credentials import (
     CredentialStore,
-    KeyringCredentialStore,
     materialize_zn_credentials,
-    normalize_credential_reference,
 )
 from .home import get_zn_home
 from .models import ModelRoute
@@ -242,59 +240,20 @@ def build_runtime(
     )
 
 
-def _report_bearer_token(
-    report_cfg: dict[str, Any],
-    *,
-    credential_store: CredentialStore | None,
-) -> str | None:
-    reference = str(report_cfg.get("credential_ref") or "").strip()
-    if not reference:
-        return None
-    ref = normalize_credential_reference(reference)
-    store = credential_store or KeyringCredentialStore()
-    secret = store.get(ref)
-    token = str(secret or "").strip()
-    if not token:
-        raise RuntimeError(
-            "upstream bug report credential reference did not resolve to a secret"
-        )
-    return token
-
-
 def build_resident_runtime(
     *,
     config: dict[str, Any] | None = None,
     store_path: str | Path | None = None,
     credential_store: CredentialStore | None = None,
 ):
-    """Build the resident organism around the ZN-owned kernel."""
+    """Build the normal product Resident around the ZN-owned kernel."""
     from .budget import CognitiveBudgetManager
-    from .reporting_maintenance_resident import ReportingMaintenanceResidentRuntime
-    from .upstream_bug_report_transport import UpstreamBugReportTransport
+    from .natural_file_work_resident import NaturalFileWorkResidentRuntime
 
     effective_config = config if config is not None else load_zn_config()
     resident_cfg = effective_config.get("zn_resident") or {}
     if not isinstance(resident_cfg, dict):
         raise ValueError("zn_resident config must be a mapping")
-
-    report_cfg = resident_cfg.get("upstream_bug_report") or {}
-    if not isinstance(report_cfg, dict):
-        raise ValueError("zn_resident.upstream_bug_report must be a mapping")
-    report_endpoint = str(report_cfg.get("endpoint") or "").strip()
-    report_transport = None
-    if report_endpoint:
-        report_transport = UpstreamBugReportTransport(
-            endpoint=report_endpoint,
-            timeout_seconds=float(report_cfg.get("timeout_seconds", 10.0)),
-            bearer_token=_report_bearer_token(
-                report_cfg,
-                credential_store=credential_store,
-            ),
-        )
-    elif str(report_cfg.get("credential_ref") or "").strip():
-        raise ValueError(
-            "zn_resident.upstream_bug_report.credential_ref requires endpoint"
-        )
 
     kernel = build_runtime(
         config=effective_config,
@@ -309,10 +268,9 @@ def build_resident_runtime(
         ),
     )
 
-    return ReportingMaintenanceResidentRuntime(
+    return NaturalFileWorkResidentRuntime(
         kernel=kernel,
         budget=budget,
-        report_transport=report_transport,
     )
 
 
