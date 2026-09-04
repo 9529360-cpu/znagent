@@ -5,12 +5,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# Legal attribution in LICENSE must remain verbatim. This verifier enforces the
-# active source/product boundary everywhere else.
+# Legal attribution in LICENSE must remain verbatim. Markdown is product/research
+# documentation rather than executable product source, so it may name external
+# systems that ZN studies or compares against. Paths are still checked below, so
+# a retired/reference product cannot return as a tracked namespace simply by
+# being placed in a Markdown file.
 TEXT_SCAN_EXEMPT = {"LICENSE"}
+TEXT_SCAN_EXEMPT_SUFFIXES = {".md"}
 
 # Retired reference-product identifiers are encoded so the active tree stays
-# text-clean while this verifier can still prevent them from returning.
+# text-clean while this verifier can still prevent them from returning as source,
+# runtime, build, test, tooling, or tracked-path identities.
 FORBIDDEN_MARKERS = tuple(
     bytes.fromhex(value)
     for value in (
@@ -51,7 +56,7 @@ def main() -> int:
             if marker in lowered_path:
                 failures.append(f"{relative}: path contains retired marker {marker.hex()}")
 
-        if relative in TEXT_SCAN_EXEMPT:
+        if relative in TEXT_SCAN_EXEMPT or path.suffix.lower() in TEXT_SCAN_EXEMPT_SUFFIXES:
             continue
         data = path.read_bytes()
         if is_binary(data):
@@ -82,7 +87,7 @@ def main() -> int:
         return 1
 
     print(
-        "ZN source-boundary verification passed: active tree is reference-product clean and shipped product metadata does not embed private source identity."
+        "ZN source-boundary verification passed: active source is reference-product clean; documentation may name studied systems; shipped product metadata does not embed private source identity."
     )
     return 0
 
