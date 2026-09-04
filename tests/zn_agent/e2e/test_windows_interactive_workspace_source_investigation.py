@@ -12,8 +12,6 @@ from zn_agent.core.provider_bridge import build_resident_runtime
 from zn_agent.core.recovery_bounded_work import RecoveryBoundedWorkLedger
 
 from test_windows_interactive_file_desktop_goal import (
-    BUTTON_NAME,
-    INPUT_NAME,
     NEW_VALUE,
     OLD_VALUE,
     START_TITLE,
@@ -35,8 +33,8 @@ class WindowsInteractiveWorkspaceSourceInvestigationE2ETests(unittest.TestCase):
             root = Path(tmp)
             workspace = root / "workspace"
             workspace.mkdir()
-            source = workspace / "orders-yesterday-a.txt"
-            decoy = workspace / "orders-yesterday-b.txt"
+            source = workspace / "订单-yesterday-a.txt"
+            decoy = workspace / "订单-yesterday-b.txt"
             source.write_text(OLD_VALUE, encoding="utf-8")
             decoy.write_text("ORDER-DECOY-771", encoding="utf-8")
             WindowsInteractiveFileDesktopGoalE2ETests._yesterday(source)
