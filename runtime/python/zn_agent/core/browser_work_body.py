@@ -165,8 +165,6 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
             raise
 
     def _browser_set_checkbox(self, action: BodyAction, started: str) -> BodyActionResult:
-        """Navigate to one explicit page and set one explicit DOM-id checkbox."""
-
         dom_id = str(action.args.get("dom_id") or "").strip()
         if not dom_id:
             raise ValueError("browser_set_checkbox requires dom_id")
@@ -185,8 +183,6 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
         action: BodyAction,
         started: str,
     ) -> BodyActionResult:
-        """Set one exact accessible-name checkbox without technical DOM authority."""
-
         target_name = str(action.args.get("target_name") or "").strip()
         if not target_name:
             raise ValueError("browser_set_named_checkbox requires target_name")
@@ -212,8 +208,6 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
         query: BrowserTargetQuery,
         target_label: str,
     ) -> BodyActionResult:
-        """Navigate, freshly bind one checkbox target, mutate, prove, and close."""
-
         browser = self._browser()
         url = str(action.args.get("url") or "").strip()
         checked = action.args.get("checked")
@@ -350,17 +344,13 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
         action: BodyAction,
         started: str,
     ) -> BodyActionResult:
-        """Click one exact semantic button and independently verify same-origin URL.
-
-        Managed browser sessions may navigate to ``url`` before the click. USER-plane
-        sessions are different: the already-authorized exact tab must freshly be on
-        ``url`` and ZN never navigates or transfers authority before dispatch.
-        """
+        """Click one exact button and verify either same-page or action-proven child result."""
 
         browser = self._browser()
         url = str(action.args.get("url") or "").strip()
         expected_url = str(action.args.get("expected_url") or "").strip()
         target_name = str(action.args.get("target_name") or "").strip()
+        expect_direct_child = action.args.get("expect_direct_child") is True
         if not url or not expected_url:
             raise ValueError("browser_click_named_button_to_url requires url and expected_url")
         if not target_name:
@@ -377,6 +367,10 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
             )
 
         user_plane = getattr(browser, "plane", None) is BrowserPlane.USER
+        if expect_direct_child and not user_plane:
+            raise ValueError(
+                "browser_click_named_button_to_url direct-child continuation is only defined for the explicitly authorized USER browser"
+            )
         permission = BrowserPermissionContext(
             allow_navigation=not user_plane,
             allow_page_interaction=True,
@@ -411,7 +405,7 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                             "closed": True,
                         },
                         error=(
-                            "authorized user browser current page changed before button click; "
+                            "authorized user browser current task page changed before button click; "
                             "refusing navigation, authority transfer or click"
                         ),
                         event_id=action.event_id,
@@ -478,6 +472,7 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                 kind=BrowserActionKind.CLICK,
                 page_id=observed.page_id,
                 target=observed.target,
+                args={"expect_direct_child": expect_direct_child},
                 expected={"url_equals": expected_url},
             )
             click_authority = BrowserActionAuthority.from_observation(
@@ -497,6 +492,8 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                         "target_id": observed.target.target_id,
                         "target_name": observed.target.name,
                         "expected_url": expected_url,
+                        "direct_child": bool(click_evidence.data.get("direct_child")),
+                        "task_tab_id": click_evidence.data.get("task_tab_id"),
                         "browser_evidence": asdict(click_evidence),
                         "closed": True,
                     },
@@ -522,12 +519,14 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                         "target_name": observed.target.name,
                         "expected_url": expected_url,
                         "observed_url": verified.url,
+                        "direct_child": bool(click_evidence.data.get("direct_child")),
+                        "task_tab_id": click_evidence.data.get("task_tab_id"),
                         "browser_evidence": asdict(click_evidence),
                         "closed": True,
                     },
                     error=(
                         "browser button postcondition verification did not match the freshly "
-                        "derived expected URL"
+                        "derived expected task-page URL"
                     ),
                     event_id=action.event_id,
                     started_at=started,
@@ -564,6 +563,10 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                     "authorization_attached_at": str(
                         click_evidence.data.get("authorization_attached_at") or ""
                     ),
+                    "authorization_tab_id": click_evidence.data.get("authorization_tab_id"),
+                    "task_tab_id": click_evidence.data.get("task_tab_id"),
+                    "direct_child": bool(click_evidence.data.get("direct_child")),
+                    "opener_tab_id": click_evidence.data.get("opener_tab_id"),
                     "browser_evidence": asdict(click_evidence),
                     "closed": True,
                 },
