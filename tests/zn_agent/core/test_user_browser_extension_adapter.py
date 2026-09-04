@@ -46,22 +46,31 @@ class _UncertainMutationRelay:
         timeout_seconds=5.0,
         expected_tab_id=None,
         expected_attached_at=None,
+        target_tab_id=None,
     ):
         del timeout_seconds
         if expected_tab_id is not None:
             assert int(expected_tab_id) == 71
         if expected_attached_at is not None:
             assert expected_attached_at == _AUTH_AT
+        if target_tab_id is not None:
+            assert int(target_tab_id) == 71
+        wrapper = {
+            "tab_id": 71,
+            "target_tab_id": 71,
+            "authorization_attached_at": _AUTH_AT,
+        }
         if kind == "probe_current_tab":
             return {
+                **wrapper,
                 "success": True,
                 "result": {"tab_id": 71, "url": _URL, "title": "Account"},
-                "authorization_attached_at": _AUTH_AT,
                 "completed_at": "2026-08-31T00:00:01Z",
             }
         if kind == "observe_named_textbox":
             self._expect_target(args)
             return {
+                **wrapper,
                 "success": True,
                 "result": {
                     "tab_id": 71,
@@ -73,7 +82,6 @@ class _UncertainMutationRelay:
                     "text_length": 0,
                     "text_sha256": _digest(""),
                 },
-                "authorization_attached_at": _AUTH_AT,
                 "completed_at": "2026-08-31T00:00:02Z",
             }
         if kind == "type_named_textbox":
@@ -82,6 +90,7 @@ class _UncertainMutationRelay:
             assert args["expected_url"] == _URL
             assert args["text"] == _TEXT
             return {
+                **wrapper,
                 "success": True,
                 "result": {
                     "tab_id": 71,
@@ -99,7 +108,6 @@ class _UncertainMutationRelay:
                     "expected_utf16_units": len(_TEXT.encode("utf-16-le")) // 2,
                     "postcondition": "",
                 },
-                "authorization_attached_at": _AUTH_AT,
                 "completed_at": "2026-08-31T00:00:03Z",
             }
         raise AssertionError(f"unexpected command kind: {kind}")
@@ -119,6 +127,7 @@ class _LostResultMutationRelay(_UncertainMutationRelay):
         timeout_seconds=5.0,
         expected_tab_id=None,
         expected_attached_at=None,
+        target_tab_id=None,
     ):
         if kind == "type_named_textbox":
             self._expect_target(args)
@@ -127,6 +136,7 @@ class _LostResultMutationRelay(_UncertainMutationRelay):
             assert args["text"] == _TEXT
             assert expected_tab_id == 71
             assert expected_attached_at == _AUTH_AT
+            assert target_tab_id == 71
             raise UserBrowserExtensionCommandUncertainError(
                 "browser extension command result was lost after delivery; side effect may have occurred"
             )
@@ -136,6 +146,7 @@ class _LostResultMutationRelay(_UncertainMutationRelay):
             timeout_seconds=timeout_seconds,
             expected_tab_id=expected_tab_id,
             expected_attached_at=expected_attached_at,
+            target_tab_id=target_tab_id,
         )
 
 
