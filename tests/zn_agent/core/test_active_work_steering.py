@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from zn_agent.core.daemon import ResidentRpcServer
-from zn_agent.core.models import EventStatus, ExecutionPath, utc_now
+from zn_agent.core.models import EventOutcome, EventStatus, ExecutionPath, utc_now
 from zn_agent.core.provider_bridge import build_resident_runtime
 from zn_agent.core.recovery_bounded_work import RecoveryBoundedWorkLedger
 from zn_agent.core.steerable_work import SteerableWorkLedger, WorkItem
@@ -135,6 +135,114 @@ class ActiveWorkSteeringTests(unittest.TestCase):
                 }
                 self.assertEqual(after_event_ids - before_event_ids, {new_event.event_id})
                 self.assertIn(old_event.event_id, after_event_ids)
+            finally:
+                resident.store.close()
+
+    def test_late_success_from_old_plan_is_retained_but_never_accepted(self) -> None:
+        """E2E-27 stale discipline is a commit-time version check, not a worker claim."""
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = self._runtime(Path(tmp) / "kernel.db")
+            try:
+                control = RestoreAwareWorkControl(RecoveryBoundedWorkLedger(resident))
+                ledger = control.ledger
+                ledger.create_thread(thread_id="product", title="Product")
+                _, old_event = ledger.start("product", "旧计划里的长任务")
+
+                ledger._set_plan_version("product", 2)
+                ledger._supersede_items_before("product", 2)
+                ledger._mark_run_stale(old_event.event_id)
+                _, current_event = ledger.start(
+                    "product",
+                    "新计划：只推进核心记账",
+                    objective="只推进核心记账",
+                )
+
+                claimed = resident.store.claim_event(old_event.event_id)
+                self.assertIsNotNone(claimed)
+                resident.store.complete_event(
+                    EventOutcome(
+                        event_id=old_event.event_id,
+                        success=True,
+                        execution_path=ExecutionPath.CAPABILITY,
+                        response="old worker says success",
+                        reason="late old-plan result",
+                    )
+                )
+
+                stale_progress = control.progress("product", old_event.event_id)
+
+                self.assertTrue(stale_progress["stale"])
+                self.assertFalse(stale_progress["accepted"])
+                self.assertEqual(stale_progress["plan_version"], 1)
+                self.assertEqual(stale_progress["current_plan_version"], 2)
+                self.assertEqual(
+                    ledger.get_run(current_event.event_id).ledger_state,
+                    "active",
+                )
+                self.assertEqual(ledger.plan_version("product"), 2)
+
+                messages = ledger.list_messages("product")
+                accepted_old_replies = [
+                    message
+                    for message in messages
+                    if message.role == "zn"
+                    and message.detail.get("event_id") == old_event.event_id
+                ]
+                self.assertEqual(accepted_old_replies, [])
+                retained = [
+                    message
+                    for message in messages
+                    if message.role == "activity"
+                    and message.detail.get("event_id") == old_event.event_id
+                    and message.detail.get("stale") is True
+                ]
+                self.assertEqual(len(retained), 1)
+                self.assertFalse(retained[0].detail["accepted"])
+                self.assertIn(
+                    "old worker says success",
+                    retained[0].detail["result_excerpt"],
+                )
+            finally:
+                resident.store.close()
+
+    def test_uncertain_side_effect_blocks_steering_before_plan_changes(self) -> None:
+        """Changing direction never erases an unresolved outside-world mutation."""
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = self._runtime(Path(tmp) / "kernel.db")
+            try:
+                control = RestoreAwareWorkControl(RecoveryBoundedWorkLedger(resident))
+                ledger = control.ledger
+                ledger.create_thread(thread_id="product", title="Product")
+                _, old_event = ledger.start("product", "旧计划：提交一次外部 mutation")
+                self._make_yesterday(ledger, "product")
+                ledger.create_thread(thread_id="shell", title="New work")
+
+                working = resident.store.get_working_state()
+                working.current_event_id = old_event.event_id
+                working.stage = "side_effect_recovery"
+                working.next_action = "reconcile uncertain outside-world effect"
+                resident.store.save_working_state(working)
+
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "unresolved outside-world effect",
+                ):
+                    control.start("shell", STEERING)
+
+                self.assertEqual(ledger.plan_version("product"), 1)
+                self.assertEqual(
+                    ledger.get_run(old_event.event_id).ledger_state,
+                    "active",
+                )
+                self.assertEqual(
+                    resident.store.get_event(old_event.event_id).status,
+                    EventStatus.PENDING,
+                )
+                self.assertEqual(
+                    resident.store.get_working_state().stage,
+                    "side_effect_recovery",
+                )
+                self.assertEqual(ledger.list_messages("shell"), [])
             finally:
                 resident.store.close()
 
