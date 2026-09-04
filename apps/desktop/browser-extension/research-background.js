@@ -183,9 +183,13 @@ function directChildCapture(openerTabId) {
     }
   }
   chrome.tabs.onCreated.addListener(listener)
+  let finished = false
   return async () => {
-    await sleep(250)
-    chrome.tabs.onCreated.removeListener(listener)
+    if (!finished) {
+      finished = true
+      await sleep(250)
+      chrome.tabs.onCreated.removeListener(listener)
+    }
     return [...children]
   }
 }
@@ -241,7 +245,13 @@ async function executeDirectChildClick(rootTabId, command) {
     throw new Error('direct child click requires one expected HTTP(S) result URL')
   }
   const finishCapture = directChildCapture(targetTabId)
-  const baseResult = await baseExecuteResidentCommand(targetTabId, command)
+  let baseResult
+  try {
+    baseResult = await baseExecuteResidentCommand(targetTabId, command)
+  } catch (error) {
+    await finishCapture()
+    throw error
+  }
   const childIds = await finishCapture()
   if (
     baseResult?.click_sent !== true ||
