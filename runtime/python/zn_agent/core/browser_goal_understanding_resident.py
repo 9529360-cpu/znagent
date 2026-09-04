@@ -22,7 +22,10 @@ from .desktop_task_goal import (
     desktop_task_goal_payload,
 )
 from .goal_resident import ResidentGoalRuntime
-from .natural_file_goal import natural_workspace_text_edit_request
+from .natural_file_goal import (
+    natural_workspace_text_edit_request,
+    observe_workspace_text_source,
+)
 
 
 _BROWSER_TASK_CUES = (
@@ -438,7 +441,7 @@ class BrowserGoalUnderstandingResidentRuntime(ResidentGoalRuntime):
         readiness,
         thought=None,
     ):
-        """Keep semantic desktop intent when exact accessible names drift at runtime."""
+        """Keep semantic desktop intent while source and UI identities are grounded in order."""
 
         goal = desktop_task_goal(event)
         semantic_goal = _desktop_semantic_goal(event)
@@ -449,6 +452,26 @@ class BrowserGoalUnderstandingResidentRuntime(ResidentGoalRuntime):
             or (isinstance(progress, dict) and progress.get("submit_dispatched") is True)
         ):
             return super()._desktop_task_investigation(
+                event,
+                state,
+                readiness=readiness,
+                thought=thought,
+            )
+
+        # Source identity is the admission boundary for this cross-domain task.
+        # Semantic destination grounding is read-only, but even that must not run
+        # until Resident has proven one exact current source. This keeps model
+        # preference from becoming file or desktop authority by ordering alone.
+        _source, source_failure = observe_workspace_text_source(
+            event,
+            self.body,
+            workspace_path=goal.workspace_path,
+            name_hint=goal.source_name_hint,
+            modified_yesterday=goal.source_modified_yesterday,
+        )
+        if source_failure is not None:
+            return ResidentGoalRuntime._desktop_task_investigation(
+                self,
                 event,
                 state,
                 readiness=readiness,
@@ -693,7 +716,7 @@ class BrowserGoalUnderstandingResidentRuntime(ResidentGoalRuntime):
         )
 
     def _orient_desktop_goal_from_cognition(self, event, state, *, readiness, thought=None):
-        """Understand desired state, then ground it only in freshly sensed safe candidates."""
+        """Understand desired state; source identity must resolve before desktop grounding."""
 
         decision = self.budget.decide(
             event,
@@ -758,105 +781,14 @@ class BrowserGoalUnderstandingResidentRuntime(ResidentGoalRuntime):
                 ),
             )
 
-        foreground, foreground_error = self._probe_foreground_window()
-        if foreground is None:
-            return self._checkpoint_terminal_failure(
-                event,
-                state,
-                reason=(
-                    "fresh desktop grounding could not observe the current foreground window: "
-                    + str(foreground_error or "unavailable")
-                ),
-            )
-        process_name = str(foreground.process_name or "").strip().lower()
-        if not process_name or process_name in _BROWSER_PROCESSES:
-            return self._checkpoint_terminal_failure(
-                event,
-                state,
-                reason="fresh desktop grounding requires the current non-browser application",
-            )
-
-        try:
-            edits = self.named_automation_control.list_safe_edits(
-                process_id=int(foreground.process_id),
-                process_name=process_name,
-            )
-            buttons = self.named_automation_control.list_buttons(
-                process_id=int(foreground.process_id),
-                process_name=process_name,
-            )
-        except Exception as exc:
-            return self._checkpoint_terminal_failure(
-                event,
-                state,
-                reason=(
-                    "fresh desktop candidate Sense failed closed before any input: "
-                    f"{type(exc).__name__}: {exc}"
-                ),
-            )
-        edit_names = tuple(item.name for item in edits)
-        button_names = tuple(item.name for item in buttons)
-        if not edit_names or not button_names:
-            return self._checkpoint_terminal_failure(
-                event,
-                state,
-                reason=(
-                    "fresh desktop candidate Sense did not expose both a safe Edit candidate "
-                    "and a Button candidate; no desktop input was attempted"
-                ),
-            )
-
-        grounding_goal_id = f"goal-desktop-grounding-{event.event_id}"
-        grounding_question = (
-            "Choose only among the freshly observed accessible names below. Match the semantic "
-            "destination field and operation to the user's goal. Return exactly "
-            '{"status":"selected","input_name":"ONE OBSERVED EDIT NAME",'
-            '"button_name":"ONE OBSERVED BUTTON NAME"} only when there is one clearly best '
-            "choice for each. If either choice is ambiguous, return "
-            '{"status":"ambiguous"}. Never return an index, RuntimeId, process/window identity, '
-            "coordinates, selectors, authority, actions, or completion. "
-            f"User task: {event.task}\n"
-            f"Semantic destination: {proposal['input_name']}\n"
-            f"Semantic operation: {proposal['button_name']}\n"
-            f"Fresh Edit names: {json.dumps(edit_names, ensure_ascii=False)}\n"
-            f"Fresh Button names: {json.dumps(button_names, ensure_ascii=False)}"
-        )
-        grounding = self.kernel.run_goal(
-            grounding_question,
-            required_capabilities=("language_understanding",),
-            priority=event.priority,
-            metadata={
-                "resident_event_id": event.event_id,
-                "purpose": "desktop_fresh_candidate_grounding_only",
-            },
-            max_attempts_override=1,
-            goal_id=grounding_goal_id,
-        )
-        invocations += self._model_invocations(grounding)
-        selection = None
-        if grounding.worker_result.success and grounding.assessment.success:
-            selection = _validated_desktop_grounding_selection(
-                grounding.worker_result.response,
-                edit_names=edit_names,
-                button_names=button_names,
-            )
-        if selection is None:
-            return self._checkpoint_terminal_failure(
-                event,
-                state,
-                reason=(
-                    "fresh desktop semantic grounding was ambiguous or did not select one "
-                    "uniquely observed safe Edit and Button; no desktop input was attempted"
-                ),
-            )
-
-        input_name, button_name = selection
-        grounded = dict(proposal)
-        grounded["input_name"] = input_name
-        grounded["button_name"] = button_name
+        # Persist only the semantic proposal. It is intentionally also the typed
+        # goal shell so the shared Resident source gate can run on the next pulse.
+        # input_name/button_name remain semantics until fresh source evidence has
+        # established one exact file and this class is allowed to ground current
+        # UIA names. The model proposal itself never acquires source authority.
         event.payload = dict(event.payload or {})
         event.payload[_DESKTOP_SEMANTIC_GOAL_KEY] = dict(proposal)
-        event.payload["desktop_task_goal"] = grounded
+        event.payload["desktop_task_goal"] = dict(proposal)
         self._persist_understanding(
             event,
             state,
@@ -865,14 +797,14 @@ class BrowserGoalUnderstandingResidentRuntime(ResidentGoalRuntime):
             route_id=str(result.goal.route_id or ""),
             goal_kind=DESKTOP_TASK_GOAL_KIND,
             next_action=(
-                "freshly bind the selected accessible names to exact current UIA targets and "
-                "continue one bounded movement"
+                "resolve one exact current workspace source before sensing or grounding the "
+                "desktop destination"
             ),
             thought=thought,
             known=(
-                "bounded cognition proposed semantic goal data and then selected only names "
-                "from Resident fresh safe candidate Sense; Resident still owns exact UIA "
-                "identity, action authority, side-effect state and completion"
+                "bounded cognition proposed semantic workspace-to-desktop goal data only; "
+                "Resident must establish exact source identity from fresh workspace evidence "
+                "before any desktop target grounding or movement"
             ),
         )
         return None
