@@ -37,6 +37,7 @@ class _ExtensionSession:
     identity: BrowserSessionIdentity
     permission: BrowserPermissionContext
     tab_id: int
+    authorization_attached_at: str
     last_observation: dict[str, BrowserObservation] = field(default_factory=dict)
 
 
@@ -62,6 +63,19 @@ class AuthorizedExtensionUserBrowser:
         permission: BrowserPermissionContext | None = None,
         headless: bool = False,
     ) -> BrowserSessionIdentity:
+        return self.open_session_for_authorization(
+            permission=permission,
+            headless=headless,
+        )
+
+    def open_session_for_authorization(
+        self,
+        *,
+        permission: BrowserPermissionContext | None = None,
+        headless: bool = False,
+        expected_tab_id: int | None = None,
+        expected_attached_at: str | None = None,
+    ) -> BrowserSessionIdentity:
         del headless
         policy = permission or BrowserPermissionContext()
         if policy.allow_navigation:
@@ -75,6 +89,15 @@ class AuthorizedExtensionUserBrowser:
         authorized = self.relay.authorized_tab()
         if authorized is None:
             raise ExtensionUserBrowserError("no extension browser tab is currently authorized")
+        if expected_tab_id is not None and int(expected_tab_id) != authorized.tab_id:
+            raise ExtensionUserBrowserError(
+                "extension browser task context is bound to a different authorized tab"
+            )
+        expected_generation = str(expected_attached_at or "").strip()
+        if expected_generation and expected_generation != authorized.attached_at:
+            raise ExtensionUserBrowserError(
+                "extension browser task context is bound to a different authorization generation"
+            )
         identity = BrowserSessionIdentity.create(
             plane=BrowserPlane.USER,
             provider=self.name,
@@ -85,6 +108,7 @@ class AuthorizedExtensionUserBrowser:
             identity=identity,
             permission=policy,
             tab_id=authorized.tab_id,
+            authorization_attached_at=authorized.attached_at,
         )
         return identity
 
@@ -96,7 +120,7 @@ class AuthorizedExtensionUserBrowser:
 
     def observe(self, session_id: str, *, page_id: str = "") -> BrowserObservation:
         session = self._session(session_id)
-        command = self._request("probe_current_tab")
+        command = self._request_for_session(session, "probe_current_tab")
         result = self._command_result(command, "authorized browser tab probe")
         tab_id = self._tab_id(result)
         if tab_id != session.tab_id:
@@ -118,6 +142,7 @@ class AuthorizedExtensionUserBrowser:
             metadata={
                 "attachment": "authorized_extension_tab",
                 "transport": "chrome_debugger",
+                "authorization_attached_at": session.authorization_attached_at,
             },
         )
         session.last_observation[resolved_page] = observation
@@ -232,7 +257,11 @@ class AuthorizedExtensionUserBrowser:
             )
 
         session = self._session(session_id)
-        command = self._request(command_kind, args={"target_name": query.value})
+        command = self._request_for_session(
+            session,
+            command_kind,
+            args={"target_name": query.value},
+        )
         result = self._command_result(command, f"authorized browser {label} observation")
         tab_id = self._tab_id(result)
         if tab_id != session.tab_id:
@@ -285,6 +314,7 @@ class AuthorizedExtensionUserBrowser:
             "attachment": "authorized_extension_tab",
             "transport": "chrome_debugger_accessibility",
             "source_role": source_role,
+            "authorization_attached_at": session.authorization_attached_at,
         }
         if label == "textbox":
             metadata.update(
@@ -373,7 +403,8 @@ class AuthorizedExtensionUserBrowser:
 
         expected_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
         try:
-            command = self._request(
+            command = self._request_for_session(
+                session,
                 "type_named_textbox",
                 args={
                     "target_name": target.name,
@@ -470,6 +501,7 @@ class AuthorizedExtensionUserBrowser:
             "expected_utf16_units": self._nonnegative_int(
                 result.get("expected_utf16_units"), "expected UTF-16 units"
             ),
+            "authorization_attached_at": session.authorization_attached_at,
         }
         if not verified:
             return BrowserEffectEvidence(
@@ -524,7 +556,8 @@ class AuthorizedExtensionUserBrowser:
                 "extension button expected URL is already observed before dispatch"
             )
         try:
-            command = self._request(
+            command = self._request_for_session(
+                session,
                 "click_named_button_to_url",
                 args={
                     "target_name": target.name,
@@ -597,6 +630,7 @@ class AuthorizedExtensionUserBrowser:
             "exact_node_continuity": exact_node,
             "target_revalidated_before_dispatch": revalidated,
             "expected_url": result_expected,
+            "authorization_attached_at": session.authorization_attached_at,
         }
         if not verified:
             return BrowserEffectEvidence(
@@ -637,9 +671,10 @@ class AuthorizedExtensionUserBrowser:
                 "extension user-browser authority disappeared before observation completed"
             )
         tab_id = self._tab_id(result)
-        if tab_id != authorized.tab_id:
+        generation = str(command.get("authorization_attached_at") or "").strip()
+        if tab_id != authorized.tab_id or generation != authorized.attached_at:
             raise ExtensionUserBrowserError(
-                "extension user-browser observation returned evidence for a different tab"
+                "extension user-browser observation returned evidence for a different authorization generation"
             )
         return result
 
@@ -647,11 +682,47 @@ class AuthorizedExtensionUserBrowser:
         session = self._sessions.get(str(session_id or "").strip())
         if session is None:
             raise ExtensionUserBrowserError("unknown extension user-browser session")
+        authorized = self.relay.authorized_tab()
+        if (
+            authorized is None
+            or authorized.tab_id != session.tab_id
+            or authorized.attached_at != session.authorization_attached_at
+        ):
+            raise ExtensionUserBrowserError(
+                "extension user-browser session lost its original authorization generation"
+            )
         return session
 
-    def _request(self, kind: str, *, args: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _request_for_session(
+        self,
+        session: _ExtensionSession,
+        kind: str,
+        *,
+        args: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            kind,
+            args=args,
+            expected_tab_id=session.tab_id,
+            expected_attached_at=session.authorization_attached_at,
+        )
+
+    def _request(
+        self,
+        kind: str,
+        *,
+        args: dict[str, Any] | None = None,
+        expected_tab_id: int | None = None,
+        expected_attached_at: str | None = None,
+    ) -> dict[str, Any]:
         try:
-            return self.relay.request_command(kind, args=args, timeout_seconds=5.0)
+            return self.relay.request_command(
+                kind,
+                args=args,
+                timeout_seconds=5.0,
+                expected_tab_id=expected_tab_id,
+                expected_attached_at=expected_attached_at,
+            )
         except UserBrowserExtensionCommandUncertainError:
             raise
         except (ValueError, UserBrowserExtensionRelayError) as exc:

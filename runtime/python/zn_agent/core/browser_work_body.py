@@ -60,6 +60,38 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
             return self._browser_close(action, started)
         return super()._dispatch(action, started)
 
+    @staticmethod
+    def _open_session_for_body_action(
+        browser,
+        action: BodyAction,
+        permission: BrowserPermissionContext,
+        *,
+        user_plane: bool,
+        headless: bool,
+    ):
+        if user_plane:
+            expected_tab_id = action.args.get("authorized_tab_id")
+            expected_attached_at = str(
+                action.args.get("authorization_attached_at") or ""
+            ).strip()
+            if expected_tab_id is not None or expected_attached_at:
+                if expected_tab_id is None or not expected_attached_at:
+                    raise ValueError(
+                        "USER browser task context requires both authorized_tab_id and authorization_attached_at"
+                    )
+                opener = getattr(browser, "open_session_for_authorization", None)
+                if not callable(opener):
+                    raise ValueError(
+                        "current USER browser adapter cannot bind the Resident task authorization context"
+                    )
+                return opener(
+                    permission=permission,
+                    headless=headless,
+                    expected_tab_id=int(expected_tab_id),
+                    expected_attached_at=expected_attached_at,
+                )
+        return browser.open_session(permission=permission, headless=headless)
+
     def _browser_navigate(self, action: BodyAction, started: str) -> BodyActionResult:
         browser = self._browser()
         url = str(action.args.get("url") or "").strip()
@@ -355,7 +387,13 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
         closed = False
         navigation_evidence = None
         try:
-            session = browser.open_session(permission=permission, headless=not user_plane)
+            session = self._open_session_for_body_action(
+                browser,
+                action,
+                permission,
+                user_plane=user_plane,
+                headless=not user_plane,
+            )
             initial = browser.observe(session.session_id)
             if user_plane:
                 if initial.url != url:
@@ -522,6 +560,9 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                     "postcondition": click_evidence.postcondition,
                     "target_revalidated_before_dispatch": bool(
                         click_evidence.data.get("target_revalidated_before_dispatch")
+                    ),
+                    "authorization_attached_at": str(
+                        click_evidence.data.get("authorization_attached_at") or ""
                     ),
                     "browser_evidence": asdict(click_evidence),
                     "closed": True,

@@ -22,6 +22,7 @@ _URL = "https://example.test/account"
 _TARGET = "Account search"
 _TEXT = "alice@example.test"
 _TARGET_ID = "backend:701"
+_AUTH_AT = "2026-08-31T00:00:00Z"
 
 
 def _digest(value: str) -> str:
@@ -34,15 +35,28 @@ class _UncertainMutationRelay:
             tab_id=71,
             url=_URL,
             title="Account",
-            attached_at="2026-08-31T00:00:00Z",
+            attached_at=_AUTH_AT,
         )
 
-    def request_command(self, kind, *, args=None, timeout_seconds=5.0):
+    def request_command(
+        self,
+        kind,
+        *,
+        args=None,
+        timeout_seconds=5.0,
+        expected_tab_id=None,
+        expected_attached_at=None,
+    ):
         del timeout_seconds
+        if expected_tab_id is not None:
+            assert int(expected_tab_id) == 71
+        if expected_attached_at is not None:
+            assert expected_attached_at == _AUTH_AT
         if kind == "probe_current_tab":
             return {
                 "success": True,
                 "result": {"tab_id": 71, "url": _URL, "title": "Account"},
+                "authorization_attached_at": _AUTH_AT,
                 "completed_at": "2026-08-31T00:00:01Z",
             }
         if kind == "observe_named_textbox":
@@ -59,6 +73,7 @@ class _UncertainMutationRelay:
                     "text_length": 0,
                     "text_sha256": _digest(""),
                 },
+                "authorization_attached_at": _AUTH_AT,
                 "completed_at": "2026-08-31T00:00:02Z",
             }
         if kind == "type_named_textbox":
@@ -84,6 +99,7 @@ class _UncertainMutationRelay:
                     "expected_utf16_units": len(_TEXT.encode("utf-16-le")) // 2,
                     "postcondition": "",
                 },
+                "authorization_attached_at": _AUTH_AT,
                 "completed_at": "2026-08-31T00:00:03Z",
             }
         raise AssertionError(f"unexpected command kind: {kind}")
@@ -95,16 +111,32 @@ class _UncertainMutationRelay:
 
 
 class _LostResultMutationRelay(_UncertainMutationRelay):
-    def request_command(self, kind, *, args=None, timeout_seconds=5.0):
+    def request_command(
+        self,
+        kind,
+        *,
+        args=None,
+        timeout_seconds=5.0,
+        expected_tab_id=None,
+        expected_attached_at=None,
+    ):
         if kind == "type_named_textbox":
             self._expect_target(args)
             assert args["target_id"] == _TARGET_ID
             assert args["expected_url"] == _URL
             assert args["text"] == _TEXT
+            assert expected_tab_id == 71
+            assert expected_attached_at == _AUTH_AT
             raise UserBrowserExtensionCommandUncertainError(
                 "browser extension command result was lost after delivery; side effect may have occurred"
             )
-        return super().request_command(kind, args=args, timeout_seconds=timeout_seconds)
+        return super().request_command(
+            kind,
+            args=args,
+            timeout_seconds=timeout_seconds,
+            expected_tab_id=expected_tab_id,
+            expected_attached_at=expected_attached_at,
+        )
 
 
 def _prepared_action(browser: AuthorizedExtensionUserBrowser):
@@ -114,7 +146,11 @@ def _prepared_action(browser: AuthorizedExtensionUserBrowser):
         allow_text_entry=True,
         allowed_origins=(_URL,),
     )
-    session = browser.open_session(permission=permission)
+    session = browser.open_session_for_authorization(
+        permission=permission,
+        expected_tab_id=71,
+        expected_attached_at=_AUTH_AT,
+    )
     initial = browser.observe(session.session_id)
     observed = browser.observe_target(
         session.session_id,

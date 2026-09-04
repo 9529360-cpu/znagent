@@ -116,7 +116,13 @@ class BrowserFormSubmitBody(BrowserTextWorkBody):
         closed = False
         navigation_evidence = None
         try:
-            session = browser.open_session(permission=permission, headless=not user_plane)
+            session = self._open_session_for_body_action(
+                browser,
+                action,
+                permission,
+                user_plane=user_plane,
+                headless=not user_plane,
+            )
             initial = browser.observe(session.session_id)
             if user_plane:
                 if initial.url != url:
@@ -365,6 +371,11 @@ class BrowserFormSubmitBody(BrowserTextWorkBody):
                     "submit_postcondition": submit_evidence.postcondition,
                     "button_revalidated_before_dispatch": bool(
                         submit_evidence.data.get("target_revalidated_before_dispatch")
+                    ),
+                    "authorization_attached_at": str(
+                        submit_evidence.data.get("authorization_attached_at")
+                        or text_data.get("authorization_attached_at")
+                        or ""
                     ),
                     "provider": str(
                         submit_evidence.data.get("provider")
