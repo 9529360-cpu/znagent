@@ -15,7 +15,7 @@ from zn_agent.core.automation_text_state_sense import (
 from zn_agent.core.body import BodyAction
 from zn_agent.core.foreground_window_sense import ForegroundWindowObservation
 from zn_agent.core.keyboard_text_body import KeyboardTextBody
-from zn_agent.core.models import utc_now
+from zn_agent.core.models import EventStatus, utc_now
 from zn_agent.core.goal_resident import ResidentGoalRuntime
 from zn_agent.core.provider_bridge import build_resident_runtime
 from zn_agent.core.recovery_bounded_work import RecoveryBoundedWorkLedger
@@ -410,7 +410,7 @@ class NaturalNamedDesktopInputWorkTests(unittest.TestCase):
             finally:
                 resident.store.close()
 
-    def test_ambiguous_workspace_source_stops_before_desktop_side_effects(self) -> None:
+    def test_ambiguous_workspace_source_stays_open_before_any_desktop_side_effect(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             workspace = base / "authorized"
@@ -423,16 +423,30 @@ class NaturalNamedDesktopInputWorkTests(unittest.TestCase):
                 "ambiguous-desktop-source",
             )
             try:
-                _, run = ledger.submit(
+                _, event = ledger.start(
                     "ambiguous-desktop-source",
                     "把文件里的账号填进账号输入框，然后点查询。",
                 )
-                self.assertFalse(run.success)
+                for _ in range(6):
+                    resident.live_once()
+                    state = resident.store.get_working_state()
+                    if state.blocked_by == "workspace_source_ambiguous":
+                        break
+
+                state = resident.store.get_working_state()
+                self.assertEqual(state.stage, "native_investigation")
+                self.assertEqual(state.blocked_by, "workspace_source_ambiguous")
+                self.assertIn("re-sense the workspace", state.next_action or "")
+                self.assertEqual(resident.store.get_event(event.event_id).status, EventStatus.PROCESSING)
+                self.assertIsNone(resident.store.get_event_outcome(event.event_id))
                 self.assertEqual(body.focus_click_count, 0)
                 self.assertEqual(body.keyboard_calls, [])
                 self.assertEqual(body.submit_click_count, 0)
                 self.assertEqual(controls.edit_calls, 0)
-                self.assertIn("ambiguous", run.reason)
+                self.assertEqual(controls.button_calls, 0)
+                progress = ledger.progress("ambiguous-desktop-source", event.event_id)
+                self.assertFalse(progress["terminal"])
+                self.assertEqual(progress["stage"], "native_investigation")
             finally:
                 resident.store.close()
 
