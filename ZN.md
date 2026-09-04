@@ -381,6 +381,58 @@ resident deterministic knowledge / learned competence
 
 A hard coding, research, writing or reasoning task may consume substantial tokens because cognition is genuinely the work. ZN must not sacrifice task quality merely to reduce token count. The efficiency goal is to stop paying large-model cost for mechanics that the resident, tools or already-learned competence can handle reliably, while spending cognition where cognition creates real value.
 
+### 1.12 ZN intelligence is layered; large language models are the new high-level cognition, not the beginning of intelligence
+
+ZN must not be designed as though intelligence began with GPT, DeepSeek or another frontier LLM. Useful computer and phone assistants existed before frontier language models because real systems already combined narrower forms of machine intelligence with deterministic operating-system capabilities.
+
+Pre-frontier assistant behavior commonly depended on mechanisms such as:
+
+```text
+speech recognition / wake-word models
++ intent classification / entity extraction
++ search and knowledge indexes
++ recommendation/ranking models
++ rules / state machines
++ application and OS APIs
++ event triggers
+= useful bounded assistant behavior
+```
+
+Weather lookup, reminders, application launching, device settings, calendar operations, local search and many other tasks do not become more correct merely because a frontier model is inserted into every step. When Windows, an application API, a trusted local index or resident-owned logic can establish and execute the task reliably, ZN should use those capabilities directly.
+
+Modern large language and multimodal models add a different layer: broad natural-language understanding, ambiguous intent resolution, open-ended generation, planning, novel reasoning and specialist cognition. Their role is to fill genuine cognitive gaps and connect previously isolated capabilities into flexible user-goal execution. They do not replace the underlying system intelligence or real action substrate.
+
+The intended ZN intelligence stack is therefore:
+
+```text
+Layer A — resident / system intelligence
+  owned state, OS events, rules, known procedures, deterministic transforms,
+  semantic actions, permissions, local indexes, fresh verification
+
+Layer B — local machine intelligence
+  embeddings, ranking, classifiers, speech/vision models, small local models,
+  hardware-aware inference on CPU/GPU/NPU where useful
+
+Layer C — external or strong cognition
+  general frontier models, coding/research/vision specialists and bounded agents
+
+ZN orchestration
+  decides which layer or combination is appropriate for the current Work
+```
+
+This means Windows is not something ZN should recreate. Windows is the current operating-system substrate and a major part of ZN's Body. ZN should progressively expose Windows and application capabilities through ZN-owned semantic contracts, preferring trustworthy native/system/application APIs over GUI automation when available, while keeping UIA, keyboard/pointer and visual computer use as important fallback execution planes.
+
+The long-term product direction is therefore not "build another OS". It is:
+
+> **Root ZN deeply in the existing operating system so Windows becomes part of its body and system intelligence; add local machine intelligence for frequent/private/low-latency cognition; add strong replaceable models for the reasoning that genuinely needs them; let one persistent ZN organize all three into continuous user Work.**
+
+This protects both directions from drift:
+
+- do not turn ZN into a thin chat shell that asks a large model to rediscover every system fact and mechanical action;
+- do not pretend deterministic rules or small local models can replace strong cognition for open-ended coding, research, writing, multimodal understanding or novel reasoning.
+
+Detailed Windows/system integration direction is governed by `docs/ZN-OS-INTELLIGENCE-SUBSTRATE.md`. Industry evidence and comparison with modern device assistants is recorded in `docs/ZN-OS-ASSISTANT-INDUSTRY-RESEARCH.md`.
+
 ## 2. Repository ownership boundary
 
 The active development tree is ZN-only. Historical/reference product source is not kept inside the active tree and is not a runtime, build, test, packaging, release or maintenance dependency.
