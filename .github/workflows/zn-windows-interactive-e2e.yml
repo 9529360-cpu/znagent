@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - dev/zn-agent
+      - work/workspace-source-investigation
     paths:
       - .github/workflows/zn-windows-interactive-e2e.yml
       - apps/desktop/browser-extension/background.js
@@ -102,6 +103,11 @@ jobs:
           uv venv .ci/interactive-e2e-venv --python 3.12
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-e2e-venv\Scripts\python.exe'
           uv pip install --python $python "runtime/python[browser]"
+      - name: Run workspace source core regressions
+        shell: powershell
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          & .\.ci\interactive-e2e-venv\Scripts\python.exe -m unittest tests.zn_agent.core.test_desktop_goal_understanding_resident tests.zn_agent.core.test_natural_named_desktop_input_work -v
       - name: Run real interactive computer-use E2Es
         shell: powershell
         run: |
