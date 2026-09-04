@@ -8,6 +8,7 @@ from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from .evidence_bound_work import EvidenceBoundSteerableWorkLedger
 from .steerable_work import SteerableWorkLedger
 from .work import WorkMessage
 from .work_control import ResidentWorkControl
@@ -49,8 +50,8 @@ class RestoreAwareWorkControl(ResidentWorkControl):
         # Upgrade that face onto the same resident/store rather than creating a
         # second Work product or scheduler. Both objects point at the same SQLite
         # truth; this control surface owns the steerable path immediately.
-        if not isinstance(ledger, SteerableWorkLedger):
-            ledger = SteerableWorkLedger(ledger.resident)
+        if not isinstance(ledger, EvidenceBoundSteerableWorkLedger):
+            ledger = EvidenceBoundSteerableWorkLedger(ledger.resident)
         super().__init__(ledger)
         self._continuation_ingress_aliases: dict[str, str] = {}
 
