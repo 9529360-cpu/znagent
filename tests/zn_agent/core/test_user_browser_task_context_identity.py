@@ -155,6 +155,160 @@ class UserBrowserTaskContextIdentityTests(unittest.TestCase):
             relay.close()
             worker.join(timeout=2.0)
 
+    def test_delivered_exact_click_can_register_only_its_direct_expected_child(self) -> None:
+        relay = ResidentUserBrowserExtensionRelay(port=0)
+        relay.start()
+        relay.authorize(
+            tab_id=31,
+            url="https://example.test/account",
+            title="Account",
+        )
+        outcome: dict[str, object] = {}
+
+        def request_click() -> None:
+            try:
+                outcome["result"] = relay.request_command(
+                    "click_named_button_to_url",
+                    args={
+                        "target_name": "查询订单",
+                        "target_id": "backend:9",
+                        "expected_url_before": "https://example.test/account",
+                        "expected_url_after": "https://example.test/results?customer=alice",
+                        "expect_direct_child": True,
+                    },
+                    timeout_seconds=5.0,
+                )
+            except Exception as exc:
+                outcome["error"] = exc
+
+        worker = threading.Thread(target=request_click)
+        worker.start()
+        try:
+            command = relay.next_command(tab_id=31, wait_seconds=1.0)
+            self.assertIsNotNone(command)
+            with self.assertRaisesRegex(UserBrowserExtensionRelayError, "opener"):
+                relay.authorize_child_from_command(
+                    tab_id=31,
+                    command_id=command["command_id"],
+                    child_tab_id=44,
+                    opener_tab_id=99,
+                    url="https://example.test/results?customer=alice",
+                    title="Result",
+                )
+            with self.assertRaisesRegex(UserBrowserExtensionRelayError, "expected result URL"):
+                relay.authorize_child_from_command(
+                    tab_id=31,
+                    command_id=command["command_id"],
+                    child_tab_id=44,
+                    opener_tab_id=31,
+                    url="https://example.test/results?customer=bob",
+                    title="Result",
+                )
+
+            registered = relay.authorize_child_from_command(
+                tab_id=31,
+                command_id=command["command_id"],
+                child_tab_id=44,
+                opener_tab_id=31,
+                url="https://example.test/results?customer=alice",
+                title="Result",
+            )
+            self.assertTrue(registered["registered"])
+            self.assertEqual(registered["child"]["tab_id"], 44)
+            self.assertEqual(relay.status()["authorized_child_pages"], 1)
+
+            relay.complete_command(
+                tab_id=31,
+                command_id=command["command_id"],
+                success=True,
+                result={"tab_id": 44, "postcondition": "direct_child_verified"},
+            )
+            worker.join(timeout=2.0)
+            self.assertFalse(worker.is_alive())
+            self.assertNotIn("error", outcome)
+            self.assertEqual(outcome["result"]["target_tab_id"], 31)
+        finally:
+            relay.close()
+            worker.join(timeout=2.0)
+
+    def test_registered_child_receives_commands_but_unrelated_tab_never_does(self) -> None:
+        relay = ResidentUserBrowserExtensionRelay(port=0)
+        relay.start()
+        relay.authorize(tab_id=51, url="https://example.test/account", title="Account")
+        click_outcome: dict[str, object] = {}
+
+        def click_request() -> None:
+            try:
+                click_outcome["result"] = relay.request_command(
+                    "click_named_button_to_url",
+                    args={
+                        "expected_url_after": "https://example.test/result",
+                        "expect_direct_child": True,
+                    },
+                    timeout_seconds=5.0,
+                )
+            except Exception as exc:
+                click_outcome["error"] = exc
+
+        click_worker = threading.Thread(target=click_request)
+        click_worker.start()
+        try:
+            click_command = relay.next_command(tab_id=51, wait_seconds=1.0)
+            self.assertIsNotNone(click_command)
+            relay.authorize_child_from_command(
+                tab_id=51,
+                command_id=click_command["command_id"],
+                child_tab_id=52,
+                opener_tab_id=51,
+                url="https://example.test/result",
+                title="Result",
+            )
+            relay.complete_command(
+                tab_id=51,
+                command_id=click_command["command_id"],
+                success=True,
+                result={"tab_id": 52},
+            )
+            click_worker.join(timeout=2.0)
+
+            with self.assertRaisesRegex(UserBrowserExtensionRelayError, "not part"):
+                relay.request_command(
+                    "probe_current_tab",
+                    target_tab_id=99,
+                    timeout_seconds=0.1,
+                )
+
+            outcome: dict[str, object] = {}
+
+            def probe_child() -> None:
+                try:
+                    outcome["result"] = relay.request_command(
+                        "probe_current_tab",
+                        target_tab_id=52,
+                        timeout_seconds=5.0,
+                    )
+                except Exception as exc:
+                    outcome["error"] = exc
+
+            worker = threading.Thread(target=probe_child)
+            worker.start()
+            command = relay.next_command(tab_id=51, wait_seconds=1.0)
+            self.assertIsNotNone(command)
+            self.assertEqual(command["tab_id"], 51)
+            self.assertEqual(command["target_tab_id"], 52)
+            relay.complete_command(
+                tab_id=51,
+                command_id=command["command_id"],
+                success=True,
+                result={"tab_id": 52, "url": "https://example.test/result"},
+            )
+            worker.join(timeout=2.0)
+            self.assertFalse(worker.is_alive())
+            self.assertNotIn("error", outcome)
+        finally:
+            relay.close()
+            click_worker.join(timeout=2.0)
+
     def test_work_context_pins_tab_authorization_generation_not_foreground_or_title(self) -> None:
         resident = UserBrowserManagedResearchResidentRuntime.__new__(
             UserBrowserManagedResearchResidentRuntime
