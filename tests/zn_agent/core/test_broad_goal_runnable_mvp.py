@@ -6,9 +6,10 @@ import unittest
 from pathlib import Path
 
 from zn_agent.core.cognitive_resource import CognitiveIncrement, CognitiveResourceWorkerFactory
-from zn_agent.core.models import ModelRoute
+from zn_agent.core.models import ModelRoute, WorkingState
 from zn_agent.core.provider_bridge import build_resident_runtime
 from zn_agent.core.recovery_bounded_work import RecoveryBoundedWorkLedger
+from zn_agent.core.steerable_work import WorkItem
 from zn_agent.core.work_restore_control import RestoreAwareWorkControl
 
 
@@ -166,14 +167,6 @@ class BroadGoalRunnableMvpTests(unittest.TestCase):
                     "completed",
                     "model text was accepted as WorkItem completion without any runnable-world evidence",
                 )
-
-                print(
-                    "ZN_E2E_26_CURRENT_FAILURE="
-                    f"model_calls={cognition.calls};"
-                    f"resident_success={getattr(result, 'success', None)};"
-                    f"work_item_status={progress.get('work_item_status')};"
-                    f"workspace_files={len(after_files)}"
-                )
             finally:
                 resident.store.close()
 
@@ -282,6 +275,93 @@ class BroadGoalRunnableMvpTests(unittest.TestCase):
                 )
             finally:
                 resident.store.close()
+
+    def test_restart_rolls_verified_child_forward_without_terminal_root(self) -> None:
+        """Crash after native_completion must not turn one child into Root completion."""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "kernel.db"
+            workspace = root / "restart-workspace"
+            workspace.mkdir()
+            first = build_resident_runtime(config={"model": {}}, store_path=db)
+            control = RestoreAwareWorkControl(RecoveryBoundedWorkLedger(first))
+            ledger = control.ledger
+            ledger.create_thread(thread_id="restart-roll", title="Restart rolling Work")
+            ledger.attach_workspace("restart-roll", workspace, name="Restart Workspace")
+            _, event = control.start(
+                "restart-roll",
+                "Keep a broad local Work alive across a verified child checkpoint.",
+                acceptance_criteria=["Root still needs later independent verification"],
+            )
+            root_item = ledger.work_item_for_event(event.event_id)
+            self.assertIsNotNone(root_item)
+            assert root_item is not None
+            child = WorkItem(
+                work_item_id="item-restart-verified-child",
+                work_thread_id="restart-roll",
+                parent_work_item_id=root_item.work_item_id,
+                title="Verified child",
+                objective="write one verified child artifact",
+                status="running",
+                plan_version=root_item.plan_version,
+                acceptance_criteria=["text_equals: restart-probe.txt"],
+            )
+            ledger._save_item(child)
+            first.store.save_working_state(
+                WorkingState(
+                    current_event_id=event.event_id,
+                    stage="native_completion",
+                    next_action="publish terminal EventOutcome",
+                    data={
+                        "broad_goal_rolling_step": {
+                            "work_item_id": child.work_item_id,
+                            "root_work_item_id": root_item.work_item_id,
+                            "work_thread_id": "restart-roll",
+                            "plan_version": root_item.plan_version,
+                            "relative_path": "restart-probe.txt",
+                            "objective": child.objective,
+                            "increment_id": "inc-restart-probe",
+                        },
+                        "native_completion": {
+                            "execution_path": "body",
+                            "success": True,
+                            "response": str(workspace / "restart-probe.txt"),
+                            "model_invocations": 0,
+                            "reason": "verified child body result",
+                        },
+                    },
+                )
+            )
+            first.store.close()
+
+            restored = build_resident_runtime(config={"model": {}}, store_path=db)
+            try:
+                restored_event = restored.store.get_event(event.event_id)
+                self.assertIsNotNone(restored_event)
+                assert restored_event is not None
+                result = restored._resume_native_completion(
+                    restored_event,
+                    restored.store.get_working_state(),
+                )
+                self.assertIsNone(result)
+                recovered_child = next(
+                    item
+                    for item in restored.work_ledger.list_work_items("restart-roll")
+                    if item.work_item_id == child.work_item_id
+                )
+                self.assertEqual(recovered_child.status, "completed")
+                self.assertEqual(
+                    restored.store.get_working_state().stage,
+                    "native_deliberation",
+                )
+                self.assertIsNone(restored.store.get_event_outcome(event.event_id))
+                recovered_root = restored.work_ledger.work_item_for_event(event.event_id)
+                self.assertIsNotNone(recovered_root)
+                assert recovered_root is not None
+                self.assertNotEqual(recovered_root.status, "completed")
+            finally:
+                restored.store.close()
 
 
 if __name__ == "__main__":
