@@ -1,72 +1,63 @@
 # ZN Maintainer Handoff
 
-This is a lightweight engineering work site and fact index, not a chat transcript, execution script, or live Git database. Real code, live Git refs and actual test/build/CI results override this file when they disagree.
+这是一份施工现场说明，不是产品路线的永久命令。
 
-SHAs, CI runs and branch states written here are **observed/verified checkpoints**. A fresh maintainer must query current `main`, `dev/zn-agent`, relevant `work/*`, open PRs and CI again instead of treating any checkpoint below as the current ref value.
+真实代码、真实 Git、真实测试和真实 CI 高于这份文档。接手时必须重新查询 `main`、`dev/zn-agent`、相关 work branch、open PR 和 CI，不能把这里写的 SHA 或状态当成永远正确。
 
-## Recent verified checkpoint
+## 当前正在做的清理
 
-Observed development checkpoint: merge `f586c2fc9816e5724f4a0a33a2126a8b3eb0f81b` on `dev/zn-agent`, merging PR #127, **Connect bounded upstream BUG report transport and intake**.
+PR #176：`Remove the special self-maintenance product lane`
 
-Executable evidence for that checkpoint:
+这一轮的目标只有一个：把专用“自我维护 / 自我修复 / upstream BUG report”产品路线从当前代码树中拆掉，同时保留正常的 Resident、Health、Recovery、Work、Memory、Browser、Desktop、File、Terminal、Git、Repo Test 和 Update 架构。
 
-- ZN CI `33358941761` completed with conclusion `success` for head `f586c2fc9816e5724f4a0a33a2126a8b3eb0f81b`.
-- The transport/intake tranche therefore has repository-native full ZN CI evidence, not only static code review.
-- Hosted clean-install/release-candidate jobs that fail before any step executes remain runner-allocation/infrastructure evidence unless a later run actually executes product steps.
+专用自我维护路线已经明确废弃。它不再是产品能力，也不再是待办优先级。
 
-Canonical `main` was observed at `0dbec575fc128bd1cc1837e7485b5a37e0ac8393` before this handoff update. Treat that SHA only as an observation checkpoint and re-query live refs before promotion or comparison.
+详细废弃说明见 `docs/ZN-RETIRED-DIRECTIONS.md`。
 
-## Upstream BUG / repair reporting reality
+## 当前产品主线
 
-The former transport/intake lane is no longer merely planned or isolated. PR #127 is merged into `dev/zn-agent` and the merged checkpoint above has full ZN CI success.
+ZN 的产品目标不是继续堆内部能力模块，而是让普通用户给出正常人类任务以后，ZN 能自己理解、观察、执行、重新调查，并验证真实结果。
 
-The implemented resident-side path now includes:
+当前工作按下面的产品价值排序：
 
-- bounded privacy-safe local BUG report formation and durable outbox accounting;
-- explicit operator-configured HTTPS transport;
-- durable reservation before external dispatch;
-- no blind automatic replay after uncertain external outcome;
-- explicit reconciliation path;
-- maintainer-side bounded intake/deduplication primitive;
-- resident/provider configuration wiring for the transport.
+1. 打通更多真实用户任务的完整自主闭环，而不是继续验证单个 click、textbox、terminal 等 primitive。
+2. 继续收紧真实 User Browser Bridge，让 ZN 在明确授权下可靠使用用户当前已经登录的浏览器状态。
+3. 补齐 Investigation / replanning：目标、页面、窗口、文件或程序状态变化时，重新 Sense / Situation / Thought，再决定下一步。
+4. 把 Work / Memory / Recovery 变成真实长期连续性，让“刚才那个继续”“昨天那个继续”成为可用体验。
+5. 改善普通用户能看懂的任务状态、授权、失败和完成结果。
 
-This is not yet a complete product loop. Important remaining gaps include:
+安装器、Release、签名、额外 CI、维护系统、文档整理和新的抽象默认都是支撑线。只有它们正在直接阻塞真实用户任务、安全边界、数据连续性或结果验证时，才提升优先级。
 
-1. reconciliation semantics still need review so an ambiguous HTTP 404 cannot incorrectly prove authoritative absence and unlock a duplicate external side effect;
-2. the persistent daemon/RPC/desktop control surface does not yet expose the explicit dispatch/reconcile actions;
-3. maintainer intake is a storage/protocol primitive, not yet a deployed HTTP service;
-4. authenticated transport is being developed separately and must remain credential-reference based rather than embedding secrets in resident config/status.
+## 明确不再做的方向
 
-Normal installed ZN still has no official repository push, PR, merge, release or signing authority.
+不要重新增加：
 
-## Active durable work
+- maintenance runtime / maintenance cognition / maintenance repair；
+- 为“ZN 修自己”单独设计的 investigation / review / publication 状态机；
+- upstream BUG report / transport / intake / reconcile 专用控制面；
+- maintenance 专用 UI / IPC / RPC；
+- 因为目标仓库刚好是 ZN，就自动扩大 Git、合并、发布、更新或凭证权限的特殊路径。
 
-`work/upstream-report-auth` is an **active** lane because it has durable Git evidence and an open PR: draft PR #128, **Protect upstream report transport with credential references**.
+如果以后需要修改 ZN 自己的代码，就把 ZN 当普通代码仓库，用通用 Work、File、Terminal、Git、Repo Test 和编码能力处理。
 
-At the last observed comparison against `dev/zn-agent` checkpoint `f586c2fc...`, the branch had 4 unique commits and no behind commits. Re-query the PR and branch before editing or merging it; these counts are an observation, not a permanent live-state claim.
+## 接手者下一步怎么判断
 
-The lane is intended to keep maintainer endpoint credentials behind ZN's existing credential-reference boundary and out of resident config/status/database evidence. It must receive repository-native executable validation before merge.
+每次准备开始一个新工作项，先问：
 
-## Handoff discipline
+1. 普通用户现在具体在哪个真实任务上卡住？
+2. 这次修改是否直接让这个任务更接近成功？
+3. 修改完成后，哪个真实用户 E2E 会从失败变成成功？
 
-Do not write a lane as `active`, `in progress`, or `isolated` merely because a previous maintainer intended to work on it. Such claims require durable recoverable evidence: a real branch delta or corresponding open PR. Planned ownership without implementation evidence must be labeled `planned` or `reserved`.
+如果第三个问题答不出来，默认重新评估，不要因为某个工程问题“看起来能修”就自动把它升成主线。
 
-Do not try to keep a literal “current HEAD” permanently synchronized inside this file. Updating this file itself changes HEAD. Record meaningful verified checkpoints when useful, then let the next maintainer recover live refs from Git/GitHub.
+## 收尾怎么汇报
 
-Update this handoff as a low-cost closeout step after a coherent engineering slice, explicit interruption/handoff, or a material change in product maturity/risk. Do not make every commit produce Markdown churn, and do not let documentation maintenance displace product work.
+优先说明：
 
-## Current product priorities
+- ZN 以前不能完成什么真实任务；
+- 现在能完成什么；
+- 成功路径是什么；
+- 用户还会在哪里失败；
+- 下一项最阻塞真实使用的问题是什么。
 
-Re-rank these from live code and evidence rather than treating this list as command authority:
-
-1. preserve at-most-once external BUG-report behavior by tightening reconciliation so only explicit authoritative receiver evidence can unlock retry;
-2. complete authenticated upstream report transport without exposing repository or maintainer credentials to installed ZN;
-3. expose explicit operator dispatch/reconcile through the real resident control surface, without automatic health-driven upload;
-4. close the maintainer intake deployment/authentication path;
-5. continue broader ZN product gaps only after re-checking whether a higher-severity identity, memory, lifecycle, security or main-path issue has appeared.
-
-## Safety / authority boundary
-
-No force push, history rewrite, repository credential expansion, updater replacement, rollback, release signing, destructive identity/memory migration, or self-approval of maintenance safety rules is authorized by this handoff.
-
-Normal reversible code changes, tests, work branches, commits, pushes, PRs, CI repair and low-risk branch synchronization remain ordinary maintainer work under repository rules.
+测试数量、PR 数、commit 数和 CI 只作为证据，不作为产品成绩本身。
