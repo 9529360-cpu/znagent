@@ -478,6 +478,23 @@ class BrowserGoalUnderstandingResidentRuntime(ResidentGoalRuntime):
                 thought=thought,
             )
 
+        raw_reground = state.data.get(_DESKTOP_SEMANTIC_REGROUND_KEY)
+        grounded_once = bool(
+            isinstance(raw_reground, dict)
+            and max(0, int(raw_reground.get("count") or 0)) > 0
+        )
+        if not grounded_once:
+            return self._reground_desktop_semantic_goal(
+                event,
+                state,
+                readiness=readiness,
+                thought=thought,
+                semantic_goal=semantic_goal,
+                exact_failure=(
+                    "semantic desktop destination has not yet been grounded in fresh UIA candidates"
+                ),
+            )
+
         foreground, _foreground_error = self._probe_foreground_window()
         if foreground is None:
             return super()._desktop_task_investigation(
@@ -605,9 +622,9 @@ class BrowserGoalUnderstandingResidentRuntime(ResidentGoalRuntime):
             )
 
         grounding_question = (
-            "The exact accessible names selected earlier are no longer current. Keep the same "
-            "semantic user goal and choose only among the freshly observed accessible names "
-            "below. Return exactly "
+            "Ground the same semantic user goal only in the freshly observed accessible names "
+            "below. The prior strings are semantic intent or stale names, not authority. Return "
+            "exactly "
             '{"status":"selected","input_name":"ONE OBSERVED EDIT NAME",'
             '"button_name":"ONE OBSERVED BUTTON NAME"} only when there is one clearly best '
             "choice for each. If either choice is ambiguous, return "
@@ -696,13 +713,13 @@ class BrowserGoalUnderstandingResidentRuntime(ResidentGoalRuntime):
 
         if thought is not None:
             known = (
-                "fresh UIA candidate Sense showed that the previously grounded accessible "
-                "names were stale while the semantic desktop goal remained unchanged"
+                "fresh UIA candidate Sense showed that the semantic destination was grounded "
+                "only in currently observed accessible names"
             )
             if known not in thought.known:
                 thought.known = (*thought.known, known)
             thought.reason = (
-                f"{thought.reason}; bounded semantic re-ground selected only current safe names "
+                f"{thought.reason}; bounded semantic grounding selected only current safe names "
                 "and Resident will bind exact UIA identity again before any movement"
             )
             self._persist_enriched_thought(thought)
