@@ -1,95 +1,74 @@
 # ZN Next Phase
 
-This file describes the next engineering sequence after reconciling the current repository state. It does not grant authority for updater, rollback, signing, release-trust, credential/permission, identity, or long-term-memory changes.
+这份文件只描述下一阶段产品主线，不给 updater、rollback、signing、release trust、credential、identity 或 long-term memory 的高风险改动自动授权。
 
-## Current verified foundation
+## 产品目标
 
-ZN remains the only product/runtime owner. The resident owns Self, Body, Senses, Memory, Situation, Thought, Will, Investigation, Action and Learning; external models are optional cognitive resources rather than the agent owner.
+ZN 的下一阶段不是继续堆基础设施，而是把已经存在的 Self、Body、Senses、Situation、Thought、Will、Work、Memory、Browser、Desktop、Computer Use 和 Recovery 真正组合成普通用户能长期使用的完整任务闭环。
 
-The Windows-first release evidence now has two canonical bounded layers:
+判断下一项工作，只问一件事：
 
-1. **Unsigned Windows x64 release candidate proof — complete/canonical.** PR #11 is on `main` at `3741db32c739322a3f921ea62798b2c698ef0771`; canonical post-merge `ZN CI` run `33192086069` succeeded.
-2. **Clean Windows install + first resident start proof — complete/canonical.** The implementation/proof head was `cb913d61f001af6c729a141a3c8631a72e8362cf`; exact-head full `ZN CI` run `33193710879`, candidate run `33193711016`, and clean-install run `33193710872` succeeded. Documentation closeout head `4b770345e1267db1cfdc37c9551ff967d6955c27` then passed `ZN CI` run `33195494937`. PR #13 promoted the stage to canonical `main` at `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`, and canonical post-merge `ZN CI` run `33196441295` completed successfully with Kernel/Python, Electron/TypeScript, and Source Boundary jobs all green.
+**这个改动能不能直接提高 ZN 在真实用户电脑上自主完成真实任务的能力？**
 
-Before the current ledger-reconciliation change, `main` and `dev/zn-agent` were synchronized at `a4f9c95a32571add9bd16ec5aa08a618c8e5566b`.
+如果不能，默认不是当前主线，除非它正在直接阻塞主线。
 
-The clean-install lane installs the real unsigned NSIS candidate into isolated hosted-runner state, starts installed `ZN.exe`, materializes the packaged ZN runtime into an isolated `ZN_AGENT_HOME`, verifies exact runtime identity through the real resident loopback endpoint, proves resident life, and shuts the resident down cleanly.
+## 当前优先顺序
 
-This does **not** prove a formal release, updater transition, rollback, signing, or replacement of a user's installed copy.
+1. 真实任务自主闭环。
+2. 真实 User Browser Bridge。
+3. 自主 Investigation / replanning。
+4. 长期 Work / Memory / Resident 连续性。
+5. 普通用户能看懂的任务状态、授权、失败和完成体验。
 
-## Windows-first M8 sequence
+Installer、Release Candidate、签名、额外 CI、维护系统、文档整理、新抽象、新 provider、新状态机默认都是支撑线，不得自动抢主线。
 
-The intended sequence is now:
+## 真实任务开发方式
 
-1. Clean hosted Windows x64 candidate build and integrity verification — **done/canonical**.
-2. Real clean NSIS install and installed first-start/resident proof — **done/canonical**.
-3. Installed **N baseline evidence** in isolated state — **next low-risk slice**.
-4. Installed N -> N+1 continuity experiment — **not started; explicit human approval required before actual replacement/update execution**.
-5. Failed-update/rollback evidence — **not started; explicit human approval required**.
-6. Signing/release-trust validation — **not started; explicit human approval required**.
-7. Formal repository release flow and stable-channel advance — only after repository gates, immutable artifacts, trust checks and required approvals are real.
-
-## Next concrete low-risk slice: installed N baseline evidence
-
-Before attempting a version transition, prove that an installed ZN can expose a small, privacy-safe baseline that a later N+1 run could compare against.
-
-The baseline should be created only in isolated test state and should prefer existing resident RPC/read-only surfaces. Useful evidence includes:
-
-- exact installed/runtime identity;
-- stable resident Self identity/reference needed for continuity checks;
-- bounded work/thread references and counts rather than private message bodies;
-- runtime/home/config path identity;
-- sanitized provider-setting metadata (`provider`, model/base URL as configured, credential presence/source metadata) without secret values;
-- resident endpoint and pulse/life evidence.
-
-The baseline must not:
-
-- call `update_apply`, run an installer over an existing formal version, or otherwise replace installed N;
-- modify identity or long-term memory;
-- mutate provider credentials or permissions;
-- execute rollback;
-- alter signing/release trust roots;
-- publish a tag, GitHub Release, or `stable.json`.
-
-A later transition test should consume this baseline as evidence rather than inventing continuity criteria after the update has already happened.
-
-## Current implementation path to inspect for the baseline slice
-
-The existing call chain already exposes most of the needed evidence through ZN-owned read-only surfaces:
+以后按这个顺序开发：
 
 ```text
-installed ZN.exe
--> zn-main.ts / resident process ownership
--> resident endpoint
--> ResidentRpcServer
--> ping / status / self / provider_settings / work_list
--> ZN resident/store/life/provider settings/work ledger
+选一个高价值真实用户任务
+-> 找出完成它真正缺的能力
+-> 只补这些缺口
+-> 打通完整任务
+-> 用真实 E2E 验证
+-> 修复过程中暴露的架构问题
+-> 再进入下一个更难真实任务
 ```
 
-Important constraints for implementation:
+不要再按“checkbox、textbox、button、navigation、terminal、UIA 一个个做完”来判断产品进度。这些只是身体动作。
 
-- `self` currently exposes the living Self snapshot and should be bounded to continuity-safe fields in the baseline artifact rather than copied wholesale.
-- `provider_settings` already returns credential presence/source metadata without secret values and should remain the provider evidence source.
-- `work_list` currently includes messages/artifacts; baseline collection must deliberately retain only bounded thread identity/count/reference information and must not persist message bodies or artifact contents.
-- runtime/home/config and endpoint identity should come from installed/materialized paths and resident endpoint evidence, not guessed values.
-- a baseline verifier should make privacy/sanitization requirements executable through tests.
+## 当前最值得继续闭合的方向
 
-## Other active program status
+- 页面、窗口、文件或目标变化后，能够重新 Sense / Situation / Thought，而不是脚本失配直接失败。
+- 自然语言里的“刚才那个继续”“昨天那个继续”能恢复同一个真实 Work，而不是从零开始。
+- active task 收到用户新指示以后，能安全改变当前计划，不重复已经发生的外部副作用。
+- Browser + File + Desktop 这类三 surface 联合任务能完成并独立验证结果。
+- 安装后跨版本仍保持身份、Memory、Work、配置和不确定副作用连续性。
 
-- P5 recovery-control remains **PARTIAL**. Read-only restore proposals are evidence, not restore authority.
-- `docs/ZN-SOURCE-EXTRACTION.md` remains the extraction/source-boundary ledger; the clean-install promotion did not change source ownership.
-- `docs/ZN-SELF-MAINTENANCE.md` remains the self-maintenance authority document; the clean-install promotion did not change its approval boundaries.
+## 已废弃方向
 
-## Promotion rule for the next slice
+专用“自我维护 / 自我修复 / upstream BUG report”路线已经删除，不属于下一阶段，不属于 backlog 优先级，也不属于未来产品路线。
 
-The installed-N baseline stage may enter `main` only through the repository's normal traceable promotion flow after:
+不要恢复专用 maintenance runtime、repair cognition、BUG report transport/intake、maintenance UI/RPC 或特殊仓库权限路径。
 
-- the bounded baseline implementation is complete;
-- privacy/sanitization and read-only behavior are covered by tests;
-- exact-head relevant tests and full CI are green;
-- any applicable isolated installed-N E2E evidence is green;
-- documentation and `.agent/HANDOFF.md` reflect the real evidence;
-- final `main...dev` diff inspection shows only the intended low-risk stage;
-- no unresolved blocker or high-risk boundary has been crossed.
+需要修改 ZN 自己的代码时，把 ZN 当成普通代码仓库，用通用 Work、File、Terminal、Git、Repo Test 和编码能力处理。
 
-No updater/replacement, rollback, signing, release-trust or user-machine replacement authority is granted by this plan.
+详情见 `docs/ZN-RETIRED-DIRECTIONS.md`。
+
+## 完成一个阶段以后怎么汇报
+
+不要只说：
+
+- 新增多少文件；
+- 测试多少个通过；
+- CI 是否绿色；
+- 合并了几个 PR。
+
+先说：
+
+- ZN 以前不能完成什么真实任务；
+- 现在能完成什么真实任务；
+- 用户的成功路径是什么；
+- 还有哪些地方会失败；
+- 下一项最阻塞真实使用的问题是什么。
