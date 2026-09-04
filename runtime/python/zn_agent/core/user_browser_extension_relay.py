@@ -2,10 +2,14 @@ from __future__ import annotations
 
 """Loopback-only authorization and command relay for the ZN browser extension.
 
-The user explicitly authorizes one current HTTP(S) tab through the installed ZN
-extension. Resident may then issue only bounded, short-lived commands to that exact
-tab. Command payloads/results live in memory only; revocation or Resident shutdown
-withdraws the surface and wakes blocked callers without replaying work.
+The user explicitly authorizes one current HTTP(S) root tab through the installed ZN
+extension. Resident may then issue only bounded, short-lived commands within that
+authorization generation. A direct child page may be registered only as the verified
+result of one already-delivered Resident click that explicitly expected a child; it
+never becomes a new user authorization and never inherits authority by foreground,
+title or resemblance. Command payloads/results live in memory only; revocation or
+Resident shutdown withdraws the surface and wakes blocked callers without replaying
+work.
 """
 
 import json
@@ -35,6 +39,7 @@ _ALLOWED_COMMAND_KINDS = frozenset(
 )
 _MAX_RELAY_BODY = 64 * 1024
 _MAX_COMMAND_WAIT_SECONDS = 20.0
+_MAX_AUTHORIZED_CHILDREN = 4
 
 
 @dataclass(slots=True, frozen=True)
@@ -46,9 +51,20 @@ class AuthorizedUserBrowserTab:
 
 
 @dataclass(slots=True, frozen=True)
+class AuthorizedUserBrowserChildPage:
+    tab_id: int
+    opener_tab_id: int
+    url: str
+    title: str
+    authorization_attached_at: str
+    attached_at: str
+
+
+@dataclass(slots=True, frozen=True)
 class UserBrowserExtensionCommand:
     command_id: str
     tab_id: int
+    target_tab_id: int
     authorization_attached_at: str
     kind: str
     args: dict[str, Any]
@@ -69,7 +85,7 @@ class UserBrowserExtensionCommandUncertainError(UserBrowserExtensionRelayError):
 
 
 class ResidentUserBrowserExtensionRelay:
-    """Keep one explicitly user-authorized browser tab on loopback only."""
+    """Keep one explicit root authorization plus bounded action-proven child pages."""
 
     protocol_version = 1
 
@@ -83,6 +99,7 @@ class ResidentUserBrowserExtensionRelay:
         self._lock = threading.RLock()
         self._condition = threading.Condition(self._lock)
         self._authorized: AuthorizedUserBrowserTab | None = None
+        self._children: dict[int, AuthorizedUserBrowserChildPage] = {}
         self._pending: list[UserBrowserExtensionCommand] = []
         self._inflight: dict[str, UserBrowserExtensionCommand] = {}
         self._results: dict[str, dict[str, Any]] = {}
@@ -111,6 +128,20 @@ class ResidentUserBrowserExtensionRelay:
                             )
                         elif self.path == "/v1/detach":
                             result = relay.revoke(tab_id=body.get("tab_id"))
+                        elif self.path == "/v1/child/attach":
+                            result = relay.authorize_child_from_command(
+                                tab_id=body.get("tab_id"),
+                                command_id=body.get("command_id"),
+                                child_tab_id=body.get("child_tab_id"),
+                                opener_tab_id=body.get("opener_tab_id"),
+                                url=body.get("url"),
+                                title=body.get("title"),
+                            )
+                        elif self.path == "/v1/child/detach":
+                            result = relay.revoke_child(
+                                tab_id=body.get("tab_id"),
+                                child_tab_id=body.get("child_tab_id"),
+                            )
                         elif self.path == "/v1/command/next":
                             result = {
                                 "command": relay.next_command(
@@ -197,6 +228,7 @@ class ResidentUserBrowserExtensionRelay:
             self._server = None
             self._thread = None
             self._authorized = None
+            self._children.clear()
             self._pending.clear()
             # Keep inflight command identities until their blocked Resident callers
             # wake. Those callers must be told that delivery happened and the final
@@ -235,6 +267,7 @@ class ResidentUserBrowserExtensionRelay:
                     "another user browser tab is already authorized; revoke it first"
                 )
             self._authorized = tab
+            self._children.clear()
             self._condition.notify_all()
         return self.status()
 
@@ -251,6 +284,7 @@ class ResidentUserBrowserExtensionRelay:
                         "refusing to revoke a different authorized browser tab"
                     )
             self._authorized = None
+            self._children.clear()
             self._pending.clear()
             # Do not erase inflight identities here. A command already delivered to
             # the extension may have crossed the side-effect boundary before the
@@ -258,6 +292,113 @@ class ResidentUserBrowserExtensionRelay:
             self._results.clear()
             self._condition.notify_all()
         return self.status()
+
+    def authorize_child_from_command(
+        self,
+        *,
+        tab_id: Any,
+        command_id: Any,
+        child_tab_id: Any,
+        opener_tab_id: Any,
+        url: Any,
+        title: Any,
+    ) -> dict[str, Any]:
+        normalized_root = self._require_current_tab_id(tab_id)
+        try:
+            normalized_child = int(child_tab_id)
+            normalized_opener = int(opener_tab_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("authorized child tab identities must be integers") from exc
+        if normalized_child <= 0 or normalized_opener <= 0:
+            raise ValueError("authorized child tab identities must be positive")
+        if normalized_child == normalized_root:
+            raise UserBrowserExtensionRelayError(
+                "a direct child task page must have a different tab identity from the root authorization"
+            )
+        normalized_command_id = str(command_id or "").strip()
+        if not normalized_command_id:
+            raise ValueError("authorized child registration requires command_id")
+        normalized_url = str(url or "").strip()
+        if not self._safe_page_url(normalized_url):
+            raise ValueError("authorized child task page must be an HTTP(S) page")
+        normalized_title = str(title or "").strip()
+        if len(normalized_title) > 512:
+            raise ValueError("authorized child task page title is too long")
+
+        with self._condition:
+            current = self._authorized
+            command = self._inflight.get(normalized_command_id)
+            if (
+                current is None
+                or command is None
+                or command.tab_id != normalized_root
+                or not self._same_authorization(current, command)
+            ):
+                raise UserBrowserExtensionRelayError(
+                    "direct child registration is not owned by a current delivered browser command"
+                )
+            if (
+                command.kind != "click_named_button_to_url"
+                or command.args.get("expect_direct_child") is not True
+            ):
+                raise UserBrowserExtensionRelayError(
+                    "direct child registration requires one delivered click that explicitly expected a child"
+                )
+            if normalized_opener != command.target_tab_id:
+                raise UserBrowserExtensionRelayError(
+                    "direct child opener does not match the exact task page that received the click"
+                )
+            expected_url = str(command.args.get("expected_url_after") or "").strip()
+            if not expected_url or normalized_url != expected_url:
+                raise UserBrowserExtensionRelayError(
+                    "direct child URL does not match the Resident-derived expected result URL"
+                )
+            if not self._same_origin(current.url, normalized_url):
+                raise UserBrowserExtensionRelayError(
+                    "direct child task page leaves the original authorized origin"
+                )
+            existing = self._children.get(normalized_child)
+            if existing is None and len(self._children) >= _MAX_AUTHORIZED_CHILDREN:
+                raise UserBrowserExtensionRelayError(
+                    "direct child task-page allowance exceeded its bounded limit"
+                )
+            child = AuthorizedUserBrowserChildPage(
+                tab_id=normalized_child,
+                opener_tab_id=normalized_opener,
+                url=normalized_url,
+                title=normalized_title,
+                authorization_attached_at=current.attached_at,
+                attached_at=utc_now(),
+            )
+            self._children[normalized_child] = child
+            self._condition.notify_all()
+        return {"registered": True, "child": asdict(child)}
+
+    def revoke_child(self, *, tab_id: Any, child_tab_id: Any) -> dict[str, Any]:
+        normalized_root = self._require_current_tab_id(tab_id)
+        try:
+            normalized_child = int(child_tab_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("revoked child tab id must be an integer") from exc
+        if normalized_child <= 0:
+            raise ValueError("revoked child tab id must be positive")
+        with self._condition:
+            current = self._authorized
+            if current is None or current.tab_id != normalized_root:
+                raise UserBrowserExtensionRelayError(
+                    "direct child revocation lost its root browser authorization"
+                )
+            self._children.pop(normalized_child, None)
+            self._pending = [
+                item for item in self._pending if item.target_tab_id != normalized_child
+            ]
+            self._results = {
+                key: value
+                for key, value in self._results.items()
+                if int(value.get("target_tab_id") or 0) != normalized_child
+            }
+            self._condition.notify_all()
+        return {"revoked": True, "child_tab_id": normalized_child}
 
     def request_command(
         self,
@@ -267,6 +408,7 @@ class ResidentUserBrowserExtensionRelay:
         timeout_seconds: float = 5.0,
         expected_tab_id: int | None = None,
         expected_attached_at: str | None = None,
+        target_tab_id: int | None = None,
     ) -> dict[str, Any]:
         normalized_kind = str(kind or "").strip()
         if normalized_kind not in _ALLOWED_COMMAND_KINDS:
@@ -283,16 +425,27 @@ class ResidentUserBrowserExtensionRelay:
                 raise UserBrowserExtensionRelayError("no user browser tab is currently authorized")
             if expected_tab_id is not None and int(expected_tab_id) != current.tab_id:
                 raise UserBrowserExtensionRelayError(
-                    "current browser authorization is not the task-owned tab"
+                    "current browser authorization is not the task-owned root tab"
                 )
             expected_generation = str(expected_attached_at or "").strip()
             if expected_generation and expected_generation != current.attached_at:
                 raise UserBrowserExtensionRelayError(
                     "current browser authorization is a different authorization generation"
                 )
+            normalized_target = current.tab_id
+            if target_tab_id is not None:
+                try:
+                    normalized_target = int(target_tab_id)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("browser extension command target tab id must be an integer") from exc
+            if not self._target_is_authorized_locked(normalized_target, current.attached_at):
+                raise UserBrowserExtensionRelayError(
+                    "browser extension command target is not part of the task-owned authorization context"
+                )
             command = UserBrowserExtensionCommand(
                 command_id=f"browser-extension-command-{uuid.uuid4().hex[:12]}",
                 tab_id=current.tab_id,
+                target_tab_id=normalized_target,
                 authorization_attached_at=current.attached_at,
                 kind=normalized_kind,
                 args=normalized_args,
@@ -315,6 +468,19 @@ class ResidentUserBrowserExtensionRelay:
                         )
                     raise UserBrowserExtensionRelayError(
                         "user browser authorization changed before command delivery"
+                    )
+                if not self._target_is_authorized_locked(
+                    command.target_tab_id,
+                    command.authorization_attached_at,
+                ):
+                    delivered = command.command_id in self._inflight
+                    self._drop_command_locked(command.command_id)
+                    if delivered:
+                        raise UserBrowserExtensionCommandUncertainError(
+                            "browser task page disappeared after command delivery; side effect may have occurred"
+                        )
+                    raise UserBrowserExtensionRelayError(
+                        "browser task page disappeared before command delivery"
                     )
                 if self._server is None:
                     delivered = command.command_id in self._inflight
@@ -349,10 +515,19 @@ class ResidentUserBrowserExtensionRelay:
             while True:
                 self._require_current_tab_id_locked(normalized_tab_id)
                 current = self._authorized
-                for index, command in enumerate(tuple(self._pending)):
+                index = 0
+                while index < len(self._pending):
+                    command = self._pending[index]
                     if command.tab_id != normalized_tab_id:
+                        index += 1
                         continue
                     if not self._same_authorization(current, command):
+                        self._pending.pop(index)
+                        continue
+                    if not self._target_is_authorized_locked(
+                        command.target_tab_id,
+                        command.authorization_attached_at,
+                    ):
                         self._pending.pop(index)
                         continue
                     self._pending.pop(index)
@@ -396,14 +571,19 @@ class ResidentUserBrowserExtensionRelay:
                 command is None
                 or command.tab_id != normalized_tab_id
                 or not self._same_authorization(current, command)
+                or not self._target_is_authorized_locked(
+                    command.target_tab_id,
+                    command.authorization_attached_at,
+                )
             ):
                 raise UserBrowserExtensionRelayError(
-                    "browser extension command result does not match the current authorization generation"
+                    "browser extension command result does not match the current authorization generation and task page"
                 )
             self._inflight.pop(normalized_command_id, None)
             self._results[normalized_command_id] = {
                 "command_id": normalized_command_id,
                 "tab_id": normalized_tab_id,
+                "target_tab_id": command.target_tab_id,
                 "authorization_attached_at": command.authorization_attached_at,
                 "kind": command.kind,
                 "success": success,
@@ -424,6 +604,7 @@ class ResidentUserBrowserExtensionRelay:
             listening = self._server is not None
             pending_count = len(self._pending)
             inflight_count = len(self._inflight)
+            child_count = len(self._children)
         return {
             "available": listening,
             "authorized": tab is not None,
@@ -431,6 +612,7 @@ class ResidentUserBrowserExtensionRelay:
             "endpoint": f"http://{self.host}:{self.port}",
             "extension_id": ZN_BROWSER_EXTENSION_ID,
             "tab": asdict(tab) if tab is not None else None,
+            "authorized_child_pages": child_count,
             "pending_commands": pending_count,
             "inflight_commands": inflight_count,
         }
@@ -448,7 +630,7 @@ class ResidentUserBrowserExtensionRelay:
         current = self._authorized
         if current is None or current.tab_id != tab_id:
             raise UserBrowserExtensionRelayError(
-                "browser extension command must use the currently authorized tab"
+                "browser extension command must use the currently authorized root tab"
             )
 
     @staticmethod
@@ -460,6 +642,18 @@ class ResidentUserBrowserExtensionRelay:
             current is not None
             and current.tab_id == command.tab_id
             and current.attached_at == command.authorization_attached_at
+        )
+
+    def _target_is_authorized_locked(self, tab_id: int, attached_at: str) -> bool:
+        current = self._authorized
+        if current is None or current.attached_at != attached_at:
+            return False
+        if tab_id == current.tab_id:
+            return True
+        child = self._children.get(tab_id)
+        return bool(
+            child is not None
+            and child.authorization_attached_at == current.attached_at
         )
 
     def _drop_command_locked(self, command_id: str) -> None:
@@ -483,3 +677,22 @@ class ResidentUserBrowserExtensionRelay:
         except ValueError:
             return False
         return parsed.scheme.lower() in {"http", "https"} and bool(parsed.hostname)
+
+    @staticmethod
+    def _same_origin(left: str, right: str) -> bool:
+        try:
+            left_url = urlsplit(left)
+            right_url = urlsplit(right)
+            left_port = left_url.port
+            right_port = right_url.port
+        except (TypeError, ValueError):
+            return False
+        return (
+            left_url.scheme.lower(),
+            str(left_url.hostname or "").lower().rstrip("."),
+            left_port,
+        ) == (
+            right_url.scheme.lower(),
+            str(right_url.hostname or "").lower().rstrip("."),
+            right_port,
+        )
