@@ -32,8 +32,17 @@ class _ButtonRelay:
             attached_at="2026-08-31T00:00:00Z",
         )
 
-    def request_command(self, kind, *, args=None, timeout_seconds=5.0):
+    def request_command(
+        self,
+        kind,
+        *,
+        args=None,
+        timeout_seconds=5.0,
+        expected_tab_id=None,
+        expected_attached_at=None,
+    ):
         del timeout_seconds
+        self.assert_expected_authorization(expected_tab_id, expected_attached_at)
         if kind == "probe_current_tab":
             return {
                 "success": True,
@@ -78,14 +87,34 @@ class _ButtonRelay:
             }
         raise AssertionError(f"unexpected command kind: {kind}")
 
+    @staticmethod
+    def assert_expected_authorization(expected_tab_id, expected_attached_at):
+        assert expected_tab_id == 81
+        assert expected_attached_at == "2026-08-31T00:00:00Z"
+
 
 class _LostClickRelay(_ButtonRelay):
-    def request_command(self, kind, *, args=None, timeout_seconds=5.0):
+    def request_command(
+        self,
+        kind,
+        *,
+        args=None,
+        timeout_seconds=5.0,
+        expected_tab_id=None,
+        expected_attached_at=None,
+    ):
+        self.assert_expected_authorization(expected_tab_id, expected_attached_at)
         if kind == "click_named_button_to_url":
             raise UserBrowserExtensionCommandUncertainError(
                 "browser extension command result was lost after delivery; side effect may have occurred"
             )
-        return super().request_command(kind, args=args, timeout_seconds=timeout_seconds)
+        return super().request_command(
+            kind,
+            args=args,
+            timeout_seconds=timeout_seconds,
+            expected_tab_id=expected_tab_id,
+            expected_attached_at=expected_attached_at,
+        )
 
 
 def _prepared_click(browser: AuthorizedExtensionUserBrowser):
