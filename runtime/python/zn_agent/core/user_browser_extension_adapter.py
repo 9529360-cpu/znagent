@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""BrowserAdapter for one tab explicitly authorized through the ZN extension."""
+"""BrowserAdapter for one explicit extension authorization and its action-proven task pages."""
 
 import hashlib
 from dataclasses import dataclass, field
@@ -37,17 +37,18 @@ class _ExtensionSession:
     identity: BrowserSessionIdentity
     permission: BrowserPermissionContext
     tab_id: int
+    task_tab_id: int
     authorization_attached_at: str
     last_observation: dict[str, BrowserObservation] = field(default_factory=dict)
 
 
 class AuthorizedExtensionUserBrowser:
-    """Expose the already-attached extension tab through ZN Browser contracts.
+    """Expose the explicitly authorized user-browser task context through ZN contracts.
 
-    The extension owns only the transport into the browser tab. Resident still
-    owns BrowserPermissionContext, fresh target authority, action identity and
-    completion judgment. The adapter deliberately exposes only exact named native
-    textboxes and buttons needed by selected real user tasks.
+    The root tab and authorization generation remain user-owned authority. Resident may
+    move a session's current task page to one direct child only after the extension and
+    relay prove that the child was created by the exact already-authorized action. The
+    model never supplies root identity, child identity or authorization.
     """
 
     name = "zn-extension-user-browser"
@@ -75,6 +76,7 @@ class AuthorizedExtensionUserBrowser:
         headless: bool = False,
         expected_tab_id: int | None = None,
         expected_attached_at: str | None = None,
+        task_tab_id: int | None = None,
     ) -> BrowserSessionIdentity:
         del headless
         policy = permission or BrowserPermissionContext()
@@ -91,13 +93,30 @@ class AuthorizedExtensionUserBrowser:
             raise ExtensionUserBrowserError("no extension browser tab is currently authorized")
         if expected_tab_id is not None and int(expected_tab_id) != authorized.tab_id:
             raise ExtensionUserBrowserError(
-                "extension browser task context is bound to a different authorized tab"
+                "extension browser task context is bound to a different authorized root tab"
             )
         expected_generation = str(expected_attached_at or "").strip()
         if expected_generation and expected_generation != authorized.attached_at:
             raise ExtensionUserBrowserError(
                 "extension browser task context is bound to a different authorization generation"
             )
+        resolved_task_tab = authorized.tab_id if task_tab_id is None else int(task_tab_id)
+        if resolved_task_tab <= 0:
+            raise ExtensionUserBrowserError("extension browser task page identity is invalid")
+        if resolved_task_tab != authorized.tab_id:
+            try:
+                # A zero-side-effect probe proves the requested child is currently registered
+                # inside this exact authorization generation before a session can bind to it.
+                self.relay.request_command(
+                    "probe_current_tab",
+                    timeout_seconds=0.001,
+                    expected_tab_id=authorized.tab_id,
+                    expected_attached_at=authorized.attached_at,
+                    target_tab_id=resolved_task_tab,
+                )
+            except UserBrowserExtensionRelayError as exc:
+                if "not delivered before timeout" not in str(exc):
+                    raise ExtensionUserBrowserError(str(exc)) from exc
         identity = BrowserSessionIdentity.create(
             plane=BrowserPlane.USER,
             provider=self.name,
@@ -108,6 +127,7 @@ class AuthorizedExtensionUserBrowser:
             identity=identity,
             permission=policy,
             tab_id=authorized.tab_id,
+            task_tab_id=resolved_task_tab,
             authorization_attached_at=authorized.attached_at,
         )
         return identity
@@ -121,14 +141,14 @@ class AuthorizedExtensionUserBrowser:
     def observe(self, session_id: str, *, page_id: str = "") -> BrowserObservation:
         session = self._session(session_id)
         command = self._request_for_session(session, "probe_current_tab")
-        result = self._command_result(command, "authorized browser tab probe")
+        result = self._command_result(command, "authorized browser task-page probe")
         tab_id = self._tab_id(result)
-        if tab_id != session.tab_id:
-            raise ExtensionUserBrowserError("extension browser observation changed tab identity")
+        if tab_id != session.task_tab_id:
+            raise ExtensionUserBrowserError("extension browser observation changed task-page identity")
         url = self._safe_url(result.get("url"))
         if not session.permission.allows_origin(url):
             raise ExtensionUserBrowserError(
-                "extension browser current page is outside the permitted origin boundary"
+                "extension browser current task page is outside the permitted origin boundary"
             )
         title = self._title(result.get("title"))
         resolved_page = page_id or f"extension-tab-{tab_id}"
@@ -140,8 +160,10 @@ class AuthorizedExtensionUserBrowser:
             title=title,
             load_state="complete",
             metadata={
-                "attachment": "authorized_extension_tab",
+                "attachment": "authorized_extension_task_context",
                 "transport": "chrome_debugger",
+                "authorization_tab_id": session.tab_id,
+                "task_tab_id": session.task_tab_id,
                 "authorization_attached_at": session.authorization_attached_at,
             },
         )
@@ -149,7 +171,7 @@ class AuthorizedExtensionUserBrowser:
         return observation
 
     def observe_semantic_candidates(self) -> dict[str, Any]:
-        """Return bounded privacy-safe candidates from only the exact authorized tab."""
+        """Return bounded privacy-safe candidates from the explicit root task page."""
 
         command = self._request(
             "probe_current_tab",
@@ -184,6 +206,7 @@ class AuthorizedExtensionUserBrowser:
                 "form_method": str(raw.get("form_method") or "").strip().lower(),
                 "form_action": str(raw.get("form_action") or "").strip(),
                 "form_signature": str(raw.get("form_signature") or "").strip(),
+                "opens_direct_child": raw.get("opens_direct_child") is True,
             }
             if candidate["form_action"]:
                 candidate["form_action"] = self._safe_url(candidate["form_action"])
@@ -216,11 +239,21 @@ class AuthorizedExtensionUserBrowser:
             "source": "zn_browser_extension_semantic_candidates",
         }
 
-    def observe_anchor_context(self, anchor_text: str) -> dict[str, Any]:
+    def observe_anchor_context(
+        self,
+        anchor_text: str,
+        *,
+        target_tab_id: int | None = None,
+        expected_tab_id: int | None = None,
+        expected_attached_at: str | None = None,
+    ) -> dict[str, Any]:
         anchor = self._bounded_text(anchor_text, "result anchor", 512)
         command = self._request(
             "probe_current_tab",
             args={"observe_anchor_context": anchor},
+            expected_tab_id=expected_tab_id,
+            expected_attached_at=expected_attached_at,
+            target_tab_id=target_tab_id,
         )
         result = self._authorized_command_result(command, "anchored result observation")
         context = self._bounded_text(result.get("context"), "result context", 1200)
@@ -264,9 +297,9 @@ class AuthorizedExtensionUserBrowser:
         )
         result = self._command_result(command, f"authorized browser {label} observation")
         tab_id = self._tab_id(result)
-        if tab_id != session.tab_id:
+        if tab_id != session.task_tab_id:
             raise ExtensionUserBrowserError(
-                f"extension {label} observation changed tab identity"
+                f"extension {label} observation changed task-page identity"
             )
         url = self._safe_url(result.get("url"))
         if not session.permission.allows_origin(url):
@@ -311,9 +344,11 @@ class AuthorizedExtensionUserBrowser:
             selector_hint=f"extension_accessible_{source_role}_name:exact",
         )
         metadata: dict[str, Any] = {
-            "attachment": "authorized_extension_tab",
+            "attachment": "authorized_extension_task_context",
             "transport": "chrome_debugger_accessibility",
             "source_role": source_role,
+            "authorization_tab_id": session.tab_id,
+            "task_tab_id": session.task_tab_id,
             "authorization_attached_at": session.authorization_attached_at,
         }
         if label == "textbox":
@@ -431,6 +466,7 @@ class AuthorizedExtensionUserBrowser:
                     "requires_fresh_resense": True,
                     "expected_text_length": len(text),
                     "expected_text_sha256": expected_sha,
+                    "task_tab_id": session.task_tab_id,
                 },
                 error=(
                     f"{exc}; refusing replay until a fresh browser observation proves the "
@@ -447,14 +483,14 @@ class AuthorizedExtensionUserBrowser:
                 url_before=current.url,
                 url_after=current.url,
                 target_id=target.target_id,
-                data={"provider": self.name, "input_sent": False},
+                data={"provider": self.name, "input_sent": False, "task_tab_id": session.task_tab_id},
                 error=str(command.get("error") or "extension textbox command failed"),
             )
         result = self._command_result(command, "authorized browser textbox mutation")
         tab_id = self._tab_id(result)
-        if tab_id != session.tab_id:
+        if tab_id != session.task_tab_id:
             raise ExtensionUserBrowserError(
-                "extension textbox mutation changed tab identity"
+                "extension textbox mutation changed task-page identity"
             )
         url_before = self._safe_url(result.get("url_before"))
         url_after = self._safe_url(result.get("url_after"))
@@ -502,6 +538,7 @@ class AuthorizedExtensionUserBrowser:
                 result.get("expected_utf16_units"), "expected UTF-16 units"
             ),
             "authorization_attached_at": session.authorization_attached_at,
+            "task_tab_id": session.task_tab_id,
         }
         if not verified:
             return BrowserEffectEvidence(
@@ -555,6 +592,8 @@ class AuthorizedExtensionUserBrowser:
             raise ExtensionUserBrowserError(
                 "extension button expected URL is already observed before dispatch"
             )
+        expect_direct_child = action.args.get("expect_direct_child") is True
+        source_task_tab = session.task_tab_id
         try:
             command = self._request_for_session(
                 session,
@@ -564,6 +603,7 @@ class AuthorizedExtensionUserBrowser:
                     "target_id": target.target_id,
                     "expected_url_before": current.url,
                     "expected_url_after": expected_url,
+                    "expect_direct_child": expect_direct_child,
                 },
             )
         except UserBrowserExtensionCommandUncertainError as exc:
@@ -583,10 +623,12 @@ class AuthorizedExtensionUserBrowser:
                     "command_delivery": "extension_received",
                     "requires_fresh_resense": True,
                     "expected_url": expected_url,
+                    "task_tab_id": source_task_tab,
+                    "expect_direct_child": expect_direct_child,
                 },
                 error=(
                     f"{exc}; refusing replay until a fresh browser observation proves the "
-                    "post-click page state"
+                    "post-click task-page state"
                 ),
             )
         if command.get("success") is not True:
@@ -599,13 +641,16 @@ class AuthorizedExtensionUserBrowser:
                 url_before=current.url,
                 url_after=current.url,
                 target_id=target.target_id,
-                data={"provider": self.name, "click_sent": False},
+                data={
+                    "provider": self.name,
+                    "click_sent": False,
+                    "task_tab_id": source_task_tab,
+                    "expect_direct_child": expect_direct_child,
+                },
                 error=str(command.get("error") or "extension button command failed"),
             )
         result = self._command_result(command, "authorized browser button click")
-        tab_id = self._tab_id(result)
-        if tab_id != session.tab_id:
-            raise ExtensionUserBrowserError("extension button click changed tab identity")
+        result_tab_id = self._tab_id(result)
         url_before = self._safe_url(result.get("url_before"))
         url_after = self._safe_url(result.get("url_after"))
         result_target = str(result.get("target_id") or "").strip()
@@ -613,8 +658,16 @@ class AuthorizedExtensionUserBrowser:
         exact_node = result.get("exact_node_continuity") is True
         revalidated = result.get("target_revalidated_before_dispatch") is True
         result_expected = self._safe_url(result.get("expected_url"))
-        verified = bool(
-            click_sent
+        direct_child = result.get("direct_child") is True
+        try:
+            opener_tab_id = int(result.get("opener_tab_id") or 0)
+        except (TypeError, ValueError):
+            opener_tab_id = 0
+        same_tab_verified = bool(
+            not expect_direct_child
+            and result_tab_id == source_task_tab
+            and not direct_child
+            and click_sent
             and exact_node
             and revalidated
             and result_target == target.target_id
@@ -624,6 +677,25 @@ class AuthorizedExtensionUserBrowser:
             and str(result.get("postcondition") or "")
             == "url_equals_after_fresh_semantic_button_click"
         )
+        child_verified = bool(
+            expect_direct_child
+            and direct_child
+            and result_tab_id != source_task_tab
+            and opener_tab_id == source_task_tab
+            and click_sent
+            and exact_node
+            and revalidated
+            and result_target == target.target_id
+            and url_before == current.url
+            and result_expected == expected_url
+            and url_after == expected_url
+            and str(result.get("postcondition") or "")
+            == "direct_child_url_equals_after_fresh_semantic_button_click"
+        )
+        verified = same_tab_verified or child_verified
+        if child_verified:
+            session.task_tab_id = result_tab_id
+        result_page_id = f"extension-tab-{session.task_tab_id}" if child_verified else page_id
         evidence_data = {
             "provider": self.name,
             "click_sent": click_sent,
@@ -631,6 +703,11 @@ class AuthorizedExtensionUserBrowser:
             "target_revalidated_before_dispatch": revalidated,
             "expected_url": result_expected,
             "authorization_attached_at": session.authorization_attached_at,
+            "authorization_tab_id": session.tab_id,
+            "task_tab_id": session.task_tab_id,
+            "direct_child": direct_child,
+            "opener_tab_id": opener_tab_id or None,
+            "expect_direct_child": expect_direct_child,
         }
         if not verified:
             return BrowserEffectEvidence(
@@ -638,14 +715,14 @@ class AuthorizedExtensionUserBrowser:
                 session_id=action.session_id,
                 observed_at=str(command.get("completed_at") or utc_now()),
                 success=False,
-                page_id=page_id,
+                page_id=result_page_id,
                 url_before=url_before,
                 url_after=url_after,
                 target_id=result_target or target.target_id,
                 data=evidence_data,
                 error=(
-                    "extension browser button click was dispatched but fresh URL evidence did not "
-                    "prove the requested final page; refusing replay"
+                    "extension browser button click was dispatched but fresh task-page evidence "
+                    "did not prove the requested result context; refusing replay"
                     if click_sent
                     else "extension browser button click did not execute"
                 ),
@@ -655,11 +732,11 @@ class AuthorizedExtensionUserBrowser:
             session_id=action.session_id,
             observed_at=str(command.get("completed_at") or utc_now()),
             success=True,
-            page_id=page_id,
+            page_id=result_page_id,
             url_before=url_before,
             url_after=url_after,
             target_id=result_target,
-            postcondition="url_equals_after_fresh_semantic_button_click",
+            postcondition=str(result.get("postcondition") or ""),
             data=evidence_data,
         )
 
@@ -670,11 +747,18 @@ class AuthorizedExtensionUserBrowser:
             raise ExtensionUserBrowserError(
                 "extension user-browser authority disappeared before observation completed"
             )
-        tab_id = self._tab_id(result)
         generation = str(command.get("authorization_attached_at") or "").strip()
-        if tab_id != authorized.tab_id or generation != authorized.attached_at:
+        try:
+            target_tab_id = int(command.get("target_tab_id") or command.get("tab_id"))
+        except (TypeError, ValueError) as exc:
+            raise ExtensionUserBrowserError("extension command lost its task-page identity") from exc
+        if generation != authorized.attached_at or int(command.get("tab_id") or 0) != authorized.tab_id:
             raise ExtensionUserBrowserError(
                 "extension user-browser observation returned evidence for a different authorization generation"
+            )
+        if self._tab_id(result) != target_tab_id:
+            raise ExtensionUserBrowserError(
+                "extension user-browser observation returned evidence for a different task page"
             )
         return result
 
@@ -705,6 +789,7 @@ class AuthorizedExtensionUserBrowser:
             args=args,
             expected_tab_id=session.tab_id,
             expected_attached_at=session.authorization_attached_at,
+            target_tab_id=session.task_tab_id,
         )
 
     def _request(
@@ -714,6 +799,7 @@ class AuthorizedExtensionUserBrowser:
         args: dict[str, Any] | None = None,
         expected_tab_id: int | None = None,
         expected_attached_at: str | None = None,
+        target_tab_id: int | None = None,
     ) -> dict[str, Any]:
         try:
             return self.relay.request_command(
@@ -722,6 +808,7 @@ class AuthorizedExtensionUserBrowser:
                 timeout_seconds=5.0,
                 expected_tab_id=expected_tab_id,
                 expected_attached_at=expected_attached_at,
+                target_tab_id=target_tab_id,
             )
         except UserBrowserExtensionCommandUncertainError:
             raise
