@@ -13,11 +13,15 @@ from zn_agent.core.work_restore_control import RestoreAwareWorkControl
 
 
 class _RepairSequenceCognition:
-    """Deterministic cognition only chooses the next step; all execution is real."""
+    """Deterministic Broad-step cognition; all execution remains real."""
+
+    _BROAD_STEP_MARKER = "You are a bounded coding/reasoning resource assisting one durable ZN Work."
 
     def __init__(self) -> None:
         self.calls = 0
+        self.step_calls = 0
         self.questions: list[str] = []
+        self.step_questions: list[str] = []
 
     @staticmethod
     def _write(content: str, objective: str) -> str:
@@ -62,16 +66,29 @@ class _RepairSequenceCognition:
         )
 
     def invoke(self, *, question: str, context: str) -> CognitiveIncrement:
-        self.questions.append(question)
         self.calls += 1
-        if self.calls == 1:
+        self.questions.append(question)
+
+        # The real Resident may borrow cognition for earlier language/goal
+        # understanding before it reaches the Broad rolling-step impasse. Those
+        # calls must not consume the deterministic write/run repair sequence.
+        if self._BROAD_STEP_MARKER not in question:
+            return CognitiveIncrement(
+                text="Use the attached workspace and continue with the user's stated objective.",
+                provider="e2e-cognition",
+                model="bounded-repair-fixture",
+            )
+
+        self.step_calls += 1
+        self.step_questions.append(question)
+        if self.step_calls == 1:
             text = self._write(
                 'raise RuntimeError("boom-first")\n',
                 "create a deliberately failing local probe so execution feedback is observable",
             )
-        elif self.calls == 2:
+        elif self.step_calls == 2:
             text = self._run("execute the current probe and require the READY contract")
-        elif self.calls == 3:
+        elif self.step_calls == 3:
             text = self._write(
                 'print("READY")\n',
                 "repair the probe using the real execution failure as evidence",
@@ -162,23 +179,23 @@ class BroadGoalTerminalRepairTests(unittest.TestCase):
                             for criterion in item.acceptance_criteria
                         )
                     ]
-                    if completed_runs and blocked_runs and cognition.calls >= 4:
+                    if completed_runs and blocked_runs and cognition.step_calls >= 4:
                         break
 
                 self.assertIsNone(
                     terminal,
                     "one repaired coding loop must not terminally accept the broad Root Work",
                 )
-                self.assertGreaterEqual(cognition.calls, 4)
-                self.assertGreaterEqual(len(cognition.questions), 3)
+                self.assertGreaterEqual(cognition.step_calls, 4)
+                self.assertGreaterEqual(len(cognition.step_questions), 3)
                 self.assertIn(
                     "boom-first",
-                    cognition.questions[2],
+                    cognition.step_questions[2],
                     "the repair cognition never received the real failing process output",
                 )
                 self.assertIn(
                     "exit_code",
-                    cognition.questions[2],
+                    cognition.step_questions[2],
                     "the repair cognition never received the real failing process exit evidence",
                 )
 
