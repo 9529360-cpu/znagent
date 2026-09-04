@@ -199,6 +199,59 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
         self.store.save_working_state(state)
         return None
 
+    def _verification_contract(self, event, intent, *, result=None):
+        raw = intent.expected_outcome
+        if intent.kind != "command" or not isinstance(raw, dict):
+            return super()._verification_contract(event, intent, result=result)
+        if str(raw.get("kind") or "").strip().lower() != "command":
+            return super()._verification_contract(event, intent, result=result)
+
+        command = str(raw.get("command") or "").strip()
+        intent_command = str(intent.args.get("command") or "").strip()
+        workdir = str(raw.get("workdir") or "").strip() or None
+        intent_workdir = str(intent.args.get("workdir") or "").strip() or None
+        if not command or command != intent_command or workdir != intent_workdir:
+            return {
+                "kind": "unsupported",
+                "requested_kind": "command",
+                "error": "rolling command verification must exactly match the current ZN-owned movement",
+                "intent_id": intent.intent_id,
+                "action_signature": self._intent_signature(intent),
+            }
+        try:
+            expected_exit = int(raw.get("expected_exit_code", 0))
+            timeout = max(0.05, min(120.0, float(raw.get("timeout", 20.0))))
+            max_output = max(128, min(100_000, int(raw.get("max_output_chars", 50_000))))
+        except (TypeError, ValueError):
+            return {
+                "kind": "unsupported",
+                "requested_kind": "command",
+                "error": "rolling command verification has invalid numeric limits",
+                "intent_id": intent.intent_id,
+                "action_signature": self._intent_signature(intent),
+            }
+        raw_output = raw.get("output_contains") or []
+        if not isinstance(raw_output, list):
+            return {
+                "kind": "unsupported",
+                "requested_kind": "command",
+                "error": "rolling command verification output_contains must be a list",
+                "intent_id": intent.intent_id,
+                "action_signature": self._intent_signature(intent),
+            }
+        output_contains = [str(item) for item in raw_output if str(item)]
+        return {
+            "kind": "command",
+            "command": command,
+            "workdir": workdir,
+            "expected_exit_code": expected_exit,
+            "output_contains": output_contains,
+            "timeout": timeout,
+            "max_output_chars": max_output,
+            "intent_id": intent.intent_id,
+            "action_signature": self._intent_signature(intent),
+        }
+
     def _native_action_step(self, event, state, *, readiness, thought=None):
         result = super()._native_action_step(
             event,
