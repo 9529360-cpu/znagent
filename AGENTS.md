@@ -31,7 +31,7 @@
 2. 读取 `AGENTS.md`。
 3. 读取 `docs/ZN-IMPLEMENTATION-STATUS.md`。
 4. 读取 `docs/ZN-SOURCE-EXTRACTION.md`。
-5. 读取 `docs/ZN-SELF-MAINTENANCE.md`。
+5. 读取 `docs/ZN-RETIRED-DIRECTIONS.md`。
 6. 读取 `.agent/HANDOFF.md`。
 7. 检查 `dev/zn-agent` 与 `main` 当前 HEAD、相关 diff、PR、CI、最近提交。
 8. 检查当前产品最重要缺口对应的真实调用链、测试和 active caller。
@@ -226,20 +226,15 @@ GPT、Claude、Gemini、Codex、人类开发者等都只是可替换维护者。
 
 维护者只需要触发流程，不应该需要知道秘密值本身。
 
-## 自维护规则
+## 已废弃：专用“自我维护”系统
 
-完整规则见 `docs/ZN-SELF-MAINTENANCE.md`。
+专用“自我维护”产品线已经删除。完整的废弃说明见 `docs/ZN-RETIRED-DIRECTIONS.md`。
 
-必须遵守：
+以后修改 ZN 仓库时，把它当成普通代码仓库，走通用 Work、File、Terminal、Git、Repo Test 和编码流程。**不要因为目标仓库是 ZN，就重新增加一套 maintenance runtime、repair intelligence、专用 BUG 上报、专用 UI/RPC 或额外 authority。**
 
-- 大模型输出不是事实，必须用代码、日志、测试和真实运行结果验证；
-- 不直接修改正在运行的正式安装目录；
-- 修复在开发分支/隔离分支/工作区完成；
-- 测试失败不能伪装成成功；
-- 不能为了通过而删除有效测试、关闭 CI、关闭更新完整性检查或绕过分支保护；
-- 身份、记忆、凭证、更新、回退、签名等高风险区域必须保持显式权限边界。
+通用 Health、Recovery、Git、测试、文件、终端、浏览器、桌面和 Update 能力继续保留。这些是正常产品底盘，不属于已经废弃的“自我维护系统”。
 
-其他正常、可逆、与 ZN 当前目标一致的开发、commit、push、PR、CI 修复和低风险分支同步，应由维护者自行完成，不要反复依赖聊天确认。
+本次 2026-09-04 的专用历史清理是项目所有者明确要求的一次性例外。它不改变正常规则：以后仍禁止在没有明确授权的情况下 force push 或重写 `main` / `dev/zn-agent` 历史。
 
 ## 接手成功标准
 
