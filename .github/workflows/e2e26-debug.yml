@@ -1,0 +1,44 @@
+name: E2E26 Debug
+
+on:
+  push:
+    branches:
+      - debug/e2e26-runpython-boundary
+  workflow_dispatch:
+
+env:
+  CI: 'true'
+  TZ: UTC
+  PYTHONUTF8: '1'
+  PYTHONUNBUFFERED: '1'
+  ZN_AGENT_HOME: ${{ github.workspace }}/.ci/zn-home
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+jobs:
+  debug:
+    runs-on: [self-hosted, Windows, X64, zn-ci]
+    timeout-minutes: 8
+    env:
+      UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare runtime
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:ZN_AGENT_HOME | Out-Null
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/debug-venv -ErrorAction SilentlyContinue
+          uv venv .ci/debug-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\debug-venv\Scripts\python.exe'
+          uv pip install --python $python runtime/python
+      - name: Run managed research regressions
+        run: |
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\debug-venv\Scripts\python.exe'
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          & $python -m unittest tests.zn_agent.core.test_broad_goal_managed_research -v
