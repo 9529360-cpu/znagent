@@ -33,7 +33,7 @@
 4. 读取 `docs/ZN-SOURCE-EXTRACTION.md`。
 5. 读取 `docs/ZN-RETIRED-DIRECTIONS.md`。
 6. 读取 `.agent/HANDOFF.md`。
-7. 检查 `dev/zn-agent` 与 `main` 当前 HEAD、相关 diff、PR、CI、最近提交。
+7. 检查 `main` 当前 HEAD、相关 `work/*` 分支、open PR、CI 和最近提交；只有历史任务仍明确引用 `dev/zn-agent` 时才把它当兼容分支检查，不能把它当新的集成主线。
 8. 检查当前产品最重要缺口对应的真实调用链、测试和 active caller。
 9. 根据 ZN 总目标、当前实现、真实缺口、风险和依赖，自主决定下一项最有价值的工作并开始推进。
 
@@ -114,20 +114,25 @@ ZN 是持续存在的 resident subject，不是一次性请求处理器。涉及
 默认工作循环：
 
 ```text
-理解 ZN 当前状态和目标
+从最新 main 拉短命 work/* 分支
+→ 理解 ZN 当前状态和目标
 → 主动体检并找出当前最值得解决的问题
 → 追真实调用链 / owner / state / lifecycle / dependency / tests / active caller
 → 判断该能力处于“存在 / 接通 / 验证 / 产品闭环”的哪一层
 → 选择最小且完整、与现有架构一致的方案
 → 修改代码
 → 补/改相关测试
-→ 跑真实验证
-→ 修复失败
-→ 检查 diff / 安全 / 连续性 / 回归风险
+→ 跑本地/针对性验证
 → commit / push
-→ 检查必要 CI
+→ 打开以 main 为 base 的 PR
+→ 在 PR 上跑完整适用 CI / E2E
+→ 修复失败，直到当前 PR head 的必需验证通过
+→ 检查 diff / 安全 / 连续性 / 回归风险
+→ 正常 merge 到 main
+→ 删除或停止使用已完成的 work 分支
+→ main 合并后 CI 只做 canonical 复核，不再把 main 当第一次集成测试场
 → 顺手更新真正发生变化的状态/HANDOFF 事实
-→ 重新评估产品缺口并继续下一个最有价值的问题
+→ 从新的 main 重新评估下一项产品缺口
 ```
 
 状态留底是开发闭环后的低成本收尾，不是独立产品目标。不要要求每个 commit 都修改 Markdown；只有架构、实现成熟度、验证事实、未完成风险或接手现场发生了对下一任有意义的变化时才同步相应文档。
@@ -136,13 +141,13 @@ ZN 是持续存在的 resident subject，不是一次性请求处理器。涉及
 
 发现与当前工作直接相关、低风险且明显的 bug、测试缺口、脆弱错误处理、类型问题、死代码或维护性问题，可以顺手修复；不要借机做无关的大规模重构。
 
-流程强度与风险匹配：小型低风险修改用“定位 → 修改 → 相关测试 → diff → commit/push”的轻量闭环；中大型、跨模块、发布或高风险工作增加架构核对、集成/E2E、Task Queue 和更完整的 HANDOFF。验证质量不能因为流程轻量而降低。
+流程强度与风险匹配：小型低风险修改用“定位 → 修改 → 相关测试 → PR CI → diff → merge”的轻量闭环；中大型、跨模块、发布或高风险工作增加架构核对、集成/E2E、Task Queue 和更完整的 HANDOFF。验证质量不能因为流程轻量而降低。
 
 ## HANDOFF 事实纪律
 
 `.agent/HANDOFF.md` 是轻量施工现场和事实索引，不是实时 Git 镜像，也不是日报。
 
-- HANDOFF 中的 SHA、CI run、branch 状态只能表示写入时的 `observed/verified checkpoint`；当前 `main` / `dev/zn-agent` HEAD、ahead/behind、open PR 和 CI 必须在接手时重新查询。
+- HANDOFF 中的 SHA、CI run、branch 状态只能表示写入时的 `observed/verified checkpoint`；当前 `main` HEAD、open PR、相关 `work/*` 和 CI 必须在接手时重新查询。`dev/zn-agent` 只在历史任务仍明确引用它时作为兼容分支检查。
 - 不要求 HANDOFF 保存“当前 HEAD”。HANDOFF 自身的提交会生成新的 HEAD，强求两者永远相等会形成无意义的自引用更新。
 - `active` / `in progress` / `isolated lane` 等声明必须绑定可恢复的 durable evidence：至少有真实 branch delta，或对应 open PR。只有计划、预留 ownership 或聊天安排时只能写 `planned` / `reserved`。
 - 已合并、撤销或失去 durable evidence 的 active 声明，应在本轮收尾中删除或降级，不能继续留作当前事实。
@@ -155,18 +160,32 @@ ZN 是持续存在的 resident subject，不是一次性请求处理器。涉及
 当前分支职责：
 
 ```text
-main          = canonical source / release branch
-dev/zn-agent  = ZN 主开发分支
-work/*        = 需要隔离时使用的实验、研究或维护分支
+main          = 唯一长期集成主线 / canonical source / release branch
+work/*        = 从最新 main 拉出的短命开发、修复、研究分支；完成后经 PR 合回 main
+
+dev/zn-agent  = 历史兼容分支，不再接收新的产品开发或作为 PR base；在仍保留期间应保持与 main 对齐
 ```
 
-普通开发在 `dev/zn-agent` 或必要的 `work/*` 分支进行，不直接在 `main` 试错。
+普通开发**不得直接在 `main` 上试错**，也不得再先合入 `dev/zn-agent` 等待 CI。正常路径固定为：
 
-**分支是隔离风险的工具，不是长期堆积工作的仓库。** 完成一个可验证、逻辑完整的增量后，应及时 commit/push；相关 CI 通过且改动达到稳定状态时，应通过正常、可追踪的 PR/merge 让 `main` 保持合理同步。不要让 `dev/zn-agent` 长期积累大量已验证工作而 `main` 无故停滞。
+```text
+main
+→ work/<one-real-product-slice>
+→ implementation + focused verification
+→ PR(base=main)
+→ required CI / applicable real E2E on the PR head
+→ green
+→ merge main
+→ delete/retire work branch
+```
 
-同样，不要把“同步 main”“promotion”“canonical source”当成独立产品里程碑或下一阶段目标。它们是完成开发闭环时自然发生的 Git 操作。除非出现冲突、CI 失败、高风险边界或其他 blocker，不需要围绕是否同步主支反复询问用户。
+**分支是隔离风险的工具，不是长期堆积工作的仓库。** 一个 `work/*` 默认只承载一个明确产品切片；不要在一个分支连续堆多个已经可以独立合并的功能。PR 变绿后应及时合并，不再制造“开发线领先 main 数十/数百个 commit 后再 promotion”的批量集成。
 
-禁止对 `main` 或 `dev/zn-agent` 使用 force push、历史重写、绕过失败 CI 或伪造完成状态。
+`main` 合并后的 CI 是 canonical 复核，不是第一次发现集成问题的地方。如果某类真实 E2E 是该产品切片的 merge gate，它必须能在 PR 阶段运行；不能先 merge 再用 `main` 失败来决定这次改动是否合格。
+
+不要把“同步 main”“promotion”“canonical source”当成独立产品里程碑。正常开发完成时 merge main 就是闭环本身，不再另设长期 promotion 阶段。
+
+禁止对 `main` 使用 force push、历史重写、绕过失败 CI 或伪造完成状态。历史兼容 `dev/zn-agent` 也不得被重新当作可 force/rewrite 的第二主线。
 
 ## ZN-only ownership 边界
 
@@ -234,7 +253,7 @@ GPT、Claude、Gemini、Codex、人类开发者等都只是可替换维护者。
 
 通用 Health、Recovery、Git、测试、文件、终端、浏览器、桌面和 Update 能力继续保留。这些是正常产品底盘，不属于已经废弃的“自我维护系统”。
 
-本次 2026-09-04 的专用历史清理是项目所有者明确要求的一次性例外。它不改变正常规则：以后仍禁止在没有明确授权的情况下 force push 或重写 `main` / `dev/zn-agent` 历史。
+本次 2026-09-04 的专用历史清理是项目所有者明确要求的一次性例外。它不改变正常规则：以后仍禁止在没有明确授权的情况下 force push 或重写 `main` / 历史兼容分支历史。
 
 ## 接手成功标准
 
