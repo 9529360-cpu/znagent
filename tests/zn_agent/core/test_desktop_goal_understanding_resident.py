@@ -15,7 +15,7 @@ from zn_agent.core.desktop_task_goal import (
     DESKTOP_TASK_GOAL_KIND,
     explicit_desktop_task_goal_hint,
 )
-from zn_agent.core.models import AgentEvent, ModelRoute, utc_now
+from zn_agent.core.models import AgentEvent, EventStatus, ModelRoute, utc_now
 from tests.zn_agent.core.test_natural_named_desktop_input_work import (
     NaturalNamedDesktopInputWorkTests,
 )
@@ -363,7 +363,7 @@ class DesktopGoalUnderstandingTests(unittest.TestCase):
                 finally:
                     resident.store.close()
 
-    def test_model_understood_goal_still_fails_closed_on_ambiguous_workspace_source(self) -> None:
+    def test_model_understood_ambiguous_source_stays_in_investigation_then_same_work_continues(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             workspace = base / "authorized"
@@ -375,7 +375,7 @@ class DesktopGoalUnderstandingTests(unittest.TestCase):
             NaturalNamedDesktopInputWorkTests._stamp_yesterday(first)
             NaturalNamedDesktopInputWorkTests._stamp_yesterday(second)
 
-            resident, _, body, controls, ledger = NaturalNamedDesktopInputWorkTests._setup(
+            resident, world, body, controls, ledger = NaturalNamedDesktopInputWorkTests._setup(
                 base,
                 workspace,
                 "desktop-language-ambiguous",
@@ -384,16 +384,49 @@ class DesktopGoalUnderstandingTests(unittest.TestCase):
             cognition = _DesktopGoalProposalResource()
             _enable_language_resource(resident, cognition)
             try:
-                _, run = ledger.submit("desktop-language-ambiguous", _PARAPHRASES[1])
+                _, event = ledger.start("desktop-language-ambiguous", _PARAPHRASES[1])
 
-                self.assertFalse(run.success)
-                self.assertEqual(run.model_invocations, 2)
-                self.assertEqual(cognition.calls, 2)
+                for _ in range(8):
+                    resident.live_once()
+                    state = resident.store.get_working_state()
+                    if state.blocked_by == "workspace_source_ambiguous":
+                        break
+
+                state = resident.store.get_working_state()
+                persisted = resident.store.get_event(event.event_id)
+                self.assertIsNotNone(persisted)
+                self.assertEqual(persisted.status, EventStatus.PROCESSING)
+                self.assertEqual(state.stage, "native_investigation")
+                self.assertEqual(state.blocked_by, "workspace_source_ambiguous")
+                self.assertIn("re-sense the workspace", state.next_action or "")
+                self.assertIsNone(resident.store.get_event_outcome(event.event_id))
+                self.assertEqual(cognition.calls, 1)
                 self.assertEqual(body.focus_click_count, 0)
                 self.assertEqual(body.keyboard_calls, [])
                 self.assertEqual(body.submit_click_count, 0)
                 self.assertEqual(controls.edit_calls, 0)
-                self.assertIn("ambiguous", run.reason)
+                self.assertEqual(controls.button_calls, 0)
+                progress = ledger.progress("desktop-language-ambiguous", event.event_id)
+                self.assertFalse(progress["terminal"])
+                self.assertEqual(progress["stage"], "native_investigation")
+
+                # New real evidence removes one candidate. Resident must re-enumerate;
+                # the cached other candidate is never promoted by model preference.
+                second.unlink()
+                run = None
+                for _ in range(64):
+                    current = resident.live_once()
+                    if current is not None and current.event.event_id == event.event_id:
+                        run = current
+                        break
+                self.assertIsNotNone(run)
+                self.assertTrue(run.success, run)
+                self.assertEqual(cognition.calls, 2)
+                self.assertEqual(body.keyboard_calls, ["ORDER-A"])
+                self.assertEqual(body.focus_click_count, 1)
+                self.assertEqual(body.submit_click_count, 1)
+                self.assertEqual(world.title, "查询结果")
+                self.assertEqual(resident.store.get_event(event.event_id).status, EventStatus.COMPLETED)
             finally:
                 resident.store.close()
 
