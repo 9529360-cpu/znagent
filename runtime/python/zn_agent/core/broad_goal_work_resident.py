@@ -10,10 +10,9 @@ NativeActionIntent/Body lifecycle, freshly verifies the postcondition, and only
 then accepts that child. The Root Work remains live for the next roll.
 """
 
+import hashlib
 import json
-import uuid
 from pathlib import Path
-from typing import Any
 
 from .action import NativeActionIntent
 from .cognition import CognitiveIncrement
@@ -137,8 +136,11 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
             )
 
         self._accept_borrowed_increment(event, state, increment)
+        identity = hashlib.sha256(
+            f"{event.event_id}\0{increment.increment_id}".encode("utf-8", errors="replace")
+        ).hexdigest()[:16]
         child = WorkItem(
-            work_item_id=f"item-{uuid.uuid4().hex[:16]}",
+            work_item_id=f"item-{identity}",
             work_thread_id=root.work_thread_id,
             parent_work_item_id=root.work_item_id,
             title=title_for_work_task(proposal["objective"]),
@@ -147,10 +149,12 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
             plan_version=root.plan_version,
             acceptance_criteria=[f'text_equals: {proposal["relative_path"]}'],
         )
+        # Deterministic identity closes the crash window between child materialization
+        # and the durable action checkpoint: replaying integration reuses this row.
         self.work_ledger._save_item(child)
 
         intent = NativeActionIntent(
-            intent_id=f"broad-step-{uuid.uuid4().hex[:12]}",
+            intent_id=f"broad-step-{identity[:12]}",
             event_id=event.event_id,
             kind="write_text",
             args={
@@ -214,6 +218,25 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
             response=response,
             reason=reason,
         )
+        return self._roll_forward_verified_child(event, state, result=result)
+
+    def _resume_native_completion(self, event, state):
+        rolling = state.data.get(self._ROLLING_STEP_KEY)
+        if not isinstance(rolling, dict):
+            return super()._resume_native_completion(event, state)
+
+        # If the process died after the mature Body completion checkpoint but
+        # before Root roll-forward, recovery must accept/reconcile the child and
+        # continue the same Root instead of publishing a terminal Root outcome.
+        result = super()._resume_native_completion(event, state)
+        if result is None or not result.success:
+            return result
+        return self._roll_forward_verified_child(event, state, result=result)
+
+    def _roll_forward_verified_child(self, event, state, *, result):
+        rolling = state.data.get(self._ROLLING_STEP_KEY)
+        if not isinstance(rolling, dict):
+            return result
 
         child_id = str(rolling.get("work_item_id") or "").strip()
         thread_id = str(rolling.get("work_thread_id") or "").strip()
@@ -236,24 +259,29 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
             self.work_ledger._save_item(child)
             return result
 
-        child.status = "completed"
-        child.result = str(response or rolling.get("relative_path") or "")
-        child.blocker = None
-        child.completed_at = utc_now()
-        child.updated_at = child.completed_at
-        self.work_ledger._save_item(child)
+        if child.status != "completed":
+            child.status = "completed"
+            child.result = str(result.response or rolling.get("relative_path") or "")
+            child.blocker = None
+            child.completed_at = utc_now()
+            child.updated_at = child.completed_at
+            self.work_ledger._save_item(child)
 
         raw_history = state.data.get(self._ROLLING_HISTORY_KEY)
         history = list(raw_history) if isinstance(raw_history, list) else []
-        history.append(
-            {
-                "work_item_id": child.work_item_id,
-                "objective": child.objective,
-                "acceptance_criteria": list(child.acceptance_criteria),
-                "result": child.result,
-                "completed_at": child.completed_at,
-            }
-        )
+        if not any(
+            isinstance(item, dict) and item.get("work_item_id") == child.work_item_id
+            for item in history
+        ):
+            history.append(
+                {
+                    "work_item_id": child.work_item_id,
+                    "objective": child.objective,
+                    "acceptance_criteria": list(child.acceptance_criteria),
+                    "result": child.result,
+                    "completed_at": child.completed_at,
+                }
+            )
         state.data[self._ROLLING_HISTORY_KEY] = history[-12:]
         state.data.pop(self._ROLLING_STEP_KEY, None)
         state.data.pop("native_completion", None)
