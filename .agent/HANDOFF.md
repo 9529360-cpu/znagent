@@ -13,7 +13,8 @@ Observed on 2026-09-04:
 - primary development branch `dev/zn-agent`: `af8754ae1ee0d0b3491cbad2134dd6e12edda5f9` (`Re-ground desktop semantic goals after runtime UI drift`, PR #173);
 - `main...dev/zn-agent` is **diverged**: dev is 223 commits ahead and 1 commit behind main at the observed comparison. This is repository/release hygiene, not a product milestone;
 - documentation-only reconciliation branch for this checkpoint: `work/docs-product-truth-20260904`; it must not be mistaken for a product implementation lane;
-- one open PR: #166, `Continue durable Work from natural references and fresh follow-ups`, head `work/natural-work-continuation` at `0c6d26b9efd4857670a1eb51bd6825e0445d049f`, base `dev/zn-agent`;
+- open product PR #166, `Continue durable Work from natural references and fresh follow-ups`, head `work/natural-work-continuation` at `0c6d26b9efd4857670a1eb51bd6825e0445d049f`, base `dev/zn-agent`;
+- open documentation-only PR #174, `Sync product docs to current real-task evidence`, head `work/docs-product-truth-20260904`, base `dev/zn-agent`; it changes documentation only and is not product capability evidence;
 - PR #166 is currently diverged from live dev: 12 commits ahead and 5 commits behind. No PR-trigger workflow run was visible for its current head when checked. Its code is therefore an **open product lane**, not current dev capability;
 - recent merged product work includes #173 desktop semantic re-grounding, #172 managed research from the authorized user page, #171 ordinary browser semantic grounding in the authorized existing session, #170 desktop semantic grounding and #164/#163 browser-result-to-file closure.
 
