@@ -36,7 +36,7 @@ inspect repository + branch + CI
 
 M10 canonical promotion is complete. `main` is the canonical source/release branch; `dev/zn-agent` is the fixed primary development branch.
 
-Ordinary development, investigation, self-maintenance and experiments must not be performed directly on `main`. They belong on `dev/zn-agent` or an isolated work branch.
+Ordinary development, investigation and experiments must not be performed directly on `main`. They belong on `dev/zn-agent` or an isolated work branch.
 
 That restriction does not freeze `main`. A coherent low-risk engineering stage may be promoted through the repository's normal PR/merge/promotion flow when all applicable gates are true:
 
@@ -52,7 +52,7 @@ implementation complete for the claimed slice
 → main becomes the new verified canonical source
 ```
 
-A normal low-risk promotion that satisfies these repository gates does not require an extra chat-only approval sentence. High-risk boundaries still require explicit human approval, including identity, long-term memory, destructive data migration, credentials/permissions, updater/rollback/signing trust, self-maintenance approval rules, and replacement of the user's currently installed formal version.
+A normal low-risk promotion that satisfies these repository gates does not require an extra chat-only approval sentence. High-risk boundaries still require explicit human approval, including identity, long-term memory, destructive data migration, credentials/permissions, updater/rollback/signing trust, and replacement of the user's currently installed formal version.
 
 Promotion must never use force push, Git history rewrite, disabled CI, bypassed failed checks, or false completion claims.
 
@@ -85,6 +85,7 @@ A normal user should not need to translate work into ZN internals, structured te
 - "打开那个软件，把这件事处理掉。"
 - "找到我昨天下载的合同，看看内容，改好以后放到项目文件夹。"
 - "网页上查到的数据整理进本地文件。"
+- "帮我看看这个项目为什么报错，把 bug 修掉并验证。"
 - "刚才做到哪了？继续。"
 - "昨天那个继续。"
 - "你自己看看怎么弄。"
@@ -215,6 +216,7 @@ Examples of the product-level task space include:
 - browser + file tasks;
 - browser + desktop tasks;
 - cross-application information transfer;
+- coding/repository work that combines specialist cognition with real File/Git/Terminal/Test tools;
 - recovery after popups, page changes, window changes or network failures;
 - resuming interrupted work;
 - long-term project/task continuation;
@@ -227,22 +229,109 @@ Individual primitives remain necessary parts of the Body, but they are not the p
 
 **ZN uses models. Models do not own ZN.**
 
-Models, browser engines/providers, search systems, code interpreters and future cognitive systems are replaceable resources. They do not own ZN identity, memory, Will, continuity or the resident life loop. ZN owns the semantics, state, authority and evidence contracts around those resources.
+Models, browser engines/providers, search systems, code interpreters, specialized agents and future cognitive systems are replaceable resources. They do not own ZN identity, memory, Will, Work continuity or the resident life loop. ZN owns the semantics, state, authority, resource selection and evidence contracts around those resources.
 
 ZN owns:
 
 - persistent Self and life;
+- user goal and durable Work identity;
 - Body and Senses;
 - Situation, Thought and Will;
 - lived memory and learning;
-- Investigation and Action;
-- provider/resource boundaries;
+- Investigation and Action coordination;
+- provider/resource selection and boundaries;
 - communication channels;
 - runtime, configuration and credential references;
 - desktop main/preload/renderer and product identity;
-- update and release behavior.
+- update and release behavior;
+- final completion judgment from current evidence.
 
-Disconnecting every external model must not erase ZN identity/state or prevent native resident pulses and owned deterministic behavior.
+Disconnecting every external model must not erase ZN identity/state or prevent native resident pulses and owned deterministic behavior. It may reduce what ZN can competently accomplish. **Provider independence is not a requirement that ZN pretend to perform model-dependent cognition without a model.** If a task genuinely requires unavailable coding, language, vision, research or reasoning cognition, ZN should preserve the Work and report the resource gap rather than fabricate an answer or force an unsuitable deterministic path.
+
+### 1.9 ZN owns the task; it does not have to personally implement every specialty
+
+ZN is the long-lived task owner, continuity owner, context/resource orchestrator and truth/safety boundary. That does **not** mean the resident core must personally perform every intellectual specialty.
+
+A difficult coding task may be performed substantially by a strong coding model. A deep research task may need a research model plus web resources. A visual task may need a vision model. Writing and translation may legitimately use language models. Other bounded specialist agents may also be used when they provide a real product advantage.
+
+The ownership boundary is:
+
+```text
+user goal / durable Work                         owned by ZN
+current Situation / authority / evidence         owned by ZN
+specialist cognition or bounded delegated work   may be external
+real computer operations                         performed through appropriate tools/Body
+result verification / continuation / completion  owned by ZN
+```
+
+For example, "fix this bug" should be allowed to look like:
+
+```text
+user goal
+→ ZN restores the real repository/Work context
+→ File/Git/Terminal establish current facts
+→ coding resource reads the relevant code and reasons about the bug
+→ coding resource proposes or performs a bounded edit through authorized tools
+→ tests/runtime produce fresh evidence
+→ failures are fed back as new evidence for further cognition
+→ ZN continues until the user's actual outcome is verified or a real blocker remains
+```
+
+The coding model may do most of the code reasoning and code generation. It still does not acquire ZN identity, durable Work ownership, arbitrary repository authority or the right to declare completion from its own confidence.
+
+### 1.10 Cognition, tools, authority and verification are complementary
+
+A capable model without the needed tools cannot make a real computer task happen. A powerful tool set without enough cognition cannot reliably solve unfamiliar or ambiguous work. Permission without competence is not enough, and apparent success without verification is not completion.
+
+A real task therefore depends on an appropriate composition of:
+
+```text
+cognition / expertise
++ sensing and action tools
++ current authority / access
++ current-world verification
+= executable task capability
+```
+
+ZN should diagnose the missing resource instead of treating every gap as an LLM prompt:
+
+```text
+missing understanding / planning / generation
+→ use an appropriate CognitiveResource or specialist
+
+missing world facts
+→ Sense / inspect / search / read first
+
+missing ability to affect the world
+→ choose the appropriate Browser / Desktop / File / Terminal / API tool
+
+missing permission or user presence
+→ request the minimum necessary authority or handoff
+
+missing proof that the intended result happened
+→ observe / query / test / compare again
+```
+
+Do not ask a model to invent facts that an owned sensor or tool can establish. Do not force a deterministic local program to solve genuinely open-ended cognition merely to avoid model use. Use the strongest suitable resource when the task warrants it, and bind it to the tools and evidence it actually needs.
+
+### 1.11 Token and cognitive cost are product constraints, not the product goal
+
+ZN should not reproduce the common agent pattern where every click, wait, poll, known state transition or deterministic check causes another large-model round trip. That is expensive, slow and often less reliable than resident-owned state and tools.
+
+The target is **appropriate cognition**, not minimum model use and not maximum model use.
+
+Prefer resident/local mechanisms for things they can establish reliably, including identity, Work state, permissions, waiting/polling, deterministic transformations, known invariants, target freshness checks and postcondition probes. Prefer bounded model calls for actual cognitive gaps. Give external cognition the minimum sufficient, relevant context rather than automatically dumping full transcripts, complete DOMs, private memory and unrelated tool history into every call.
+
+Resource selection may legitimately escalate:
+
+```text
+resident deterministic knowledge / learned competence
+→ small or specialized model for a bounded language/selection gap
+→ general strong model for difficult reasoning
+→ specialist coding/research/vision model when the task requires it
+```
+
+A hard coding, research, writing or reasoning task may consume substantial tokens because cognition is genuinely the work. ZN must not sacrifice task quality merely to reduce token count. The efficiency goal is to stop paying large-model cost for mechanics that the resident, tools or already-learned competence can handle reliably, while spending cognition where cognition creates real value.
 
 ## 2. Repository ownership boundary
 
@@ -327,6 +416,21 @@ specific gap
 ```
 
 Model output is never automatically fact, decision, execution authority or completion proof.
+
+Resource orchestration is part of the resident task loop, not a separate agent personality:
+
+```text
+current goal + Work + Situation
+→ identify the actual gap
+→ select a resource bundle
+   (cognition + senses/tools + authority + verification path)
+→ let the selected specialist/tool perform its bounded role
+→ collect fresh result/evidence
+→ integrate into Situation
+→ continue / replan / escalate / ask for authority / complete
+```
+
+A resource bundle can legitimately combine a strong model with real tools. For example, a coding model without File/Git/Terminal/Test access is not equivalent to a coding capability that can change and verify a repository. Conversely, granting tools does not make the model the resident subject or give it unbounded authority.
 
 ## 4. Body, verification and learned competence
 
@@ -452,28 +556,30 @@ Resident intelligence has three distinct sources:
 ```text
 ZN-owned built-in competence
 + ZN-owned learned experience / procedural competence
-+ replaceable external cognition for genuine novelty
++ replaceable external cognition for genuine novelty and specialist work
 = mature resident intelligence
 ```
 
 **Built-in competence** is mature engineering and computer-use knowledge crystallized into ZN-owned mechanisms: state machines, evidence contracts, Body/Senses semantics, verification, recovery, conflict detection, deterministic capabilities, tests and other resident behavior. When a class of failure is already well understood and can be handled by explicit evidence, ZN should not repeatedly ask a model to rediscover the same rule.
 
-**Learned competence** is what ZN acquires through its own verified lived experience: familiar procedures, context-specific expectations, anomaly patterns, recovery tendencies and project/user-specific ways of working. This competence must remain reality-gated and should survive provider replacement.
+**Learned competence** is what ZN acquires through its own verified lived experience: familiar procedures, context-specific expectations, anomaly patterns, recovery tendencies and project/user-specific ways of working. This competence must remain reality-gated and should survive provider replacement when the competence has genuinely become resident-owned.
 
-**External cognition** remains valuable for unfamiliar situations, hard reasoning and genuine knowledge gaps, but its output is candidate cognition rather than resident truth. External model quality may change without redefining who ZN is or erasing what ZN already knows how to do.
+**External cognition** remains valuable for unfamiliar situations, hard reasoning, open-ended generation, specialist work and genuine knowledge gaps. Its output is candidate cognition rather than resident truth, but that does not make it optional when the task actually requires such cognition. External model quality may change without redefining who ZN is or erasing what ZN already knows how to do.
 
 The knowledge-crystallization rule is:
 
 ```text
-well-understood recurring problem
+well-understood recurring low-level problem
 → encode resident-owned observation / invariant / procedure / verification
 → prove it with tests and current-world evidence
-→ stop paying a model to rediscover the same low-level rule every time
+→ stop paying a model to rediscover the same mechanical rule every time
 ```
+
+This rule must not be misread as "turn every intelligent task into local deterministic code." Open-ended coding, research, writing, interpretation and novel reasoning may remain model work indefinitely even when the surrounding mechanics, context restoration, tool use and verification become cheaper and more resident-owned.
 
 Some questions are never model-authority questions. Whether an action executed, a file now contains intended bytes, a browser mutation took effect, an event is terminal, or the outside world changed must be established from owned state and fresh observation, not inferred from model confidence.
 
-Repeated work should proceduralize rather than become repeated prompting. The first unfamiliar attempt may require deep Investigation and external cognition; later compatible attempts should use accumulated resident competence while still checking current reality. A hundred prior successes do not authorize a blind hundred-and-first action when current evidence has drifted.
+Repeated mechanical structure should proceduralize rather than become repeated prompting. The first unfamiliar attempt may require deep Investigation and external cognition; later compatible attempts should use accumulated resident competence for the parts that are actually learnable while still calling specialist cognition for unresolved semantic work. A hundred prior successes do not authorize a blind hundred-and-first action when current evidence has drifted.
 
 A mature familiar path therefore needs both speed and interruption semantics:
 
@@ -494,9 +600,9 @@ changed / ambiguous / contradictory reality
 → adapt or relearn
 ```
 
-Product quality is not measured only by whether ZN can complete a task once. Important intelligence criteria include repeated-task reliability, anomaly detection, uncertainty calibration, self-correction, restart continuity, resistance to stale state, provider independence and retention of mature competence when models are unavailable.
+Product quality is not measured only by whether ZN can complete a task once. Important intelligence criteria include repeated-task reliability, anomaly detection, uncertainty calibration, self-correction, restart continuity, resistance to stale state, provider independence, efficient resource selection and retention of mature resident-owned competence when particular models are unavailable.
 
-This does not mean copying a model's weights, hidden training data or unverified textual knowledge into ZN. It means converting applicable mature systems knowledge into explicit ZN-owned architecture and tests, while allowing ZN's personal/project-specific competence to emerge from verified experience.
+This does not mean copying a model's weights, hidden training data or unverified textual knowledge into ZN. It means converting applicable mature systems knowledge into explicit ZN-owned architecture and tests, while allowing ZN's personal/project-specific competence to emerge from verified experience and continuing to use external cognition where it remains the right tool.
 
 Detailed learning mechanics remain governed by `docs/ZN-MEMORY-LEARNING.md`. The broader product/engineering implications of resident intelligence are recorded in `docs/ZN-RESIDENT-INTELLIGENCE.md`.
 
@@ -515,7 +621,7 @@ experience
 → reinforcement, inhibition or relearning
 ```
 
-One success does not create a permanent skill. Contradiction must be able to weaken or inhibit stale competence. Mature resident-owned ability should survive provider replacement and full model removal.
+One success does not create a permanent skill. Contradiction must be able to weaken or inhibit stale competence. Mature procedural ability that has genuinely become resident-owned should survive provider replacement; this is not a claim that open-ended model-dependent tasks must remain solvable with all cognitive providers removed.
 
 Detailed direction is maintained in `docs/ZN-MEMORY-LEARNING.md` and `docs/ZN-NEXT-PHASE.md`.
 
@@ -566,36 +672,24 @@ traceable commit/tag
 
 Installed ZN instances must know a bounded **upstream update identity/channel** so they can check for newer official versions and verify update metadata/artifacts. That knowledge is not repository authority. The source repository may remain private; an installed client must not require source checkout, repository read access, GitHub credentials, system Python or Node/npm in order to update.
 
-The product boundary is deliberately asymmetric:
+The installed-product update boundary is deliberately one-way and narrow:
 
 ```text
-official upstream update channel -> installed ZN
-installed ZN -> bounded bug / repair report channel
+official upstream update channel
+→ installed ZN reads/verifies/downloads approved update metadata/artifacts
 ```
 
-The update direction is read/verify/download only. The report direction may send bounded diagnostic evidence or a repair proposal to an operator-controlled reporting endpoint, but it must not grant the installed resident source-repository write authority.
+Knowing the official update channel or product upstream identity never implies source-repository read/write, PR, merge, release or signing authority.
 
 Hashes are integrity checks, not signatures. Windows signing remains a separate release hardening gate.
 
-## 9. Self-maintenance
+## 9. Retired dedicated self-maintenance direction
 
-Self-maintenance follows `docs/ZN-SELF-MAINTENANCE.md`.
+The former dedicated self-maintenance / self-repair / upstream BUG-report product lane is retired. It must not reappear as a separate resident cognition stack, maintenance runtime, repair workflow, transport/intake/reconcile control plane, maintenance-specific UI/RPC, or special repository-authority path.
 
-An installed ZN may investigate itself, form and verify a bounded local repair candidate, and report a defect or repair proposal upstream. Its ordinary resident authority stops before official repository mutation.
+Normal resident Health, Recovery, Work, Memory, Browser, Desktop, File, Terminal, Git, Repo Test and Update capabilities remain valid. If ZN ever needs to work on code — including its own code — that work must use the same general task/resource model as any other repository task rather than creating a privileged second product inside ZN.
 
-The normal installed-product boundary is:
-
-```text
-observe upstream update availability
-+ diagnose / locally verify a defect
-+ submit a bounded upstream report
-```
-
-It does **not** include direct push to the official source repository, direct PR creation against that repository, merge, release, signing or official-version promotion. Those operations belong to the separately trusted maintainer/release environment. A maintainer may consume a report, reproduce it, create a repository `work/*` branch, run CI, review and decide whether to merge or release; that authority is not distributed with ZN installations.
-
-Repository URLs, credentials, maintainer tokens, deploy keys or source-write capabilities must never be treated as ordinary installed-resident authority. Knowing the official update channel or product upstream identity does not imply access to the private source repository.
-
-Replacing the user's currently installed body remains a separate update action governed by updater/replacement safety and continuity requirements. Identity, long-term memory, updater, rollback and signing remain high-risk boundaries requiring conservative approval and verification.
+Observing an update channel does not authorize source mutation. Familiarity with its own repository does not grant extra Git/release authority. Any future mechanism in this area must first justify itself by closing a concrete real-user task or safety/continuity blocker and must remain inside the ordinary ZN ownership, authority and verification contracts.
 
 ## 10. Testing contract
 
@@ -605,6 +699,8 @@ At minimum protect:
 
 - zero-model resident boot and persistence;
 - Situation/Thought/Will continuity;
+- task/resource ownership: specialist models/agents and tools must not become owners of durable Work, resident authority or completion judgment;
+- model-dependent tasks may fail explicitly on unavailable cognition instead of fabricating a resident-only substitute;
 - Body result feedback and independent verification;
 - nervous learning/reconsolidation;
 - current-reality-gated procedural influence;
@@ -613,7 +709,8 @@ At minimum protect:
 - active ZN renderer/main/preload/protocol ownership;
 - release/runtime staging integrity;
 - repository-boundary scans that prevent historical/reference product paths, package namespaces or control planes from becoming active dependencies again;
-- installed-resident upstream authority boundaries: update observation and report submission must not imply repository write/merge/release authority;
+- installed-resident update-channel knowledge must not imply repository write/merge/release authority;
+- retired dedicated self-maintenance/reporting control planes must not become active dependencies again;
 - managed-browser lifecycle/evidence contracts once implemented;
 - real user-browser integration and privacy/permission boundaries once implemented.
 
