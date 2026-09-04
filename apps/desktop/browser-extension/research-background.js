@@ -112,6 +112,64 @@ currentTabEvidence = async function (tabId) {
   }
 }
 
+async function exactButtonDirectChildMode(tabId, buttonName) {
+  const target = await exactNamedButton(tabId, buttonName)
+  const resolved = await debuggerCommand(tabId, 'DOM.resolveNode', {
+    backendNodeId: target.backendNodeId
+  })
+  const objectId = String(resolved?.object?.objectId || '')
+  if (!objectId) {
+    throw new Error('exact semantic button could not be resolved for browsing-context Sense')
+  }
+  const call = await debuggerCommand(tabId, 'Runtime.callFunctionOn', {
+    objectId,
+    functionDeclaration: `function(){
+      const own = String(this.getAttribute?.('formtarget') || '').trim().toLowerCase();
+      const form = String(this.form?.getAttribute?.('target') || '').trim().toLowerCase();
+      const target = own || form || '_self';
+      return { target };
+    }`,
+    returnByValue: true,
+    awaitPromise: false
+  })
+  if (call?.exceptionDetails) {
+    throw new Error('semantic button browsing-context Sense returned JavaScript exception details')
+  }
+  const mode = String(call?.result?.value?.target || '_self').trim().toLowerCase()
+  if (!['_self', '_blank'].includes(mode)) {
+    throw new Error('semantic button uses a named or non-local browsing context; autonomous authority is ambiguous')
+  }
+  return mode === '_blank'
+}
+
+async function observeSemanticCandidatesWithChildContext(tabId, command) {
+  const result = await baseExecuteResidentCommand(tabId, command)
+  const candidates = Array.isArray(result?.candidates) ? result.candidates : []
+  const buttonCounts = new Map()
+  for (const candidate of candidates) {
+    if (String(candidate?.role || '') !== 'button') continue
+    const name = String(candidate?.name || '')
+    buttonCounts.set(name, Number(buttonCounts.get(name) || 0) + 1)
+  }
+  const enriched = []
+  for (const candidate of candidates) {
+    if (String(candidate?.role || '') !== 'button') {
+      enriched.push(candidate)
+      continue
+    }
+    const name = String(candidate?.name || '')
+    if (buttonCounts.get(name) !== 1) {
+      enriched.push({ ...candidate, opens_direct_child: false })
+      continue
+    }
+    enriched.push({
+      ...candidate,
+      opens_direct_child: await exactButtonDirectChildMode(tabId, name)
+    })
+  }
+  return { ...result, candidates: enriched }
+}
+
 function directChildCapture(openerTabId) {
   const children = new Set()
   const listener = tab => {
@@ -284,6 +342,12 @@ executeResidentCommand = async function (rootTabId, command) {
     command?.args?.expect_direct_child === true
   ) {
     return executeDirectChildClick(rootTabId, command)
+  }
+  if (
+    String(command?.kind || '') === 'probe_current_tab' &&
+    command?.args?.observe_semantic_candidates === true
+  ) {
+    return observeSemanticCandidatesWithChildContext(targetTabId, command)
   }
   if (
     String(command?.kind || '') === 'probe_current_tab' &&
