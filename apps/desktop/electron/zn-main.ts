@@ -7,7 +7,6 @@ import { configureZnPackagedRuntime } from './zn-packaged-runtime'
 import { parseZnDeepLink, type ZnDeepLink, znDeepLinksFromArgv } from './zn-protocol'
 import { registerZnReleaseUpdaterIpc } from './zn-release-updater'
 import { registerZnResidentIpc, startZnResidentOnDesktopReady } from './zn-resident-ipc'
-import { registerZnUpstreamReportIpc } from './zn-upstream-report-ipc'
 import { registerZnWorkspaceIpc } from './zn-workspace-ipc'
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url))
@@ -135,7 +134,6 @@ async function bootstrapZnDesktop(): Promise<void> {
   }
 
   registerZnResidentIpc()
-  registerZnUpstreamReportIpc()
   registerZnWorkspaceIpc()
   registerZnReleaseUpdaterIpc()
 
