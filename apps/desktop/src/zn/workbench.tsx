@@ -318,15 +318,17 @@ export function ZnWorkbench() {
         const started = await startZnWork(threadId, task)
         residentAccepted = true
         replaceThread(started.thread)
+        setActiveThreadId(started.thread.id)
         setWorkProgress(started.progress)
         setResidentError(null)
         setResidentHealth('live')
 
+        const progressThreadId = started.progress.threadId
         let current = started.progress
         let finalThread = started.progress.finalized ? started.thread : undefined
         while (!current.terminal) {
           await sleep(700)
-          const update = await loadZnWorkProgress(threadId, current.eventId)
+          const update = await loadZnWorkProgress(progressThreadId, current.eventId)
           current = update.progress
           setWorkProgress(current)
           if (update.thread) finalThread = update.thread
@@ -336,7 +338,7 @@ export function ZnWorkbench() {
           throw new Error(current.error || 'Resident work ended without a durable work outcome')
         }
         if (!finalThread) {
-          const update = await loadZnWorkProgress(threadId, current.eventId)
+          const update = await loadZnWorkProgress(progressThreadId, current.eventId)
           finalThread = update.thread
         }
         if (finalThread) {
