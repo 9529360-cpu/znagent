@@ -51,6 +51,8 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
     _DESKTOP_TEXT_KIND = "desktop_task_text_equals"
     _DESKTOP_SUBMIT_KIND = "desktop_task_button_submitted"
     _DESKTOP_SUBMIT_OBSERVATION_LIMIT = 12
+    _WORKSPACE_SOURCE_AMBIGUITY = "the requested workspace text source is ambiguous"
+    _WORKSPACE_SOURCE_BLOCKED_BY = "workspace_source_ambiguous"
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
@@ -290,6 +292,9 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
         phase = "blocked"
 
         if failure is None:
+            if state.blocked_by == self._WORKSPACE_SOURCE_BLOCKED_BY:
+                state.blocked_by = None
+            state.data.pop("workspace_source_investigation", None)
             foreground, error = self._probe_foreground_window()
             if foreground is None:
                 failure = "foreground desktop window is unavailable: " + str(error)
@@ -389,6 +394,13 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
         self._sync_execution_context(event, state)
         self.store.save_working_state(state)
         if failure:
+            if failure == self._WORKSPACE_SOURCE_AMBIGUITY:
+                return self._hold_workspace_source_ambiguity(
+                    event,
+                    state,
+                    reason=failure,
+                    thought=thought,
+                )
             return self._fail_composite_goal_investigation(event, state, reason=failure)
         if thought is not None:
             known = (
@@ -401,6 +413,46 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
         state.stage = "native_deliberation"
         state.next_action = f"form the next desktop-goal movement for phase={phase}"
         self.store.save_working_state(state)
+        return None
+
+    def _hold_workspace_source_ambiguity(
+        self,
+        event,
+        state,
+        *,
+        reason: str,
+        thought=None,
+    ):
+        """Keep one Work open until fresh evidence establishes one exact source."""
+
+        state.data["local_failure"] = str(reason)
+        state.data["workspace_source_investigation"] = {
+            "status": "open",
+            "unresolved": str(reason),
+            "mutation_admitted": False,
+            "desktop_grounding_admitted": False,
+            "observed_at": utc_now(),
+        }
+        state.blocked_by = self._WORKSPACE_SOURCE_BLOCKED_BY
+        state.stage = "native_investigation"
+        state.next_action = (
+            "re-sense the workspace for disambiguating source evidence; do not inspect or "
+            "mutate the desktop destination until one exact source is established"
+        )
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        if thought is not None:
+            unknown = "which current workspace file uniquely owns the requested source value"
+            if unknown not in thought.unknown:
+                thought.unknown = (*thought.unknown, unknown)
+            action = "gather fresh read-only workspace evidence before any desktop movement"
+            if action not in thought.possible_actions:
+                thought.possible_actions = (*thought.possible_actions, action)
+            thought.reason = (
+                f"{thought.reason}; source identity is ambiguous, so Resident keeps the Work "
+                "open and admits no desktop side effect"
+            )
+            self._persist_enriched_thought(thought)
         return None
 
     def _browser_named_goal_investigation(
@@ -870,7 +922,7 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
                 "width_fraction": self._POINTER_CLICK_DEFAULT_REGION,
                 "height_fraction": self._POINTER_CLICK_DEFAULT_REGION,
                 "completion_scope": scope,
-                "completion_event_kind": str(event.kind or "").strip().lower(),
+                "completion_event_kind": self._UI_EVENT_KIND,
                 "action_precondition": {
                     "kind": self._UI_SCOPE_KIND,
                     "process_name": scope["process_name"],
