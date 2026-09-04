@@ -4,10 +4,11 @@
 
 ## 仓库状态规则
 
-- 主开发分支：`dev/zn-agent`
-- canonical / release 分支：`main`
+- 唯一长期集成 / canonical / release 分支：`main`
+- 新开发从最新 `main` 拉短命 `work/*`，PR 直接以 `main` 为 base；适用 CI/E2E 在 PR 阶段通过后再合并。
+- `dev/zn-agent` 只保留为历史兼容分支，不再接收新的产品开发或作为新 PR base；保留期间应与 `main` 对齐。
 - 文档里的 SHA 和 CI run 只能当历史检查点，接手时必须重新查询。
-- Git/CI/main 同步属于工程卫生，不是产品里程碑。
+- Git/CI/main 合并属于工程卫生，不是产品里程碑。
 
 ## 已废弃方向
 
