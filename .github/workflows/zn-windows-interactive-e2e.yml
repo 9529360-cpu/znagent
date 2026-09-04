@@ -109,6 +109,11 @@ jobs:
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           & .\.ci\interactive-e2e-venv\Scripts\python.exe -m unittest tests.zn_agent.core.test_desktop_goal_understanding_resident tests.zn_agent.core.test_natural_named_desktop_input_work -v
+      - name: Run workspace source Windows acceptance
+        shell: powershell
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          & .\.ci\interactive-e2e-venv\Scripts\python.exe tests/zn_agent/e2e/test_windows_interactive_workspace_source_investigation.py -v
       - name: Run real interactive computer-use E2Es
         shell: powershell
         run: |
