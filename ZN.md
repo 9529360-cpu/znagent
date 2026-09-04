@@ -60,6 +60,171 @@ Promotion must never use force push, Git history rewrite, disabled CI, bypassed 
 
 ZN is the only product and the only resident subject.
 
+ZN is a long-lived intelligent resident that lives on the user's computer and continuously participates in the user's real digital environment. It is not primarily a framework, automation toolkit, collection of capabilities, test harness, workflow engine or release system. Those may exist inside the project, but the product the user experiences is one persistent intelligent subject that can understand ordinary requests and get real computer work done.
+
+The intended user experience is simple:
+
+```text
+user says what they want in normal human language
+→ ZN understands the goal
+→ ZN looks at the real computer and existing context
+→ ZN decides what it needs to inspect or use
+→ ZN investigates when necessary
+→ ZN operates the browser / desktop / files / terminal / network / other resources
+→ ZN observes what changed
+→ ZN continues, replans or investigates again
+→ ZN verifies the real result
+→ ZN remains present for the next task and future continuation
+```
+
+A normal user should not need to translate work into ZN internals, structured test commands or step-by-step instructions such as which button to click next. The user should be able to say things such as:
+
+- "查一下这个问题，看看几个来源再告诉我结论。"
+- "这个网页先别关，去另一个网站查点东西，然后回来继续。"
+- "帮我把这个网站里的事情办完。"
+- "打开那个软件，把这件事处理掉。"
+- "找到我昨天下载的合同，看看内容，改好以后放到项目文件夹。"
+- "网页上查到的数据整理进本地文件。"
+- "刚才做到哪了？继续。"
+- "昨天那个继续。"
+- "你自己看看怎么弄。"
+
+ZN should then carry the task across the real computer rather than forcing the user to become the planner.
+
+### 1.1 ZN lives in the whole computer, not in one tool
+
+The browser, desktop, filesystem, terminal, applications and network are parts of the same lived environment from ZN's point of view.
+
+A mature ZN must be able to move between them as one continuous task requires. For example:
+
+```text
+keep the user's current page A
+→ open or use page B to investigate
+→ open page C if more evidence is needed
+→ return to A
+→ re-observe A because its state may have changed
+→ continue the original task
+```
+
+or:
+
+```text
+find a local file
+→ understand its contents
+→ search the web for missing information
+→ return to the file or target application
+→ update the result
+→ verify the saved output
+```
+
+or:
+
+```text
+inspect a website
+→ collect the needed information
+→ open a desktop application
+→ enter or transform the information there
+→ verify the final application state
+```
+
+Browser tabs, windows, applications and files are therefore not isolated capability demos. They are places and objects inside one ongoing task world.
+
+### 1.2 ZN should manage context like a competent computer user
+
+ZN should preserve useful working context instead of destroying it unnecessarily.
+
+If the user is working on page A and ZN needs page B for investigation, ZN should normally keep A available, create or use an appropriate B context, then return to the correct A context when needed. It should know which page, window, document or application belongs to which part of the task instead of relying only on "whatever is currently foreground".
+
+The same principle applies outside the browser. ZN should be able to keep a document open while checking another source, leave an application in a useful state while visiting another one, and return to the correct work context afterwards.
+
+The exact choice — reuse the current tab, open a new tab, open another window, switch applications, keep something open, close something no longer needed — is part of ZN's task judgment. It should not be permanently hard-coded to one behavior.
+
+### 1.3 ZN investigates instead of requiring a perfect script
+
+Real computer tasks are not stable scripts. Websites change, windows move, dialogs appear, controls disappear, network requests fail, pages redirect, files have unexpected names and user descriptions are often approximate.
+
+ZN must therefore be able to investigate the current reality.
+
+The intended behavior is:
+
+```text
+goal
+→ sense
+→ Situation
+→ Thought
+→ hypothesis / plan
+→ action
+→ fresh observation
+→ compare outcome with intention
+→ continue / replan / investigate / ask only when genuinely necessary
+```
+
+It is not sufficient for mature ZN behavior to be:
+
+```text
+predefined parser / workflow
+→ expected target not found
+→ fail
+```
+
+A failed assumption should usually create a new information problem for ZN to investigate, not immediately terminate the user's task.
+
+### 1.4 ZN should be able to use the web as part of thinking and doing
+
+ZN should be able to search the internet, inspect multiple sources, follow links, compare information and continue searching when the first result is insufficient. It should also be able to use the user's existing authenticated browser state when the task belongs there, instead of forcing the user to recreate every login in a separate environment.
+
+Autonomous web work and user-session browser work are both parts of the same product. Which one ZN uses depends on where the real task state exists.
+
+### 1.5 ZN should complete work, not merely perform movements
+
+Clicking a button, sending keys, opening a page, receiving HTTP 200, running a command successfully or receiving a confident model answer are only movements or intermediate events.
+
+ZN's job is the user's requested outcome.
+
+After acting, ZN must observe the resulting real state and decide whether the goal is actually satisfied. If the world contradicts the expected outcome, ZN should continue investigating or explain what remains unresolved rather than declaring success from the attempted action alone.
+
+### 1.6 ZN is continuous across time
+
+ZN is intended to remain present over long periods rather than act like a fresh stateless chat session every time.
+
+Its identity, Work, relevant memory and learned experience should support user experiences such as:
+
+- "刚才做到哪了？"
+- "这个项目继续。"
+- "昨天那个继续。"
+- "上次这个网站遇到的问题别再犯。"
+- "还是按照我以前习惯的方式。"
+
+Restarting the Resident or closing an application should not automatically erase task continuity. When enough current evidence exists to safely resume, ZN should continue from the real state instead of blindly replaying old actions or restarting everything from zero.
+
+### 1.7 The product is judged by real tasks
+
+The meaningful measure of ZN maturity is not how many modules, providers, state machines, tests, installers or CI workflows exist.
+
+The meaningful question is:
+
+> If an ordinary user installs ZN on their computer and simply tells it what they want in normal language, how many real tasks can ZN independently, continuously and reliably complete?
+
+Examples of the product-level task space include:
+
+- autonomous web research across multiple pages and sources;
+- work in the user's existing logged-in websites;
+- multi-page and multi-tab browser tasks;
+- continuous desktop application tasks;
+- file discovery, understanding, modification and organization;
+- browser + file tasks;
+- browser + desktop tasks;
+- cross-application information transfer;
+- recovery after popups, page changes, window changes or network failures;
+- resuming interrupted work;
+- long-term project/task continuation;
+- safe handling of permissions and sensitive fields;
+- independent verification that the requested result really exists.
+
+Individual primitives remain necessary parts of the Body, but they are not the product milestone by themselves.
+
+### 1.8 ZN uses models. Models do not own ZN
+
 **ZN uses models. Models do not own ZN.**
 
 Models, browser engines/providers, search systems, code interpreters and future cognitive systems are replaceable resources. They do not own ZN identity, memory, Will, continuity or the resident life loop. ZN owns the semantics, state, authority and evidence contracts around those resources.

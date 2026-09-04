@@ -6,10 +6,22 @@ on:
       - dev/zn-agent
     paths:
       - .github/workflows/zn-windows-interactive-e2e.yml
+      - apps/desktop/browser-extension/background.js
+      - apps/desktop/browser-extension/manifest.json
       - tests/zn_agent/e2e/test_windows_interactive_pointer_uia.py
       - tests/zn_agent/e2e/test_windows_interactive_text_entry.py
       - tests/zn_agent/e2e/test_windows_interactive_uia_text_capability.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_bridge.py
+      - tests/zn_agent/e2e/test_windows_interactive_user_browser_named_goal.py
+      - tests/zn_agent/e2e/test_windows_interactive_authorized_user_browser_cdp.py
+      - tests/zn_agent/e2e/test_windows_interactive_user_browser_extension.py
+      - tests/zn_agent/e2e/test_windows_interactive_user_browser_natural_search_work.py
+      - tests/zn_agent/e2e/test_windows_interactive_user_browser_semantic_grounding.py
+      - tests/zn_agent/e2e/test_windows_interactive_user_browser_task_context.py
+      - tests/zn_agent/e2e/test_windows_interactive_user_browser_managed_research_return_work.py
+      - tests/zn_agent/e2e/test_windows_interactive_browser_result_file_work.py
+      - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_grounding.py
+      - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_reground.py
       - runtime/python/zn_agent/core/body.py
       - runtime/python/zn_agent/core/keyboard_text_body.py
       - runtime/python/zn_agent/core/visual_region_sense.py
@@ -18,6 +30,26 @@ on:
       - runtime/python/zn_agent/core/focused_text_sense.py
       - runtime/python/zn_agent/core/automation_element_sense.py
       - runtime/python/zn_agent/core/automation_text_state_sense.py
+      - runtime/python/zn_agent/core/browser_named_target_sense.py
+      - runtime/python/zn_agent/core/browser_named_goal.py
+      - runtime/python/zn_agent/core/browser_work_body.py
+      - runtime/python/zn_agent/core/browser_text_work_body.py
+      - runtime/python/zn_agent/core/browser_form_submit_body.py
+      - runtime/python/zn_agent/core/user_browser.py
+      - runtime/python/zn_agent/core/user_browser_extension_adapter.py
+      - runtime/python/zn_agent/core/user_browser_extension_relay.py
+      - runtime/python/zn_agent/core/user_browser_extension_resident.py
+      - runtime/python/zn_agent/core/user_browser_resident.py
+      - runtime/python/zn_agent/core/user_browser_managed_research_resident.py
+      - runtime/python/zn_agent/core/natural_file_goal.py
+      - runtime/python/zn_agent/core/natural_file_work_resident.py
+      - runtime/python/zn_agent/core/goal_resident.py
+      - runtime/python/zn_agent/core/desktop_task_goal.py
+      - runtime/python/zn_agent/core/browser_goal_understanding_resident.py
+      - runtime/python/zn_agent/core/automation_named_control_sense.py
+      - tests/zn_agent/e2e/test_windows_interactive_file_desktop_goal.py
+      - tests/zn_agent/core/test_desktop_goal_understanding_resident.py
+      - tests/zn_agent/core/test_natural_named_desktop_input_work.py
       - runtime/python/zn_agent/core/pointer_click_resident.py
       - runtime/python/zn_agent/core/pointer_click_completion_resident.py
       - runtime/python/zn_agent/core/pointer_click_semantic_resident.py
@@ -69,7 +101,7 @@ jobs:
           Remove-Item -Recurse -Force .ci/interactive-e2e-venv -ErrorAction SilentlyContinue
           uv venv .ci/interactive-e2e-venv --python 3.12
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-e2e-venv\Scripts\python.exe'
-          uv pip install --python $python runtime/python
+          uv pip install --python $python "runtime/python[browser]"
       - name: Run real interactive computer-use E2Es
         shell: powershell
         run: |

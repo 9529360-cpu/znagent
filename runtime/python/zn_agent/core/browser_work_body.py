@@ -13,6 +13,7 @@ from .browser import (
     BrowserActionAuthority,
     BrowserActionKind,
     BrowserPermissionContext,
+    BrowserPlane,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
 )
@@ -58,6 +59,38 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
         if action.kind == "browser_close":
             return self._browser_close(action, started)
         return super()._dispatch(action, started)
+
+    @staticmethod
+    def _open_session_for_body_action(
+        browser,
+        action: BodyAction,
+        permission: BrowserPermissionContext,
+        *,
+        user_plane: bool,
+        headless: bool,
+    ):
+        if user_plane:
+            expected_tab_id = action.args.get("authorized_tab_id")
+            expected_attached_at = str(
+                action.args.get("authorization_attached_at") or ""
+            ).strip()
+            if expected_tab_id is not None or expected_attached_at:
+                if expected_tab_id is None or not expected_attached_at:
+                    raise ValueError(
+                        "USER browser task context requires both authorized_tab_id and authorization_attached_at"
+                    )
+                opener = getattr(browser, "open_session_for_authorization", None)
+                if not callable(opener):
+                    raise ValueError(
+                        "current USER browser adapter cannot bind the Resident task authorization context"
+                    )
+                return opener(
+                    permission=permission,
+                    headless=headless,
+                    expected_tab_id=int(expected_tab_id),
+                    expected_attached_at=expected_attached_at,
+                )
+        return browser.open_session(permission=permission, headless=headless)
 
     def _browser_navigate(self, action: BodyAction, started: str) -> BodyActionResult:
         browser = self._browser()
@@ -317,7 +350,12 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
         action: BodyAction,
         started: str,
     ) -> BodyActionResult:
-        """Click one exact semantic button and independently verify same-origin URL."""
+        """Click one exact semantic button and independently verify same-origin URL.
+
+        Managed browser sessions may navigate to ``url`` before the click. USER-plane
+        sessions are different: the already-authorized exact tab must freshly be on
+        ``url`` and ZN never navigates or transfers authority before dispatch.
+        """
 
         browser = self._browser()
         url = str(action.args.get("url") or "").strip()
@@ -338,45 +376,88 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                 "browser_click_named_button_to_url currently requires same-origin expected_url"
             )
 
+        user_plane = getattr(browser, "plane", None) is BrowserPlane.USER
         permission = BrowserPermissionContext(
-            allow_navigation=True,
+            allow_navigation=not user_plane,
             allow_page_interaction=True,
             allow_private_network=bool(action.args.get("allow_private_network", False)),
             allowed_origins=(url,),
         )
         session = None
         closed = False
+        navigation_evidence = None
         try:
-            session = browser.open_session(permission=permission, headless=True)
-            initial = browser.observe(session.session_id)
-            navigate = BrowserAction.create(
-                session_id=session.session_id,
-                kind=BrowserActionKind.NAVIGATE,
-                page_id=initial.page_id,
-                args={"url": url},
-                expected={"url_equals": url},
-            )
-            navigate_authority = BrowserActionAuthority.from_observation(
-                navigate,
-                initial,
+            session = self._open_session_for_body_action(
+                browser,
+                action,
                 permission,
+                user_plane=user_plane,
+                headless=not user_plane,
             )
-            navigation_evidence = browser.act(navigate, navigate_authority)
-            if not navigation_evidence.success:
-                browser.close_session(session.session_id)
-                closed = True
-                return BodyActionResult(
-                    action_id=action.action_id,
-                    kind=action.kind,
-                    success=False,
-                    data={
-                        "browser_evidence": asdict(navigation_evidence),
-                        "closed": True,
-                    },
-                    error=navigation_evidence.error or "managed browser navigation failed",
-                    event_id=action.event_id,
-                    started_at=started,
-                    completed_at=utc_now(),
+            initial = browser.observe(session.session_id)
+            if user_plane:
+                if initial.url != url:
+                    browser.close_session(session.session_id)
+                    closed = True
+                    return BodyActionResult(
+                        action_id=action.action_id,
+                        kind=action.kind,
+                        success=False,
+                        data={
+                            "expected_start_url": url,
+                            "observed_start_url": initial.url,
+                            "browser_plane": BrowserPlane.USER.value,
+                            "click_sent": False,
+                            "closed": True,
+                        },
+                        error=(
+                            "authorized user browser current page changed before button click; "
+                            "refusing navigation, authority transfer or click"
+                        ),
+                        event_id=action.event_id,
+                        started_at=started,
+                        completed_at=utc_now(),
+                    )
+                current = initial
+                start_url = initial.url
+                navigation_provider = session.provider
+            else:
+                navigate = BrowserAction.create(
+                    session_id=session.session_id,
+                    kind=BrowserActionKind.NAVIGATE,
+                    page_id=initial.page_id,
+                    args={"url": url},
+                    expected={"url_equals": url},
+                )
+                navigate_authority = BrowserActionAuthority.from_observation(
+                    navigate,
+                    initial,
+                    permission,
+                )
+                navigation_evidence = browser.act(navigate, navigate_authority)
+                if not navigation_evidence.success:
+                    browser.close_session(session.session_id)
+                    closed = True
+                    return BodyActionResult(
+                        action_id=action.action_id,
+                        kind=action.kind,
+                        success=False,
+                        data={
+                            "browser_evidence": asdict(navigation_evidence),
+                            "closed": True,
+                        },
+                        error=navigation_evidence.error or "managed browser navigation failed",
+                        event_id=action.event_id,
+                        started_at=started,
+                        completed_at=utc_now(),
+                    )
+                current = browser.observe(
+                    session.session_id,
+                    page_id=navigation_evidence.page_id,
+                )
+                start_url = navigation_evidence.url_after
+                navigation_provider = str(
+                    navigation_evidence.data.get("provider") or session.provider
                 )
 
             observed = browser.observe_target(
@@ -385,7 +466,7 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                     kind=BrowserTargetQueryKind.ACCESSIBLE_BUTTON_NAME,
                     value=target_name,
                 ),
-                page_id=navigation_evidence.page_id,
+                page_id=current.page_id,
             )
             if observed.target is None or observed.target.role != "button":
                 raise ValueError(
@@ -419,7 +500,7 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                         "browser_evidence": asdict(click_evidence),
                         "closed": True,
                     },
-                    error=click_evidence.error or "managed browser button click failed",
+                    error=click_evidence.error or "browser button click failed",
                     event_id=action.event_id,
                     started_at=started,
                     completed_at=utc_now(),
@@ -445,8 +526,8 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                         "closed": True,
                     },
                     error=(
-                        "managed browser button postcondition verification did not match "
-                        "the explicitly requested URL"
+                        "browser button postcondition verification did not match the freshly "
+                        "derived expected URL"
                     ),
                     event_id=action.event_id,
                     started_at=started,
@@ -461,22 +542,27 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                 success=True,
                 output=verified.url,
                 data={
-                    "url": navigation_evidence.url_after,
+                    "url": start_url,
                     "expected_url": expected_url,
                     "observed_url": verified.url,
                     "page_id": verified.page_id,
+                    "browser_plane": session.plane.value,
+                    "navigation_performed": navigation_evidence is not None,
                     "target_id": click_evidence.target_id,
                     "target_role": observed.target.role,
                     "target_name": observed.target.name,
                     "selector_hint": observed.target.selector_hint,
                     "provider": str(
                         click_evidence.data.get("provider")
-                        or navigation_evidence.data.get("provider")
+                        or navigation_provider
                         or session.provider
                     ),
                     "postcondition": click_evidence.postcondition,
                     "target_revalidated_before_dispatch": bool(
                         click_evidence.data.get("target_revalidated_before_dispatch")
+                    ),
+                    "authorization_attached_at": str(
+                        click_evidence.data.get("authorization_attached_at") or ""
                     ),
                     "browser_evidence": asdict(click_evidence),
                     "closed": True,

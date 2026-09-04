@@ -9,6 +9,7 @@ An interrupted started click is investigated, never replayed blindly.
 """
 
 import math
+import time
 from dataclasses import asdict
 from typing import Any
 
@@ -118,8 +119,12 @@ class VerifiedPointerClickResidentRuntime(RepositoryVerifyingResidentRuntime):
                 )
             target_x = moved.data.get("target_x")
             target_y = moved.data.get("target_y")
-            observed = self.body.act("pointer_state", event_id=event.event_id)
-            if not self._pointer_matches(observed, target_x, target_y):
+            observed = self._wait_for_pointer_position(
+                event_id=event.event_id,
+                target_x=target_x,
+                target_y=target_y,
+            )
+            if observed is None:
                 return self._fail_pointer_click_precondition(
                     event,
                     state,
@@ -487,6 +492,22 @@ class VerifiedPointerClickResidentRuntime(RepositoryVerifyingResidentRuntime):
     ):
         message = "pointer click precondition failed: " + str(failure or "unknown failure")
         state.data["local_failure"] = message
+        investigation = self.investigator.current(event.event_id)
+        if investigation is not None:
+            investigation.facts = {
+                **dict(investigation.facts or {}),
+                "last_pointer_click_precondition_failure": {
+                    "kind": intent.kind,
+                    "failure": message,
+                    "at": utc_now(),
+                },
+            }
+            investigation.evidence = (
+                *investigation.evidence,
+                message,
+            )[-64:]
+            investigation.updated_at = utc_now()
+            self.investigator._save(investigation)
         self._record_failed_action(
             event,
             state,
@@ -506,6 +527,24 @@ class VerifiedPointerClickResidentRuntime(RepositoryVerifyingResidentRuntime):
             )
             self._persist_enriched_thought(thought)
         return None
+
+    def _wait_for_pointer_position(
+        self,
+        *,
+        event_id: str,
+        target_x: Any,
+        target_y: Any,
+        timeout_seconds: float = 0.25,
+    ):
+        """Wait briefly for Windows to publish our successful SetCursorPos move."""
+        deadline = time.monotonic() + max(0.0, float(timeout_seconds))
+        while True:
+            observed = self.body.act("pointer_state", event_id=event_id)
+            if self._pointer_matches(observed, target_x, target_y):
+                return observed
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(0.01)
 
     @staticmethod
     def _pointer_matches(observed, target_x: Any, target_y: Any) -> bool:

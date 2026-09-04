@@ -16,7 +16,10 @@ from .cognitive_factory import (
     resolve_zn_cognitive_route,
 )
 from .config import load_zn_config
-from .credentials import CredentialStore, materialize_zn_credentials
+from .credentials import (
+    CredentialStore,
+    materialize_zn_credentials,
+)
 from .home import get_zn_home
 from .models import ModelRoute
 from .runtime import ZNKernelRuntime
@@ -243,19 +246,20 @@ def build_resident_runtime(
     store_path: str | Path | None = None,
     credential_store: CredentialStore | None = None,
 ):
-    """Build the resident organism around the ZN-owned kernel."""
+    """Build the normal product Resident around the ZN-owned kernel."""
     from .budget import CognitiveBudgetManager
-    from .reporting_maintenance_resident import ReportingMaintenanceResidentRuntime
+    from .natural_file_work_resident import NaturalFileWorkResidentRuntime
 
     effective_config = config if config is not None else load_zn_config()
+    resident_cfg = effective_config.get("zn_resident") or {}
+    if not isinstance(resident_cfg, dict):
+        raise ValueError("zn_resident config must be a mapping")
+
     kernel = build_runtime(
         config=effective_config,
         store_path=store_path,
         credential_store=credential_store,
     )
-    resident_cfg = effective_config.get("zn_resident") or {}
-    if not isinstance(resident_cfg, dict):
-        raise ValueError("zn_resident config must be a mapping")
     budget = CognitiveBudgetManager(
         normal_model_calls=max(1, int(resident_cfg.get("normal_model_calls", 1))),
         high_risk_model_calls=max(1, int(resident_cfg.get("high_risk_model_calls", 2))),
@@ -263,7 +267,11 @@ def build_resident_runtime(
             0.0, min(1.0, float(resident_cfg.get("high_risk_threshold", 0.8)))
         ),
     )
-    return ReportingMaintenanceResidentRuntime(kernel=kernel, budget=budget)
+
+    return NaturalFileWorkResidentRuntime(
+        kernel=kernel,
+        budget=budget,
+    )
 
 
 build_runtime_from_existing_stack = build_runtime
