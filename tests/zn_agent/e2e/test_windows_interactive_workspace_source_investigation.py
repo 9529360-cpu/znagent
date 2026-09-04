@@ -117,6 +117,7 @@ class WindowsInteractiveWorkspaceSourceInvestigationE2ETests(unittest.TestCase):
                 drifted = False
                 stale_rejected = False
                 result = None
+                trace: list[dict] = []
                 deadline = time.monotonic() + 35.0
                 while time.monotonic() < deadline and result is None:
                     state = resident.store.get_working_state()
@@ -143,12 +144,46 @@ class WindowsInteractiveWorkspaceSourceInvestigationE2ETests(unittest.TestCase):
                     stale_rejected |= (
                         "workspace source identity changed after investigation" in failure
                     )
+                    persisted = resident.store.get_event(event.event_id)
+                    trace.append(
+                        {
+                            "stage": current_state.stage,
+                            "next_action": current_state.next_action,
+                            "blocked_by": current_state.blocked_by,
+                            "local_failure": failure or None,
+                            "intent_kind": (
+                                str((current_state.data.get("native_action_intent") or {}).get("kind") or "")
+                                if isinstance(current_state.data.get("native_action_intent"), dict)
+                                else None
+                            ),
+                            "grounded_goal": (
+                                dict(persisted.payload.get("desktop_task_goal") or {})
+                                if persisted is not None
+                                else None
+                            ),
+                            "proposal_calls": proposal.calls,
+                            "action_kinds": [item.kind for item in event_actions],
+                            "app_title": app.title(),
+                        }
+                    )
                     if current is not None and current.event.event_id == event.event_id:
                         result = current
                         break
                     time.sleep(0.02)
 
-                self.assertTrue(drifted, "source-drift boundary was never reached")
+                self.assertTrue(
+                    drifted,
+                    "source-drift boundary was never reached: "
+                    + json.dumps(
+                        {
+                            "terminal_success": getattr(result, "success", None),
+                            "terminal_reason": getattr(result, "reason", None),
+                            "trace": trace[-16:],
+                        },
+                        ensure_ascii=False,
+                        default=str,
+                    ),
+                )
                 self.assertTrue(stale_rejected, "stale exact source value was not rejected")
                 self.assertIsNotNone(result)
                 self.assertTrue(result.success, result)
