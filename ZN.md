@@ -62,6 +62,10 @@ ZN is the only product and the only resident subject.
 
 ZN is a long-lived intelligent resident that lives on the user's computer and continuously participates in the user's real digital environment. It is not primarily a framework, automation toolkit, collection of capabilities, test harness, workflow engine or release system. Those may exist inside the project, but the product the user experiences is one persistent intelligent subject that can understand ordinary requests and get real computer work done.
 
+ZN is a **general-purpose personal assistant**, not a vertical office agent, coding agent, browser agent, desktop-automation agent or command-line agent. Office work, coding, research, browser use, desktop operation, file management, terminal/system work and future personal workflows are task domains inside the same product. They must not become separate subjects or redefine ZN around one capability family.
+
+The product should be organized around **user goals**, not capability categories. A user should not have to decide whether a request belongs to Browser, Coding, Desktop, File or Terminal before asking ZN. ZN owns the goal and chooses the required combination of cognition, tools, authority and verification.
+
 The intended user experience is simple:
 
 ```text
@@ -71,6 +75,7 @@ user says what they want in normal human language
 → ZN decides what it needs to inspect or use
 → ZN investigates when necessary
 → ZN operates the browser / desktop / files / terminal / network / other resources
+→ ZN calls specialist cognition when the task needs it
 → ZN observes what changed
 → ZN continues, replans or investigates again
 → ZN verifies the real result
@@ -86,6 +91,7 @@ A normal user should not need to translate work into ZN internals, structured te
 - "找到我昨天下载的合同，看看内容，改好以后放到项目文件夹。"
 - "网页上查到的数据整理进本地文件。"
 - "帮我看看这个项目为什么报错，把 bug 修掉并验证。"
+- "看看这个服务为什么挂了，修好以后确认它真的恢复。"
 - "刚才做到哪了？继续。"
 - "昨天那个继续。"
 - "你自己看看怎么弄。"
@@ -128,7 +134,18 @@ inspect a website
 → verify the final application state
 ```
 
-Browser tabs, windows, applications and files are therefore not isolated capability demos. They are places and objects inside one ongoing task world.
+or:
+
+```text
+inspect a repository
+→ use coding cognition to understand a difficult bug
+→ modify files through authorized tools
+→ run tests / commands
+→ feed failures back as fresh evidence
+→ verify the real runtime result
+```
+
+Browser tabs, windows, applications, repositories, terminals and files are therefore not isolated capability demos. They are places and objects inside one ongoing task world.
 
 ### 1.2 ZN should manage context like a competent computer user
 
@@ -198,13 +215,27 @@ Its identity, Work, relevant memory and learned experience should support user e
 
 Restarting the Resident or closing an application should not automatically erase task continuity. When enough current evidence exists to safely resume, ZN should continue from the real state instead of blindly replaying old actions or restarting everything from zero.
 
-### 1.7 The product is judged by real tasks
+### 1.7 The product is judged by real tasks and real E2E completion
 
 The meaningful measure of ZN maturity is not how many modules, providers, state machines, tests, installers or CI workflows exist.
 
 The meaningful question is:
 
 > If an ordinary user installs ZN on their computer and simply tells it what they want in normal language, how many real tasks can ZN independently, continuously and reliably complete?
+
+For ZN, an E2E (End-to-End) is not merely a chain of primitives. It begins from a normal user goal and ends only when the user's requested real-world outcome has been independently verified.
+
+```text
+normal user request
+→ goal understanding
+→ current Work / Memory / Situation
+→ resource selection
+→ real sensing / cognition / action
+→ fresh observation after state changes
+→ replanning when needed
+→ independent result verification
+→ durable task outcome / continuation
+```
 
 Examples of the product-level task space include:
 
@@ -217,11 +248,28 @@ Examples of the product-level task space include:
 - browser + desktop tasks;
 - cross-application information transfer;
 - coding/repository work that combines specialist cognition with real File/Git/Terminal/Test tools;
+- Terminal / CLI / local development-tool and reasonable system-management tasks;
 - recovery after popups, page changes, window changes or network failures;
 - resuming interrupted work;
 - long-term project/task continuation;
 - safe handling of permissions and sensitive fields;
 - independent verification that the requested result really exists.
+
+The E2E acceptance set must stay broad enough to protect the general-assistant identity. It must not drift into an office-only, browser-only or coding-only benchmark. Over time it should cover information/research, authenticated web work, documents/files, desktop applications, coding/repositories, terminal/system work, cross-surface tasks, long-term continuation, permission/user-presence boundaries, failure/replanning and independent result verification.
+
+The following are explicitly not equivalent to product E2E success:
+
+```text
+primitive action succeeded
+provider/model returned success
+model produced a plausible answer
+command exited 0
+HTTP returned 200
+unit/integration tests passed
+CI is green
+```
+
+Those may be evidence for intermediate layers. The product milestone is the user's real goal becoming true in the current world and ZN having evidence for that fact.
 
 Individual primitives remain necessary parts of the Body, but they are not the product milestone by themselves.
 
@@ -712,6 +760,8 @@ At minimum protect:
 - installed-resident update-channel knowledge must not imply repository write/merge/release authority;
 - retired dedicated self-maintenance/reporting control planes must not become active dependencies again;
 - managed-browser lifecycle/evidence contracts once implemented;
-- real user-browser integration and privacy/permission boundaries once implemented.
+- real user-browser integration and privacy/permission boundaries once implemented;
+- representative product E2Es must start from ordinary user goals and verify the final user outcome, not merely primitive/provider success;
+- the E2E acceptance set must remain cross-domain so ZN does not silently collapse into office-only, browser-only or coding-only behavior.
 
 Tests retained in the active tree must describe ZN behavior or guard ZN ownership boundaries. Optional Linux/macOS checks remain supplementary unless restored as product targets.
