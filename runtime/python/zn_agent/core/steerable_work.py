@@ -44,6 +44,7 @@ class SteerableWorkLedger(RecoveryBoundedWorkLedger):
         super().__init__(resident)
         self._init_plan_schema()
         self.reconcile_run_plan_bindings()
+        self.reconcile_steering_transitions()
 
     def _init_plan_schema(self) -> None:
         with self._lock, closing(self._connect()) as conn:
@@ -382,10 +383,161 @@ class SteerableWorkLedger(RecoveryBoundedWorkLedger):
                 "another resident event owns the live checkpoint; active Work steering will not erase it"
             )
 
+    def _prepare_steering_ingress(
+        self,
+        thread_id: str,
+        active_event_id: str,
+        task: str,
+        *,
+        objective: str,
+        previous_version: int,
+        next_version: int,
+        kind: str,
+        priority: int,
+        payload: dict[str, Any],
+    ) -> tuple[str, str]:
+        """Atomically persist the next plan and its recoverable Resident ingress.
+
+        The inherited Work ingress checkpoint is the durable forward-intent. If
+        the process dies after this transaction, superclass reconstruction can
+        materialize the exact new event/run, then steering reconciliation below
+        finishes superseding the previous Resident event before work continues.
+        """
+
+        normalized_thread = self._normalize_thread_id(thread_id)
+        normalized_task = str(task or "").strip()
+        normalized_kind = str(kind or "desktop_user_event").strip() or "desktop_user_event"
+        normalized_priority = max(1, int(priority))
+        thread = self.get_thread(normalized_thread)
+        if thread is None:
+            raise ValueError(f"unknown work thread: {normalized_thread}")
+
+        message_id = f"msg-{uuid.uuid4().hex[:16]}"
+        event_id = f"evt-{uuid.uuid4().hex[:12]}"
+        work_item_id = f"item-{uuid.uuid4().hex[:16]}"
+        message_created_at = utc_now()
+        event_created_at = utc_now()
+        objective_text = str(objective or normalized_task).strip()
+        event_payload = dict(payload)
+        event_payload["work_plan_version"] = int(next_version)
+        event_payload["work_item_id"] = work_item_id
+        event_payload["work_thread_id"] = normalized_thread
+        event_payload["work_message_id"] = message_id
+        workspace = self.workspace_for(thread)
+        if workspace is not None:
+            event_payload["workspace_path"] = workspace.path
+            event_payload["workdir"] = workspace.path
+            event_payload["workspace_name"] = workspace.name
+        payload_json = json.dumps(
+            event_payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        placeholders = ",".join("?" for _ in self._ACTIVE_ITEM_STATES)
+
+        with self._lock, closing(self._connect()) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            plan = conn.execute(
+                "SELECT plan_version FROM work_plan_state WHERE thread_id=?",
+                (normalized_thread,),
+            ).fetchone()
+            if plan is None or int(plan["plan_version"]) != int(previous_version):
+                raise RuntimeError("active Work plan changed before steering could commit")
+            active = conn.execute(
+                "SELECT thread_id,ledger_state FROM work_runs WHERE event_id=?",
+                (active_event_id,),
+            ).fetchone()
+            if (
+                active is None
+                or str(active["thread_id"]) != normalized_thread
+                or str(active["ledger_state"]) != "active"
+            ):
+                raise RuntimeError("active Work run changed before steering could commit")
+
+            now = utc_now()
+            updated = conn.execute(
+                "UPDATE work_plan_state SET plan_version=?,updated_at=? "
+                "WHERE thread_id=? AND plan_version=?",
+                (
+                    int(next_version),
+                    now,
+                    normalized_thread,
+                    int(previous_version),
+                ),
+            )
+            if updated.rowcount != 1:
+                raise RuntimeError("active Work plan changed before steering could commit")
+            conn.execute(
+                f"UPDATE work_items SET status='superseded',updated_at=? "
+                f"WHERE work_thread_id=? AND plan_version<? AND status IN ({placeholders})",
+                (
+                    now,
+                    normalized_thread,
+                    int(next_version),
+                    *self._ACTIVE_ITEM_STATES,
+                ),
+            )
+            stale = conn.execute(
+                "UPDATE work_runs SET ledger_state='stale',updated_at=? "
+                "WHERE event_id=? AND thread_id=? AND ledger_state='active'",
+                (now, active_event_id, normalized_thread),
+            )
+            if stale.rowcount != 1:
+                raise RuntimeError("active Work run changed before steering could commit")
+            conn.execute(
+                """
+                INSERT INTO work_items(
+                    work_item_id,work_thread_id,parent_work_item_id,title,objective,status,
+                    plan_version,acceptance_criteria_json,result,blocker,created_at,updated_at,completed_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    work_item_id,
+                    normalized_thread,
+                    None,
+                    title_for_work_task(objective_text),
+                    objective_text,
+                    "running",
+                    int(next_version),
+                    "[]",
+                    None,
+                    None,
+                    event_created_at,
+                    event_created_at,
+                    None,
+                ),
+            )
+            conn.execute(
+                f"""
+                INSERT INTO {self._INGRESS_TABLE}(
+                    event_id,thread_id,message_id,task,kind,priority,payload_json,
+                    message_created_at,event_created_at,created_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    event_id,
+                    normalized_thread,
+                    message_id,
+                    normalized_task,
+                    normalized_kind,
+                    normalized_priority,
+                    payload_json,
+                    message_created_at,
+                    event_created_at,
+                    event_created_at,
+                ),
+            )
+            conn.commit()
+        return event_id, work_item_id
+
     def _supersede_resident_event(self, event_id: str, *, new_plan_version: int) -> None:
         event = self.resident.store.get_event(event_id)
         if event is None:
             raise RuntimeError("active Work lost its resident event")
+        if event.status in {EventStatus.COMPLETED, EventStatus.FAILED}:
+            if self.resident.store.get_event_outcome(event_id) is None:
+                raise RuntimeError("terminal superseded Work event has no durable outcome")
+            return
         if event.status == EventStatus.PENDING:
             event = self.resident.store.claim_event(event_id)
             if event is None:
@@ -402,6 +554,98 @@ class SteerableWorkLedger(RecoveryBoundedWorkLedger):
             ),
             error=reason,
         )
+
+    @staticmethod
+    def _steering_from_event_data(raw: str) -> dict[str, Any] | None:
+        try:
+            data = json.loads(raw or "{}")
+        except (TypeError, json.JSONDecodeError):
+            return None
+        payload = data.get("payload")
+        if not isinstance(payload, dict):
+            return None
+        steering = payload.get("work_steering")
+        if not isinstance(steering, dict) or steering.get("mode") != "active_steer":
+            return None
+        return steering
+
+    def reconcile_steering_transitions(self) -> int:
+        """Finish any durable steering transition interrupted by a process crash."""
+
+        with self._lock, closing(self._connect()) as conn:
+            rows = conn.execute(
+                """
+                SELECT work_runs.event_id,work_runs.thread_id,events.data
+                FROM work_runs
+                JOIN events ON events.event_id=work_runs.event_id
+                ORDER BY work_runs.created_at DESC
+                LIMIT 128
+                """
+            ).fetchall()
+
+        repaired = 0
+        for row in rows:
+            steering = self._steering_from_event_data(str(row["data"] or ""))
+            if steering is None:
+                continue
+            previous_event_id = str(steering.get("previous_event_id") or "").strip()
+            raw_previous_version = steering.get("previous_plan_version")
+            raw_next_version = steering.get("plan_version")
+            if (
+                not previous_event_id
+                or isinstance(raw_previous_version, bool)
+                or isinstance(raw_next_version, bool)
+            ):
+                raise RuntimeError("durable Work steering metadata is incomplete")
+            try:
+                previous_version = max(1, int(raw_previous_version))
+                next_version = max(1, int(raw_next_version))
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError("durable Work steering metadata is malformed") from exc
+            if next_version != previous_version + 1:
+                raise RuntimeError("durable Work steering plan versions are inconsistent")
+
+            thread_id = self._normalize_thread_id(str(row["thread_id"] or ""))
+            new_event_id = str(row["event_id"] or "").strip()
+            new_version = self._run_plan_version(new_event_id)
+            if new_version != next_version:
+                raise RuntimeError("durable Work steering event conflicts with plan binding")
+            if self.plan_version(thread_id) < next_version:
+                raise RuntimeError("durable Work steering event is ahead of current plan state")
+
+            previous_run = self.get_run(previous_event_id)
+            if previous_run is None or previous_run.thread_id != thread_id:
+                raise RuntimeError("durable Work steering lost its previous Work run")
+            previous_bound = self._run_plan_version(previous_event_id)
+            if previous_bound is not None and previous_bound != previous_version:
+                raise RuntimeError("durable Work steering previous run conflicts with plan binding")
+            if previous_run.ledger_state == "stale_finalized":
+                continue
+            if previous_run.ledger_state == "active":
+                previous_run.ledger_state = "stale"
+                previous_run.updated_at = utc_now()
+                self._save_run(previous_run)
+                self._supersede_items_before(thread_id, next_version)
+            elif previous_run.ledger_state != "stale":
+                raise RuntimeError("durable Work steering previous run has invalid state")
+
+            cycle_lock = getattr(self.resident, "_cycle_lock", None)
+            context = (
+                cycle_lock
+                if cycle_lock is not None and hasattr(cycle_lock, "__enter__")
+                else nullcontext()
+            )
+            with context:
+                self._supersede_resident_event(
+                    previous_event_id,
+                    new_plan_version=next_version,
+                )
+                stale_result = self.resident.result_for(previous_event_id)
+                if stale_result is None:
+                    raise RuntimeError("superseded resident event has no durable outcome")
+                self._finalize_run(previous_event_id, run=stale_result)
+            repaired += 1
+        return repaired
 
     def steer_active(
         self,
@@ -427,8 +671,11 @@ class SteerableWorkLedger(RecoveryBoundedWorkLedger):
         next_version = previous_version + 1
 
         raw_payload = dict(payload or {})
-        if "work_steering" in raw_payload:
-            raise ValueError("work_steering is resident-owned metadata")
+        if any(
+            key in raw_payload
+            for key in ("work_steering", "work_plan_version", "work_item_id")
+        ):
+            raise ValueError("work steering identity is resident-owned metadata")
         raw_payload["work_steering"] = {
             "mode": "active_steer",
             "reference": str(reference or "").strip() or None,
@@ -456,9 +703,32 @@ class SteerableWorkLedger(RecoveryBoundedWorkLedger):
         )
         with context:
             self._assert_steerable_resident_state(active_event_id)
-            self._set_plan_version(normalized_thread, next_version)
-            self._supersede_items_before(normalized_thread, next_version)
-            self._mark_run_stale(active_event_id)
+            new_event_id, work_item_id = self._prepare_steering_ingress(
+                normalized_thread,
+                active_event_id,
+                task,
+                objective=objective,
+                previous_version=previous_version,
+                next_version=next_version,
+                kind=kind,
+                priority=priority,
+                payload=raw_payload,
+            )
+            self.reconcile_ingress_checkpoints(thread_id=normalized_thread)
+            self.reconcile_run_plan_bindings()
+            new_event = self.resident.store.get_event(new_event_id)
+            new_run = self.get_run(new_event_id)
+            item = self.work_item_for_event(new_event_id)
+            if (
+                new_event is None
+                or new_run is None
+                or new_run.thread_id != normalized_thread
+                or new_run.ledger_state != "active"
+                or item is None
+                or item.work_item_id != work_item_id
+                or item.plan_version != next_version
+            ):
+                raise RuntimeError("durable steering ingress did not materialize exact new Work")
             self._supersede_resident_event(
                 active_event_id,
                 new_plan_version=next_version,
@@ -467,14 +737,7 @@ class SteerableWorkLedger(RecoveryBoundedWorkLedger):
             if stale_result is None:
                 raise RuntimeError("superseded resident event has no durable outcome")
             self._finalize_run(active_event_id, run=stale_result)
-            return self.start(
-                normalized_thread,
-                task,
-                kind=kind,
-                priority=max(1, int(priority)),
-                payload=raw_payload,
-                objective=objective,
-            )
+            return self._snapshot_without_finalize(normalized_thread), new_event
 
     def _finalize_completed_runs(self, *, thread_id: str | None = None) -> None:
         sql = "SELECT * FROM work_runs WHERE ledger_state IN ('active','stale')"
