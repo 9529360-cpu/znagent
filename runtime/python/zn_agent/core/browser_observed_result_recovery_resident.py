@@ -10,10 +10,10 @@ from typing import Any
 
 from .action import NativeActionIntent
 from .body import BodyActionResult
-from .cognitive_maintenance_resident import CognitiveMaintenanceResidentRuntime
+from .health_aware_resident import HealthAwareResidentRuntime
 
 
-class BrowserObservedResultRecoveryResidentRuntime(CognitiveMaintenanceResidentRuntime):
+class BrowserObservedResultRecoveryResidentRuntime(HealthAwareResidentRuntime):
     """Resume a verified named-button result without replaying its side effect.
 
     ``SideEffectAwareBody`` durably records the Body result before it marks the
