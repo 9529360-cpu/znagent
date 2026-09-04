@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,7 +36,63 @@ class _PlanOnlyCognition:
         )
 
 
+class _OneStepCognition:
+    """Propose one bounded workspace movement; ZN must own and verify execution."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.questions: list[str] = []
+
+    def invoke(self, *, question: str, context: str) -> CognitiveIncrement:
+        self.calls += 1
+        self.questions.append(question)
+        proposal = {
+            "zn_work_step": {
+                "objective": "create one bounded probe artifact in the attached workspace",
+                "action": {
+                    "kind": "write_file",
+                    "path": "rolling-probe.txt",
+                    "content": "resident-owned rolling step\n",
+                },
+                "acceptance": {
+                    "kind": "text_equals",
+                    "path": "rolling-probe.txt",
+                    "expected_text": "resident-owned rolling step\n",
+                },
+            }
+        }
+        return CognitiveIncrement(
+            text=json.dumps(proposal, ensure_ascii=False),
+            provider="e2e-cognition",
+            model="bounded-step-fixture",
+        )
+
+
 class BroadGoalRunnableMvpTests(unittest.TestCase):
+    @staticmethod
+    def _configure_cognition(resident, cognition, *, model: str) -> None:
+        resident.kernel.reconfigure_resources(
+            routes=[
+                ModelRoute(
+                    route_id="e2e-26-broad-goal-cognition",
+                    provider="fixture",
+                    model=model,
+                    capabilities={
+                        "general": 1.0,
+                        "reasoning": 1.0,
+                        "coding": 1.0,
+                        "research": 1.0,
+                        "language_understanding": 1.0,
+                    },
+                )
+            ],
+            worker_factory=CognitiveResourceWorkerFactory(
+                resource_builder=lambda _route: cognition,
+            ),
+            max_attempts=1,
+            resource_status={"available": True, "error": None},
+        )
+
     def test_model_plan_alone_cannot_accept_broad_goal_work_item(self) -> None:
         """E2E-26 probe: cognition is not acceptance without runnable-world evidence."""
 
@@ -49,26 +106,10 @@ class BroadGoalRunnableMvpTests(unittest.TestCase):
             )
             try:
                 cognition = _PlanOnlyCognition()
-                resident.kernel.reconfigure_resources(
-                    routes=[
-                        ModelRoute(
-                            route_id="e2e-26-broad-goal-cognition",
-                            provider="fixture",
-                            model="bounded-planning-fixture",
-                            capabilities={
-                                "general": 1.0,
-                                "reasoning": 1.0,
-                                "coding": 1.0,
-                                "research": 1.0,
-                                "language_understanding": 1.0,
-                            },
-                        )
-                    ],
-                    worker_factory=CognitiveResourceWorkerFactory(
-                        resource_builder=lambda _route: cognition,
-                    ),
-                    max_attempts=1,
-                    resource_status={"available": True, "error": None},
+                self._configure_cognition(
+                    resident,
+                    cognition,
+                    model="bounded-planning-fixture",
                 )
 
                 control = RestoreAwareWorkControl(RecoveryBoundedWorkLedger(resident))
@@ -132,6 +173,97 @@ class BroadGoalRunnableMvpTests(unittest.TestCase):
                     f"resident_success={getattr(result, 'success', None)};"
                     f"work_item_status={progress.get('work_item_status')};"
                     f"workspace_files={len(after_files)}"
+                )
+            finally:
+                resident.store.close()
+
+    def test_structured_cognition_step_becomes_durable_verified_body_work(self) -> None:
+        """Second E2E-26 probe: proposal -> WorkItem -> Body -> fresh verification."""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / "rolling-workspace"
+            workspace.mkdir()
+            resident = build_resident_runtime(
+                config={"model": {}},
+                store_path=root / "kernel.db",
+            )
+            try:
+                cognition = _OneStepCognition()
+                self._configure_cognition(
+                    resident,
+                    cognition,
+                    model="bounded-step-fixture",
+                )
+                control = RestoreAwareWorkControl(RecoveryBoundedWorkLedger(resident))
+                ledger = control.ledger
+                ledger.create_thread(thread_id="rolling-step", title="Rolling broad Work")
+                ledger.attach_workspace(
+                    "rolling-step",
+                    workspace,
+                    name="Rolling Workspace",
+                )
+
+                _, event = control.start(
+                    "rolling-step",
+                    "Build a small local artifact from this broad workspace goal and keep advancing from evidence.",
+                    payload={"model_policy": "on_demand"},
+                    acceptance_criteria=[
+                        "the final broad goal still requires later independent verification",
+                    ],
+                )
+                root_item = ledger.work_item_for_event(event.event_id)
+                self.assertIsNotNone(root_item)
+                assert root_item is not None
+
+                terminal = None
+                for _ in range(32):
+                    candidate = resident.live_once()
+                    if candidate is not None and candidate.event.event_id == event.event_id:
+                        terminal = candidate
+                        break
+
+                target = workspace / "rolling-probe.txt"
+                self.assertGreaterEqual(cognition.calls, 1)
+                self.assertTrue(
+                    target.is_file(),
+                    "structured model proposal was never converted into a resident-owned File movement",
+                )
+                self.assertEqual(
+                    target.read_text(encoding="utf-8"),
+                    "resident-owned rolling step\n",
+                    "ZN must fresh-read and preserve the exact proposed postcondition",
+                )
+
+                items = ledger.list_work_items("rolling-step")
+                children = [
+                    item
+                    for item in items
+                    if item.parent_work_item_id == root_item.work_item_id
+                ]
+                self.assertEqual(
+                    len(children),
+                    1,
+                    "one bounded cognition proposal should materialize as one durable child WorkItem",
+                )
+                self.assertEqual(children[0].status, "completed")
+                self.assertEqual(
+                    children[0].acceptance_criteria,
+                    ["text_equals: rolling-probe.txt"],
+                )
+                self.assertIn("rolling-probe.txt", children[0].result or "")
+
+                root_after = ledger.work_item_for_event(event.event_id)
+                self.assertIsNotNone(root_after)
+                assert root_after is not None
+                self.assertNotEqual(
+                    root_after.status,
+                    "completed",
+                    "one verified child step cannot accept the still-broad Root Work",
+                )
+                self.assertIsNone(
+                    terminal,
+                    "Resident must keep the Root Work live after one rolling child step",
                 )
             finally:
                 resident.store.close()
