@@ -14,6 +14,8 @@ export type ZnResidentRequest = {
     | 'self'
     | 'provider_settings'
     | 'provider_settings_update'
+    | 'upstream_bug_report_dispatch'
+    | 'upstream_bug_report_reconcile'
     | 'work_list'
     | 'work_create'
     | 'work_get'

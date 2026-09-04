@@ -1,236 +1,148 @@
-# ZN product capability map
+# ZN Product Capability Map
 
-> This is a product-completeness ledger, not an agent-feature checklist.
+> 这是一份产品能力地图，不是 feature checklist。
 >
-> Architecture authority remains [`../ZN.md`](../ZN.md). Real code and real verification outrank this file.
+> 真实代码、真实 Git、真实测试和真实 E2E 高于本文件。
 
-Updated: 2026-08-31
+Updated: 2026-09-04
 
-## 1. Why this ledger exists
+## 1. 产品判断标准
 
-ZN must keep pace with useful capabilities demonstrated by current coding agents, computer-use agents and AI work systems without becoming an agent harness whose identity is a planner/model/tool loop.
+ZN 的目标不是拥有最多 capability，而是让普通用户用正常语言交代事情以后，ZN 能长期、连续、可靠地把事情办完。
 
-The comparison rule is:
-
-```text
-market capability proves a user need exists
--> decide whether that need belongs to ZN
--> map it to a ZN-owned organ/resource/lifecycle
--> implement behind ZN-owned authority and state
--> verify effects from current-world evidence
--> keep providers/models replaceable
-```
-
-Passing one narrow E2E is evidence for one slice, not product completion.
-
-Status vocabulary:
-
-- `VERIFIED`: real implementation plus relevant real tests/CI/evidence exist.
-- `PARTIAL`: useful implementation exists but product lifecycle/coverage is incomplete.
-- `FOUNDATION`: owned contracts or early implementation exist, but the user-facing capability is not complete.
-- `OPEN`: required product capability not yet implemented.
-- `DEFERRED`: deliberately not current priority; not silently forgotten.
-
-## 2. Subject / continuity
-
-| Product need | ZN owner | Status | Current evidence / open work |
-| --- | --- | --- | --- |
-| Persistent identity independent of models | Self / resident life | VERIFIED | zero-model resident boot and persistent resident state are CI-guarded |
-| Long-lived process independent of desktop window | resident / service | VERIFIED | desktop starts resident; identity is not renderer-owned |
-| Situation / Thought / Will continuity | resident life | VERIFIED/PARTIAL | resident-owned lifecycle exists; broader real-world competence continues to grow |
-| Provider replacement without identity loss | CognitiveResource boundary | VERIFIED | model routes are optional resources, not resident identity |
-| Safe body/version handoff | update/release lifecycle | PARTIAL | architecture exists; Windows M8 install/upgrade/rollback/signing evidence remains open |
-
-## 3. Memory / learning / competence
-
-| Product need | ZN owner | Status | Current evidence / open work |
-| --- | --- | --- | --- |
-| Durable lived memory | nervous system / memory | VERIFIED/PARTIAL | persistent memory and reconsolidation mechanisms exist |
-| Procedural learning gated by current reality | learning / Will | VERIFIED/PARTIAL | learned tendencies cannot replace fresh authority; breadth remains limited |
-| Reusable deterministic skills/capabilities | resident competence | PARTIAL | `CapabilityRegistry` and promoted capabilities exist; installable/shareable skill lifecycle remains open |
-| Forgetting/inhibition when evidence contradicts | nervous system | PARTIAL | architecture/tests exist; more real-world longitudinal evidence needed |
-| User-visible memory controls and provenance | Self / memory UI | OPEN | needs inspect/edit/forget/provenance UX without exposing internal secrets |
-
-## 4. Files / workspace / terminal / code
-
-| Product need | ZN owner | Status | Current evidence / open work |
-| --- | --- | --- | --- |
-| Safe file read/write/move operations | Body | VERIFIED/PARTIAL | typed Body operations exist; broader desktop file workflows remain open |
-| Terminal/process execution | Body | VERIFIED | bounded terminal/process mechanisms and tests exist |
-| Git repository sensing and actions | Body/Senses | VERIFIED/PARTIAL | repository evidence and guarded actions exist; broader collaboration flows can expand |
-| Code investigation/test/fix loop | Investigation / Action | VERIFIED/PARTIAL | repo-test semantics and evidence-based completion exist |
-| Isolated parallel worktrees/tasks | Work / Investigation | OPEN | required for mainstream multi-task parity; must be ZN-owned work isolation, not multiple identities |
-| Checkpoints / restore / rollback for work | Work / Body safety | PARTIAL | deterministic restart recovery now exists for selected pending-action and outbox paths; general user-visible checkpoint, restore and destructive rollback remain open |
-
-## 5. Web and browser
-
-Complete browser product capability requires both planes:
+能力成熟度统一按下面判断：
 
 ```text
-Resident Managed Browser + User Browser Bridge
+Exists
+-> Connected
+-> Verified
+-> Product-closed
 ```
 
-| Product need | ZN owner | Status | Current evidence / open work |
-| --- | --- | --- | --- |
-| HTTP web search/extract | Web Senses / external resources | VERIFIED/PARTIAL | Tavily/Exa/Firecrawl resources exist with resident-owned normalization/failover |
-| ZN-owned browser session/action/evidence contracts | Browser Body/Senses | PARTIAL | session, permission, semantic query/target, observation, action, authority and effect contracts are ZN-owned; the verified surface remains deliberately bounded |
-| Local managed Chromium, headless | Browser Body | PARTIAL / VERIFIED NARROW | Playwright adapter + dedicated real Windows Chromium navigation, exact semantic checkbox/button/textbox targeting, same-session form transaction and page-registry lifecycle E2E exist; lifecycle cleanup is resident-owned |
-| Local managed Chromium, headed | Browser Body | OPEN | same ZN contracts, separate real UX/evidence |
-| DOM/accessibility target sensing | Browser Senses | PARTIAL / VERIFIED NARROW | exact `DOM_ID` and exact accessible-name semantic checkbox/button/textbox targets are real-Chromium verified for unique visible main-frame elements; iframe, broader roles, multi-target/disambiguation and visual fusion remain open |
-| Managed-browser focus | Browser Body | VERIFIED NARROW | exact current target authority, execution-time exact-node revalidation, `FOCUS`, and fresh `document.activeElement` evidence are real-Chromium verified |
-| Managed-browser aria-pressed toggle click | Browser Body | VERIFIED NARROW | explicit boolean expected state, exact-node continuity, fresh pre/post `aria-pressed`, and replacement rejection are real-Chromium verified |
-| Managed-browser empty-textbox TYPE_TEXT | Browser Body | VERIFIED NARROW | `allow_page_interaction + allow_text_entry`, empty writable non-password text input/textarea, <=512 UTF-16 units, same-node continuity, and fresh length+SHA-256 completion evidence are real-Chromium verified |
-| Managed-browser native CHECK | Browser Body | VERIFIED NARROW | enabled unchecked native `input[type=checkbox]`, current authority, provider `check()`, exact-node continuity and fresh `checked=true` evidence are real-Chromium verified |
-| Managed-browser native UNCHECK | Browser Body | VERIFIED NARROW | enabled checked native `input[type=checkbox]`, current authority, provider `uncheck()`, exact-node continuity and fresh `checked=false` evidence are real-Chromium verified |
-| Managed-browser native SELECT_OPTION | Browser Body | VERIFIED NARROW | enabled single-select native `select`/combobox, one explicit bounded string value, current target authority, provider `select_option`, exact-node continuity and fresh selected-value length+SHA-256 evidence are real-Chromium verified; already-selected, multi-select, replacement and no-change cases fail closed and raw requested value is not persisted |
-| Same-session semantic form transaction | Browser Body / Work | VERIFIED NARROW | PR #120 connects exact accessible-name textbox observation, bounded non-password text entry, exact submit-button observation/click and an independently observed explicit same-origin final URL to ordinary Work; replacement/stale targets and unsafe plaintext history fail closed |
-| PRESS / broader click / text replacement / ARIA checkbox | Browser Body | OPEN | bounded semantic button click is verified only inside the form transaction. `PRESS`, arbitrary click, text replacement and general ARIA-checkbox mutation remain unavailable; every new mutation still requires a bounded independent postcondition |
-| Multi-tab/popup/frame lifecycle | Browser Body/Senses | PARTIAL / VERIFIED NARROW | live Playwright pages are reconciled into stable monotonic ZN page IDs, provider-created pages are discovered, closed pages are evicted with stale observation/target-handle cleanup, default-page promotion is deterministic, and real Chromium E2E verifies non-reuse; popup intent/ownership, explicit tab actions, frame identities and iframe stale-target handling remain open |
-| Downloads/uploads | Browser Body + File authority | OPEN | adapter refuses these until explicit file authority exists |
-| Screenshots/visual browser sensing | Browser Senses | OPEN | integrate with visual evidence rather than making pixels completion authority by themselves |
-| Persistent ZN-managed browser profile | Browser state | OPEN | explicitly separate from user profiles/credentials |
-| Optional cloud browser backend | Browser resource adapter | OPEN | provider may be replaceable; local browsing must not depend on it |
-| Operate user's existing Edge/Chrome login session | User Browser Bridge | FOUNDATION / VERIFIED NARROW | real Windows interactive proof shows isolated-profile Edge exposes and accepts one bounded explicit text mutation in an already-focused empty non-password HTML Edit through default UIA plus keyboard input, with same-RuntimeId length/digest verification and no forced renderer accessibility; authenticated existing-session attachment and permission UX remain open |
-| Companion extension/native messaging bridge | User Browser Bridge | OPEN | add only if real provider evidence shows it is needed and permission is explicit |
-| MFA/sensitive-field handling | Permission / Body | OPEN | never silently replay/extract secrets; explicit high-risk boundaries required |
+有代码、有单测、有 CI，只能证明前几层，不等于普通用户已经能稳定使用。
 
-Managed mutation evidence remains deliberately narrow. Provider handles are disposable execution resources and never ZN identity. `FOCUS` requires exact-node continuity plus fresh focus evidence. `CLICK` includes explicit boolean `aria-pressed` transitions and one bounded exact-semantic submit-button path whose completion is a separately observed explicit final URL. `TYPE_TEXT` is limited to an empty writable non-password textbox with bounded Unicode input and privacy-safe length/digest evidence. Native `CHECK` and `UNCHECK` independently prove inverse boolean transitions on the same exact native checkbox. Native `SELECT_OPTION` is limited to an enabled single-select native combobox, one explicit bounded string value, exact-node continuity and privacy-safe fresh selected-value evidence. Generic click, text replacement, password entry, contenteditable, general ARIA checkbox control, PRESS and arbitrary provider methods remain unavailable until independently verified.
+## 2. Resident / continuity
 
-Managed page identity is now resident-owned within one live session rather than derived from Python provider object identity. The adapter reconciles the provider page registry before page selection/authority checks, never reuses an evicted page ID during that session, and disposes target bindings when a page disappears. This is page-registry lifecycle only: it does not imply popup permission semantics, explicit tab switching/closing APIs, child-frame identity, or persistent browser-session recovery.
+| Product need | Current status | Remaining gap |
+| --- | --- | --- |
+| Persistent Self / identity | VERIFIED / PARTIAL product closure | 继续验证安装、升级、恢复后的长期连续性 |
+| Resident long-lived process | VERIFIED | 继续覆盖真实长期运行场景 |
+| Situation / Thought / Will loop | CONNECTED + VERIFIED | 更通用的 investigation / replanning |
+| Durable Work | CONNECTED + VERIFIED | 自然引用、active steering、跨重启继续需要产品化 |
+| Memory / learned context | PARTIAL | “上次怎么做”“昨天那个继续”等真实长期体验仍需扩大 |
 
-The User Browser Bridge provider proof now includes one bounded mutation but still uses a temporary isolated profile, not authenticated browser control. Authority is limited to an explicit exact foreground scope and the already-focused UIA Edit; password, read-only, non-empty-different and identity-drift targets fail closed, and interrupted input is not blindly replayed.
+## 3. Browser
 
-## 6. Desktop computer use
+| Product need | Current status | Remaining gap |
+| --- | --- | --- |
+| Managed Browser | VERIFIED NARROW | 更广页面结构、popup/frame/download/upload、复杂失败恢复 |
+| User Browser Bridge | CONNECTED + VERIFIED NARROW | 扩大真实已登录网站覆盖、授权 UX、漂移后的稳定重规划 |
+| Semantic re-ground | VERIFIED NARROW | 从已知模式扩展到更通用的页面变化调查 |
+| Sensitive-field protection | GUARDED | 继续保持 fail-closed，不复制用户 profile / cookie / password DB |
 
-| Product need | ZN owner | Status | Current evidence / open work |
-| --- | --- | --- | --- |
-| Visual region sensing | Senses | VERIFIED/PARTIAL | visual-region sensing and attention rhythm exist |
-| Foreground/focused control sensing | Senses | VERIFIED | native foreground/focus evidence exists |
-| Pointer movement/click with verification | Body + Senses | VERIFIED NARROW | real Windows interactive E2E exists |
-| Native Win32 text entry | Body + Senses | VERIFIED NARROW | real Unicode Edit E2E, empty focused native Edit only |
-| Modern UI text current-state evidence | Senses | VERIFIED NARROW | WPF read-only digest proof and real Edge focused HTML-input provider proof exist; raw text is not exported |
-| Modern app/browser mutation | Body | PARTIAL | managed browser has narrow focus, toggle click, empty-textbox type, native check/uncheck/select-option and the bounded semantic form transaction; authenticated user-browser/general modern-app mutation remains open |
-| Generic keyboard shortcuts/navigation | Body | OPEN | requires typed authority and effect verification |
-| Robust window/app lifecycle | Body/Senses | OPEN/PARTIAL | process/window foundations exist; product-grade cross-app lifecycle incomplete |
+真实 User Browser Bridge 是产品主线。临时 profile 或隔离测试浏览器只能作为验证设施，不能替代用户现有登录 session 的产品能力。
 
-## 7. Connectors / protocols / external systems
+## 4. Desktop computer use
 
-| Product need | ZN owner | Status | Current evidence / open work |
-| --- | --- | --- | --- |
-| Typed external resource protocol | Resource/Channel boundary | PARTIAL | provider-specific resources exist; generic protocol surface is not complete |
-| MCP client interoperability | Body/Channel adapter | OPEN | expose bounded resources/actions behind ZN permission/evidence semantics |
-| Plugin/connector discovery | Resource registry | OPEN | provider metadata cannot create execution authority |
-| Credential-reference management | credential boundary | VERIFIED/PARTIAL | secrets live outside normal config/memory; more connector UX remains |
-| Connector permission scopes/revocation | permission system | OPEN | needed before broad third-party integration |
+| Product need | Current status | Remaining gap |
+| --- | --- | --- |
+| Foreground / focused-control sensing | VERIFIED | 更复杂窗口切换和应用生命周期 |
+| Pointer / keyboard / text entry | VERIFIED NARROW | 继续在完整真实任务中验证，而不是单独堆 primitive |
+| Semantic desktop target re-ground | VERIFIED NARROW | 控件变化、窗口漂移、替代入口需要更通用 investigation |
+| Cross-app task execution | PARTIAL | 浏览器 + 桌面 + 文件三 surface 联合任务仍需扩大 |
 
-## 8. Communication and personal work systems
+## 5. Files / workspace / terminal / Git
 
-| Product need | ZN owner | Status | Current evidence / open work |
-| --- | --- | --- | --- |
-| User conversation channels | Communication organs | PARTIAL | channel mechanisms exist; product breadth incomplete |
-| Email read/draft/send | Communication/Body | OPEN | account connector + explicit send authority required |
-| Calendar read/schedule/respond | Communication/Body | OPEN | current-time/conflict evidence required |
-| Contacts/people resolution | Senses / connector | OPEN | side-effect ambiguity must fail closed |
-| Team chat/work systems | Communication/Body | OPEN | replaceable connectors, not product identity |
-| Notifications/follow-up | Will / automation | OPEN/PARTIAL | resident work/progress exists; general user automation remains open |
+| Product need | Current status | Remaining gap |
+| --- | --- | --- |
+| File read/write/search | CONNECTED + VERIFIED NARROW | 模糊来源、复杂整理、多文件任务 |
+| Workspace evidence / exact source identity | PARTIAL | 歧义来源必须先解决身份，再允许外部副作用 |
+| Terminal/process | VERIFIED | 继续作为真实任务执行资源，不单独追 milestone |
+| Git / repo task support | PARTIAL | 作为普通项目工作能力继续发展，不给 ZN 自身仓库特殊权限 |
 
-## 9. Long-running work / automation / recovery
+## 6. Multi-surface real tasks
 
-| Product need | ZN owner | Status | Current evidence / open work |
-| --- | --- | --- | --- |
-| Persist work across restarts | Work / resident state | PARTIAL | resident work/progress state exists |
-| Durable per-task checkpoints / restore | Work / resident state | PARTIAL | selected pending-action and dispatch-reservation states recover deterministically after restart; general user-driven checkpoints and restore remain open |
-| Scheduled tasks | Will / resident scheduler | OPEN | must persist independently of chat/model provider |
-| Event-triggered tasks | Senses / Will | OPEN | external events become observations, not direct execution authority |
-| Conditional monitoring | Investigation / Will | OPEN | evidence-based notification lifecycle required |
-| Background task visibility/cancel | Work UI | OPEN | user must inspect/cancel active work |
-| Retry/backoff/idempotency | Action lifecycle | PARTIAL | selected paths exist; unified semantics remain open |
-| Crash recovery/resume | resident / Work | PARTIAL | resident continuity plus selected Work Recovery E2E paths exist; per-task recovery still needs broader coverage |
+当前已经有 Browser + File、Browser + Desktop、File + Desktop 等真实闭环基础。
 
-## 10. Parallelism / delegation / cognition
-
-| Product need | ZN owner | Status | Current evidence / open work |
-| --- | --- | --- | --- |
-| Multiple model providers | CognitiveResource | VERIFIED | providers/routes are replaceable cognition resources |
-| Use specialist models for bounded gaps | Investigation / Thought | PARTIAL | architecture supports bounded cognition; broader orchestration can improve |
-| Parallel independent investigations | Investigation / Work | OPEN | resident-owned concurrent work, not multiple product identities |
-| Merge competing hypotheses by evidence | Thought / Investigation | PARTIAL | contradiction/evidence principles exist; explicit merge lifecycle open |
-| Human/model maintainer collaboration | engineering workflow | PARTIAL | Git/PR/HANDOFF make maintainers replaceable; work must not depend on any single model/provider |
-
-## 11. Security / permission / trust
-
-| Product need | ZN owner | Status | Current evidence / open work |
-| --- | --- | --- | --- |
-| Secret storage outside source/log/memory | credential boundary | VERIFIED | keyring/project secret boundaries exist |
-| URL/private-network safety | network Body policy | VERIFIED/PARTIAL | strong URL checks exist; DNS-rebinding/network-sandbox hardening remains open |
-| Action-specific authority | Body/Action | VERIFIED/PARTIAL | strong typed authority exists in several lifecycles; expansion remains action-specific |
-| Independent post-action evidence | Senses / Action | VERIFIED/PARTIAL | verified lifecycles include managed navigation, focus, toggle click, empty-textbox type, native check/uncheck/select-option and an explicit observed final URL after the bounded semantic form submit |
-| Global permission center | Self/user boundary | OPEN | inspectable grants/revocation by capability/site/account |
-| Sensitive action escalation | Will / permission | OPEN/PARTIAL | release/self-maintenance rules exist; general product policy remains open |
-| Sandboxed untrusted code/content | Body | OPEN/PARTIAL | some boundaries exist; browser/code/plugin sandboxing needs unified policy |
-| Audit trail without secret leakage | Memory/observability | OPEN/PARTIAL | evidence records exist; product-level audit UX incomplete |
-
-## 12. Product UI / observability
-
-| Product need | ZN owner | Status | Current evidence / open work |
-| --- | --- | --- | --- |
-| Native desktop work surface | ZN desktop | VERIFIED/PARTIAL | independent Electron main/preload/renderer exists |
-| Show current work/status/evidence | desktop / Work | PARTIAL | resident work/progress surfaces exist; richer task inspection needed |
-| Browser/session visibility | desktop / Browser | OPEN | headed session and inspect/cancel UX needed |
-| Permission management UX | desktop / Self boundary | OPEN | site/account/capability grants and revocation |
-| Memory inspection/control UX | desktop / Memory | OPEN | provenance, correction and forgetting controls |
-| Failure/recovery explanation | desktop / Situation | OPEN/PARTIAL | errors exist; coherent recovery surface incomplete |
-
-UI polish is not the current priority, but control-plane UI is not optional. Permission confirmation/revocation, work inspection/cancel/recovery, browser/session visibility and failure/recovery surfaces must be added when their underlying resident objects become stable.
-
-## 13. Self-maintenance / release
-
-| Product need | ZN owner | Status | Current evidence / open work |
-| --- | --- | --- | --- |
-| Detect/investigate own failures | self-maintenance | SM0 VERIFIED / SM1+ OPEN | architecture and maintenance evidence pipeline exist |
-| Isolated self-repair branch/test/PR | self-maintenance | OPEN | SM1+ |
-| CI-gated promotion | repository automation | VERIFIED | normal development/PR/CI flow established |
-| Immutable packaged releases | release automation | PARTIAL | release machinery exists; Windows M8 evidence incomplete |
-| User-approved update/restart | updater | PARTIAL | architecture/desktop updater exists; full continuity evidence open |
-| Rollback after bad release | updater | OPEN/PARTIAL | required M8 proof remains |
-
-## 14. Near-term product order
-
-The order is dependency- and leverage-driven, not “implement the thinnest row first” and not UI-first.
+下一阶段重点不是继续证明单动作，而是扩大这些完整任务：
 
 ```text
-A. keep resident continuity + Windows CI trustworthy
-B. preserve Managed Browser navigation, semantic target/focus/mutation, same-session form transaction and page-registry lifecycle real Chromium evidence
-C. keep the dedicated browser proof lane aligned with every verified narrow browser contract
-D. treat stable live-page registry/eviction as the bounded browser checkpoint; leave PRESS, explicit tab/popup control and frame identity OPEN until new dependency evidence justifies returning
-E. build durable resident-owned Work / checkpoint / restore / recovery
-F. build isolated parallel Work / Investigation + evidence merge without multiple ZN identities
-G. build ZN-owned connector/resource/permission/effect contracts, then MCP interoperability as an adapter
-H. add scheduled/event-driven resident work
-I. design authenticated User Browser Bridge from real provider evidence
-J. build unified permission/audit/task/browser control surfaces as underlying resident objects stabilize
-K. expand communication/personal-work connectors
-L. close Windows install/update/rollback/signing continuity
-M. advance SM1+ isolated self-maintenance
+normal human goal
+-> Sense current computer state
+-> Situation
+-> Thought / Investigation
+-> choose Browser / Desktop / File / Terminal / network resource
+-> action
+-> fresh observation
+-> compare result
+-> continue / replan
+-> independent completion evidence
 ```
 
-No development or release capability may depend on one current model, chat session or machine.
+页面、窗口、文件或目标发生变化时，必须重新观察再决定，而不是继续用旧 target 或预设脚本。
 
-## 15. Completion rule
+## 7. Recovery / non-replay
 
-No row is `VERIFIED` because a model says it is, a provider advertises support, or one API call returned successfully.
+| Product need | Current status | Remaining gap |
+| --- | --- | --- |
+| Resident restart recovery | VERIFIED / PARTIAL | 更多真实任务跨重启恢复 |
+| Unknown external-effect handling | FAIL-CLOSED foundations exist | 继续保证不确定副作用不盲目重放 |
+| Fresh evidence before mutation | CORE RULE | 扩展到所有新的真实任务 |
+| Independent completion verification | VERIFIED NARROW | 继续覆盖更复杂任务 |
 
-For user-affecting capability, completion normally requires:
+Recovery 是为了让真实任务能继续，不是独立产品路线。
 
-```text
-ZN-owned contract/state/lifecycle
-+ explicit permission/authority where side effects exist
-+ real provider/runtime behavior
-+ failure/privacy/security boundaries
-+ independent effect observation
-+ tests
-+ exact relevant CI/E2E
-+ packaging/update consideration where the capability ships to users
-```
+## 8. Product UX
 
-The goal is not “feature parity with agents.” The goal is a capable ZN whose useful abilities remain organs of one persistent subject.
+| Product need | Current status | Remaining gap |
+| --- | --- | --- |
+| User-visible task progress | PARTIAL | 用户只需要知道 ZN 在做什么、是否还在继续 |
+| Permission / revoke UX | PARTIAL / OPEN | Browser、敏感操作、外部副作用需要更清楚的授权范围 |
+| Failure explanation | PARTIAL | 说明遇到什么、是否还能继续、需要用户做什么 |
+| Completion result | PARTIAL | 明确完成了什么、什么没完成、依据是什么 |
+
+用户不应该需要理解 runtime id、provider、semantic target、resident RPC、Work recovery 等内部工程概念。
+
+## 9. Release / update continuity
+
+Installer、CI、Release、签名本身不是当前产品主线。
+
+只有当它们直接阻塞真实用户长期安装、身份/Memory/Work 连续性、安全边界或数据可靠性时，才提升优先级。
+
+当前真正未闭合的是：真实 N -> N+1 后，ZN 是否还是同一个长期存在的 ZN，原有身份、Memory、Work、配置和不确定副作用状态是否安全连续。
+
+## 10. 已废弃：专用自我维护系统
+
+专用“自我维护 / 自我修复 / upstream BUG report”路线已经明确删除。
+
+它不是当前 capability，不是 backlog，不是 P0/P1/P2/P3，也不属于 near-term product order。
+
+不要重新增加：
+
+- maintenance runtime / cognition / repair；
+- 专用 self-repair investigation / review / publication；
+- upstream BUG report / transport / intake / reconcile；
+- maintenance UI / IPC / RPC；
+- 因为目标仓库是 ZN 就获得特殊 Git、合并、发布、更新或凭证权限的路径。
+
+需要修改 ZN 仓库时，把它当普通代码仓库，用通用 Work、File、Terminal、Git、Repo Test 和编码能力处理。
+
+详情见 `docs/ZN-RETIRED-DIRECTIONS.md`。
+
+## 11. 当前产品优先顺序
+
+1. 真实任务自主闭环。
+2. 真实 User Browser Bridge。
+3. 自主 Investigation / replanning。
+4. 长期 Work / Memory / Resident 连续性。
+5. 普通用户任务状态、授权、失败和完成体验。
+
+支撑线默认包括 Installer、Release Candidate、签名、额外 CI、维护系统、文档整理、新 governance、新 provider、新状态机和新的抽象。只有它们直接阻塞上面五项时才升优先级。
+
+## 12. 最终判断
+
+每做完一个阶段，只看这件事：
+
+**一个普通用户不学习 ZN 内部结构，只用正常语言告诉它事情，它现在比以前多能独立、连续、可靠地完成哪些真实任务？**
+
+如果这个数字没有明显增加，就不能把工程工作当成产品主线已经推进。

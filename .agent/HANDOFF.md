@@ -1,81 +1,63 @@
 # ZN Maintainer Handoff
 
-This is the current engineering work site and fact index, not a chat transcript or execution script. Real code, live Git refs and actual test/build/CI results override this file when they disagree.
+这是一份施工现场说明，不是产品路线的永久命令。
 
-## Current verified checkpoint
+真实代码、真实 Git、真实测试和真实 CI 高于这份文档。接手时必须重新查询 `main`、`dev/zn-agent`、相关 work branch、open PR 和 CI，不能把这里写的 SHA 或状态当成永远正确。
 
-The latest verified development checkpoint is merge `5f14a6453aadba196060e954ce7bc674551ac3e8` on `dev/zn-agent`.
+## 当前正在做的清理
 
-At that checkpoint:
+PR #176：`Remove the special self-maintenance product lane`
 
-- ZN CI `33340676146` completed successfully across Source Boundary, Kernel/Python full core tests and Electron/TypeScript.
-- Work Recovery E2E `33340676170` completed successfully.
-- Managed Browser E2E `33339937362` completed successfully on `f68ff28de63bc334033b5b8f05520c96deffbc70`; later commits in the same tranche changed compiler contract tests/workflow coverage and passed Work Recovery plus full ZN CI.
-- Hosted Windows Clean Install and Release Candidate runs still fail before execution with `steps=[]` and `runner_id=0`. Treat this as runner-allocation infrastructure evidence unless a future run actually executes steps.
+这一轮的目标只有一个：把专用“自我维护 / 自我修复 / upstream BUG report”产品路线从当前代码树中拆掉，同时保留正常的 Resident、Health、Recovery、Work、Memory、Browser、Desktop、File、Terminal、Git、Repo Test 和 Update 架构。
 
-PR #123 promoted the reconciled verified tranche to canonical `main`; canonical merge SHA is `ac6b3846d621dd790f587cbc08311b162eba6b97`. Fresh maintainers must still query live refs, open PRs and CI before acting. Exact SHAs in this file are evidence checkpoints, not permanent branch oracles.
+专用自我维护路线已经明确废弃。它不再是产品能力，也不再是待办优先级。
 
-## Managed-browser product reality
+详细废弃说明见 `docs/ZN-RETIRED-DIRECTIONS.md`。
 
-The same-session form transaction from PR #120 is merged and verified. Ordinary Work can now deterministically perform this bounded scenario:
+## 当前产品主线
 
-```text
-explicit start URL
--> fresh exact semantic textbox observation by accessible name
--> explicit bounded text entry
--> same-node length/SHA-256 verification
--> fresh exact semantic button observation by accessible name
--> submit in the same managed Chromium session
--> independent explicit same-origin final-URL verification
--> durable Work result
--> observed-result restart recovery without blind replay
-```
+ZN 的产品目标不是继续堆内部能力模块，而是让普通用户给出正常人类任务以后，ZN 能自己理解、观察、执行、重新调查，并验证真实结果。
 
-The real Chromium fixture makes the final `/done` result depend on the exact text still being present when the button is clicked, proving same-session state retention rather than a sequence of disconnected primitives.
+当前工作按下面的产品价值排序：
 
-The verified ordinary Work browser surface now includes:
+1. 打通更多真实用户任务的完整自主闭环，而不是继续验证单个 click、textbox、terminal 等 primitive。
+2. 继续收紧真实 User Browser Bridge，让 ZN 在明确授权下可靠使用用户当前已经登录的浏览器状态。
+3. 补齐 Investigation / replanning：目标、页面、窗口、文件或程序状态变化时，重新 Sense / Situation / Thought，再决定下一步。
+4. 把 Work / Memory / Recovery 变成真实长期连续性，让“刚才那个继续”“昨天那个继续”成为可用体验。
+5. 改善普通用户能看懂的任务状态、授权、失败和完成结果。
 
-- safe navigation with observed URL completion;
-- exact accessible-name checkbox selection and checked-state verification;
-- exact accessible-name button click with explicit URL postcondition;
-- exact accessible-name textbox entry with same-node digest/length verification;
-- a bounded same-session textbox-plus-submit transaction;
-- durable observed-result recovery for the verified button, textbox and form paths.
+安装器、Release、签名、额外 CI、维护系统、文档整理和新的抽象默认都是支撑线。只有它们正在直接阻塞真实用户任务、安全边界、数据连续性或结果验证时，才提升优先级。
 
-The structured-action compiler now limits historical `text -> content` compatibility to `write_text` / `write_file`. Browser, form and keyboard text no longer receive a duplicate plaintext `content` alias. Form Body history also retains a second defensive redaction boundary. The structured compiler and its tests are included in Managed Browser and Work Recovery workflow coverage.
+## 明确不再做的方向
 
-PR #125 is the current User Browser Bridge candidate. On candidate commit `f1ded231d44dc58e9d9a597213f8f738ea5560f4`, Windows Interactive Desktop E2E `33354912873`, full ZN CI `33354911263` and Work Recovery E2E `33354930689` all completed successfully. Hosted clean-install run `33354874932` failed before execution with `steps=[]`; it is runner-allocation evidence, not an executed candidate failure.
+不要重新增加：
 
-## Resident reliability and reporting reality
+- maintenance runtime / maintenance cognition / maintenance repair；
+- 为“ZN 修自己”单独设计的 investigation / review / publication 状态机；
+- upstream BUG report / transport / intake / reconcile 专用控制面；
+- maintenance 专用 UI / IPC / RPC；
+- 因为目标仓库刚好是 ZN，就自动扩大 Git、合并、发布、更新或凭证权限的特殊路径。
 
-PR #121 is merged. If a BUG-report dispatch was durably reserved and the resident stopped before recording delivery or uncertainty, reconstructing the outbox now promotes the abandoned `dispatching` record to `outcome_uncertain`, preserves `dispatch_attempts`, and continues to reject automatic replay. This recovery is covered by the successful Work Recovery run above.
+如果以后需要修改 ZN 自己的代码，就把 ZN 当普通代码仓库，用通用 Work、File、Terminal、Git、Repo Test 和编码能力处理。
 
-BUG/repair reporting otherwise remains local-only in merged product code. There is no merged operator-controlled network transport, acknowledgement or maintainer intake active caller yet.
+## 接手者下一步怎么判断
 
-The current large-stage collaboration has an isolated transport/intake implementation lane. That lane owns the new transport/intake modules plus the related `upstream_bug_report.py` / `reporting_maintenance_resident.py` call chain until it produces a reviewable PR. The promotion/documentation lane must not concurrently edit those product files. When the isolated PR arrives, re-anchor to its live base/head/diff and verification evidence before merge.
+每次准备开始一个新工作项，先问：
 
-Normal installed ZN still has no official repository push, PR, merge, release or signing authority.
+1. 普通用户现在具体在哪个真实任务上卡住？
+2. 这次修改是否直接让这个任务更接近成功？
+3. 修改完成后，哪个真实用户 E2E 会从失败变成成功？
 
-## Current repository hygiene
+如果第三个问题答不出来，默认重新评估，不要因为某个工程问题“看起来能修”就自动把它升成主线。
 
-The verified development tranche has been promoted through PR #123 to canonical `main`. Canonical ZN CI run `33353573721` is the post-promotion authority; inspect its live final state rather than inferring success from the dev run.
+## 收尾怎么汇报
 
-Repository synchronization is engineering hygiene, not the product milestone. `dev/zn-agent` may temporarily trail `main` by the promotion merge commit; reconcile normal branch ancestry without force updates and without disturbing active isolated product branches.
+优先说明：
 
-## Current product gaps
+- ZN 以前不能完成什么真实任务；
+- 现在能完成什么；
+- 成功路径是什么；
+- 用户还会在哪里失败；
+- 下一项最阻塞真实使用的问题是什么。
 
-1. BUG/repair transport/intake is the active isolated product stage: local formation and crash-safe dispatch accounting are verified, but operator-controlled transport, acknowledgement/reconciliation and maintainer intake are not merged yet.
-2. User Browser Bridge has a bounded local mutation foundation: an explicitly scoped, already-focused, empty non-password HTML Edit can receive one non-replayable text input and be independently verified by fresh UIA RuntimeId plus privacy-safe length/digest evidence. Current real Windows evidence still uses an isolated temporary Edge profile; attachment to an authenticated existing Edge/Chrome session and user-facing permission UX are not product-closed. Never solve this by copying cookies, passwords or profile data.
-3. Managed browser remains deliberately bounded. Generic target discovery, multi-tab/popup/frame authority, downloads/uploads and broad arbitrary interaction are not product-closed.
-4. Browser recovery is strong where a trustworthy durable observed result exists; unknown external mutations without sufficient evidence still fail closed and require bounded re-sense/reclassification work.
-5. Installed update observation and release machinery exist, including public-channel parsing and package verification, but formal N -> N+1 continuity, rollback and signing/trust remain approval-gated product stages.
-6. Unified health remains partial.
-
-## Immediate continuation
-
-1. Finish reading canonical ZN CI `33353573721` for PR #123's main merge and classify only executed-code failures as product failures.
-2. Preserve the transport/intake ownership boundary; do not modify its reserved product files from the promotion/documentation lane.
-3. When the isolated transport/intake PR arrives, review its live base/head/diff, authority boundaries, retry/reconciliation semantics and actual tests before merge.
-4. After that merge, re-evaluate the highest-value product gap from real code and runtime evidence rather than from this queue alone.
-
-No force push, history rewrite, repository credential expansion, updater replacement, rollback, release signing or destructive identity/memory migration is authorized by this handoff.
+测试数量、PR 数、commit 数和 CI 只作为证据，不作为产品成绩本身。

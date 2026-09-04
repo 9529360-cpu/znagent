@@ -101,6 +101,16 @@ class ResidentRpcServer:
             result = self.provider_settings.snapshot()
         elif method == "provider_settings_update":
             result = self.provider_settings.update(params)
+        elif method == "upstream_bug_report_dispatch":
+            report_key = str(params.get("report_key") or "").strip()
+            if not report_key:
+                raise ValueError("upstream_bug_report_dispatch requires report_key")
+            result = self.resident.dispatch_upstream_bug_report(report_key)
+        elif method == "upstream_bug_report_reconcile":
+            report_key = str(params.get("report_key") or "").strip()
+            if not report_key:
+                raise ValueError("upstream_bug_report_reconcile requires report_key")
+            result = self.resident.reconcile_upstream_bug_report(report_key)
         elif method == "work_list":
             result = [
                 self._work_snapshot(snapshot, artifact_limit=1)

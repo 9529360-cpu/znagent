@@ -31,6 +31,14 @@ class ResidentService:
         self.instance_id = instance_id or f"resident-{uuid.uuid4().hex[:12]}"
         self._acquired = False
 
+    def _browser_extension_resource(self):
+        return getattr(self.resident, "user_browser_extension", None)
+
+    def _close_browser_extension_resource(self) -> None:
+        close_extension = getattr(self._browser_extension_resource(), "close", None)
+        if callable(close_extension):
+            close_extension()
+
     def acquire(self) -> None:
         if self._acquired:
             return
@@ -60,15 +68,30 @@ class ResidentService:
                 f"(pid={lease.get('pid')}, host={lease.get('hostname')})"
             )
         self._acquired = True
+        start_extension = getattr(self._browser_extension_resource(), "start", None)
+        if callable(start_extension):
+            try:
+                start_extension()
+            except Exception:
+                self.store.release_resident_lease(self.instance_id)
+                self._acquired = False
+                raise
 
     def heartbeat(self) -> None:
         if not self._acquired:
             raise RuntimeError("resident lease is not acquired")
         if not self.store.heartbeat_resident_lease(self.instance_id):
+            # Browser-tab authority may only exist while this process owns the
+            # canonical Resident lease. Drop it before surfacing lease loss.
+            self._close_browser_extension_resource()
             self._acquired = False
             raise RuntimeError("resident lease was lost")
 
     def release(self) -> None:
+        # Always close browser authorization first. This is intentionally not
+        # conditional on ``_acquired`` because heartbeat loss may already have
+        # cleared the flag.
+        self._close_browser_extension_resource()
         if self._acquired:
             self.store.release_resident_lease(self.instance_id)
             self._acquired = False
