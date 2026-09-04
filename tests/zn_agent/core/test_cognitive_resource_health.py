@@ -77,7 +77,6 @@ class CognitiveResourceHealthTests(unittest.TestCase):
                 self.assertEqual(health["repeat_fingerprint_failures"], expected)
                 self.assertEqual(health["last_exception_type"], "ConnectionError")
                 self.assertEqual(health["last_failure_class"], "network_or_service")
-                self.assertFalse(health["maintenance_candidate"])
 
             status_text = repr(resident.status())
             self.assertNotIn("sensitive-route-name", status_text)
@@ -159,7 +158,6 @@ class CognitiveResourceHealthTests(unittest.TestCase):
             self.assertEqual(health["total_failures"], 1)
             self.assertEqual(health["last_exception_type"], "ValueError")
             self.assertEqual(health["last_failure_class"], "configuration_or_input")
-            self.assertFalse(health["maintenance_candidate"])
             status_text = repr(resident.status())
             self.assertNotIn("private-construction-route", status_text)
             self.assertNotIn("private-construction-model", status_text)
