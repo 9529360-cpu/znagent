@@ -9,6 +9,8 @@ persists them once into the existing WorkItem, and only then enters the mature
 research/write/run/verify loop.
 """
 
+import json
+
 from .broad_goal_completion_resident import BroadGoalCompletionResidentRuntime
 from .cognition import CognitiveIncrement
 from .models import utc_now
@@ -79,6 +81,32 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
         if intake is None or run is None or not run.success:
             return run
         return self._promote_external_completion(event, state, run)
+
+    def _promote_external_completion(self, event, state, run):
+        outcome = super()._promote_external_completion(event, state, run)
+        if outcome is not None:
+            return outcome
+        raw_increment = state.data.get("cognitive_increment")
+        if not isinstance(raw_increment, dict):
+            return None
+        content = str(raw_increment.get("content") or "")
+        structured = decode_structured_cognition_object(content)
+        if structured is None:
+            return None
+        normalized = json.dumps(structured, ensure_ascii=False, separators=(",", ":"))
+        if normalized == content:
+            return None
+        raw_increment = dict(raw_increment)
+        raw_increment["content"] = normalized
+        state.data["cognitive_increment"] = raw_increment
+        integration = state.data.get("cognition_integration")
+        if isinstance(integration, dict):
+            integration = dict(integration)
+            integration["structured_envelope_normalized"] = True
+            state.data["cognition_integration"] = integration
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        return None
 
     def _build_cognition_request(self, event, impasse, required, deliberation=None):
         request = super()._build_cognition_request(event, impasse, required, deliberation)
