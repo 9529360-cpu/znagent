@@ -143,6 +143,32 @@ class _ExtensionBrowserFixture(_IsolatedUserBrowserFixture):
             f"{self.provider} did not expose the browser-extension fixture window in time"
         )
 
+    def activate(self) -> None:
+        """Return only after the exact fixture window owns the next user gesture."""
+
+        super().activate()
+        if not self.hwnd:
+            return
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.GetForegroundWindow.argtypes = []
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        deadline = time.monotonic() + 2.0
+        observed = 0
+        while time.monotonic() < deadline:
+            observed = int(user32.GetForegroundWindow() or 0)
+            if observed == int(self.hwnd):
+                return
+            # Chromium/Edge may briefly surface another top-level window from the
+            # same process while the requested window is activating. Reassert the
+            # exact target, but never synthesize the extension gesture until the
+            # foreground observation proves which HWND will receive it.
+            super().activate()
+            time.sleep(0.02)
+        raise RuntimeError(
+            "extension gesture precondition failed: exact fixture window never became foreground; "
+            f"expected_hwnd={int(self.hwnd)} observed_hwnd={observed}"
+        )
+
 
 def _press_extension_action_shortcut() -> None:
     """Generate the user gesture bound to manifest command `_execute_action`."""
@@ -199,9 +225,6 @@ class WindowsInteractiveUserBrowserExtensionE2ETests(unittest.TestCase):
         resident = None
         service = None
         try:
-            # Establish the authenticated browser session before Resident exists.
-            # The login endpoint sets one HttpOnly cookie and redirects into the
-            # protected account page. ZN receives no cookie/profile material.
             fixture.start()
             deadline = time.monotonic() + 10.0
             while time.monotonic() < deadline:
@@ -274,8 +297,6 @@ class WindowsInteractiveUserBrowserExtensionE2ETests(unittest.TestCase):
                 "ZN task unexpectedly created a new authenticated page request",
             )
 
-            # Independent postcondition path: prove the final text through Windows UIA,
-            # not through the extension/CDP provider that performed the mutation.
             fixture.activate()
             deadline = time.monotonic() + 5.0
             named_after = None
@@ -303,8 +324,6 @@ class WindowsInteractiveUserBrowserExtensionE2ETests(unittest.TestCase):
                     f"textbox state; last_error={last_error!r}"
                 )
 
-            # The extension may inspect the target value locally, but current text is
-            # represented outside it only by bounded length/digest evidence.
             self.assertEqual(text_after.text_sha256, hashlib.sha256(_TEXT.encode("utf-8")).hexdigest())
 
             fixture.activate()
