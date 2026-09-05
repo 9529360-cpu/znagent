@@ -52,11 +52,6 @@ class _RepairingCognition:
                         "path": "probe.py",
                         "content": 'print("READY")\n',
                     },
-                    "acceptance": {
-                        "kind": "text_equals",
-                        "path": "probe.py",
-                        "expected_text": 'print("READY")\n',
-                    },
                 }
             }
         elif self.step_calls == 3:
@@ -92,7 +87,7 @@ class _RepairingCognition:
 
 
 class BroadGoalProtocolRepairTests(unittest.TestCase):
-    def test_contract_mismatch_gets_precise_stateful_retry_and_then_executes(self) -> None:
+    def test_contract_mismatch_gets_compact_stateful_retry_and_then_executes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             workspace = root / "workspace"
@@ -156,12 +151,14 @@ class BroadGoalProtocolRepairTests(unittest.TestCase):
                     repair_question,
                 )
                 self.assertIn(
-                    "write_file requires acceptance.kind=text_equals",
+                    "legacy write_file acceptance must remain exact text_equals",
                     repair_question,
                 )
                 self.assertIn("Previous rejected proposal", repair_question)
                 self.assertIn('"kind": "file_exists"', repair_question)
                 self.assertIn("Do not use markdown fences", repair_question)
+                self.assertIn("omit acceptance entirely", repair_question)
+                self.assertNotIn("expected_text", repair_question.split("Use exactly this currently allowed contract:", 1)[1].split("For run_python", 1)[0])
                 self.assertEqual(
                     (workspace / "probe.py").read_text(encoding="utf-8"),
                     'print("READY")\n',
