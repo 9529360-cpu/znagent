@@ -1,0 +1,108 @@
+name: E2E26 Local Model Debug
+
+on:
+  push:
+    branches:
+      - debug/e2e26-local-model
+  workflow_dispatch:
+
+env:
+  CI: 'true'
+  PYTHONUTF8: '1'
+  PYTHONUNBUFFERED: '1'
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+jobs:
+  smoke:
+    runs-on: [self-hosted, Windows, X64, zn-ci]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare ZN runtime and llama.cpp
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/local-model-venv -ErrorAction SilentlyContinue
+          uv venv .ci/local-model-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\local-model-venv\Scripts\python.exe'
+          uv pip install --python $python runtime/python
+          New-Item -ItemType Directory -Force .ci/llama | Out-Null
+          $zip = Join-Path $env:GITHUB_WORKSPACE '.ci\llama.zip'
+          Invoke-WebRequest -Uri 'https://github.com/ggml-org/llama.cpp/releases/download/b10809/llama-b10809-bin-win-cpu-x64.zip' -OutFile $zip -UseBasicParsing
+          Expand-Archive -Path $zip -DestinationPath .ci/llama -Force
+          $server = Get-ChildItem .ci/llama -Recurse -Filter llama-server.exe | Select-Object -First 1
+          if (-not $server) { throw 'official llama.cpp CPU archive did not contain llama-server.exe' }
+          Write-Host ("ZN_LLAMA_SERVER={0}" -f $server.FullName)
+      - name: Start real local model and invoke through ZN cognition boundary
+        run: |
+          $server = (Get-ChildItem .ci/llama -Recurse -Filter llama-server.exe | Select-Object -First 1).FullName
+          $stdout = Join-Path $env:GITHUB_WORKSPACE '.ci\llama-server.out.log'
+          $stderr = Join-Path $env:GITHUB_WORKSPACE '.ci\llama-server.err.log'
+          $args = @(
+            '-hf', 'Qwen/Qwen2.5-Coder-3B-Instruct-GGUF:Q4_K_M',
+            '--host', '127.0.0.1',
+            '--port', '18080',
+            '-c', '8192',
+            '-n', '1024',
+            '-ngl', '0'
+          )
+          $process = Start-Process -FilePath $server -ArgumentList $args -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          try {
+            $deadline = (Get-Date).AddMinutes(18)
+            $models = $null
+            while ((Get-Date) -lt $deadline) {
+              if ($process.HasExited) {
+                Get-Content $stderr -Tail 100 -ErrorAction SilentlyContinue
+                throw "llama-server exited before model became ready: $($process.ExitCode)"
+              }
+              try {
+                $models = Invoke-RestMethod -Uri 'http://127.0.0.1:18080/v1/models' -Method Get -TimeoutSec 3
+                if (@($models.data).Count -gt 0) { break }
+              } catch {}
+              Start-Sleep -Seconds 3
+            }
+            if (-not $models -or @($models.data).Count -lt 1) {
+              Get-Content $stderr -Tail 100 -ErrorAction SilentlyContinue
+              throw 'real local model did not become ready before deadline'
+            }
+            $env:ZN_LOCAL_MODEL_ID = [string]$models.data[0].id
+            Write-Host ("ZN_LOCAL_MODEL_READY id={0}" -f $env:ZN_LOCAL_MODEL_ID)
+            $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+            $python = Join-Path $env:GITHUB_WORKSPACE '.ci\local-model-venv\Scripts\python.exe'
+            @'
+import json
+import os
+from zn_agent.core.cognitive_resource import OpenAICompatibleCognitiveResource
+from zn_agent.core.models import ModelRoute
+
+route = ModelRoute(
+    route_id="local-real-qwen",
+    provider="custom",
+    model=os.environ["ZN_LOCAL_MODEL_ID"],
+    capabilities={"general": 1.0, "reasoning": 1.0, "coding": 1.0, "language_understanding": 1.0},
+    metadata={"base_url": "http://127.0.0.1:18080/v1", "timeout": 180, "max_tokens": 512, "temperature": 0.0},
+)
+resource = OpenAICompatibleCognitiveResource(route)
+result = resource.invoke(
+    question=(
+        "Before any execution, define the Root acceptance contract. Return ONLY JSON shaped exactly as "
+        "{\"zn_root_acceptance\":{\"criteria\":[\"observable criterion\",\"observable criterion\"]}}. "
+        "Root objective: Build a tiny local reading-list product that is runnable and keeps saved items after restart."
+    ),
+    context="ZN owns execution and final verification; you only define observable success criteria.",
+)
+raw = json.loads(result.text)
+criteria = raw.get("zn_root_acceptance", {}).get("criteria")
+assert isinstance(criteria, list) and len(criteria) >= 2, result.text
+print("ZN_REAL_LOCAL_COGNITION_OK provider=%s model=%s criteria_count=%s" % (result.provider, result.model, len(criteria)))
+'@ | & $python -
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            if ($process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
+          }
