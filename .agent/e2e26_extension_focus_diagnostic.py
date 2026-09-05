@@ -9,13 +9,18 @@ from pathlib import Path
 
 repo_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(repo_root / "tests" / "zn_agent" / "e2e"))
+sys.path.insert(0, str(repo_root / "runtime" / "python"))
 
 import test_windows_interactive_user_browser_extension as extension_test  # noqa: E402
+from zn_agent.core.user_browser_extension_relay import ResidentUserBrowserExtensionRelay  # noqa: E402
 
 
 last_fixture = None
+relay_events = {"authorize_calls": 0, "authorize_success": 0, "revoke_calls": 0}
 original_activate = extension_test._ExtensionBrowserFixture.activate
 original_press = extension_test._press_extension_action_shortcut
+original_authorize = ResidentUserBrowserExtensionRelay.authorize
+original_revoke = ResidentUserBrowserExtensionRelay.revoke
 
 
 def _foreground() -> tuple[int, int]:
@@ -51,10 +56,25 @@ def _modifiers() -> dict[str, bool]:
         "lalt": 0xA4,
         "ralt": 0xA5,
     }
-    return {
-        name: bool(int(user32.GetAsyncKeyState(vk)) & 0x8000)
-        for name, vk in keys.items()
-    }
+    return {name: bool(int(user32.GetAsyncKeyState(vk)) & 0x8000) for name, vk in keys.items()}
+
+
+def diagnostic_authorize(self, *, tab_id, url, title):
+    relay_events["authorize_calls"] += 1
+    try:
+        result = original_authorize(self, tab_id=tab_id, url=url, title=title)
+    except Exception:
+        print("ZN_EXTENSION_RELAY_EVENT=" + json.dumps({**relay_events, "stage": "authorize_error"}, sort_keys=True), flush=True)
+        raise
+    relay_events["authorize_success"] += 1
+    print("ZN_EXTENSION_RELAY_EVENT=" + json.dumps({**relay_events, "stage": "authorize_success"}, sort_keys=True), flush=True)
+    return result
+
+
+def diagnostic_revoke(self, *, tab_id=None):
+    relay_events["revoke_calls"] += 1
+    print("ZN_EXTENSION_RELAY_EVENT=" + json.dumps({**relay_events, "stage": "revoke"}, sort_keys=True), flush=True)
+    return original_revoke(self, tab_id=tab_id)
 
 
 def diagnostic_activate(self):
@@ -93,11 +113,14 @@ def diagnostic_press():
         "foreground_in_browser_family": pid in family,
         "exact_fixture_window_foreground": bool(fixture is not None and hwnd == int(fixture.hwnd)),
         "modifiers": _modifiers(),
+        "relay_events_before_shortcut": dict(relay_events),
     }
     print("ZN_EXTENSION_FOCUS_BEFORE_SHORTCUT=" + json.dumps(evidence, sort_keys=True), flush=True)
     original_press()
 
 
+ResidentUserBrowserExtensionRelay.authorize = diagnostic_authorize
+ResidentUserBrowserExtensionRelay.revoke = diagnostic_revoke
 extension_test._ExtensionBrowserFixture.activate = diagnostic_activate
 extension_test._press_extension_action_shortcut = diagnostic_press
 
@@ -108,4 +131,5 @@ suite.addTest(
     )
 )
 result = unittest.TextTestRunner(verbosity=2).run(suite)
+print("ZN_EXTENSION_RELAY_FINAL=" + json.dumps(relay_events, sort_keys=True), flush=True)
 raise SystemExit(0 if result.wasSuccessful() else 1)
