@@ -40,5 +40,6 @@ jobs:
             tests.zn_agent.core.test_structured_cognition `
             tests.zn_agent.core.test_broad_goal_autonomous_intake `
             tests.zn_agent.core.test_broad_goal_independent_completion_v2 `
+            tests.zn_agent.core.test_broad_goal_protocol_repair `
             tests.zn_agent.core.test_broad_goal_steering_continuity
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

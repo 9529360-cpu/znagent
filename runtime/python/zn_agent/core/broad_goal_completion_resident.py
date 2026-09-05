@@ -28,6 +28,8 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
     """Finish criterion-bound Broad Work only from current-plan execution evidence."""
 
     _MODEL_INVOCATION_TOTAL_KEY = "broad_goal_model_invocations"
+    _PROTOCOL_REPAIR_KEY = "broad_goal_protocol_repair"
+    _MAX_REJECTED_PROTOCOL_CHARS = 12_000
 
     def _promote_external_completion(self, event, state, run):
         result = super()._promote_external_completion(event, state, run)
@@ -54,6 +56,28 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
                 for criterion in item.acceptance_criteria
             )
         ]
+
+        state = self.store.get_working_state()
+        repair = state.data.get(self._PROTOCOL_REPAIR_KEY)
+        if isinstance(repair, dict):
+            request.question = self._build_protocol_repair_question(
+                root,
+                repair,
+                allow_verify=bool(completed_commands),
+            )
+            request.context = {
+                **dict(request.context or {}),
+                "protocol_repair": True,
+                "protocol_repair_kind": str(repair.get("kind") or "unknown"),
+                "root_finish_contract": (
+                    "current-plan-python-verifier-v1"
+                    if completed_commands
+                    else "blocked-until-current-plan-command-evidence"
+                ),
+                "current_plan_completed_command_count": len(completed_commands),
+            }
+            return request
+
         if completed_commands:
             request.question += (
                 " The current plan now has a completed real Terminal execution, so if the runnable result "
@@ -85,6 +109,65 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
         }
         return request
 
+    def _build_protocol_repair_question(
+        self,
+        root: WorkItem,
+        repair: dict[str, Any],
+        *,
+        allow_verify: bool,
+    ) -> str:
+        kind = str(repair.get("kind") or "unknown").strip()
+        error = str(repair.get("error") or "invalid bounded Work protocol").strip()
+        rejected = str(repair.get("content") or "")[: self._MAX_REJECTED_PROTOCOL_CHARS]
+        contracts = {
+            "write_file": (
+                '{"zn_work_step":{"objective":"...","action":{"kind":"write_file",'
+                '"path":"relative/path","content":"..."},"acceptance":{"kind":"text_equals",'
+                '"path":"same relative/path","expected_text":"exact same full text"}}}'
+            ),
+            "run_python": (
+                '{"zn_work_step":{"objective":"...","action":{"kind":"run_python",'
+                '"path":"relative/script.py","args":[]},"acceptance":{"kind":"command",'
+                '"expected_exit_code":0,"output_contains":["optional expected stdout"]}}}'
+            ),
+            "research_page": (
+                '{"zn_work_step":{"objective":"...","action":{"kind":"research_page",'
+                '"url":"https://..."},"acceptance":{"kind":"page_read",'
+                '"url":"exact same https://..."}}}'
+            ),
+            "verify_python": (
+                '{"zn_work_step":{"objective":"...","action":{"kind":"verify_python",'
+                '"path":"relative/app.py","args":[]},"acceptance":{"kind":"root_verified",'
+                '"criteria":["copy every Root acceptance criterion exactly"],"expected_exit_code":0,'
+                '"output_contains":["specific observed output fragment"]}}}'
+            ),
+        }
+        if kind in contracts and (kind != "verify_python" or allow_verify):
+            allowed = contracts[kind]
+        else:
+            names = ["research_page", "write_file", "run_python"]
+            if allow_verify:
+                names.append("verify_python")
+            allowed = " OR ".join(contracts[name] for name in names)
+        verify_note = (
+            "verify_python is allowed because current-plan Terminal evidence exists."
+            if allow_verify
+            else "verify_python/root_verified is not allowed until a normal current-plan Terminal child completes."
+        )
+        return (
+            "Repair the immediately previous bounded ZN Work protocol proposal; do not redo planning or emit "
+            "a summary. Return exactly ONE strict JSON object and nothing else. Do not use markdown fences. "
+            "Inside JSON string values, encode source-code line breaks as \\n and escape quotes/backslashes as JSON "
+            "requires; raw control characters make the object invalid. "
+            f"Validation error: {error}. "
+            f"Previous rejected proposal: {rejected}. "
+            f"Use exactly this currently allowed contract: {allowed}. "
+            "For write_file, acceptance.expected_text must be byte-for-byte identical to action.content and "
+            "acceptance.path must equal action.path. For run_python, target an existing workspace Python file. "
+            f"{verify_note} Root objective: {root.objective}. "
+            f"Root acceptance criteria: {json.dumps(root.acceptance_criteria, ensure_ascii=False)}."
+        )
+
     def _cognition_integration_step(self, event, state, *, readiness, thought=None):
         raw = state.data.get("cognitive_increment")
         root = self._criterion_bound_root(event)
@@ -111,18 +194,36 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
     def _reject_invalid_work_step(self, event, state, increment: CognitiveIncrement):
         self._accept_borrowed_increment(event, state, increment)
         structured = decode_structured_cognition_object(increment.content)
+        kind = self._protocol_attempt_kind(increment.content, structured)
         if structured is None:
+            stripped = str(increment.content or "").strip()
+            if "```" in stripped:
+                detail = "markdown fences are not allowed around the JSON object"
+            else:
+                try:
+                    json.loads(stripped)
+                except json.JSONDecodeError as exc:
+                    detail = (
+                        f"JSON decode error {exc.msg!r} at line {exc.lineno} column {exc.colno}; "
+                        "escape source-code newlines and other control characters inside JSON strings"
+                    )
+                except (TypeError, ValueError):
+                    detail = "the response is not one complete JSON object"
+                else:
+                    detail = "the response is not one complete zn_work_step JSON object"
             failure = (
-                "ZN rejected the proposed Broad Work step because it looked like the zn_work_step protocol "
-                "but was not exactly one complete valid JSON object. Return one strict zn_work_step JSON object "
-                "with no prose, no extra fences, and an action/acceptance pair from the currently allowed "
-                "research/write/run/verification contracts"
+                "ZN rejected the proposed Broad Work step: " + detail + ". Return one strict zn_work_step "
+                "JSON object with no prose or markdown fences"
             )
         else:
-            failure = (
-                "ZN rejected the proposed Broad Work step because it did not match any bounded "
-                "current-plan research/write/run/verification contract"
+            failure = "ZN rejected the proposed Broad Work step: " + self._structured_contract_error(
+                event, structured
             )
+        state.data[self._PROTOCOL_REPAIR_KEY] = {
+            "error": failure,
+            "kind": kind,
+            "content": str(increment.content or "")[: self._MAX_REJECTED_PROTOCOL_CHARS],
+        }
         state.data["local_failure"] = failure
         investigation = self.investigator.current(event.event_id)
         if investigation is not None and investigation.status == "resolved_external":
@@ -145,6 +246,77 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
         self._sync_execution_context(event, state)
         self.store.save_working_state(state)
         return None
+
+    @staticmethod
+    def _protocol_attempt_kind(content: str, structured: dict[str, Any] | None) -> str:
+        if isinstance(structured, dict):
+            step = structured.get("zn_work_step")
+            if isinstance(step, dict):
+                action = step.get("action")
+                if isinstance(action, dict):
+                    kind = str(action.get("kind") or "").strip()
+                    if kind:
+                        return kind
+        raw = str(content or "")
+        for kind in ("write_file", "run_python", "research_page", "verify_python"):
+            if kind in raw:
+                return kind
+        return "unknown"
+
+    def _structured_contract_error(self, event, structured: dict[str, Any]) -> str:
+        if set(structured) != {"zn_work_step"}:
+            return "top level must contain only the zn_work_step key"
+        step = structured.get("zn_work_step")
+        if not isinstance(step, dict):
+            return "zn_work_step must be an object"
+        objective = " ".join(str(step.get("objective") or "").strip().split())
+        if not objective or len(objective) > 600:
+            return "objective must be non-empty and at most 600 characters"
+        action = step.get("action")
+        acceptance = step.get("acceptance")
+        if not isinstance(action, dict) or not isinstance(acceptance, dict):
+            return "action and acceptance must both be JSON objects"
+        kind = str(action.get("kind") or "").strip()
+        acceptance_kind = str(acceptance.get("kind") or "").strip()
+        if kind == "write_file":
+            if acceptance_kind != "text_equals":
+                return "write_file requires acceptance.kind=text_equals"
+            action_path = str(action.get("path") or "").strip()
+            acceptance_path = str(acceptance.get("path") or "").strip()
+            if not action_path or action_path != acceptance_path:
+                return "write_file requires acceptance.path to exactly equal action.path"
+            body = action.get("content")
+            expected = acceptance.get("expected_text")
+            if not isinstance(body, str):
+                return "write_file requires action.content to be a JSON string"
+            if not isinstance(expected, str) or expected != body:
+                return "write_file requires acceptance.expected_text to exactly equal action.content"
+            return "write_file path/content did not satisfy the attached-workspace safety contract"
+        if kind == "run_python":
+            if acceptance_kind != "command":
+                return "run_python requires acceptance.kind=command"
+            if not str(action.get("path") or "").strip():
+                return "run_python requires action.path naming an existing workspace .py file"
+            return "run_python must target an existing safe workspace .py file with valid args/command acceptance"
+        if kind == "research_page":
+            if acceptance_kind != "page_read":
+                return "research_page requires acceptance.kind=page_read"
+            if str(action.get("url") or "").strip() != str(acceptance.get("url") or "").strip():
+                return "research_page requires acceptance.url to exactly equal action.url"
+            return "research_page requires a valid http/https URL allowed by the managed browser contract"
+        if kind == "verify_python":
+            if acceptance_kind != "root_verified":
+                return "verify_python requires acceptance.kind=root_verified"
+            root = self._criterion_bound_root(event)
+            criteria = acceptance.get("criteria")
+            if root is not None and criteria != list(root.acceptance_criteria):
+                return "verify_python requires acceptance.criteria to copy every current Root criterion exactly"
+            return "verify_python requires prior current-plan Terminal evidence, an existing .py file, and non-empty output_contains"
+        return "action.kind must be one of the currently advertised bounded Work actions"
+
+    def _accept_borrowed_increment(self, event, state, increment: CognitiveIncrement) -> None:
+        state.data.pop(self._PROTOCOL_REPAIR_KEY, None)
+        super()._accept_borrowed_increment(event, state, increment)
 
     def _begin_root_verification(self, event, state, root, increment, proposal):
         self._accept_borrowed_increment(event, state, increment)
