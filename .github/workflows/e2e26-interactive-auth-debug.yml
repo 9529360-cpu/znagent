@@ -19,7 +19,7 @@ defaults:
 jobs:
   diagnostic:
     runs-on: [self-hosted, Windows, X64, zn-interactive]
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
     steps:
@@ -35,7 +35,7 @@ jobs:
           uv venv .ci/interactive-debug-venv --python 3.12
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-debug-venv\Scripts\python.exe'
           uv pip install --python $python "runtime/python[browser]"
-      - name: Run exact pre-extension product sequence then diagnostic
+      - name: Run exact pre-extension product sequence then stress diagnostic
         run: |
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-debug-venv\Scripts\python.exe'
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
@@ -52,5 +52,8 @@ jobs:
             & $python $test.FullName -v
             if ($LASTEXITCODE -ne 0) { throw "Pre-extension module failed: $($test.Name)" }
           }
-          & $python .agent/e2e26_extension_focus_diagnostic.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          1..5 | ForEach-Object {
+            Write-Host "=== extension authorization diagnostic attempt: $_ ==="
+            & $python .agent/e2e26_extension_focus_diagnostic.py
+            if ($LASTEXITCODE -ne 0) { throw "Extension authorization diagnostic failed on attempt $_" }
+          }
