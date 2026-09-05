@@ -57,6 +57,67 @@ class EvidenceBoundSteerableWorkLedger(SteerableWorkLedger):
         item.updated_at = utc_now()
         self._save_item(item)
 
+    def initialize_root_acceptance(
+        self,
+        event_id: str,
+        *,
+        acceptance_criteria: list[str],
+    ) -> WorkItem:
+        """Define acceptance exactly once for one active criteria-less Root.
+
+        Generic WorkItem saves deliberately keep acceptance criteria immutable.
+        Broad-goal intake therefore uses this one narrow transition from the
+        creation-time empty vector to a non-empty contract. The Work ledger owns
+        the mutation and revalidates Root identity, active run, and current plan.
+        """
+
+        criteria = [str(item) for item in acceptance_criteria]
+        if not criteria or any(not item.strip() for item in criteria):
+            raise ValueError("autonomous Root acceptance requires non-empty criteria")
+
+        root = self.work_item_for_event(event_id)
+        run = self.get_run(event_id)
+        if root is None or run is None:
+            raise ValueError("autonomous Root acceptance requires a durable Work run")
+        if root.parent_work_item_id is not None:
+            raise ValueError("autonomous Root acceptance only applies to Root Work")
+        current_version = self.plan_version(root.work_thread_id)
+        if (
+            run.ledger_state != "active"
+            or run.thread_id != root.work_thread_id
+            or root.plan_version != current_version
+            or self._run_plan_version(event_id) != current_version
+        ):
+            raise ValueError("autonomous Root acceptance rejected stale Work")
+        if root.acceptance_criteria:
+            if list(root.acceptance_criteria) == criteria:
+                return root
+            raise ValueError("autonomous Root acceptance is immutable once defined")
+
+        criteria_json = json.dumps(criteria, ensure_ascii=False, separators=(",", ":"))
+        now = utc_now()
+        with self._lock, closing(self._connect()) as conn:
+            updated = conn.execute(
+                "UPDATE work_items SET acceptance_criteria_json=?,updated_at=? "
+                "WHERE work_item_id=? AND work_thread_id=? AND plan_version=? "
+                "AND parent_work_item_id IS NULL AND acceptance_criteria_json='[]'",
+                (
+                    criteria_json,
+                    now,
+                    root.work_item_id,
+                    root.work_thread_id,
+                    current_version,
+                ),
+            )
+            conn.commit()
+        if updated.rowcount not in {0, 1}:
+            raise RuntimeError("autonomous Root acceptance changed an unexpected number of rows")
+
+        persisted = self.work_item_for_event(event_id)
+        if persisted is None or list(persisted.acceptance_criteria) != criteria:
+            raise RuntimeError("autonomous Root acceptance did not persist the exact criteria")
+        return persisted
+
     def recover_steered_root_acceptance(self, event) -> WorkItem | None:
         """Durably recover criteria for the exact next Root after same-Work steering.
 
