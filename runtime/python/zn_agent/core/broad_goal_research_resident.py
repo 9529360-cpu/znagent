@@ -27,6 +27,62 @@ class BroadGoalResearchResidentRuntime(BroadGoalRecoverableCodingResidentRuntime
     _BROAD_RESEARCH_HISTORY_KEY = "broad_goal_research_history"
     _MAX_RESEARCH_EVIDENCE_TEXT = 8192
 
+    def _criterion_bound_root(self, event) -> WorkItem | None:
+        root = super()._criterion_bound_root(event)
+        if root is not None:
+            return root
+
+        # Mature Work steering creates a fresh Root for the new plan and keeps
+        # the old Root/results as history. Its generic Root does not carry
+        # product-specific acceptance criteria. For Broad Work only, recover the
+        # criteria deterministically from the immediately superseded Root. This
+        # is restart-safe because every identity/version used here is durable.
+        thread_id = str(event.payload.get("work_thread_id") or "").strip()
+        item_id = str(event.payload.get("work_item_id") or "").strip()
+        steering = event.payload.get("work_steering")
+        if (
+            not thread_id
+            or not item_id
+            or not event.payload.get("workspace_path")
+            or not isinstance(steering, dict)
+            or str(steering.get("mode") or "") != "active_steer"
+        ):
+            return None
+        candidate = self.work_ledger.work_item_for_event(event.event_id)
+        if (
+            candidate is None
+            or candidate.work_item_id != item_id
+            or candidate.parent_work_item_id is not None
+            or candidate.acceptance_criteria
+        ):
+            return None
+        current_version = self.work_ledger.plan_version(thread_id)
+        try:
+            declared_current = int(steering.get("plan_version"))
+            previous_version = int(steering.get("previous_plan_version"))
+        except (TypeError, ValueError):
+            return None
+        if (
+            candidate.plan_version != current_version
+            or declared_current != current_version
+            or previous_version + 1 != current_version
+        ):
+            return None
+        previous_event_id = str(steering.get("previous_event_id") or "").strip()
+        previous = self.work_ledger.work_item_for_event(previous_event_id)
+        if (
+            previous is None
+            or previous.work_thread_id != thread_id
+            or previous.parent_work_item_id is not None
+            or previous.plan_version != previous_version
+            or not previous.acceptance_criteria
+        ):
+            return None
+        candidate.acceptance_criteria = list(previous.acceptance_criteria)
+        candidate.updated_at = utc_now()
+        self.work_ledger._save_item(candidate)
+        return candidate
+
     def _advance_event_step(
         self,
         event,
@@ -76,6 +132,22 @@ class BroadGoalResearchResidentRuntime(BroadGoalRecoverableCodingResidentRuntime
                 }
             )
         research.reverse()
+
+        historical_items = [
+            item
+            for item in self.work_ledger.list_work_items(root.work_thread_id, limit=256)
+            if item.status == "completed" and item.plan_version < root.plan_version
+        ][-8:]
+        historical = [
+            {
+                "plan_version": item.plan_version,
+                "objective": item.objective[:300],
+                "acceptance": list(item.acceptance_criteria)[:4],
+                "result": str(item.result or "")[:900],
+            }
+            for item in historical_items
+        ]
+
         request.question += (
             " A third allowed V1 form is real managed-browser research: "
             '{"zn_work_step":{"objective":"...","action":{"kind":"research_page",'
@@ -85,12 +157,17 @@ class BroadGoalResearchResidentRuntime(BroadGoalRecoverableCodingResidentRuntime
             "must match exactly. Do not invent page contents: ZN will navigate and read the page. "
             "Prefer authoritative primary sources. "
             "Fresh managed-browser research evidence already collected: "
-            f"{json.dumps(research, ensure_ascii=False)}."
+            f"{json.dumps(research, ensure_ascii=False)}. "
+            "Historical completed evidence from superseded plans is context only and NEVER counts as "
+            "acceptance for the current plan; use it to avoid repeating already-observed facts or workspace "
+            "work, then freshly verify anything that must advance the current plan: "
+            f"{json.dumps(historical, ensure_ascii=False)}."
         )
         request.context = {
             **dict(request.context or {}),
             "rolling_step_contract": "research-page-or-write-file-or-run-python-v1",
             "research_evidence_count": len(history),
+            "historical_prior_plan_evidence_count": len(historical),
         }
         return request
 
