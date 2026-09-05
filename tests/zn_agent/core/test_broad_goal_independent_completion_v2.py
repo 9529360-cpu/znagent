@@ -191,9 +191,16 @@ class BroadGoalIndependentCompletionV2Tests(unittest.TestCase):
                     "Final Root verification is NOT available yet",
                     cognition.step_questions[0],
                 )
-                self.assertNotIn("verify_python", cognition.step_questions[0])
+                self.assertNotIn(
+                    '"action":{"kind":"verify_python"',
+                    cognition.step_questions[0],
+                )
                 self.assertIn(
                     "current plan now has a completed real Terminal execution",
+                    cognition.step_questions[-1],
+                )
+                self.assertIn(
+                    '"action":{"kind":"verify_python"',
                     cognition.step_questions[-1],
                 )
 
