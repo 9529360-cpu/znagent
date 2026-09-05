@@ -247,7 +247,7 @@ def build_resident_runtime(
     credential_store: CredentialStore | None = None,
 ):
     """Build the normal product Resident around the ZN-owned kernel."""
-    from .broad_goal_recoverable_resident import BroadGoalRecoverableCodingResidentRuntime
+    from .broad_goal_research_resident import BroadGoalResearchResidentRuntime
     from .budget import CognitiveBudgetManager
 
     effective_config = config if config is not None else load_zn_config()
@@ -268,7 +268,7 @@ def build_resident_runtime(
         ),
     )
 
-    return BroadGoalRecoverableCodingResidentRuntime(
+    return BroadGoalResearchResidentRuntime(
         kernel=kernel,
         budget=budget,
     )
