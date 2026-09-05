@@ -1,0 +1,41 @@
+name: E2E26 Autonomous Intake Debug
+
+on:
+  push:
+    branches:
+      - debug/e2e26-autonomous-intake
+  workflow_dispatch:
+
+env:
+  CI: 'true'
+  TZ: UTC
+  PYTHONUTF8: '1'
+  PYTHONUNBUFFERED: '1'
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+jobs:
+  debug:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare runtime
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/autonomous-intake-venv -ErrorAction SilentlyContinue
+          uv venv .ci/autonomous-intake-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\autonomous-intake-venv\Scripts\python.exe'
+          uv pip install --python $python runtime/python
+      - name: Run autonomous broad goal intake regressions
+        run: |
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\autonomous-intake-venv\Scripts\python.exe'
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          & $python -m unittest tests.zn_agent.core.test_broad_goal_autonomous_intake -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
