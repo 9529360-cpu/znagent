@@ -27,6 +27,17 @@ class BroadGoalResearchResidentRuntime(BroadGoalRecoverableCodingResidentRuntime
     _BROAD_RESEARCH_HISTORY_KEY = "broad_goal_research_history"
     _MAX_RESEARCH_EVIDENCE_TEXT = 8192
 
+    def _criterion_bound_root(self, event) -> WorkItem | None:
+        root = super()._criterion_bound_root(event)
+        if root is not None:
+            return root
+        recover = getattr(self.work_ledger, "recover_steered_root_acceptance", None)
+        if callable(recover):
+            recovered = recover(event)
+            if recovered is not None:
+                return super()._criterion_bound_root(event)
+        return None
+
     def _advance_event_step(
         self,
         event,
@@ -76,6 +87,37 @@ class BroadGoalResearchResidentRuntime(BroadGoalRecoverableCodingResidentRuntime
                 }
             )
         research.reverse()
+
+        historical_items = [
+            item
+            for item in self.work_ledger.list_work_items(root.work_thread_id, limit=256)
+            if item.status == "completed" and item.plan_version < root.plan_version
+        ][-8:]
+        historical = [
+            {
+                "plan_version": item.plan_version,
+                "objective": item.objective[:300],
+                "acceptance": list(item.acceptance_criteria)[:4],
+                "result": str(item.result or "")[:900],
+            }
+            for item in historical_items
+        ]
+        steering = event.payload.get("work_steering")
+        previous_root_context = None
+        if isinstance(steering, dict) and str(steering.get("mode") or "") == "active_steer":
+            previous_event_id = str(steering.get("previous_event_id") or "").strip()
+            previous = self.work_ledger.work_item_for_event(previous_event_id)
+            if (
+                previous is not None
+                and previous.work_thread_id == root.work_thread_id
+                and previous.parent_work_item_id is None
+                and previous.plan_version < root.plan_version
+            ):
+                previous_root_context = {
+                    "plan_version": previous.plan_version,
+                    "objective": previous.objective[:1200],
+                }
+
         request.question += (
             " A third allowed V1 form is real managed-browser research: "
             '{"zn_work_step":{"objective":"...","action":{"kind":"research_page",'
@@ -85,12 +127,22 @@ class BroadGoalResearchResidentRuntime(BroadGoalRecoverableCodingResidentRuntime
             "must match exactly. Do not invent page contents: ZN will navigate and read the page. "
             "Prefer authoritative primary sources. "
             "Fresh managed-browser research evidence already collected: "
-            f"{json.dumps(research, ensure_ascii=False)}."
+            f"{json.dumps(research, ensure_ascii=False)}. "
+            "The immediately superseded Root objective is historical task context only; preserve its "
+            "product subject while obeying the user's current steering, and never treat the old objective "
+            "as current-plan acceptance evidence: "
+            f"{json.dumps(previous_root_context, ensure_ascii=False)}. "
+            "Historical completed evidence from superseded plans is context only and NEVER counts as "
+            "acceptance for the current plan; use it to avoid repeating already-observed facts or workspace "
+            "work, then freshly verify anything that must advance the current plan: "
+            f"{json.dumps(historical, ensure_ascii=False)}."
         )
         request.context = {
             **dict(request.context or {}),
             "rolling_step_contract": "research-page-or-write-file-or-run-python-v1",
             "research_evidence_count": len(history),
+            "historical_prior_plan_evidence_count": len(historical),
+            "previous_root_context": previous_root_context,
         }
         return request
 
