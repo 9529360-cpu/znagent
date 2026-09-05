@@ -1,0 +1,44 @@
+name: E2E26 Model Probe
+
+on:
+  push:
+    branches:
+      - debug/e2e26-model-probe
+  workflow_dispatch:
+
+env:
+  CI: 'true'
+  PYTHONUTF8: '1'
+  PYTHONUNBUFFERED: '1'
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+jobs:
+  probe:
+    runs-on: [self-hosted, Windows, X64, zn-ci]
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v7
+      - name: Report provider capability without secrets
+        run: |
+          $names = @('OPENAI_API_KEY','ANTHROPIC_API_KEY','OPENROUTER_API_KEY','DEEPSEEK_API_KEY','GEMINI_API_KEY')
+          foreach ($name in $names) {
+            $value = [Environment]::GetEnvironmentVariable($name)
+            Write-Host ("ZN_MODEL_ENV {0}={1}" -f $name, (-not [string]::IsNullOrWhiteSpace($value)))
+          }
+          $targets = @(
+            @{ Name='ollama'; Url='http://127.0.0.1:11434/v1/models' },
+            @{ Name='lmstudio'; Url='http://127.0.0.1:1234/v1/models' },
+            @{ Name='vllm'; Url='http://127.0.0.1:8000/v1/models' }
+          )
+          foreach ($target in $targets) {
+            try {
+              $response = Invoke-RestMethod -Uri $target.Url -Method Get -TimeoutSec 2
+              $models = @($response.data | ForEach-Object { [string]$_.id } | Where-Object { $_ } | Select-Object -First 8)
+              Write-Host ("ZN_LOCAL_MODEL {0}=true count={1} models={2}" -f $target.Name, $models.Count, ($models -join ','))
+            } catch {
+              Write-Host ("ZN_LOCAL_MODEL {0}=false" -f $target.Name)
+            }
+          }
