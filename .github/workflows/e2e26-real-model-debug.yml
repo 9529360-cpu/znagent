@@ -6,6 +6,10 @@ on:
       - debug/e2e26-structured-json
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CI: 'true'
   PYTHONUTF8: '1'
