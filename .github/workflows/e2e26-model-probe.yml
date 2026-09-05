@@ -18,42 +18,60 @@ defaults:
 jobs:
   probe:
     runs-on: [self-hosted, Windows, X64, zn-ci]
-    timeout-minutes: 6
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v6
         with:
           version: '0.11.6'
           enable-cache: false
-      - name: Prepare runtime
+      - name: Prepare runtime and llama.cpp
         run: |
           uv python install 3.12
           Remove-Item -Recurse -Force .ci/model-probe-venv -ErrorAction SilentlyContinue
           uv venv .ci/model-probe-venv --python 3.12
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\model-probe-venv\Scripts\python.exe'
           uv pip install --python $python runtime/python
-      - name: Report provider capability without secrets
-        run: |
-          $names = @('OPENAI_API_KEY','ANTHROPIC_API_KEY','OPENROUTER_API_KEY','DEEPSEEK_API_KEY','GEMINI_API_KEY')
-          foreach ($name in $names) {
-            $value = [Environment]::GetEnvironmentVariable($name)
-            Write-Host ("ZN_MODEL_ENV {0}={1}" -f $name, (-not [string]::IsNullOrWhiteSpace($value)))
+          New-Item -ItemType Directory -Force .ci/llama | Out-Null
+          $zip = Join-Path $env:GITHUB_WORKSPACE '.ci\llama.zip'
+          Invoke-WebRequest -Uri 'https://github.com/ggml-org/llama.cpp/releases/download/b10809/llama-b10809-bin-win-cpu-x64.zip' -OutFile $zip -UseBasicParsing
+          Expand-Archive -Path $zip -DestinationPath .ci/llama -Force
+          if (-not (Get-ChildItem .ci/llama -Recurse -Filter llama-server.exe | Select-Object -First 1)) {
+            throw 'official llama.cpp CPU archive did not contain llama-server.exe'
           }
-          $targets = @(
-            @{ Name='ollama'; Url='http://127.0.0.1:11434/v1/models' },
-            @{ Name='lmstudio'; Url='http://127.0.0.1:1234/v1/models' },
-            @{ Name='vllm'; Url='http://127.0.0.1:8000/v1/models' }
-          )
-          foreach ($target in $targets) {
-            try {
-              $response = Invoke-RestMethod -Uri $target.Url -Method Get -TimeoutSec 2
-              $models = @($response.data | ForEach-Object { [string]$_.id } | Where-Object { $_ } | Select-Object -First 8)
-              Write-Host ("ZN_LOCAL_MODEL {0}=true count={1} models={2}" -f $target.Name, $models.Count, ($models -join ','))
-            } catch {
-              Write-Host ("ZN_LOCAL_MODEL {0}=false" -f $target.Name)
+      - name: Start Qwen coder and invoke through ZN cognition boundary
+        run: |
+          $server = (Get-ChildItem .ci/llama -Recurse -Filter llama-server.exe | Select-Object -First 1).FullName
+          $stdout = Join-Path $env:GITHUB_WORKSPACE '.ci\llama-server.out.log'
+          $stderr = Join-Path $env:GITHUB_WORKSPACE '.ci\llama-server.err.log'
+          $arguments = '-hf Qwen/Qwen2.5-Coder-3B-Instruct-GGUF:Q4_K_M --host 127.0.0.1 --port 18080 -c 8192 -n 1024 -ngl 0'
+          $process = Start-Process -FilePath $server -ArgumentList $arguments -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          try {
+            $deadline = (Get-Date).AddMinutes(18)
+            $models = $null
+            while ((Get-Date) -lt $deadline) {
+              if ($process.HasExited) {
+                Get-Content $stderr -Tail 120 -ErrorAction SilentlyContinue
+                throw "llama-server exited before model became ready: $($process.ExitCode)"
+              }
+              try {
+                $models = Invoke-RestMethod -Uri 'http://127.0.0.1:18080/v1/models' -Method Get -TimeoutSec 3
+                if (@($models.data).Count -gt 0) { break }
+              } catch {}
+              Start-Sleep -Seconds 3
+            }
+            if (-not $models -or @($models.data).Count -lt 1) {
+              Get-Content $stderr -Tail 120 -ErrorAction SilentlyContinue
+              throw 'real local model did not become ready before deadline'
+            }
+            $env:ZN_LOCAL_MODEL_ID = [string]$models.data[0].id
+            Write-Host ("ZN_LOCAL_MODEL_READY id={0}" -f $env:ZN_LOCAL_MODEL_ID)
+            $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+            $python = Join-Path $env:GITHUB_WORKSPACE '.ci\model-probe-venv\Scripts\python.exe'
+            & $python .agent/e2e26_local_model_smoke.py
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            if ($process -and -not $process.HasExited) {
+              Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
             }
           }
-          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\model-probe-venv\Scripts\python.exe'
-          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
-          & $python -c "from zn_agent.core.config import load_zn_config; from zn_agent.core.provider_bridge import build_zn_cognitive_resource_plan; p=build_zn_cognitive_resource_plan(load_zn_config()); print('ZN_CONFIGURED_MODEL available=%s routes=%s' % (p.available, [(r.provider, r.model) for r in p.routes]))"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
