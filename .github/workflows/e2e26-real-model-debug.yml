@@ -54,6 +54,7 @@ jobs:
           $server = (Get-ChildItem .ci/llama -Recurse -Filter llama-server.exe | Select-Object -First 1).FullName
           $stdout = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e26-llama.out.log'
           $stderr = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e26-llama.err.log'
+          $testLog = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e26-unittest.log'
           $arguments = '-hf Qwen/Qwen2.5-Coder-3B-Instruct-GGUF:Q4_K_M --host 127.0.0.1 --port 18080 -c 16384 -n 4096 -ngl 0'
           $process = Start-Process -FilePath $server -ArgumentList $arguments -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
           try {
@@ -99,8 +100,9 @@ jobs:
             $env:ZN_E2E26_REAL_MODEL = '1'
             $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
             $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e26-real-venv\Scripts\python.exe'
-            & $python -m unittest tests.zn_agent.e2e.test_e2e26_autonomous_accounting -v
+            & $python -m unittest tests.zn_agent.e2e.test_e2e26_autonomous_accounting -v *> $testLog
             $code = $LASTEXITCODE
+            Get-Content $testLog -ErrorAction SilentlyContinue
             if ($code -ne 0) {
               Write-Host '--- llama.cpp stderr tail ---'
               Get-Content $stderr -Tail 200 -ErrorAction SilentlyContinue
@@ -111,3 +113,14 @@ jobs:
               Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
             }
           }
+      - name: Upload E2E26 diagnostic logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e26-real-model-diagnostics
+          path: |
+            .ci/e2e26-unittest.log
+            .ci/e2e26-llama.out.log
+            .ci/e2e26-llama.err.log
+          if-no-files-found: warn
+          retention-days: 5
