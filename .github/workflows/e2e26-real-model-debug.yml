@@ -77,23 +77,24 @@ jobs:
             $modelId = [string]$models.data[0].id
             Write-Host ("ZN_E2E26_REAL_MODEL_READY id={0}" -f $modelId)
             $config = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e26-config.yaml'
-            @"
-model:
-  provider: custom
-  model: "$modelId"
-  base_url: http://127.0.0.1:18080/v1
-  timeout: 180
-  temperature: 0
-  max_tokens: 4096
-  extra_body:
-    response_format:
-      type: json_object
-zn_kernel:
-  max_attempts: 1
-zn_resident:
-  normal_model_calls: 8
-  high_risk_model_calls: 8
-"@ | Set-Content -Path $config -Encoding UTF8
+            $configLines = @(
+              'model:',
+              '  provider: custom',
+              ('  model: "{0}"' -f $modelId),
+              '  base_url: http://127.0.0.1:18080/v1',
+              '  timeout: 180',
+              '  temperature: 0',
+              '  max_tokens: 4096',
+              '  extra_body:',
+              '    response_format:',
+              '      type: json_object',
+              'zn_kernel:',
+              '  max_attempts: 1',
+              'zn_resident:',
+              '  normal_model_calls: 8',
+              '  high_risk_model_calls: 8'
+            )
+            Set-Content -Path $config -Value $configLines -Encoding UTF8
             $env:ZN_CONFIG_PATH = $config
             $env:ZN_E2E26_REAL_MODEL = '1'
             $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
