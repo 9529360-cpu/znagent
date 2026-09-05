@@ -18,9 +18,20 @@ defaults:
 jobs:
   probe:
     runs-on: [self-hosted, Windows, X64, zn-ci]
-    timeout-minutes: 4
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare runtime
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/model-probe-venv -ErrorAction SilentlyContinue
+          uv venv .ci/model-probe-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\model-probe-venv\Scripts\python.exe'
+          uv pip install --python $python runtime/python
       - name: Report provider capability without secrets
         run: |
           $names = @('OPENAI_API_KEY','ANTHROPIC_API_KEY','OPENROUTER_API_KEY','DEEPSEEK_API_KEY','GEMINI_API_KEY')
@@ -42,3 +53,7 @@ jobs:
               Write-Host ("ZN_LOCAL_MODEL {0}=false" -f $target.Name)
             }
           }
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\model-probe-venv\Scripts\python.exe'
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          & $python -c "from zn_agent.core.config import load_zn_config; from zn_agent.core.provider_bridge import build_zn_cognitive_resource_plan; p=build_zn_cognitive_resource_plan(load_zn_config()); print('ZN_CONFIGURED_MODEL available=%s routes=%s' % (p.available, [(r.provider, r.model) for r in p.routes]))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
