@@ -15,6 +15,7 @@ from zn_agent.core.work_restore_control import RestoreAwareWorkControl
 
 
 STEERING = "登录先不要做，界面保持简单，先确保新增收支和本地保存能用。"
+ORIGINAL_OBJECTIVE = "开发一个本地小产品，先推进当前计划。"
 CRITERIA = [
     "新增收入和支出能通过真实运行路径写入本地数据",
     "重启后的新进程能读回已保存记录",
@@ -77,7 +78,7 @@ class BroadGoalSteeringContinuityTests(unittest.TestCase):
             ledger.attach_workspace("product", workspace, name="Product Workspace")
             _, old_event = ledger.start(
                 "product",
-                "开发一个本地小产品，先推进当前计划。",
+                ORIGINAL_OBJECTIVE,
                 payload={"model_policy": "on_demand"},
                 acceptance_criteria=CRITERIA,
             )
@@ -143,6 +144,8 @@ class BroadGoalSteeringContinuityTests(unittest.TestCase):
                 self.assertTrue(cognition.step_questions)
                 question = cognition.step_questions[-1]
                 self.assertIn(STEERING, question)
+                self.assertIn(ORIGINAL_OBJECTIVE, question)
+                self.assertIn("immediately superseded Root objective is historical task context only", question)
                 self.assertIn("LOCAL-FIRST-HISTORICAL-EVIDENCE", question)
                 self.assertIn("Historical completed evidence from superseded plans is context only", question)
                 self.assertIn("NEVER counts as acceptance for the current plan", question)
