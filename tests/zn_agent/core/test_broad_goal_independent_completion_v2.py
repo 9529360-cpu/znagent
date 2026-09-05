@@ -17,9 +17,16 @@ from zn_agent.core.work_restore_control import RestoreAwareWorkControl
 class _CompletionCognition:
     _BROAD_MARKER = "You are a bounded coding/reasoning resource assisting one durable ZN Work."
 
-    def __init__(self, criteria: list[str], *, weaken_final: bool = False) -> None:
+    def __init__(
+        self,
+        criteria: list[str],
+        *,
+        weaken_final: bool = False,
+        malformed_final: bool = False,
+    ) -> None:
         self.criteria = criteria
         self.weaken_final = weaken_final
+        self.malformed_final = malformed_final
         self.step_calls = 0
         self.step_questions: list[str] = []
 
@@ -48,6 +55,7 @@ class _CompletionCognition:
                     },
                 }
             }
+            text = json.dumps(proposal)
         elif self.step_calls == 2:
             proposal = {
                 "zn_work_step": {
@@ -60,6 +68,22 @@ class _CompletionCognition:
                     },
                 }
             }
+            text = json.dumps(proposal)
+        elif self.malformed_final:
+            text = """```json
+{
+  \"zn_work_step\": {
+    \"objective\": \"independently verify the runnable artifact\",
+    \"action\": {\"kind\": \"verify_python\", \"path\": \"probe.py\", \"args\": []},
+    \"acceptance\": {
+      \"kind\": \"root_verified\",
+      \"criteria\": [\"copy every Root acceptance criterion exactly\", \"output_contains\": [\"READY\"]],
+      \"expected_exit_code\": 0,
+      \"output_contains\": [\"READY\"]
+    }
+  }
+}
+```"""
         else:
             final_criteria = ["weakened criterion"] if self.weaken_final else list(self.criteria)
             proposal = {
@@ -74,8 +98,9 @@ class _CompletionCognition:
                     },
                 }
             }
+            text = json.dumps(proposal)
         return CognitiveIncrement(
-            text=json.dumps(proposal),
+            text=text,
             provider="fixture",
             model="completion-fixture",
         )
@@ -105,7 +130,13 @@ class BroadGoalIndependentCompletionV2Tests(unittest.TestCase):
             resource_status={"available": True, "error": None},
         )
 
-    def _start(self, root: Path, *, weaken_final: bool = False):
+    def _start(
+        self,
+        root: Path,
+        *,
+        weaken_final: bool = False,
+        malformed_final: bool = False,
+    ):
         criteria = [
             "a runnable artifact exists in the workspace",
             "a fresh process demonstrates the expected READY behavior",
@@ -117,7 +148,11 @@ class BroadGoalIndependentCompletionV2Tests(unittest.TestCase):
             kernel=kernel,
             budget=CognitiveBudgetManager(),
         )
-        cognition = _CompletionCognition(criteria, weaken_final=weaken_final)
+        cognition = _CompletionCognition(
+            criteria,
+            weaken_final=weaken_final,
+            malformed_final=malformed_final,
+        )
         self._configure(resident, cognition)
         control = RestoreAwareWorkControl(RecoveryBoundedWorkLedger(resident))
         ledger = control.ledger
@@ -151,6 +186,15 @@ class BroadGoalIndependentCompletionV2Tests(unittest.TestCase):
                 self.assertEqual(
                     (workspace / "probe.py").read_text(encoding="utf-8"),
                     'print("READY")\n',
+                )
+                self.assertIn(
+                    "Final Root verification is NOT available yet",
+                    cognition.step_questions[0],
+                )
+                self.assertNotIn("verify_python", cognition.step_questions[0])
+                self.assertIn(
+                    "current plan now has a completed real Terminal execution",
+                    cognition.step_questions[-1],
                 )
 
                 root_after = ledger.work_item_for_event(event.event_id)
@@ -225,6 +269,49 @@ class BroadGoalIndependentCompletionV2Tests(unittest.TestCase):
                         for item in children
                     )
                 )
+            finally:
+                resident.store.close()
+
+    def test_malformed_work_protocol_is_repaired_instead_of_model_terminalized(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, cognition, ledger, event, root_item, _workspace = self._start(
+                Path(tmp), malformed_final=True
+            )
+            try:
+                terminal = None
+                for _ in range(240):
+                    candidate = resident.live_once()
+                    if candidate is not None and candidate.event.event_id == event.event_id:
+                        terminal = candidate
+                        break
+                    state = resident.store.get_working_state()
+                    if (
+                        cognition.step_calls >= 3
+                        and "looked like the zn_work_step protocol"
+                        in str(state.data.get("local_failure") or "")
+                    ):
+                        break
+                self.assertIsNone(
+                    terminal,
+                    "protocol-shaped invalid JSON must remain in the Broad Work repair loop",
+                )
+                state = resident.store.get_working_state()
+                self.assertEqual(state.stage, "native_investigation")
+                self.assertIn(
+                    "looked like the zn_work_step protocol",
+                    str(state.data.get("local_failure") or ""),
+                )
+                root_after = ledger.work_item_for_event(event.event_id)
+                self.assertIsNotNone(root_after)
+                assert root_after is not None
+                self.assertNotEqual(root_after.status, "completed")
+                children = [
+                    item
+                    for item in ledger.list_work_items("completion-loop")
+                    if item.parent_work_item_id == root_item.work_item_id
+                ]
+                self.assertEqual(len(children), 2)
+                self.assertTrue(all(item.status == "completed" for item in children))
             finally:
                 resident.store.close()
 
