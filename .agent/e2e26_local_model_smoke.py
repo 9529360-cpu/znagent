@@ -29,10 +29,12 @@ result = resource.invoke(
     question=(
         "Before any execution, define the Root acceptance contract. Return ONLY JSON shaped exactly as "
         '{"zn_root_acceptance":{"criteria":["observable criterion","observable criterion"]}}. '
+        "Do not use Markdown fences or prose before/after the JSON. "
         "Root objective: Build a tiny local reading-list product that is runnable and keeps saved items after restart."
     ),
     context="ZN owns execution and final verification; you only define observable success criteria.",
 )
+print("ZN_LOCAL_MODEL_RAW=" + repr(result.text[:3000]), flush=True)
 raw = json.loads(result.text)
 criteria = raw.get("zn_root_acceptance", {}).get("criteria")
 assert isinstance(criteria, list) and len(criteria) >= 2, result.text
