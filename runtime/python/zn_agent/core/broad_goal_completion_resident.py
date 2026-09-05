@@ -155,6 +155,7 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
             else "verify_python/root_verified is not allowed until a normal current-plan Terminal child completes."
         )
         return (
+            "You are a bounded coding/reasoning resource assisting one durable ZN Work. "
             "Repair the immediately previous bounded ZN Work protocol proposal; do not redo planning or emit "
             "a summary. Return exactly ONE strict JSON object and nothing else. Do not use markdown fences. "
             "Inside JSON string values, encode source-code line breaks as \\n and escape quotes/backslashes as JSON "
@@ -176,11 +177,12 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
                 event, state, readiness=readiness, thought=thought
             )
         increment = CognitiveIncrement.from_dict(raw)
+        repair_active = isinstance(state.data.get(self._PROTOCOL_REPAIR_KEY), dict)
         proposal = self._parse_verify_python_step(event, root, increment.content)
         if proposal is not None:
             return self._begin_root_verification(event, state, root, increment, proposal)
 
-        if self._looks_like_work_protocol_attempt(increment.content):
+        if repair_active or self._looks_like_work_protocol_attempt(increment.content):
             research = self._parse_research_page_step(root, increment.content)
             run_python = self._parse_run_python_step(event, root, increment.content)
             write_file = self._parse_write_file_step(event, root, increment.content)
@@ -192,9 +194,12 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
         )
 
     def _reject_invalid_work_step(self, event, state, increment: CognitiveIncrement):
+        prior_repair = state.data.get(self._PROTOCOL_REPAIR_KEY)
         self._accept_borrowed_increment(event, state, increment)
         structured = decode_structured_cognition_object(increment.content)
         kind = self._protocol_attempt_kind(increment.content, structured)
+        if kind == "unknown" and isinstance(prior_repair, dict):
+            kind = str(prior_repair.get("kind") or "unknown").strip() or "unknown"
         if structured is None:
             stripped = str(increment.content or "").strip()
             if "```" in stripped:
