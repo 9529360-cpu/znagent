@@ -53,6 +53,35 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
             return None
         return root
 
+    def _advance_event_step(
+        self,
+        event,
+        state,
+        *,
+        readiness,
+        learning_evidence,
+        thought=None,
+    ):
+        if state.stage == "external_completion" and self._autonomous_root_candidate(event) is not None:
+            run = self._resume_external_completion(event, state)
+            if not run.success:
+                return run
+            return self._promote_external_completion(event, state, run)
+        return super()._advance_event_step(
+            event,
+            state,
+            readiness=readiness,
+            learning_evidence=learning_evidence,
+            thought=thought,
+        )
+
+    def _external_cognition_step(self, event, state):
+        intake = self._autonomous_root_candidate(event)
+        run = super()._external_cognition_step(event, state)
+        if intake is None or run is None or not run.success:
+            return run
+        return self._promote_external_completion(event, state, run)
+
     def _build_cognition_request(self, event, impasse, required, deliberation=None):
         request = super()._build_cognition_request(event, impasse, required, deliberation)
         root = self._autonomous_root_candidate(event)
