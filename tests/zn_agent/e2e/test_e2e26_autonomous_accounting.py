@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -26,6 +27,92 @@ STEERING = "登录先不要做，界面保持简单，先确保新增收支和�
 
 class E2E26AutonomousAccountingTests(unittest.TestCase):
     """Real-provider acceptance: the harness supplies goals, never the product solution."""
+
+    @staticmethod
+    def _trace_runtime(*, resident, ledger, pulse: int, phase: str, elapsed: float | None = None) -> None:
+        state = resident.store.get_working_state()
+        data = state.data if isinstance(getattr(state, "data", None), dict) else {}
+        try:
+            current_version = ledger.plan_version("e2e-26-real")
+            items = ledger.list_work_items("e2e-26-real", limit=256)
+        except Exception as exc:  # pragma: no cover - diagnostic only
+            current_version = None
+            items = []
+            ledger_error = f"{type(exc).__name__}: {exc}"
+        else:
+            ledger_error = None
+
+        roots = [
+            {
+                "id": item.work_item_id,
+                "status": item.status,
+                "plan_version": item.plan_version,
+                "criteria": list(item.acceptance_criteria)[:8],
+                "result": str(item.result or "")[:1200],
+                "blocker": str(item.blocker or "")[:800],
+            }
+            for item in items
+            if item.parent_work_item_id is None
+        ][-4:]
+        children = [
+            {
+                "id": item.work_item_id,
+                "parent": item.parent_work_item_id,
+                "status": item.status,
+                "plan_version": item.plan_version,
+                "objective": item.objective[:300],
+                "criteria": list(item.acceptance_criteria)[:4],
+                "result": str(item.result or "")[:1200],
+                "blocker": str(item.blocker or "")[:800],
+            }
+            for item in items
+            if item.parent_work_item_id is not None
+        ][-10:]
+
+        increment = data.get("cognitive_increment")
+        increment_content = (
+            str(increment.get("content") or "")[:4000]
+            if isinstance(increment, dict)
+            else ""
+        )
+        action = data.get("native_action_result")
+        action_summary = None
+        if isinstance(action, dict):
+            action_data = action.get("data") if isinstance(action.get("data"), dict) else {}
+            action_summary = {
+                "success": action.get("success"),
+                "kind": action.get("kind"),
+                "output": str(action.get("output") or "")[-2500:],
+                "error": str(action.get("error") or "")[:1200],
+                "exit_code": action_data.get("exit_code"),
+                "timed_out": action_data.get("timed_out"),
+                "dispatch_observed": action_data.get("side_effect_dispatch_observed"),
+            }
+
+        payload = {
+            "pulse": pulse,
+            "phase": phase,
+            "elapsed_seconds": round(elapsed, 3) if elapsed is not None else None,
+            "stage": state.stage,
+            "next_action": state.next_action,
+            "current_event_id": state.current_event_id,
+            "plan_version": current_version,
+            "local_failure": str(data.get("local_failure") or "")[:1600],
+            "model_invocations": data.get("broad_goal_model_invocations"),
+            "external_cognition_result": data.get("external_cognition_result"),
+            "cognition_integration": data.get("cognition_integration"),
+            "cognitive_increment": increment_content,
+            "rolling_step": data.get("broad_goal_rolling_step"),
+            "research_step": data.get("broad_goal_research_step"),
+            "native_action_result": action_summary,
+            "ledger_error": ledger_error,
+            "roots": roots,
+            "children": children,
+        }
+        print(
+            "ZN_E2E26_TRACE " + json.dumps(payload, ensure_ascii=False, default=str),
+            flush=True,
+        )
 
     def test_broad_goal_reaches_evidence_bound_runnable_mvp_without_solution_fixture(self) -> None:
         config = load_zn_config()
@@ -84,10 +171,56 @@ class E2E26AutonomousAccountingTests(unittest.TestCase):
             steering_applied = False
             steered_event_id: str | None = None
             terminal = None
+            wall_clock_budget = max(
+                300.0,
+                float(os.environ.get("ZN_E2E26_DIAGNOSTIC_DEADLINE_SECONDS", "2160")),
+            )
+            wall_clock_deadline = time.monotonic() + wall_clock_budget
 
             try:
-                for _ in range(900):
+                for pulse in range(900):
+                    if time.monotonic() >= wall_clock_deadline:
+                        self._trace_runtime(
+                            resident=resident,
+                            ledger=ledger,
+                            pulse=pulse,
+                            phase="wall_clock_deadline",
+                        )
+                        self.fail(
+                            f"E2E-26 diagnostic wall-clock budget expired after {wall_clock_budget:.0f}s "
+                            "before independent Root acceptance"
+                        )
+
+                    before = resident.store.get_working_state()
+                    before_stage = before.stage
+                    if pulse % 25 == 0 or before_stage in {
+                        "external_cognition",
+                        "external_completion",
+                        "cognition_integration",
+                        "native_action",
+                        "native_verification",
+                        "broad_goal_research",
+                    }:
+                        self._trace_runtime(
+                            resident=resident,
+                            ledger=ledger,
+                            pulse=pulse,
+                            phase="before_live_once",
+                        )
+
+                    started = time.monotonic()
                     candidate = resident.live_once()
+                    elapsed = time.monotonic() - started
+                    after_stage = resident.store.get_working_state().stage
+                    if candidate is not None or elapsed >= 5.0 or after_stage != before_stage:
+                        self._trace_runtime(
+                            resident=resident,
+                            ledger=ledger,
+                            pulse=pulse,
+                            phase="after_live_once",
+                            elapsed=elapsed,
+                        )
+
                     if candidate is not None:
                         terminal = candidate
                         if steering_applied and candidate.event.event_id == steered_event_id:
@@ -137,6 +270,12 @@ class E2E26AutonomousAccountingTests(unittest.TestCase):
                         )
                         steering_applied = True
                         steered_event_id = steered_event.event_id
+                        self._trace_runtime(
+                            resident=resident,
+                            ledger=ledger,
+                            pulse=pulse,
+                            phase="steering_applied",
+                        )
 
                 self.assertTrue(
                     criteria_formed_before_child,
