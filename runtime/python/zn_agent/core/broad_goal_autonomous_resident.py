@@ -10,7 +10,6 @@ research/write/run/verify loop.
 """
 
 import json
-from contextlib import closing
 
 from .broad_goal_completion_resident import BroadGoalCompletionResidentRuntime
 from .cognition import CognitiveIncrement
@@ -142,7 +141,10 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
             return None
 
         self._accept_borrowed_increment(event, state, increment)
-        accepted = self._initialize_root_acceptance(event.event_id, root, criteria)
+        accepted = self.work_ledger.initialize_root_acceptance(
+            event.event_id,
+            acceptance_criteria=criteria,
+        )
         state.data["autonomous_root_acceptance"] = {
             "work_item_id": accepted.work_item_id,
             "plan_version": accepted.plan_version,
@@ -161,50 +163,6 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
         self._sync_execution_context(event, state)
         self.store.save_working_state(state)
         return None
-
-    def _initialize_root_acceptance(
-        self,
-        event_id: str,
-        root: WorkItem,
-        criteria: list[str],
-    ) -> WorkItem:
-        """Perform one narrowly authorized empty->defined Root criteria transition."""
-
-        run = self.work_ledger.get_run(event_id)
-        current_version = self.work_ledger.plan_version(root.work_thread_id)
-        if (
-            run is None
-            or run.ledger_state != "active"
-            or run.thread_id != root.work_thread_id
-            or root.parent_work_item_id is not None
-            or root.plan_version != current_version
-            or self.work_ledger._run_plan_version(event_id) != current_version
-        ):
-            raise ValueError("autonomous Root acceptance rejected stale or non-Root Work")
-        existing = self.work_ledger.work_item_for_event(event_id)
-        if existing is None:
-            raise ValueError("autonomous Root acceptance requires a durable WorkItem")
-        if existing.acceptance_criteria:
-            if list(existing.acceptance_criteria) == list(criteria):
-                return existing
-            raise ValueError("autonomous Root acceptance is immutable once defined")
-
-        encoded = json.dumps(criteria, ensure_ascii=False, separators=(",", ":"))
-        now = utc_now()
-        with self.work_ledger._lock, closing(self.work_ledger._connect()) as conn:
-            updated = conn.execute(
-                "UPDATE work_items SET acceptance_criteria_json=?,updated_at=? "
-                "WHERE work_item_id=? AND work_thread_id=? AND plan_version=? "
-                "AND parent_work_item_id IS NULL AND acceptance_criteria_json='[]'",
-                (encoded, now, root.work_item_id, root.work_thread_id, current_version),
-            )
-            conn.commit()
-        if updated.rowcount not in {0, 1}:
-            raise RuntimeError("autonomous Root acceptance changed an unexpected number of rows")
-        persisted = self.work_ledger.work_item_for_event(event_id)
-        if persisted is None or list(persisted.acceptance_criteria) != list(criteria):
-            raise RuntimeError("autonomous Root acceptance did not persist the exact criteria")
-        return persisted
 
     def _parse_root_acceptance(self, content: str) -> list[str] | None:
         try:
