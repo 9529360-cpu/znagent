@@ -32,8 +32,6 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
-        # Same SQLite truth and same WorkItem schema. This helper does not own a
-        # scheduler or event loop; the Resident event remains the execution owner.
         self.work_ledger = EvidenceBoundSteerableWorkLedger(self)
 
     def _criterion_bound_root(self, event) -> WorkItem | None:
@@ -51,16 +49,10 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
         return item
 
     def _build_cognition_request(self, event, impasse, required, deliberation=None):
-        request = super()._build_cognition_request(
-            event,
-            impasse,
-            required,
-            deliberation,
-        )
+        request = super()._build_cognition_request(event, impasse, required, deliberation)
         root = self._criterion_bound_root(event)
         if root is None:
             return request
-
         completed = [
             item
             for item in self.work_ledger.list_work_items(root.work_thread_id)
@@ -78,7 +70,6 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
         ]
         state = self.store.get_working_state()
         local_failure = str(state.data.get("local_failure") or "").strip()
-
         request.question = (
             "You are a bounded cognitive resource assisting one durable ZN Work. "
             "ZN owns the Work lifecycle, tools, permissions, execution, evidence and completion. "
@@ -88,8 +79,9 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
             '"path":"relative/path","content":"..."}}}. '
             "The path must be relative to the attached workspace. Do not describe or duplicate acceptance: "
             "ZN deterministically derives an exact text readback check from action.path and action.content. "
-            "Legacy V1 responses containing acceptance are tolerated only for compatibility and do not control verification. "
-            "Do not emit shell commands or tool calls in this write step. "
+            "Legacy V1 responses containing acceptance are tolerated only when they still declare the exact same "
+            "text_equals path/content; weaker acceptance is rejected. Do not emit shell commands or tool calls in "
+            "this write step. "
             f"Root objective: {root.objective}. "
             f"Root acceptance criteria: {json.dumps(root.acceptance_criteria, ensure_ascii=False)}. "
             f"Already accepted child evidence: {json.dumps(history, ensure_ascii=False)}. "
@@ -105,37 +97,15 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
         }
         return request
 
-    def _cognition_integration_step(
-        self,
-        event,
-        state,
-        *,
-        readiness,
-        thought=None,
-    ):
+    def _cognition_integration_step(self, event, state, *, readiness, thought=None):
         raw = state.data.get("cognitive_increment")
         root = self._criterion_bound_root(event)
         if root is None or not isinstance(raw, dict):
-            return super()._cognition_integration_step(
-                event,
-                state,
-                readiness=readiness,
-                thought=thought,
-            )
-
+            return super()._cognition_integration_step(event, state, readiness=readiness, thought=thought)
         increment = CognitiveIncrement.from_dict(raw)
         proposal = self._parse_write_file_step(event, root, increment.content)
         if proposal is None:
-            # Ordinary prose cognition keeps the existing bounded-increment
-            # behavior. In particular, model planning text still cannot satisfy
-            # Work acceptance because the evidence-bound ledger owns that gate.
-            return super()._cognition_integration_step(
-                event,
-                state,
-                readiness=readiness,
-                thought=thought,
-            )
-
+            return super()._cognition_integration_step(event, state, readiness=readiness, thought=thought)
         self._accept_borrowed_increment(event, state, increment)
         identity = hashlib.sha256(
             f"{event.event_id}\0{increment.increment_id}".encode("utf-8", errors="replace")
@@ -150,10 +120,7 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
             plan_version=root.plan_version,
             acceptance_criteria=[f'text_equals: {proposal["relative_path"]}'],
         )
-        # Deterministic identity closes the crash window between child materialization
-        # and the durable action checkpoint: replaying integration reuses this row.
         self.work_ledger._save_item(child)
-
         intent = NativeActionIntent(
             intent_id=f"broad-step-{identity[:12]}",
             event_id=event.event_id,
@@ -170,8 +137,8 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
                 "expected_text": proposal["content"],
             },
             reason=(
-                "ZN validated one bounded external cognition proposal against the attached "
-                "workspace and deterministically derived the exact Body readback acceptance itself"
+                "ZN validated one bounded external cognition proposal against the attached workspace and "
+                "deterministically derived the exact Body readback acceptance itself"
             ),
             source="resident_broad_goal_choice",
         )
@@ -190,34 +157,14 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
         self.store.save_working_state(state)
         return None
 
-    def _complete_successful_body_action(
-        self,
-        event,
-        state,
-        intent,
-        *,
-        response: str,
-        reason: str,
-    ):
+    def _complete_successful_body_action(self, event, state, intent, *, response: str, reason: str):
         rolling = state.data.get(self._ROLLING_STEP_KEY)
         if not isinstance(rolling, dict):
             return super()._complete_successful_body_action(
-                event,
-                state,
-                intent,
-                response=response,
-                reason=reason,
+                event, state, intent, response=response, reason=reason
             )
-
-        # Reuse the complete mature Body accounting/recovery path first. We only
-        # intercept the semantic level above it: this is a verified child step,
-        # not yet terminal Root Work completion.
         result = super()._complete_successful_body_action(
-            event,
-            state,
-            intent,
-            response=response,
-            reason=reason,
+            event, state, intent, response=response, reason=reason
         )
         return self._roll_forward_verified_child(event, state, result=result)
 
@@ -225,10 +172,6 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
         rolling = state.data.get(self._ROLLING_STEP_KEY)
         if not isinstance(rolling, dict):
             return super()._resume_native_completion(event, state)
-
-        # If the process died after the mature Body completion checkpoint but
-        # before Root roll-forward, recovery must accept/reconcile the child and
-        # continue the same Root instead of publishing a terminal Root outcome.
         result = super()._resume_native_completion(event, state)
         if result is None or not result.success:
             return result
@@ -238,16 +181,11 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
         rolling = state.data.get(self._ROLLING_STEP_KEY)
         if not isinstance(rolling, dict):
             return result
-
         child_id = str(rolling.get("work_item_id") or "").strip()
         thread_id = str(rolling.get("work_thread_id") or "").strip()
         plan_version = int(rolling.get("plan_version") or 0)
         child = next(
-            (
-                item
-                for item in self.work_ledger.list_work_items(thread_id)
-                if item.work_item_id == child_id
-            ),
+            (item for item in self.work_ledger.list_work_items(thread_id) if item.work_item_id == child_id),
             None,
         )
         current_version = self.work_ledger.plan_version(thread_id)
@@ -259,7 +197,6 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
             child.updated_at = utc_now()
             self.work_ledger._save_item(child)
             return result
-
         if child.status != "completed":
             child.status = "completed"
             child.result = str(result.response or rolling.get("relative_path") or "")
@@ -267,12 +204,10 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
             child.completed_at = utc_now()
             child.updated_at = child.completed_at
             self.work_ledger._save_item(child)
-
         raw_history = state.data.get(self._ROLLING_HISTORY_KEY)
         history = list(raw_history) if isinstance(raw_history, list) else []
         if not any(
-            isinstance(item, dict) and item.get("work_item_id") == child.work_item_id
-            for item in history
+            isinstance(item, dict) and item.get("work_item_id") == child.work_item_id for item in history
         ):
             history.append(
                 {
@@ -309,11 +244,7 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
             model_invocations=invocations,
             reason=f"accepted bounded rolling Work proposal from {increment.source}",
         )
-        self.life.resolve_impasse(
-            event,
-            accepted_run,
-            resolution_source=increment.source,
-        )
+        self.life.resolve_impasse(event, accepted_run, resolution_source=increment.source)
         self.investigator.resolve_from_external(
             event.event_id,
             increment.content or "external cognition proposed one bounded Work step",
@@ -333,12 +264,7 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
         }
         state.data["integrated_learning_domains"] = list(domains)
 
-    def _parse_write_file_step(
-        self,
-        event,
-        root: WorkItem,
-        content: str,
-    ) -> dict[str, str] | None:
+    def _parse_write_file_step(self, event, root: WorkItem, content: str) -> dict[str, str] | None:
         try:
             raw = json.loads(str(content or "").strip())
         except (TypeError, ValueError, json.JSONDecodeError):
@@ -351,40 +277,23 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
         objective = " ".join(str(step.get("objective") or "").strip().split())
         action = step.get("action")
         acceptance = step.get("acceptance")
-        if not objective or len(objective) > 600:
-            return None
-        if not isinstance(action, dict):
+        if not objective or len(objective) > 600 or not isinstance(action, dict):
             return None
         if str(action.get("kind") or "").strip() != "write_file":
             return None
-
         relative_path = str(action.get("path") or "").strip()
         body = action.get("content")
-        if not relative_path or not isinstance(body, str):
+        if not relative_path or not isinstance(body, str) or len(body) > self._MAX_STEP_CONTENT:
             return None
-        if len(body) > self._MAX_STEP_CONTENT:
-            return None
-
-        # V2: the model proposes only the write intent. ZN is the acceptance owner
-        # and always derives an exact text readback from action.path/content.
-        # V1 remains parse-compatible, but any duplicated fields must agree so a
-        # legacy response cannot weaken or redirect the ZN-owned postcondition.
         if acceptance is not None:
             if not isinstance(acceptance, dict):
                 return None
-            acceptance_kind = str(acceptance.get("kind") or "").strip()
-            if acceptance_kind and acceptance_kind != "text_equals":
-                # Legacy model-declared acceptance is not authoritative. Ignore
-                # weaker labels such as file_exists while retaining exact host
-                # verification from the action itself.
-                pass
-            legacy_path = acceptance.get("path")
-            if legacy_path is not None and str(legacy_path).strip() != relative_path:
+            if str(acceptance.get("kind") or "").strip() != "text_equals":
                 return None
+            legacy_path = str(acceptance.get("path") or "").strip()
             legacy_expected = acceptance.get("expected_text")
-            if legacy_expected is not None and legacy_expected != body:
+            if legacy_path != relative_path or not isinstance(legacy_expected, str) or legacy_expected != body:
                 return None
-
         rel = Path(relative_path)
         if rel.is_absolute() or not rel.parts or any(part in {"", ".", ".."} for part in rel.parts):
             return None
@@ -398,7 +307,6 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
                 candidate.resolve(strict=True).relative_to(root_path)
         except (OSError, RuntimeError, ValueError):
             return None
-
         if root.plan_version != self.work_ledger.plan_version(root.work_thread_id):
             return None
         return {
