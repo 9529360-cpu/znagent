@@ -125,7 +125,9 @@ class BroadGoalResearchResidentRuntime(BroadGoalRecoverableCodingResidentRuntime
             '"url":"https://..."}}}. '
             "Use research_page when current external facts are needed. Action and acceptance URLs "
             "must match exactly. Do not invent page contents: ZN will navigate and read the page. "
-            "Prefer authoritative primary sources. "
+            "Prefer authoritative primary sources. A URL that already has completed page_read evidence in "
+            "the current plan is no longer a useful next step; ZN will reject an exact repeat instead of "
+            "replaying the browser action. "
             "Fresh managed-browser research evidence already collected: "
             f"{json.dumps(research, ensure_ascii=False)}. "
             "The immediately superseded Root objective is historical task context only; preserve its "
@@ -173,6 +175,9 @@ class BroadGoalResearchResidentRuntime(BroadGoalRecoverableCodingResidentRuntime
                 thought=thought,
             )
 
+        if self._has_completed_current_plan_research(root, proposal["url"]):
+            return self._reject_no_progress_research(event, state, root, increment, proposal)
+
         self._accept_borrowed_increment(event, state, increment)
         identity = hashlib.sha256(
             f"{event.event_id}\0{increment.increment_id}".encode("utf-8", errors="replace")
@@ -199,6 +204,84 @@ class BroadGoalResearchResidentRuntime(BroadGoalRecoverableCodingResidentRuntime
         }
         state.stage = "broad_goal_research"
         state.next_action = "navigate managed Chromium and capture fresh page evidence"
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        return None
+
+    def _has_completed_current_plan_research(self, root: WorkItem, url: str) -> bool:
+        criterion = f"page_read: {url}"
+        return any(
+            item.parent_work_item_id == root.work_item_id
+            and item.plan_version == root.plan_version
+            and item.status == "completed"
+            and criterion in item.acceptance_criteria
+            for item in self.work_ledger.list_work_items(root.work_thread_id, limit=256)
+        )
+
+    def _next_progress_action_kind(self, root: WorkItem) -> str:
+        current = [
+            item
+            for item in self.work_ledger.list_work_items(root.work_thread_id, limit=256)
+            if item.parent_work_item_id == root.work_item_id
+            and item.plan_version == root.plan_version
+            and item.status == "completed"
+        ]
+        if not any(
+            any(criterion.startswith("text_equals:") for criterion in item.acceptance_criteria)
+            for item in current
+        ):
+            return "write_file"
+        if not any(
+            any(criterion.startswith("command_exit:") for criterion in item.acceptance_criteria)
+            for item in current
+        ):
+            return "run_python"
+        return "verify_python"
+
+    def _reject_no_progress_research(
+        self,
+        event,
+        state,
+        root: WorkItem,
+        increment: CognitiveIncrement,
+        proposal: dict[str, str],
+    ):
+        target_kind = self._next_progress_action_kind(root)
+        url = proposal["url"]
+        failure = (
+            "ZN rejected a no-progress Broad Work step: research_page URL "
+            f"{url!r} already has completed current-plan page_read evidence; replaying the same "
+            f"browser action cannot advance the Root. Switch to {target_kind}."
+        )
+        self._accept_borrowed_increment(event, state, increment)
+        repair_key = str(getattr(self, "_PROTOCOL_REPAIR_KEY", "broad_goal_protocol_repair"))
+        max_chars = int(getattr(self, "_MAX_REJECTED_PROTOCOL_CHARS", 12_000))
+        state.data[repair_key] = {
+            "error": failure,
+            "kind": target_kind,
+            "content": str(increment.content or "")[:max_chars],
+            "reason": "no_progress_repeat",
+        }
+        state.data["local_failure"] = failure
+        investigation = self.investigator.current(event.event_id)
+        if investigation is not None and investigation.status == "resolved_external":
+            evidence = list(investigation.evidence)
+            if failure not in evidence:
+                evidence.append(failure)
+            investigation.status = "open"
+            investigation.resolution = None
+            investigation.unresolved = failure
+            investigation.next_probe = None
+            investigation.updated_at = utc_now()
+            investigation.evidence = tuple(evidence[-64:])
+            self.investigator._save(investigation)
+        state.data.pop("cognitive_increment", None)
+        state.data.pop("external_cognition_result", None)
+        state.data.pop("cognition_integration", None)
+        state.data.pop("cognition_request", None)
+        state.data.pop("impasse_id", None)
+        state.stage = "native_investigation"
+        state.next_action = f"switch from repeated research to one progress-producing {target_kind} step"
         self._sync_execution_context(event, state)
         self.store.save_working_state(state)
         return None
