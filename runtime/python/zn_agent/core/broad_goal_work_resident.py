@@ -83,12 +83,13 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
             "You are a bounded cognitive resource assisting one durable ZN Work. "
             "ZN owns the Work lifecycle, tools, permissions, execution, evidence and completion. "
             "Propose exactly ONE smallest useful next workspace step; do not claim the Root Work is complete. "
-            "Return ONLY one JSON object with this shape: "
+            "Return ONLY one JSON object with this preferred shape: "
             '{"zn_work_step":{"objective":"...","action":{"kind":"write_file",'
-            '"path":"relative/path","content":"..."},"acceptance":{"kind":"text_equals",'
-            '"path":"relative/path","expected_text":"..."}}}. '
-            "The path must be relative to the attached workspace. The acceptance path and text must exactly "
-            "match the proposed write. Do not emit shell commands or tool calls in this V1 step. "
+            '"path":"relative/path","content":"..."}}}. '
+            "The path must be relative to the attached workspace. Do not describe or duplicate acceptance: "
+            "ZN deterministically derives an exact text readback check from action.path and action.content. "
+            "Legacy V1 responses containing acceptance are tolerated only for compatibility and do not control verification. "
+            "Do not emit shell commands or tool calls in this write step. "
             f"Root objective: {root.objective}. "
             f"Root acceptance criteria: {json.dumps(root.acceptance_criteria, ensure_ascii=False)}. "
             f"Already accepted child evidence: {json.dumps(history, ensure_ascii=False)}. "
@@ -100,7 +101,7 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
             "root_work_item_id": root.work_item_id,
             "plan_version": root.plan_version,
             "completed_child_count": len(completed),
-            "rolling_step_contract": "write_file/text_equals-v1",
+            "rolling_step_contract": "write_file/zn-derived-text-equals-v2",
         }
         return request
 
@@ -170,7 +171,7 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
             },
             reason=(
                 "ZN validated one bounded external cognition proposal against the attached "
-                "workspace and chose the concrete Body movement itself"
+                "workspace and deterministically derived the exact Body readback acceptance itself"
             ),
             source="resident_broad_goal_choice",
         )
@@ -352,23 +353,37 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
         acceptance = step.get("acceptance")
         if not objective or len(objective) > 600:
             return None
-        if not isinstance(action, dict) or not isinstance(acceptance, dict):
+        if not isinstance(action, dict):
             return None
         if str(action.get("kind") or "").strip() != "write_file":
             return None
-        if str(acceptance.get("kind") or "").strip() != "text_equals":
-            return None
 
         relative_path = str(action.get("path") or "").strip()
-        acceptance_path = str(acceptance.get("path") or "").strip()
         body = action.get("content")
-        expected = acceptance.get("expected_text")
-        if not relative_path or relative_path != acceptance_path:
-            return None
-        if not isinstance(body, str) or not isinstance(expected, str) or body != expected:
+        if not relative_path or not isinstance(body, str):
             return None
         if len(body) > self._MAX_STEP_CONTENT:
             return None
+
+        # V2: the model proposes only the write intent. ZN is the acceptance owner
+        # and always derives an exact text readback from action.path/content.
+        # V1 remains parse-compatible, but any duplicated fields must agree so a
+        # legacy response cannot weaken or redirect the ZN-owned postcondition.
+        if acceptance is not None:
+            if not isinstance(acceptance, dict):
+                return None
+            acceptance_kind = str(acceptance.get("kind") or "").strip()
+            if acceptance_kind and acceptance_kind != "text_equals":
+                # Legacy model-declared acceptance is not authoritative. Ignore
+                # weaker labels such as file_exists while retaining exact host
+                # verification from the action itself.
+                pass
+            legacy_path = acceptance.get("path")
+            if legacy_path is not None and str(legacy_path).strip() != relative_path:
+                return None
+            legacy_expected = acceptance.get("expected_text")
+            if legacy_expected is not None and legacy_expected != body:
+                return None
 
         rel = Path(relative_path)
         if rel.is_absolute() or not rel.parts or any(part in {"", ".", ".."} for part in rel.parts):
