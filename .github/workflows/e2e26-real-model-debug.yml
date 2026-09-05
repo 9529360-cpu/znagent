@@ -1,0 +1,112 @@
+name: E2E26 Real Model Debug
+
+on:
+  push:
+    branches:
+      - debug/e2e26-structured-json
+  workflow_dispatch:
+
+env:
+  CI: 'true'
+  PYTHONUTF8: '1'
+  PYTHONUNBUFFERED: '1'
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+jobs:
+  real-model-accounting:
+    runs-on: [self-hosted, Windows, X64, zn-ci]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare ZN browser runtime and llama.cpp
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/e2e26-real-venv -ErrorAction SilentlyContinue
+          uv venv .ci/e2e26-real-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e26-real-venv\Scripts\python.exe'
+          Push-Location runtime/python
+          try {
+            uv pip install --python $python '.[browser]'
+          } finally {
+            Pop-Location
+          }
+          & $python -m playwright install chromium
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force .ci/llama | Out-Null
+          $server = Get-ChildItem .ci/llama -Recurse -Filter llama-server.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $server) {
+            $zip = Join-Path $env:GITHUB_WORKSPACE '.ci\llama.zip'
+            Invoke-WebRequest -Uri 'https://github.com/ggml-org/llama.cpp/releases/download/b10809/llama-b10809-bin-win-cpu-x64.zip' -OutFile $zip -UseBasicParsing
+            Expand-Archive -Path $zip -DestinationPath .ci/llama -Force
+          }
+          if (-not (Get-ChildItem .ci/llama -Recurse -Filter llama-server.exe | Select-Object -First 1)) {
+            throw 'official llama.cpp CPU archive did not contain llama-server.exe'
+          }
+      - name: Run fixed E2E26 broad goal through real ZN cognition and tools
+        run: |
+          $server = (Get-ChildItem .ci/llama -Recurse -Filter llama-server.exe | Select-Object -First 1).FullName
+          $stdout = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e26-llama.out.log'
+          $stderr = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e26-llama.err.log'
+          $arguments = '-hf Qwen/Qwen2.5-Coder-3B-Instruct-GGUF:Q4_K_M --host 127.0.0.1 --port 18080 -c 16384 -n 4096 -ngl 0'
+          $process = Start-Process -FilePath $server -ArgumentList $arguments -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          try {
+            $deadline = (Get-Date).AddMinutes(18)
+            $models = $null
+            while ((Get-Date) -lt $deadline) {
+              if ($process.HasExited) {
+                Get-Content $stderr -Tail 160 -ErrorAction SilentlyContinue
+                throw "llama-server exited before model became ready: $($process.ExitCode)"
+              }
+              try {
+                $models = Invoke-RestMethod -Uri 'http://127.0.0.1:18080/v1/models' -Method Get -TimeoutSec 3
+                if (@($models.data).Count -gt 0) { break }
+              } catch {}
+              Start-Sleep -Seconds 3
+            }
+            if (-not $models -or @($models.data).Count -lt 1) {
+              Get-Content $stderr -Tail 160 -ErrorAction SilentlyContinue
+              throw 'real local model did not become ready before deadline'
+            }
+            $modelId = [string]$models.data[0].id
+            Write-Host ("ZN_E2E26_REAL_MODEL_READY id={0}" -f $modelId)
+            $config = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e26-config.yaml'
+            @"
+model:
+  provider: custom
+  model: "$modelId"
+  base_url: http://127.0.0.1:18080/v1
+  timeout: 180
+  temperature: 0
+  max_tokens: 4096
+  extra_body:
+    response_format:
+      type: json_object
+zn_kernel:
+  max_attempts: 1
+zn_resident:
+  normal_model_calls: 8
+  high_risk_model_calls: 8
+"@ | Set-Content -Path $config -Encoding UTF8
+            $env:ZN_CONFIG_PATH = $config
+            $env:ZN_E2E26_REAL_MODEL = '1'
+            $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+            $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e26-real-venv\Scripts\python.exe'
+            & $python -m unittest tests.zn_agent.e2e.test_e2e26_autonomous_accounting -v
+            $code = $LASTEXITCODE
+            if ($code -ne 0) {
+              Write-Host '--- llama.cpp stderr tail ---'
+              Get-Content $stderr -Tail 200 -ErrorAction SilentlyContinue
+              exit $code
+            }
+          } finally {
+            if ($process -and -not $process.HasExited) {
+              Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            }
+          }
