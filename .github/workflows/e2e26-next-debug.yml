@@ -20,7 +20,7 @@ defaults:
 jobs:
   debug:
     runs-on: [self-hosted, Windows, X64, zn-ci]
-    timeout-minutes: 8
+    timeout-minutes: 10
     env:
       UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
     steps:
@@ -41,7 +41,7 @@ jobs:
         run: |
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\debug-venv\Scripts\python.exe'
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
-          & $python -m unittest tests.zn_agent.core.test_broad_goal_research_layer tests.zn_agent.core.test_broad_goal_terminal_repair -v
+          & $python -m unittest tests.zn_agent.core.test_broad_goal_research_layer tests.zn_agent.core.test_broad_goal_terminal_repair tests.zn_agent.core.test_broad_goal_independent_completion_v2 -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $python -c "import tempfile; from pathlib import Path; from zn_agent.core.broad_goal_research_resident import BroadGoalResearchResidentRuntime; from zn_agent.core.provider_bridge import build_resident_runtime; tmp=tempfile.TemporaryDirectory(); resident=build_resident_runtime(config={'model': {}}, store_path=Path(tmp.name)/'kernel.db'); assert isinstance(resident, BroadGoalResearchResidentRuntime), type(resident); resident.store.close(); tmp.cleanup()"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
