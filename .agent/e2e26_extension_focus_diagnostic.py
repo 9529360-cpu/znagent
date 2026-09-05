@@ -34,6 +34,29 @@ def _foreground() -> tuple[int, int]:
     return hwnd, int(pid.value)
 
 
+def _modifiers() -> dict[str, bool]:
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+    user32.GetAsyncKeyState.restype = ctypes.c_short
+    keys = {
+        "ctrl": 0x11,
+        "shift": 0x10,
+        "alt": 0x12,
+        "lwin": 0x5B,
+        "rwin": 0x5C,
+        "lctrl": 0xA2,
+        "rctrl": 0xA3,
+        "lshift": 0xA0,
+        "rshift": 0xA1,
+        "lalt": 0xA4,
+        "ralt": 0xA5,
+    }
+    return {
+        name: bool(int(user32.GetAsyncKeyState(vk)) & 0x8000)
+        for name, vk in keys.items()
+    }
+
+
 def diagnostic_activate(self):
     global last_fixture
     last_fixture = self
@@ -50,6 +73,7 @@ def diagnostic_activate(self):
                 "fixture_window_pid": int(self.window_pid),
                 "foreground_in_browser_family": pid in set(family),
                 "browser_family_size": len(family),
+                "modifiers": _modifiers(),
             },
             sort_keys=True,
         ),
@@ -68,6 +92,7 @@ def diagnostic_press():
         "fixture_window_pid": int(fixture.window_pid) if fixture is not None else 0,
         "foreground_in_browser_family": pid in family,
         "exact_fixture_window_foreground": bool(fixture is not None and hwnd == int(fixture.hwnd)),
+        "modifiers": _modifiers(),
     }
     print("ZN_EXTENSION_FOCUS_BEFORE_SHORTCUT=" + json.dumps(evidence, sort_keys=True), flush=True)
     original_press()
