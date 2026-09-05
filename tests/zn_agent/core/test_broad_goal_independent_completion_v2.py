@@ -294,7 +294,7 @@ class BroadGoalIndependentCompletionV2Tests(unittest.TestCase):
                     state = resident.store.get_working_state()
                     if (
                         cognition.step_calls >= 3
-                        and "looked like the zn_work_step protocol"
+                        and "ZN rejected the proposed Broad Work step"
                         in str(state.data.get("local_failure") or "")
                     ):
                         break
@@ -305,7 +305,7 @@ class BroadGoalIndependentCompletionV2Tests(unittest.TestCase):
                 state = resident.store.get_working_state()
                 self.assertEqual(state.stage, "native_investigation")
                 self.assertIn(
-                    "looked like the zn_work_step protocol",
+                    "ZN rejected the proposed Broad Work step",
                     str(state.data.get("local_failure") or ""),
                 )
                 root_after = ledger.work_item_for_event(event.event_id)
