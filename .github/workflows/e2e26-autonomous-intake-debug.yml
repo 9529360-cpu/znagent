@@ -41,3 +41,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $python -c "import tempfile; from pathlib import Path; from zn_agent.core.broad_goal_autonomous_resident import BroadGoalAutonomousResidentRuntime; from zn_agent.core.provider_bridge import build_resident_runtime; tmp=tempfile.TemporaryDirectory(); r=build_resident_runtime(config={'model': {}}, store_path=Path(tmp.name)/'kernel.db'); assert isinstance(r, BroadGoalAutonomousResidentRuntime), type(r); r.store.close(); tmp.cleanup()"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Prove final accounting harness blocks without a real model
+        run: |
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\autonomous-intake-venv\Scripts\python.exe'
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          & $python -m unittest tests.zn_agent.e2e.test_e2e26_autonomous_accounting -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
