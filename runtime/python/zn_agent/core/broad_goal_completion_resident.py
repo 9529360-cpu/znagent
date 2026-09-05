@@ -98,7 +98,7 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
             request.question += (
                 " Final Root verification is NOT available yet because the current plan has no completed "
                 "normal Terminal execution evidence. Do not emit verify_python or root_verified. First propose "
-                "exactly one research_page, write_file, or run_python step using its exact acceptance form; "
+                "exactly one research_page, compact write_file, or run_python step using its advertised form; "
                 "run_python may only target a Python file that already exists in the attached workspace."
             )
             finish_contract = "blocked-until-current-plan-command-evidence"
@@ -122,8 +122,7 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
         contracts = {
             "write_file": (
                 '{"zn_work_step":{"objective":"...","action":{"kind":"write_file",'
-                '"path":"relative/path","content":"..."},"acceptance":{"kind":"text_equals",'
-                '"path":"same relative/path","expected_text":"exact same full text"}}}'
+                '"path":"relative/path","content":"..."}}}'
             ),
             "run_python": (
                 '{"zn_work_step":{"objective":"...","action":{"kind":"run_python",'
@@ -154,17 +153,23 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
             if allow_verify
             else "verify_python/root_verified is not allowed until a normal current-plan Terminal child completes."
         )
+        write_note = (
+            "For write_file, omit acceptance entirely; ZN derives exact text_equals verification from "
+            "action.path and action.content. "
+            if kind in {"write_file", "unknown"}
+            else ""
+        )
         return (
             "You are a bounded coding/reasoning resource assisting one durable ZN Work. "
             "Repair the immediately previous bounded ZN Work protocol proposal; do not redo planning or emit "
             "a summary. Return exactly ONE strict JSON object and nothing else. Do not use markdown fences. "
+            "Do not change the action kind while repairing a known action. "
             "Inside JSON string values, encode source-code line breaks as \\n and escape quotes/backslashes as JSON "
             "requires; raw control characters make the object invalid. "
             f"Validation error: {error}. "
             f"Previous rejected proposal: {rejected}. "
             f"Use exactly this currently allowed contract: {allowed}. "
-            "For write_file, acceptance.expected_text must be byte-for-byte identical to action.content and "
-            "acceptance.path must equal action.path. For run_python, target an existing workspace Python file. "
+            f"{write_note}For run_python, target an existing workspace Python file. "
             f"{verify_note} Root objective: {root.objective}. "
             f"Root acceptance criteria: {json.dumps(root.acceptance_criteria, ensure_ascii=False)}."
         )
@@ -177,7 +182,27 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
                 event, state, readiness=readiness, thought=thought
             )
         increment = CognitiveIncrement.from_dict(raw)
-        repair_active = isinstance(state.data.get(self._PROTOCOL_REPAIR_KEY), dict)
+        repair = state.data.get(self._PROTOCOL_REPAIR_KEY)
+        repair_active = isinstance(repair, dict)
+        if repair_active:
+            expected_kind = str(repair.get("kind") or "unknown").strip() or "unknown"
+            structured = decode_structured_cognition_object(increment.content)
+            proposed_kind = self._protocol_attempt_kind(increment.content, structured)
+            if (
+                expected_kind != "unknown"
+                and proposed_kind != "unknown"
+                and proposed_kind != expected_kind
+            ):
+                return self._reject_invalid_work_step(
+                    event,
+                    state,
+                    increment,
+                    forced_failure=(
+                        "ZN rejected the proposed Broad Work step: protocol repair may not change "
+                        f"action.kind from {expected_kind} to {proposed_kind}"
+                    ),
+                )
+
         proposal = self._parse_verify_python_step(event, root, increment.content)
         if proposal is not None:
             return self._begin_root_verification(event, state, root, increment, proposal)
@@ -193,14 +218,27 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
             event, state, readiness=readiness, thought=thought
         )
 
-    def _reject_invalid_work_step(self, event, state, increment: CognitiveIncrement):
+    def _reject_invalid_work_step(
+        self,
+        event,
+        state,
+        increment: CognitiveIncrement,
+        *,
+        forced_failure: str | None = None,
+    ):
         prior_repair = state.data.get(self._PROTOCOL_REPAIR_KEY)
         self._accept_borrowed_increment(event, state, increment)
         structured = decode_structured_cognition_object(increment.content)
-        kind = self._protocol_attempt_kind(increment.content, structured)
-        if kind == "unknown" and isinstance(prior_repair, dict):
-            kind = str(prior_repair.get("kind") or "unknown").strip() or "unknown"
-        if structured is None:
+        detected_kind = self._protocol_attempt_kind(increment.content, structured)
+        prior_kind = (
+            str(prior_repair.get("kind") or "unknown").strip()
+            if isinstance(prior_repair, dict)
+            else "unknown"
+        )
+        kind = prior_kind if prior_kind != "unknown" else detected_kind
+        if forced_failure is not None:
+            failure = forced_failure
+        elif structured is None:
             stripped = str(increment.content or "").strip()
             if "```" in stripped:
                 detail = "markdown fences are not allowed around the JSON object"
@@ -279,24 +317,32 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
             return "objective must be non-empty and at most 600 characters"
         action = step.get("action")
         acceptance = step.get("acceptance")
-        if not isinstance(action, dict) or not isinstance(acceptance, dict):
-            return "action and acceptance must both be JSON objects"
+        if not isinstance(action, dict):
+            return "action must be a JSON object"
         kind = str(action.get("kind") or "").strip()
-        acceptance_kind = str(acceptance.get("kind") or "").strip()
         if kind == "write_file":
-            if acceptance_kind != "text_equals":
-                return "write_file requires acceptance.kind=text_equals"
             action_path = str(action.get("path") or "").strip()
-            acceptance_path = str(acceptance.get("path") or "").strip()
-            if not action_path or action_path != acceptance_path:
-                return "write_file requires acceptance.path to exactly equal action.path"
             body = action.get("content")
-            expected = acceptance.get("expected_text")
+            if not action_path:
+                return "write_file requires a non-empty relative action.path"
             if not isinstance(body, str):
                 return "write_file requires action.content to be a JSON string"
+            if acceptance is None:
+                return "write_file path/content did not satisfy the attached-workspace safety contract"
+            if not isinstance(acceptance, dict):
+                return "legacy write_file acceptance must be a JSON object or be omitted for compact V2"
+            if str(acceptance.get("kind") or "").strip() != "text_equals":
+                return "legacy write_file acceptance must remain exact text_equals; compact V2 should omit acceptance"
+            acceptance_path = str(acceptance.get("path") or "").strip()
+            if acceptance_path != action_path:
+                return "legacy write_file acceptance.path must exactly equal action.path"
+            expected = acceptance.get("expected_text")
             if not isinstance(expected, str) or expected != body:
-                return "write_file requires acceptance.expected_text to exactly equal action.content"
+                return "legacy write_file acceptance.expected_text must exactly equal action.content"
             return "write_file path/content did not satisfy the attached-workspace safety contract"
+        if not isinstance(acceptance, dict):
+            return "this action requires an acceptance JSON object"
+        acceptance_kind = str(acceptance.get("kind") or "").strip()
         if kind == "run_python":
             if acceptance_kind != "command":
                 return "run_python requires acceptance.kind=command"
