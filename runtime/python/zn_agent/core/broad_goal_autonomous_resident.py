@@ -9,12 +9,11 @@ persists them once into the existing WorkItem, and only then enters the mature
 research/write/run/verify loop.
 """
 
-import json
-
 from .broad_goal_completion_resident import BroadGoalCompletionResidentRuntime
 from .cognition import CognitiveIncrement
 from .models import utc_now
 from .steerable_work import WorkItem
+from .structured_cognition import decode_structured_cognition_object
 
 
 class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
@@ -165,11 +164,8 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
         return None
 
     def _parse_root_acceptance(self, content: str) -> list[str] | None:
-        try:
-            raw = json.loads(str(content or "").strip())
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return None
-        if not isinstance(raw, dict) or set(raw) != {"zn_root_acceptance"}:
+        raw = decode_structured_cognition_object(content)
+        if raw is None or set(raw) != {"zn_root_acceptance"}:
             return None
         contract = raw.get("zn_root_acceptance")
         if not isinstance(contract, dict) or set(contract) != {"criteria"}:
