@@ -19,7 +19,7 @@ defaults:
 jobs:
   diagnostic:
     runs-on: [self-hosted, Windows, X64, zn-interactive]
-    timeout-minutes: 8
+    timeout-minutes: 20
     env:
       UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
     steps:
@@ -35,9 +35,22 @@ jobs:
           uv venv .ci/interactive-debug-venv --python 3.12
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-debug-venv\Scripts\python.exe'
           uv pip install --python $python "runtime/python[browser]"
-      - name: Run extension focus diagnostic
+      - name: Run exact pre-extension product sequence then diagnostic
         run: |
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-debug-venv\Scripts\python.exe'
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $extensionName = 'test_windows_interactive_user_browser_extension.py'
+          $excluded = @(
+            'test_windows_interactive_authorized_user_browser_cdp.py',
+            'test_windows_interactive_user_browser_named_goal.py'
+          )
+          $tests = Get-ChildItem tests/zn_agent/e2e/test_windows_interactive_*.py |
+            Where-Object { $_.Name -notin $excluded -and $_.Name -lt $extensionName } |
+            Sort-Object Name
+          foreach ($test in $tests) {
+            Write-Host "=== pre-extension module: $($test.Name) ==="
+            & $python $test.FullName -v
+            if ($LASTEXITCODE -ne 0) { throw "Pre-extension module failed: $($test.Name)" }
+          }
           & $python .agent/e2e26_extension_focus_diagnostic.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
