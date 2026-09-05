@@ -1,0 +1,44 @@
+name: E2E26 Structured Cognition Debug
+
+on:
+  push:
+    branches:
+      - debug/e2e26-structured-json
+  workflow_dispatch:
+
+env:
+  CI: 'true'
+  PYTHONUTF8: '1'
+  PYTHONUNBUFFERED: '1'
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+jobs:
+  structured-cognition:
+    runs-on: [self-hosted, Windows, X64, zn-ci]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare isolated runtime
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/structured-json-venv -ErrorAction SilentlyContinue
+          uv venv .ci/structured-json-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\structured-json-venv\Scripts\python.exe'
+          uv pip install --python $python "runtime/python[browser]"
+      - name: Run strict envelope and broad Work regressions
+        run: |
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\structured-json-venv\Scripts\python.exe'
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          & $python -m unittest -v `
+            tests.zn_agent.core.test_structured_cognition `
+            tests.zn_agent.core.test_broad_goal_autonomous_intake `
+            tests.zn_agent.core.test_broad_goal_independent_completion_v2 `
+            tests.zn_agent.core.test_broad_goal_steering_continuity
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
