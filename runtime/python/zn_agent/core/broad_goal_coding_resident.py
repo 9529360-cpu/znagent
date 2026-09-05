@@ -82,18 +82,19 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
         request.question = (
             "You are a bounded coding/reasoning resource assisting one durable ZN Work. "
             "ZN owns the Work lifecycle, tools, permissions, execution, evidence and completion. "
-            "Propose exactly ONE smallest useful next workspace step. Return ONLY JSON. "
-            "Allowed V1 forms are either: "
+            "Propose exactly ONE smallest useful next workspace step. Return ONLY one strict JSON object. "
+            "Allowed forms are either: "
             '{"zn_work_step":{"objective":"...","action":{"kind":"write_file",'
-            '"path":"relative/path","content":"..."},"acceptance":{"kind":"text_equals",'
-            '"path":"relative/path","expected_text":"..."}}} OR '
+            '"path":"relative/path","content":"..."}}} OR '
             '{"zn_work_step":{"objective":"...","action":{"kind":"run_python",'
             '"path":"relative/script.py","args":[]},"acceptance":{"kind":"command",'
             '"expected_exit_code":0,"output_contains":["..."]}}}. '
-            "Do not emit shell commands, executable paths, background-process controls, or tool calls. "
-            "For run_python, the script must already exist inside the attached workspace; ZN chooses "
-            "the interpreter and workdir. If the latest real execution failed, use that exact evidence "
-            "to propose the smallest repair rather than repeating the failed assumption. "
+            "For write_file, do NOT include or duplicate an acceptance object. ZN owns verification and "
+            "deterministically derives an exact text readback from action.path and action.content. "
+            "Do not use markdown fences. Do not emit shell commands, executable paths, background-process "
+            "controls, or tool calls. For run_python, the script must already exist inside the attached "
+            "workspace; ZN chooses the interpreter and workdir. If the latest real execution failed, use "
+            "that exact evidence to propose the smallest repair rather than repeating the failed assumption. "
             f"Root objective: {root.objective}. "
             f"Root acceptance criteria: {json.dumps(root.acceptance_criteria, ensure_ascii=False)}. "
             f"Durable child evidence: {json.dumps(evidence, ensure_ascii=False)}. "
@@ -102,7 +103,7 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
         )
         request.context = {
             **dict(request.context or {}),
-            "rolling_step_contract": "write_file-or-run_python-v1",
+            "rolling_step_contract": "write_file-v2-or-run_python-v1",
             "child_count": len(items),
             "latest_execution": latest_execution,
         }
@@ -275,10 +276,6 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
         learning_evidence,
         thought=None,
     ):
-        # Recovery boundary: the mature Body persists native_investigation before
-        # this rolling layer records its child/failure semantics. Reconcile from
-        # that durable truth on the next pulse instead of leaving a running child
-        # or a stale resolved_external investigation after a crash.
         self._reconcile_failed_rolling_step(event, state)
         return super()._investigation_step(
             event,
