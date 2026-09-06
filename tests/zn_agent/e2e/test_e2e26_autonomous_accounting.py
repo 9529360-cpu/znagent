@@ -22,10 +22,82 @@ BROAD_GOAL = (
     "做出一个能真正运行的第一版。第一版不要做登录，不要做复杂设计，先把核心记账跑起来。"
 )
 STEERING = "登录先不要做，界面保持简单，先确保新增收支和本地保存能用。"
+_MAX_PULSES = 420
+_MAX_POST_STEERING_PULSES = 240
+_HEARTBEAT_EVERY = 20
 
 
 class E2E26AutonomousAccountingTests(unittest.TestCase):
     """Real-provider acceptance: the harness supplies goals, never the product solution."""
+
+    @staticmethod
+    def _diagnostic_snapshot(resident, ledger, *, pulse: int) -> dict[str, object]:
+        state = resident.store.get_working_state()
+        items = ledger.list_work_items("e2e-26-real", limit=256)
+        current_version = ledger.plan_version("e2e-26-real")
+        current = [item for item in items if item.plan_version == current_version]
+        investigation = None
+        current_event_id = str(state.current_event_id or "").strip()
+        if current_event_id:
+            active = resident.investigator.current(current_event_id)
+            if active is not None:
+                investigation = {
+                    "status": active.status,
+                    "unresolved": str(active.unresolved or "")[:1000],
+                    "resolution": str(active.resolution or "")[:1000],
+                    "next_probe": str(active.next_probe or "")[:1000],
+                    "evidence_tail": [str(value)[:700] for value in active.evidence[-4:]],
+                }
+        raw_action = state.data.get("native_action_result")
+        action = raw_action if isinstance(raw_action, dict) else {}
+        action_data = action.get("data") if isinstance(action.get("data"), dict) else {}
+        return {
+            "pulse": pulse,
+            "stage": state.stage,
+            "next_action": str(state.next_action or "")[:1000],
+            "current_event_id": current_event_id,
+            "current_goal_id": str(state.current_goal_id or "")[:300],
+            "plan_version": current_version,
+            "local_failure": str(state.data.get("local_failure") or "")[:1800],
+            "rolling_step": state.data.get("broad_goal_rolling_step"),
+            "research_step": state.data.get("broad_goal_research_step"),
+            "structured_rejection": state.data.get("structured_proposal_rejection"),
+            "latest_action": {
+                "kind": action.get("kind"),
+                "success": action.get("success"),
+                "exit_code": action_data.get("exit_code"),
+                "timed_out": action_data.get("timed_out"),
+                "error": str(action.get("error") or "")[:1000],
+                "output_tail": str(action.get("output") or "")[-1200:],
+            },
+            "investigation": investigation,
+            "current_items": [
+                {
+                    "id": item.work_item_id,
+                    "parent": item.parent_work_item_id,
+                    "status": item.status,
+                    "objective": item.objective[:500],
+                    "criteria": list(item.acceptance_criteria)[:6],
+                    "blocker": str(item.blocker or "")[:1200],
+                    "result_tail": str(item.result or "")[-1200:],
+                }
+                for item in current[-16:]
+            ],
+        }
+
+    @classmethod
+    def _print_diagnostic(cls, resident, ledger, *, pulse: int, marker: str) -> None:
+        print(
+            marker
+            + "="
+            + json.dumps(
+                cls._diagnostic_snapshot(resident, ledger, pulse=pulse),
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            ),
+            flush=True,
+        )
 
     def test_broad_goal_reaches_evidence_bound_runnable_mvp_without_solution_fixture(self) -> None:
         config = load_zn_config()
@@ -94,11 +166,12 @@ class E2E26AutonomousAccountingTests(unittest.TestCase):
             criteria_formed_before_child = False
             research_seen = False
             steering_applied = False
+            steering_pulse: int | None = None
             steered_event_id: str | None = None
             terminal = None
 
             try:
-                for _ in range(900):
+                for pulse in range(1, _MAX_PULSES + 1):
                     candidate = resident.live_once()
                     if candidate is not None:
                         terminal = candidate
@@ -149,11 +222,48 @@ class E2E26AutonomousAccountingTests(unittest.TestCase):
                             payload={"model_policy": "on_demand"},
                         )
                         steering_applied = True
+                        steering_pulse = pulse
                         steered_event_id = steered_event.event_id
                         print(
                             f"ZN_E2E26_STEERING_PLAN_VERSION={old_version}->{ledger.plan_version('e2e-26-real')}",
                             flush=True,
                         )
+                        self._print_diagnostic(
+                            resident,
+                            ledger,
+                            pulse=pulse,
+                            marker="ZN_E2E26_AFTER_STEERING",
+                        )
+
+                    if pulse % _HEARTBEAT_EVERY == 0:
+                        self._print_diagnostic(
+                            resident,
+                            ledger,
+                            pulse=pulse,
+                            marker="ZN_E2E26_HEARTBEAT",
+                        )
+
+                    if (
+                        steering_pulse is not None
+                        and pulse - steering_pulse >= _MAX_POST_STEERING_PULSES
+                    ):
+                        self._print_diagnostic(
+                            resident,
+                            ledger,
+                            pulse=pulse,
+                            marker="ZN_E2E26_STALL",
+                        )
+                        self.fail(
+                            "the steered autonomous Root exceeded the bounded post-steering pulse budget; "
+                            "see ZN_E2E26_STALL for the durable stage/Work/evidence snapshot"
+                        )
+                else:
+                    self._print_diagnostic(
+                        resident,
+                        ledger,
+                        pulse=_MAX_PULSES,
+                        marker="ZN_E2E26_PULSE_LIMIT",
+                    )
 
                 self.assertTrue(
                     criteria_formed_before_child,
@@ -231,7 +341,7 @@ class E2E26AutonomousAccountingTests(unittest.TestCase):
                     action
                     for action in body_actions
                     if action.kind == "read_text"
-                    and Path(str(action.args.get("path") or "")).name == Path(persisted_path).name
+                    and Path(str(action.data.get("path") or "")).name == Path(persisted_path).name
                 ]
                 self.assertTrue(
                     persisted_reads,
