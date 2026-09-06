@@ -12,8 +12,9 @@ import json
 from typing import Any
 
 from .delegation_admission import BoundedDelegationPlanner, DelegatedPlanDecision
-from .evidence_bound_work import WorkerContextPack, WorkerRun
+from .evidence_bound_work import WorkerRun
 from .steerable_work import WorkItem
+from .worker_context_boundary import WorkerContextPack
 
 
 class DelegatedWorkCoordinator:
@@ -188,16 +189,16 @@ class DelegatedWorkCoordinator:
         expected_action: str,
         completed: list[WorkItem],
     ):
-        """Build a bounded pack and bind the request to the durable WorkerRun."""
+        """Build a strict pack and bind the request to the durable WorkerRun."""
 
         profile = self.resident._WORKER_SCOPE_PROFILES[worker.executor_kind]
         accepted_evidence = [
             {
                 "kind": "accepted_effect",
                 "work_item_id": item.work_item_id,
-                "objective": item.objective[:400],
-                "acceptance": list(item.acceptance_criteria)[:4],
-                "result": str(item.result or "")[:1200],
+                "objective": item.objective,
+                "acceptance": list(item.acceptance_criteria),
+                "result": str(item.result or ""),
             }
             for item in completed[-6:]
             if item.work_item_id != child.work_item_id
@@ -216,10 +217,10 @@ class DelegatedWorkCoordinator:
             {
                 "kind": "failed_effect",
                 "work_item_id": item.work_item_id,
-                "objective": item.objective[:400],
-                "acceptance": list(item.acceptance_criteria)[:4],
-                "blocker": str(item.blocker or "")[:1200],
-                "result": str(item.result or "")[:1200],
+                "objective": item.objective,
+                "acceptance": list(item.acceptance_criteria),
+                "blocker": str(item.blocker or ""),
+                "result": str(item.result or ""),
             }
             for item in current_items
             if item.status == "blocked"
@@ -242,19 +243,27 @@ class DelegatedWorkCoordinator:
             except (TypeError, ValueError, json.JSONDecodeError):
                 continue
             if isinstance(parsed, dict) and str(parsed.get("url") or "").strip():
-                refs.append({"kind": "url", "url": str(parsed["url"])[:2048]})
+                refs.append({"kind": "url", "url": str(parsed["url"])})
 
+        classification = str(event.payload.get("data_classification") or "private").strip()
         pack = WorkerContextPack(
-            root_goal_summary=root.objective[:2000],
+            root_goal_summary=root.objective,
             work_item_objective=child.objective,
             acceptance_criteria=tuple(child.acceptance_criteria),
             plan_version=root.plan_version,
             relevant_evidence=evidence,
-            artifact_refs=tuple(refs[:12]),
+            artifact_refs=tuple(refs),
             tool_scope=worker.tool_scope,
             authority_scope=worker.authority_scope,
             forbidden_actions=tuple(profile["forbidden_actions"]),
             expected_result_schema=self.resident._expected_worker_schema(expected_action),
+            provenance={
+                "source": "resident_work_ledger",
+                "boundary": "worker_context_pack_v1",
+                "work_item_id": child.work_item_id,
+                "plan_version": root.plan_version,
+            },
+            data_classification=classification,
         )
         request.request_id = worker.cognition_request_id
         request.required_capabilities = self.resident._worker_required_capabilities(
