@@ -20,6 +20,7 @@ from .evidence_bound_work import EvidenceBoundSteerableWorkLedger
 from .models import ExecutionPath, ResidentRunResult, utc_now
 from .natural_file_work_resident import NaturalFileWorkResidentRuntime
 from .steerable_work import WorkItem
+from .structured_proposal import parse_exact_json_payload
 from .work import title_for_work_task
 
 
@@ -338,10 +339,7 @@ class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
         root: WorkItem,
         content: str,
     ) -> dict[str, str] | None:
-        try:
-            raw = json.loads(str(content or "").strip())
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return None
+        raw = parse_exact_json_payload(content)
         if not isinstance(raw, dict) or set(raw) != {"zn_work_step"}:
             return None
         step = raw.get("zn_work_step")
