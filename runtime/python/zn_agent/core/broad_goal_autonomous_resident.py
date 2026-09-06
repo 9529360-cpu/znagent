@@ -9,12 +9,15 @@ persists them once into the existing WorkItem, and only then enters the mature
 research/write/run/verify loop.
 """
 
-import json
-
 from .broad_goal_completion_resident import BroadGoalCompletionResidentRuntime
 from .cognition import CognitiveIncrement
 from .models import utc_now
 from .steerable_work import WorkItem
+from .structured_proposal import (
+    looks_like_structured_payload,
+    normalize_exact_json_payload,
+    parse_exact_json_payload,
+)
 
 
 class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
@@ -111,6 +114,28 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
         return request
 
     def _cognition_integration_step(self, event, state, *, readiness, thought=None):
+        raw = state.data.get("cognitive_increment")
+        if isinstance(raw, dict):
+            increment = CognitiveIncrement.from_dict(raw)
+            normalized = normalize_exact_json_payload(increment.content)
+            parsed = parse_exact_json_payload(increment.content)
+            if normalized is not None and parsed is not None:
+                # One normalization boundary sits ahead of every broad-goal
+                # structured parser. This lets research/write/run/verify share
+                # the same exact fence rule without turning prose into actions.
+                if normalized != increment.content.strip():
+                    normalized_raw = dict(raw)
+                    normalized_raw["content"] = normalized
+                    state.data["cognitive_increment"] = normalized_raw
+                    state.data["structured_proposal_normalization"] = {
+                        "increment_id": increment.increment_id,
+                        "envelope": "single_json_fence",
+                    }
+                    raw = normalized_raw
+                    increment = CognitiveIncrement.from_dict(raw)
+            elif self._looks_like_any_structured_proposal(increment.content):
+                return self._reject_malformed_structured_proposal(event, state, increment)
+
         root = self._autonomous_root_candidate(event)
         raw = state.data.get("cognitive_increment")
         if root is None or not isinstance(raw, dict):
@@ -164,11 +189,47 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
         self.store.save_working_state(state)
         return None
 
+    @staticmethod
+    def _looks_like_any_structured_proposal(content: str) -> bool:
+        return looks_like_structured_payload(content, top_level_key="zn_work_step") or (
+            looks_like_structured_payload(content, top_level_key="zn_root_acceptance")
+        )
+
+    def _reject_malformed_structured_proposal(self, event, state, increment: CognitiveIncrement):
+        failure = (
+            "ZN rejected a structured cognition proposal because its exact JSON envelope was malformed, "
+            "ambiguous, duplicated, or contained multiple proposal envelopes"
+        )
+        state.data["local_failure"] = failure
+        state.data["structured_proposal_rejection"] = {
+            "increment_id": increment.increment_id,
+            "reason": failure,
+        }
+        investigation = self.investigator.current(event.event_id)
+        if investigation is not None:
+            evidence = list(investigation.evidence)
+            if failure not in evidence:
+                evidence.append(failure)
+            investigation.status = "open"
+            investigation.resolution = None
+            investigation.unresolved = failure
+            investigation.next_probe = None
+            investigation.updated_at = utc_now()
+            investigation.evidence = tuple(evidence[-64:])
+            self.investigator._save(investigation)
+        state.data.pop("cognitive_increment", None)
+        state.data.pop("external_cognition_result", None)
+        state.data.pop("cognition_integration", None)
+        state.data.pop("cognition_request", None)
+        state.data.pop("impasse_id", None)
+        state.stage = "native_investigation"
+        state.next_action = "repair the rejected bounded structured proposal"
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        return None
+
     def _parse_root_acceptance(self, content: str) -> list[str] | None:
-        try:
-            raw = json.loads(str(content or "").strip())
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return None
+        raw = parse_exact_json_payload(content)
         if not isinstance(raw, dict) or set(raw) != {"zn_root_acceptance"}:
             return None
         contract = raw.get("zn_root_acceptance")
