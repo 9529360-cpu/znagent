@@ -68,12 +68,27 @@ class E2E29OneModelMultiWorkerTests(unittest.TestCase):
                         break
                     if pulse % 40 == 0:
                         runs = work_ledger.list_worker_runs(thread_id="e2e-29-real", limit=64)
+                        state = resident.store.get_working_state()
+                        blocked = [
+                            item
+                            for item in work_ledger.list_work_items("e2e-29-real", limit=256)
+                            if item.status == "blocked" and (item.blocker or item.result)
+                        ][-4:]
                         print(
                             "ZN_E2E29_HEARTBEAT="
                             + json.dumps(
                                 {
                                     "pulse": pulse,
-                                    "stage": resident.store.get_working_state().stage,
+                                    "stage": state.stage,
+                                    "local_failure": str(state.data.get("local_failure") or "")[:1600],
+                                    "blocked_tail": [
+                                        {
+                                            "id": item.work_item_id,
+                                            "criteria": list(item.acceptance_criteria)[:4],
+                                            "blocker": str(item.blocker or item.result or "")[:1600],
+                                        }
+                                        for item in blocked
+                                    ],
                                     "workers": [
                                         {
                                             "id": run.worker_run_id,

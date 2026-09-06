@@ -124,6 +124,16 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
             self._fail_delegated_provider_run(state, result)
         return result
 
+    @staticmethod
+    def _root_requests_delegated_worker_sequence(root: WorkItem) -> bool:
+        text = " ".join(str(root.objective or "").casefold().split())
+        required_groups = (
+            ("调研", "研究", "research"),
+            ("开发", "实现", "做出", "build", "implement", "develop"),
+            ("review", "评审", "审查", "复核"),
+        )
+        return all(any(marker in text for marker in markers) for markers in required_groups)
+
     def _build_cognition_request(self, event, impasse, required, deliberation=None):
         request = super()._build_cognition_request(event, impasse, required, deliberation)
         root = self._criterion_bound_root(event)
@@ -157,6 +167,8 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
             **dict(request.context or {}),
             "root_finish_contract": "current-plan-python-plus-persisted-read-verifier-v2",
         }
+        if not self._root_requests_delegated_worker_sequence(root):
+            return request
         return self._prepare_delegated_worker_request(event, root, request, completed)
 
     def _prepare_delegated_worker_request(self, event, root, request, completed):
@@ -264,8 +276,9 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
         completed: list[WorkItem],
     ):
         profile = self._WORKER_SCOPE_PROFILES[worker.executor_kind]
-        evidence = tuple(
+        accepted_evidence = [
             {
+                "kind": "accepted_effect",
                 "work_item_id": item.work_item_id,
                 "objective": item.objective[:400],
                 "acceptance": list(item.acceptance_criteria)[:4],
@@ -273,7 +286,32 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
             }
             for item in completed[-6:]
             if item.work_item_id != child.work_item_id
-        )
+        ]
+        current_items = [
+            item
+            for item in self.work_ledger.list_work_items(root.work_thread_id, limit=256)
+            if item.parent_work_item_id == root.work_item_id
+            and item.plan_version == root.plan_version
+            and item.work_item_id != child.work_item_id
+        ]
+        failed_evidence = [
+            {
+                "kind": "failed_effect",
+                "work_item_id": item.work_item_id,
+                "objective": item.objective[:400],
+                "acceptance": list(item.acceptance_criteria)[:4],
+                "blocker": str(item.blocker or "")[:1200],
+                "result": str(item.result or "")[:1200],
+            }
+            for item in current_items
+            if item.status == "blocked"
+            and (item.blocker or item.result)
+            and not any(
+                criterion.startswith("delegated_worker_evidence:")
+                for criterion in item.acceptance_criteria
+            )
+        ][-4:]
+        evidence = tuple((accepted_evidence + failed_evidence)[-8:])
         refs: list[dict[str, Any]] = []
         workspace = str(event.payload.get("workspace_path") or "").strip()
         if workspace and worker.executor_kind in {"coding", "review"}:
@@ -344,7 +382,13 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
     @staticmethod
     def _delegated_worker_instruction(executor_kind: str, expected_action: str) -> str:
         if executor_kind == "research":
-            return " DELEGATED WORKER: research. Return ONLY the research_page form. You have managed-browser read authority only. Workspace writes, Terminal execution, messaging, releases, and Root acceptance are forbidden."
+            return (
+                " DELEGATED WORKER: research. Return ONLY the research_page form. You have managed-browser "
+                "read authority only. Use worker_context_pack.relevant_evidence, including prior failed real "
+                "page effects, and do not blindly repeat an already failed URL or assumption; choose another "
+                "authoritative primary source when the evidence supports that repair. Workspace writes, Terminal "
+                "execution, messaging, releases, and Root acceptance are forbidden."
+            )
         if executor_kind == "review":
             return " DELEGATED WORKER: review. Return ONLY the run_python form against an existing workspace artifact. You may inspect/run verification but must not write workspace files, mutate Git, push/release/message, or accept the Root."
         if expected_action == "write_file":
