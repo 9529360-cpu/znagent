@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from zn_agent.core.models import Goal, ModelRoute
+from zn_agent.core.provider_bridge import _current_model_spec, route_from_spec
 from zn_agent.core.router import ModelRouter, NoRouteAvailable
 
 
@@ -70,6 +71,27 @@ class ModelRouterHardEligibilityTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(NoRouteAvailable, "missing required capabilities: research"):
             router.select(self._goal("research", required=("research",)))
+
+    def test_legacy_single_model_shortcut_explicitly_covers_existing_worker_roles(self) -> None:
+        spec = _current_model_spec({"model": "fixture-model"})
+        self.assertIsNotNone(spec)
+        assert spec is not None
+        route = route_from_spec(spec)
+        for required in (
+            ("general",),
+            ("research", "reasoning"),
+            ("coding", "reasoning"),
+        ):
+            with self.subTest(required=required):
+                selected = self._router(route).select(
+                    self._goal("legacy default", required=required)
+                )
+                self.assertEqual(selected.route_id, "default")
+
+    def test_explicit_route_without_capability_contract_remains_fail_closed(self) -> None:
+        route = route_from_spec({"id": "explicit", "provider": "fixture", "model": "model"})
+        with self.assertRaisesRegex(NoRouteAvailable, "missing required capabilities: coding"):
+            self._router(route).select(self._goal("explicit coding", required=("coding",)))
 
     def test_user_pins_and_denials_are_hard_filters(self) -> None:
         pinned = self._route(
