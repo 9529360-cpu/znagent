@@ -9,6 +9,7 @@ from unittest.mock import patch
 from zn_agent.core.models import ModelRoute, WorkerResult
 from zn_agent.core.provider_bridge import build_resident_runtime
 from zn_agent.core.route_policy_intake import infer_thread_route_policy
+from zn_agent.core.router import NoRouteAvailable
 from zn_agent.core.runtime import ZNKernelRuntime
 from zn_agent.core.store import KernelStore
 
@@ -155,6 +156,41 @@ class ThreadRoutePolicyIntakeTests(unittest.TestCase):
             )
         finally:
             kernel.store.close()
+
+    def test_explicit_empty_provider_allowlist_rejects_all_nonlocal_routes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            factory = _CaptureFactory()
+            kernel = ZNKernelRuntime(
+                store=KernelStore(Path(tmp) / "empty-allowlist.db"),
+                routes=[
+                    ModelRoute(
+                        "otherwise-eligible",
+                        "openai",
+                        "gpt",
+                        {"research": 1.0, "reasoning": 1.0},
+                        reliability=1.0,
+                        metadata={"local": False},
+                    )
+                ],
+                worker_factory=factory,
+                max_attempts=1,
+            )
+            try:
+                with self.assertRaisesRegex(NoRouteAvailable, "outside user allowlist"):
+                    kernel.run_goal(
+                        "perform research cognition",
+                        required_capabilities=("research", "reasoning"),
+                        metadata={
+                            "cognition_request": {
+                                "context": {"route_policy": {"allowed_providers": []}}
+                            }
+                        },
+                        max_attempts_override=1,
+                        goal_id="goal-empty-allowlist",
+                    )
+                self.assertEqual(factory.routes, [])
+            finally:
+                kernel.store.close()
 
     def test_natural_language_policy_persists_across_resident_restart_and_blocks_other_provider(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
