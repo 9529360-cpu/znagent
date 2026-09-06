@@ -2,7 +2,9 @@
 
 > Date: 2026-08-23
 >
-> Active branch: `dev/zn-agent`
+> Canonical branch: `main`
+>
+> Active development: short-lived `work/*` branches from current `main`; `dev/zn-agent` is historical compatibility only.
 >
 > Governing architecture: [`../ZN.md`](../ZN.md)
 >
