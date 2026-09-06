@@ -72,7 +72,7 @@ class ModelRouterHardEligibilityTests(unittest.TestCase):
         with self.assertRaisesRegex(NoRouteAvailable, "missing required capabilities: research"):
             router.select(self._goal("research", required=("research",)))
 
-    def test_legacy_single_model_shortcut_explicitly_covers_existing_worker_roles(self) -> None:
+    def test_legacy_single_model_shortcut_explicitly_covers_existing_product_roles(self) -> None:
         spec = _current_model_spec({"model": "fixture-model"})
         self.assertIsNotNone(spec)
         assert spec is not None
@@ -81,6 +81,7 @@ class ModelRouterHardEligibilityTests(unittest.TestCase):
             ("general",),
             ("research", "reasoning"),
             ("coding", "reasoning"),
+            ("language_understanding",),
         ):
             with self.subTest(required=required):
                 selected = self._router(route).select(
