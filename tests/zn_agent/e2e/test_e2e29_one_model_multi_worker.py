@@ -53,9 +53,10 @@ class E2E29OneModelMultiWorkerTests(unittest.TestCase):
                 resource_status={"available": True, "error": None},
             )
             control = RestoreAwareWorkControl(RecoveryBoundedWorkLedger(resident))
-            ledger = control.ledger
-            ledger.create_thread(thread_id="e2e-29-real", title="One model multi worker")
-            ledger.attach_workspace("e2e-29-real", workspace, name="E2E29 workspace")
+            ingress_ledger = control.ledger
+            work_ledger = resident.work_ledger
+            ingress_ledger.create_thread(thread_id="e2e-29-real", title="One model multi worker")
+            ingress_ledger.attach_workspace("e2e-29-real", workspace, name="E2E29 workspace")
             _, event = control.start("e2e-29-real", GOAL, payload={"model_policy": "on_demand"})
 
             terminal = None
@@ -66,7 +67,7 @@ class E2E29OneModelMultiWorkerTests(unittest.TestCase):
                         terminal = candidate
                         break
                     if pulse % 40 == 0:
-                        runs = ledger.list_worker_runs(thread_id="e2e-29-real", limit=64)
+                        runs = work_ledger.list_worker_runs(thread_id="e2e-29-real", limit=64)
                         print(
                             "ZN_E2E29_HEARTBEAT="
                             + json.dumps(
@@ -93,15 +94,15 @@ class E2E29OneModelMultiWorkerTests(unittest.TestCase):
                 assert terminal is not None
                 self.assertTrue(terminal.success, terminal.reason)
 
-                current_version = ledger.plan_version("e2e-29-real")
-                root = ledger.work_item_for_event(event.event_id)
+                current_version = work_ledger.plan_version("e2e-29-real")
+                root = work_ledger.work_item_for_event(event.event_id)
                 self.assertIsNotNone(root)
                 assert root is not None
                 self.assertEqual(root.plan_version, current_version)
                 self.assertEqual(root.status, "completed")
                 self.assertIn("zn_independent_acceptance", root.result or "")
 
-                runs = ledger.list_worker_runs(thread_id="e2e-29-real", limit=64)
+                runs = work_ledger.list_worker_runs(thread_id="e2e-29-real", limit=64)
                 current_runs = [run for run in runs if run.plan_version == current_version]
                 self.assertGreaterEqual(len(current_runs), 3)
                 self.assertGreaterEqual(len({run.worker_run_id for run in current_runs}), 3)
@@ -139,7 +140,7 @@ class E2E29OneModelMultiWorkerTests(unittest.TestCase):
                     packs.append(json.dumps(pack, ensure_ascii=False, sort_keys=True))
                 self.assertGreaterEqual(len(set(packs)), 3, "delegated context packs must be isolated per WorkItem")
 
-                items = ledger.list_work_items("e2e-29-real", limit=256)
+                items = work_ledger.list_work_items("e2e-29-real", limit=256)
                 current_children = [
                     item for item in items
                     if item.parent_work_item_id == root.work_item_id and item.plan_version == current_version
