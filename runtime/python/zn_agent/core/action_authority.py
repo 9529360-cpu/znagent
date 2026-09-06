@@ -44,9 +44,7 @@ class ActionAuthorityContext:
             expected_action=str(raw.get("expected_action") or ""),
             tool_scope=tuple(str(item) for item in (raw.get("tool_scope") or ())),
             authority_scope=tuple(str(item) for item in (raw.get("authority_scope") or ())),
-            workspace_root=(
-                str(raw.get("workspace_root") or "").strip() or None
-            ),
+            workspace_root=str(raw.get("workspace_root") or "").strip() or None,
             allowed_command_sha256=(
                 str(raw.get("allowed_command_sha256") or "").strip() or None
             ),
@@ -125,9 +123,6 @@ class WorkerActionAuthorityEnforcer:
             cls._require_workspace_target(root, context, allow_root=True)
             return
 
-        # Worker contexts are deliberately fail-closed for every primitive that
-        # is not explicitly mapped above. Resident-owned actions without a worker
-        # context continue to use the existing Body semantics.
         raise WorkerActionAuthorityError(
             f"Body action {normalized or '<empty>'} is not admitted for a WorkerRun"
         )
@@ -156,8 +151,9 @@ class WorkerActionAuthorityEnforcer:
 class AuthorityEnforcedBody:
     """Thin admission wrapper around the one existing NativeBody instance."""
 
-    def __init__(self, body) -> None:
+    def __init__(self, body, *, resident=None) -> None:
         self._body = body
+        self._resident = resident
 
     def __getattr__(self, name: str):
         return getattr(self._body, name)
@@ -168,8 +164,33 @@ class AuthorityEnforcedBody:
             if not isinstance(raw_context, dict):
                 raise WorkerActionAuthorityError("worker action authority context is malformed")
             context = ActionAuthorityContext.from_dict(raw_context)
+            self._revalidate_durable_authority(context)
             WorkerActionAuthorityEnforcer.authorize(kind, args, context)
         return self._body.act(kind, event_id=event_id, **args)
+
+    def _revalidate_durable_authority(self, context: ActionAuthorityContext) -> None:
+        resident = self._resident
+        if resident is None:
+            return
+        ledger = resident.work_ledger
+        current_plan = int(ledger.plan_version(context.work_thread_id))
+        if current_plan != context.plan_version:
+            raise WorkerActionAuthorityError("worker action belongs to a stale Work plan")
+        worker = ledger.worker_run(context.worker_run_id)
+        if worker is None:
+            raise WorkerActionAuthorityError("worker action references a missing WorkerRun")
+        if (
+            worker.work_item_id != context.work_item_id
+            or worker.plan_version != context.plan_version
+            or worker.executor_kind != context.executor_kind
+            or tuple(worker.tool_scope) != tuple(context.tool_scope)
+            or tuple(worker.authority_scope) != tuple(context.authority_scope)
+        ):
+            raise WorkerActionAuthorityError("worker action authority no longer matches durable WorkerRun")
+        if worker.state not in {"queued", "running", "completed"}:
+            raise WorkerActionAuthorityError(
+                f"worker action cannot execute from WorkerRun state {worker.state}"
+            )
 
 
 def bind_worker_authority_arg(
