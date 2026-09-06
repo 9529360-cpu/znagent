@@ -10,6 +10,11 @@ research/write/run/verify loop. Delegated work is coordinated by one composed
 Resident-internal component; cognition cannot materialize WorkerRuns directly.
 """
 
+from .action_authority import (
+    ActionAuthorityContext,
+    bind_worker_authority_arg,
+    install_worker_authority_gate,
+)
 from .broad_goal_completion_resident import BroadGoalCompletionResidentRuntime
 from .cognition import CognitiveIncrement
 from .delegated_work_coordinator import DelegatedWorkCoordinator
@@ -30,6 +35,12 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
     _MIN_ROOT_CRITERIA = 2
     _MAX_ROOT_CRITERIA = 8
     _MAX_CRITERION_CHARS = 500
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Keep the one existing Body object and its recovery-aware concrete type;
+        # only its act admission boundary is decorated.
+        install_worker_authority_gate(self.body, resident=self)
 
     def _delegated_work_coordinator(self) -> DelegatedWorkCoordinator:
         coordinator = getattr(self, "_delegated_work_coordinator_instance", None)
@@ -53,6 +64,47 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
             request,
             completed,
         )
+
+    def _begin_native_action_cycle(self, event, state, intent):
+        """Bind transient WorkerRun authority to the concrete persisted action."""
+
+        pending = state.data.get(self._DELEGATED_PENDING_KEY)
+        if isinstance(pending, dict):
+            worker_run_id = str(pending.get("worker_run_id") or "").strip()
+            work_item_id = str(pending.get("work_item_id") or "").strip()
+            expected_action = str(pending.get("expected_action") or "").strip()
+            worker = self.work_ledger.worker_run(worker_run_id) if worker_run_id else None
+            item = (
+                self.work_ledger._work_item_by_id(worker.work_item_id)
+                if worker is not None
+                else None
+            )
+            if worker is None or item is None or not work_item_id or not expected_action:
+                raise PermissionError("delegated action lost its durable WorkerRun authority context")
+            if item.work_item_id != work_item_id or worker.work_item_id != item.work_item_id:
+                raise PermissionError("delegated action WorkItem does not match its WorkerRun")
+            if item.plan_version != worker.plan_version:
+                raise PermissionError("delegated action WorkItem plan does not match its WorkerRun")
+            current_plan = int(self.work_ledger.plan_version(item.work_thread_id))
+            if worker.plan_version != current_plan:
+                raise PermissionError("delegated action belongs to a stale Work plan")
+            command = str(intent.args.get("command") or "")
+            context = ActionAuthorityContext(
+                work_thread_id=item.work_thread_id,
+                work_item_id=worker.work_item_id,
+                worker_run_id=worker.worker_run_id,
+                plan_version=worker.plan_version,
+                executor_kind=worker.executor_kind,
+                expected_action=expected_action,
+                tool_scope=tuple(worker.tool_scope),
+                authority_scope=tuple(worker.authority_scope),
+                workspace_root=str(event.payload.get("workspace_path") or "").strip() or None,
+                allowed_command_sha256=(
+                    ActionAuthorityContext.command_digest(command) if command else None
+                ),
+            )
+            intent.args = bind_worker_authority_arg(intent.args, context)
+        return super()._begin_native_action_cycle(event, state, intent)
 
     def _autonomous_root_candidate(self, event) -> WorkItem | None:
         payload = event.payload if isinstance(getattr(event, "payload", None), dict) else {}
@@ -146,9 +198,6 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
             normalized = normalize_exact_json_payload(increment.content)
             parsed = parse_exact_json_payload(increment.content)
             if normalized is not None and parsed is not None:
-                # One normalization boundary sits ahead of every broad-goal
-                # structured parser. This lets research/write/run/verify share
-                # the same exact fence rule without turning prose into actions.
                 if normalized != increment.content.strip():
                     normalized_raw = dict(raw)
                     normalized_raw["content"] = normalized
