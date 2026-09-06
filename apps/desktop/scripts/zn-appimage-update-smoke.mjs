@@ -77,9 +77,24 @@ async function readEndpoint() {
 }
 
 async function residentRpc(endpoint, method, params = {}, timeoutMs = 5_000) {
+  const authentication = endpoint?.authentication
+  if (
+    endpoint?.version !== 2 ||
+    endpoint?.transport !== 'tcp' ||
+    endpoint?.host !== '127.0.0.1' ||
+    !authentication ||
+    authentication.scheme !== 'session-secret-v1' ||
+    typeof authentication.secret !== 'string' ||
+    authentication.secret.length < 32
+  ) {
+    throw new Error('resident endpoint is not an authenticated loopback endpoint')
+  }
   return await new Promise((resolve, reject) => {
     const socket = net.createConnection({ host: endpoint.host, port: Number(endpoint.port) })
     let buffer = ''
+    const authId = `smoke-auth-${Date.now()}-${Math.random()}`
+    const requestId = `smoke-${Date.now()}-${Math.random()}`
+    let authenticated = false
     const timer = setTimeout(() => {
       socket.destroy()
       reject(new Error(`resident RPC timed out: ${method}`))
@@ -94,18 +109,39 @@ async function residentRpc(endpoint, method, params = {}, timeoutMs = 5_000) {
 
     socket.once('error', error => finish(error))
     socket.once('connect', () => {
-      socket.write(`${JSON.stringify({ id: `smoke-${Date.now()}`, method, params })}\n`)
+      socket.write(`${JSON.stringify({
+        id: authId,
+        method: 'authenticate',
+        params: { secret: authentication.secret }
+      })}\n`)
     })
     socket.on('data', chunk => {
       buffer += chunk.toString('utf8')
-      const newline = buffer.indexOf('\n')
-      if (newline < 0) return
-      try {
-        const response = JSON.parse(buffer.slice(0, newline))
-        if (response.ok === false) finish(new Error(response.error || `resident RPC failed: ${method}`))
-        else finish(null, response.result)
-      } catch (error) {
-        finish(error)
+      while (true) {
+        const newline = buffer.indexOf('\n')
+        if (newline < 0) return
+        const line = buffer.slice(0, newline)
+        buffer = buffer.slice(newline + 1)
+        try {
+          const response = JSON.parse(line)
+          if (!authenticated) {
+            if (response.id !== authId) continue
+            if (response.ok === false || response.result?.authenticated !== true) {
+              finish(new Error(response.error || 'resident authentication failed'))
+              return
+            }
+            authenticated = true
+            socket.write(`${JSON.stringify({ id: requestId, method, params })}\n`)
+            continue
+          }
+          if (response.id !== requestId) continue
+          if (response.ok === false) finish(new Error(response.error || `resident RPC failed: ${method}`))
+          else finish(null, response.result)
+          return
+        } catch (error) {
+          finish(error)
+          return
+        }
       }
     })
   })

@@ -10,6 +10,23 @@ import {
   validateInstalledLayout
 } from './verify-zn-windows-clean-install.mjs'
 
+const AUTH = { scheme: 'session-secret-v1', secret: 's'.repeat(64) }
+
+function endpointFixture({ znHome, runtimeId, ...overrides }) {
+  return {
+    version: 2,
+    transport: 'tcp',
+    host: '127.0.0.1',
+    port: 42001,
+    pid: 1234,
+    instance_id: 'resident-instance',
+    runtime_id: runtimeId,
+    python: path.join(znHome, 'runtime', runtimeId, 'python', 'cpython', 'python.exe'),
+    authentication: { ...AUTH },
+    ...overrides
+  }
+}
+
 test('installed layout is rooted in the requested installation directory', () => {
   const root = path.join(os.tmpdir(), 'zn-clean-install-layout')
   const layout = validateInstalledLayout(root)
@@ -22,63 +39,53 @@ test('installed layout is rooted in the requested installation directory', () =>
 test('endpoint accepts exact isolated materialized runtime identity', () => {
   const znHome = path.join(os.tmpdir(), 'zn-clean-install-home')
   const runtimeId = '0123456789abcdef0123456789abcdef01234567'
-  const python = path.join(znHome, 'runtime', runtimeId, 'python', 'cpython', 'python.exe')
-  const endpoint = {
-    version: 1,
-    transport: 'tcp',
-    host: '127.0.0.1',
-    port: 42001,
-    pid: 1234,
-    instance_id: 'resident-instance',
-    runtime_id: runtimeId,
-    python
-  }
+  const endpoint = endpointFixture({ znHome, runtimeId })
   assert.equal(validateEndpoint(endpoint, { znHome, expectedRuntimeId: runtimeId }), endpoint)
 })
 
 test('endpoint rejects a stale runtime id', () => {
   const znHome = path.join(os.tmpdir(), 'zn-clean-install-home')
   const runtimeId = '0123456789abcdef0123456789abcdef01234567'
-  assert.throws(() => validateEndpoint({
-    version: 1,
-    transport: 'tcp',
-    host: '127.0.0.1',
-    port: 42001,
-    pid: 1234,
-    instance_id: 'resident-instance',
-    runtime_id: 'fedcba9876543210fedcba9876543210fedcba98',
-    python: path.join(znHome, 'runtime', runtimeId, 'python.exe')
-  }, { znHome, expectedRuntimeId: runtimeId }), /resident runtime mismatch/)
+  assert.throws(() => validateEndpoint(endpointFixture({
+    znHome,
+    runtimeId,
+    runtime_id: 'fedcba9876543210fedcba9876543210fedcba98'
+  }), { znHome, expectedRuntimeId: runtimeId }), /resident runtime mismatch/)
 })
 
 test('endpoint rejects Python outside the isolated installed runtime', () => {
   const znHome = path.join(os.tmpdir(), 'zn-clean-install-home')
   const runtimeId = '0123456789abcdef0123456789abcdef01234567'
-  assert.throws(() => validateEndpoint({
-    version: 1,
-    transport: 'tcp',
-    host: '127.0.0.1',
-    port: 42001,
-    pid: 1234,
-    instance_id: 'resident-instance',
-    runtime_id: runtimeId,
+  assert.throws(() => validateEndpoint(endpointFixture({
+    znHome,
+    runtimeId,
     python: path.join(os.tmpdir(), 'foreign-python', 'python.exe')
-  }, { znHome, expectedRuntimeId: runtimeId }), /outside isolated installed runtime/)
+  }), { znHome, expectedRuntimeId: runtimeId }), /outside isolated installed runtime/)
 })
 
 test('endpoint rejects non-loopback transport evidence', () => {
   const znHome = path.join(os.tmpdir(), 'zn-clean-install-home')
   const runtimeId = '0123456789abcdef0123456789abcdef01234567'
-  assert.throws(() => validateEndpoint({
-    version: 1,
-    transport: 'tcp',
-    host: '0.0.0.0',
-    port: 42001,
-    pid: 1234,
-    instance_id: 'resident-instance',
-    runtime_id: runtimeId,
-    python: path.join(znHome, 'runtime', runtimeId, 'python.exe')
-  }, { znHome, expectedRuntimeId: runtimeId }), /not loopback/)
+  assert.throws(() => validateEndpoint(endpointFixture({
+    znHome,
+    runtimeId,
+    host: '0.0.0.0'
+  }), { znHome, expectedRuntimeId: runtimeId }), /not loopback/)
+})
+
+test('endpoint rejects missing or malformed authentication material', () => {
+  const znHome = path.join(os.tmpdir(), 'zn-clean-install-home')
+  const runtimeId = '0123456789abcdef0123456789abcdef01234567'
+  assert.throws(() => validateEndpoint(endpointFixture({
+    znHome,
+    runtimeId,
+    authentication: undefined
+  }), { znHome, expectedRuntimeId: runtimeId }), /authentication metadata is missing/)
+  assert.throws(() => validateEndpoint(endpointFixture({
+    znHome,
+    runtimeId,
+    authentication: { scheme: 'session-secret-v1', secret: 'short' }
+  }), { znHome, expectedRuntimeId: runtimeId }), /authentication secret is invalid/)
 })
 
 const HASH_A = 'a'.repeat(64)
