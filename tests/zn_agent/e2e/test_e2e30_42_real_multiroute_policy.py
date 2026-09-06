@@ -7,9 +7,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from zn_agent.core.models import ModelRoute
+from zn_agent.core.config import load_zn_config
+from zn_agent.core.models import ModelRoute, WorkerResult
 from zn_agent.core.provider_bridge import build_resident_runtime, build_zn_cognitive_resource_plan
 from zn_agent.core.recovery_bounded_work import RecoveryBoundedWorkLedger
+from zn_agent.core.runtime import ZNKernelRuntime
+from zn_agent.core.store import KernelStore
 from zn_agent.core.work_restore_control import RestoreAwareWorkControl
 
 
@@ -62,20 +65,66 @@ def _kernel_route_snapshot(resident, model_goal_id: str) -> dict:
     return dict(route) if isinstance(route, dict) else {}
 
 
+class _RecordingFactory:
+    def __init__(self, delegate, *, fail_route_id: str | None = None):
+        self.delegate = delegate
+        self.fail_route_id = fail_route_id
+        self.created: list[str] = []
+
+    def create(self, route):
+        self.created.append(route.route_id)
+        if route.route_id == self.fail_route_id:
+            return _InjectedFailureWorker(route.route_id)
+        return self.delegate.create(route)
+
+
+class _InjectedFailureWorker:
+    def __init__(self, route_id: str):
+        self.route_id = route_id
+
+    def run(self, goal, kernel_context):
+        return WorkerResult(
+            success=False,
+            error=f"controlled transient failure for {self.route_id}",
+            metrics={"model_invoked": False, "controlled_failure": True},
+        )
+
+
 class E2E30And42RealMultiRoutePolicyTests(unittest.TestCase):
-    def test_real_delegated_work_uses_two_providers_by_capability_and_keeps_durable_provenance(self) -> None:
+    def _plan_and_pair(self):
         if os.environ.get("ZN_E2E30_42_REAL_MODELS", "").strip().lower() not in {"1", "true", "yes"}:
             self.skipTest("set ZN_E2E30_42_REAL_MODELS=1 only on the guarded real-model runner")
-
-        config = __import__("zn_agent.core.config", fromlist=["load_zn_config"]).load_zn_config()
+        config = load_zn_config()
         plan = build_zn_cognitive_resource_plan(config)
-        pair = _two_distinct_provider_routes(plan.routes)
         self.assertTrue(plan.available, plan.error)
+        pair = _two_distinct_provider_routes(plan.routes)
         self.assertIsNotNone(
             pair,
             "E2E-30/42 requires at least two actually configured routes from distinct real providers",
         )
         assert pair is not None
+        return config, plan, pair
+
+    @staticmethod
+    def _start_root(resident, root_dir: Path, *, thread_id: str, task: str, payload: dict):
+        workspace = root_dir / "workspace"
+        workspace.mkdir()
+        subprocess.run(
+            ["git", "init", "-q", str(workspace)],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        control = RestoreAwareWorkControl(RecoveryBoundedWorkLedger(resident))
+        ledger = control.ledger
+        ledger.create_thread(thread_id=thread_id, title=thread_id)
+        ledger.attach_workspace(thread_id, workspace, name=f"{thread_id} workspace")
+        _, event = control.start(thread_id, task, payload={"model_policy": "on_demand", **payload})
+        return ledger, event, workspace
+
+    def test_real_delegated_work_uses_two_providers_by_capability_and_keeps_durable_provenance(self) -> None:
+        config, plan, pair = self._plan_and_pair()
         research_base, coding_base = pair
         research_route = _copy_route(
             research_base,
@@ -90,15 +139,6 @@ class E2E30And42RealMultiRoutePolicyTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory(prefix="zn-e2e30-42-multiroute-") as tmp:
             root_dir = Path(tmp)
-            workspace = root_dir / "workspace"
-            workspace.mkdir()
-            subprocess.run(
-                ["git", "init", "-q", str(workspace)],
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
             resident = build_resident_runtime(config=config, store_path=root_dir / "kernel.db")
             resident.kernel.reconfigure_resources(
                 routes=[research_route, coding_route],
@@ -106,16 +146,14 @@ class E2E30And42RealMultiRoutePolicyTests(unittest.TestCase):
                 max_attempts=1,
                 resource_status={"available": True, "error": None},
             )
-            control = RestoreAwareWorkControl(RecoveryBoundedWorkLedger(resident))
-            ingress = control.ledger
-            work = resident.work_ledger
-            ingress.create_thread(thread_id="e2e-30-42-real", title="Real multi-provider Work")
-            ingress.attach_workspace("e2e-30-42-real", workspace, name="E2E30/42 workspace")
-            _, event = control.start(
-                "e2e-30-42-real",
-                GOAL,
-                payload={"model_policy": "on_demand"},
+            ingress, event, _ = self._start_root(
+                resident,
+                root_dir,
+                thread_id="e2e-30-42-real",
+                task=GOAL,
+                payload={},
             )
+            work = resident.work_ledger
 
             terminal = None
             try:
@@ -214,6 +252,202 @@ class E2E30And42RealMultiRoutePolicyTests(unittest.TestCase):
                 print("ZN_E2E30_42_ROOT_ACCEPTANCE=" + str(root.result or ""), flush=True)
             finally:
                 resident.store.close()
+
+    def test_real_allowlist_filters_before_provider_construction_and_persists_after_restart(self) -> None:
+        config, plan, pair = self._plan_and_pair()
+        forbidden_base, allowed_base = pair
+        forbidden = _copy_route(
+            forbidden_base,
+            capabilities={"general": 1.0, "reasoning": 1.0},
+            reliability=1.0,
+        )
+        allowed = _copy_route(
+            allowed_base,
+            capabilities={"general": 1.0, "reasoning": 1.0},
+            reliability=0.5,
+        )
+        factory = _RecordingFactory(plan.worker_factory)
+
+        with tempfile.TemporaryDirectory(prefix="zn-e2e42-policy-") as tmp:
+            root_dir = Path(tmp)
+            db = root_dir / "kernel.db"
+            resident = build_resident_runtime(config=config, store_path=db)
+            resident.kernel.reconfigure_resources(
+                routes=[forbidden, allowed],
+                worker_factory=factory,
+                max_attempts=1,
+                resource_status={"available": True, "error": None},
+            )
+            ledger, event, _ = self._start_root(
+                resident,
+                root_dir,
+                thread_id="e2e-42-policy",
+                task="开发一个可运行的本地小工具，先定义可观察验收标准。",
+                payload={"route_policy": {"allowed_providers": [allowed.provider]}},
+            )
+            try:
+                accepted = None
+                for _ in range(120):
+                    candidate = resident.live_once()
+                    if candidate is not None and not candidate.success:
+                        self.fail(candidate.reason or "policy root failed before acceptance formation")
+                    root = ledger.work_item_for_event(event.event_id)
+                    if root is not None and root.acceptance_criteria:
+                        accepted = root
+                        break
+                self.assertIsNotNone(accepted)
+                self.assertTrue(factory.created)
+                self.assertEqual(set(factory.created), {allowed.route_id})
+                self.assertNotIn(forbidden.route_id, factory.created)
+                thread = ledger.get_thread("e2e-42-policy")
+                self.assertIsNotNone(thread)
+                assert thread is not None
+                self.assertEqual(
+                    thread.metadata.get("route_policy"),
+                    {"allowed_providers": [allowed.provider]},
+                )
+                print(
+                    "ZN_E2E42_NON_RECEIPT="
+                    + json.dumps(
+                        {
+                            "forbidden_route": forbidden.route_id,
+                            "forbidden_provider": forbidden.provider,
+                            "constructed_routes": factory.created,
+                            "policy": thread.metadata.get("route_policy"),
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+            finally:
+                resident.store.close()
+
+            restarted = build_resident_runtime(config=config, store_path=db)
+            try:
+                thread = restarted.work_ledger.get_thread("e2e-42-policy")
+                self.assertIsNotNone(thread)
+                assert thread is not None
+                self.assertEqual(
+                    thread.metadata.get("route_policy"),
+                    {"allowed_providers": [allowed.provider]},
+                )
+            finally:
+                restarted.store.close()
+
+    def test_local_only_work_fails_closed_before_cloud_provider_construction(self) -> None:
+        config, plan, pair = self._plan_and_pair()
+        cloud = [route for route in pair if not bool(route.metadata.get("local"))]
+        self.assertTrue(cloud, "E2E-42 local-only fail-closed needs at least one configured cloud route")
+        routes = [
+            _copy_route(
+                route,
+                capabilities={"general": 1.0, "reasoning": 1.0},
+                reliability=1.0,
+            )
+            for route in cloud
+        ]
+        factory = _RecordingFactory(plan.worker_factory)
+
+        with tempfile.TemporaryDirectory(prefix="zn-e2e42-local-only-") as tmp:
+            root_dir = Path(tmp)
+            resident = build_resident_runtime(config=config, store_path=root_dir / "kernel.db")
+            resident.kernel.reconfigure_resources(
+                routes=routes,
+                worker_factory=factory,
+                max_attempts=1,
+                resource_status={"available": True, "error": None},
+            )
+            ledger, _, _ = self._start_root(
+                resident,
+                root_dir,
+                thread_id="e2e-42-local-only",
+                task="这个项目只允许本地模型处理。开发一个可运行的小工具。",
+                payload={},
+            )
+            try:
+                for _ in range(40):
+                    resident.live_once()
+                    if factory.created:
+                        break
+                self.assertEqual(factory.created, [])
+                thread = ledger.get_thread("e2e-42-local-only")
+                self.assertIsNotNone(thread)
+                assert thread is not None
+                self.assertEqual(
+                    thread.metadata.get("route_policy"),
+                    {"data_classification": "local_only"},
+                )
+                print(
+                    "ZN_E2E42_LOCAL_ONLY_FAIL_CLOSED="
+                    + json.dumps(
+                        {
+                            "configured_cloud_routes": [route.route_id for route in routes],
+                            "constructed_routes": factory.created,
+                            "policy": thread.metadata.get("route_policy"),
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+            finally:
+                resident.store.close()
+
+    def test_legal_fallback_rechecks_policy_and_invokes_only_still_eligible_real_provider(self) -> None:
+        _, plan, pair = self._plan_and_pair()
+        first_base, second_base = pair
+        first = _copy_route(
+            first_base,
+            capabilities={"general": 1.0, "reasoning": 1.0},
+            reliability=1.0,
+        )
+        second = _copy_route(
+            second_base,
+            capabilities={"general": 1.0, "reasoning": 1.0},
+            reliability=0.8,
+        )
+
+        with tempfile.TemporaryDirectory(prefix="zn-e2e30-fallback-") as tmp:
+            factory = _RecordingFactory(plan.worker_factory, fail_route_id=first.route_id)
+            kernel = ZNKernelRuntime(
+                store=KernelStore(Path(tmp) / "kernel.db"),
+                routes=[first, second],
+                worker_factory=factory,
+                max_attempts=2,
+            )
+            try:
+                result = kernel.run_goal(
+                    "Return a concise acknowledgement that the bounded fallback route is alive.",
+                    required_capabilities=("general", "reasoning"),
+                    metadata={
+                        "cognition_request": {
+                            "context": {
+                                "route_policy": {
+                                    "allowed_providers": [first.provider, second.provider]
+                                }
+                            }
+                        }
+                    },
+                    max_attempts_override=2,
+                    goal_id="e2e30-legal-fallback",
+                )
+                self.assertTrue(result.assessment.success, result.worker_result.error)
+                self.assertEqual(factory.created, [first.route_id, second.route_id])
+                self.assertEqual(result.goal.route_id, second.route_id)
+                print(
+                    "ZN_E2E30_LEGAL_FALLBACK="
+                    + json.dumps(
+                        {
+                            "failed_route": first.route_id,
+                            "fallback_route": second.route_id,
+                            "fallback_provider": second.provider,
+                            "constructed_routes": factory.created,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+            finally:
+                kernel.store.close()
 
 
 if __name__ == "__main__":
