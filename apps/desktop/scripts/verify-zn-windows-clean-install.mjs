@@ -25,8 +25,8 @@ export function validateInstalledLayout(installDir) {
 
 export function validateEndpoint(endpoint, { znHome, expectedRuntimeId }) {
   if (!endpoint || typeof endpoint !== 'object') throw new Error('resident endpoint must be an object')
-  if (endpoint.version !== 1 || endpoint.transport !== 'tcp') {
-    throw new Error('resident endpoint must use version 1 tcp transport')
+  if (endpoint.version !== 2 || endpoint.transport !== 'tcp') {
+    throw new Error('resident endpoint must use version 2 authenticated tcp transport')
   }
   if (endpoint.host !== '127.0.0.1') throw new Error(`resident endpoint host is not loopback: ${endpoint.host}`)
   if (!Number.isInteger(endpoint.port) || endpoint.port <= 0 || endpoint.port > 65535) {
@@ -35,6 +35,16 @@ export function validateEndpoint(endpoint, { znHome, expectedRuntimeId }) {
   if (!Number.isInteger(endpoint.pid) || endpoint.pid <= 0) throw new Error('resident endpoint pid is invalid')
   if (typeof endpoint.instance_id !== 'string' || !endpoint.instance_id.trim()) {
     throw new Error('resident endpoint instance_id is missing')
+  }
+  const authentication = endpoint.authentication
+  if (!authentication || typeof authentication !== 'object' || Array.isArray(authentication)) {
+    throw new Error('resident endpoint authentication metadata is missing')
+  }
+  if (authentication.scheme !== 'session-secret-v1') {
+    throw new Error('resident endpoint authentication scheme is invalid')
+  }
+  if (typeof authentication.secret !== 'string' || authentication.secret.length < 32) {
+    throw new Error('resident endpoint authentication secret is invalid')
   }
   if (endpoint.runtime_id !== expectedRuntimeId) {
     throw new Error(`resident runtime mismatch: expected ${expectedRuntimeId}, got ${endpoint.runtime_id}`)
@@ -188,7 +198,7 @@ export function validateContinuityBaseline(baseline) {
   if (!Number.isInteger(livingSelf.pulse_count) || livingSelf.pulse_count < 1) throw new Error('continuity pulse_count is invalid')
   if (livingSelf.last_event_id !== null && typeof livingSelf.last_event_id !== 'string') throw new Error('continuity last_event_id is invalid')
   if (!Array.isArray(livingSelf.learning_candidate_ids) || livingSelf.learning_candidate_ids.some(value => typeof value !== 'string')) {
-    throw new Error('continuity learning_candidate_ids is invalid')
+    throw new Error('continuity living_self learning_candidate_ids is invalid')
   }
 
   validateOptionalProofContainer(baseline.resident_state, 'continuity resident_state', 'full_state_proof')
@@ -330,7 +340,9 @@ export async function rpcRequest(endpoint, method, params = {}, timeoutMs = 5000
   return await new Promise((resolve, reject) => {
     const socket = net.createConnection({ host: endpoint.host, port: endpoint.port })
     let buffer = ''
+    const authId = `clean-install-auth-${process.pid}-${Date.now()}`
     const requestId = `clean-install-${process.pid}-${Date.now()}`
+    let authenticated = false
     const timer = setTimeout(() => {
       socket.destroy()
       reject(new Error(`resident RPC timed out: ${method}`))
@@ -342,20 +354,38 @@ export async function rpcRequest(endpoint, method, params = {}, timeoutMs = 5000
     }
     socket.once('error', fail)
     socket.once('connect', () => {
-      socket.write(`${JSON.stringify({ id: requestId, method, params })}\n`)
+      socket.write(`${JSON.stringify({
+        id: authId,
+        method: 'authenticate',
+        params: { secret: endpoint.authentication.secret }
+      })}\n`)
     })
     socket.on('data', chunk => {
       buffer += chunk.toString('utf8')
-      const newline = buffer.indexOf('\n')
-      if (newline < 0) return
-      const line = buffer.slice(0, newline)
-      let response
-      try { response = JSON.parse(line) } catch (error) { fail(error); return }
-      if (response.id !== requestId) return
-      clearTimeout(timer)
-      socket.end()
-      if (response.ok === false) reject(new Error(response.error || `resident RPC failed: ${method}`))
-      else resolve(response.result)
+      while (true) {
+        const newline = buffer.indexOf('\n')
+        if (newline < 0) return
+        const line = buffer.slice(0, newline)
+        buffer = buffer.slice(newline + 1)
+        let response
+        try { response = JSON.parse(line) } catch (error) { fail(error); return }
+        if (!authenticated) {
+          if (response.id !== authId) continue
+          if (response.ok === false || response.result?.authenticated !== true) {
+            fail(new Error(response.error || 'resident authentication failed'))
+            return
+          }
+          authenticated = true
+          socket.write(`${JSON.stringify({ id: requestId, method, params })}\n`)
+          continue
+        }
+        if (response.id !== requestId) continue
+        clearTimeout(timer)
+        socket.end()
+        if (response.ok === false) reject(new Error(response.error || `resident RPC failed: ${method}`))
+        else resolve(response.result)
+        return
+      }
     })
   })
 }
