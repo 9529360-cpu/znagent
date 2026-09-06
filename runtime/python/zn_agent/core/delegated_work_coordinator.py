@@ -13,6 +13,7 @@ from typing import Any
 
 from .delegation_admission import BoundedDelegationPlanner, DelegatedPlanDecision
 from .evidence_bound_work import WorkerRun
+from .route_policy_intake import infer_thread_route_policy, merge_route_policy
 from .steerable_work import WorkItem
 from .worker_context_boundary import WorkerContextPack
 
@@ -178,6 +179,40 @@ class DelegatedWorkCoordinator:
             return "review", "run_python"
         return None
 
+    def _durable_route_policy(self, event, root: WorkItem) -> object:
+        """Resolve project policy from durable Work truth before model routing.
+
+        Explicit natural-language restrictions are persisted on WorkThread, not
+        in model memory. A later delegated WorkerRun in the same thread therefore
+        inherits the policy after restart. Per-event policy remains supported as
+        a narrower/current-call overlay. Malformed explicit values are preserved
+        for ModelRouter to reject fail-closed.
+        """
+
+        thread = self.resident.work_ledger.get_thread(root.work_thread_id)
+        persisted: object = None
+        if thread is not None:
+            persisted = thread.metadata.get("route_policy")
+
+        inferred = infer_thread_route_policy(str(getattr(event, "task", "") or ""))
+        if inferred is not None:
+            durable = merge_route_policy(persisted, inferred)
+            if thread is None:
+                raise RuntimeError("delegated route policy lost its durable WorkThread")
+            metadata = dict(thread.metadata)
+            metadata["route_policy"] = durable
+            thread.metadata = metadata
+            from .models import utc_now
+
+            thread.updated_at = utc_now()
+            self.resident.work_ledger._save_thread(thread)
+            persisted = durable
+
+        explicit = event.payload.get("route_policy")
+        if explicit is not None and not isinstance(explicit, dict):
+            return explicit
+        return merge_route_policy(persisted, explicit)
+
     def bind_worker_request(
         self,
         event,
@@ -269,16 +304,10 @@ class DelegatedWorkCoordinator:
         request.required_capabilities = self.resident._worker_required_capabilities(
             worker.executor_kind
         )
-        # User/project routing policy is admission metadata, not model-owned state.
-        # Preserve it through the existing CognitionRequest so the one kernel
-        # ModelRouter can reject forbidden routes before soft scoring. Malformed
-        # values are intentionally forwarded as-is: ModelRouter validates and
-        # fails closed instead of this coordinator silently widening access.
-        route_policy = event.payload.get("route_policy")
+        route_policy = self._durable_route_policy(event, root)
         request.context = {
             **dict(request.context or {}),
-            **({"route_policy": dict(route_policy)} if isinstance(route_policy, dict) else {}),
-            **({"route_policy": route_policy} if route_policy is not None and not isinstance(route_policy, dict) else {}),
+            **({"route_policy": route_policy} if route_policy else {}),
             self.resident._DELEGATED_CONTEXT_KEY: {
                 "worker_run_id": worker.worker_run_id,
                 "work_item_id": child.work_item_id,
