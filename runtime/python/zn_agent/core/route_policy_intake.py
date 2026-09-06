@@ -88,6 +88,12 @@ def infer_thread_route_policy(text: str) -> dict[str, Any] | None:
 
     if exclusive and (providers or allow_local):
         if allow_local and not providers:
+            lowered = normalized.casefold()
+            # "local and <unknown model>" is not the same as local-only. When an
+            # exclusive phrase contains a conjunction but no recognized provider,
+            # keep it ambiguous rather than silently dropping the unknown model.
+            if "和" in normalized or "以及" in normalized or " and " in lowered:
+                return None
             return {"data_classification": "local_only"}
         policy: dict[str, Any] = {"allowed_providers": providers}
         if allow_local:
