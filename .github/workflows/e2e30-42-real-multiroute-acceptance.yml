@@ -24,7 +24,7 @@ defaults:
     shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
 
 # Temporary guarded acceptance. It intentionally fails if the configured host
-# does not expose two distinct real providers or if the unittest skips.
+# does not expose two distinct real providers or if any unittest skips.
 jobs:
   real-e2e:
     name: Real multi-provider delegated Work + policy
@@ -111,8 +111,8 @@ jobs:
           sys.modules[spec.name] = module
           spec.loader.exec_module(module)
           suite = unittest.defaultTestLoader.loadTestsFromModule(module)
-          if suite.countTestCases() != 1:
-              raise SystemExit(f"expected exactly one E2E-30/42 real acceptance test, got {suite.countTestCases()}")
+          if suite.countTestCases() != 4:
+              raise SystemExit(f"expected exactly four E2E-30/42 acceptance tests, got {suite.countTestCases()}")
           result = unittest.TextTestRunner(stream=sys.stdout, verbosity=2).run(suite)
           print("ZN_E2E30_42_SKIPPED=" + str(len(result.skipped)), flush=True)
           print("ZN_E2E30_42_FAILURES=" + str(len(result.failures)), flush=True)
