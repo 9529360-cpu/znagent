@@ -2,9 +2,9 @@
 
 > Governing contract: [`../ZN.md`](../ZN.md)
 >
-> Development branch: `dev/zn-agent`
->
 > Canonical branch: `main`
+>
+> Active development: short-lived verified `work/*` branches start from current `main`; no permanent `dev/zn-agent` synchronization contract remains.
 >
 > Current status: **physical source evacuation complete; active repository is ZN-only**.
 
@@ -12,7 +12,7 @@
 
 This file is no longer a migration plan for an in-tree reference product. That phase is complete.
 
-Its continuing purpose is to define how ZN may study and adopt mature implementation from the dedicated reference branch, Git history or external/upstream repositories without importing another product control plane.
+Its continuing purpose is to define how ZN may study and adopt mature implementation from a dedicated read-only reference branch, Git history, or external/upstream repositories without importing another product control plane.
 
 ## 2. Current verified state
 
@@ -22,7 +22,7 @@ The active tree has these ownership boundaries:
 runtime/python/zn_agent/core/   resident core
 runtime/python/zn_agent/        installed ZN package
 runtime/python/pyproject.toml    ZN Python distribution metadata
-tests/zn_agent/core/             resident verification
+tests/zn_agent/core/            resident verification
 apps/desktop/                    ZN desktop only
 .github/workflows/               ZN CI / release automation only
 ```
@@ -44,7 +44,7 @@ One-shot verification run `32669071891` proved the physically reduced tree befor
 - generated verification artifacts excluded from the commit;
 - verified deleted tree committed and pushed.
 
-M10 later promoted the verified ZN tree to canonical `main` without history rewrite. `main` and `dev/zn-agent` are now expected to remain synchronized only through normal verified development/promotion flow.
+M10 later promoted the verified ZN tree to canonical `main` without history rewrite. New product work now branches from current `main` and returns through normal verified review/promotion flow; retired migration/development branch names are not product architecture or synchronization requirements.
 
 The one-shot migration job and migration script are not part of the steady-state architecture.
 
@@ -84,27 +84,26 @@ A broken test or build is not permission to restore a removed control plane. Fix
 Reference access belongs outside the active development tree:
 
 ```text
-dedicated reference branch
+dedicated read-only reference branch
 or
 Git history
 or
 external/upstream repository
 ```
 
-The dedicated reference branch is read-only quarry material for maintainers. It must not be merged back wholesale, added as a submodule, included in packaging, or treated as a build/runtime dependency.
+Any dedicated reference branch is quarry material for maintainers only. It must not be merged back wholesale, added as a submodule, included in packaging, or treated as a build/runtime dependency.
 
 If a future investigation studies a mature mechanism, record only the durable result that matters to ZN: the need, chosen design, provenance/license obligation if applicable, tests and active caller. Do not recreate a permanent source quarry inside the active tree.
 
 ## 6. Retained ZN research documents
 
-The following documents remain because they describe ZN architecture/research rather than an in-tree migration dependency:
+Retain documents that describe current ZN architecture or active research, including:
 
 - `ZN-MEMORY-LEARNING.md`;
 - `ZN-LEARNING-SOURCE-RESEARCH.md`;
-- `ZN-NEXT-PHASE.md`;
-- `ZN-SELF-MAINTENANCE.md`.
+- `ZN-NEXT-PHASE.md`.
 
-Historical migration-only documents should not be retained merely for nostalgia; Git history already preserves them.
+Retired directions such as the former standalone self-maintenance program are historical inputs, not current product-stage claims. Git history preserves migration-only and retired planning material; do not cite it as a live implementation direction merely because an old branch once did.
 
 ## 7. Ongoing verification
 
