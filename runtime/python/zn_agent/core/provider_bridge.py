@@ -204,8 +204,6 @@ def apply_zn_cognitive_config(
         try:
             setter(observer)
         except Exception:
-            # Health observation is secondary. A replacement provider plan must
-            # remain hot-applicable even if observer binding itself is broken.
             pass
     runtime.reconfigure_resources(
         routes=plan.routes,
@@ -225,12 +223,9 @@ def build_runtime(
     """Build the ZN kernel from only ZN-owned configuration and resources."""
     if config is None:
         config = load_zn_config()
-
     plan = build_zn_cognitive_resource_plan(config, credential_store=credential_store)
-
     if store_path is None:
         store_path = get_zn_home() / "kernel" / "kernel.db"
-
     return ZNKernelRuntime(
         store=KernelStore(store_path),
         routes=plan.routes,
@@ -247,8 +242,8 @@ def build_resident_runtime(
     credential_store: CredentialStore | None = None,
 ):
     """Build the normal product Resident around the ZN-owned kernel."""
+    from .broad_goal_autonomous_resident import BroadGoalAutonomousResidentRuntime
     from .budget import CognitiveBudgetManager
-    from .natural_file_work_resident import NaturalFileWorkResidentRuntime
 
     effective_config = config if config is not None else load_zn_config()
     resident_cfg = effective_config.get("zn_resident") or {}
@@ -268,10 +263,7 @@ def build_resident_runtime(
         ),
     )
 
-    return NaturalFileWorkResidentRuntime(
-        kernel=kernel,
-        budget=budget,
-    )
+    return BroadGoalAutonomousResidentRuntime(kernel=kernel, budget=budget)
 
 
 build_runtime_from_existing_stack = build_runtime
