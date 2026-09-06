@@ -24,10 +24,10 @@ defaults:
     shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
 
 jobs:
-  provider-smoke:
-    name: Configured provider smoke
+  real-model-acceptance:
+    name: Configured provider and E2E-26 acceptance
     runs-on: [self-hosted, Windows, X64, zn-interactive]
-    timeout-minutes: 10
+    timeout-minutes: 35
     steps:
       - name: Require the configured interactive Windows host
         run: |
@@ -48,7 +48,12 @@ jobs:
           Remove-Item -Recurse -Force .ci/e2e26-real-model-venv -ErrorAction SilentlyContinue
           uv venv .ci/e2e26-real-model-venv --python 3.12
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e26-real-model-venv\Scripts\python.exe'
-          uv pip install --python $python runtime/python
+          Push-Location runtime/python
+          try {
+            uv pip install --python $python '.[browser]'
+          } finally {
+            Pop-Location
+          }
       - name: Verify ZN config and one real bounded cognition
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
@@ -109,5 +114,40 @@ jobs:
                   raise AssertionError("real cognition returned an empty response")
           finally:
               runtime.store.close()
+          '@ | & $python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run structured proposal regression
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e26-real-model-venv\Scripts\python.exe'
+          & $python -m unittest tests.zn_agent.core.test_broad_goal_structured_proposal_boundary -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Install managed Chromium
+        run: |
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e26-real-model-venv\Scripts\python.exe'
+          & $python -m playwright install chromium
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run E2E-26 with real configured model and require non-skip PASS
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e26-real-model-venv\Scripts\python.exe'
+          @'
+          import unittest
+
+          suite = unittest.defaultTestLoader.loadTestsFromName(
+              "tests.zn_agent.e2e.test_e2e26_autonomous_accounting"
+          )
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          print("ZN_E2E26_TESTS_RUN=" + str(result.testsRun))
+          print("ZN_E2E26_SKIPPED=" + str(len(result.skipped)))
+          print("ZN_E2E26_FAILURES=" + str(len(result.failures)))
+          print("ZN_E2E26_ERRORS=" + str(len(result.errors)))
+          if result.testsRun < 1:
+              raise SystemExit("E2E-26 did not run any tests")
+          if result.skipped:
+              raise SystemExit("E2E-26 was skipped: " + repr(result.skipped))
+          if not result.wasSuccessful():
+              raise SystemExit("E2E-26 real-model test failed")
+          print("ZN_E2E26_REAL_MODEL_RESULT=PASS")
           '@ | & $python -
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
