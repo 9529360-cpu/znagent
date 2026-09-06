@@ -166,7 +166,8 @@ class ModelRouter:
 
         allowed_providers = self._string_set(policy.get("allowed_providers"), lower=True)
         allow_local = policy.get("allow_local") is True
-        if allowed_providers or allow_local:
+        allowlist_active = "allowed_providers" in policy or allow_local
+        if allowlist_active:
             provider_allowed = route.provider.strip().lower() in allowed_providers
             local_allowed = allow_local and self._is_explicit_local_route(route)
             if not provider_allowed and not local_allowed:
