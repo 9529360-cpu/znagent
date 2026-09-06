@@ -668,6 +668,40 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
 
         return super()._cognition_integration_step(event, state, readiness=readiness, thought=thought)
 
+    def _on_malformed_structured_proposal_rejection(
+        self,
+        event,
+        state,
+        increment: CognitiveIncrement,
+        failure: str,
+    ) -> None:
+        delegated = self._delegated_meta_from_state(state)
+        if delegated is None:
+            return
+        worker_run_id = str(delegated.get("worker_run_id") or "").strip()
+        work_item_id = str(delegated.get("work_item_id") or "").strip()
+        worker = self.work_ledger.worker_run(worker_run_id)
+        route_id = self._route_id_from_increment(increment)
+        if worker is not None and worker.state in {"queued", "running"}:
+            self.work_ledger.fail_worker_run(
+                worker.worker_run_id,
+                error=failure,
+                result_summary=increment.content,
+                claimed_completion=self._claims_completion(increment.content),
+                verification_status="schema_rejected",
+                model_route_id=route_id,
+                metrics={
+                    "source": increment.source,
+                    "increment_id": increment.increment_id,
+                    "malformed_envelope": True,
+                },
+            )
+        if work_item_id:
+            try:
+                self.work_ledger.block_child_item(work_item_id, blocker=failure)
+            except ValueError:
+                pass
+
     def _return_to_investigation_after_rejection(self, event, state, failure: str):
         state.data["local_failure"] = failure
         investigation = self.investigator.current(event.event_id)
