@@ -141,6 +141,13 @@ class ModelRouterHardEligibilityTests(unittest.TestCase):
         with self.assertRaisesRegex(NoRouteAvailable, "denied_providers has invalid type"):
             self._router(route).select(malformed_set)
 
+        malformed_member = self._goal(
+            "bad deny member",
+            metadata={"route_policy": {"denied_models": ["model-a", {"model": "model-b"}]}},
+        )
+        with self.assertRaisesRegex(NoRouteAvailable, "denied_models must contain only strings"):
+            self._router(route).select(malformed_member)
+
         malformed_nested = self._goal(
             "bad nested policy",
             metadata={"cognition_request": {"context": {"route_policy": "allow everything"}}},
