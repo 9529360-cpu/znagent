@@ -3,8 +3,8 @@ from __future__ import annotations
 """Action-level authority for transient Work/WorkerRun execution.
 
 Authority belongs to the current Work/WorkerRun/action, never to a model or a
-permanent agent identity. The active Resident wraps its existing NativeBody with
-this admission boundary; the underlying Body, store and Router remain singular.
+permanent agent identity. The active Resident installs this gate on the existing
+Body instance, preserving the one Body object's class/store/recovery semantics.
 """
 
 import hashlib
@@ -45,12 +45,8 @@ class ActionAuthorityContext:
             tool_scope=tuple(str(item) for item in (raw.get("tool_scope") or ())),
             authority_scope=tuple(str(item) for item in (raw.get("authority_scope") or ())),
             workspace_root=str(raw.get("workspace_root") or "").strip() or None,
-            allowed_command_sha256=(
-                str(raw.get("allowed_command_sha256") or "").strip() or None
-            ),
-            side_effect_sensitivity=str(
-                raw.get("side_effect_sensitivity") or "bounded_worker_effect"
-            ),
+            allowed_command_sha256=(str(raw.get("allowed_command_sha256") or "").strip() or None),
+            side_effect_sensitivity=str(raw.get("side_effect_sensitivity") or "bounded_worker_effect"),
         )
 
     @staticmethod
@@ -149,14 +145,11 @@ class WorkerActionAuthorityEnforcer:
 
 
 class AuthorityEnforcedBody:
-    """Thin admission wrapper around the one existing NativeBody instance."""
+    """Admission gate that delegates to the original bound ``body.act`` method."""
 
     def __init__(self, body, *, resident=None) -> None:
-        self._body = body
+        self._original_act = body.act
         self._resident = resident
-
-    def __getattr__(self, name: str):
-        return getattr(self._body, name)
 
     def act(self, kind: str, *, event_id: str | None = None, **args: Any):
         raw_context = args.pop(_AUTHORITY_ARG, None)
@@ -166,7 +159,7 @@ class AuthorityEnforcedBody:
             context = ActionAuthorityContext.from_dict(raw_context)
             self._revalidate_durable_authority(context)
             WorkerActionAuthorityEnforcer.authorize(kind, args, context)
-        return self._body.act(kind, event_id=event_id, **args)
+        return self._original_act(kind, event_id=event_id, **args)
 
     def _revalidate_durable_authority(self, context: ActionAuthorityContext) -> None:
         resident = self._resident
@@ -191,6 +184,18 @@ class AuthorityEnforcedBody:
             raise WorkerActionAuthorityError(
                 f"worker action cannot execute from WorkerRun state {worker.state}"
             )
+
+
+def install_worker_authority_gate(body, *, resident) -> AuthorityEnforcedBody:
+    """Install once without replacing the existing Body object or its class."""
+
+    existing = getattr(body, "_zn_worker_authority_gate", None)
+    if isinstance(existing, AuthorityEnforcedBody):
+        return existing
+    gate = AuthorityEnforcedBody(body, resident=resident)
+    body.act = gate.act
+    body._zn_worker_authority_gate = gate
+    return gate
 
 
 def bind_worker_authority_arg(
