@@ -64,6 +64,22 @@ class ManagedBrowserWorkWindowsE2E(unittest.TestCase):
             (str(endpoint["host"]), int(endpoint["port"])), timeout=5.0
         ) as client:
             client.settimeout(10.0)
+            stream = client.makefile("rb")
+            client.sendall(
+                (
+                    json.dumps(
+                        {
+                            "id": f"{request_id}-auth",
+                            "method": "authenticate",
+                            "params": {"secret": endpoint["authentication"]["secret"]},
+                        }
+                    )
+                    + "\n"
+                ).encode("utf-8")
+            )
+            auth = json.loads(stream.readline().decode("utf-8"))
+            if not auth.get("ok"):
+                return auth
             client.sendall(
                 (
                     json.dumps(
@@ -76,7 +92,7 @@ class ManagedBrowserWorkWindowsE2E(unittest.TestCase):
                     + "\n"
                 ).encode("utf-8")
             )
-            raw = client.makefile("rb").readline()
+            raw = stream.readline()
             if not raw:
                 raise AssertionError("resident endpoint closed without a response")
             return json.loads(raw.decode("utf-8"))
