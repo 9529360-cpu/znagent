@@ -185,7 +185,8 @@ class BroadGoalIndependentCompletionV2Tests(unittest.TestCase):
                 fresh_reads = [
                     action
                     for action in actions
-                    if action.kind == "read_text" and str(action.args.get("path") or "").endswith("state.json")
+                    if action.kind == "read_text"
+                    and str(action.data.get("path") or "").endswith("state.json")
                 ]
                 self.assertTrue(fresh_reads, "Root acceptance requires a fresh Body read of persisted state")
                 self.assertTrue(fresh_reads[-1].success)
