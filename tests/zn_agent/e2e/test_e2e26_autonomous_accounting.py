@@ -39,6 +39,18 @@ class E2E26AutonomousAccountingTests(unittest.TestCase):
             self.skipTest(
                 "set ZN_E2E26_REAL_MODEL=1 only on a runner intended to spend a real model call budget"
             )
+        print(
+            "ZN_E2E26_REAL_ROUTES="
+            + json.dumps(
+                [
+                    {"provider": route.provider, "model": route.model, "route_id": route.route_id}
+                    for route in plan.routes
+                    if route.provider != "none" and str(route.model).strip()
+                ],
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
 
         with tempfile.TemporaryDirectory(prefix="zn-e2e26-autonomous-accounting-") as tmp:
             root = Path(tmp)
@@ -127,6 +139,7 @@ class E2E26AutonomousAccountingTests(unittest.TestCase):
                             research_seen = True
 
                     if research_seen and not steering_applied:
+                        old_version = ledger.plan_version("e2e-26-real")
                         _, steered_event = ledger.steer_active(
                             "e2e-26-real",
                             original_event_id,
@@ -137,6 +150,10 @@ class E2E26AutonomousAccountingTests(unittest.TestCase):
                         )
                         steering_applied = True
                         steered_event_id = steered_event.event_id
+                        print(
+                            f"ZN_E2E26_STEERING_PLAN_VERSION={old_version}->{ledger.plan_version('e2e-26-real')}",
+                            flush=True,
+                        )
 
                 self.assertTrue(
                     criteria_formed_before_child,
@@ -199,7 +216,28 @@ class E2E26AutonomousAccountingTests(unittest.TestCase):
                     1,
                     "Root acceptance must come from exactly one dedicated current-plan verifier WorkItem",
                 )
-                self.assertTrue(str(verifiers[0].result or "").strip())
+                verifier_result = json.loads(str(verifiers[0].result or "{}"))
+                persisted = verifier_result.get("fresh_persisted_read")
+                self.assertIsInstance(persisted, dict)
+                assert isinstance(persisted, dict)
+                persisted_path = str(persisted.get("path") or "").strip()
+                self.assertTrue(persisted_path)
+                self.assertGreater(int(persisted.get("observed_chars") or 0), 0)
+                self.assertTrue(str(persisted.get("observed_excerpt") or "").strip())
+                self.assertTrue(list(persisted.get("contains") or []))
+
+                body_actions = list(resident.body.recent_actions(limit=512))
+                persisted_reads = [
+                    action
+                    for action in body_actions
+                    if action.kind == "read_text"
+                    and Path(str(action.args.get("path") or "")).name == Path(persisted_path).name
+                ]
+                self.assertTrue(
+                    persisted_reads,
+                    "Root completion requires a fresh Body read of the declared persisted product state",
+                )
+                self.assertTrue(persisted_reads[-1].success)
 
                 progress = ledger.progress("e2e-26-real", steered_event_id)
                 self.assertTrue(progress.get("accepted"))
@@ -226,6 +264,38 @@ class E2E26AutonomousAccountingTests(unittest.TestCase):
                 self.assertIsInstance(acceptance, dict)
                 self.assertEqual(int(acceptance["plan_version"]), current_version)
                 self.assertEqual(acceptance["verifier_work_item_id"], verifiers[0].work_item_id)
+
+                research = [
+                    {
+                        "objective": item.objective,
+                        "criteria": item.acceptance_criteria,
+                        "result": item.result,
+                    }
+                    for item in current_children
+                    if any(c.startswith("page_read:") for c in item.acceptance_criteria)
+                ]
+                print("ZN_E2E26_ROOT_ACCEPTANCE=" + json.dumps(current_root.acceptance_criteria, ensure_ascii=False), flush=True)
+                print("ZN_E2E26_RESEARCH=" + json.dumps(research, ensure_ascii=False), flush=True)
+                print(
+                    "ZN_E2E26_CURRENT_CHILDREN="
+                    + json.dumps(
+                        [
+                            {
+                                "objective": item.objective,
+                                "status": item.status,
+                                "criteria": item.acceptance_criteria,
+                                "result": item.result,
+                                "blocker": item.blocker,
+                            }
+                            for item in current_children
+                        ],
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+                print("ZN_E2E26_PERSISTED_PATH=" + persisted_path, flush=True)
+                print("ZN_E2E26_PERSISTED_EXCERPT=" + str(persisted.get("observed_excerpt") or "")[:1200], flush=True)
+                print("ZN_E2E26_MODEL_INVOCATIONS=" + str(terminal.model_invocations), flush=True)
             finally:
                 resident.store.close()
 
