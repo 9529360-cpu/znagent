@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
+from typing import Any
+
 from .models import Goal, ModelRoute
 from .self_model import SelfModel
 
@@ -11,9 +14,30 @@ class NoRouteAvailable(RuntimeError):
 class ModelRouter:
     """Kernel-owned deterministic model selection.
 
-    Models do not select themselves. The kernel combines declared route priors
-    with observed route performance from SelfModel.
+    Selection is deliberately two-stage:
+
+    1. hard eligibility removes routes that are unavailable, unhealthy, lack a
+       required capability, violate explicit provider/model policy, or cannot
+       receive the goal's data under locality/privacy/authority policy;
+    2. soft scoring ranks only the remaining legal candidates using declared
+       priors plus SelfModel evidence, reliability, cost and latency.
+
+    A forbidden route never survives as a merely low-scoring fallback.
     """
+
+    _DATA_CLASSIFICATIONS = frozenset({
+        "public",
+        "private",
+        "local_only",
+        "cloud_allowed",
+        "cloud_denied",
+    })
+    _POLICY_SET_FIELDS = (
+        "denied_providers",
+        "denied_models",
+        "required_policy_tags",
+        "required_authority_scopes",
+    )
 
     def __init__(self, routes: list[ModelRoute], self_model: SelfModel):
         if not routes:
@@ -23,9 +47,43 @@ class ModelRouter:
 
     def select(self, goal: Goal, excluded: set[str] | None = None) -> ModelRoute:
         excluded = excluded or set()
-        candidates = [route for route in self.routes if route.route_id not in excluded]
+
+        # The zero-model Resident uses one explicit local sentinel so the normal
+        # durable kernel path can reach UnavailableModelWorkerFactory and report
+        # a stable cognition blocker while System 1/local capabilities remain
+        # alive. This sentinel is not an external model candidate and therefore
+        # must not be converted into a normal route-eligibility failure. Retry
+        # exclusion still terminates the already-observed unavailable attempt.
+        if len(self.routes) == 1 and self._is_no_model_sentinel(self.routes[0]):
+            sentinel = self.routes[0]
+            if sentinel.route_id in excluded:
+                raise NoRouteAvailable("zero-model sentinel already observed")
+            return sentinel
+
+        policy = self._route_policy(goal)
+        self._validate_route_policy(policy)
+        candidates: list[ModelRoute] = []
+        rejection_reasons: dict[str, tuple[str, ...]] = {}
+
+        for route in self.routes:
+            reasons = self._ineligibility_reasons(
+                route,
+                goal,
+                excluded=excluded,
+                policy=policy,
+            )
+            if reasons:
+                rejection_reasons[route.route_id] = tuple(reasons)
+            else:
+                candidates.append(route)
+
         if not candidates:
-            raise NoRouteAvailable("no model routes remain")
+            detail = "; ".join(
+                f"{route_id}: {', '.join(reasons)}"
+                for route_id, reasons in sorted(rejection_reasons.items())
+            )
+            suffix = f" ({detail})" if detail else ""
+            raise NoRouteAvailable(f"no eligible model route remains{suffix}")
 
         required = goal.required_capabilities or ("general",)
 
@@ -33,6 +91,11 @@ class ModelRouter:
             capability_scores = []
             for capability in required:
                 prior = self._declared_prior(route, capability)
+                # Hard capability eligibility guarantees this is declared.
+                if prior is None:
+                    raise NoRouteAvailable(
+                        f"route {route.route_id} lost required capability eligibility"
+                    )
                 capability_scores.append(
                     self.self_model.route_score(route.route_id, capability, prior)
                 )
@@ -47,18 +110,197 @@ class ModelRouter:
 
         return max(candidates, key=score)
 
-    def _declared_prior(self, route: ModelRoute, capability: str) -> float:
-        """Use the most specific declared prior available in the domain tree."""
+    @staticmethod
+    def _is_no_model_sentinel(route: ModelRoute) -> bool:
+        """Recognize only ZN's exact internal zero-model control route.
+
+        A real route with ``available=False`` remains subject to normal hard
+        eligibility. Requiring the exact provider/model/id plus the internal
+        ``model_available=False`` marker prevents user-defined unavailable
+        routes from inheriting sentinel behavior.
+        """
+
+        metadata = route.metadata if isinstance(route.metadata, dict) else {}
+        return (
+            route.route_id == "system2-unavailable"
+            and route.provider == "none"
+            and route.model == "none"
+            and metadata.get("model_available") is False
+        )
+
+    def _ineligibility_reasons(
+        self,
+        route: ModelRoute,
+        goal: Goal,
+        *,
+        excluded: set[str],
+        policy: dict[str, Any],
+    ) -> list[str]:
+        reasons: list[str] = []
+        if route.route_id in excluded:
+            reasons.append("excluded by retry/runtime state")
+
+        metadata = route.metadata if isinstance(route.metadata, dict) else {}
+        if metadata.get("model_available") is False or metadata.get("available") is False:
+            reasons.append("route unavailable")
+        health = str(metadata.get("health") or "").strip().lower()
+        if metadata.get("healthy") is False or health in {"down", "failed", "unhealthy", "disabled"}:
+            reasons.append("route unhealthy")
+
+        required = goal.required_capabilities or ("general",)
+        missing = [
+            capability
+            for capability in required
+            if self._declared_prior(route, capability) is None
+        ]
+        if missing:
+            reasons.append("missing required capabilities: " + ", ".join(missing))
+
+        pinned_provider = str(policy.get("pinned_provider") or "").strip().lower()
+        pinned_model = str(policy.get("pinned_model") or "").strip()
+        if pinned_provider and route.provider.strip().lower() != pinned_provider:
+            reasons.append("provider is not user pinned provider")
+        if pinned_model and route.model != pinned_model:
+            reasons.append("model is not user pinned model")
+
+        denied_providers = self._string_set(policy.get("denied_providers"), lower=True)
+        denied_models = self._string_set(policy.get("denied_models"), lower=False)
+        if route.provider.strip().lower() in denied_providers:
+            reasons.append("provider explicitly denied")
+        if route.model in denied_models:
+            reasons.append("model explicitly denied")
+
+        classification = str(policy.get("data_classification") or "").strip().lower()
+        local_only = bool(policy.get("local_only")) or bool(policy.get("cloud_forbidden"))
+        if classification in {"local_only", "cloud_denied"}:
+            local_only = True
+        if local_only and not self._is_explicit_local_route(route):
+            reasons.append("cloud/non-local route forbidden by data policy")
+
+        required_tags = self._string_set(policy.get("required_policy_tags"), lower=True)
+        route_tags = self._string_set(metadata.get("policy_tags"), lower=True)
+        if required_tags and not required_tags.issubset(route_tags):
+            reasons.append("route lacks required policy tags")
+
+        required_authority = self._string_set(
+            policy.get("required_authority_scopes"),
+            lower=True,
+        )
+        route_authority = self._string_set(metadata.get("authority_scopes"), lower=True)
+        if required_authority and not required_authority.issubset(route_authority):
+            reasons.append("route lacks required authority policy scope")
+
+        return reasons
+
+    def _declared_prior(self, route: ModelRoute, capability: str) -> float | None:
+        """Return a declared capability prior, never an undeclared default.
+
+        Domain aliases may satisfy a capability when SelfModel maps the capability
+        into that declared domain. ``general`` does not silently satisfy a more
+        specific capability: a route that never declared research/coding/etc. is
+        ineligible for that requirement rather than receiving the historical 0.5
+        prior.
+        """
+
         raw = str(capability or "general").strip().lower() or "general"
         keys: list[str] = [raw]
         domains = self.self_model.infer_domains("", (raw,))
         for domain in reversed(domains):
             for key in (domain, domain.rsplit("/", 1)[-1]):
-                if key not in keys:
-                    keys.append(key)
-        if "general" not in keys:
+                normalized = str(key or "").strip().lower()
+                if normalized and normalized != "general" and normalized not in keys:
+                    keys.append(normalized)
+        if raw == "general" and "general" not in keys:
             keys.append("general")
+
+        normalized_caps = {
+            str(key).strip().lower(): value
+            for key, value in route.capabilities.items()
+        }
         for key in keys:
-            if key in route.capabilities:
-                return max(0.0, min(1.0, float(route.capabilities[key])))
-        return 0.5
+            if key not in normalized_caps:
+                continue
+            prior = max(0.0, min(1.0, float(normalized_caps[key])))
+            # A zero declaration is an explicit lack of capability.
+            return prior if prior > 0.0 else None
+        return None
+
+    @classmethod
+    def _route_policy(cls, goal: Goal) -> dict[str, Any]:
+        metadata = goal.metadata if isinstance(goal.metadata, dict) else {}
+        policy: dict[str, Any] = {}
+
+        direct = metadata.get("route_policy")
+        if isinstance(direct, dict):
+            policy.update(direct)
+        elif direct is not None:
+            raise NoRouteAvailable("model route policy is malformed")
+
+        cognition = metadata.get("cognition_request")
+        if isinstance(cognition, dict):
+            context = cognition.get("context")
+            if isinstance(context, dict):
+                nested = context.get("route_policy")
+                if isinstance(nested, dict):
+                    policy.update(nested)
+                elif nested is not None:
+                    raise NoRouteAvailable("cognition route policy is malformed")
+                pack = context.get("worker_context_pack")
+                if isinstance(pack, dict):
+                    classification = str(pack.get("data_classification") or "").strip()
+                    if classification and "data_classification" not in policy:
+                        policy["data_classification"] = classification
+        return policy
+
+    @classmethod
+    def _validate_route_policy(cls, policy: dict[str, Any]) -> None:
+        for field in ("pinned_provider", "pinned_model"):
+            value = policy.get(field)
+            if value is not None and not isinstance(value, str):
+                raise NoRouteAvailable(f"model route policy {field} must be a string")
+        for field in ("local_only", "cloud_forbidden"):
+            value = policy.get(field)
+            if value is not None and not isinstance(value, bool):
+                raise NoRouteAvailable(f"model route policy {field} must be boolean")
+        for field in cls._POLICY_SET_FIELDS:
+            value = policy.get(field)
+            if value is None:
+                continue
+            if not isinstance(value, (str, list, tuple, set, frozenset)):
+                raise NoRouteAvailable(f"model route policy {field} has invalid type")
+            if not isinstance(value, str) and any(not isinstance(item, str) for item in value):
+                raise NoRouteAvailable(f"model route policy {field} must contain only strings")
+        raw_classification = policy.get("data_classification")
+        if raw_classification is not None:
+            if not isinstance(raw_classification, str):
+                raise NoRouteAvailable("model route policy data_classification must be a string")
+            classification = raw_classification.strip().lower()
+            if classification not in cls._DATA_CLASSIFICATIONS:
+                raise NoRouteAvailable("model route policy data_classification is invalid")
+
+    @staticmethod
+    def _is_explicit_local_route(route: ModelRoute) -> bool:
+        metadata = route.metadata if isinstance(route.metadata, dict) else {}
+        if metadata.get("local") is True:
+            return True
+        deployment = str(metadata.get("deployment") or metadata.get("location") or "").strip().lower()
+        return deployment in {"local", "on_device", "on-device", "localhost"}
+
+    @staticmethod
+    def _string_set(value: object, *, lower: bool) -> set[str]:
+        if value is None:
+            return set()
+        if isinstance(value, str):
+            items: Iterable[object] = (value,)
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            items = value
+        else:
+            return set()
+        result: set[str] = set()
+        for item in items:
+            if not isinstance(item, str):
+                continue
+            text = item.strip()
+            if text:
+                result.add(text.lower() if lower else text)
+        return result
