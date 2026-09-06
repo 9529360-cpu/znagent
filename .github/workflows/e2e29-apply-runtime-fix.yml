@@ -16,6 +16,7 @@ defaults:
   run:
     shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
 
+# Trigger commit after the workflow exists on the branch.
 jobs:
   apply-and-test:
     if: ${{ github.event.head_commit.message == 'ci(e2e29): add guarded runtime fix executor' }}
