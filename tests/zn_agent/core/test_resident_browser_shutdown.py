@@ -29,12 +29,24 @@ class ResidentBrowserShutdownTests(unittest.TestCase):
             timeout=3.0,
         ) as client:
             client.settimeout(3.0)
+            stream = client.makefile("rb")
+            secret = endpoint["authentication"]["secret"]
+            client.sendall(
+                (json.dumps({
+                    "id": "shutdown-auth",
+                    "method": "authenticate",
+                    "params": {"secret": secret},
+                }) + "\n").encode("utf-8")
+            )
+            auth = json.loads(stream.readline().decode("utf-8"))
+            if not auth.get("ok"):
+                return auth
             client.sendall(
                 (json.dumps({"id": "shutdown-test", "method": method, "params": {}}) + "\n").encode(
                     "utf-8"
                 )
             )
-            raw = client.makefile("rb").readline()
+            raw = stream.readline()
             if not raw:
                 raise AssertionError("resident endpoint closed without a response")
             return json.loads(raw.decode("utf-8"))
