@@ -8,9 +8,13 @@ Body instance, preserving the one Body object's class/store/recovery semantics.
 """
 
 import hashlib
+import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+
+from .body import BodyAction, BodyActionResult
+from .models import utc_now
 
 
 _AUTHORITY_ARG = "__zn_authority_context"
@@ -148,18 +152,54 @@ class AuthorityEnforcedBody:
     """Admission gate that delegates to the original bound ``body.act`` method."""
 
     def __init__(self, body, *, resident=None) -> None:
+        self._body = body
         self._original_act = body.act
         self._resident = resident
 
-    def act(self, kind: str, *, event_id: str | None = None, **args: Any):
+    def act(self, kind: str, *, event_id: str | None = None, **args: Any) -> BodyActionResult:
         raw_context = args.pop(_AUTHORITY_ARG, None)
         if raw_context is not None:
-            if not isinstance(raw_context, dict):
-                raise WorkerActionAuthorityError("worker action authority context is malformed")
-            context = ActionAuthorityContext.from_dict(raw_context)
-            self._revalidate_durable_authority(context)
-            WorkerActionAuthorityEnforcer.authorize(kind, args, context)
+            try:
+                if not isinstance(raw_context, dict):
+                    raise WorkerActionAuthorityError("worker action authority context is malformed")
+                context = ActionAuthorityContext.from_dict(raw_context)
+                self._revalidate_durable_authority(context)
+                WorkerActionAuthorityEnforcer.authorize(kind, args, context)
+            except (WorkerActionAuthorityError, TypeError, ValueError) as exc:
+                return self._record_denial(kind, event_id=event_id, args=args, error=exc)
         return self._original_act(kind, event_id=event_id, **args)
+
+    def _record_denial(
+        self,
+        kind: str,
+        *,
+        event_id: str | None,
+        args: dict[str, Any],
+        error: BaseException,
+    ) -> BodyActionResult:
+        action = BodyAction(
+            action_id=f"body-{uuid.uuid4().hex[:12]}",
+            kind=str(kind or "").strip().lower(),
+            args=dict(args),
+            event_id=event_id,
+        )
+        started = utc_now()
+        result = BodyActionResult(
+            action_id=action.action_id,
+            kind=action.kind,
+            success=False,
+            error=f"WorkerActionAuthorityError: {error}",
+            event_id=event_id,
+            started_at=started,
+            completed_at=utc_now(),
+        )
+        try:
+            self._body._record(action, result)
+        except Exception:
+            # The rejection itself remains fail-closed even if secondary audit
+            # persistence is unavailable; never fall through to the real effect.
+            pass
+        return result
 
     def _revalidate_durable_authority(self, context: ActionAuthorityContext) -> None:
         resident = self._resident
