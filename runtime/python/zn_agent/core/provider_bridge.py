@@ -66,7 +66,9 @@ def route_from_spec(spec: dict[str, Any], index: int = 0) -> ModelRoute:
     if not model:
         raise ValueError(f"zn_kernel.routes[{index}] is missing model")
     route_id = str(spec.get("id") or spec.get("route_id") or f"route-{index}").strip()
-    capabilities = spec.get("capabilities") or {"general": 0.7}
+    capabilities = spec.get("capabilities")
+    if capabilities is None:
+        capabilities = {"general": 0.7}
     if not isinstance(capabilities, dict):
         raise ValueError(f"zn_kernel.routes[{index}].capabilities must be a mapping")
     normalized_caps = {
