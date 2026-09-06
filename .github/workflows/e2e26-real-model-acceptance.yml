@@ -1,0 +1,113 @@
+name: TEMP E2E26 Real Model Acceptance
+
+on:
+  push:
+    branches:
+      - work/e2e-26-broad-goal-mvp
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e26-real-model-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: 'true'
+  PYTHONUTF8: '1'
+  PYTHONUNBUFFERED: '1'
+  ZN_E2E26_REAL_MODEL: '1'
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+jobs:
+  provider-smoke:
+    name: Configured provider smoke
+    runs-on: [self-hosted, Windows, X64, zn-interactive]
+    timeout-minutes: 10
+    steps:
+      - name: Require the configured interactive Windows host
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "E2E-26 real-model acceptance requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+          if ($env:RUNNER_NAME -ne 'zn-interactive') {
+            throw "E2E-26 real-model acceptance requires the dedicated configured Windows host; got $env:RUNNER_NAME"
+          }
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare isolated runtime without replacing ZN home
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/e2e26-real-model-venv -ErrorAction SilentlyContinue
+          uv venv .ci/e2e26-real-model-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e26-real-model-venv\Scripts\python.exe'
+          uv pip install --python $python runtime/python
+      - name: Verify ZN config and one real bounded cognition
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e26-real-model-venv\Scripts\python.exe'
+          @'
+          import json
+          import os
+          from pathlib import Path
+
+          from zn_agent.core.config import load_zn_config, zn_config_path
+          from zn_agent.core.provider_bridge import build_runtime, build_zn_cognitive_resource_plan
+
+          config_path = zn_config_path()
+          config = load_zn_config()
+          plan = build_zn_cognitive_resource_plan(config)
+          safe_routes = [
+              {"route_id": route.route_id, "provider": route.provider, "model": route.model}
+              for route in plan.routes
+          ]
+          print("ZN_E2E26_CONFIG_PATH=" + str(config_path))
+          print("ZN_E2E26_PLAN_AVAILABLE=" + str(plan.available).lower())
+          print("ZN_E2E26_ROUTES=" + json.dumps(safe_routes, ensure_ascii=False))
+          if not plan.available:
+              raise AssertionError("ZN cognitive plan is unavailable: " + str(plan.error))
+          real_routes = [route for route in plan.routes if route.provider != "none" and str(route.model).strip()]
+          if not real_routes:
+              raise AssertionError("ZN cognitive plan has no real provider/model route")
+
+          store_path = Path(os.environ["GITHUB_WORKSPACE"]) / ".ci" / "e2e26-real-model-smoke.db"
+          store_path.parent.mkdir(parents=True, exist_ok=True)
+          if store_path.exists():
+              store_path.unlink()
+          runtime = build_runtime(config=config, store_path=store_path)
+          try:
+              cognition_available = bool(runtime.resource_status.get("available"))
+              print("ZN_E2E26_COGNITION_AVAILABLE=" + str(cognition_available).lower())
+              if not cognition_available:
+                  raise AssertionError("runtime cognition_available is false: " + str(runtime.resource_status))
+              result = runtime.run_goal(
+                  "Return one short, non-empty sentence confirming this bounded cognition request was received.",
+                  required_capabilities=("general",),
+                  max_attempts_override=1,
+                  goal_id="e2e26-real-model-provider-smoke",
+              )
+              metrics = dict(result.worker_result.metrics or {})
+              print("ZN_E2E26_SMOKE_PROVIDER=" + str(result.route.provider))
+              print("ZN_E2E26_SMOKE_MODEL=" + str(result.route.model))
+              print("ZN_E2E26_SMOKE_MODEL_INVOKED=" + str(metrics.get("model_invoked") is True).lower())
+              print("ZN_E2E26_SMOKE_SUCCESS=" + str(result.worker_result.success).lower())
+              print("ZN_E2E26_SMOKE_RESPONSE_CHARS=" + str(len(str(result.worker_result.response or "").strip())))
+              if metrics.get("model_invoked") is not True:
+                  raise AssertionError("bounded cognition did not invoke a real model: " + repr(metrics))
+              if result.route.provider == "none" or not str(result.route.model).strip():
+                  raise AssertionError("bounded cognition used a non-real route")
+              if not result.worker_result.success:
+                  raise AssertionError("real cognition failed: " + str(result.worker_result.error))
+              if not str(result.worker_result.response or "").strip():
+                  raise AssertionError("real cognition returned an empty response")
+          finally:
+              runtime.store.close()
+          '@ | & $python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
