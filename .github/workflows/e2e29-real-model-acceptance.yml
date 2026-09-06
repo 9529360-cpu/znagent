@@ -23,12 +23,12 @@ defaults:
   run:
     shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
 
-# Temporary guarded acceptance after malformed WorkerRun retry identity repair; any unittest skip is a hard failure.
+# Temporary guarded acceptance after malformed WorkerRun retry identity repair; extended only because the prior real run reached accepted research/coding/review before the cutoff. Any unittest skip is a hard failure.
 jobs:
   real-e2e:
     name: One real model serves several WorkerRuns
     runs-on: [self-hosted, Windows, X64, zn-interactive]
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Require the configured interactive Windows host
         run: |
