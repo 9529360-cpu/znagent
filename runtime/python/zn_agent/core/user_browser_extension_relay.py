@@ -101,7 +101,16 @@ class ResidentUserBrowserExtensionRelay:
 
                 def do_POST(self) -> None:  # noqa: N802
                     try:
-                        self._require_extension_request()
+                        try:
+                            self._require_extension_request()
+                        except UserBrowserExtensionRelayError:
+                            # Keep header identity as the admission boundary, but
+                            # consume only an already-declared bounded body before
+                            # closing the rejected POST. On Windows, closing a TCP
+                            # socket with unread request bytes can reset the
+                            # connection before the client receives our HTTP 400.
+                            self._drain_bounded_request_body()
+                            raise
                         body = self._json_body()
                         if self.path == "/v1/attach":
                             result = relay.authorize(
@@ -148,6 +157,22 @@ class ResidentUserBrowserExtensionRelay:
                             "browser tab authorization origin does not match the ZN extension"
                         )
 
+                def _drain_bounded_request_body(self) -> None:
+                    self.close_connection = True
+                    try:
+                        length = int(self.headers.get("Content-Length") or "0")
+                    except ValueError:
+                        return
+                    if length <= 0 or length > _MAX_RELAY_BODY:
+                        return
+                    try:
+                        self.rfile.read(length)
+                    except OSError:
+                        # The request is already rejected. A peer that disappears
+                        # while its bounded body is being drained cannot gain
+                        # authority and must not replace the original rejection.
+                        return
+
                 def _json_body(self) -> dict[str, Any]:
                     try:
                         length = int(self.headers.get("Content-Length") or "0")
@@ -172,6 +197,8 @@ class ResidentUserBrowserExtensionRelay:
                     self.send_header("Content-Length", str(len(payload)))
                     self.send_header("Cache-Control", "no-store")
                     self.send_header("X-Content-Type-Options", "nosniff")
+                    if self.close_connection:
+                        self.send_header("Connection", "close")
                     self.end_headers()
                     self.wfile.write(payload)
 
