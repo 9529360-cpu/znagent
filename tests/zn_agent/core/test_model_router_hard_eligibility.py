@@ -118,6 +118,31 @@ class ModelRouterHardEligibilityTests(unittest.TestCase):
         )
         self.assertEqual(self._router(tempting, pinned).select(denied).route_id, "pinned")
 
+    def test_malformed_user_policy_never_degrades_to_allow(self) -> None:
+        route = self._route("otherwise-eligible")
+        malformed_set = self._goal(
+            "bad deny",
+            metadata={"route_policy": {"denied_providers": {"provider-a": True}}},
+        )
+        with self.assertRaisesRegex(NoRouteAvailable, "denied_providers has invalid type"):
+            self._router(route).select(malformed_set)
+
+        malformed_nested = self._goal(
+            "bad nested policy",
+            metadata={"cognition_request": {"context": {"route_policy": "allow everything"}}},
+        )
+        with self.assertRaisesRegex(NoRouteAvailable, "cognition route policy is malformed"):
+            self._router(route).select(malformed_nested)
+
+    def test_unknown_data_classification_fails_closed(self) -> None:
+        route = self._route("otherwise-eligible")
+        goal = self._goal(
+            "unknown classification",
+            metadata={"route_policy": {"data_classification": "mystery_policy"}},
+        )
+        with self.assertRaisesRegex(NoRouteAvailable, "data_classification is invalid"):
+            self._router(route).select(goal)
+
     def test_unavailable_and_unhealthy_routes_do_not_enter_soft_score(self) -> None:
         unavailable = self._route("unavailable", reliability=1.0, metadata={"available": False})
         unhealthy = self._route("unhealthy", reliability=1.0, metadata={"health": "unhealthy"})
