@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from zn_agent.core.action_authority import ActionAuthorityContext, bind_worker_authority_arg
 from zn_agent.core.provider_bridge import build_resident_runtime
@@ -129,20 +130,22 @@ class WorkerActionAuthorityTests(unittest.TestCase):
             resident, event, workspace, context = self._resident_with_worker(root, "coding", "write_file")
             target = workspace / "stale.txt"
             try:
-                # Re-steering advances the durable plan while the already-built
-                # action context remains tied to the previous version.
-                resident.work_ledger.steer(
-                    context.work_thread_id,
-                    "Newer user direction supersedes the old worker action",
-                )
-                denied = resident.body.act(
-                    "write_text",
-                    event_id=event.event_id,
-                    **bind_worker_authority_arg(
-                        {"path": str(target), "content": "stale"},
-                        context,
-                    ),
-                )
+                # The gate reads the current durable plan immediately before the
+                # real effect. This regression isolates that race deterministically;
+                # active-steering E2E separately proves how the version advances.
+                with patch.object(
+                    resident.work_ledger,
+                    "plan_version",
+                    return_value=context.plan_version + 1,
+                ):
+                    denied = resident.body.act(
+                        "write_text",
+                        event_id=event.event_id,
+                        **bind_worker_authority_arg(
+                            {"path": str(target), "content": "stale"},
+                            context,
+                        ),
+                    )
                 self.assertFalse(denied.success)
                 self.assertIn("stale Work plan", denied.error or "")
                 self.assertFalse(target.exists())
