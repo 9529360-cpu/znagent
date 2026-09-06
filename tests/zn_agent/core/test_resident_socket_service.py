@@ -276,7 +276,7 @@ class ResidentSocketServiceTests(unittest.TestCase):
             resident, _, _, thread, _, endpoint = self._start_threaded_service(Path(tmp))
             secret = self._auth_secret(endpoint)
             try:
-                for method in ("ping", "status", "self", "continuity_snapshot"):
+                for method in ("ping", "status", "self", "neural"):
                     response = self._request(endpoint, method)
                     self.assertTrue(response["ok"])
                     self.assertNotIn(secret, json.dumps(response, ensure_ascii=False, default=str))
