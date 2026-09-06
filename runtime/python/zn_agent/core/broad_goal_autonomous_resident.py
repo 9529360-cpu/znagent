@@ -51,14 +51,15 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
         return coordinator
 
     def _bind_work_route_policy(self, event, request):
-        """Apply durable Work privacy policy before any external cognition.
+        """Persist Work privacy policy before any external cognition.
 
-        Delegated Work already re-checks the same policy before building a
+        Delegated Work re-checks the same policy before building a
         WorkerContextPack. Broad Root acceptance is itself an external cognition
-        call, though, so the WorkThread restriction must exist before that first
-        call or a forbidden provider could see the Root goal before delegation.
-        This stays an intake/persistence step only; ModelRouter remains the sole
-        owner of provider eligibility and fail-closed validation.
+        call, though, so user policy must already belong to the durable WorkThread
+        before that first call. Natural-language restrictions, data classification,
+        and an explicit valid route-policy object are therefore merged into the
+        same WorkThread policy. ModelRouter remains the sole owner of provider
+        eligibility and fail-closed validation.
         """
 
         payload = event.payload if isinstance(getattr(event, "payload", None), dict) else {}
@@ -67,15 +68,23 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
             return request
 
         thread = self.work_ledger.get_thread(thread_id)
-        inferred = infer_thread_route_policy(str(getattr(event, "task", "") or ""))
-        classification = payload.get("data_classification")
-        durable_overlay = dict(inferred or {})
-        if classification is not None:
-            durable_overlay["data_classification"] = classification
-
         persisted: object = None
         if thread is not None:
             persisted = thread.metadata.get("route_policy")
+
+        inferred = infer_thread_route_policy(str(getattr(event, "task", "") or ""))
+        classification = payload.get("data_classification")
+        explicit = payload.get("route_policy")
+
+        durable_overlay: object = dict(inferred or {})
+        if classification is not None:
+            durable_overlay = merge_route_policy(
+                durable_overlay,
+                {"data_classification": classification},
+            )
+        if isinstance(explicit, dict):
+            durable_overlay = merge_route_policy(durable_overlay, explicit)
+
         if durable_overlay:
             if thread is None:
                 raise RuntimeError("Work route policy lost its durable WorkThread")
@@ -87,13 +96,12 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
             self.work_ledger._save_thread(thread)
             persisted = durable
 
-        explicit = payload.get("route_policy")
         if explicit is not None and not isinstance(explicit, dict):
             # Preserve malformed explicit policy for ModelRouter to reject rather
-            # than widening access in this lower intake layer.
+            # than widening access or persisting an unusable policy value.
             route_policy: object = explicit
         else:
-            route_policy = merge_route_policy(persisted, explicit)
+            route_policy = persisted
 
         if route_policy:
             request.context = {
