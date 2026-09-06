@@ -1,0 +1,134 @@
+from __future__ import annotations
+
+"""Conservative natural-language intake for durable Work route policy.
+
+This module does not choose a model and does not own authorization. It only
+recognizes narrow, explicit user restrictions and turns them into the existing
+ModelRouter policy vocabulary. Ambiguous language returns no policy rather than
+silently broadening or inventing user intent.
+"""
+
+import re
+from typing import Any
+
+
+_PROVIDER_ALIASES: tuple[tuple[str, str], ...] = (
+    (r"\bopenai\b", "openai"),
+    (r"\bgpt(?:[-\s]?\d[\w.-]*)?\b", "openai"),
+    (r"\banthropic\b", "anthropic"),
+    (r"\bclaude\b", "anthropic"),
+    (r"\bgemini\b", "gemini"),
+    (r"\bgoogle\b", "gemini"),
+)
+_LOCAL_MARKERS = (
+    "本地模型",
+    "本地大模型",
+    "本机模型",
+    "local model",
+    "local models",
+    "on-device model",
+    "on device model",
+)
+_ONLY_MARKERS = (
+    "只能",
+    "只允许",
+    "仅允许",
+    "只可以",
+    "only allow",
+    "only use",
+    "only share with",
+    "only send to",
+)
+_EXCLUDE_OTHERS_MARKERS = (
+    "其他模型不要接触",
+    "其它模型不要接触",
+    "别的模型不要接触",
+    "不要给其他模型",
+    "不要给其它模型",
+    "no other model",
+    "no other models",
+    "do not share with other models",
+    "do not send to other models",
+)
+
+
+def _providers_in(text: str) -> list[str]:
+    providers: list[str] = []
+    for pattern, provider in _PROVIDER_ALIASES:
+        if re.search(pattern, text, flags=re.IGNORECASE) and provider not in providers:
+            providers.append(provider)
+    return providers
+
+
+def _contains_any(text: str, markers: tuple[str, ...]) -> bool:
+    lowered = text.casefold()
+    return any(marker.casefold() in lowered for marker in markers)
+
+
+def infer_thread_route_policy(text: str) -> dict[str, Any] | None:
+    """Infer only explicit model/privacy restrictions from one user message.
+
+    Supported narrow forms include:
+    - "这个项目只能给本地模型和 GPT 看，其他模型不要接触。"
+    - "这个项目只允许本地模型。"
+    - "不要让 Claude 接触这个项目。"
+
+    Ordinary model preferences ("GPT 更好") are intentionally ignored.
+    """
+
+    normalized = " ".join(str(text or "").strip().split())
+    if not normalized:
+        return None
+
+    providers = _providers_in(normalized)
+    allow_local = _contains_any(normalized, _LOCAL_MARKERS)
+    exclusive = _contains_any(normalized, _ONLY_MARKERS) or _contains_any(
+        normalized, _EXCLUDE_OTHERS_MARKERS
+    )
+
+    if exclusive and (providers or allow_local):
+        if allow_local and not providers:
+            return {"data_classification": "local_only"}
+        policy: dict[str, Any] = {"allowed_providers": providers}
+        if allow_local:
+            policy["allow_local"] = True
+        return policy
+
+    denied: list[str] = []
+    lowered = normalized.casefold()
+    denial_markers = ("不要给", "不要让", "不要接触", "禁止", "do not send", "do not share", "must not")
+    if any(marker.casefold() in lowered for marker in denial_markers):
+        for provider in providers:
+            aliases = {
+                "openai": ("openai", "gpt"),
+                "anthropic": ("anthropic", "claude"),
+                "gemini": ("gemini", "google"),
+            }[provider]
+            if any(alias in lowered for alias in aliases):
+                denied.append(provider)
+    if denied:
+        return {"denied_providers": denied}
+    return None
+
+
+def merge_route_policy(base: object, overlay: object) -> dict[str, Any]:
+    """Merge policy objects without treating malformed values as empty policy.
+
+    Validation remains ModelRouter-owned. Callers may preserve malformed explicit
+    policy so the Router fails closed instead of a lower layer silently widening
+    access.
+    """
+
+    if base is None:
+        base_map: dict[str, Any] = {}
+    elif isinstance(base, dict):
+        base_map = dict(base)
+    else:
+        raise ValueError("persisted Work route_policy must be an object")
+
+    if overlay is None:
+        return base_map
+    if not isinstance(overlay, dict):
+        raise ValueError("explicit Work route_policy must be an object")
+    base_map.update(overlay)
+    return base_map
