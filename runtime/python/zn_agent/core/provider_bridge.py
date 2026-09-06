@@ -127,7 +127,18 @@ def _current_model_spec(config: dict[str, Any]) -> dict[str, Any] | None:
         "id": "default",
         "provider": provider,
         "model": model,
-        "capabilities": {"general": 0.75},
+        # The legacy single-model shortcut is the product's general cognitive
+        # resource and already serves these bounded WorkerRun roles. Once Router
+        # capabilities become hard eligibility, make that existing contract
+        # explicit instead of restoring an undeclared `general` fallback. Fully
+        # specified zn_kernel.routes remain responsible for their own capability
+        # declarations and therefore stay fail-closed.
+        "capabilities": {
+            "general": 0.75,
+            "reasoning": 0.75,
+            "research": 0.75,
+            "coding": 0.75,
+        },
         "reliability": 0.8,
         "cost_weight": 0.5,
         "latency_weight": 0.5,
