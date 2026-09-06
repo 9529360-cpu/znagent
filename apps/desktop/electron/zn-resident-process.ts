@@ -66,10 +66,14 @@ export type ZnResidentRuntimeIdentity = {
 }
 
 type ZnResidentEndpoint = {
-  version: number
+  version: 2
   transport: 'tcp'
   host: string
   port: number
+  authentication: {
+    scheme: 'session-secret-v1'
+    secret: string
+  }
   pid?: number
   instance_id?: string
   started_at?: string
@@ -236,7 +240,6 @@ export class ZnResidentProcess extends EventEmitter {
 
   private async connectFromEndpoint(timeoutMs: number): Promise<void> {
     const endpoint = await this.readEndpoint()
-    if (endpoint.transport !== 'tcp') throw new Error(`Unsupported resident transport: ${endpoint.transport}`)
     await new Promise<void>((resolve, reject) => {
       const socket = createConnection({ host: endpoint.host, port: endpoint.port })
       const timer = setTimeout(() => { socket.destroy(); reject(new Error('Timed out connecting to ZN Resident endpoint')) }, Math.max(250, timeoutMs))
@@ -249,6 +252,15 @@ export class ZnResidentProcess extends EventEmitter {
         resolve()
       })
     })
+    try {
+      const result = await this.requestInternal('authenticate', { secret: endpoint.authentication.secret }, Math.max(250, timeoutMs))
+      if (!result || typeof result !== 'object' || (result as { authenticated?: unknown }).authenticated !== true) {
+        throw new Error('ZN Resident authentication was not accepted')
+      }
+    } catch (error) {
+      this.disconnect()
+      throw error
+    }
   }
 
   private async readEndpoint(): Promise<ZnResidentEndpoint> {
@@ -256,17 +268,24 @@ export class ZnResidentProcess extends EventEmitter {
     const parsed = JSON.parse(raw) as Partial<ZnResidentEndpoint>
     const port = Number(parsed.port || 0)
     const host = String(parsed.host || '').trim()
+    const auth = parsed.authentication
+    const secret = auth && typeof auth === 'object' ? String(auth.secret || '') : ''
     if (
+      parsed.version !== 2 ||
       parsed.transport !== 'tcp' ||
       !isZnResidentLoopbackHost(host) ||
       !Number.isInteger(port) ||
       port <= 0 ||
-      port > 65_535
+      port > 65_535 ||
+      !auth ||
+      auth.scheme !== 'session-secret-v1' ||
+      secret.length < 32
     ) {
-      throw new Error('ZN Resident endpoint file is invalid or non-loopback')
+      throw new Error('ZN Resident endpoint file is invalid or unauthenticated')
     }
     return {
-      version: Number(parsed.version || 1), transport: 'tcp', host, port,
+      version: 2, transport: 'tcp', host, port,
+      authentication: { scheme: 'session-secret-v1', secret },
       pid: parsed.pid, instance_id: parsed.instance_id, started_at: parsed.started_at,
       runtime_id: typeof parsed.runtime_id === 'string' ? parsed.runtime_id : null,
       python: typeof parsed.python === 'string' ? parsed.python : null
@@ -292,10 +311,14 @@ export class ZnResidentProcess extends EventEmitter {
   }
 
   private requestConnected(method: ZnResidentRequest['method'], params: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
+    return this.requestInternal(method, params, timeoutMs)
+  }
+
+  private requestInternal(method: ZnResidentRequest['method'] | 'authenticate', params: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
     const socket = this.socket
     if (!socket || socket.destroyed) return Promise.reject(new Error('ZN Resident service is not connected'))
     const id = `zn-${process.pid}-${Date.now()}-${++this.sequence}`
-    const payload: ZnResidentRequest = { id, method, params }
+    const payload = { id, method, params }
     const response = new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`ZN Resident request timed out: ${method}`)) }, Math.max(250, timeoutMs))
       this.pending.set(id, { resolve, reject, timer })
@@ -322,7 +345,7 @@ export class ZnResidentProcess extends EventEmitter {
   private onLine(line: string): void {
     let message: ZnResidentResponse
     try { message = JSON.parse(line) as ZnResidentResponse } catch {
-      this.emit('protocol-error', new Error(`Invalid ZN Resident JSON: ${line.slice(0, 200)}`))
+      this.emit('protocol-error', new Error(`Invalid ZN Resident JSON response`))
       return
     }
     const id = typeof message.id === 'string' ? message.id : ''
