@@ -171,6 +171,32 @@ class ModelRouterHardEligibilityTests(unittest.TestCase):
         selected = self._router(unavailable, unhealthy, healthy).select(self._goal("general"))
         self.assertEqual(selected.route_id, "healthy")
 
+    def test_zero_model_sentinel_preserves_local_resident_no_model_semantics(self) -> None:
+        sentinel = ModelRoute(
+            route_id="system2-unavailable",
+            provider="none",
+            model="none",
+            capabilities={"general": 0.0},
+            reliability=1.0,
+            cost_weight=0.0,
+            latency_weight=0.0,
+            metadata={"model_available": False},
+        )
+        router = self._router(sentinel)
+        self.assertIs(router.select(self._goal("needs cognition")), sentinel)
+        with self.assertRaisesRegex(NoRouteAvailable, "zero-model sentinel already observed"):
+            router.select(self._goal("needs cognition"), excluded={sentinel.route_id})
+
+        # An ordinary unavailable route must never inherit sentinel behavior.
+        real_unavailable = self._route(
+            "system2-unavailable",
+            provider="cloud-a",
+            model="model-a",
+            metadata={"model_available": False},
+        )
+        with self.assertRaisesRegex(NoRouteAvailable, "route unavailable"):
+            self._router(real_unavailable).select(self._goal("real route"))
+
     def test_cloud_denied_worker_context_removes_cloud_route_before_scoring(self) -> None:
         cloud = self._route("cloud", reliability=1.0, metadata={"local": False})
         local = self._route("local", reliability=0.1, metadata={"local": True})
