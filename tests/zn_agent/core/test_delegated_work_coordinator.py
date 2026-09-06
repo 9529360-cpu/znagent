@@ -54,6 +54,26 @@ class DelegatedWorkCoordinatorTests(unittest.TestCase):
             finally:
                 resident.store.close()
 
+    def test_coordinator_reconciles_stale_runs_through_same_work_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            try:
+                coordinator = resident._delegated_work_coordinator()
+                with patch.object(
+                    resident.work_ledger,
+                    "reconcile_stale_worker_runs",
+                    return_value=2,
+                ) as reconcile:
+                    result = coordinator.reconcile(thread_id="durable-thread")
+                self.assertIsNone(result)
+                reconcile.assert_called_once_with(thread_id="durable-thread")
+                self.assertIs(coordinator.resident.work_ledger, resident.work_ledger)
+            finally:
+                resident.store.close()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
