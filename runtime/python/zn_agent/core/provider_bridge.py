@@ -38,6 +38,16 @@ _ROUTE_METADATA_KEYS = (
     "timeout",
     "extra_body",
     "thinking",
+    # Hard eligibility metadata. These remain attributes of the existing
+    # CognitiveResource route, not a second router/configuration system.
+    "available",
+    "healthy",
+    "health",
+    "local",
+    "deployment",
+    "location",
+    "policy_tags",
+    "authority_scopes",
 )
 
 
@@ -56,7 +66,9 @@ def route_from_spec(spec: dict[str, Any], index: int = 0) -> ModelRoute:
     if not model:
         raise ValueError(f"zn_kernel.routes[{index}] is missing model")
     route_id = str(spec.get("id") or spec.get("route_id") or f"route-{index}").strip()
-    capabilities = spec.get("capabilities") or {"general": 0.7}
+    capabilities = spec.get("capabilities")
+    if capabilities is None:
+        capabilities = {"general": 0.7}
     if not isinstance(capabilities, dict):
         raise ValueError(f"zn_kernel.routes[{index}].capabilities must be a mapping")
     normalized_caps = {
@@ -117,7 +129,19 @@ def _current_model_spec(config: dict[str, Any]) -> dict[str, Any] | None:
         "id": "default",
         "provider": provider,
         "model": model,
-        "capabilities": {"general": 0.75},
+        # The legacy single-model shortcut is the product's general cognitive
+        # resource and already serves these bounded WorkerRun/browser-understanding
+        # roles. Once Router capabilities become hard eligibility, make that
+        # existing contract explicit instead of restoring an undeclared `general`
+        # fallback. Fully specified zn_kernel.routes remain responsible for their
+        # own capability declarations and therefore stay fail-closed.
+        "capabilities": {
+            "general": 0.75,
+            "reasoning": 0.75,
+            "research": 0.75,
+            "coding": 0.75,
+            "language_understanding": 0.75,
+        },
         "reliability": 0.8,
         "cost_weight": 0.5,
         "latency_weight": 0.5,

@@ -42,7 +42,14 @@ class _CaptureFactory:
 def _resident(db: Path, factory: _CaptureFactory) -> ZNResidentRuntime:
     kernel = ZNKernelRuntime(
         store=KernelStore(db),
-        routes=[ModelRoute("primary", "test", "model", {"general": 0.8})],
+        routes=[
+            ModelRoute(
+                "primary",
+                "test",
+                "model",
+                {"general": 0.8, "database": 0.8},
+            )
+        ],
         worker_factory=factory,
     )
     return ZNResidentRuntime(kernel=kernel)
