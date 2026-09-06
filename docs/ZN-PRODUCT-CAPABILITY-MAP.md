@@ -4,7 +4,7 @@
 >
 > 真实代码、真实 Git、真实测试和真实 E2E 高于本文件。
 
-Updated: 2026-09-04
+Updated: 2026-09-06
 
 ## 1. 产品判断标准
 
@@ -28,25 +28,30 @@ Exists
 | Persistent Self / identity | VERIFIED / PARTIAL product closure | 继续验证安装、升级、恢复后的长期连续性 |
 | Resident long-lived process | VERIFIED | 继续覆盖真实长期运行场景 |
 | Situation / Thought / Will loop | CONNECTED + VERIFIED | 更通用的 investigation / replanning / supervision |
-| Durable Work | CONNECTED + VERIFIED | 自然引用、active steering、SubWork、跨重启继续需要产品化 |
+| Durable Work | CONNECTED + VERIFIED | 自然引用、active steering、跨重启 delegated supervision 仍需产品化 |
 | Memory / learned context | PARTIAL | “上次怎么做”“昨天那个继续”等真实长期体验仍需扩大 |
 
 ## 3. Task ownership / delegation / routing
 
 | Product need | Current status | Remaining gap |
 | --- | --- | --- |
-| ZN remains root task owner | ARCHITECTURE CONTRACT + existing resident ownership | 继续在 delegated E2E 中证明 worker/model 不夺取 Work/authority/completion |
-| Durable Work thread/run/artifact | CONNECTED + VERIFIED | 需要扩展成真实 WorkItem/SubWork/dependency/acceptance semantics |
+| ZN remains root task owner | VERIFIED NARROW | E2E-29 已证明 worker/model 不夺取 Work/authority/completion；继续扩大到多模型与重启 |
+| Durable Work thread/run/artifact | CONNECTED + VERIFIED | 已扩展最小 WorkItem/WorkerRun/plan_version/acceptance 语义；dependency 与完整 supervision 仍缺 |
 | Active user steering | PARTIAL / OPEN | 用户改变方向时要更新同一个 Root Work，并处理 running/stale work |
-| Delegated worker lifecycle | DESIGN ONLY / NOT PRODUCT-CLOSED | 缺 bounded WorkerRun、tool scope、result ingestion、cancel/reassign/stall handling |
-| One-model multi-worker | DESIGN ONLY | 需要真实 E2E 证明 worker 数量和 model route 数量解耦 |
-| Multiple ModelRoute support | EXISTS + CONNECTED | 需要真实用户策略和 per-SubWork 路由闭环 |
+| Delegated WorkerRun lifecycle | CONNECTED + VERIFIED NARROW | durable queued/running/completed/failed/stale 已实现；cancel/reassign/stall/restart 仍缺 |
+| One-model multi-worker | **VERIFIED / E2E-29 CLOSED** | 一个实际 route 已服务隔离 research/coding/review WorkerRun；不再是设计缺口 |
+| Multiple ModelRoute support | EXISTS + CONNECTED | 下一步需要用户策略和 per-SubWork eligibility/routing 闭环 |
 | Kernel-owned ModelRouter | EXISTS + VERIFIED NARROW | 已按 capability/route evidence/reliability/cost/latency 评分；缺 privacy/pin/deny/health/concurrency gating |
-| Route learning in SelfModel | EXISTS + VERIFIED NARROW | 需要在真实 delegated outcome 上学习哪个 route 对哪个领域有效 |
-| Worker completion verification | CORE DESIGN / partial evidence elsewhere | 需要明确 WorkerRun `done` 不等于 WorkItem/root completion |
-| Stall/no-progress supervision | OPEN | 重复失败、无新 evidence、worker lost 等要回到 Situation/Thought/Investigation |
+| Route learning in SelfModel | EXISTS + VERIFIED NARROW | 需要在真实 delegated outcome 上继续学习哪个 route 对哪个领域有效 |
+| Worker completion verification | **VERIFIED NARROW** | worker `done` 已被证明不等于 WorkItem/root completion；继续覆盖更复杂 Work |
+| Bounded WorkerContextPack | **VERIFIED NARROW** | 已限制 root goal/current item/evidence/tool/authority；继续审计未来 worker 类型 |
+| Worker authority isolation | **VERIFIED NARROW** | research read-only Browser、coding workspace/terminal、review no-write 已验证；继续扩大权限模型 |
+| Stale delegated result protection | **VERIFIED NARROW** | plan_version stale result 可保留 provenance 但不能推进 current plan；继续覆盖 active steering/restart |
+| Stall/no-progress supervision | PARTIAL / OPEN | E2E-29 可从失败 WorkerRun 继续，但系统化 stall -> reroute/reassign/replan 仍未闭合 |
 
 核心规则：**不要新建第二套 model router，也不要新建 Orchestrator Agent。** 模型选择扩展现有 `ModelRouter`；任务分解/监督扩展现有 `Work`；最终 owner 继续是同一个 ZN。
+
+E2E-29 的真实验收在 Windows X64 `zn-interactive` 上完成：一个 `default` route 连续服务 research/coding/review WorkerRun，最终由独立 verifier WorkItem + Terminal + fresh persisted-state reread 完成 Root acceptance；`SKIPPED=0 / FAILURES=0 / ERRORS=0`。
 
 详细设计：`docs/ZN-DELEGATED-WORK-DESIGN.md`。
 
@@ -78,11 +83,11 @@ Exists
 | Workspace evidence / exact source identity | PARTIAL | 歧义来源必须先解决身份，再允许外部副作用 |
 | Terminal/process | VERIFIED | 继续作为真实任务执行资源，不单独追 milestone |
 | Git / repo task support | PARTIAL | 作为普通项目工作能力继续发展，不给 ZN 自身仓库特殊权限 |
-| Coding specialist + real tools | PARTIAL FOUNDATIONS | 要打通 coding cognition + File/Git/Terminal/Test + runtime verification，而不是只生成代码建议 |
+| Coding specialist + real tools | VERIFIED NARROW | E2E-29 已打通 coding cognition + workspace + Terminal/Test；继续扩大真实 repo 场景 |
 
 ## 7. Multi-surface and long-task real work
 
-当前已经有 Browser + File、Browser + Desktop、File + Desktop 等真实闭环基础。
+当前已经有 Browser + File、Browser + Desktop、File + Desktop 等真实闭环基础；E2E-29 又补上了 `Browser research -> coding workspace -> Terminal/Test -> review -> Root verification` 的一条真实长任务链。
 
 下一阶段重点不是继续证明单动作，而是扩大这些完整任务：
 
@@ -110,8 +115,9 @@ normal human goal
 | Resident restart recovery | VERIFIED / PARTIAL | 更多真实任务和 delegated runs 跨重启恢复 |
 | Unknown external-effect handling | FAIL-CLOSED foundations exist | 继续保证不确定副作用不盲目重放 |
 | Fresh evidence before mutation | CORE RULE | 扩展到所有新的真实任务和 delegated result acceptance |
-| Independent completion verification | VERIFIED NARROW | 继续覆盖复杂 WorkItem/root Work |
-| Stale delegated result protection | DESIGN ONLY | plan version 改变后旧 worker 结果不能自动推进新计划 |
+| Independent completion verification | VERIFIED NARROW | E2E-29 已验证独立 Root verifier + fresh persisted reread；继续覆盖复杂 Work |
+| Stale delegated result protection | VERIFIED NARROW | 已有 plan_version stale gate；继续覆盖 steering/restart/reroute |
+| Fresh semantic retry identity | VERIFIED NARROW | malformed/failed WorkerRun 结束后新尝试使用新 durable identity，避免复用已绑定 goal id |
 
 Recovery 是为了让真实任务能继续，不是独立产品路线。
 
@@ -120,7 +126,7 @@ Recovery 是为了让真实任务能继续，不是独立产品路线。
 | Product need | Current status | Remaining gap |
 | --- | --- | --- |
 | User-visible root task progress | PARTIAL | 用户看到已完成/进行中/等待/阻塞，而不是内部 runtime id |
-| Delegated progress | OPEN | 子任务/worker 应显示人类可懂的工作状态，不展示模型 plumbing 为主 |
+| Delegated progress | OPEN / INTERNAL FOUNDATIONS | WorkerRun 已有 durable status/provenance，但用户层仍需人类可懂表达 |
 | Permission / revoke UX | PARTIAL / OPEN | Browser、敏感操作、外部副作用需要更清楚的授权范围 |
 | Model/privacy policy UX | OPEN | 用户可指定主模型、coding preference、禁用 provider、敏感数据限制 |
 | Failure explanation | PARTIAL | 说明遇到什么、是否还能继续、需要用户做什么 |
@@ -130,24 +136,13 @@ Recovery 是为了让真实任务能继续，不是独立产品路线。
 
 ## 10. Real E2E acceptance set
 
-`docs/ZN-REAL-TASK-E2E-CATALOG.md` 当前定义 50 个真实任务验收场景，覆盖：
+`docs/ZN-REAL-TASK-E2E-CATALOG.md` 当前定义 50 个真实任务验收场景。E2E-29 已于 2026-09-06 完成真实模型验收并关闭；它证明的是“worker 数量与 model route 数量解耦”，不是“多模型 routing 已完成”。
 
-- research；
-- authenticated web；
-- documents/files/spreadsheets；
-- desktop apps；
-- coding/repos；
-- terminal/system；
-- cross-surface；
-- long-running product development；
-- single-model multi-worker；
-- multi-model routing；
-- steering；
-- restart/cross-day continuity；
-- learned behavior；
-- privacy/permission；
-- model/tool availability；
-- independent final verification。
+下一组最直接的 delegated-work 验收应转向：
+
+- E2E-30 + E2E-42：多模型、用户 policy、per-SubWork routing；
+- E2E-28 + E2E-34：worker/model failure、stall、restart 后 supervision/reroute；
+- E2E-33 + E2E-27：durable continuation + active steering。
 
 不是要求一次性实现 50 个测试，而是作为长期产品验收集，按高价值真实任务纵向推进。
 
@@ -165,29 +160,18 @@ Installer、CI、Release、签名本身不是当前产品主线。
 
 它不是当前 capability，不是 backlog，不是 P0/P1/P2/P3，也不属于 near-term product order。
 
-不要重新增加：
-
-- maintenance runtime / cognition / repair；
-- 专用 self-repair investigation / review / publication；
-- upstream BUG report / transport / intake / reconcile；
-- maintenance UI / IPC / RPC；
-- 因为目标仓库是 ZN 就获得特殊 Git、合并、发布、更新或凭证权限的路径。
-
-需要修改 ZN 仓库时，把它当普通代码仓库，用通用 Work、File、Terminal、Git、Repo Test 和编码能力处理。
+不要重新增加 maintenance runtime / cognition / repair、专用 BUG report transport/intake/reconcile、maintenance UI/IPC/RPC，或因为目标仓库是 ZN 就获得特殊 Git/合并/发布权限的路径。
 
 详情见 `docs/ZN-RETIRED-DIRECTIONS.md`。
 
 ## 13. 当前产品优先顺序
 
-下一阶段不能再把 delegated work 作为独立“multi-agent 平台工程”。它必须服务真实任务。推荐五个连续产品工作项：
+E2E-29 已完成。下一阶段不能把 delegated work 扩成独立“multi-agent 平台工程”，而应继续服务真实任务：
 
-1. 自然 Work continuation + active steering。
-2. Broad goal -> 调研 -> runnable MVP 的真实长任务。
-3. 单模型多 worker。
-4. 多模型按用户 policy/per-SubWork routing。
-5. worker failure/stall/restart 后 supervision + reroute。
-
-同时继续补真实 User Browser Bridge、Investigation/replanning 和跨 surface Body 能力，因为调度没有真实工具同样办不成事。
+1. 多模型按用户 policy / per-SubWork routing（E2E-30 + E2E-42）。
+2. worker failure/stall/restart 后 supervision + reroute（E2E-28 + E2E-34）。
+3. 自然 Work continuation + active steering（E2E-33 + E2E-27）。
+4. 继续补真实 User Browser Bridge、Investigation/replanning 和跨 surface Body 能力。
 
 支撑线默认包括 Installer、Release Candidate、签名、额外 CI、维护系统、文档整理、新 governance、新 provider、新状态机和新的抽象。只有它们直接阻塞真实任务时才升优先级。
 
