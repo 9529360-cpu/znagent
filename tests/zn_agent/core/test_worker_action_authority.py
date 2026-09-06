@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from zn_agent.core.action import NativeActionIntent
 from zn_agent.core.action_authority import ActionAuthorityContext, bind_worker_authority_arg
 from zn_agent.core.provider_bridge import build_resident_runtime
 
@@ -22,6 +23,7 @@ class WorkerActionAuthorityTests(unittest.TestCase):
             thread_id,
             "Exercise bounded worker authority",
             acceptance_criteria=["bounded action is independently observable"],
+            payload={"workspace_path": str(workspace)},
         )
         root_item = ledger.work_item_for_event(event.event_id)
         assert root_item is not None
@@ -50,6 +52,51 @@ class WorkerActionAuthorityTests(unittest.TestCase):
             workspace_root=str(workspace),
         )
         return resident, event, workspace, context
+
+    def test_active_action_cycle_derives_thread_identity_from_durable_work_item(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            resident, event, workspace, context = self._resident_with_worker(
+                root,
+                "coding",
+                "write_file",
+            )
+            target = workspace / "cycle-bound.txt"
+            try:
+                state = resident.store.get_working_state()
+                state.current_event_id = event.event_id
+                state.data[resident._DELEGATED_PENDING_KEY] = {
+                    "worker_run_id": context.worker_run_id,
+                    "work_item_id": context.work_item_id,
+                    "expected_action": context.expected_action,
+                }
+                intent = NativeActionIntent(
+                    intent_id="authority-cycle-binding",
+                    event_id=event.event_id,
+                    kind="write_text",
+                    args={"path": str(target), "content": "bound"},
+                    expected_outcome={
+                        "kind": "text_equals",
+                        "path": str(target),
+                        "expected_text": "bound",
+                    },
+                    source="resident_broad_goal_choice",
+                )
+
+                resident._begin_native_action_cycle(event, state, intent)
+                resident.store.save_working_state(state)
+
+                persisted = resident.store.get_working_state()
+                raw_intent = persisted.data.get("native_action_intent")
+                self.assertIsInstance(raw_intent, dict)
+                authority = raw_intent["args"]["__zn_authority_context"]
+                self.assertEqual(authority["work_thread_id"], context.work_thread_id)
+                self.assertEqual(authority["work_item_id"], context.work_item_id)
+                self.assertEqual(authority["worker_run_id"], context.worker_run_id)
+                self.assertEqual(authority["plan_version"], context.plan_version)
+                self.assertEqual(authority["workspace_root"], str(workspace))
+            finally:
+                resident.store.close()
 
     def test_review_worker_cannot_mutate_workspace_through_low_level_body(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
