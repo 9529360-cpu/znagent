@@ -51,6 +51,7 @@ class WorkerDelegationAdmissionTests(unittest.TestCase):
             "Do not research or review; just implement the requested change.",
             "先研究一下但不要 review，直接开发就好。",
             "skip research, then implement and finally review the code",
+            "先调研，然后实现，最后 review，但其实不要 review。",
         )
         for objective in cases:
             with self.subTest(objective=objective):
