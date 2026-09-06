@@ -1,0 +1,81 @@
+name: TEMP E2E29 Real Model Acceptance
+
+on:
+  push:
+    branches:
+      - work/e2e-29-one-model-multi-worker
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e29-real-model-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: 'true'
+  PYTHONUTF8: '1'
+  PYTHONUNBUFFERED: '1'
+  ZN_E2E29_REAL_MODEL: '1'
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+jobs:
+  real-e2e:
+    name: One real model serves several WorkerRuns
+    runs-on: [self-hosted, Windows, X64, zn-interactive]
+    timeout-minutes: 30
+    steps:
+      - name: Require the configured interactive Windows host
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "E2E-29 real-model acceptance requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+          if ($env:RUNNER_NAME -ne 'zn-interactive') {
+            throw "E2E-29 real-model acceptance requires the dedicated configured Windows host; got $env:RUNNER_NAME"
+          }
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare isolated runtime without replacing ZN home
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/e2e29-real-model-venv -ErrorAction SilentlyContinue
+          uv venv .ci/e2e29-real-model-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e29-real-model-venv\Scripts\python.exe'
+          uv pip install --python $python runtime/python
+      - name: Run guarded E2E-29 and fail on any skip
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e29-real-model-venv\Scripts\python.exe'
+          @'
+          import importlib.util
+          import sys
+          import unittest
+          from pathlib import Path
+
+          test_path = Path("tests/zn_agent/e2e/test_e2e29_one_model_multi_worker.py").resolve()
+          spec = importlib.util.spec_from_file_location("zn_e2e29_real", test_path)
+          if spec is None or spec.loader is None:
+              raise SystemExit("unable to load E2E-29 test module")
+          module = importlib.util.module_from_spec(spec)
+          sys.modules[spec.name] = module
+          spec.loader.exec_module(module)
+          suite = unittest.defaultTestLoader.loadTestsFromModule(module)
+          if suite.countTestCases() != 1:
+              raise SystemExit(f"expected exactly one E2E-29 real acceptance test, got {suite.countTestCases()}")
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          print("ZN_E2E29_SKIPPED=" + str(len(result.skipped)), flush=True)
+          print("ZN_E2E29_FAILURES=" + str(len(result.failures)), flush=True)
+          print("ZN_E2E29_ERRORS=" + str(len(result.errors)), flush=True)
+          if result.skipped:
+              raise SystemExit("E2E-29 real-model acceptance skipped: " + repr(result.skipped))
+          if not result.wasSuccessful():
+              raise SystemExit(1)
+          '@ | & $python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
