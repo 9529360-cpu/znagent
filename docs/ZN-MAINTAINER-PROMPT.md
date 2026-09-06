@@ -2,9 +2,11 @@
 
 > 用途：给任何新接手 `9529360-cpu/znagent` 的维护者使用。
 >
-> 主开发分支：`dev/zn-agent`
+> Canonical / integration / release branch：`main`
 >
-> Canonical source / release branch：`main`
+> Active development：从最新 `main` 拉短命 `work/*` 分支，PR 直接回到 `main`。
+>
+> Historical compatibility：`dev/zn-agent` 仅保留兼容用途，不再作为主开发分支、集成分支或新 PR base；保留期间应与 `main` 对齐。
 
 ## 接手时先做什么
 
@@ -17,7 +19,7 @@
 5. `docs/ZN-RETIRED-DIRECTIONS.md`
 6. `.agent/HANDOFF.md`
 
-然后现场查询 `main`、`dev/zn-agent`、相关 work branch、open PR 和 CI。旧文档里的 SHA、CI run 和分支状态只能当历史检查点，不能当现在的事实。
+然后现场查询 `main`、相关短命 `work/*`、open PR 和 CI。只有历史任务仍明确引用 `dev/zn-agent` 时才把它作为兼容分支检查，不能把它当新的开发主线。旧文档里的 SHA、CI run 和分支状态只能当历史检查点，不能当现在的事实。
 
 事实优先级：
 
