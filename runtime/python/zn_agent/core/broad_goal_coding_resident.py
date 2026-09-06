@@ -22,6 +22,7 @@ from .broad_goal_work_resident import BroadGoalWorkResidentRuntime
 from .cognition import CognitiveIncrement
 from .models import utc_now
 from .steerable_work import WorkItem
+from .structured_proposal import parse_exact_json_payload
 from .work import title_for_work_task
 
 
@@ -369,10 +370,7 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
         root: WorkItem,
         content: str,
     ) -> dict[str, Any] | None:
-        try:
-            raw = json.loads(str(content or "").strip())
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return None
+        raw = parse_exact_json_payload(content)
         if not isinstance(raw, dict) or set(raw) != {"zn_work_step"}:
             return None
         step = raw.get("zn_work_step")
