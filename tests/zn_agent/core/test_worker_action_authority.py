@@ -94,7 +94,7 @@ class WorkerActionAuthorityTests(unittest.TestCase):
                 self.assertEqual(authority["work_item_id"], context.work_item_id)
                 self.assertEqual(authority["worker_run_id"], context.worker_run_id)
                 self.assertEqual(authority["plan_version"], context.plan_version)
-                self.assertEqual(authority["workspace_root"], str(workspace))
+                self.assertTrue(Path(authority["workspace_root"]).samefile(workspace))
             finally:
                 resident.store.close()
 

@@ -43,19 +43,43 @@ class PersistentVisualSenseTests(unittest.TestCase):
         )
 
     @staticmethod
-    def _request(endpoint: dict, method: str, params: dict | None = None) -> dict:
+    def _auth_secret(endpoint: dict) -> str:
+        auth = endpoint.get("authentication")
+        if not isinstance(auth, dict) or auth.get("scheme") != "session-secret-v1":
+            raise AssertionError("resident endpoint does not contain the expected auth scheme")
+        secret = auth.get("secret")
+        if not isinstance(secret, str) or len(secret) < 32:
+            raise AssertionError("resident endpoint auth secret is missing or too short")
+        return secret
+
+    @classmethod
+    def _request(cls, endpoint: dict, method: str, params: dict | None = None) -> dict:
         with socket.create_connection(
             (str(endpoint["host"]), int(endpoint["port"])),
             timeout=3.0,
         ) as client:
             client.settimeout(3.0)
+            stream = client.makefile("rb")
+            auth_request = {
+                "id": f"visual-auth-{time.time_ns()}",
+                "method": "authenticate",
+                "params": {"secret": cls._auth_secret(endpoint)},
+            }
+            client.sendall((json.dumps(auth_request) + "\n").encode("utf-8"))
+            raw_auth = stream.readline()
+            if not raw_auth:
+                raise AssertionError("resident endpoint closed before auth response")
+            auth_response = json.loads(raw_auth.decode("utf-8"))
+            if not auth_response.get("ok"):
+                return auth_response
+
             request = {
                 "id": f"visual-{method}-{time.time_ns()}",
                 "method": method,
                 "params": params or {},
             }
             client.sendall((json.dumps(request) + "\n").encode("utf-8"))
-            raw = client.makefile("rb").readline()
+            raw = stream.readline()
             if not raw:
                 raise AssertionError("resident endpoint closed without a response")
             return json.loads(raw.decode("utf-8"))

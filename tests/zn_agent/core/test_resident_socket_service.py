@@ -22,22 +22,71 @@ from zn_agent.core.service import ResidentService
 
 class ResidentSocketServiceTests(unittest.TestCase):
     @staticmethod
-    def _request(endpoint: dict, method: str, params: dict | None = None) -> dict:
+    def _auth_secret(endpoint: dict) -> str:
+        auth = endpoint.get("authentication")
+        if not isinstance(auth, dict) or auth.get("scheme") != "session-secret-v1":
+            raise AssertionError("resident endpoint does not contain the expected auth scheme")
+        secret = auth.get("secret")
+        if not isinstance(secret, str) or len(secret) < 32:
+            raise AssertionError("resident endpoint auth secret is missing or too short")
+        return secret
+
+    @classmethod
+    def _request(
+        cls,
+        endpoint: dict,
+        method: str,
+        params: dict | None = None,
+        *,
+        secret: str | None = None,
+    ) -> dict:
         with socket.create_connection(
             (str(endpoint["host"]), int(endpoint["port"])),
             timeout=3.0,
         ) as client:
             client.settimeout(3.0)
+            stream = client.makefile("rb")
+            auth_id = f"test-auth-{time.time_ns()}"
+            auth_request = {
+                "id": auth_id,
+                "method": "authenticate",
+                "params": {"secret": secret if secret is not None else cls._auth_secret(endpoint)},
+            }
+            client.sendall((json.dumps(auth_request) + "\n").encode("utf-8"))
+            raw_auth = stream.readline()
+            if not raw_auth:
+                raise AssertionError("resident endpoint closed before auth response")
+            auth_response = json.loads(raw_auth.decode("utf-8"))
+            if not auth_response.get("ok"):
+                return auth_response
+
             request = {
                 "id": f"test-{method}-{time.time_ns()}",
                 "method": method,
                 "params": params or {},
             }
             client.sendall((json.dumps(request) + "\n").encode("utf-8"))
-            stream = client.makefile("rb")
             raw = stream.readline()
             if not raw:
                 raise AssertionError("resident endpoint closed without a response")
+            return json.loads(raw.decode("utf-8"))
+
+    @staticmethod
+    def _unauthenticated_request(endpoint: dict, method: str, params: dict | None = None) -> dict:
+        with socket.create_connection(
+            (str(endpoint["host"]), int(endpoint["port"])),
+            timeout=3.0,
+        ) as client:
+            client.settimeout(3.0)
+            request = {
+                "id": f"unauth-{method}-{time.time_ns()}",
+                "method": method,
+                "params": params or {},
+            }
+            client.sendall((json.dumps(request) + "\n").encode("utf-8"))
+            raw = client.makefile("rb").readline()
+            if not raw:
+                raise AssertionError("resident endpoint closed without auth rejection")
             return json.loads(raw.decode("utf-8"))
 
     @staticmethod
@@ -82,35 +131,37 @@ class ResidentSocketServiceTests(unittest.TestCase):
             text=True,
         )
 
+    def _start_threaded_service(self, root: Path):
+        db = root / "kernel.db"
+        endpoint_path = root / "resident-endpoint.json"
+        resident = build_resident_runtime_from_existing_stack(
+            config={"model": {}},
+            store_path=db,
+        )
+        rpc = ResidentRpcServer(resident=resident, life_interval=0.1)
+        service = ResidentSocketService(rpc, endpoint_path=endpoint_path)
+        thread = threading.Thread(
+            target=service.serve_forever,
+            name="test-resident-socket",
+            daemon=True,
+        )
+        thread.start()
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            if endpoint_path.exists():
+                endpoint = json.loads(endpoint_path.read_text(encoding="utf-8"))
+                return resident, rpc, service, thread, endpoint_path, endpoint
+            time.sleep(0.02)
+        self.fail("resident endpoint was not published")
+
     def test_client_disconnect_does_not_end_resident_and_next_client_reconnects(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            db = root / "kernel.db"
-            endpoint_path = root / "resident-endpoint.json"
-            resident = build_resident_runtime_from_existing_stack(
-                config={"model": {}},
-                store_path=db,
-            )
-            rpc = ResidentRpcServer(resident=resident, life_interval=0.1)
-            service = ResidentSocketService(
-                rpc,
-                endpoint_path=endpoint_path,
-            )
-            thread = threading.Thread(
-                target=service.serve_forever,
-                name="test-resident-socket",
-                daemon=True,
-            )
-            thread.start()
-
-            deadline = time.monotonic() + 5.0
-            endpoint = None
-            while time.monotonic() < deadline:
-                if endpoint_path.exists():
-                    endpoint = json.loads(endpoint_path.read_text(encoding="utf-8"))
-                    break
-                time.sleep(0.02)
-            self.assertIsNotNone(endpoint)
+            resident, _, _, thread, endpoint_path, endpoint = self._start_threaded_service(root)
+            self.assertEqual(endpoint["version"], 2)
+            self.assertEqual(endpoint["transport"], "tcp")
+            self.assertEqual(endpoint["host"], "127.0.0.1")
+            self._auth_secret(endpoint)
 
             first_ping = self._request(endpoint, "ping")
             self.assertTrue(first_ping["ok"])
@@ -130,20 +181,13 @@ class ResidentSocketServiceTests(unittest.TestCase):
             self.assertTrue(perceived["ok"])
             trace_id = perceived["result"]["trace_id"]
 
-            # _request closes its socket after every call. A later connection
-            # must reach the same resident instead of recreating the subject.
             time.sleep(0.15)
             second_ping = self._request(endpoint, "ping")
             self.assertTrue(second_ping["ok"])
-            self.assertGreaterEqual(
-                int(second_ping["result"]["pulse_count"]),
-                first_pulse,
-            )
+            self.assertGreaterEqual(int(second_ping["result"]["pulse_count"]), first_pulse)
             neural = self._request(endpoint, "neural", {"limit": 50})
             self.assertTrue(neural["ok"])
-            self.assertTrue(
-                any(item["trace_id"] == trace_id for item in neural["result"])
-            )
+            self.assertTrue(any(item["trace_id"] == trace_id for item in neural["result"]))
             self.assertTrue(thread.is_alive())
 
             shutdown = self._request(endpoint, "shutdown")
@@ -151,6 +195,98 @@ class ResidentSocketServiceTests(unittest.TestCase):
             thread.join(timeout=5.0)
             self.assertFalse(thread.is_alive())
             self.assertFalse(endpoint_path.exists())
+            resident.store.close()
+
+    def test_unauthenticated_and_wrong_secret_clients_fail_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, _, _, thread, endpoint_path, endpoint = self._start_threaded_service(Path(tmp))
+            try:
+                no_auth = self._unauthenticated_request(endpoint, "ping")
+                self.assertFalse(no_auth["ok"])
+                self.assertEqual(no_auth["error"], "authentication required")
+
+                wrong = self._request(endpoint, "ping", secret="not-the-session-secret")
+                self.assertFalse(wrong["ok"])
+                self.assertEqual(wrong["error"], "authentication failed")
+                self.assertNotIn(self._auth_secret(endpoint), json.dumps(wrong))
+
+                good = self._request(endpoint, "ping")
+                self.assertTrue(good["ok"])
+            finally:
+                self._request(endpoint, "shutdown")
+                thread.join(timeout=5.0)
+                self.assertFalse(endpoint_path.exists())
+                resident.store.close()
+
+    def test_unauthenticated_side_effect_rpcs_never_reach_resident(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, _, _, thread, endpoint_path, endpoint = self._start_threaded_service(Path(tmp))
+            cases = (
+                ("work_start", {"thread_id": "missing"}),
+                ("provider_settings_update", {"provider": "openai", "model": "forbidden"}),
+                ("remember", {"content": "must not persist"}),
+                ("forget", {"memory_id": "anything"}),
+                ("shutdown", {}),
+            )
+            try:
+                for method, params in cases:
+                    with self.subTest(method=method):
+                        rejected = self._unauthenticated_request(endpoint, method, params)
+                        self.assertFalse(rejected["ok"])
+                        self.assertEqual(rejected["error"], "authentication required")
+                        self.assertTrue(thread.is_alive())
+                ping = self._request(endpoint, "ping")
+                self.assertTrue(ping["ok"])
+            finally:
+                self._request(endpoint, "shutdown")
+                thread.join(timeout=5.0)
+                self.assertFalse(endpoint_path.exists())
+                resident.store.close()
+
+    def test_non_loopback_bind_is_rejected_at_transport_boundary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            rpc = ResidentRpcServer(resident=resident)
+            try:
+                with self.assertRaisesRegex(ValueError, "requires a loopback bind host"):
+                    ResidentSocketService(rpc, host="0.0.0.0")
+                with self.assertRaisesRegex(ValueError, "requires a loopback bind host"):
+                    ResidentSocketService(rpc, host="192.168.1.20")
+            finally:
+                resident.store.close()
+
+    @unittest.skipIf(os.name == "nt", "POSIX endpoint mode contract")
+    def test_endpoint_auth_material_is_owner_only_on_posix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, _, _, thread, endpoint_path, endpoint = self._start_threaded_service(Path(tmp))
+            try:
+                mode = endpoint_path.stat().st_mode & 0o777
+                self.assertEqual(mode, 0o600)
+                self._auth_secret(endpoint)
+            finally:
+                self._request(endpoint, "shutdown")
+                thread.join(timeout=5.0)
+                resident.store.close()
+
+    def test_secret_never_appears_in_rpc_snapshots_or_errors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, _, _, thread, _, endpoint = self._start_threaded_service(Path(tmp))
+            secret = self._auth_secret(endpoint)
+            try:
+                for method in ("ping", "status", "self", "neural"):
+                    response = self._request(endpoint, method)
+                    self.assertTrue(response["ok"])
+                    self.assertNotIn(secret, json.dumps(response, ensure_ascii=False, default=str))
+                malformed = self._request(endpoint, "method-that-does-not-exist")
+                self.assertFalse(malformed["ok"])
+                self.assertNotIn(secret, json.dumps(malformed, ensure_ascii=False, default=str))
+            finally:
+                self._request(endpoint, "shutdown")
+                thread.join(timeout=5.0)
+                resident.store.close()
 
     def test_idle_runtime_upgrade_keeps_same_home_self_and_work_history(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -161,6 +297,7 @@ class ResidentSocketServiceTests(unittest.TestCase):
             second: subprocess.Popen | None = None
             try:
                 first_endpoint = self._wait_for_endpoint(endpoint_path, first)
+                first_secret = self._auth_secret(first_endpoint)
                 self.assertEqual(first_endpoint["runtime_id"], "runtime-n")
                 self.assertEqual(Path(first_endpoint["python"]).resolve(), Path(sys.executable).resolve())
 
@@ -191,19 +328,19 @@ class ResidentSocketServiceTests(unittest.TestCase):
 
                 second = self._spawn_resident(home, "runtime-n-plus-1")
                 second_endpoint = self._wait_for_endpoint(endpoint_path, second)
+                second_secret = self._auth_secret(second_endpoint)
                 self.assertEqual(second_endpoint["runtime_id"], "runtime-n-plus-1")
                 self.assertNotEqual(first_endpoint["instance_id"], second_endpoint["instance_id"])
+                self.assertNotEqual(first_secret, second_secret)
+
+                stale_auth = self._request(second_endpoint, "ping", secret=first_secret)
+                self.assertFalse(stale_auth["ok"])
+                self.assertEqual(stale_auth["error"], "authentication failed")
 
                 second_self = self._request(second_endpoint, "self")
                 self.assertTrue(second_self["ok"])
-                self.assertEqual(
-                    second_self["result"]["born_at"],
-                    first_self["result"]["born_at"],
-                )
-                self.assertEqual(
-                    second_self["result"]["name"],
-                    first_self["result"]["name"],
-                )
+                self.assertEqual(second_self["result"]["born_at"], first_self["result"]["born_at"])
+                self.assertEqual(second_self["result"]["name"], first_self["result"]["name"])
                 self.assertGreaterEqual(
                     int(second_self["result"]["pulse_count"]),
                     int(first_self["result"]["pulse_count"]),
@@ -282,6 +419,7 @@ class ResidentSocketServiceTests(unittest.TestCase):
             )
             try:
                 endpoint = self._wait_for_endpoint(endpoint_path, child)
+                self._auth_secret(endpoint)
                 self.assertEqual(int(endpoint["pid"]), child.pid)
 
                 with closing(sqlite3.connect(store_path)) as connection:

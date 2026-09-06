@@ -58,12 +58,42 @@ class _ResidentChannelAdapter:
 
 class ResidentChannelSocketServiceTests(unittest.TestCase):
     @staticmethod
-    def _request(endpoint: dict, method: str) -> dict:
+    def _auth_secret(endpoint: dict) -> str:
+        auth = endpoint.get("authentication")
+        if not isinstance(auth, dict) or auth.get("scheme") != "session-secret-v1":
+            raise AssertionError("resident endpoint does not contain the expected auth scheme")
+        secret = auth.get("secret")
+        if not isinstance(secret, str) or len(secret) < 32:
+            raise AssertionError("resident endpoint auth secret is missing or too short")
+        return secret
+
+    @classmethod
+    def _request(cls, endpoint: dict, method: str) -> dict:
         with socket.create_connection(
             (str(endpoint["host"]), int(endpoint["port"])),
             timeout=3.0,
         ) as client:
             client.settimeout(3.0)
+            stream = client.makefile("rb")
+            client.sendall(
+                (
+                    json.dumps(
+                        {
+                            "id": f"test-auth-{time.time_ns()}",
+                            "method": "authenticate",
+                            "params": {"secret": cls._auth_secret(endpoint)},
+                        }
+                    )
+                    + "\n"
+                ).encode("utf-8")
+            )
+            raw_auth = stream.readline()
+            if not raw_auth:
+                raise AssertionError("resident endpoint closed before auth response")
+            auth_response = json.loads(raw_auth.decode("utf-8"))
+            if not auth_response.get("ok"):
+                return auth_response
+
             client.sendall(
                 (
                     json.dumps(
@@ -76,7 +106,9 @@ class ResidentChannelSocketServiceTests(unittest.TestCase):
                     + "\n"
                 ).encode("utf-8")
             )
-            raw = client.makefile("rb").readline()
+            raw = stream.readline()
+            if not raw:
+                raise AssertionError("resident endpoint closed without a response")
             return json.loads(raw.decode("utf-8"))
 
     def test_channel_runs_with_resident_even_without_ui_client(self):
