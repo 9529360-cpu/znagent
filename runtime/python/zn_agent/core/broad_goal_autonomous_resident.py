@@ -74,16 +74,23 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
             work_item_id = str(pending.get("work_item_id") or "").strip()
             expected_action = str(pending.get("expected_action") or "").strip()
             worker = self.work_ledger.worker_run(worker_run_id) if worker_run_id else None
-            if worker is None or not work_item_id or not expected_action:
+            item = (
+                self.work_ledger._work_item_by_id(worker.work_item_id)
+                if worker is not None
+                else None
+            )
+            if worker is None or item is None or not work_item_id or not expected_action:
                 raise PermissionError("delegated action lost its durable WorkerRun authority context")
-            current_plan = int(self.work_ledger.plan_version(worker.work_thread_id))
+            if item.work_item_id != work_item_id or worker.work_item_id != item.work_item_id:
+                raise PermissionError("delegated action WorkItem does not match its WorkerRun")
+            if item.plan_version != worker.plan_version:
+                raise PermissionError("delegated action WorkItem plan does not match its WorkerRun")
+            current_plan = int(self.work_ledger.plan_version(item.work_thread_id))
             if worker.plan_version != current_plan:
                 raise PermissionError("delegated action belongs to a stale Work plan")
-            if worker.work_item_id != work_item_id:
-                raise PermissionError("delegated action WorkItem does not match its WorkerRun")
             command = str(intent.args.get("command") or "")
             context = ActionAuthorityContext(
-                work_thread_id=worker.work_thread_id,
+                work_thread_id=item.work_thread_id,
                 work_item_id=worker.work_item_id,
                 worker_run_id=worker.worker_run_id,
                 plan_version=worker.plan_version,
