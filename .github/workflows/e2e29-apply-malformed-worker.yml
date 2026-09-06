@@ -1,0 +1,73 @@
+name: TEMP E2E29 Apply Malformed Worker Repair
+
+on:
+  push:
+    branches:
+      - work/e2e-29-one-model-multi-worker
+
+permissions:
+  contents: write
+
+concurrency:
+  group: e2e29-malformed-worker-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+jobs:
+  apply-and-test:
+    runs-on: [self-hosted, Windows, X64, zn-ci]
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare runtime
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/e2e29-malformed-venv -ErrorAction SilentlyContinue
+          uv venv .ci/e2e29-malformed-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e29-malformed-venv\Scripts\python.exe'
+          uv pip install --python $python runtime/python
+      - name: Apply exact malformed-worker repair
+        run: |
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e29-malformed-venv\Scripts\python.exe'
+          & $python .ci/e2e29_malformed_worker_patch.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run regression slice
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e29-malformed-venv\Scripts\python.exe'
+          & $python -m unittest -v `
+            tests.zn_agent.core.test_worker_malformed_retry_identity `
+            tests.zn_agent.core.test_worker_write_repair_contract `
+            tests.zn_agent.core.test_worker_phase_repair `
+            tests.zn_agent.core.test_worker_delegation_admission `
+            tests.zn_agent.core.test_worker_scope_admission `
+            tests.zn_agent.core.test_worker_completion_not_acceptance `
+            tests.zn_agent.core.test_direct_work_avoids_delegation `
+            tests.zn_agent.core.test_broad_goal_terminal_repair `
+            tests.zn_agent.core.test_broad_goal_independent_completion_v2 `
+            tests.zn_agent.core.test_broad_goal_runnable_mvp `
+            tests.zn_agent.core.test_broad_goal_research_layer `
+            tests.zn_agent.core.test_broad_goal_steering_continuity
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Commit verified repair and remove scaffolding
+        run: |
+          Remove-Item .ci/e2e29_malformed_worker_patch.py
+          Remove-Item .github/workflows/e2e29-apply-malformed-worker.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add runtime/python/zn_agent/core/broad_goal_autonomous_resident.py `
+            runtime/python/zn_agent/core/broad_goal_completion_resident.py `
+            tests/zn_agent/core/test_worker_malformed_retry_identity.py `
+            .ci/e2e29_malformed_worker_patch.py `
+            .github/workflows/e2e29-apply-malformed-worker.yml
+          git commit -m "fix(e2e29): give malformed worker retries fresh durable ids"
+          git push origin HEAD:work/e2e-29-one-model-multi-worker
