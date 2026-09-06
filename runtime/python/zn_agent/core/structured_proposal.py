@@ -73,15 +73,23 @@ def looks_like_structured_payload(content: str, *, top_level_key: str) -> bool:
     not fall through to generic cognition completion.
     """
 
+    text = str(content or "").strip()
     payload = normalize_exact_json_payload(content)
+    marker = f'"{top_level_key}"'
     if payload is None:
-        return False
+        # Rejection-only classification for malformed/multiple exact proposal
+        # envelopes. Never search prose: the response itself must present as an
+        # object or JSON fence before a marker can make it a structured candidate.
+        lowered = text.lower()
+        presents_as_structured = text.startswith("{") or lowered.startswith("```json")
+        return presents_as_structured and marker in text
+
     parsed = parse_exact_json_payload(content)
     if isinstance(parsed, dict):
         return top_level_key in parsed
 
     # Malformed or duplicate-key JSON that still clearly presents itself as one
     # object proposal is rejected by the structured boundary instead of being
-    # treated as ordinary prose. We do not search prose or extract substrings.
+    # treated as ordinary prose. We do not extract any substring for execution.
     stripped = payload.lstrip()
-    return stripped.startswith("{") and f'"{top_level_key}"' in payload
+    return stripped.startswith("{") and marker in payload
