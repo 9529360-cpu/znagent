@@ -23,6 +23,7 @@ defaults:
   run:
     shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
 
+# Temporary guarded acceptance: any unittest skip is a hard failure.
 jobs:
   real-e2e:
     name: One real model serves several WorkerRuns
