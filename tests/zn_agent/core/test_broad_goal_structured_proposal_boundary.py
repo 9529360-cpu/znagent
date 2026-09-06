@@ -9,7 +9,6 @@ from zn_agent.core.provider_bridge import build_resident_runtime
 from zn_agent.core.recovery_bounded_work import RecoveryBoundedWorkLedger
 from zn_agent.core.structured_proposal import (
     looks_like_structured_payload,
-    normalize_exact_json_payload,
     parse_exact_json_payload,
 )
 from zn_agent.core.work_restore_control import RestoreAwareWorkControl
@@ -99,17 +98,14 @@ class BroadGoalStructuredProposalBoundaryTests(unittest.TestCase):
             self.resident._parse_write_file_step(self.event, self.root_item, fenced)
         )
 
-    def test_bare_and_fenced_run_python_are_recognized_at_the_shared_boundary(self) -> None:
+    def test_bare_and_fenced_run_python_are_recognized(self) -> None:
         bare = self._run_payload()
         fenced = f"```json\n{bare}\n```"
         self.assertIsNotNone(
             self.resident._parse_run_python_step(self.event, self.root_item, bare)
         )
-        normalized = normalize_exact_json_payload(fenced)
-        self.assertIsNotNone(normalized)
-        assert normalized is not None
         self.assertIsNotNone(
-            self.resident._parse_run_python_step(self.event, self.root_item, normalized)
+            self.resident._parse_run_python_step(self.event, self.root_item, fenced)
         )
         self.assertEqual(parse_exact_json_payload(fenced), parse_exact_json_payload(bare))
 
@@ -141,6 +137,13 @@ class BroadGoalStructuredProposalBoundaryTests(unittest.TestCase):
         )
         self.assertIsNone(
             self.resident._parse_write_file_step(
+                self.event,
+                self.root_item,
+                concatenated,
+            )
+        )
+        self.assertIsNone(
+            self.resident._parse_run_python_step(
                 self.event,
                 self.root_item,
                 concatenated,
