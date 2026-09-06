@@ -9,6 +9,7 @@ from unittest.mock import patch
 from zn_agent.core.delegated_work_coordinator import DelegatedWorkCoordinator
 from zn_agent.core.models import ModelRoute, WorkerResult
 from zn_agent.core.provider_bridge import build_resident_runtime
+from zn_agent.core.router import NoRouteAvailable
 from zn_agent.core.runtime import ZNKernelRuntime
 from zn_agent.core.store import KernelStore
 
@@ -101,7 +102,13 @@ class DelegatedWorkCoordinatorTests(unittest.TestCase):
                 resident.store.close()
 
     @staticmethod
-    def _bound_research_request(resident, *, payload):
+    def _bound_worker_request(
+        resident,
+        *,
+        executor_kind: str,
+        expected_action: str,
+        payload,
+    ):
         coordinator = resident._delegated_work_coordinator()
         root = SimpleNamespace(
             work_thread_id="route-thread",
@@ -110,24 +117,27 @@ class DelegatedWorkCoordinatorTests(unittest.TestCase):
             plan_version=1,
         )
         child = SimpleNamespace(
-            work_item_id="item-research",
-            objective="research the bounded current source",
-            acceptance_criteria=("delegated_worker_evidence: research/research_page",),
+            work_item_id=f"item-{executor_kind}",
+            objective=f"perform bounded {executor_kind} work",
+            acceptance_criteria=(
+                f"delegated_worker_evidence: {executor_kind}/{expected_action}",
+            ),
         )
+        profile = resident._WORKER_SCOPE_PROFILES[executor_kind]
         worker = SimpleNamespace(
-            worker_run_id="worker-research",
+            worker_run_id=f"worker-{executor_kind}",
             work_item_id=child.work_item_id,
-            model_goal_id="goal-cog-worker-research",
-            cognition_request_id="cog-worker-research",
-            executor_kind="research",
-            tool_scope=("managed_browser.navigate", "managed_browser.read"),
-            authority_scope=("web_read",),
+            model_goal_id=f"goal-cog-worker-{executor_kind}",
+            cognition_request_id=f"cog-worker-{executor_kind}",
+            executor_kind=executor_kind,
+            tool_scope=profile["tool_scope"],
+            authority_scope=profile["authority_scope"],
         )
         request = SimpleNamespace(
             request_id="original",
             required_capabilities=("general",),
             context={"existing": "kept"},
-            question="research this",
+            question=f"perform {executor_kind} cognition",
         )
         event = SimpleNamespace(payload=dict(payload))
         with patch.object(resident.work_ledger, "list_work_items", return_value=[]):
@@ -137,9 +147,87 @@ class DelegatedWorkCoordinatorTests(unittest.TestCase):
                 request,
                 worker,
                 child,
-                expected_action="research_page",
+                expected_action=expected_action,
                 completed=[],
             )
+
+    @staticmethod
+    def _run_bound_request(tmp: str, *, request, routes, factory, goal_id: str):
+        kernel = ZNKernelRuntime(
+            store=KernelStore(Path(tmp) / f"{goal_id}.db"),
+            routes=routes,
+            worker_factory=factory,
+            max_attempts=1,
+        )
+        try:
+            return kernel.run_goal(
+                request.question,
+                required_capabilities=request.required_capabilities,
+                metadata={"cognition_request": {"context": request.context}},
+                max_attempts_override=1,
+                goal_id=goal_id,
+            )
+        finally:
+            kernel.store.close()
+
+    def test_task_specific_worker_capabilities_route_research_and_coding_differently(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime(
+                config={"model": {}},
+                store_path=Path(tmp) / "resident.db",
+            )
+            try:
+                research = self._bound_worker_request(
+                    resident,
+                    executor_kind="research",
+                    expected_action="research_page",
+                    payload={"data_classification": "cloud_allowed"},
+                )
+                coding = self._bound_worker_request(
+                    resident,
+                    executor_kind="coding",
+                    expected_action="write_file",
+                    payload={"data_classification": "cloud_allowed"},
+                )
+                self.assertEqual(research.required_capabilities, ("research", "reasoning"))
+                self.assertEqual(coding.required_capabilities, ("coding", "reasoning"))
+
+                routes = [
+                    ModelRoute(
+                        "research-route",
+                        "approved-a",
+                        "research-model",
+                        {"research": 0.8, "reasoning": 0.8},
+                        reliability=0.5,
+                    ),
+                    ModelRoute(
+                        "coding-route",
+                        "approved-b",
+                        "coding-model",
+                        {"coding": 0.8, "reasoning": 0.8},
+                        reliability=0.5,
+                    ),
+                ]
+                factory = _RouteCaptureFactory()
+                research_result = self._run_bound_request(
+                    tmp,
+                    request=research,
+                    routes=routes,
+                    factory=factory,
+                    goal_id="goal-research-route",
+                )
+                coding_result = self._run_bound_request(
+                    tmp,
+                    request=coding,
+                    routes=routes,
+                    factory=factory,
+                    goal_id="goal-coding-route",
+                )
+                self.assertEqual(research_result.goal.route_id, "research-route")
+                self.assertEqual(coding_result.goal.route_id, "coding-route")
+                self.assertEqual(factory.route_ids, ["research-route", "coding-route"])
+            finally:
+                resident.store.close()
 
     def test_delegated_user_deny_policy_reaches_kernel_before_soft_scoring(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -148,8 +236,10 @@ class DelegatedWorkCoordinatorTests(unittest.TestCase):
                 store_path=Path(tmp) / "resident.db",
             )
             try:
-                request = self._bound_research_request(
+                request = self._bound_worker_request(
                     resident,
+                    executor_kind="research",
+                    expected_action="research_page",
                     payload={
                         "route_policy": {"denied_providers": ["blocked-cloud"]},
                         "data_classification": "cloud_allowed",
@@ -159,14 +249,11 @@ class DelegatedWorkCoordinatorTests(unittest.TestCase):
                     request.context["route_policy"],
                     {"denied_providers": ["blocked-cloud"]},
                 )
-                self.assertEqual(
-                    request.context["worker_context_pack"]["data_classification"],
-                    "cloud_allowed",
-                )
 
                 factory = _RouteCaptureFactory()
-                kernel = ZNKernelRuntime(
-                    store=KernelStore(Path(tmp) / "routing.db"),
+                result = self._run_bound_request(
+                    tmp,
+                    request=request,
                     routes=[
                         ModelRoute(
                             "tempting-denied",
@@ -183,21 +270,12 @@ class DelegatedWorkCoordinatorTests(unittest.TestCase):
                             reliability=0.1,
                         ),
                     ],
-                    worker_factory=factory,
-                    max_attempts=1,
+                    factory=factory,
+                    goal_id="goal-denied-provider",
                 )
-                try:
-                    result = kernel.run_goal(
-                        request.question,
-                        required_capabilities=request.required_capabilities,
-                        metadata={"cognition_request": {"context": request.context}},
-                        max_attempts_override=1,
-                    )
-                    self.assertTrue(result.assessment.success)
-                    self.assertEqual(result.goal.route_id, "allowed")
-                    self.assertEqual(factory.route_ids, ["allowed"])
-                finally:
-                    kernel.store.close()
+                self.assertTrue(result.assessment.success)
+                self.assertEqual(result.goal.route_id, "allowed")
+                self.assertEqual(factory.route_ids, ["allowed"])
             finally:
                 resident.store.close()
 
@@ -208,8 +286,10 @@ class DelegatedWorkCoordinatorTests(unittest.TestCase):
                 store_path=Path(tmp) / "resident.db",
             )
             try:
-                request = self._bound_research_request(
+                request = self._bound_worker_request(
                     resident,
+                    executor_kind="research",
+                    expected_action="research_page",
                     payload={"data_classification": "cloud_denied"},
                 )
                 self.assertEqual(
@@ -218,8 +298,9 @@ class DelegatedWorkCoordinatorTests(unittest.TestCase):
                 )
 
                 factory = _RouteCaptureFactory()
-                kernel = ZNKernelRuntime(
-                    store=KernelStore(Path(tmp) / "routing.db"),
+                result = self._run_bound_request(
+                    tmp,
+                    request=request,
                     routes=[
                         ModelRoute(
                             "cloud-high-score",
@@ -238,36 +319,46 @@ class DelegatedWorkCoordinatorTests(unittest.TestCase):
                             metadata={"local": True},
                         ),
                     ],
-                    worker_factory=factory,
-                    max_attempts=1,
+                    factory=factory,
+                    goal_id="goal-cloud-denied",
                 )
-                try:
-                    result = kernel.run_goal(
-                        request.question,
-                        required_capabilities=request.required_capabilities,
-                        metadata={"cognition_request": {"context": request.context}},
-                        max_attempts_override=1,
-                    )
-                    self.assertTrue(result.assessment.success)
-                    self.assertEqual(result.goal.route_id, "local-low-score")
-                    self.assertEqual(factory.route_ids, ["local-low-score"])
-                finally:
-                    kernel.store.close()
+                self.assertTrue(result.assessment.success)
+                self.assertEqual(result.goal.route_id, "local-low-score")
+                self.assertEqual(factory.route_ids, ["local-low-score"])
             finally:
                 resident.store.close()
 
-    def test_malformed_delegated_route_policy_is_preserved_for_router_fail_closed(self) -> None:
+    def test_malformed_delegated_route_policy_reaches_router_and_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             resident = build_resident_runtime(
                 config={"model": {}},
-                store_path=Path(tmp) / "kernel.db",
+                store_path=Path(tmp) / "resident.db",
             )
             try:
-                request = self._bound_research_request(
+                request = self._bound_worker_request(
                     resident,
+                    executor_kind="research",
+                    expected_action="research_page",
                     payload={"route_policy": "allow everything"},
                 )
                 self.assertEqual(request.context["route_policy"], "allow everything")
+                factory = _RouteCaptureFactory()
+                with self.assertRaisesRegex(NoRouteAvailable, "cognition route policy is malformed"):
+                    self._run_bound_request(
+                        tmp,
+                        request=request,
+                        routes=[
+                            ModelRoute(
+                                "otherwise-eligible",
+                                "approved-cloud",
+                                "model",
+                                {"research": 1.0, "reasoning": 1.0},
+                            )
+                        ],
+                        factory=factory,
+                        goal_id="goal-malformed-policy",
+                    )
+                self.assertEqual(factory.route_ids, [])
             finally:
                 resident.store.close()
 
