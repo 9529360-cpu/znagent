@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
+import re
+import secrets
 import signal
 import socketserver
+import stat
+import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -14,6 +19,10 @@ from .channel_runtime import ResidentChannelSupervisor, build_zn_channel_adapter
 from .models import utc_now
 from .visual_region_sense import NativeVisualRegionSense, VisualRegionProbeFn
 from .visual_sense import NativeVisualSense, VisualCaptureFn
+
+
+_RESIDENT_ENDPOINT_VERSION = 2
+_RESIDENT_AUTH_SCHEME = "session-secret-v1"
 
 
 def _process_runtime_id(
@@ -41,6 +50,76 @@ def _process_runtime_id(
     return None
 
 
+def _loopback_bind_host(value: str | None) -> str:
+    """Return the canonical TCP loopback host or fail closed.
+
+    The local Resident control plane is never a network service. Normalizing
+    ``localhost`` to the literal IPv4 loopback avoids DNS/hosts-file ambiguity,
+    while rejecting wildcard/LAN addresses at the transport boundary means a
+    caller cannot accidentally expose privileged RPC by changing configuration.
+    A future Windows Named Pipe transport can replace this transport without
+    changing the authentication/authority contract above it.
+    """
+
+    host = str(value or "127.0.0.1").strip().lower() or "127.0.0.1"
+    if host in {"127.0.0.1", "localhost"}:
+        return "127.0.0.1"
+    raise ValueError("ZN Resident TCP control plane requires a loopback bind host")
+
+
+def _windows_current_user_sid() -> str:
+    """Resolve the SID of the actual process token, including service accounts."""
+
+    completed = subprocess.run(
+        ["whoami", "/user", "/fo", "csv", "/nh"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        errors="replace",
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    if completed.returncode != 0:
+        return ""
+    match = re.search(r"\bS-\d+(?:-\d+)+\b", completed.stdout or "", flags=re.IGNORECASE)
+    return match.group(0) if match else ""
+
+
+def _restrict_endpoint_file(path: Path) -> None:
+    """Restrict the endpoint/auth material to the current OS user.
+
+    POSIX uses a strict 0600 mode. On Windows the process-token SID is resolved
+    numerically and passed to ``icacls``. Numeric SIDs avoid friendly-name
+    localization/service-account ambiguity (for example NetworkService runners).
+    Failure is fatal: publishing an unrestricted session secret is less safe
+    than refusing to publish the endpoint.
+    """
+
+    if os.name != "nt":
+        os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+        return
+
+    sid = _windows_current_user_sid()
+    if not sid:
+        raise RuntimeError("could not resolve the current Windows SID for endpoint ACL")
+    completed = subprocess.run(
+        [
+            "icacls",
+            str(path),
+            "/inheritancelevel:r",
+            "/grant:r",
+            f"*{sid}:F",
+        ],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    if completed.returncode != 0:
+        raise RuntimeError("failed to restrict ZN Resident endpoint permissions")
+
+
 class _ResidentTerminationRequested(BaseException):
     """Internal control flow for an OS-requested graceful resident stop."""
 
@@ -49,14 +128,34 @@ class _ResidentTcpServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
 
-    def __init__(self, server_address, handler_class, *, rpc):
+    def __init__(self, server_address, handler_class, *, rpc, auth_secret: str):
         self.rpc = rpc
+        self._auth_secret = auth_secret
         super().__init__(server_address, handler_class)
+
+    def verify_request(self, request, client_address) -> bool:  # noqa: ARG002
+        try:
+            return ipaddress.ip_address(str(client_address[0])).is_loopback
+        except ValueError:
+            return False
+
+    def authenticate(self, candidate: object) -> bool:
+        if not isinstance(candidate, str):
+            return False
+        return secrets.compare_digest(candidate, self._auth_secret)
 
 
 class _ResidentTcpHandler(socketserver.StreamRequestHandler):
+    @staticmethod
+    def _write_response(handler: "_ResidentTcpHandler", response: dict[str, Any]) -> None:
+        handler.wfile.write(
+            (json.dumps(response, ensure_ascii=False, default=str) + "\n").encode("utf-8")
+        )
+        handler.wfile.flush()
+
     def handle(self) -> None:
         rpc = self.server.rpc  # type: ignore[attr-defined]
+        authenticated = False
         while True:
             raw = self.rfile.readline()
             if not raw:
@@ -66,7 +165,54 @@ class _ResidentTcpHandler(socketserver.StreamRequestHandler):
                 request = json.loads(raw.decode("utf-8"))
                 if not isinstance(request, dict):
                     raise ValueError("request must be an object")
-                response = rpc.handle(request)
+                request_id = request.get("id")
+                method = str(request.get("method") or "").strip()
+
+                if not authenticated:
+                    if method != "authenticate":
+                        self._write_response(
+                            self,
+                            {
+                                "id": request_id,
+                                "ok": False,
+                                "error": "authentication required",
+                            },
+                        )
+                        return
+                    params = request.get("params")
+                    candidate = params.get("secret") if isinstance(params, dict) else None
+                    if not self.server.authenticate(candidate):  # type: ignore[attr-defined]
+                        self._write_response(
+                            self,
+                            {
+                                "id": request_id,
+                                "ok": False,
+                                "error": "authentication failed",
+                            },
+                        )
+                        return
+                    authenticated = True
+                    self._write_response(
+                        self,
+                        {
+                            "id": request_id,
+                            "ok": True,
+                            "result": {
+                                "authenticated": True,
+                                "scheme": _RESIDENT_AUTH_SCHEME,
+                            },
+                        },
+                    )
+                    continue
+
+                if method == "authenticate":
+                    response = {
+                        "id": request_id,
+                        "ok": False,
+                        "error": "authentication already established",
+                    }
+                else:
+                    response = rpc.handle(request)
             except Exception as exc:
                 request_id = request.get("id") if isinstance(request, dict) else None
                 response = {
@@ -74,12 +220,7 @@ class _ResidentTcpHandler(socketserver.StreamRequestHandler):
                     "ok": False,
                     "error": f"{type(exc).__name__}: {exc}",
                 }
-            self.wfile.write(
-                (json.dumps(response, ensure_ascii=False, default=str) + "\n").encode(
-                    "utf-8"
-                )
-            )
-            self.wfile.flush()
+            self._write_response(self, response)
             if getattr(rpc, "_shutdown", False):
                 threading.Thread(
                     target=self.server.shutdown,  # type: ignore[attr-defined]
@@ -90,12 +231,18 @@ class _ResidentTcpHandler(socketserver.StreamRequestHandler):
 
 
 class ResidentSocketService:
-    """Reconnectable local transport for a resident that outlives its UI.
+    """Reconnectable authenticated local transport for the long-lived Resident.
 
     The resident runtime owns the lease, heartbeat, state, endpoint and enabled
-    communication organs. Desktop windows are clients. Closing a client
-    connection therefore does not end the resident; another Electron process can
-    later reconnect to the same subject.
+    communication organs. Desktop windows are authenticated clients. Closing a
+    client connection therefore does not end the resident; another authorized
+    Electron process can later reconnect to the same subject.
+
+    TCP is deliberately transitional: it is pinned to loopback, every connection
+    must prove possession of a high-entropy per-process session secret before any
+    Resident RPC is dispatched, and the endpoint carrying that secret is
+    restricted to the current OS user. This keeps the control-plane semantics
+    compatible with a later Windows Named Pipe + per-user SID ACL transport.
 
     The same service process owns ZN's low-level visual sampling, on-demand local
     visual region sensing and channel lifecycles. Visual evidence and authorized
@@ -119,13 +266,14 @@ class ResidentSocketService:
         channel_poll_timeout: float = 10.0,
     ):
         self.rpc = rpc
-        self.host = str(host or "127.0.0.1")
+        self.host = _loopback_bind_host(host)
         self.port = max(0, int(port))
         self.endpoint_path = (
             Path(endpoint_path).expanduser()
             if endpoint_path is not None
             else Path(self.rpc.resident.store.path).parent / "resident-endpoint.json"
         )
+        self._session_secret = secrets.token_urlsafe(48)
         capture = visual_capture_fn or NativeVisualSense._capture_primary_screen
         self.visual = NativeVisualSense(
             self.rpc.resident,
@@ -199,6 +347,7 @@ class ResidentSocketService:
                 (self.host, self.port),
                 _ResidentTcpHandler,
                 rpc=self.rpc,
+                auth_secret=self._session_secret,
             ) as server:
                 self._server = server
                 host, port = server.server_address[:2]
@@ -265,7 +414,7 @@ class ResidentSocketService:
         path = self.endpoint_path
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
-            "version": 1,
+            "version": _RESIDENT_ENDPOINT_VERSION,
             "transport": "tcp",
             "host": host,
             "port": port,
@@ -275,13 +424,32 @@ class ResidentSocketService:
             "runtime_id": _process_runtime_id(),
             "python": sys.executable,
             "channels": list(self.channels.channels),
+            "authentication": {
+                "scheme": _RESIDENT_AUTH_SCHEME,
+                "secret": self._session_secret,
+            },
         }
         temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-        temporary.write_text(
-            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-            encoding="utf-8",
-        )
-        os.replace(temporary, path)
+        encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        try:
+            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+            if hasattr(os, "O_BINARY"):
+                flags |= os.O_BINARY
+            descriptor = os.open(temporary, flags, stat.S_IRUSR | stat.S_IWUSR)
+            os.close(descriptor)
+            # Restrict the empty staging file before the session secret is ever
+            # written. This makes the publish sequence fail closed even if ACL
+            # hardening fails on Windows.
+            _restrict_endpoint_file(temporary)
+            with temporary.open("w", encoding="utf-8", newline="") as handle:
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+            _restrict_endpoint_file(path)
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
 
     def _remove_owned_endpoint(self) -> None:
         path = self.endpoint_path

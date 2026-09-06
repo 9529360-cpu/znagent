@@ -169,29 +169,50 @@ def _endpoint_path(home: Path) -> Path:
     return _normalized_home(home) / "kernel" / "resident-endpoint.json"
 
 
+def _endpoint_secret(payload: object) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    auth = payload.get("authentication")
+    if not isinstance(auth, dict) or auth.get("scheme") != "session-secret-v1":
+        return None
+    secret = auth.get("secret")
+    return secret if isinstance(secret, str) and len(secret) >= 32 else None
+
+
 def resident_running(home: Path, *, timeout: float = 0.4) -> bool:
     try:
         payload = json.loads(_endpoint_path(home).read_text(encoding="utf-8"))
         host = str(payload.get("host") or "").strip()
         port = int(payload.get("port") or 0)
+        secret = _endpoint_secret(payload)
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return False
-    if host not in {"127.0.0.1", "localhost", "::1"} or not (0 < port < 65536):
+    if host not in {"127.0.0.1", "localhost", "::1"} or not (0 < port < 65536) or not secret:
         return False
 
+    auth = json.dumps(
+        {
+            "id": "autostart-auth",
+            "method": "authenticate",
+            "params": {"secret": secret},
+        },
+        separators=(",", ":"),
+    ).encode("utf-8") + b"\n"
     request = b'{"id":"autostart-status","method":"ping","params":{}}\n'
     try:
         with socket.create_connection((host, port), timeout=max(0.05, float(timeout))) as sock:
             sock.settimeout(max(0.05, float(timeout)))
-            sock.sendall(request)
-            buffer = bytearray()
-            while len(buffer) < 8192 and b"\n" not in buffer:
-                chunk = sock.recv(1024)
-                if not chunk:
-                    break
-                buffer.extend(chunk)
-        line = bytes(buffer).split(b"\n", 1)[0]
-        response = json.loads(line.decode("utf-8"))
+            sock.sendall(auth + request)
+            stream = sock.makefile("rb")
+            auth_response = json.loads(stream.readline().decode("utf-8"))
+            if not (
+                isinstance(auth_response, dict)
+                and auth_response.get("ok")
+                and isinstance(auth_response.get("result"), dict)
+                and auth_response["result"].get("authenticated") is True
+            ):
+                return False
+            response = json.loads(stream.readline().decode("utf-8"))
     except (OSError, ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError):
         return False
     result = response.get("result") if isinstance(response, dict) else None
