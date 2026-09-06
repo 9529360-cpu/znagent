@@ -27,64 +27,91 @@ truth/completion                                                 = fresh evidenc
 
 - `main` 是唯一长期集成主线、canonical source 和 release branch。
 - 新开发固定从最新 `main` 拉短命 `work/*`，PR 直接以 `main` 为 base；核心 CI 和适用真实 E2E 必须在 PR 阶段运行并通过。
-- `dev/zn-agent` 只保留为历史兼容分支，不再接收新的产品开发或作为新 PR base。
+- `dev/zn-agent` 只保留为历史兼容分支，不再接收新的产品开发或作为新 PR base；保留期间应与 `main` 对齐。
 - 专用 self-maintenance / self-repair / upstream BUG-report 产品路线已经废弃，不要恢复。
-- 当前 E2E-29 工作分支：`work/e2e-29-one-model-multi-worker`，PR #188。
+- PR #188 的 E2E-29 工作已经合并；不要再把 `work/e2e-29-one-model-multi-worker` 当当前开发主线。
 - E2E-29 已于 2026-09-06 完成真实模型验收；临时真模型 workflow 已删除，不要恢复为长期 CI。
+
+## 已落地的 delegated-work substrate
+
+当前 `main` 已经形成同一个 Resident 内的最小纵向链路：
+
+```text
+normal user goal
+-> durable Root Work
+-> bounded delegation admission
+-> DelegatedWorkCoordinator inside the same Resident
+-> short-lived durable WorkerRun
+-> strict WorkerContextPack
+-> single ModelRouter
+-> Body action-authority revalidation
+-> fresh evidence / verification
+-> Root completion remains ZN-owned
+```
+
+这不是第二个 Resident、第二个 router 或独立 multi-agent control plane。
+
+### Delegation admission
+
+`BoundedDelegationPlanner` 只在目标真正需要多个有意义阶段时委派。小而确定的任务保持 direct path；显式否定 delegation/research/review 优先于关键词匹配，例如：
+
+> `不要调研，也不要 review，直接实现。`
+
+不得因为系统“支持 worker”就把每个请求都拆 worker。
+
+### Coordinator ownership
+
+`DelegatedWorkCoordinator` 是现有 Resident 的内部 composition。它复用同一个 Work ledger、ModelRouter、Body、store 和 Root completion authority，不拥有第二套 scheduler/session/control plane。
+
+### Strict WorkerContextPack
+
+active delegated runtime 使用严格递归边界，而不是靠调用方随手截断字符串：
+
+- recursion depth / node / mapping / sequence / string limits；
+- final serialized byte limit；
+- acceptance/evidence/artifact/scope top-level limits；
+- nested credential/token/transcript/Memory/SelfModel/other-worker internals fail closed；
+- secret-like bearer/API/GitHub-token value rejection；
+- provenance + data classification；
+- malformed mapping keys 和 malformed `plan_version` fail closed；
+- classification hook 可以收紧 route-facing policy。
+
+`private` 本身不等于 cloud forbidden；当前明确的 `local_only` / `cloud_denied` 才进入 locality hard gate。不要把这层描述成完整 DLP。
+
+### Worker action authority
+
+WorkerRun 的 tool/authority/workspace/plan contract 会绑定到持久化 action intent，并在真实 Body effect 前再次读取 durable state 验证：
+
+- research/review WorkerRun 不能通过低层 Body 路径获得 workspace mutation；
+- coding write 被限制在 attached workspace；
+- stale plan authority 在 effect 前拒绝；
+- unknown Worker-authorized primitive fail closed；
+- denial 仍进入现有 Body audit。
+
+这是 **action admission boundary**，不是任意命令的 OS sandbox。不要在文档或产品声明中把它升级描述成进程级安全隔离。
+
+### ModelRouter hard eligibility
+
+现有单一 `ModelRouter` 已扩展为：先做 hard eligibility，再对合法候选做 soft scoring。已实现的 hard gates 包括：
+
+- retry/runtime exclusion；
+- required capability 必须显式声明；
+- user pinned provider/model；
+- denied provider/model；
+- declared availability / health metadata；
+- `local_only` / `cloud_forbidden` / `cloud_denied` locality policy；
+- required policy tags；
+- required authority-policy scopes；
+- malformed route-policy type/member fail closed；
+- 无合法 route 时明确 `NoRouteAvailable`，不静默回退到违规模型。
+
+legacy 单模型 product shortcut 显式声明它已经承担的 general/reasoning/research/coding/language-understanding roles；显式 `zn_kernel.routes` 不获得未声明 capability 的历史默认分。
+
+**仍未闭合：** dynamic `ResidentHealthJournal` observation 尚未成为实时 eligibility/reroute 输入；一次 transient provider failure 后的 bounded reroute/reassign 仍属于 E2E-28/E2E-34 supervision 工作。
 
 ## E2E-29 已正式关闭
 
-### 用户能力变化
-
-以前：ZN 虽然已有 Work、ModelRouter、CognitiveResource 和 Body，但不能证明“一个模型 route 被 ZN 当作多个隔离 worker 使用，同时 Root Work 仍由 ZN 自己持有并独立验收”。
-
-现在：同一个实际 model route `default` 已真实服务多个不同 WorkerRun，完成 research、coding、review，并最终由独立 Root verifier 验收真实产物。
-
-### 已实现的最小 delegated Work 基线
-
-`runtime/python/zn_agent/core/evidence_bound_work.py` 现在有 durable WorkerRun / WorkerContextPack 基础：
-
-- `worker_run_id`
-- `work_item_id`
-- `plan_version`
-- `executor_kind`
-- `model_goal_id`
-- `model_route_id`
-- `tool_scope`
-- `authority_scope`
-- `state = queued/running/completed/failed/stale`
-- result / artifacts / verification / error / metrics provenance
-
-WorkerRun identity 由 ZN 创建，模型不能自选 id、plan_version 或 authority。一个 WorkerRun 内 cognition/model goal identity 稳定；如果 malformed proposal 或当前语义尝试失败并终结 WorkerRun，下一次语义重试必须创建新的 WorkerRun/cognition/model goal identity，不能复用已经绑定到旧 task 的 durable goal id。
-
-### bounded context
-
-WorkerContextPack 只允许当前任务所需的 bounded context：root goal 摘要、当前 WorkItem objective/acceptance、plan_version、相关 evidence/artifact、tool/authority scope、forbidden actions 和 result schema。
-
-不要把完整 transcript、Memory dump、SelfModel internals、credentials、其他 worker internals 或无关历史直接塞给 worker。
-
-### 权限边界
-
-已真实验证的 E2E-29 scopes：
-
-- research：`managed_browser.navigate/read`，authority=`web_read`
-- coding：workspace read/write + terminal python/test + read-only git status/diff
-- review：workspace read + terminal verify + git status/diff，无 workspace write
-
-任何 worker 都不能 push/release/message/accept Root。
-
-### completion / stale 规则
-
-- WorkerRun completed != WorkItem completed != Root Work completed。
-- worker/model 的 “done/success” 不是 acceptance evidence。
-- plan_version 已变化时旧 worker result 可保留为 stale provenance，但不得推进 current plan。
-- Root completion 由 ZN 自己做 criterion-bound verification。
-
-### 真实验收证据
-
-Windows X64 self-hosted runner：`zn-interactive`。
-
-真实模型 run：`34022287626`，验收 HEAD：`3b2a96633ed1d593f64e5526fb35ab460bd4ebeb`。
+2026-09-06 在 Windows X64 自托管 `zn-interactive` 上，真实模型 run `34022287626`（HEAD `3b2a96633ed1d593f64e5526fb35ab460bd4ebeb`）证明：一个实际 model route `default` 可以连续服务隔离 research/coding/review WorkerRun，而 Root Work、authority 和 completion judgment 始终由 ZN 持有。
 
 ```text
 ZN_E2E29_SKIPPED=0
@@ -94,49 +121,41 @@ ZN_E2E29_TERMINAL.success=true
 model_route_id=default
 ```
 
-真实路径中出现过 schema rejection、command mismatch、timeout 等失败尝试，但 ZN 没把它们当 Root failure；后续使用新的 WorkerRun 继续，最后出现 accepted research/coding/review，并由独立 verifier WorkItem 执行真实 Terminal 检查，再由 ZN Body fresh reread `data.json` 后完成 Root acceptance。
-
 同一 HEAD 的标准 `ZN CI` run `34022288706` 也为 success。
 
-这才是 E2E-29 关闭依据，不是“有代码”或“CI 绿”本身。
+这才是 E2E-29 关闭依据，不是“有 WorkerRun 代码”或“CI 绿”本身。
 
-## 非常重要的真实代码事实
+## 当前不要误报为已关闭的事项
 
-现有代码早已有 kernel-owned `ModelRouter`、Goal required capabilities、route reliability/cost/latency scoring、SelfModel route evidence learning 和多 provider resource seam。
-
-所以：**禁止新建第二套 model router。**
-
-E2E-29 又新增了一条同样重要的事实：**禁止把 WorkerRun 再升级成第二个 Resident/Agent control plane。** WorkerRun 是当前 Root Work 下的受限执行上下文，不拥有 scheduler/router/store/session/conversation/root completion。
+- **E2E-30 / E2E-42 仍未 product-close。** hard routing/privacy substrate 已落地，但仍需要真正多 route、用户 policy/privacy 的端到端验收，证明不允许的 provider 从未收到受限项目上下文，并且每个选中 route 可追溯到它服务的 WorkItem/WorkerRun。
+- **E2E-28 / E2E-34 仍未 product-close。** stale-run reconciliation 和 recovery foundations 已存在，但 dynamic health -> reroute、systematic no-progress supervision、restart-safe reassign 仍缺完整闭环。
+- **E2E-27 / E2E-33 不能仅凭 plan-version/unit tests 宣称关闭。** active steering / natural continuation 需要正常用户语言到同一个 durable Work 的真实验收。
+- Resident 本地 control plane 当前是 loopback TCP + per-process secret + endpoint ACL 的过渡实现；长期 Windows transport 仍应收敛到 Named Pipe + per-user SID ACL。
 
 ## 下一阶段代码顺序
 
-E2E-29 已关闭，不要继续在“单模型多 worker”上扩平台。下一步按真实 E2E 纵向推进：
+### 1. 真实关闭 E2E-30 + E2E-42
 
-### 1. Multi-model per-SubWork routing — E2E-30 + E2E-42
+不要再新造 eligibility abstraction；现有 hard gates 已经足够作为 substrate。下一步要做真实多模型验收：
 
-扩展现有 `ModelRouter` 的 eligibility/policy layer，而不是重写 router。最小范围：
-
-- user primary model preference；
-- coding/research/vision capability requirement；
-- allow / deny / pin；
-- privacy / locality constraint；
-- route unavailable / fallback；
-- selected route provenance 写回 WorkerRun；
-- 用户策略先于 route scoring 做硬过滤。
-
-不要提前实现完整并发 scheduler、复杂成本优化或独立 orchestration framework。
+- 多个 user-approved routes；
+- per-SubWork capability routing；
+- pin / deny / privacy / locality policy；
+- selected route provenance；
+- 明确证明 forbidden route 没看到受限数据；
+- preferred route 不可用时只在仍满足 policy 的候选中 fallback。
 
 ### 2. Supervision / stall / restart — E2E-28 + E2E-34
 
-E2E-29 已证明单个失败 WorkerRun 后可以继续，但还没系统化闭合：
+重点补真实 supervision，而不是 worker 状态字段：
 
 - repeated no-progress detection；
 - bounded retry budget；
+- dynamic model availability/health；
 - reroute / reassign / replan；
-- model unavailable；
-- Resident restart 后 reconcile WorkItem/WorkerRun/plan/current reality；
+- Resident restart 后 reconcile WorkerRun / WorkItem / plan/current reality；
 - completed side effect 不 replay；
-- stale result 不推进新计划。
+- stale result 不推进 current plan。
 
 ### 3. Natural continuation + active steering — E2E-33 + E2E-27
 
@@ -146,14 +165,6 @@ E2E-29 已证明单个失败 WorkerRun 后可以继续，但还没系统化闭�
 
 User Browser Bridge、Browser/Desktop/File/Terminal/Git、Investigation/replanning、restart/cross-day continuity 都继续保留主线地位。只有真实 E2E 因 OS semantic substrate 缺口被卡住时，再补对应 native integration；不要横向造 OSAgent/SystemAgent/DeviceAgent。
 
-## 成熟案例吸收边界
-
-- OpenAI Agents SDK：借 manager-style，专家在背后工作，user-facing owner 不 handoff 出 ZN。
-- Magentic-One / AutoGen：借 task/progress ledger、stall->replan 思路，不引入第二 Orchestrator Agent。
-- LangGraph：借 checkpoint/interrupt/non-rerun lesson，不替换 ZN Resident。
-- OpenClaw / Hermes / OpenHuman：借 worker isolation、bounded authority、durable task/acceptance/supervision 思路，不复制其 control plane。
-- provider/model gateway：只帮助完善现有 `ModelRouter` eligibility/policy，不另造 routing runtime。
-
 ## 安全和成本边界
 
 - worker `done` 永远不是 root completion evidence；
@@ -161,7 +172,6 @@ User Browser Bridge、Browser/Desktop/File/Terminal/Git、Investigation/replanni
 - user routing/privacy policy 在 route scoring 前作为硬过滤；
 - 模型强不代表工具存在，工具强也不代表认知足够；
 - wait/poll/status 等机械监督不要反复调用大模型；
-- 真正 coding/research/reasoning 需要强模型时，不要为了省 token 降低任务质量；
 - completed side effect 不因 replan/restart 自动 replay；
 - old plan worker result 返回后必须检查 plan version/current reality；
 - OS/system event 只提供 Situation evidence，不自动授权主动外部副作用。
@@ -178,14 +188,4 @@ User Browser Bridge、Browser/Desktop/File/Terminal/Git、Investigation/replanni
 
 ## 收尾怎么汇报
 
-优先说明：
-
-- ZN 以前不能完成什么真实任务；
-- 现在能完成什么；
-- 成功路径是什么；
-- 哪些 cognition + workers + tools + OS/native capabilities 真正参与；
-- worker/model/tool failure 是否能恢复；
-- 用户还会在哪里失败；
-- 下一个最阻塞真实使用的问题是什么。
-
-不要拿 model 数量、worker 数量、Action 数量、OS API 数量、测试数量、PR 数、commit 数和 CI 当产品成绩。
+优先说明用户能力变化、成功路径、参与的 cognition/workers/tools/authority/verification、失败恢复、仍会失败的地方和下一个真实阻塞。不要把 model 数量、worker 数量、Action 数量、测试数量、PR 数、commit 数或 CI 当产品成绩。
