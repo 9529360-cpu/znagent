@@ -5,21 +5,24 @@ from __future__ import annotations
 The model may propose a bounded final verifier, but it cannot mark Root Work
 complete. ZN materializes the verifier as a new current-plan WorkItem, binds the
 command to that durable child identity, executes it through the existing Body,
-validates the durable observed process result, then asks the evidence-bound
-ledger to accept the Root. No second scheduler, router, worker, or store exists.
+then freshly reads the declared persisted result through the Body before asking
+the evidence-bound ledger to accept the Root. No second scheduler, router,
+worker, or store exists.
 """
 
 import hashlib
 import json
 import shlex
 import sys
+from pathlib import Path
 from typing import Any
 
 from .action import NativeActionIntent
 from .broad_goal_research_resident import BroadGoalResearchResidentRuntime
 from .cognition import CognitiveIncrement
-from .models import ExecutionPath, ResidentRunResult
+from .models import ExecutionPath, ResidentRunResult, utc_now
 from .steerable_work import WorkItem
+from .structured_proposal import parse_exact_json_payload
 from .work import title_for_work_task
 
 
@@ -55,16 +58,20 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
             '{"zn_work_step":{"objective":"...","action":{"kind":"verify_python",'
             '"path":"relative/app.py","args":[]},"acceptance":{"kind":"root_verified",'
             '"criteria":["copy every Root acceptance criterion exactly"],"expected_exit_code":0,'
-            '"output_contains":["specific observed output fragment"]}}}. '
-            "The Python artifact must already exist in the attached workspace and output_contains must be "
-            "non-empty. Copy the Root criteria exactly; do not weaken, summarize, or replace them. ZN will "
-            "create a separate verifier WorkItem, choose the interpreter, execute the process, inspect real "
-            "exit/output evidence, and decide whether Root acceptance is allowed. "
+            '"output_contains":["specific observed output fragment"],"persisted_read":{'
+            '"path":"relative/data.json","contains":["specific persisted fragment"]}}}}. '
+            "The Python artifact and persisted text file must be inside the attached workspace. "
+            "output_contains and persisted_read.contains must both be non-empty. Copy the Root criteria "
+            "exactly; do not weaken, summarize, or replace them. The persisted path must name the actual "
+            "local state used by the runnable product, not source code or a model explanation. ZN will "
+            "create a separate verifier WorkItem, choose the interpreter, execute the process, then perform "
+            "a fresh Body read of that persisted path and require every declared persisted fragment before "
+            "the evidence ledger can accept the Root. "
             f"Current-plan completed child count: {len(completed)}."
         )
         request.context = {
             **dict(request.context or {}),
-            "root_finish_contract": "current-plan-python-verifier-v1",
+            "root_finish_contract": "current-plan-python-plus-persisted-read-verifier-v2",
         }
         return request
 
@@ -131,7 +138,8 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
             status="running",
             plan_version=root.plan_version,
             acceptance_criteria=[
-                f'independent_python_verification: {proposal["relative_path"]}'
+                f'independent_python_verification: {proposal["relative_path"]}; '
+                f'fresh_persisted_read: {proposal["persisted_relative_path"]}'
             ],
         )
         self.work_ledger._save_item(child)
@@ -173,6 +181,9 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
             "increment_id": increment.increment_id,
             "action_kind": "verify_root_python",
             "root_acceptance_criteria": list(root.acceptance_criteria),
+            "persisted_relative_path": proposal["persisted_relative_path"],
+            "persisted_absolute_path": proposal["persisted_absolute_path"],
+            "persisted_contains": list(proposal["persisted_contains"]),
         }
         self._begin_native_action_cycle(event, state, intent)
         state.next_action = "execute the separate current-plan Root verifier through the Terminal Body"
@@ -202,6 +213,85 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
         )
         if child is None or child.status != "completed":
             return result
+
+        persisted_path = str((rolling or {}).get("persisted_absolute_path") or "").strip()
+        persisted_relative = str((rolling or {}).get("persisted_relative_path") or "").strip()
+        expected_fragments = [
+            str(item)
+            for item in ((rolling or {}).get("persisted_contains") or [])
+            if str(item)
+        ]
+        fresh = self.body.act(
+            "read_text",
+            event_id=event.event_id,
+            path=persisted_path,
+            max_chars=50_000,
+        )
+        fresh_text = str(fresh.output or "")
+        missing = [fragment for fragment in expected_fragments if fragment not in fresh_text]
+        if not fresh.success or not fresh_text.strip() or missing:
+            detail = str(fresh.error or "").strip()
+            if missing:
+                detail = "missing persisted fragments: " + " | ".join(missing[:8])
+            if not detail:
+                detail = "persisted file was empty after the independent verifier"
+            failure = (
+                f"fresh persisted-state verification failed for {persisted_relative or persisted_path}: "
+                f"{detail}"
+            )
+            child.status = "blocked"
+            child.blocker = failure[:6000]
+            child.result = failure[:6000]
+            child.completed_at = None
+            child.updated_at = utc_now()
+            self.work_ledger._save_item(child)
+            state.data["local_failure"] = failure
+            state.data["fresh_persisted_verification"] = {
+                "path": persisted_relative or persisted_path,
+                "success": False,
+                "missing": missing[:8],
+                "error": str(fresh.error or "")[:1000],
+            }
+            investigation = self.investigator.current(event.event_id)
+            if investigation is not None:
+                evidence = list(investigation.evidence)
+                evidence_line = failure[:1000]
+                if evidence_line not in evidence:
+                    evidence.append(evidence_line)
+                investigation.status = "open"
+                investigation.resolution = None
+                investigation.unresolved = failure[:1000]
+                investigation.next_probe = None
+                investigation.updated_at = utc_now()
+                investigation.evidence = tuple(evidence[-64:])
+                self.investigator._save(investigation)
+            state.stage = "native_investigation"
+            state.next_action = "repair the product from fresh persisted-state verification evidence"
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return None
+
+        persisted_summary = {
+            "terminal": str(child.result or result.response or "")[:3000],
+            "fresh_persisted_read": {
+                "path": persisted_relative,
+                "contains": expected_fragments,
+                "observed_chars": len(fresh_text),
+                "observed_excerpt": fresh_text[:3000],
+            },
+        }
+        child.result = json.dumps(persisted_summary, ensure_ascii=False, sort_keys=True)
+        child.updated_at = utc_now()
+        self.work_ledger._save_item(child)
+        state.data["fresh_persisted_verification"] = {
+            "path": persisted_relative,
+            "success": True,
+            "observed_chars": len(fresh_text),
+            "contains": expected_fragments,
+        }
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+
         accepted = self.work_ledger.accept_root_with_current_evidence(
             event.event_id,
             verifier_work_item_id=child.work_item_id,
@@ -214,15 +304,16 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
             execution_path=ExecutionPath.BODY,
             success=True,
             response=(
-                "Broad Work accepted from current-plan execution evidence: "
+                "Broad Work accepted from current-plan execution evidence and a fresh persisted-state read: "
                 + str(result.response or child.result or "verification passed")
             ),
             model_invocations=max(
                 0, int(state.data.get(self._MODEL_INVOCATION_TOTAL_KEY) or 0)
             ),
             reason=(
-                "criterion-bound Root Work completed only after a separate verifier WorkItem "
-                "passed real Terminal execution and the evidence ledger revalidated current plan identity"
+                "criterion-bound Root Work completed only after a separate verifier WorkItem passed real "
+                "Terminal execution, ZN freshly reread declared persisted state through its Body, and the "
+                "evidence ledger revalidated current plan identity"
             ),
         )
 
@@ -232,10 +323,7 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
         root: WorkItem,
         content: str,
     ) -> dict[str, Any] | None:
-        try:
-            raw = json.loads(str(content or "").strip())
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return None
+        raw = parse_exact_json_payload(content)
         if not isinstance(raw, dict) or set(raw) != {"zn_work_step"}:
             return None
         step = raw.get("zn_work_step")
@@ -261,6 +349,27 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
         raw_output = acceptance.get("output_contains")
         if not isinstance(raw_output, list) or not raw_output:
             return None
+        persisted = acceptance.get("persisted_read")
+        if not isinstance(persisted, dict) or set(persisted) != {"path", "contains"}:
+            return None
+        persisted_relative = str(persisted.get("path") or "").strip()
+        persisted_rel = Path(persisted_relative)
+        raw_persisted_contains = persisted.get("contains")
+        if (
+            not persisted_relative
+            or persisted_rel.is_absolute()
+            or not persisted_rel.parts
+            or any(part in {"", ".", ".."} for part in persisted_rel.parts)
+            or not isinstance(raw_persisted_contains, list)
+            or not raw_persisted_contains
+            or len(raw_persisted_contains) > 8
+        ):
+            return None
+        persisted_contains: list[str] = []
+        for value in raw_persisted_contains:
+            if not isinstance(value, str) or not value or len(value) > 1000:
+                return None
+            persisted_contains.append(value)
 
         run_shape = {
             "zn_work_step": {
@@ -283,6 +392,17 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
         )
         if parsed is None:
             return None
+        try:
+            root_path = Path(parsed["workspace"]).resolve(strict=True)
+            persisted_path = root_path.joinpath(*persisted_rel.parts).resolve(strict=True)
+            persisted_path.relative_to(root_path)
+            if not persisted_path.is_file():
+                return None
+        except (OSError, RuntimeError, ValueError):
+            return None
+        if persisted_path == Path(parsed["absolute_path"]):
+            return None
+
         prior = [
             item
             for item in self.work_ledger.list_work_items(root.work_thread_id, limit=256)
@@ -292,12 +412,14 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
         ]
         if not prior:
             return None
-        return parsed
+        return {
+            **parsed,
+            "persisted_relative_path": persisted_rel.as_posix(),
+            "persisted_absolute_path": str(persisted_path),
+            "persisted_contains": persisted_contains,
+        }
 
     @staticmethod
     def _looks_like_work_step(content: str) -> bool:
-        try:
-            raw = json.loads(str(content or "").strip())
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return False
+        raw = parse_exact_json_payload(content)
         return isinstance(raw, dict) and "zn_work_step" in raw
