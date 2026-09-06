@@ -1,0 +1,76 @@
+name: TEMP E2E30-42 Route Inventory
+
+on:
+  push:
+    branches:
+      - work/e2e-30-42-real-multiroute-policy
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e30-42-route-inventory-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  inventory:
+    runs-on: [self-hosted, Windows, X64, zn-interactive]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare runtime
+        shell: powershell
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/e2e30-42-inventory-venv -ErrorAction SilentlyContinue
+          uv venv .ci/e2e30-42-inventory-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e30-42-inventory-venv\Scripts\python.exe'
+          Push-Location runtime/python
+          try { uv pip install --python $python '.[anthropic]' } finally { Pop-Location }
+      - name: Capture sanitized inventory
+        shell: powershell
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e30-42-inventory-venv\Scripts\python.exe'
+          New-Item -ItemType Directory -Force .ci | Out-Null
+          @'
+          import json
+          from pathlib import Path
+          from zn_agent.core.config import load_zn_config
+          from zn_agent.core.provider_bridge import build_zn_cognitive_resource_plan
+
+          plan = build_zn_cognitive_resource_plan(load_zn_config())
+          payload = {
+              "available": plan.available,
+              "error": plan.error,
+              "routes": [
+                  {
+                      "route_id": route.route_id,
+                      "provider": route.provider,
+                      "model": route.model,
+                      "capabilities": sorted(route.capabilities),
+                      "local": bool(route.metadata.get("local")),
+                      "deployment": route.metadata.get("deployment"),
+                  }
+                  for route in plan.routes
+                  if route.provider != "none"
+              ],
+          }
+          Path('.ci/e2e30-42-route-inventory.json').write_text(
+              json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8'
+          )
+          print(json.dumps(payload, ensure_ascii=False), flush=True)
+          '@ | & $python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload sanitized inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e30-42-route-inventory
+          path: .ci/e2e30-42-route-inventory.json
+          if-no-files-found: error
+          retention-days: 2
