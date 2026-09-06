@@ -205,6 +205,9 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
             "increment_id": increment.increment_id,
             "reason": failure,
         }
+        rejection_hook = getattr(self, "_on_malformed_structured_proposal_rejection", None)
+        if callable(rejection_hook):
+            rejection_hook(event, state, increment, failure)
         investigation = self.investigator.current(event.event_id)
         if investigation is not None:
             evidence = list(investigation.evidence)
