@@ -43,13 +43,29 @@ jobs:
         with:
           version: '0.11.6'
           enable-cache: false
-      - name: Prepare isolated runtime without replacing ZN home
+      - name: Prepare isolated runtime with managed Chromium
         run: |
           uv python install 3.12
           Remove-Item -Recurse -Force .ci/e2e29-real-model-venv -ErrorAction SilentlyContinue
           uv venv .ci/e2e29-real-model-venv --python 3.12
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e29-real-model-venv\Scripts\python.exe'
-          uv pip install --python $python runtime/python
+          Push-Location runtime/python
+          try {
+            uv pip install --python $python '.[browser]'
+          } finally {
+            Pop-Location
+          }
+          & $python -m playwright install chromium
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @'
+          from playwright.sync_api import sync_playwright
+
+          with sync_playwright() as playwright:
+              browser = playwright.chromium.launch(headless=True)
+              print("ZN_E2E29_BROWSER_READY=" + browser.version, flush=True)
+              browser.close()
+          '@ | & $python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run guarded E2E-29 and fail on any skip
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
