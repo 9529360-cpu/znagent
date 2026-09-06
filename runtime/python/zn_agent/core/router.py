@@ -33,6 +33,7 @@ class ModelRouter:
         "cloud_denied",
     })
     _POLICY_SET_FIELDS = (
+        "allowed_providers",
         "denied_providers",
         "denied_models",
         "required_policy_tags",
@@ -163,6 +164,14 @@ class ModelRouter:
         if pinned_model and route.model != pinned_model:
             reasons.append("model is not user pinned model")
 
+        allowed_providers = self._string_set(policy.get("allowed_providers"), lower=True)
+        allow_local = policy.get("allow_local") is True
+        if allowed_providers or allow_local:
+            provider_allowed = route.provider.strip().lower() in allowed_providers
+            local_allowed = allow_local and self._is_explicit_local_route(route)
+            if not provider_allowed and not local_allowed:
+                reasons.append("provider/local route is outside user allowlist")
+
         denied_providers = self._string_set(policy.get("denied_providers"), lower=True)
         denied_models = self._string_set(policy.get("denied_models"), lower=False)
         if route.provider.strip().lower() in denied_providers:
@@ -258,7 +267,7 @@ class ModelRouter:
             value = policy.get(field)
             if value is not None and not isinstance(value, str):
                 raise NoRouteAvailable(f"model route policy {field} must be a string")
-        for field in ("local_only", "cloud_forbidden"):
+        for field in ("local_only", "cloud_forbidden", "allow_local"):
             value = policy.get(field)
             if value is not None and not isinstance(value, bool):
                 raise NoRouteAvailable(f"model route policy {field} must be boolean")
