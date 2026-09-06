@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import argparse
-import getpass
 import ipaddress
 import json
 import os
+import re
 import secrets
 import signal
 import socketserver
@@ -67,38 +67,48 @@ def _loopback_bind_host(value: str | None) -> str:
     raise ValueError("ZN Resident TCP control plane requires a loopback bind host")
 
 
-def _windows_current_user() -> str:
-    username = str(os.environ.get("USERNAME") or getpass.getuser() or "").strip()
-    domain = str(os.environ.get("USERDOMAIN") or "").strip()
-    if domain and username and "\\" not in username:
-        return f"{domain}\\{username}"
-    return username
+def _windows_current_user_sid() -> str:
+    """Resolve the SID of the actual process token, including service accounts."""
+
+    completed = subprocess.run(
+        ["whoami", "/user", "/fo", "csv", "/nh"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        errors="replace",
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    if completed.returncode != 0:
+        return ""
+    match = re.search(r"\bS-\d+(?:-\d+)+\b", completed.stdout or "", flags=re.IGNORECASE)
+    return match.group(0) if match else ""
 
 
 def _restrict_endpoint_file(path: Path) -> None:
     """Restrict the endpoint/auth material to the current OS user.
 
-    POSIX uses a strict 0600 mode. Windows does not implement POSIX ACLs through
-    ``chmod``, so the transitional TCP transport removes inherited ACEs and
-    grants the current interactive account full control with the native
-    ``icacls`` utility. Failure is fatal: publishing an unrestricted session
-    secret is less safe than refusing to publish the endpoint.
+    POSIX uses a strict 0600 mode. On Windows the process-token SID is resolved
+    numerically and passed to ``icacls``. Numeric SIDs avoid friendly-name
+    localization/service-account ambiguity (for example NetworkService runners).
+    Failure is fatal: publishing an unrestricted session secret is less safe
+    than refusing to publish the endpoint.
     """
 
     if os.name != "nt":
         os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
         return
 
-    user = _windows_current_user()
-    if not user:
-        raise RuntimeError("could not resolve the current Windows user for endpoint ACL")
+    sid = _windows_current_user_sid()
+    if not sid:
+        raise RuntimeError("could not resolve the current Windows SID for endpoint ACL")
     completed = subprocess.run(
         [
             "icacls",
             str(path),
             "/inheritancelevel:r",
             "/grant:r",
-            f"{user}:F",
+            f"*{sid}:F",
         ],
         check=False,
         stdout=subprocess.DEVNULL,
@@ -426,11 +436,15 @@ class ResidentSocketService:
             if hasattr(os, "O_BINARY"):
                 flags |= os.O_BINARY
             descriptor = os.open(temporary, flags, stat.S_IRUSR | stat.S_IWUSR)
-            with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as handle:
+            os.close(descriptor)
+            # Restrict the empty staging file before the session secret is ever
+            # written. This makes the publish sequence fail closed even if ACL
+            # hardening fails on Windows.
+            _restrict_endpoint_file(temporary)
+            with temporary.open("w", encoding="utf-8", newline="") as handle:
                 handle.write(encoded)
                 handle.flush()
                 os.fsync(handle.fileno())
-            _restrict_endpoint_file(temporary)
             os.replace(temporary, path)
             _restrict_endpoint_file(path)
         except Exception:
