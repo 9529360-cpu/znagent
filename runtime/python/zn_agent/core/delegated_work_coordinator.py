@@ -269,8 +269,16 @@ class DelegatedWorkCoordinator:
         request.required_capabilities = self.resident._worker_required_capabilities(
             worker.executor_kind
         )
+        # User/project routing policy is admission metadata, not model-owned state.
+        # Preserve it through the existing CognitionRequest so the one kernel
+        # ModelRouter can reject forbidden routes before soft scoring. Malformed
+        # values are intentionally forwarded as-is: ModelRouter validates and
+        # fails closed instead of this coordinator silently widening access.
+        route_policy = event.payload.get("route_policy")
         request.context = {
             **dict(request.context or {}),
+            **({"route_policy": dict(route_policy)} if isinstance(route_policy, dict) else {}),
+            **({"route_policy": route_policy} if route_policy is not None and not isinstance(route_policy, dict) else {}),
             self.resident._DELEGATED_CONTEXT_KEY: {
                 "worker_run_id": worker.worker_run_id,
                 "work_item_id": child.work_item_id,
