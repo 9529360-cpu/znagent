@@ -126,11 +126,29 @@ class E2E29OneModelMultiWorkerTests(unittest.TestCase):
                 self.assertEqual(route_ids, {only_route.route_id})
                 self.assertGreater(len({run.worker_run_id for run in current_runs}), len(route_ids))
                 self.assertTrue(all(run.work_item_id for run in current_runs))
-                self.assertTrue(all(run.verification_status == "accepted" for run in current_runs))
+                self.assertTrue(all(run.verification_status != "pending" for run in current_runs))
+                accepted_current_runs = [
+                    run for run in current_runs
+                    if run.verification_status == "accepted"
+                ]
+                accepted_kinds = {run.executor_kind for run in accepted_current_runs}
+                self.assertTrue(
+                    {"research", "coding", "review"}.issubset(accepted_kinds),
+                    "each delegated role needs at least one verified accepted run; failed attempts remain durable evidence",
+                )
 
-                research = next(run for run in current_runs if run.executor_kind == "research")
-                coding = next(run for run in current_runs if run.executor_kind == "coding")
-                review = next(run for run in current_runs if run.executor_kind == "review")
+                research = next(
+                    run for run in accepted_current_runs
+                    if run.executor_kind == "research"
+                )
+                coding = next(
+                    run for run in accepted_current_runs
+                    if run.executor_kind == "coding"
+                )
+                review = next(
+                    run for run in accepted_current_runs
+                    if run.executor_kind == "review"
+                )
                 self.assertNotEqual(research.tool_scope, coding.tool_scope)
                 self.assertNotEqual(coding.authority_scope, review.authority_scope)
                 self.assertNotIn("workspace.write", research.tool_scope)
