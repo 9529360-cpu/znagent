@@ -25,6 +25,20 @@ class ModelRouter:
     A forbidden route never survives as a merely low-scoring fallback.
     """
 
+    _DATA_CLASSIFICATIONS = frozenset({
+        "public",
+        "private",
+        "local_only",
+        "cloud_allowed",
+        "cloud_denied",
+    })
+    _POLICY_SET_FIELDS = (
+        "denied_providers",
+        "denied_models",
+        "required_policy_tags",
+        "required_authority_scopes",
+    )
+
     def __init__(self, routes: list[ModelRoute], self_model: SelfModel):
         if not routes:
             raise ValueError("at least one model route is required")
@@ -34,6 +48,7 @@ class ModelRouter:
     def select(self, goal: Goal, excluded: set[str] | None = None) -> ModelRoute:
         excluded = excluded or set()
         policy = self._route_policy(goal)
+        self._validate_route_policy(policy)
         candidates: list[ModelRoute] = []
         rejection_reasons: dict[str, tuple[str, ...]] = {}
 
@@ -187,6 +202,8 @@ class ModelRouter:
         direct = metadata.get("route_policy")
         if isinstance(direct, dict):
             policy.update(direct)
+        elif direct is not None:
+            raise NoRouteAvailable("model route policy is malformed")
 
         cognition = metadata.get("cognition_request")
         if isinstance(cognition, dict):
@@ -195,12 +212,38 @@ class ModelRouter:
                 nested = context.get("route_policy")
                 if isinstance(nested, dict):
                     policy.update(nested)
+                elif nested is not None:
+                    raise NoRouteAvailable("cognition route policy is malformed")
                 pack = context.get("worker_context_pack")
                 if isinstance(pack, dict):
                     classification = str(pack.get("data_classification") or "").strip()
                     if classification and "data_classification" not in policy:
                         policy["data_classification"] = classification
         return policy
+
+    @classmethod
+    def _validate_route_policy(cls, policy: dict[str, Any]) -> None:
+        for field in ("pinned_provider", "pinned_model"):
+            value = policy.get(field)
+            if value is not None and not isinstance(value, str):
+                raise NoRouteAvailable(f"model route policy {field} must be a string")
+        for field in ("local_only", "cloud_forbidden"):
+            value = policy.get(field)
+            if value is not None and not isinstance(value, bool):
+                raise NoRouteAvailable(f"model route policy {field} must be boolean")
+        for field in cls._POLICY_SET_FIELDS:
+            value = policy.get(field)
+            if value is None:
+                continue
+            if not isinstance(value, (str, list, tuple, set, frozenset)):
+                raise NoRouteAvailable(f"model route policy {field} has invalid type")
+        raw_classification = policy.get("data_classification")
+        if raw_classification is not None:
+            if not isinstance(raw_classification, str):
+                raise NoRouteAvailable("model route policy data_classification must be a string")
+            classification = raw_classification.strip().lower()
+            if classification not in cls._DATA_CLASSIFICATIONS:
+                raise NoRouteAvailable("model route policy data_classification is invalid")
 
     @staticmethod
     def _is_explicit_local_route(route: ModelRoute) -> bool:
