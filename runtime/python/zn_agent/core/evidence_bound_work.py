@@ -1,29 +1,595 @@
 from __future__ import annotations
 
-"""Evidence-bound completion for the existing steerable Work ledger.
+"""Evidence-bound completion and delegated WorkerRun truth for steerable Work.
 
 A Resident event can finish successfully while the WorkItem it serves still has
 unmet acceptance criteria. This layer preserves the event/result as evidence but
-prevents that executor/model success bit from becoming Work acceptance by
-itself. It deliberately adds no scheduler, planner, worker identity, or second
-store; the existing WorkItem and plan-version tables remain authoritative.
+prevents executor/model success from becoming Work acceptance by itself.
+
+E2E-29 adds a small Work-owned WorkerRun ledger here. WorkerRun is a disposable
+execution attempt bound to an existing WorkItem and plan version; it is not a
+Resident, Agent identity, scheduler, provider Worker, model route, or second
+store. Provider dispatch durability remains owned by ZNKernelRuntime.
 """
 
 import json
+import uuid
 from contextlib import closing
+from dataclasses import dataclass, field
+from typing import Any
 
 from .models import ResidentRunResult, utc_now
 from .steerable_work import SteerableWorkLedger, WorkItem
 
 
+@dataclass(slots=True)
+class WorkerRun:
+    worker_run_id: str
+    work_item_id: str
+    plan_version: int
+    executor_kind: str
+    model_goal_id: str
+    model_route_id: str | None
+    tool_scope: tuple[str, ...]
+    authority_scope: tuple[str, ...]
+    state: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    result_summary: str | None = None
+    artifact_refs: list[dict[str, Any]] = field(default_factory=list)
+    claimed_completion: bool = False
+    verification_status: str = "pending"
+    error: str | None = None
+    metrics: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def cognition_request_id(self) -> str:
+        return f"cog-{self.worker_run_id}"
+
+
+@dataclass(slots=True)
+class WorkerContextPack:
+    root_goal_summary: str
+    work_item_objective: str
+    acceptance_criteria: tuple[str, ...]
+    plan_version: int
+    relevant_evidence: tuple[dict[str, Any], ...]
+    artifact_refs: tuple[dict[str, Any], ...]
+    tool_scope: tuple[str, ...]
+    authority_scope: tuple[str, ...]
+    forbidden_actions: tuple[str, ...]
+    expected_result_schema: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "root_goal_summary": self.root_goal_summary[:2000],
+            "work_item_objective": self.work_item_objective[:1200],
+            "acceptance_criteria": [str(value)[:600] for value in self.acceptance_criteria[:8]],
+            "plan_version": int(self.plan_version),
+            "relevant_evidence": [dict(item) for item in self.relevant_evidence[:8]],
+            "artifact_refs": [dict(item) for item in self.artifact_refs[:12]],
+            "tool_scope": list(self.tool_scope),
+            "authority_scope": list(self.authority_scope),
+            "forbidden_actions": list(self.forbidden_actions),
+            "expected_result_schema": dict(self.expected_result_schema),
+        }
+
+
 class EvidenceBoundSteerableWorkLedger(SteerableWorkLedger):
-    """Do not equate a successful Resident event with accepted criterion-bound Work."""
+    """Keep Root acceptance and delegated WorkerRun lifecycle in Work truth."""
 
     _UNVERIFIED_BLOCKER = (
         "resident event succeeded, but this WorkItem has acceptance criteria that "
         "still require independent current-world evidence"
     )
     _ACCEPTANCE_KEY = "zn_independent_acceptance"
+    _WORKER_STATES = frozenset({"queued", "running", "completed", "failed", "stale"})
+    _WORKER_TERMINAL_STATES = frozenset({"completed", "failed", "stale"})
+
+    def __init__(self, resident):
+        super().__init__(resident)
+        self._init_worker_run_schema()
+        self.reconcile_stale_worker_runs()
+
+    def _init_worker_run_schema(self) -> None:
+        with self._lock, closing(self._connect()) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS worker_runs(
+                    worker_run_id TEXT PRIMARY KEY,
+                    work_item_id TEXT NOT NULL,
+                    plan_version INTEGER NOT NULL,
+                    executor_kind TEXT NOT NULL,
+                    model_goal_id TEXT NOT NULL,
+                    model_route_id TEXT,
+                    tool_scope_json TEXT NOT NULL,
+                    authority_scope_json TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    started_at TEXT,
+                    finished_at TEXT,
+                    result_summary TEXT,
+                    artifact_refs_json TEXT NOT NULL,
+                    claimed_completion INTEGER NOT NULL DEFAULT 0,
+                    verification_status TEXT NOT NULL DEFAULT 'pending',
+                    error TEXT,
+                    metrics_json TEXT NOT NULL,
+                    FOREIGN KEY(work_item_id) REFERENCES work_items(work_item_id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_worker_runs_item
+                    ON worker_runs(work_item_id, started_at ASC);
+                CREATE INDEX IF NOT EXISTS idx_worker_runs_plan_state
+                    ON worker_runs(plan_version, state, started_at ASC);
+                CREATE INDEX IF NOT EXISTS idx_worker_runs_model_goal
+                    ON worker_runs(model_goal_id);
+                """
+            )
+            conn.commit()
+
+    @staticmethod
+    def _normalized_scope(values: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw in values:
+            value = str(raw or "").strip()
+            if not value or len(value) > 200:
+                raise ValueError("worker scope entries must be non-empty and bounded")
+            if value in seen:
+                continue
+            seen.add(value)
+            normalized.append(value)
+        if not normalized:
+            raise ValueError("worker scope must fail closed rather than be empty")
+        return tuple(normalized)
+
+    @staticmethod
+    def _json_list(raw: str | None) -> list[Any]:
+        try:
+            value = json.loads(raw or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            value = []
+        return value if isinstance(value, list) else []
+
+    @staticmethod
+    def _json_dict(raw: str | None) -> dict[str, Any]:
+        try:
+            value = json.loads(raw or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            value = {}
+        return value if isinstance(value, dict) else {}
+
+    @classmethod
+    def _worker_from_row(cls, row) -> WorkerRun:
+        tool_scope = tuple(str(value) for value in cls._json_list(row["tool_scope_json"]))
+        authority_scope = tuple(
+            str(value) for value in cls._json_list(row["authority_scope_json"])
+        )
+        artifact_refs = [
+            dict(value)
+            for value in cls._json_list(row["artifact_refs_json"])
+            if isinstance(value, dict)
+        ]
+        return WorkerRun(
+            worker_run_id=str(row["worker_run_id"]),
+            work_item_id=str(row["work_item_id"]),
+            plan_version=max(1, int(row["plan_version"])),
+            executor_kind=str(row["executor_kind"]),
+            model_goal_id=str(row["model_goal_id"]),
+            model_route_id=(str(row["model_route_id"]) if row["model_route_id"] else None),
+            tool_scope=tool_scope,
+            authority_scope=authority_scope,
+            state=str(row["state"]),
+            started_at=(str(row["started_at"]) if row["started_at"] else None),
+            finished_at=(str(row["finished_at"]) if row["finished_at"] else None),
+            result_summary=(
+                str(row["result_summary"]) if row["result_summary"] is not None else None
+            ),
+            artifact_refs=artifact_refs,
+            claimed_completion=bool(row["claimed_completion"]),
+            verification_status=str(row["verification_status"] or "pending"),
+            error=str(row["error"]) if row["error"] is not None else None,
+            metrics=cls._json_dict(row["metrics_json"]),
+        )
+
+    def _work_item_by_id(self, work_item_id: str) -> WorkItem | None:
+        normalized = str(work_item_id or "").strip()
+        if not normalized:
+            return None
+        with self._lock, closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT * FROM work_items WHERE work_item_id=?",
+                (normalized,),
+            ).fetchone()
+        return self._item_from_row(row) if row is not None else None
+
+    def create_child_item(
+        self,
+        *,
+        root_work_item_id: str,
+        objective: str,
+        acceptance_criteria: list[str],
+        title: str | None = None,
+    ) -> WorkItem:
+        """Create one flat current-plan child with resident-owned identity/version."""
+        root = self._work_item_by_id(root_work_item_id)
+        if root is None or root.parent_work_item_id is not None:
+            raise ValueError("delegated child requires an existing Root WorkItem")
+        current_version = self.plan_version(root.work_thread_id)
+        if root.plan_version != current_version or root.status not in {"running", "blocked"}:
+            raise ValueError("delegated child rejected stale or terminal Root Work")
+        normalized_objective = " ".join(str(objective or "").strip().split())
+        if not normalized_objective or len(normalized_objective) > 1200:
+            raise ValueError("delegated child objective must be non-empty and bounded")
+        criteria = [" ".join(str(value).strip().split()) for value in acceptance_criteria]
+        if not criteria or any(not value for value in criteria):
+            raise ValueError("delegated child requires explicit acceptance criteria")
+        now = utc_now()
+        child = WorkItem(
+            work_item_id=f"item-{uuid.uuid4().hex[:16]}",
+            work_thread_id=root.work_thread_id,
+            parent_work_item_id=root.work_item_id,
+            title=(str(title or normalized_objective).strip()[:200] or "Delegated Work"),
+            objective=normalized_objective,
+            status="running",
+            plan_version=current_version,
+            acceptance_criteria=criteria,
+            created_at=now,
+            updated_at=now,
+        )
+        self._save_item(child)
+        return child
+
+    def complete_child_item(self, work_item_id: str, *, result: str) -> WorkItem:
+        item = self._work_item_by_id(work_item_id)
+        if item is None or item.parent_work_item_id is None:
+            raise ValueError("child completion requires an existing non-Root WorkItem")
+        current_version = self.plan_version(item.work_thread_id)
+        if item.plan_version != current_version:
+            raise ValueError("child completion rejected stale Work evidence")
+        if item.status == "completed":
+            return item
+        if item.status not in {"running", "blocked", "ready"}:
+            raise ValueError(f"child completion rejected state {item.status!r}")
+        now = utc_now()
+        item.status = "completed"
+        item.result = str(result or "").strip()[:6000] or None
+        item.blocker = None
+        item.completed_at = now
+        item.updated_at = now
+        self._save_item(item)
+        return item
+
+    def block_child_item(self, work_item_id: str, *, blocker: str) -> WorkItem:
+        item = self._work_item_by_id(work_item_id)
+        if item is None or item.parent_work_item_id is None:
+            raise ValueError("child blocking requires an existing non-Root WorkItem")
+        current_version = self.plan_version(item.work_thread_id)
+        if item.plan_version != current_version:
+            item.status = "superseded"
+            item.updated_at = utc_now()
+            self._save_item(item)
+            return item
+        if item.status == "completed":
+            return item
+        failure = str(blocker or "delegated Work failed").strip()[:6000]
+        item.status = "blocked"
+        item.blocker = failure
+        item.result = failure
+        item.completed_at = None
+        item.updated_at = utc_now()
+        self._save_item(item)
+        return item
+
+    def start_worker_run(
+        self,
+        *,
+        work_item_id: str,
+        executor_kind: str,
+        tool_scope: tuple[str, ...] | list[str],
+        authority_scope: tuple[str, ...] | list[str],
+    ) -> WorkerRun:
+        """Start one Work-owned disposable execution attempt.
+
+        Caller/model cannot supply worker_run_id, plan_version or model_goal_id.
+        The stable model goal is derived from the resident-owned worker_run_id so
+        Kernel provider dispatch can keep its existing at-most-once semantics.
+        """
+        item = self._work_item_by_id(work_item_id)
+        if item is None or item.parent_work_item_id is None:
+            raise ValueError("WorkerRun requires an existing child WorkItem")
+        current_version = self.plan_version(item.work_thread_id)
+        if item.plan_version != current_version or item.status not in {"running", "ready"}:
+            raise ValueError("WorkerRun rejected stale or non-runnable WorkItem")
+        root = self._work_item_by_id(item.parent_work_item_id)
+        if (
+            root is None
+            or root.parent_work_item_id is not None
+            or root.work_thread_id != item.work_thread_id
+            or root.plan_version != current_version
+        ):
+            raise ValueError("WorkerRun WorkItem is not bound to the current Root")
+        kind = str(executor_kind or "").strip().lower()
+        if kind not in {"research", "coding", "review"}:
+            raise ValueError("WorkerRun executor_kind must be research, coding, or review")
+        tools = self._normalized_scope(tool_scope)
+        authority = self._normalized_scope(authority_scope)
+        worker_run_id = f"worker-{uuid.uuid4().hex[:16]}"
+        model_goal_id = f"goal-cog-{worker_run_id}"
+        now = utc_now()
+        with self._lock, closing(self._connect()) as conn:
+            conn.execute(
+                """
+                INSERT INTO worker_runs(
+                    worker_run_id,work_item_id,plan_version,executor_kind,model_goal_id,
+                    model_route_id,tool_scope_json,authority_scope_json,state,started_at,
+                    finished_at,result_summary,artifact_refs_json,claimed_completion,
+                    verification_status,error,metrics_json
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    worker_run_id,
+                    item.work_item_id,
+                    current_version,
+                    kind,
+                    model_goal_id,
+                    None,
+                    json.dumps(tools, ensure_ascii=False, separators=(",", ":")),
+                    json.dumps(authority, ensure_ascii=False, separators=(",", ":")),
+                    "running",
+                    now,
+                    None,
+                    None,
+                    "[]",
+                    0,
+                    "pending",
+                    None,
+                    "{}",
+                ),
+            )
+            conn.commit()
+        run = self.worker_run(worker_run_id)
+        if run is None:
+            raise RuntimeError("WorkerRun creation did not persist")
+        return run
+
+    def worker_run(self, worker_run_id: str) -> WorkerRun | None:
+        normalized = str(worker_run_id or "").strip()
+        if not normalized:
+            return None
+        with self._lock, closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT * FROM worker_runs WHERE worker_run_id=?",
+                (normalized,),
+            ).fetchone()
+        return self._worker_from_row(row) if row is not None else None
+
+    def list_worker_runs(
+        self,
+        *,
+        thread_id: str | None = None,
+        work_item_id: str | None = None,
+        limit: int = 256,
+    ) -> list[WorkerRun]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        join = ""
+        if thread_id is not None:
+            join = " JOIN work_items ON work_items.work_item_id=worker_runs.work_item_id"
+            clauses.append("work_items.work_thread_id=?")
+            params.append(self._normalize_thread_id(thread_id))
+        if work_item_id is not None:
+            clauses.append("worker_runs.work_item_id=?")
+            params.append(str(work_item_id or "").strip())
+        sql = "SELECT worker_runs.* FROM worker_runs" + join
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY worker_runs.started_at ASC LIMIT ?"
+        params.append(max(1, min(1024, int(limit))))
+        with self._lock, closing(self._connect()) as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [self._worker_from_row(row) for row in rows]
+
+    def _finish_worker_run(
+        self,
+        worker_run_id: str,
+        *,
+        state: str,
+        result_summary: str | None,
+        artifact_refs: list[dict[str, Any]] | None,
+        claimed_completion: bool,
+        verification_status: str,
+        error: str | None,
+        model_route_id: str | None,
+        metrics: dict[str, Any] | None,
+    ) -> WorkerRun:
+        if state not in self._WORKER_TERMINAL_STATES:
+            raise ValueError("WorkerRun finish state must be terminal")
+        run = self.worker_run(worker_run_id)
+        if run is None:
+            raise ValueError("unknown WorkerRun")
+        item = self._work_item_by_id(run.work_item_id)
+        if item is None or item.plan_version != run.plan_version:
+            raise RuntimeError("WorkerRun lost its immutable WorkItem binding")
+        current_version = self.plan_version(item.work_thread_id)
+        final_state = state if run.plan_version == current_version else "stale"
+        if run.state in self._WORKER_TERMINAL_STATES:
+            if run.state == "stale" or run.state == final_state:
+                return run
+            if final_state == "stale":
+                self.mark_worker_stale(worker_run_id, reason="WorkerRun result belongs to a stale plan")
+                refreshed = self.worker_run(worker_run_id)
+                assert refreshed is not None
+                return refreshed
+            raise ValueError(f"WorkerRun transition {run.state!r} -> {final_state!r} is not allowed")
+        if run.state not in {"queued", "running"}:
+            raise ValueError(f"WorkerRun has invalid state {run.state!r}")
+        route_id = str(model_route_id or "").strip() or None
+        refs = [dict(value) for value in (artifact_refs or []) if isinstance(value, dict)][:32]
+        metric_values = dict(metrics or {})
+        now = utc_now()
+        status = str(verification_status or "pending").strip()[:120] or "pending"
+        if final_state == "stale":
+            status = "stale_plan"
+        with self._lock, closing(self._connect()) as conn:
+            updated = conn.execute(
+                """
+                UPDATE worker_runs SET
+                    model_route_id=?,state=?,finished_at=?,result_summary=?,artifact_refs_json=?,
+                    claimed_completion=?,verification_status=?,error=?,metrics_json=?
+                WHERE worker_run_id=? AND state IN ('queued','running')
+                """,
+                (
+                    route_id,
+                    final_state,
+                    now,
+                    str(result_summary or "").strip()[:12000] or None,
+                    json.dumps(refs, ensure_ascii=False, separators=(",", ":")),
+                    1 if claimed_completion else 0,
+                    status,
+                    str(error or "").strip()[:6000] or None,
+                    json.dumps(metric_values, ensure_ascii=False, separators=(",", ":")),
+                    run.worker_run_id,
+                ),
+            )
+            conn.commit()
+        if updated.rowcount != 1:
+            raise RuntimeError("WorkerRun transition lost a concurrent state change")
+        persisted = self.worker_run(run.worker_run_id)
+        if persisted is None:
+            raise RuntimeError("WorkerRun transition did not persist")
+        return persisted
+
+    def complete_worker_run(
+        self,
+        worker_run_id: str,
+        *,
+        result_summary: str,
+        artifact_refs: list[dict[str, Any]] | None = None,
+        claimed_completion: bool = False,
+        verification_status: str = "scope_admitted",
+        model_route_id: str | None = None,
+        metrics: dict[str, Any] | None = None,
+    ) -> WorkerRun:
+        return self._finish_worker_run(
+            worker_run_id,
+            state="completed",
+            result_summary=result_summary,
+            artifact_refs=artifact_refs,
+            claimed_completion=claimed_completion,
+            verification_status=verification_status,
+            error=None,
+            model_route_id=model_route_id,
+            metrics=metrics,
+        )
+
+    def fail_worker_run(
+        self,
+        worker_run_id: str,
+        *,
+        error: str,
+        result_summary: str | None = None,
+        claimed_completion: bool = False,
+        verification_status: str = "failed",
+        model_route_id: str | None = None,
+        metrics: dict[str, Any] | None = None,
+    ) -> WorkerRun:
+        return self._finish_worker_run(
+            worker_run_id,
+            state="failed",
+            result_summary=result_summary,
+            artifact_refs=None,
+            claimed_completion=claimed_completion,
+            verification_status=verification_status,
+            error=error,
+            model_route_id=model_route_id,
+            metrics=metrics,
+        )
+
+    def mark_worker_stale(self, worker_run_id: str, *, reason: str) -> WorkerRun:
+        run = self.worker_run(worker_run_id)
+        if run is None:
+            raise ValueError("unknown WorkerRun")
+        if run.state == "stale":
+            return run
+        now = utc_now()
+        with self._lock, closing(self._connect()) as conn:
+            conn.execute(
+                "UPDATE worker_runs SET state='stale',finished_at=COALESCE(finished_at,?),"
+                "verification_status='stale_plan',error=COALESCE(error,?) WHERE worker_run_id=?",
+                (now, str(reason or "stale plan")[:6000], run.worker_run_id),
+            )
+            conn.commit()
+        persisted = self.worker_run(run.worker_run_id)
+        if persisted is None:
+            raise RuntimeError("stale WorkerRun transition did not persist")
+        return persisted
+
+    def record_worker_verification(
+        self,
+        worker_run_id: str,
+        *,
+        verification_status: str,
+        artifact_refs: list[dict[str, Any]] | None = None,
+    ) -> WorkerRun:
+        run = self.worker_run(worker_run_id)
+        if run is None:
+            raise ValueError("unknown WorkerRun")
+        if run.state == "stale":
+            return run
+        item = self._work_item_by_id(run.work_item_id)
+        if item is None or item.plan_version != self.plan_version(item.work_thread_id):
+            return self.mark_worker_stale(worker_run_id, reason="verification arrived for a stale plan")
+        refs = run.artifact_refs
+        if artifact_refs is not None:
+            refs = [dict(value) for value in artifact_refs if isinstance(value, dict)][:32]
+        with self._lock, closing(self._connect()) as conn:
+            conn.execute(
+                "UPDATE worker_runs SET verification_status=?,artifact_refs_json=? WHERE worker_run_id=?",
+                (
+                    str(verification_status or "pending").strip()[:120] or "pending",
+                    json.dumps(refs, ensure_ascii=False, separators=(",", ":")),
+                    run.worker_run_id,
+                ),
+            )
+            conn.commit()
+        persisted = self.worker_run(run.worker_run_id)
+        if persisted is None:
+            raise RuntimeError("WorkerRun verification update did not persist")
+        return persisted
+
+    def reconcile_stale_worker_runs(self, *, thread_id: str | None = None) -> int:
+        params: list[Any] = [utc_now()]
+        thread_clause = ""
+        if thread_id is not None:
+            thread_clause = " AND work_items.work_thread_id=?"
+            params.append(self._normalize_thread_id(thread_id))
+        with self._lock, closing(self._connect()) as conn:
+            updated = conn.execute(
+                """
+                UPDATE worker_runs SET
+                    state='stale',
+                    finished_at=COALESCE(finished_at,?),
+                    verification_status='stale_plan',
+                    error=COALESCE(error,'WorkerRun belongs to a superseded Work plan')
+                WHERE worker_run_id IN (
+                    SELECT worker_runs.worker_run_id
+                    FROM worker_runs
+                    JOIN work_items ON work_items.work_item_id=worker_runs.work_item_id
+                    JOIN work_plan_state ON work_plan_state.thread_id=work_items.work_thread_id
+                    WHERE worker_runs.plan_version < work_plan_state.plan_version
+                      AND worker_runs.state IN ('queued','running','completed')
+                """
+                + thread_clause
+                + ")",
+                params,
+            )
+            conn.commit()
+        return max(0, int(updated.rowcount))
+
+    def steer_active(self, *args, **kwargs):
+        result = super().steer_active(*args, **kwargs)
+        thread_id = str(args[0] if args else kwargs.get("thread_id") or "").strip()
+        self.reconcile_stale_worker_runs(thread_id=thread_id or None)
+        return result
 
     def _finalize_run(self, event_id: str, *, run: ResidentRunResult) -> None:
         before = self.work_item_for_event(event_id)
