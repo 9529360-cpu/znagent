@@ -53,6 +53,8 @@ jobs:
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e29-real-model-venv\Scripts\python.exe'
+          $log = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e29-real-model.log'
+          Remove-Item -Force $log -ErrorAction SilentlyContinue
           @'
           import importlib.util
           import sys
@@ -77,5 +79,14 @@ jobs:
               raise SystemExit("E2E-29 real-model acceptance skipped: " + repr(result.skipped))
           if not result.wasSuccessful():
               raise SystemExit(1)
-          '@ | & $python -
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          '@ | & $python - 2>&1 | Tee-Object -FilePath $log
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -ne 0) { exit $exitCode }
+      - name: Upload guarded E2E-29 transcript
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e29-real-model-transcript
+          path: .ci/e2e29-real-model.log
+          if-no-files-found: error
+          retention-days: 7
