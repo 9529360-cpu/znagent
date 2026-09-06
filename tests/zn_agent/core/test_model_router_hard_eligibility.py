@@ -19,6 +19,15 @@ class ModelRouterHardEligibilityTests(unittest.TestCase):
         return ModelRouter(list(routes), _SelfModel())
 
     @staticmethod
+    def _goal(task: str, *, required=("general",), metadata=None) -> Goal:
+        return Goal(
+            goal_id=f"goal-{task.replace(' ', '-')}",
+            task=task,
+            required_capabilities=tuple(required),
+            metadata=dict(metadata or {}),
+        )
+
+    @staticmethod
     def _route(
         route_id: str,
         *,
@@ -50,8 +59,9 @@ class ModelRouterHardEligibilityTests(unittest.TestCase):
             capabilities={"coding": 0.2},
             reliability=0.1,
         )
-        goal = Goal(task="code", required_capabilities=("coding",))
-        selected = self._router(forbidden_but_reliable, eligible).select(goal)
+        selected = self._router(forbidden_but_reliable, eligible).select(
+            self._goal("code", required=("coding",))
+        )
         self.assertEqual(selected.route_id, "coding")
 
     def test_no_capability_eligible_route_fails_closed(self) -> None:
@@ -59,7 +69,7 @@ class ModelRouterHardEligibilityTests(unittest.TestCase):
             self._route("general-only", capabilities={"general": 1.0})
         )
         with self.assertRaisesRegex(NoRouteAvailable, "missing required capabilities: research"):
-            router.select(Goal(task="research", required_capabilities=("research",)))
+            router.select(self._goal("research", required=("research",)))
 
     def test_user_pins_and_denials_are_hard_filters(self) -> None:
         pinned = self._route(
@@ -74,14 +84,14 @@ class ModelRouterHardEligibilityTests(unittest.TestCase):
             model="model-a",
             reliability=1.0,
         )
-        goal = Goal(
-            task="general",
+        goal = self._goal(
+            "general",
             metadata={"route_policy": {"pinned_provider": "provider-b", "pinned_model": "model-b"}},
         )
         self.assertEqual(self._router(tempting, pinned).select(goal).route_id, "pinned")
 
-        denied = Goal(
-            task="general",
+        denied = self._goal(
+            "general-denied",
             metadata={"route_policy": {"denied_providers": ["provider-a"], "denied_models": ["model-a"]}},
         )
         self.assertEqual(self._router(tempting, pinned).select(denied).route_id, "pinned")
@@ -90,14 +100,14 @@ class ModelRouterHardEligibilityTests(unittest.TestCase):
         unavailable = self._route("unavailable", reliability=1.0, metadata={"available": False})
         unhealthy = self._route("unhealthy", reliability=1.0, metadata={"health": "unhealthy"})
         healthy = self._route("healthy", reliability=0.1, metadata={"healthy": True})
-        selected = self._router(unavailable, unhealthy, healthy).select(Goal(task="general"))
+        selected = self._router(unavailable, unhealthy, healthy).select(self._goal("general"))
         self.assertEqual(selected.route_id, "healthy")
 
     def test_cloud_denied_worker_context_removes_cloud_route_before_scoring(self) -> None:
         cloud = self._route("cloud", reliability=1.0, metadata={"local": False})
         local = self._route("local", reliability=0.1, metadata={"local": True})
-        goal = Goal(
-            task="private delegated work",
+        goal = self._goal(
+            "private delegated work",
             metadata={
                 "cognition_request": {
                     "context": {
@@ -110,7 +120,7 @@ class ModelRouterHardEligibilityTests(unittest.TestCase):
 
     def test_local_only_without_explicit_local_route_fails_closed(self) -> None:
         cloud = self._route("cloud", metadata={})
-        goal = Goal(task="local private work", metadata={"route_policy": {"local_only": True}})
+        goal = self._goal("local private work", metadata={"route_policy": {"local_only": True}})
         with self.assertRaisesRegex(NoRouteAvailable, "cloud/non-local route forbidden"):
             self._router(cloud).select(goal)
 
@@ -128,8 +138,8 @@ class ModelRouterHardEligibilityTests(unittest.TestCase):
                 "authority_scopes": ["read", "bounded_worker"],
             },
         )
-        goal = Goal(
-            task="policy bound",
+        goal = self._goal(
+            "policy bound",
             metadata={
                 "route_policy": {
                     "required_policy_tags": ["private"],
@@ -142,7 +152,7 @@ class ModelRouterHardEligibilityTests(unittest.TestCase):
     def test_excluded_retry_route_is_removed_before_scoring(self) -> None:
         first = self._route("first", reliability=1.0)
         second = self._route("second", reliability=0.1)
-        selected = self._router(first, second).select(Goal(task="retry"), excluded={"first"})
+        selected = self._router(first, second).select(self._goal("retry"), excluded={"first"})
         self.assertEqual(selected.route_id, "second")
 
 
