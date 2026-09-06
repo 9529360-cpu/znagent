@@ -19,6 +19,7 @@ env:
   PYTHONUTF8: '1'
   PYTHONUNBUFFERED: '1'
   ZN_AGENT_HOME: ${{ github.workspace }}/.ci/zn-home
+  ZN_STATUS_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
 
 defaults:
   run:
@@ -43,7 +44,7 @@ jobs:
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              sha: context.sha,
+              sha: process.env.ZN_STATUS_SHA,
               state: 'pending',
               context: 'ZN Source Boundary',
               description: 'ZN Windows CI: running',
@@ -84,7 +85,7 @@ jobs:
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              sha: context.sha,
+              sha: process.env.ZN_STATUS_SHA,
               state: 'pending',
               context: 'ZN Kernel / Python',
               description: 'ZN Windows CI: running',
@@ -150,7 +151,7 @@ jobs:
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              sha: context.sha,
+              sha: process.env.ZN_STATUS_SHA,
               state: 'pending',
               context: 'Electron / TypeScript',
               description: 'ZN Windows CI: running',
@@ -203,7 +204,7 @@ jobs:
               await github.rest.repos.createCommitStatus({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                sha: context.sha,
+                sha: process.env.ZN_STATUS_SHA,
                 state: normalize(result),
                 context: statusContext,
                 description: `ZN Windows CI: ${result}`.slice(0, 140),
