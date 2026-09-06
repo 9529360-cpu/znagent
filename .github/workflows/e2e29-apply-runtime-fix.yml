@@ -1,0 +1,68 @@
+name: TEMP E2E29 Apply Runtime Fix
+
+on:
+  push:
+    branches:
+      - work/e2e-29-one-model-multi-worker
+
+permissions:
+  contents: write
+
+concurrency:
+  group: e2e29-runtime-fix-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+jobs:
+  apply-and-test:
+    if: ${{ github.event.head_commit.message == 'ci(e2e29): add guarded runtime fix executor' }}
+    runs-on: [self-hosted, Windows, X64, zn-ci]
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare runtime
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/e2e29-fix-venv -ErrorAction SilentlyContinue
+          uv venv .ci/e2e29-fix-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e29-fix-venv\Scripts\python.exe'
+          uv pip install --python $python runtime/python
+      - name: Apply exact patch
+        run: |
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e29-fix-venv\Scripts\python.exe'
+          & $python .ci/e2e29_apply_runtime_fix.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run regression slice
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e29-fix-venv\Scripts\python.exe'
+          & $python -m unittest -v `
+            tests.zn_agent.core.test_worker_delegation_admission `
+            tests.zn_agent.core.test_broad_goal_terminal_repair `
+            tests.zn_agent.core.test_broad_goal_independent_completion_v2 `
+            tests.zn_agent.core.test_broad_goal_runnable_mvp `
+            tests.zn_agent.core.test_broad_goal_research_layer `
+            tests.zn_agent.core.test_broad_goal_steering_continuity
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Commit verified runtime fix and remove patch scaffolding
+        run: |
+          Remove-Item .ci/e2e29_apply_runtime_fix.py
+          Remove-Item .github/workflows/e2e29-apply-runtime-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add runtime/python/zn_agent/core/broad_goal_completion_resident.py `
+            tests/zn_agent/core/test_worker_delegation_admission.py `
+            tests/zn_agent/e2e/test_e2e29_one_model_multi_worker.py `
+            .ci/e2e29_apply_runtime_fix.py `
+            .github/workflows/e2e29-apply-runtime-fix.yml
+          git commit -m "fix(e2e29): bound delegated phases and carry failed effect evidence"
+          git push origin HEAD:work/e2e-29-one-model-multi-worker
