@@ -88,7 +88,7 @@ jobs:
           suite = unittest.defaultTestLoader.loadTestsFromModule(module)
           if suite.countTestCases() != 1:
               raise SystemExit(f"expected exactly one E2E-29 real acceptance test, got {suite.countTestCases()}")
-          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          result = unittest.TextTestRunner(stream=sys.stdout, verbosity=2).run(suite)
           print("ZN_E2E29_SKIPPED=" + str(len(result.skipped)), flush=True)
           print("ZN_E2E29_FAILURES=" + str(len(result.failures)), flush=True)
           print("ZN_E2E29_ERRORS=" + str(len(result.errors)), flush=True)
