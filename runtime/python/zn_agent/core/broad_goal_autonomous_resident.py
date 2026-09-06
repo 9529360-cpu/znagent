@@ -2,15 +2,17 @@ from __future__ import annotations
 
 """Autonomous Root acceptance formation for broad attached-workspace goals.
 
-This layer does not add a planner, scheduler, worker runtime, or store. When one
-active Root Work has an attached workspace but no acceptance criteria yet, ZN
-borrows one bounded cognition increment to define observable success criteria,
-persists them once into the existing WorkItem, and only then enters the mature
-research/write/run/verify loop.
+This layer does not add a scheduler, worker runtime, or store. When one active
+Root Work has an attached workspace but no acceptance criteria yet, ZN borrows
+one bounded cognition increment to define observable success criteria, persists
+them once into the existing WorkItem, and only then enters the mature
+research/write/run/verify loop. Delegated-work admission is a Resident-owned
+bounded decision; cognition cannot materialize WorkerRuns directly.
 """
 
 from .broad_goal_completion_resident import BroadGoalCompletionResidentRuntime
 from .cognition import CognitiveIncrement
+from .delegation_admission import BoundedDelegationPlanner
 from .models import utc_now
 from .steerable_work import WorkItem
 from .structured_proposal import (
@@ -27,6 +29,19 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
     _MIN_ROOT_CRITERIA = 2
     _MAX_ROOT_CRITERIA = 8
     _MAX_CRITERION_CHARS = 500
+
+    @staticmethod
+    def _root_requests_delegated_worker_sequence(root: WorkItem) -> bool:
+        """Admit only a bounded plan the current flat-worker substrate can honor.
+
+        This override is the active product boundary: ``build_resident_runtime``
+        instantiates this class. The legacy completion-layer matcher remains
+        below temporarily so Slice C can remove that coordination responsibility
+        while extracting ``DelegatedWorkCoordinator`` without mixing behavior
+        changes into the extraction.
+        """
+
+        return BoundedDelegationPlanner.decide(root).admitted
 
     def _autonomous_root_candidate(self, event) -> WorkItem | None:
         payload = event.payload if isinstance(getattr(event, "payload", None), dict) else {}
