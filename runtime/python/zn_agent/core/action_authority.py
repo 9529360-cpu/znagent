@@ -1,0 +1,181 @@
+from __future__ import annotations
+
+"""Action-level authority for transient Work/WorkerRun execution.
+
+Authority belongs to the current Work/WorkerRun/action, never to a model or a
+permanent agent identity. The active Resident wraps its existing NativeBody with
+this admission boundary; the underlying Body, store and Router remain singular.
+"""
+
+import hashlib
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any
+
+
+_AUTHORITY_ARG = "__zn_authority_context"
+
+
+@dataclass(frozen=True, slots=True)
+class ActionAuthorityContext:
+    work_thread_id: str
+    work_item_id: str
+    worker_run_id: str
+    plan_version: int
+    executor_kind: str
+    expected_action: str
+    tool_scope: tuple[str, ...]
+    authority_scope: tuple[str, ...]
+    workspace_root: str | None = None
+    allowed_command_sha256: str | None = None
+    side_effect_sensitivity: str = "bounded_worker_effect"
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "ActionAuthorityContext":
+        return cls(
+            work_thread_id=str(raw.get("work_thread_id") or ""),
+            work_item_id=str(raw.get("work_item_id") or ""),
+            worker_run_id=str(raw.get("worker_run_id") or ""),
+            plan_version=int(raw.get("plan_version") or 0),
+            executor_kind=str(raw.get("executor_kind") or ""),
+            expected_action=str(raw.get("expected_action") or ""),
+            tool_scope=tuple(str(item) for item in (raw.get("tool_scope") or ())),
+            authority_scope=tuple(str(item) for item in (raw.get("authority_scope") or ())),
+            workspace_root=(
+                str(raw.get("workspace_root") or "").strip() or None
+            ),
+            allowed_command_sha256=(
+                str(raw.get("allowed_command_sha256") or "").strip() or None
+            ),
+            side_effect_sensitivity=str(
+                raw.get("side_effect_sensitivity") or "bounded_worker_effect"
+            ),
+        )
+
+    @staticmethod
+    def command_digest(command: str) -> str:
+        return hashlib.sha256(str(command).encode("utf-8", errors="replace")).hexdigest()
+
+
+class WorkerActionAuthorityError(PermissionError):
+    pass
+
+
+class WorkerActionAuthorityEnforcer:
+    """Fail-closed checks for Body actions that declare WorkerRun authority."""
+
+    _READ_KINDS = {"inspect_path", "path", "read_text", "read_file", "list_directory", "list_dir"}
+    _WRITE_KINDS = {"write_text", "write_file"}
+    _COMMAND_KINDS = {"command", "terminal", "shell"}
+    _GIT_READ_KINDS = {"git_state", "git", "git_diff"}
+
+    @classmethod
+    def authorize(cls, kind: str, args: dict[str, Any], context: ActionAuthorityContext) -> None:
+        if not context.worker_run_id or not context.work_item_id or not context.work_thread_id:
+            raise WorkerActionAuthorityError("worker action authority identity is incomplete")
+        if context.plan_version < 1:
+            raise WorkerActionAuthorityError("worker action authority plan_version is invalid")
+
+        normalized = str(kind or "").strip().lower()
+        tools = set(context.tool_scope)
+        authorities = set(context.authority_scope)
+
+        if normalized in cls._WRITE_KINDS:
+            if context.executor_kind != "coding" or context.expected_action != "write_file":
+                raise WorkerActionAuthorityError("worker is not authorized for workspace mutation")
+            if "workspace.write" not in tools or "workspace_write" not in authorities:
+                raise WorkerActionAuthorityError("workspace write capability is outside WorkerRun scope")
+            cls._require_workspace_target(args.get("path"), context)
+            return
+
+        if normalized in cls._COMMAND_KINDS:
+            command = str(args.get("command") or "")
+            if not command or not context.allowed_command_sha256:
+                raise WorkerActionAuthorityError("worker command is not bound to the admitted action")
+            if ActionAuthorityContext.command_digest(command) != context.allowed_command_sha256:
+                raise WorkerActionAuthorityError("worker command differs from the admitted action")
+            if context.expected_action != "run_python":
+                raise WorkerActionAuthorityError("worker command is outside the expected action contract")
+            if context.executor_kind == "coding":
+                if "terminal.python" not in tools or "terminal_execute" not in authorities:
+                    raise WorkerActionAuthorityError("coding terminal authority is outside WorkerRun scope")
+            elif context.executor_kind == "review":
+                if "terminal.test" not in tools or "terminal_verify" not in authorities:
+                    raise WorkerActionAuthorityError("review terminal authority is outside WorkerRun scope")
+            else:
+                raise WorkerActionAuthorityError("research WorkerRun cannot execute Terminal actions")
+            workdir = args.get("workdir")
+            if workdir is not None:
+                cls._require_workspace_target(workdir, context, allow_root=True)
+            return
+
+        if normalized in cls._READ_KINDS:
+            if "workspace.read" not in tools or "workspace_read" not in authorities:
+                raise WorkerActionAuthorityError("workspace read capability is outside WorkerRun scope")
+            cls._require_workspace_target(args.get("path"), context, allow_root=True)
+            return
+
+        if normalized in cls._GIT_READ_KINDS:
+            if "git.status" not in tools and "git.diff" not in tools:
+                raise WorkerActionAuthorityError("Git read capability is outside WorkerRun scope")
+            root = args.get("root") or args.get("workdir") or context.workspace_root
+            cls._require_workspace_target(root, context, allow_root=True)
+            return
+
+        # Worker contexts are deliberately fail-closed for every primitive that
+        # is not explicitly mapped above. Resident-owned actions without a worker
+        # context continue to use the existing Body semantics.
+        raise WorkerActionAuthorityError(
+            f"Body action {normalized or '<empty>'} is not admitted for a WorkerRun"
+        )
+
+    @staticmethod
+    def _require_workspace_target(
+        raw_target: object,
+        context: ActionAuthorityContext,
+        *,
+        allow_root: bool = False,
+    ) -> None:
+        if not context.workspace_root:
+            raise WorkerActionAuthorityError("WorkerRun has no workspace target scope")
+        if raw_target is None or not str(raw_target).strip():
+            if allow_root:
+                return
+            raise WorkerActionAuthorityError("worker action has no target path")
+        root = Path(context.workspace_root).expanduser().resolve(strict=False)
+        target = Path(str(raw_target)).expanduser().resolve(strict=False)
+        try:
+            target.relative_to(root)
+        except ValueError as exc:
+            raise WorkerActionAuthorityError("worker target is outside the attached workspace") from exc
+
+
+class AuthorityEnforcedBody:
+    """Thin admission wrapper around the one existing NativeBody instance."""
+
+    def __init__(self, body) -> None:
+        self._body = body
+
+    def __getattr__(self, name: str):
+        return getattr(self._body, name)
+
+    def act(self, kind: str, *, event_id: str | None = None, **args: Any):
+        raw_context = args.pop(_AUTHORITY_ARG, None)
+        if raw_context is not None:
+            if not isinstance(raw_context, dict):
+                raise WorkerActionAuthorityError("worker action authority context is malformed")
+            context = ActionAuthorityContext.from_dict(raw_context)
+            WorkerActionAuthorityEnforcer.authorize(kind, args, context)
+        return self._body.act(kind, event_id=event_id, **args)
+
+
+def bind_worker_authority_arg(
+    args: dict[str, Any],
+    context: ActionAuthorityContext,
+) -> dict[str, Any]:
+    bound = dict(args)
+    bound[_AUTHORITY_ARG] = context.to_dict()
+    return bound
