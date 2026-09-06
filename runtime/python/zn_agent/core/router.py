@@ -47,6 +47,19 @@ class ModelRouter:
 
     def select(self, goal: Goal, excluded: set[str] | None = None) -> ModelRoute:
         excluded = excluded or set()
+
+        # The zero-model Resident uses one explicit local sentinel so the normal
+        # durable kernel path can reach UnavailableModelWorkerFactory and report
+        # a stable cognition blocker while System 1/local capabilities remain
+        # alive. This sentinel is not an external model candidate and therefore
+        # must not be converted into a normal route-eligibility failure. Retry
+        # exclusion still terminates the already-observed unavailable attempt.
+        if len(self.routes) == 1 and self._is_no_model_sentinel(self.routes[0]):
+            sentinel = self.routes[0]
+            if sentinel.route_id in excluded:
+                raise NoRouteAvailable("zero-model sentinel already observed")
+            return sentinel
+
         policy = self._route_policy(goal)
         self._validate_route_policy(policy)
         candidates: list[ModelRoute] = []
@@ -96,6 +109,24 @@ class ModelRouter:
             return total, route.route_id
 
         return max(candidates, key=score)
+
+    @staticmethod
+    def _is_no_model_sentinel(route: ModelRoute) -> bool:
+        """Recognize only ZN's exact internal zero-model control route.
+
+        A real route with ``available=False`` remains subject to normal hard
+        eligibility. Requiring the exact provider/model/id plus the internal
+        ``model_available=False`` marker prevents user-defined unavailable
+        routes from inheriting sentinel behavior.
+        """
+
+        metadata = route.metadata if isinstance(route.metadata, dict) else {}
+        return (
+            route.route_id == "system2-unavailable"
+            and route.provider == "none"
+            and route.model == "none"
+            and metadata.get("model_available") is False
+        )
 
     def _ineligibility_reasons(
         self,
