@@ -33,18 +33,23 @@ class _CompletionCognition:
         self.step_calls += 1
         self.step_questions.append(question)
         if self.step_calls == 1:
+            source = (
+                "from pathlib import Path\n"
+                "Path('state.json').write_text('{\\\"status\\\":\\\"READY\\\"}', encoding='utf-8')\n"
+                "print('READY')\n"
+            )
             proposal = {
                 "zn_work_step": {
                     "objective": "create a tiny runnable probe",
                     "action": {
                         "kind": "write_file",
                         "path": "probe.py",
-                        "content": 'print("READY")\n',
+                        "content": source,
                     },
                     "acceptance": {
                         "kind": "text_equals",
                         "path": "probe.py",
-                        "expected_text": 'print("READY")\n',
+                        "expected_text": source,
                     },
                 }
             }
@@ -64,13 +69,17 @@ class _CompletionCognition:
             final_criteria = ["weakened criterion"] if self.weaken_final else list(self.criteria)
             proposal = {
                 "zn_work_step": {
-                    "objective": "independently execute the current runnable artifact",
+                    "objective": "independently execute and reread the current runnable artifact",
                     "action": {"kind": "verify_python", "path": "probe.py", "args": []},
                     "acceptance": {
                         "kind": "root_verified",
                         "criteria": final_criteria,
                         "expected_exit_code": 0,
                         "output_contains": ["READY"],
+                        "persisted_read": {
+                            "path": "state.json",
+                            "contains": ["READY"],
+                        },
                     },
                 }
             }
@@ -148,10 +157,7 @@ class BroadGoalIndependentCompletionV2Tests(unittest.TestCase):
                 self.assertTrue(terminal.success)
                 self.assertEqual(terminal.execution_path.value, "body")
                 self.assertGreaterEqual(cognition.step_calls, 3)
-                self.assertEqual(
-                    (workspace / "probe.py").read_text(encoding="utf-8"),
-                    'print("READY")\n',
-                )
+                self.assertIn("READY", (workspace / "state.json").read_text(encoding="utf-8"))
 
                 root_after = ledger.work_item_for_event(event.event_id)
                 self.assertIsNotNone(root_after)
@@ -173,7 +179,16 @@ class BroadGoalIndependentCompletionV2Tests(unittest.TestCase):
                     )
                 ]
                 self.assertEqual(len(verifiers), 1)
-                self.assertIn("READY", verifiers[0].result or "")
+                self.assertIn("fresh_persisted_read", verifiers[0].result or "")
+                self.assertIn("state.json", verifiers[0].result or "")
+                actions = list(resident.body.recent_actions(limit=128))
+                fresh_reads = [
+                    action
+                    for action in actions
+                    if action.kind == "read_text" and str(action.args.get("path") or "").endswith("state.json")
+                ]
+                self.assertTrue(fresh_reads, "Root acceptance requires a fresh Body read of persisted state")
+                self.assertTrue(fresh_reads[-1].success)
                 progress = ledger.progress("completion-loop", event.event_id)
                 self.assertTrue(progress.get("accepted"))
                 self.assertFalse(progress.get("acceptance_pending"))
