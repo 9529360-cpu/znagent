@@ -96,8 +96,10 @@ class E2E29OneModelMultiWorkerTests(unittest.TestCase):
                                             "state": run.state,
                                             "route": run.model_route_id,
                                             "verification": run.verification_status,
+                                            "error": str(run.error or "")[:1200],
+                                            "result": str(run.result_summary or "")[:1200],
                                         }
-                                        for run in runs
+                                        for run in runs[-12:]
                                     ],
                                 },
                                 ensure_ascii=False,
@@ -105,6 +107,21 @@ class E2E29OneModelMultiWorkerTests(unittest.TestCase):
                             flush=True,
                         )
 
+                if terminal is not None:
+                    print(
+                        "ZN_E2E29_TERMINAL="
+                        + json.dumps(
+                            {
+                                "success": terminal.success,
+                                "reason": str(terminal.reason or "")[:4000],
+                                "response": str(terminal.response or "")[:4000],
+                                "model_invocations": terminal.model_invocations,
+                                "execution_path": terminal.execution_path.value,
+                            },
+                            ensure_ascii=False,
+                        ),
+                        flush=True,
+                    )
                 self.assertIsNotNone(terminal, "E2E-29 did not reach evidence-bound Root completion")
                 assert terminal is not None
                 self.assertTrue(terminal.success, terminal.reason)

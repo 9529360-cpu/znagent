@@ -453,8 +453,12 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
                 " DELEGATED WORKER: coding. Return ONLY the write_file form. The write must stay inside the "
                 "attached workspace. Use worker_context_pack.relevant_evidence. If the latest failed_effect is "
                 "a real command/output mismatch, repair the existing implementation or its observable test "
-                "signal instead of replaying the same run unchanged. Git push, release, messaging, "
-                "outside-workspace mutation, and Root acceptance are forbidden."
+                "signal instead of replaying the same run unchanged. V1 write_file is a COMPLETE replacement "
+                "of exactly one target file, not a diff, patch, search/replace helper, or a script whose purpose "
+                "is to patch another file. acceptance.kind must be text_equals; acceptance.path must exactly "
+                "equal action.path; acceptance.expected_text must exactly equal action.content. When repairing "
+                "an existing file, incorporate the repair directly into that complete replacement content. "
+                "Git push, release, messaging, outside-workspace mutation, and Root acceptance are forbidden."
             )
         return (
             " DELEGATED WORKER: coding. Return ONLY the run_python form for an existing workspace artifact. "
@@ -517,6 +521,55 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
             return self._parse_run_python_step(event, root, content) is not None
         return False
 
+    def _proposal_contract_failure_reason(self, event, root, expected_action: str, content: str) -> str:
+        if expected_action != "write_file":
+            return f"{expected_action} proposal failed its bounded schema/workspace validation"
+        raw = parse_exact_json_payload(content)
+        if not isinstance(raw, dict) or set(raw) != {"zn_work_step"}:
+            return "write_file proposal must contain exactly one zn_work_step JSON envelope"
+        step = raw.get("zn_work_step")
+        if not isinstance(step, dict):
+            return "write_file zn_work_step must be an object"
+        objective = " ".join(str(step.get("objective") or "").strip().split())
+        if not objective or len(objective) > 600:
+            return "write_file objective must be non-empty and at most 600 characters"
+        action = step.get("action")
+        acceptance = step.get("acceptance")
+        if not isinstance(action, dict) or not isinstance(acceptance, dict):
+            return "write_file action and acceptance must both be objects"
+        if str(action.get("kind") or "").strip() != "write_file":
+            return "write_file action.kind must be write_file"
+        if str(acceptance.get("kind") or "").strip() != "text_equals":
+            return "write_file acceptance.kind must be text_equals"
+        relative_path = str(action.get("path") or "").strip()
+        acceptance_path = str(acceptance.get("path") or "").strip()
+        if not relative_path or relative_path != acceptance_path:
+            return "write_file acceptance.path must exactly equal action.path"
+        body = action.get("content")
+        expected = acceptance.get("expected_text")
+        if not isinstance(body, str) or not isinstance(expected, str):
+            return "write_file action.content and acceptance.expected_text must both be strings"
+        if body != expected:
+            return "write_file acceptance.expected_text must exactly equal action.content"
+        if len(body) > self._MAX_STEP_CONTENT:
+            return "write_file complete replacement content exceeds the bounded size limit"
+        rel = Path(relative_path)
+        if rel.is_absolute() or not rel.parts or any(part in {"", ".", ".."} for part in rel.parts):
+            return "write_file path must be a safe relative path inside the attached workspace"
+        workspace = Path(str(event.payload.get("workspace_path") or "")).expanduser()
+        try:
+            root_path = workspace.resolve(strict=True)
+            candidate = root_path.joinpath(*rel.parts)
+            parent = candidate.parent.resolve(strict=True)
+            parent.relative_to(root_path)
+            if candidate.exists():
+                candidate.resolve(strict=True).relative_to(root_path)
+        except (OSError, RuntimeError, ValueError):
+            return "write_file target parent must already exist inside the attached workspace"
+        if root.plan_version != self.work_ledger.plan_version(root.work_thread_id):
+            return "write_file proposal belongs to a stale Work plan"
+        return "write_file proposal failed bounded workspace/text_equals validation"
+
     @staticmethod
     def _proposal_action_kind(content: str) -> str | None:
         raw = parse_exact_json_payload(content)
@@ -556,10 +609,20 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
             )
             if not valid:
                 status = "scope_rejected" if action_kind and action_kind != expected_action else "schema_rejected"
+                detail = (
+                    "proposal action kind exceeded the delegated scope"
+                    if status == "scope_rejected"
+                    else self._proposal_contract_failure_reason(
+                        event,
+                        root,
+                        expected_action,
+                        increment.content,
+                    )
+                )
                 failure = (
                     f"ZN rejected delegated {str(delegated.get('executor_kind') or 'worker')} proposal: "
                     f"expected {expected_action or 'bounded schema'}, received {action_kind or 'unstructured result'}; "
-                    "WorkerRun self-report cannot expand tool/authority scope or accept Root Work"
+                    f"{detail}; WorkerRun self-report cannot expand tool/authority scope or accept Root Work"
                 )
                 if worker is not None:
                     self.work_ledger.fail_worker_run(
