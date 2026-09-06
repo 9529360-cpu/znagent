@@ -282,21 +282,13 @@ def build_resident_runtime(
     budget = CognitiveBudgetManager(
         normal_model_calls=max(1, int(resident_cfg.get("normal_model_calls", 1))),
         high_risk_model_calls=max(1, int(resident_cfg.get("high_risk_model_calls", 2))),
-        rolling_window_seconds=max(60, int(resident_cfg.get("rolling_window_seconds", 3600))),
-        rolling_window_limit=max(1, int(resident_cfg.get("rolling_window_limit", 12))),
+        high_risk_threshold=max(
+            0.0, min(1.0, float(resident_cfg.get("high_risk_threshold", 0.8)))
+        ),
     )
-    return BroadGoalAutonomousResidentRuntime(kernel=kernel, cognitive_budget=budget)
+
+    return BroadGoalAutonomousResidentRuntime(kernel=kernel, budget=budget)
 
 
-def build_resident_runtime_from_existing_stack(
-    *,
-    config: dict[str, Any] | None = None,
-    store_path: str | Path | None = None,
-    credential_store: CredentialStore | None = None,
-):
-    """Compatibility alias kept for tests and old callers during ZN's extraction."""
-    return build_resident_runtime(
-        config=config,
-        store_path=store_path,
-        credential_store=credential_store,
-    )
+build_runtime_from_existing_stack = build_runtime
+build_resident_runtime_from_existing_stack = build_resident_runtime
