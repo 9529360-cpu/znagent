@@ -49,6 +49,11 @@ class ThreadRoutePolicyIntakeTests(unittest.TestCase):
             {"data_classification": "local_only"},
         )
 
+    def test_unknown_model_in_exclusive_local_list_stays_ambiguous(self) -> None:
+        self.assertIsNone(
+            infer_thread_route_policy("这个项目只允许本地模型和 FutureModel 处理。")
+        )
+
     def test_clear_provider_denial_is_recognized(self) -> None:
         self.assertEqual(
             infer_thread_route_policy("不要让 Claude 接触这个项目。"),
