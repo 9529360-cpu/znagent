@@ -93,6 +93,19 @@ class ModelRouterHardEligibilityTests(unittest.TestCase):
         with self.assertRaisesRegex(NoRouteAvailable, "missing required capabilities: coding"):
             self._router(route).select(self._goal("explicit coding", required=("coding",)))
 
+    def test_explicit_empty_capabilities_are_not_rewritten_to_general(self) -> None:
+        route = route_from_spec(
+            {
+                "id": "explicit-empty",
+                "provider": "fixture",
+                "model": "model",
+                "capabilities": {},
+            }
+        )
+        self.assertEqual(route.capabilities, {})
+        with self.assertRaisesRegex(NoRouteAvailable, "missing required capabilities: general"):
+            self._router(route).select(self._goal("no declared capability"))
+
     def test_user_pins_and_denials_are_hard_filters(self) -> None:
         pinned = self._route(
             "pinned",
