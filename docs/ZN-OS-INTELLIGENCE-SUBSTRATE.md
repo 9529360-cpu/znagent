@@ -10,6 +10,35 @@ ZN currently runs as a Windows-first Resident application.
 
 The long-term product target is not to remain a smart desktop app with a chat box. ZN should progressively become a **user-owned Personal Intelligence Layer** that lives above Windows and can participate in the operating environment through durable identity, local context, semantic actions, system events, hardware-aware local cognition and bounded cloud/specialist cognition.
 
+### 1.1 Product-language framing: a Windows intelligent native
+
+At the product level, ZN should be understood as a **Windows intelligent native** ("Windows 智能原住民"): a persistent intelligent resident that treats the user's Windows computing environment as its lived environment rather than as an occasional external tool.
+
+This framing does **not** mean that ZN replaces Windows, runs inside the Windows kernel, or automatically possesses elevated system authority. It means that, within explicit user permission and real platform boundaries, ZN should progressively gain durable, model-independent awareness of and access to the computer it lives on.
+
+A mature Windows-native ZN should therefore:
+
+- remain resident across conversations and ordinary application boundaries;
+- know current machine and application facts through deterministic/native sensing where available, instead of asking a model to guess them;
+- understand installed applications, processes, windows, files, devices, system state and available execution surfaces as parts of its own operating environment;
+- prefer native Windows/application semantics and typed capabilities over screenshot-and-click automation when trustworthy interfaces exist;
+- expose those capabilities through one ZN-owned Body / Senses / Capability / Action / Permission / Verification stack;
+- treat GPT, Claude, local models and future specialist systems as replaceable CognitiveResources rather than as owners of ZN identity or machine truth;
+- allow delegated agents/workers to use bounded portions of the same ZN-owned computer capability system instead of creating separate OS-agent identities or duplicate control stacks;
+- verify real effects in the operating environment before considering Work complete.
+
+In short:
+
+```text
+Windows is ZN's current primary lived computing environment.
+ZN is the persistent intelligent resident inside that environment.
+Models are replaceable cognition resources.
+Agents/workers are bounded execution units inside ZN.
+Computer/application capabilities are part of ZN's body, not model knowledge.
+```
+
+The shorthand **PCOS** may be used internally to describe this long-term product shape — persistent personal intelligence + agentic Work + native computer capability — but it must not imply a replacement operating-system kernel. The architectural meaning remains a ZN-owned Personal Intelligence Layer that lives **on top of and through** Windows and its applications.
+
 The target is:
 
 ```text
@@ -322,7 +351,7 @@ assistant application
 → resident assistant
 → resident task owner
 → OS-aware personal assistant
-→ user-owned Personal Intelligence Layer
+→ Windows intelligent native / user-owned Personal Intelligence Layer
 → one persistent intelligence across multiple personal devices
 ```
 
