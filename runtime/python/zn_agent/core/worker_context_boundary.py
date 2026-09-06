@@ -98,7 +98,7 @@ class WorkerContextPack:
             "root_goal_summary": self.root_goal_summary,
             "work_item_objective": self.work_item_objective,
             "acceptance_criteria": list(self.acceptance_criteria),
-            "plan_version": int(self.plan_version),
+            "plan_version": self.plan_version,
             "relevant_evidence": list(self.relevant_evidence),
             "artifact_refs": list(self.artifact_refs),
             "tool_scope": list(self.tool_scope),
@@ -146,7 +146,7 @@ class WorkerContextPack:
             value = raw[key]
             if not isinstance(value, list) or len(value) > limit:
                 raise WorkerContextBoundaryError(f"WorkerContextPack {key} exceeds item limit")
-        if int(raw["plan_version"]) < 1:
+        if type(raw["plan_version"]) is not int or raw["plan_version"] < 1:
             raise WorkerContextBoundaryError("WorkerContextPack plan_version is invalid")
 
     @classmethod
@@ -170,7 +170,9 @@ class WorkerContextPack:
                 raise WorkerContextBoundaryError(f"WorkerContextPack mapping exceeds item limit at {path}")
             clean: dict[str, Any] = {}
             for raw_key, item in value.items():
-                key = str(raw_key or "").strip()
+                if not isinstance(raw_key, str):
+                    raise WorkerContextBoundaryError(f"WorkerContextPack key must be a string at {path}")
+                key = raw_key.strip()
                 if not key or len(key) > 120:
                     raise WorkerContextBoundaryError(f"WorkerContextPack key is invalid at {path}")
                 normalized = key.casefold().replace("-", "_")
