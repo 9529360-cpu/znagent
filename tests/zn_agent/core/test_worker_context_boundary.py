@@ -77,6 +77,15 @@ class WorkerContextBoundaryTests(unittest.TestCase):
         with self.assertRaisesRegex(WorkerContextBoundaryError, "serialized size limit"):
             self._pack(relevant_evidence=evidence, expected_result_schema=schema).to_dict()
 
+    def test_malformed_mapping_keys_and_plan_version_fail_closed(self) -> None:
+        with self.assertRaisesRegex(WorkerContextBoundaryError, "key must be a string"):
+            self._pack(expected_result_schema={1: "not-a-string-key"}).to_dict()
+
+        for malformed in ("2", True, 0, -1):
+            with self.subTest(plan_version=malformed):
+                with self.assertRaisesRegex(WorkerContextBoundaryError, "plan_version is invalid"):
+                    self._pack(plan_version=malformed).to_dict()
+
     def test_classification_hook_can_tighten_route_facing_label(self) -> None:
         WorkerContextPack.set_classification_hook(
             lambda payload, current: "cloud_denied" if current == "private" else current
