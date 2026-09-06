@@ -1,9 +1,6 @@
-name: TEMP E2E30-42 Real Multi-Provider Acceptance
+name: E2E30-42 Real Multi-Provider Acceptance
 
 on:
-  push:
-    branches:
-      - work/e2e-30-42-real-multiroute-policy
   workflow_dispatch:
 
 permissions:
@@ -23,7 +20,7 @@ defaults:
   run:
     shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
 
-# Temporary guarded acceptance. It intentionally fails if the configured host
+# Guarded product acceptance. It intentionally fails if the configured host
 # does not expose two distinct real providers or if any unittest skips.
 jobs:
   real-e2e:
