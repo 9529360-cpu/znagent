@@ -237,6 +237,8 @@ class ModelRouter:
                 continue
             if not isinstance(value, (str, list, tuple, set, frozenset)):
                 raise NoRouteAvailable(f"model route policy {field} has invalid type")
+            if not isinstance(value, str) and any(not isinstance(item, str) for item in value):
+                raise NoRouteAvailable(f"model route policy {field} must contain only strings")
         raw_classification = policy.get("data_classification")
         if raw_classification is not None:
             if not isinstance(raw_classification, str):
@@ -265,7 +267,9 @@ class ModelRouter:
             return set()
         result: set[str] = set()
         for item in items:
-            text = str(item or "").strip()
+            if not isinstance(item, str):
+                continue
+            text = item.strip()
             if text:
                 result.add(text.lower() if lower else text)
         return result
