@@ -13,6 +13,7 @@ from .browser_scene_js_dialog import PlaywrightBrowserSceneJsDialogMixin
 from .browser_scene_pointer import PlaywrightBrowserScenePointerMixin
 from .browser_scene_select import PlaywrightBrowserSceneSelectMixin
 from .browser_scene_table import PlaywrightBrowserSceneTableMixin
+from .browser_scene_visual_fallback import PlaywrightBrowserSceneVisualFallbackMixin
 from .managed_browser import ManagedBrowserError
 
 
@@ -22,6 +23,7 @@ _ENTER_ROLES = frozenset({"textbox", "searchbox"})
 
 
 class PlaywrightBrowserSceneClearPressMixin(
+    PlaywrightBrowserSceneVisualFallbackMixin,
     PlaywrightBrowserSceneFileTransferMixin,
     PlaywrightBrowserSceneJsDialogMixin,
     PlaywrightBrowserSceneDialogMixin,
