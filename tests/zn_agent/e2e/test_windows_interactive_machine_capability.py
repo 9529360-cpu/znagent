@@ -52,22 +52,23 @@ class WindowsInteractiveMachineCapabilityE2ETests(unittest.TestCase):
 
     def test_real_inventory_launch_verify_and_already_running_no_duplicate(self) -> None:
         self._require_input_desktop()
-        resident = None
-        launched_windows = ()
-        preexisting_pids: set[int] = set()
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                resident = build_resident_runtime(
-                    config={"model": {}},
-                    store_path=Path(tmp) / "kernel.db",
-                )
+        # Windows may retain a transient sqlite file handle for a few milliseconds
+        # after the runtime is closed. Cleanup is not the product assertion here.
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            resident = build_resident_runtime(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            launched_windows = ()
+            preexisting_pids: set[int] = set()
+            try:
                 graph = resident.device_capabilities
                 applications = graph.installed_applications(force_refresh=True)
                 self.assertTrue(applications, "real Windows inventory returned no installed applications")
                 self.assertEqual(len({app.app_id for app in applications}), len(applications))
 
                 # Select only a known benign GUI application discovered from this
-                # actual machine.  The test never assumes a path or package id.
+                # actual machine. The test never assumes a path or package id.
                 safe_names = ("Notepad", "Microsoft Paint")
                 selected = None
                 for name in safe_names:
@@ -88,7 +89,7 @@ class WindowsInteractiveMachineCapabilityE2ETests(unittest.TestCase):
 
                 before_processes, _ = graph.application_runtime(selected)
                 preexisting_pids = {row.process_id for row in before_processes}
-                event = resident.enqueue(
+                resident.enqueue(
                     f"打开 {selected.canonical_name}",
                     kind="desktop_user_event",
                     payload={"model_policy": "never"},
@@ -106,8 +107,18 @@ class WindowsInteractiveMachineCapabilityE2ETests(unittest.TestCase):
                 first_pids = {row.process_id for row in after_processes}
                 self.assertTrue(first_pids - preexisting_pids)
 
-                # A second ordinary “open” request must observe the existing
-                # instance and complete without dispatching another launch.
+                launch_actions_before = [
+                    action for action in resident.body.recent_actions(30)
+                    if action.kind == "launch_application"
+                ]
+                dispatched_before = [
+                    action for action in launch_actions_before if action.data.get("dispatch_sent")
+                ]
+                self.assertEqual(len(dispatched_before), 1)
+
+                # A second ordinary “open” request is allowed to complete directly
+                # from fresh existing process/window facts. It must not need to
+                # enter Body at all, and it must never dispatch a second launch.
                 resident.enqueue(
                     f"打开 {selected.canonical_name}",
                     kind="desktop_user_event",
@@ -119,27 +130,24 @@ class WindowsInteractiveMachineCapabilityE2ETests(unittest.TestCase):
                 second_processes, _ = graph.application_runtime(selected)
                 self.assertEqual({row.process_id for row in second_processes}, first_pids)
 
-                launch_actions = [
+                launch_actions_after = [
                     action for action in resident.body.recent_actions(30)
                     if action.kind == "launch_application"
                 ]
-                self.assertTrue(launch_actions)
-                dispatched = [action for action in launch_actions if action.data.get("dispatch_sent")]
-                self.assertEqual(len(dispatched), 1)
-                self.assertTrue(any(
-                    action.data.get("disposition") == "already_running" for action in launch_actions
-                ))
+                dispatched_after = [
+                    action for action in launch_actions_after if action.data.get("dispatch_sent")
+                ]
+                self.assertEqual(len(dispatched_after), 1)
+                self.assertEqual(len(launch_actions_after), len(launch_actions_before))
+            finally:
+                if launched_windows:
+                    self._close_new_windows(launched_windows, preexisting_pids)
+                    time.sleep(0.20)
                 resident.store.close()
-                resident = None
-        finally:
-            if resident is not None:
-                resident.store.close()
-            if launched_windows:
-                self._close_new_windows(launched_windows, preexisting_pids)
 
     def test_real_machine_unknown_application_is_not_invented(self) -> None:
         self._require_input_desktop()
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             resident = build_resident_runtime(
                 config={"model": {}},
                 store_path=Path(tmp) / "kernel.db",
