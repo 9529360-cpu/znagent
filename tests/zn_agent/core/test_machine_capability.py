@@ -73,7 +73,7 @@ class MachineCapabilityTests(unittest.TestCase):
             self.assertEqual(len(result.candidates), 2)
             self.assertNotEqual(result.candidates[0].app_id, result.candidates[1].app_id)
 
-    def test_prefix_collision_stays_ambiguous(self) -> None:
+    def test_exact_alias_wins_over_longer_fuzzy_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             visual_studio = root / "VisualStudio" / "devenv.exe"
@@ -98,8 +98,39 @@ class MachineCapabilityTests(unittest.TestCase):
                 cache_path=root / "cache.json", inventory_ttl_seconds=0,
             )
             result = graph.resolve_application("Visual Studio", force_refresh=True)
+            self.assertEqual(result.status, "resolved")
+            self.assertEqual(result.application.canonical_name, "Visual Studio")
+
+    def test_partial_prefix_collision_stays_ambiguous(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            visual_studio = root / "VisualStudio" / "devenv.exe"
+            vscode = root / "VSCode" / "code.exe"
+            visual_studio.parent.mkdir(parents=True)
+            vscode.parent.mkdir(parents=True)
+            visual_studio.write_bytes(b"")
+            vscode.write_bytes(b"")
+            graph = DeviceCapabilityGraph(
+                inventory_provider=lambda: [
+                    ApplicationInventoryCandidate(
+                        source="app_paths", source_id="vs", display_name="Visual Studio",
+                        executable_path=str(visual_studio), identity_paths=(str(visual_studio),),
+                        launch_kind="executable", launch_target=str(visual_studio),
+                    ),
+                    ApplicationInventoryCandidate(
+                        source="app_paths", source_id="vscode", display_name="Visual Studio Code",
+                        executable_path=str(vscode), identity_paths=(str(vscode),),
+                        launch_kind="executable", launch_target=str(vscode),
+                    ),
+                ],
+                cache_path=root / "cache.json", inventory_ttl_seconds=0,
+            )
+            result = graph.resolve_application("Visual", force_refresh=True)
             self.assertEqual(result.status, "ambiguous")
-            self.assertEqual({item.canonical_name for item in result.candidates}, {"Visual Studio", "Visual Studio Code"})
+            self.assertEqual(
+                {item.canonical_name for item in result.candidates},
+                {"Visual Studio", "Visual Studio Code"},
+            )
 
     def test_known_alias_never_invents_executable_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
