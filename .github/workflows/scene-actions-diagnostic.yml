@@ -25,63 +25,42 @@ jobs:
         with:
           version: '0.11.6'
           enable-cache: false
-      - name: Apply mechanical branch repairs
+      - name: Apply Python repairs
         run: |
           uv python install 3.12
           $python = (uv python find 3.12)
           @'
           from pathlib import Path
-          import re
 
           unit = Path("tests/zn_agent/core/test_browser_scene_actions.py")
           text = unit.read_text(encoding="utf-8")
           old = "    observed = browser.observe_scene_target(identity.session_id, target.target_id, page_id=target.page_id)"
-          new = "    page_id = browser._default_page_id(browser._sessions[identity.session_id])\n    observed = browser.observe_scene_target(identity.session_id, target.target_id, page_id=page_id)"
+          print("unit_count", text.count(old))
           if text.count(old) != 1:
-              raise SystemExit(f"unit helper replacement count={text.count(old)}")
-          unit.write_text(text.replace(old, new), encoding="utf-8")
+              raise SystemExit(11)
+          unit.write_text(text.replace(old, "    page_id = browser._default_page_id(browser._sessions[identity.session_id])\n    observed = browser.observe_scene_target(identity.session_id, target.target_id, page_id=page_id)"), encoding="utf-8")
 
           e2e = Path("tests/zn_agent/e2e/test_windows_managed_browser_scene_actions.py")
           text = e2e.read_text(encoding="utf-8")
-          old = """        observed = browser.observe_scene_target(\n            identity.session_id,\n            target.target_id,\n            page_id=target.page_id,\n        )"""
-          new = """        page_id = browser._default_page_id(browser._sessions[identity.session_id])\n        observed = browser.observe_scene_target(\n            identity.session_id,\n            target.target_id,\n            page_id=page_id,\n        )"""
+          old = "        observed = browser.observe_scene_target(\n            identity.session_id,\n            target.target_id,\n            page_id=target.page_id,\n        )"
+          print("e2e_count", text.count(old))
           if text.count(old) != 1:
-              raise SystemExit(f"e2e helper replacement count={text.count(old)}")
-          e2e.write_text(text.replace(old, new), encoding="utf-8")
+              raise SystemExit(12)
+          e2e.write_text(text.replace(old, "        page_id = browser._default_page_id(browser._sessions[identity.session_id])\n        observed = browser.observe_scene_target(\n            identity.session_id,\n            target.target_id,\n            page_id=page_id,\n        )"), encoding="utf-8")
 
           actions = Path("runtime/python/zn_agent/core/browser_scene_actions.py")
           text = actions.read_text(encoding="utf-8")
+          print("provider_count", text.count("_provider_pages"))
           if text.count("_provider_pages") != 3:
-              raise SystemExit(f"provider helper replacement count={text.count('_provider_pages')}")
+              raise SystemExit(13)
           actions.write_text(text.replace("_provider_pages", "_scene_action_provider_pages"), encoding="utf-8")
-
-          workflow = Path(".github/workflows/zn-managed-browser-e2e.yml")
-          text = workflow.read_text(encoding="utf-8")
-          pattern = re.compile(
-              r"      - name: Run managed browser contract tests\n.*?"
-              r"(?=      - name: Run real local Chromium E2E\n)",
-              re.S,
-          )
-          replacement = """      - name: Run managed browser contract tests\n        run: |\n          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\\python'\n          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\\managed-browser-venv\\Scripts\\python.exe'\n          & $python -m unittest tests.zn_agent.core.test_browser_scene_actions -v\n          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n          & $python -m unittest discover -s tests/zn_agent/core -p 'test_*browser*.py' -v\n          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n          & $python -m unittest tests.zn_agent.core.test_structured_action_text_alias -v\n          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n"""
-          text, count = pattern.subn(replacement, text, count=1)
-          if count != 1:
-              raise SystemExit(f"contract workflow replacement count={count}")
-          pattern = re.compile(
-              r"      - name: Run real local Chromium E2E\n.*\Z",
-              re.S,
-          )
-          replacement = """      - name: Run real local Chromium E2E\n        run: |\n          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\\python'\n          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\\managed-browser-venv\\Scripts\\python.exe'\n          & $python -m unittest discover -s tests/zn_agent/e2e -p 'test_windows_managed_browser*.py' -v\n          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n"""
-          text, count = pattern.subn(replacement, text, count=1)
-          if count != 1:
-              raise SystemExit(f"e2e workflow replacement count={count}")
-          workflow.write_text(text, encoding="utf-8")
           '@ | & $python -
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Commit repairs to work branch
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add runtime/python/zn_agent/core/browser_scene_actions.py tests/zn_agent/core/test_browser_scene_actions.py tests/zn_agent/e2e/test_windows_managed_browser_scene_actions.py .github/workflows/zn-managed-browser-e2e.yml
+          git add runtime/python/zn_agent/core/browser_scene_actions.py tests/zn_agent/core/test_browser_scene_actions.py tests/zn_agent/e2e/test_windows_managed_browser_scene_actions.py
           git diff --cached --check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git commit -m "Browser Body V2: repair scene action validation wiring"
