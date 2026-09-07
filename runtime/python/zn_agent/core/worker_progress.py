@@ -32,6 +32,10 @@ _STAGE_RANK = {
     "effect_observed": 50,
     "effect_verified": 60,
 }
+_PROVIDER_RESULT_STAGES = frozenset({
+    "provider_result_persisted",
+    "provider_result_observed",
+})
 
 
 def record_worker_progress(
@@ -107,12 +111,23 @@ def progress_snapshot(run) -> dict[str, Any]:
 
 
 def worker_stalled(run, *, timeout_seconds: float) -> bool:
-    """Return true only when a live WorkerRun has no new durable progress."""
+    """Return true only when a live WorkerRun has no new durable progress.
+
+    A durable provider result is not a stalled provider WorkerRun. Once Kernel
+    has finalized that exact model_goal_id, the only legal continuation is to
+    resume and consume the existing result. Creating a new semantic WorkerRun at
+    this point could duplicate already-completed provider work under a new goal
+    identity, so provider-result stages are excluded from WorkerRun stall retry.
+    Resident-level integration/recovery remains responsible for consuming them.
+    """
 
     if run is None or run.state not in {"queued", "running"}:
         return False
     timeout = max(0.0, float(timeout_seconds))
     progress = progress_snapshot(run)
+    stage = str(progress.get("stage") or "").strip().lower()
+    if stage in _PROVIDER_RESULT_STAGES:
+        return False
     observed = _parse_timestamp(progress.get("last_progress_at"))
     if observed is None:
         observed = _parse_timestamp(run.started_at)
