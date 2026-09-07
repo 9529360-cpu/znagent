@@ -10,6 +10,7 @@ on:
       - runtime/python/zn_agent/resident.py
       - runtime/python/zn_agent/core/action.py
       - runtime/python/zn_agent/core/browser.py
+      - runtime/python/zn_agent/core/browser_causal_popup.py
       - runtime/python/zn_agent/core/browser_scene_actions.py
       - runtime/python/zn_agent/core/browser_tab_navigation.py
       - runtime/python/zn_agent/core/browser_form_submit_body.py
@@ -33,6 +34,7 @@ on:
       - runtime/python/zn_agent/core/side_effect_body.py
       - runtime/python/zn_agent/core/url_safety.py
       - tests/zn_agent/core/test_browser_contract.py
+      - tests/zn_agent/core/test_browser_causal_popup.py
       - tests/zn_agent/core/test_browser_scene_actions.py
       - tests/zn_agent/core/test_browser_tab_navigation.py
       - tests/zn_agent/core/test_browser_work_button_recovery.py
@@ -56,6 +58,7 @@ on:
       - tests/zn_agent/core/test_semantic_managed_browser_textbox.py
       - tests/zn_agent/core/test_structured_action_text_alias.py
       - tests/zn_agent/e2e/test_windows_managed_browser.py
+      - tests/zn_agent/e2e/test_windows_managed_browser_causal_popup.py
       - tests/zn_agent/e2e/test_windows_managed_browser_form_submit.py
       - tests/zn_agent/e2e/test_windows_managed_browser_pages.py
       - tests/zn_agent/e2e/test_windows_managed_browser_scene_actions.py
@@ -72,6 +75,7 @@ on:
       - runtime/python/zn_agent/resident.py
       - runtime/python/zn_agent/core/action.py
       - runtime/python/zn_agent/core/browser.py
+      - runtime/python/zn_agent/core/browser_causal_popup.py
       - runtime/python/zn_agent/core/browser_scene_actions.py
       - runtime/python/zn_agent/core/browser_tab_navigation.py
       - runtime/python/zn_agent/core/browser_form_submit_body.py
@@ -95,6 +99,7 @@ on:
       - runtime/python/zn_agent/core/side_effect_body.py
       - runtime/python/zn_agent/core/url_safety.py
       - tests/zn_agent/core/test_browser_contract.py
+      - tests/zn_agent/core/test_browser_causal_popup.py
       - tests/zn_agent/core/test_browser_scene_actions.py
       - tests/zn_agent/core/test_browser_tab_navigation.py
       - tests/zn_agent/core/test_browser_work_button_recovery.py
@@ -118,6 +123,7 @@ on:
       - tests/zn_agent/core/test_semantic_managed_browser_textbox.py
       - tests/zn_agent/core/test_structured_action_text_alias.py
       - tests/zn_agent/e2e/test_windows_managed_browser.py
+      - tests/zn_agent/e2e/test_windows_managed_browser_causal_popup.py
       - tests/zn_agent/e2e/test_windows_managed_browser_form_submit.py
       - tests/zn_agent/e2e/test_windows_managed_browser_pages.py
       - tests/zn_agent/e2e/test_windows_managed_browser_scene_actions.py
