@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .browser import BrowserAction, BrowserActionAuthority, BrowserActionKind, BrowserEffectEvidence
+from .browser_scene_command import PlaywrightBrowserSceneCommandMixin
 from .browser_scene_controls import PlaywrightBrowserSceneControlMixin
 from .browser_scene_dialog import PlaywrightBrowserSceneDialogMixin
 from .browser_scene_file_transfer import PlaywrightBrowserSceneFileTransferMixin
@@ -24,6 +25,7 @@ class PlaywrightBrowserSceneClearPressMixin(
     PlaywrightBrowserSceneFileTransferMixin,
     PlaywrightBrowserSceneJsDialogMixin,
     PlaywrightBrowserSceneDialogMixin,
+    PlaywrightBrowserSceneCommandMixin,
     PlaywrightBrowserSceneControlMixin,
     PlaywrightBrowserScenePointerMixin,
     PlaywrightBrowserSceneTableMixin,
