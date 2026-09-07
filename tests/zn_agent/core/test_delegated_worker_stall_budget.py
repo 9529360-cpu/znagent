@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -69,7 +70,7 @@ class DelegatedWorkerStallBudgetTests(unittest.TestCase):
         progress = dict(metrics.get("supervision_progress") or {})
         progress["last_progress_at"] = "2000-01-01T00:00:00+00:00"
         metrics["supervision_progress"] = progress
-        with self.ledger._lock, self.ledger._connect() as conn:
+        with self.ledger._lock, closing(self.ledger._connect()) as conn:
             conn.execute(
                 "UPDATE worker_runs SET metrics_json=? WHERE worker_run_id=?",
                 (
