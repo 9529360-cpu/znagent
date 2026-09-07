@@ -6,6 +6,11 @@ This module does not own scheduling or lifecycle. It updates only the existing
 ``worker_runs.metrics_json`` row owned by the Work ledger. A heartbeat is a
 change in durable progress evidence, never a timer tick: repeating the same
 stage/evidence fingerprint does not refresh ``last_progress_at``.
+
+Progress observation is deliberately non-authoritative. Missing WorkerRuns are
+reported as an empty observation and are never created, failed, or otherwise
+materialized here. The Work ledger remains the sole owner of WorkerRun identity
+and lifecycle.
 """
 
 import hashlib
@@ -44,7 +49,11 @@ def record_worker_progress(
         raise ValueError("worker progress requires worker_run_id and stage")
     run = ledger.worker_run(normalized_id)
     if run is None:
-        raise ValueError("unknown WorkerRun")
+        # Progress is an observation surface, never WorkerRun lifecycle
+        # authority. Pure request-boundary tests and legitimate races can refer
+        # to an identity that is not durable in this ledger; observation must not
+        # manufacture or terminalize work to make that reference true.
+        return progress_snapshot(None)
     if run.state not in {"queued", "running"}:
         return progress_snapshot(run)
 
