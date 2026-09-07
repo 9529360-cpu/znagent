@@ -8,6 +8,7 @@ on:
       - '.github/workflows/e2e05-authenticated-research-mutation.yml'
       - 'runtime/python/zn_agent/core/browser.py'
       - 'runtime/python/zn_agent/core/browser_scene.py'
+      - 'runtime/python/zn_agent/core/browser_scene_actions.py'
       - 'runtime/python/zn_agent/core/browser_tab_navigation.py'
       - 'runtime/python/zn_agent/core/semantic_managed_browser.py'
       - 'runtime/python/zn_agent/core/user_browser_managed_research_resident.py'
