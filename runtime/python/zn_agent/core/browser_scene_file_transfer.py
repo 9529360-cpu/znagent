@@ -2,13 +2,12 @@ from __future__ import annotations
 
 """Authority-safe causal file transfer for exact BrowserScene targets.
 
-Playwright owns only the provider mechanics (file chooser/download events and
-transport). ZN owns the action schema, BrowserScene identity, file identity,
-authority, completion proof, and rollback boundary.
+Playwright owns provider mechanics (file chooser/download events and transport).
+ZN owns action schema, authority, BrowserScene identity, file identity, completion
+proof, and rollback ownership.
 """
 
 import os
-import shutil
 import stat
 import tempfile
 from pathlib import Path
@@ -35,6 +34,7 @@ from .managed_browser import (
 _SCENE_PREFIX = "browser_scene:"
 _FILE_ACTIONS = frozenset({BrowserActionKind.UPLOAD_FILE, BrowserActionKind.DOWNLOAD_FILE})
 _MAX_SUGGESTED_FILENAME = 255
+_COPY_CHUNK_BYTES = 1024 * 1024
 _UPLOAD_POSTCONDITION = "causal_file_chooser_and_exact_input_state_verified"
 _DOWNLOAD_POSTCONDITION = "causal_download_and_exact_file_identity_verified"
 
@@ -61,7 +61,7 @@ _UPLOAD_INPUT_STATE_SCRIPT = r"""
 
 
 class PlaywrightBrowserSceneFileTransferMixin:
-    """Add narrow MANAGED-only causal upload/download BrowserScene actions."""
+    """Narrow MANAGED-only causal upload/download BrowserScene actions."""
 
     def open_session(
         self,
@@ -69,7 +69,7 @@ class PlaywrightBrowserSceneFileTransferMixin:
         permission: BrowserPermissionContext | None = None,
         headless: bool = True,
     ) -> BrowserSessionIdentity:
-        """Enable download transport only for explicitly authorized managed sessions."""
+        """Create a file-authorized ephemeral context without widening USER sessions."""
 
         policy = permission or BrowserPermissionContext()
         if not (policy.allow_downloads or policy.allow_uploads):
@@ -78,9 +78,7 @@ class PlaywrightBrowserSceneFileTransferMixin:
             return super().open_session(permission=policy, headless=headless)
 
         factory = self._playwright_factory or self._default_playwright_factory
-        playwright = None
-        browser = None
-        context = None
+        playwright = browser = context = None
         try:
             playwright = factory().start()
             browser = playwright.chromium.launch(headless=bool(headless))
@@ -117,7 +115,7 @@ class PlaywrightBrowserSceneFileTransferMixin:
             self._best_effort_close(context, browser, playwright)
             if self._playwright_factory is None and self._looks_like_missing_playwright(exc):
                 raise ManagedBrowserUnavailable(
-                    "Playwright is unavailable; install znagent[browser] before using browser file transfer"
+                    "local managed browser file transfer requires the browser dependency and Chromium runtime"
                 ) from exc
             raise ManagedBrowserError(
                 f"failed to open file-authorized managed browser: {type(exc).__name__}: {exc}"
@@ -172,7 +170,9 @@ class PlaywrightBrowserSceneFileTransferMixin:
             self._scene_action_exact_keys(action.args, {"source_identity"}, "UPLOAD_FILE args")
             self._scene_action_exact_keys(action.expected, set(), "UPLOAD_FILE expected")
             if not isinstance(action.args.get("source_identity"), dict):
-                raise ManagedBrowserError("UPLOAD_FILE args.source_identity must be a File Body identity object")
+                raise ManagedBrowserError(
+                    "UPLOAD_FILE args.source_identity must be a File Body identity object"
+                )
             return
         self._scene_action_exact_keys(action.args, {"destination_path"}, "DOWNLOAD_FILE args")
         self._scene_action_exact_keys(
@@ -192,10 +192,10 @@ class PlaywrightBrowserSceneFileTransferMixin:
         page, before_url, pages_before = self._scene_action_pre_dispatch(session, binding)
         expect_chooser = getattr(page, "expect_file_chooser", None)
         if not callable(expect_chooser):
-            raise ManagedBrowserError("browser provider does not support action-scoped file chooser observation")
+            raise ManagedBrowserError(
+                "browser provider does not support action-scoped file chooser observation"
+            )
 
-        chooser = None
-        chooser_element = None
         dispatched = False
         try:
             self._scene_revalidate_binding(session, binding)
@@ -213,19 +213,17 @@ class PlaywrightBrowserSceneFileTransferMixin:
 
             if chooser is None:
                 raise ManagedBrowserError("file chooser expectation returned no FileChooser")
-            chooser_page = self._provider_value(chooser, "page")
-            if chooser_page is not page:
+            if self._provider_value(chooser, "page") is not page:
                 raise ManagedBrowserError("causal file chooser belongs to a different Page")
             chooser_element = self._provider_value(chooser, "element")
             if chooser_element is None:
                 raise ManagedBrowserError("causal file chooser has no element")
-            chooser_multiple = self._provider_bool(chooser, "is_multiple")
-            if chooser_multiple:
+            if self._provider_bool(chooser, "is_multiple"):
                 raise ManagedBrowserError("UPLOAD_FILE first slice refuses a multiple file chooser")
-
             before_input = self._upload_input_state(chooser_element)
             if before_input["multiple"]:
                 raise ManagedBrowserError("UPLOAD_FILE first slice refuses input[multiple]")
+
             set_files = getattr(chooser, "set_files", None)
             if not callable(set_files):
                 raise ManagedBrowserError("browser provider cannot set files on causal chooser")
@@ -233,7 +231,7 @@ class PlaywrightBrowserSceneFileTransferMixin:
 
             after_input = self._upload_input_state(chooser_element)
             expected_basename = Path(source_path).name
-            expected_size = int(source_before["size"])
+            expected_size = int(source_before["size_bytes"])
             if after_input["count"] != 1:
                 raise ManagedBrowserError("file input postcondition did not contain exactly one file")
             if after_input["name"] != expected_basename:
@@ -244,12 +242,7 @@ class PlaywrightBrowserSceneFileTransferMixin:
             source_after = observe_file_identity(source_path)
             self._require_identity_match(source_before, source_after, "upload source changed during operation")
             self._require_same_page_postcondition(
-                session,
-                binding.page_id,
-                page,
-                before_url,
-                pages_before,
-                label="upload",
+                session, binding.page_id, page, before_url, pages_before, label="upload"
             )
             observed = self._capture(session, binding.page_id)
             self._require_url_allowed(observed.url, session.permission)
@@ -285,38 +278,34 @@ class PlaywrightBrowserSceneFileTransferMixin:
             if dispatched:
                 self._scene_action_dispatched_failure(session, binding.page_id)
             raise
-        finally:
-            chooser_element = None
-            chooser = None
 
     def _download_file(self, session: Any, action: BrowserAction, binding: Any) -> BrowserEffectEvidence:
-        destination_raw = self._download_destination_path(action.args["destination_path"])
+        destination = self._download_destination_path(action.args["destination_path"])
         expected_filename = self._safe_expected_filename(
             action.expected["suggested_filename_equals"]
         )
-        destination_before = observe_file_identity(destination_raw)
+        destination_before = observe_file_identity(destination)
         self._require_missing_destination(destination_before)
-        parent_snapshot = self._observe_destination_parent(destination_raw)
+        parent_snapshot = self._observe_destination_parent(destination)
 
         page, before_url, pages_before = self._scene_action_pre_dispatch(session, binding)
         expect_download = getattr(page, "expect_download", None)
         if not callable(expect_download):
-            raise ManagedBrowserError("browser provider does not support action-scoped download observation")
+            raise ManagedBrowserError(
+                "browser provider does not support action-scoped download observation"
+            )
 
         download = None
         dispatched = False
-        temp_dir = ""
-        temp_path = ""
-        temp_identity: dict[str, Any] | None = None
-        owned_destination_identity: dict[str, Any] | None = None
-        owned_destination_stat: tuple[int, int, int, int, int] | None = None
+        temp_dir = temp_path = ""
+        owned_identity: dict[str, Any] | None = None
+        owned_stat: tuple[int, int, int, int, int] | None = None
         try:
             self._scene_revalidate_binding(session, binding)
-            self._revalidate_destination_parent(destination_raw, parent_snapshot)
-            current_missing = observe_file_identity(destination_raw)
+            self._revalidate_destination_parent(destination, parent_snapshot)
             self._require_identity_match(
                 destination_before,
-                current_missing,
+                observe_file_identity(destination),
                 "download destination changed before dispatch",
             )
 
@@ -328,8 +317,7 @@ class PlaywrightBrowserSceneFileTransferMixin:
 
             if download is None:
                 raise ManagedBrowserError("download expectation returned no Download")
-            download_page = self._provider_value(download, "page")
-            if download_page is not page:
+            if self._provider_value(download, "page") is not page:
                 raise ManagedBrowserError("causal Download belongs to a different Page")
             suggested = str(self._provider_value(download, "suggested_filename") or "")
             if suggested != expected_filename:
@@ -339,8 +327,7 @@ class PlaywrightBrowserSceneFileTransferMixin:
             failure_fn = getattr(download, "failure", None)
             if not callable(failure_fn):
                 raise ManagedBrowserError("browser provider cannot report Download.failure()")
-            failure = failure_fn()
-            if failure is not None:
+            if failure_fn() is not None:
                 raise ManagedBrowserError("causal download provider reported failure")
 
             temp_dir = tempfile.mkdtemp(prefix="zn-browser-download-")
@@ -352,31 +339,22 @@ class PlaywrightBrowserSceneFileTransferMixin:
             temp_identity = observe_file_identity(temp_path)
             self._require_complete_regular_identity(temp_identity, label="downloaded temporary file")
 
-            self._revalidate_destination_parent(destination_raw, parent_snapshot)
-            still_missing = observe_file_identity(destination_raw)
+            self._revalidate_destination_parent(destination, parent_snapshot)
             self._require_identity_match(
                 destination_before,
-                still_missing,
+                observe_file_identity(destination),
                 "download destination changed before exclusive commit",
             )
-            owned_destination_stat = self._exclusive_copy(temp_path, destination_raw)
-            owned_destination_identity = observe_file_identity(destination_raw)
-            self._require_complete_regular_identity(
-                owned_destination_identity,
-                label="download destination",
-            )
-            if int(owned_destination_identity["size"]) != int(temp_identity["size"]):
+            owned_stat = self._exclusive_copy(temp_path, destination)
+            owned_identity = observe_file_identity(destination)
+            self._require_complete_regular_identity(owned_identity, label="download destination")
+            if int(owned_identity["size_bytes"]) != int(temp_identity["size_bytes"]):
                 raise ManagedBrowserError("final download size does not match owned temporary file")
-            if str(owned_destination_identity["content_sha256"]) != str(temp_identity["content_sha256"]):
+            if str(owned_identity["content_sha256"]) != str(temp_identity["content_sha256"]):
                 raise ManagedBrowserError("final download SHA-256 does not match owned temporary file")
 
             self._require_same_page_postcondition(
-                session,
-                binding.page_id,
-                page,
-                before_url,
-                pages_before,
-                label="download",
+                session, binding.page_id, page, before_url, pages_before, label="download"
             )
             observed = self._capture(session, binding.page_id)
             self._require_url_allowed(observed.url, session.permission)
@@ -397,11 +375,11 @@ class PlaywrightBrowserSceneFileTransferMixin:
                 data={
                     "provider": session.identity.provider,
                     "frame_id": binding.scene_target.frame_id,
-                    "destination_path": str(owned_destination_identity["path"]),
+                    "destination_path": str(owned_identity["path"]),
                     "suggested_filename": suggested,
                     "download_url": download_url,
-                    "download_size": int(owned_destination_identity["size"]),
-                    "download_sha256": str(owned_destination_identity["content_sha256"]),
+                    "download_size": int(owned_identity["size_bytes"]),
+                    "download_sha256": str(owned_identity["content_sha256"]),
                     "temp_sha256_matches_final": True,
                     "target_revalidated_before_dispatch": True,
                     "download_page_matches": True,
@@ -409,8 +387,8 @@ class PlaywrightBrowserSceneFileTransferMixin:
                     "exclusive_create_commit": True,
                 },
             )
-            owned_destination_identity = None
-            owned_destination_stat = None
+            owned_identity = None
+            owned_stat = None
             return evidence
         except Exception:
             if download is not None:
@@ -420,28 +398,19 @@ class PlaywrightBrowserSceneFileTransferMixin:
                         cancel()
                     except Exception:
                         pass
-            if owned_destination_identity is not None or owned_destination_stat is not None:
-                self._cleanup_owned_destination(
-                    destination_raw,
-                    owned_destination_identity,
-                    owned_destination_stat,
-                )
+            if owned_identity is not None or owned_stat is not None:
+                self._cleanup_owned_destination(destination, owned_identity, owned_stat)
             if dispatched:
                 self._scene_action_dispatched_failure(session, binding.page_id)
             raise
         finally:
-            if temp_path:
-                self._cleanup_owned_temp(temp_path)
-            if temp_dir:
-                self._cleanup_owned_temp_dir(temp_dir)
-            download = None
+            self._cleanup_owned_temp(temp_path)
+            self._cleanup_owned_temp_dir(temp_dir)
 
     @staticmethod
     def _provider_value(obj: Any, name: str) -> Any:
         value = getattr(obj, name, None)
-        if callable(value):
-            return value()
-        return value
+        return value() if callable(value) else value
 
     @classmethod
     def _provider_bool(cls, obj: Any, name: str) -> bool:
@@ -455,12 +424,13 @@ class PlaywrightBrowserSceneFileTransferMixin:
         if not isinstance(identity, dict):
             raise ManagedBrowserError(f"{label} identity must be a File Body identity object")
         required = {
+            "version",
             "path",
             "observable",
             "stable",
             "exists",
             "type",
-            "size",
+            "size_bytes",
             "digest_complete",
             "content_sha256",
         }
@@ -471,7 +441,9 @@ class PlaywrightBrowserSceneFileTransferMixin:
         if not bool(identity.get("exists")) or identity.get("type") != "file":
             raise ManagedBrowserError(f"{label} must be an existing regular file")
         if not bool(identity.get("digest_complete")) or not str(identity.get("content_sha256") or ""):
-            raise ManagedBrowserError(f"{label} is outside bounded complete SHA-256 identity scope")
+            raise ManagedBrowserError(
+                f"{label} is outside bounded complete SHA-256 identity scope"
+            )
         path = str(identity.get("path") or "")
         if not path or not os.path.isabs(path):
             raise ManagedBrowserError(f"{label} requires a canonical absolute path")
@@ -487,8 +459,9 @@ class PlaywrightBrowserSceneFileTransferMixin:
     @staticmethod
     def _require_identity_match(previous: dict[str, Any], current: dict[str, Any], error: str) -> None:
         comparison = compare_file_identities(previous, current)
-        if not bool(comparison.get("match")) or comparison.get("outcome") != "exact":
-            raise ManagedBrowserError(error)
+        if not bool(comparison.get("exact")):
+            reason = str(comparison.get("reason") or "identity mismatch")
+            raise ManagedBrowserError(f"{error}: {reason}")
 
     @staticmethod
     def _upload_input_state(element: Any) -> dict[str, Any]:
@@ -500,8 +473,7 @@ class PlaywrightBrowserSceneFileTransferMixin:
             raise ManagedBrowserError("causal file chooser element is detached")
         if raw.get("tag") != "input" or raw.get("input_type") != "file":
             raise ManagedBrowserError("causal file chooser element is not input[type=file]")
-        count = raw.get("count")
-        size = raw.get("size")
+        count, size = raw.get("count"), raw.get("size")
         if not isinstance(count, int) or isinstance(count, bool):
             raise ManagedBrowserError("file input file count is unavailable")
         if not isinstance(size, (int, float)) or isinstance(size, bool):
@@ -516,11 +488,13 @@ class PlaywrightBrowserSceneFileTransferMixin:
     @staticmethod
     def _download_destination_path(raw: Any) -> str:
         if not isinstance(raw, str) or not raw.strip():
-            raise ManagedBrowserError("DOWNLOAD_FILE args.destination_path must be a non-empty absolute path")
+            raise ManagedBrowserError(
+                "DOWNLOAD_FILE args.destination_path must be a non-empty absolute path"
+            )
         value = raw.strip()
         if not os.path.isabs(value):
             raise ManagedBrowserError("DOWNLOAD_FILE destination_path must be absolute")
-        if any(ord(char) == 0 for char in value):
+        if "\x00" in value:
             raise ManagedBrowserError("DOWNLOAD_FILE destination_path is invalid")
         return value
 
@@ -546,28 +520,38 @@ class PlaywrightBrowserSceneFileTransferMixin:
             raise ManagedBrowserError("download destination missing-state identity is not stable")
         if bool(identity.get("exists")) or identity.get("type") != "missing":
             raise ManagedBrowserError("DOWNLOAD_FILE refuses to overwrite an existing destination")
-        path = str(identity.get("path") or "")
-        if not path or not os.path.isabs(path):
+        if not os.path.isabs(str(identity.get("path") or "")):
             raise ManagedBrowserError("download destination identity is not canonical and absolute")
 
-    @staticmethod
-    def _raw_parent_lstat(parent: Path) -> os.stat_result:
-        try:
-            info = os.lstat(parent)
-        except OSError as exc:
-            raise ManagedBrowserError(
-                f"download destination parent is unavailable: {type(exc).__name__}: {exc}"
-            ) from exc
-        if stat.S_ISLNK(info.st_mode):
-            raise ManagedBrowserError("download destination parent must not be a symlink")
-        if not stat.S_ISDIR(info.st_mode):
-            raise ManagedBrowserError("download destination parent must be an existing directory")
-        return info
+    @classmethod
+    def _assert_no_symlink_components(cls, parent: Path) -> None:
+        current = Path(parent.anchor)
+        for part in parent.parts[1:]:
+            current = current / part
+            try:
+                info = os.lstat(current)
+            except OSError as exc:
+                raise ManagedBrowserError(
+                    f"download destination parent is unavailable: {type(exc).__name__}: {exc}"
+                ) from exc
+            if stat.S_ISLNK(info.st_mode):
+                raise ManagedBrowserError("download destination parent path contains a symlink")
+            is_junction = getattr(current, "is_junction", None)
+            if callable(is_junction) and is_junction():
+                raise ManagedBrowserError("download destination parent path contains a junction")
 
     @classmethod
     def _observe_destination_parent(cls, destination: str) -> dict[str, Any]:
         parent = Path(destination).parent
-        raw_stat = cls._raw_parent_lstat(parent)
+        cls._assert_no_symlink_components(parent)
+        try:
+            raw_stat = os.lstat(parent)
+        except OSError as exc:
+            raise ManagedBrowserError(
+                f"download destination parent is unavailable: {type(exc).__name__}: {exc}"
+            ) from exc
+        if not stat.S_ISDIR(raw_stat.st_mode):
+            raise ManagedBrowserError("download destination parent must be an existing directory")
         identity = observe_file_identity(str(parent), max_hash_bytes=0)
         if not bool(identity.get("observable")) or not bool(identity.get("stable")):
             raise ManagedBrowserError("download destination parent identity is not stable")
@@ -577,14 +561,14 @@ class PlaywrightBrowserSceneFileTransferMixin:
             "path": str(identity.get("path") or ""),
             "device": int(getattr(raw_stat, "st_dev", 0)),
             "inode": int(getattr(raw_stat, "st_ino", 0)),
+            "size_bytes": int(getattr(raw_stat, "st_size", 0)),
             "mtime_ns": int(getattr(raw_stat, "st_mtime_ns", 0)),
             "ctime_ns": int(getattr(raw_stat, "st_ctime_ns", 0)),
         }
 
     @classmethod
     def _revalidate_destination_parent(cls, destination: str, previous: dict[str, Any]) -> None:
-        current = cls._observe_destination_parent(destination)
-        if current != previous:
+        if cls._observe_destination_parent(destination) != previous:
             raise ManagedBrowserError("download destination parent identity changed before commit")
 
     def _require_download_url_allowed(self, url: str, permission: BrowserPermissionContext) -> None:
@@ -595,8 +579,20 @@ class PlaywrightBrowserSceneFileTransferMixin:
         except ValueError as exc:
             raise ManagedBrowserError("causal Download URL is invalid") from exc
         if str(parsed.scheme or "").lower() not in {"http", "https"} or not parsed.hostname:
-            raise ManagedBrowserError("DOWNLOAD_FILE first slice requires an HTTP(S) download URL")
+            raise ManagedBrowserError(
+                "DOWNLOAD_FILE first slice requires an HTTP(S) download URL"
+            )
         self._require_url_allowed(url, permission)
+
+    @staticmethod
+    def _stat_marker(info: os.stat_result) -> tuple[int, int, int, int, int]:
+        return (
+            int(getattr(info, "st_dev", 0)),
+            int(getattr(info, "st_ino", 0)),
+            int(getattr(info, "st_size", 0)),
+            int(getattr(info, "st_mtime_ns", 0)),
+            int(getattr(info, "st_ctime_ns", 0)),
+        )
 
     @classmethod
     def _exclusive_copy(cls, source: str, destination: str) -> tuple[int, int, int, int, int]:
@@ -614,57 +610,37 @@ class PlaywrightBrowserSceneFileTransferMixin:
                 f"exclusive download destination create failed: {type(exc).__name__}: {exc}"
             ) from exc
 
-        owned = None
-        writer = None
+        owned: tuple[int, int, int, int, int] | None = None
         try:
-            reader = open(source, "rb")
-            writer = os.fdopen(fd, "wb", closefd=True)
-            fd = -1
-            try:
-                shutil.copyfileobj(reader, writer, length=1024 * 1024)
-                writer.flush()
-                os.fsync(writer.fileno())
-                created = os.fstat(writer.fileno())
-                owned = (
-                    int(getattr(created, "st_dev", 0)),
-                    int(getattr(created, "st_ino", 0)),
-                    int(getattr(created, "st_size", 0)),
-                    int(getattr(created, "st_mtime_ns", 0)),
-                    int(getattr(created, "st_ctime_ns", 0)),
-                )
-            finally:
-                reader.close()
-                writer.close()
+            with open(source, "rb") as reader, os.fdopen(fd, "wb", closefd=True) as writer:
+                fd = -1
+                try:
+                    while True:
+                        chunk = reader.read(_COPY_CHUNK_BYTES)
+                        if not chunk:
+                            break
+                        writer.write(chunk)
+                    writer.flush()
+                    os.fsync(writer.fileno())
+                    owned = cls._stat_marker(os.fstat(writer.fileno()))
+                except Exception:
+                    try:
+                        owned = cls._stat_marker(os.fstat(writer.fileno()))
+                    except OSError:
+                        owned = None
+                    raise
+            assert owned is not None
             return owned
         except Exception:
             if fd >= 0:
                 try:
-                    created = os.fstat(fd)
-                    owned = (
-                        int(getattr(created, "st_dev", 0)),
-                        int(getattr(created, "st_ino", 0)),
-                        int(getattr(created, "st_size", 0)),
-                        int(getattr(created, "st_mtime_ns", 0)),
-                        int(getattr(created, "st_ctime_ns", 0)),
-                    )
+                    owned = cls._stat_marker(os.fstat(fd))
                 except OSError:
                     owned = None
                 try:
                     os.close(fd)
                 except OSError:
                     pass
-            elif writer is not None:
-                try:
-                    info = os.lstat(destination)
-                    owned = (
-                        int(getattr(info, "st_dev", 0)),
-                        int(getattr(info, "st_ino", 0)),
-                        int(getattr(info, "st_size", 0)),
-                        int(getattr(info, "st_mtime_ns", 0)),
-                        int(getattr(info, "st_ctime_ns", 0)),
-                    )
-                except OSError:
-                    owned = None
             if owned is not None:
                 cls._cleanup_owned_destination(destination, None, owned)
             raise
@@ -684,20 +660,12 @@ class PlaywrightBrowserSceneFileTransferMixin:
             return False
         if not stat.S_ISREG(info.st_mode):
             return False
-        current_stat = (
-            int(getattr(info, "st_dev", 0)),
-            int(getattr(info, "st_ino", 0)),
-            int(getattr(info, "st_size", 0)),
-            int(getattr(info, "st_mtime_ns", 0)),
-            int(getattr(info, "st_ctime_ns", 0)),
-        )
-        if owned_stat is None or current_stat != owned_stat:
+        if owned_stat is None or cls._stat_marker(info) != owned_stat:
             return False
         if identity is not None:
             try:
-                current = observe_file_identity(destination)
-                comparison = compare_file_identities(identity, current)
-                if not bool(comparison.get("match")) or comparison.get("outcome") != "exact":
+                comparison = compare_file_identities(identity, observe_file_identity(destination))
+                if not bool(comparison.get("exact")):
                     return False
             except Exception:
                 return False
@@ -709,15 +677,17 @@ class PlaywrightBrowserSceneFileTransferMixin:
 
     @staticmethod
     def _cleanup_owned_temp(path: str) -> None:
+        if not path:
+            return
         try:
             os.unlink(path)
-        except FileNotFoundError:
-            pass
-        except OSError:
+        except (FileNotFoundError, OSError):
             pass
 
     @staticmethod
     def _cleanup_owned_temp_dir(path: str) -> None:
+        if not path:
+            return
         try:
             os.rmdir(path)
         except OSError:
