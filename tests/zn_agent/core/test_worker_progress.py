@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from zn_agent.core.provider_bridge import build_resident_runtime
@@ -119,7 +120,7 @@ class WorkerProgressTests(unittest.TestCase):
         aged = dict(metrics.get("supervision_progress") or {})
         aged["last_progress_at"] = "2000-01-01T00:00:00+00:00"
         metrics["supervision_progress"] = aged
-        with self.ledger._lock, self.ledger._connect() as conn:
+        with self.ledger._lock, closing(self.ledger._connect()) as conn:
             conn.execute(
                 "UPDATE worker_runs SET metrics_json=? WHERE worker_run_id=?",
                 (
