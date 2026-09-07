@@ -48,6 +48,10 @@ _ROUTE_METADATA_KEYS = (
     "location",
     "policy_tags",
     "authority_scopes",
+    # Dynamic health remains Router-owned. These values tune only the bounded
+    # circuit-breaker thresholds applied to ResidentHealthJournal evidence.
+    "health_failure_threshold",
+    "health_backoff_seconds",
 )
 
 
@@ -235,6 +239,13 @@ def apply_zn_cognitive_config(
         max_attempts=plan.max_attempts,
         resource_status={"available": plan.available, "error": plan.error},
     )
+    resolver = getattr(runtime, "resource_health_resolver", None)
+    router_setter = getattr(runtime.router, "set_health_resolver", None)
+    if resolver is not None and callable(router_setter):
+        try:
+            router_setter(resolver)
+        except Exception:
+            pass
     return plan
 
 
