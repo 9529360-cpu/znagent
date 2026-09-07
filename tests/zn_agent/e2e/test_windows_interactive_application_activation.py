@@ -18,13 +18,14 @@ class _OwnedForegroundFixture:
 
     WM_CLOSE = 0x0010
     WM_DESTROY = 0x0002
+    SW_SHOW = 5
     WS_OVERLAPPEDWINDOW = 0x00CF0000
 
     def __init__(self) -> None:
         self.hwnd = 0
         self._ready = threading.Event()
-        self._thread = None
-        self._error = None
+        self._thread: threading.Thread | None = None
+        self._error: BaseException | None = None
         self._class_name = f"ZNApplicationActivationFixture-{uuid.uuid4().hex}"
         self._wndproc = None
 
@@ -70,19 +71,62 @@ class _OwnedForegroundFixture:
             user32 = ctypes.WinDLL("user32", use_last_error=True)
             kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
             WNDPROC = ctypes.WINFUNCTYPE(
-                ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM
+                ctypes.c_ssize_t,
+                wintypes.HWND,
+                wintypes.UINT,
+                wintypes.WPARAM,
+                wintypes.LPARAM,
             )
 
             class WNDCLASSW(ctypes.Structure):
                 _fields_ = [
-                    ("style", wintypes.UINT), ("lpfnWndProc", WNDPROC),
-                    ("cbClsExtra", ctypes.c_int), ("cbWndExtra", ctypes.c_int),
-                    ("hInstance", wintypes.HINSTANCE), ("hIcon", wintypes.HANDLE),
-                    ("hCursor", wintypes.HANDLE), ("hbrBackground", wintypes.HANDLE),
-                    ("lpszMenuName", wintypes.LPCWSTR), ("lpszClassName", wintypes.LPCWSTR),
+                    ("style", wintypes.UINT),
+                    ("lpfnWndProc", WNDPROC),
+                    ("cbClsExtra", ctypes.c_int),
+                    ("cbWndExtra", ctypes.c_int),
+                    ("hInstance", wintypes.HINSTANCE),
+                    ("hIcon", wintypes.HANDLE),
+                    ("hCursor", wintypes.HANDLE),
+                    ("hbrBackground", wintypes.HANDLE),
+                    ("lpszMenuName", wintypes.LPCWSTR),
+                    ("lpszClassName", wintypes.LPCWSTR),
                 ]
 
+            user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
             user32.DefWindowProcW.restype = ctypes.c_ssize_t
+            user32.DestroyWindow.argtypes = [wintypes.HWND]
+            user32.DestroyWindow.restype = wintypes.BOOL
+            user32.PostQuitMessage.argtypes = [ctypes.c_int]
+            user32.RegisterClassW.argtypes = [ctypes.POINTER(WNDCLASSW)]
+            user32.RegisterClassW.restype = wintypes.WORD
+            user32.CreateWindowExW.argtypes = [
+                wintypes.DWORD,
+                wintypes.LPCWSTR,
+                wintypes.LPCWSTR,
+                wintypes.DWORD,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                wintypes.HWND,
+                wintypes.HANDLE,
+                wintypes.HINSTANCE,
+                wintypes.LPVOID,
+            ]
+            user32.CreateWindowExW.restype = wintypes.HWND
+            user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+            user32.ShowWindow.restype = wintypes.BOOL
+            user32.UpdateWindow.argtypes = [wintypes.HWND]
+            user32.UpdateWindow.restype = wintypes.BOOL
+            user32.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT]
+            user32.GetMessageW.restype = wintypes.BOOL
+            user32.TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
+            user32.TranslateMessage.restype = wintypes.BOOL
+            user32.DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
+            user32.DispatchMessageW.restype = ctypes.c_ssize_t
+            user32.UnregisterClassW.argtypes = [wintypes.LPCWSTR, wintypes.HINSTANCE]
+            user32.UnregisterClassW.restype = wintypes.BOOL
+            kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
             kernel32.GetModuleHandleW.restype = wintypes.HMODULE
 
             @WNDPROC
@@ -104,16 +148,24 @@ class _OwnedForegroundFixture:
             if not user32.RegisterClassW(ctypes.byref(window_class)):
                 raise ctypes.WinError(ctypes.get_last_error())
             try:
-                user32.CreateWindowExW.restype = wintypes.HWND
                 hwnd = user32.CreateWindowExW(
-                    0, self._class_name, "ZN Application Activation Fixture",
-                    self.WS_OVERLAPPEDWINDOW, 40, 40, 360, 180,
-                    None, None, instance, None,
+                    0,
+                    self._class_name,
+                    "ZN Application Activation Fixture",
+                    self.WS_OVERLAPPEDWINDOW,
+                    40,
+                    40,
+                    360,
+                    180,
+                    None,
+                    None,
+                    instance,
+                    None,
                 )
                 if not hwnd:
                     raise ctypes.WinError(ctypes.get_last_error())
                 self.hwnd = int(hwnd)
-                user32.ShowWindow(hwnd, 5)
+                user32.ShowWindow(hwnd, self.SW_SHOW)
                 user32.UpdateWindow(hwnd)
                 self._ready.set()
                 message = wintypes.MSG()
@@ -138,6 +190,12 @@ class WindowsInteractiveApplicationActivationE2ETests(unittest.TestCase):
         if os.name != "nt":
             raise unittest.SkipTest("Windows application activation E2E runs only on Windows")
         user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.OpenInputDesktop.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        user32.OpenInputDesktop.restype = wintypes.HANDLE
+        user32.SwitchDesktop.argtypes = [wintypes.HANDLE]
+        user32.SwitchDesktop.restype = wintypes.BOOL
+        user32.CloseDesktop.argtypes = [wintypes.HANDLE]
+        user32.CloseDesktop.restype = wintypes.BOOL
         desktop = user32.OpenInputDesktop(0, False, 0x0001 | 0x0080 | 0x0100)
         if not desktop:
             raise AssertionError("zn-interactive runner cannot open the Windows input desktop")
@@ -159,12 +217,29 @@ class WindowsInteractiveApplicationActivationE2ETests(unittest.TestCase):
     @staticmethod
     def _foreground_hwnd() -> int:
         user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.GetForegroundWindow.argtypes = []
         user32.GetForegroundWindow.restype = wintypes.HWND
         return int(user32.GetForegroundWindow() or 0)
 
     @staticmethod
-    def _close_created_windows(windows, created_pids: set[int]) -> None:
+    def _restore_foreground_once(hwnd: int) -> None:
+        if not hwnd:
+            return
         user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.IsWindow.argtypes = [wintypes.HWND]
+        user32.IsWindow.restype = wintypes.BOOL
+        user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+        user32.SetForegroundWindow.restype = wintypes.BOOL
+        if user32.IsWindow(int(hwnd)):
+            user32.SetForegroundWindow(int(hwnd))
+
+    @staticmethod
+    def _close_created_windows(windows, created_pids: set[int]) -> None:
+        if not created_pids:
+            return
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        user32.PostMessageW.restype = wintypes.BOOL
         for window in windows:
             if int(window.process_id) in created_pids:
                 user32.PostMessageW(int(window.hwnd), 0x0010, 0, 0)
@@ -253,7 +328,7 @@ class WindowsInteractiveApplicationActivationE2ETests(unittest.TestCase):
                     + "; ".join(diagnostics),
                 )
                 assert selected is not None and selected_window is not None
-                before_second_processes, before_second_windows = graph.application_runtime(selected)
+                before_second_processes, _ = graph.application_runtime(selected)
                 first_pids = {row.process_id for row in before_second_processes}
                 exact_hwnd = int(selected_window.hwnd)
                 exact_pid = int(selected_window.process_id)
@@ -308,8 +383,7 @@ class WindowsInteractiveApplicationActivationE2ETests(unittest.TestCase):
                     _, windows = resident.device_capabilities.application_runtime(selected)
                     self._close_created_windows(windows, created_pids)
                     time.sleep(0.20)
-                if original_foreground:
-                    ctypes.WinDLL("user32", use_last_error=True).SetForegroundWindow(original_foreground)
+                self._restore_foreground_once(original_foreground)
                 resident.store.close()
 
 
