@@ -30,6 +30,7 @@ class BrowserActionKind(str, Enum):
     CLICK = "click"
     FOCUS = "focus"
     TYPE_TEXT = "type_text"
+    CLEAR = "clear"
     PRESS = "press"
     SELECT_OPTION = "select_option"
     CHECK = "check"
@@ -155,7 +156,7 @@ class BrowserPermissionContext:
     def allows_action(self, kind: BrowserActionKind) -> bool:
         if kind in _NAVIGATION_ACTIONS:
             return bool(self.allow_navigation)
-        if kind is BrowserActionKind.TYPE_TEXT:
+        if kind in {BrowserActionKind.TYPE_TEXT, BrowserActionKind.CLEAR}:
             return bool(self.allow_page_interaction and self.allow_text_entry)
         if kind in _PAGE_INTERACTION_ACTIONS:
             return bool(self.allow_page_interaction)
