@@ -8,11 +8,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from zn_agent.core.cognitive_factory import resolve_zn_cognitive_route
 from zn_agent.core.config import load_zn_config
 from zn_agent.core.models import ModelRoute, WorkerResult
 from zn_agent.core.provider_bridge import build_resident_runtime, build_zn_cognitive_resource_plan
 from zn_agent.core.recovery_bounded_work import RecoveryBoundedWorkLedger
-from zn_agent.core.router import NoRouteAvailable
+from zn_agent.core.router import ModelRouter, NoRouteAvailable
 from zn_agent.core.runtime import ZNKernelRuntime
 from zn_agent.core.store import KernelStore
 from zn_agent.core.work_restore_control import RestoreAwareWorkControl
@@ -39,15 +40,20 @@ def _copy_route(route: ModelRoute, *, capabilities: dict[str, float], reliabilit
     )
 
 
+def _provider_family(route: ModelRoute) -> str:
+    return resolve_zn_cognitive_route(route).provider.strip().lower()
+
+
 def _two_distinct_provider_routes(routes: list[ModelRoute]) -> tuple[ModelRoute, ModelRoute] | None:
     usable = [
         route
         for route in routes
         if route.provider != "none" and str(route.provider).strip() and str(route.model).strip()
     ]
+    families = {route.route_id: _provider_family(route) for route in usable}
     for index, first in enumerate(usable):
         for second in usable[index + 1 :]:
-            if first.provider.strip().lower() != second.provider.strip().lower():
+            if families[first.route_id] != families[second.route_id]:
                 return first, second
     return None
 
@@ -123,7 +129,7 @@ class E2E30And42RealMultiRoutePolicyTests(unittest.TestCase):
         pair = _two_distinct_provider_routes(plan.routes)
         self.assertIsNotNone(
             pair,
-            "E2E-30/42 requires at least two actually configured routes from distinct real providers",
+            "E2E-30/42 requires at least two actually configured routes from distinct real provider families",
         )
         assert pair is not None
         return config, plan, pair
@@ -271,11 +277,13 @@ class E2E30And42RealMultiRoutePolicyTests(unittest.TestCase):
                             "research": {
                                 "route_id": research_route.route_id,
                                 "provider": research_route.provider,
+                                "provider_family": _provider_family(research_route),
                                 "model": research_route.model,
                             },
                             "coding": {
                                 "route_id": coding_route.route_id,
                                 "provider": coding_route.provider,
+                                "provider_family": _provider_family(coding_route),
                                 "model": coding_route.model,
                             },
                         },
@@ -417,7 +425,7 @@ class E2E30And42RealMultiRoutePolicyTests(unittest.TestCase):
 
     def test_local_only_work_fails_closed_before_cloud_provider_construction(self) -> None:
         config, plan, pair = self._plan_and_pair()
-        cloud = [route for route in pair if not bool(route.metadata.get("local"))]
+        cloud = [route for route in pair if not ModelRouter._is_explicit_local_route(route)]
         self.assertTrue(cloud, "E2E-42 locality fail-closed needs at least one configured cloud route")
         routes = [
             _copy_route(
