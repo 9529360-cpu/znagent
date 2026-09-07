@@ -10,6 +10,7 @@ from .browser_scene_controls import PlaywrightBrowserSceneControlMixin
 from .browser_scene_dialog import PlaywrightBrowserSceneDialogMixin
 from .browser_scene_file_transfer import PlaywrightBrowserSceneFileTransferMixin
 from .browser_scene_js_dialog import PlaywrightBrowserSceneJsDialogMixin
+from .browser_scene_keypress import PlaywrightBrowserSceneKeypressMixin
 from .browser_scene_pointer import PlaywrightBrowserScenePointerMixin
 from .browser_scene_select import PlaywrightBrowserSceneSelectMixin
 from .browser_scene_table import PlaywrightBrowserSceneTableMixin
@@ -23,6 +24,7 @@ _ENTER_ROLES = frozenset({"textbox", "searchbox"})
 
 
 class PlaywrightBrowserSceneClearPressMixin(
+    PlaywrightBrowserSceneKeypressMixin,
     PlaywrightBrowserSceneVisualFallbackMixin,
     PlaywrightBrowserSceneFileTransferMixin,
     PlaywrightBrowserSceneJsDialogMixin,
@@ -61,10 +63,15 @@ class PlaywrightBrowserSceneClearPressMixin(
 
     @staticmethod
     def _is_scene_clear_press(action: BrowserAction) -> bool:
+        if action.target is None:
+            return False
+        if not str(action.target.selector_hint or "").startswith(_SCENE_SELECTOR_PREFIX):
+            return False
+        if action.kind is BrowserActionKind.CLEAR:
+            return True
         return bool(
-            action.kind in {BrowserActionKind.CLEAR, BrowserActionKind.PRESS}
-            and action.target is not None
-            and str(action.target.selector_hint or "").startswith(_SCENE_SELECTOR_PREFIX)
+            action.kind is BrowserActionKind.PRESS
+            and str(action.args.get("key") or "").strip() == "Enter"
         )
 
     def _scene_clear(
@@ -129,9 +136,7 @@ class PlaywrightBrowserSceneClearPressMixin(
             )
         key = str(action.args.get("key") or "").strip()
         if key != "Enter":
-            raise ManagedBrowserError(
-                "BrowserScene press first slice only accepts the exact Enter key"
-            )
+            raise ManagedBrowserError("BrowserScene Enter dispatch requires exact Enter key")
         if not authority.permission.allow_navigation:
             raise ManagedBrowserError(
                 "BrowserScene Enter navigation requires navigation permission"
