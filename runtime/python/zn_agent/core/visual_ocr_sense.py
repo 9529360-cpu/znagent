@@ -67,6 +67,7 @@ class VisualOcrObservation:
 
 
 OcrProviderFn = Callable[[bytes], LocalOcrProviderResult]
+OcrCaptureFn = Callable[[float, float, float, float], tuple[bytes, int, int, int, int, int, int]]
 
 
 class WindowsLocalOcrSense:
@@ -75,8 +76,14 @@ class WindowsLocalOcrSense:
     _DEFAULT_WIDTH_FRACTION = 0.25
     _DEFAULT_HEIGHT_FRACTION = 0.20
 
-    def __init__(self, *, provider_fn: OcrProviderFn | None = None):
+    def __init__(
+        self,
+        *,
+        provider_fn: OcrProviderFn | None = None,
+        capture_fn: OcrCaptureFn | None = None,
+    ):
         self.provider_fn = provider_fn or self._recognize_png_winrt
+        self.capture_fn = capture_fn or self._capture_region_png
 
     def probe(
         self,
@@ -102,14 +109,25 @@ class WindowsLocalOcrSense:
             height_fraction,
             "height_fraction",
         )
-        png_bytes, screen_width, screen_height, left, top, right, bottom = (
-            self._capture_region_png(
-                center_x_fraction=center_x,
-                center_y_fraction=center_y,
-                width_fraction=width,
-                height_fraction=height,
-            )
-        )
+        capture = self.capture_fn(center_x, center_y, width, height)
+        if not isinstance(capture, tuple) or len(capture) != 7:
+            raise TypeError("local OCR capture must return 7-tuple region evidence")
+        png_bytes, screen_width, screen_height, left, top, right, bottom = capture
+        if not isinstance(png_bytes, bytes) or not png_bytes:
+            raise ValueError("local OCR capture returned empty image bytes")
+        screen_width = int(screen_width)
+        screen_height = int(screen_height)
+        left = int(left)
+        top = int(top)
+        right = int(right)
+        bottom = int(bottom)
+        if screen_width <= 0 or screen_height <= 0:
+            raise ValueError("local OCR capture returned invalid screen dimensions")
+        if left < 0 or top < 0 or right > screen_width or bottom > screen_height:
+            raise ValueError("local OCR capture returned out-of-bounds region")
+        if right <= left or bottom <= top:
+            raise ValueError("local OCR capture returned empty region")
+
         captured_at = utc_now()
         try:
             result = self.provider_fn(png_bytes)
@@ -180,7 +198,6 @@ class WindowsLocalOcrSense:
     @classmethod
     def _capture_region_png(
         cls,
-        *,
         center_x_fraction: float,
         center_y_fraction: float,
         width_fraction: float,
@@ -203,9 +220,13 @@ class WindowsLocalOcrSense:
             )
             cropped = captured.crop((left, top, right, bottom))
             try:
-                buffer = io.BytesIO()
-                cropped.convert("RGB").save(buffer, format="PNG")
-                payload = buffer.getvalue()
+                rgb = cropped.convert("RGB")
+                try:
+                    buffer = io.BytesIO()
+                    rgb.save(buffer, format="PNG")
+                    payload = buffer.getvalue()
+                finally:
+                    rgb.close()
             finally:
                 cropped.close()
         finally:
