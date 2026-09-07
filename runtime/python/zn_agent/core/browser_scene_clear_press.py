@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .browser import BrowserAction, BrowserActionAuthority, BrowserActionKind, BrowserEffectEvidence
+from .browser_scene_controls import PlaywrightBrowserSceneControlMixin
 from .browser_scene_pointer import PlaywrightBrowserScenePointerMixin
 from .browser_scene_select import PlaywrightBrowserSceneSelectMixin
 from .browser_scene_table import PlaywrightBrowserSceneTableMixin
@@ -17,6 +18,7 @@ _ENTER_ROLES = frozenset({"textbox", "searchbox"})
 
 
 class PlaywrightBrowserSceneClearPressMixin(
+    PlaywrightBrowserSceneControlMixin,
     PlaywrightBrowserScenePointerMixin,
     PlaywrightBrowserSceneTableMixin,
     PlaywrightBrowserSceneSelectMixin,
