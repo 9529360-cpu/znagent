@@ -125,8 +125,13 @@ def merge_route_policy(base: object, overlay: object) -> dict[str, Any]:
     This helper owns neither route selection nor authorization. It reuses the
     ModelRouter syntax boundary before durable WorkThread persistence so a
     structurally-valid mapping with invalid field values cannot poison the
-    thread across restart. Non-object explicit values are still preserved by
-    callers and rejected fail-closed when ModelRouter reads the cognition goal.
+    thread across restart.
+
+    Provider allowlists are replacement semantics, not additive history. When a
+    newer explicit provider allowlist omits ``allow_local``, any older local
+    exception is removed; otherwise a user changing "local + GPT only" to
+    "GPT only" would silently leave local routes eligible. Denials and unrelated
+    policy dimensions continue to merge conservatively.
     """
 
     if base is None:
@@ -143,6 +148,8 @@ def merge_route_policy(base: object, overlay: object) -> dict[str, Any]:
         raise ValueError("explicit Work route_policy must be an object")
 
     merged = dict(base_map)
+    if "allowed_providers" in overlay and "allow_local" not in overlay:
+        merged.pop("allow_local", None)
     merged.update(overlay)
     ModelRouter.validate_route_policy(merged)
     return merged
