@@ -205,7 +205,7 @@ class ManagedBrowserSceneActionsWindowsE2E(unittest.TestCase):
             fresh_scene = browser.observe_scene(identity.session_id, page_id=page_id)
             replacement = self._target(fresh_scene, "Dynamic focus", role="button")
             self.assertEqual(replacement.accessible_name, dynamic.accessible_name)
-            self.assertNotEqual(replacement.observed_at, dynamic.observed_at)
+            self.assertNotEqual(fresh_scene.scene_id, scene.scene_id)
         finally:
             browser.close_session(identity.session_id)
 
