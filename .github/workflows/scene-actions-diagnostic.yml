@@ -39,16 +39,21 @@ jobs:
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\scene-actions-diag\Scripts\python.exe'
           $log = Join-Path $env:GITHUB_WORKSPACE '.ci\scene-actions-diagnostic.log'
-          "python=$python" | Out-File -FilePath $log -Encoding utf8
-          & $python -V *>> $log
-          "version_code=$LASTEXITCODE" | Out-File -FilePath $log -Append -Encoding utf8
-          & $python -c "import zn_agent.core.semantic_managed_browser; print('import-ok')" *>> $log
-          "import_code=$LASTEXITCODE" | Out-File -FilePath $log -Append -Encoding utf8
-          & $python -m unittest tests.zn_agent.core.test_browser_scene_actions -v *>> $log
-          $code = $LASTEXITCODE
-          "test_code=$code" | Out-File -FilePath $log -Append -Encoding utf8
-          Get-Content $log | ForEach-Object { Write-Host $_ }
-          if ($code -ne 0) { exit $code }
+          @'
+          import sys
+          import traceback
+          import unittest
+          try:
+              suite = unittest.defaultTestLoader.loadTestsFromName("tests.zn_agent.core.test_browser_scene_actions")
+              result = unittest.TextTestRunner(stream=sys.stdout, verbosity=2).run(suite)
+              raise SystemExit(0 if result.wasSuccessful() else 1)
+          except SystemExit:
+              raise
+          except BaseException:
+              traceback.print_exc(file=sys.stdout)
+              raise SystemExit(2)
+          '@ | & $python - | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload focused transcript
         if: always()
         uses: actions/upload-artifact@v4
