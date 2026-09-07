@@ -10,6 +10,7 @@ on:
       - runtime/python/zn_agent/resident.py
       - runtime/python/zn_agent/core/action.py
       - runtime/python/zn_agent/core/browser.py
+      - runtime/python/zn_agent/core/browser_tab_navigation.py
       - runtime/python/zn_agent/core/browser_form_submit_body.py
       - runtime/python/zn_agent/core/browser_form_submit_resident.py
       - runtime/python/zn_agent/core/browser_named_text_work_resident.py
@@ -31,6 +32,7 @@ on:
       - runtime/python/zn_agent/core/side_effect_body.py
       - runtime/python/zn_agent/core/url_safety.py
       - tests/zn_agent/core/test_browser_contract.py
+      - tests/zn_agent/core/test_browser_tab_navigation.py
       - tests/zn_agent/core/test_browser_work_button_recovery.py
       - tests/zn_agent/core/test_browser_work_form_submit.py
       - tests/zn_agent/core/test_browser_work_form_submit_recovery.py
@@ -56,6 +58,7 @@ on:
       - tests/zn_agent/e2e/test_windows_managed_browser_pages.py
       - tests/zn_agent/e2e/test_windows_managed_browser_select.py
       - tests/zn_agent/e2e/test_windows_managed_browser_resident_rpc.py
+      - tests/zn_agent/e2e/test_windows_managed_browser_tab_navigation.py
       - tests/zn_agent/e2e/test_windows_managed_browser_work.py
   push:
     branches:
@@ -66,6 +69,7 @@ on:
       - runtime/python/zn_agent/resident.py
       - runtime/python/zn_agent/core/action.py
       - runtime/python/zn_agent/core/browser.py
+      - runtime/python/zn_agent/core/browser_tab_navigation.py
       - runtime/python/zn_agent/core/browser_form_submit_body.py
       - runtime/python/zn_agent/core/browser_form_submit_resident.py
       - runtime/python/zn_agent/core/browser_named_text_work_resident.py
@@ -87,6 +91,7 @@ on:
       - runtime/python/zn_agent/core/side_effect_body.py
       - runtime/python/zn_agent/core/url_safety.py
       - tests/zn_agent/core/test_browser_contract.py
+      - tests/zn_agent/core/test_browser_tab_navigation.py
       - tests/zn_agent/core/test_browser_work_button_recovery.py
       - tests/zn_agent/core/test_browser_work_form_submit.py
       - tests/zn_agent/core/test_browser_work_form_submit_recovery.py
@@ -112,6 +117,7 @@ on:
       - tests/zn_agent/e2e/test_windows_managed_browser_pages.py
       - tests/zn_agent/e2e/test_windows_managed_browser_select.py
       - tests/zn_agent/e2e/test_windows_managed_browser_resident_rpc.py
+      - tests/zn_agent/e2e/test_windows_managed_browser_tab_navigation.py
       - tests/zn_agent/e2e/test_windows_managed_browser_work.py
   workflow_dispatch:
 
