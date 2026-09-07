@@ -33,6 +33,8 @@ class BrowserActionKind(str, Enum):
     CLEAR = "clear"
     PRESS = "press"
     SELECT_OPTION = "select_option"
+    SCROLL_INTO_VIEW = "scroll_into_view"
+    HOVER = "hover"
     CHECK = "check"
     UNCHECK = "uncheck"
     WAIT = "wait"
@@ -73,6 +75,8 @@ _PAGE_INTERACTION_ACTIONS = frozenset(
         BrowserActionKind.FOCUS,
         BrowserActionKind.PRESS,
         BrowserActionKind.SELECT_OPTION,
+        BrowserActionKind.SCROLL_INTO_VIEW,
+        BrowserActionKind.HOVER,
         BrowserActionKind.CHECK,
         BrowserActionKind.UNCHECK,
     }
