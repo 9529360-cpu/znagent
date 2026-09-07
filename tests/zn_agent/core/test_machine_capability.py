@@ -4,7 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from zn_agent.core.machine_capability import ApplicationInventoryCandidate, DeviceCapabilityGraph
+from zn_agent.core.device_capability_graph import DeviceCapabilityGraph
+from zn_agent.core.machine_capability import ApplicationInventoryCandidate
 
 
 class MachineCapabilityTests(unittest.TestCase):
@@ -72,6 +73,34 @@ class MachineCapabilityTests(unittest.TestCase):
             self.assertEqual(len(result.candidates), 2)
             self.assertNotEqual(result.candidates[0].app_id, result.candidates[1].app_id)
 
+    def test_prefix_collision_stays_ambiguous(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            visual_studio = root / "VisualStudio" / "devenv.exe"
+            vscode = root / "VSCode" / "code.exe"
+            visual_studio.parent.mkdir(parents=True)
+            vscode.parent.mkdir(parents=True)
+            visual_studio.write_bytes(b"")
+            vscode.write_bytes(b"")
+            graph = DeviceCapabilityGraph(
+                inventory_provider=lambda: [
+                    ApplicationInventoryCandidate(
+                        source="app_paths", source_id="vs", display_name="Visual Studio",
+                        executable_path=str(visual_studio), identity_paths=(str(visual_studio),),
+                        launch_kind="executable", launch_target=str(visual_studio),
+                    ),
+                    ApplicationInventoryCandidate(
+                        source="app_paths", source_id="vscode", display_name="Visual Studio Code",
+                        executable_path=str(vscode), identity_paths=(str(vscode),),
+                        launch_kind="executable", launch_target=str(vscode),
+                    ),
+                ],
+                cache_path=root / "cache.json", inventory_ttl_seconds=0,
+            )
+            result = graph.resolve_application("Visual Studio", force_refresh=True)
+            self.assertEqual(result.status, "ambiguous")
+            self.assertEqual({item.canonical_name for item in result.candidates}, {"Visual Studio", "Visual Studio Code"})
+
     def test_known_alias_never_invents_executable_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             executable = Path(tmp) / "WeChat.exe"
@@ -91,14 +120,31 @@ class MachineCapabilityTests(unittest.TestCase):
             self.assertEqual(result.application.executable_path, str(executable))
             self.assertIn("messaging", result.application.capabilities)
 
-    def test_unknown_application_is_not_installed(self) -> None:
+    def test_long_unknown_application_is_not_installed(self) -> None:
         graph = DeviceCapabilityGraph(
             inventory_provider=lambda: [], cache_path=None, inventory_ttl_seconds=0
         )
-        result = graph.resolve_application("Definitely Missing ZN App", force_refresh=True)
+        result = graph.resolve_application("ZN Definitely Missing Application 7f4f42d7", force_refresh=True)
         self.assertEqual(result.status, "not_installed")
         self.assertIsNone(result.application)
         self.assertEqual(result.candidates, ())
+
+    def test_long_unknown_suffix_does_not_inherit_short_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            executable = Path(tmp) / "notepad.exe"
+            executable.write_bytes(b"")
+            graph = DeviceCapabilityGraph(
+                inventory_provider=lambda: [
+                    ApplicationInventoryCandidate(
+                        source="app_paths", source_id="notepad", display_name="Notepad",
+                        executable_path=str(executable), identity_paths=(str(executable),),
+                        launch_kind="executable", launch_target=str(executable),
+                    )
+                ],
+                cache_path=Path(tmp) / "cache.json", inventory_ttl_seconds=0,
+            )
+            result = graph.resolve_application("Notepad Definitely Missing Edition", force_refresh=True)
+            self.assertEqual(result.status, "not_installed")
 
     def test_installed_running_and_foreground_are_distinct_fresh_facts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
