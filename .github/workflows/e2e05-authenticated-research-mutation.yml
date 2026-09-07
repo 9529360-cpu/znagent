@@ -72,6 +72,7 @@ jobs:
           from pathlib import Path
 
           test_path = Path("tests/zn_agent/e2e/test_e2e05_authenticated_research_note_mutation.py").resolve()
+          sys.path.insert(0, str(test_path.parent))
           spec = importlib.util.spec_from_file_location("zn_e2e05_auth_mutation", test_path)
           if spec is None or spec.loader is None:
               raise SystemExit("unable to load E2E-05 test module")
