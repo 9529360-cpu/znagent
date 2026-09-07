@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .browser import BrowserAction, BrowserActionAuthority, BrowserActionKind, BrowserEffectEvidence
+from .browser_scene_select import PlaywrightBrowserSceneSelectMixin
 from .managed_browser import ManagedBrowserError
 
 
@@ -13,7 +14,7 @@ _CLEAR_ROLES = frozenset({"textbox", "searchbox", "textarea"})
 _ENTER_ROLES = frozenset({"textbox", "searchbox"})
 
 
-class PlaywrightBrowserSceneClearPressMixin:
+class PlaywrightBrowserSceneClearPressMixin(PlaywrightBrowserSceneSelectMixin):
     """Add conservative text clearing and Enter navigation to scene targets."""
 
     def act(
