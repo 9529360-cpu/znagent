@@ -9,6 +9,7 @@ from typing import Any
 
 from .models import AgentEvent, EventStatus, utc_now
 from .recovery_control import raise_if_synchronous_recovery_blocked
+from .route_policy_intake import bind_work_event_route_policy
 from .work import (
     ResidentWorkLedger,
     WorkMessage,
@@ -287,6 +288,18 @@ class RecoveryBoundedWorkLedger(ResidentWorkLedger):
             event_payload["workspace_path"] = workspace.path
             event_payload["workdir"] = workspace.path
             event_payload["workspace_name"] = workspace.name
+
+        # Privacy/provider policy is Work continuity truth. Bind it before the
+        # checkpoint can recreate/enqueue this ResidentEvent so every later
+        # cognition path sees the same durable policy, including semantic
+        # understanding calls that occur before broad Root acceptance.
+        thread = self.get_thread(thread.thread_id) or thread
+        bind_work_event_route_policy(
+            self,
+            thread,
+            task=normalized_task,
+            event_payload=event_payload,
+        )
 
         self._save_ingress_checkpoint(
             event_id=event_id,

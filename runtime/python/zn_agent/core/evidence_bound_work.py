@@ -30,6 +30,7 @@ class WorkerRun:
     executor_kind: str
     model_goal_id: str
     model_route_id: str | None
+    provider: str | None
     tool_scope: tuple[str, ...]
     authority_scope: tuple[str, ...]
     state: str
@@ -102,6 +103,7 @@ class EvidenceBoundSteerableWorkLedger(SteerableWorkLedger):
                     executor_kind TEXT NOT NULL,
                     model_goal_id TEXT NOT NULL,
                     model_route_id TEXT,
+                    provider TEXT,
                     tool_scope_json TEXT NOT NULL,
                     authority_scope_json TEXT NOT NULL,
                     state TEXT NOT NULL,
@@ -123,6 +125,12 @@ class EvidenceBoundSteerableWorkLedger(SteerableWorkLedger):
                     ON worker_runs(model_goal_id);
                 """
             )
+            columns = {
+                str(row["name"])
+                for row in conn.execute("PRAGMA table_info(worker_runs)")
+            }
+            if "provider" not in columns:
+                conn.execute("ALTER TABLE worker_runs ADD COLUMN provider TEXT")
             conn.commit()
 
     @staticmethod
@@ -175,6 +183,7 @@ class EvidenceBoundSteerableWorkLedger(SteerableWorkLedger):
             executor_kind=str(row["executor_kind"]),
             model_goal_id=str(row["model_goal_id"]),
             model_route_id=(str(row["model_route_id"]) if row["model_route_id"] else None),
+            provider=(str(row["provider"]) if row["provider"] else None),
             tool_scope=tool_scope,
             authority_scope=authority_scope,
             state=str(row["state"]),
@@ -320,10 +329,10 @@ class EvidenceBoundSteerableWorkLedger(SteerableWorkLedger):
                 """
                 INSERT INTO worker_runs(
                     worker_run_id,work_item_id,plan_version,executor_kind,model_goal_id,
-                    model_route_id,tool_scope_json,authority_scope_json,state,started_at,
+                    model_route_id,provider,tool_scope_json,authority_scope_json,state,started_at,
                     finished_at,result_summary,artifact_refs_json,claimed_completion,
                     verification_status,error,metrics_json
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     worker_run_id,
@@ -331,6 +340,7 @@ class EvidenceBoundSteerableWorkLedger(SteerableWorkLedger):
                     current_version,
                     kind,
                     model_goal_id,
+                    None,
                     None,
                     json.dumps(tools, ensure_ascii=False, separators=(",", ":")),
                     json.dumps(authority, ensure_ascii=False, separators=(",", ":")),
@@ -388,6 +398,30 @@ class EvidenceBoundSteerableWorkLedger(SteerableWorkLedger):
             rows = conn.execute(sql, params).fetchall()
         return [self._worker_from_row(row) for row in rows]
 
+    def _provider_for_worker_route(self, run: WorkerRun, route_id: str | None) -> str | None:
+        """Resolve provider only from Kernel's durable final route snapshot.
+
+        WorkerRun owns the audit copy, while Kernel remains the provider-dispatch
+        truth. Synthetic ledger tests and pre-dispatch/stale runs can legitimately
+        have no completed Kernel goal yet; real provider-dispatched terminal runs
+        resolve and persist the provider here without guessing from route names.
+        """
+
+        if route_id is None:
+            return None
+        kernel = getattr(self.resident, "kernel", None)
+        load = getattr(kernel, "load_goal_result", None)
+        if not callable(load):
+            return None
+        result = load(run.model_goal_id)
+        if result is None:
+            return None
+        durable_route_id = str(result.route.route_id or "").strip()
+        if durable_route_id and durable_route_id != route_id:
+            raise RuntimeError("WorkerRun model route disagrees with Kernel durable route trace")
+        provider = str(result.route.provider or "").strip()
+        return provider or None
+
     def _finish_worker_run(
         self,
         worker_run_id: str,
@@ -423,6 +457,7 @@ class EvidenceBoundSteerableWorkLedger(SteerableWorkLedger):
         if run.state not in {"queued", "running"}:
             raise ValueError(f"WorkerRun has invalid state {run.state!r}")
         route_id = str(model_route_id or "").strip() or None
+        provider = self._provider_for_worker_route(run, route_id)
         refs = [dict(value) for value in (artifact_refs or []) if isinstance(value, dict)][:32]
         metric_values = dict(metrics or {})
         now = utc_now()
@@ -433,12 +468,13 @@ class EvidenceBoundSteerableWorkLedger(SteerableWorkLedger):
             updated = conn.execute(
                 """
                 UPDATE worker_runs SET
-                    model_route_id=?,state=?,finished_at=?,result_summary=?,artifact_refs_json=?,
+                    model_route_id=?,provider=?,state=?,finished_at=?,result_summary=?,artifact_refs_json=?,
                     claimed_completion=?,verification_status=?,error=?,metrics_json=?
                 WHERE worker_run_id=? AND state IN ('queued','running')
                 """,
                 (
                     route_id,
+                    provider,
                     final_state,
                     now,
                     str(result_summary or "").strip()[:12000] or None,

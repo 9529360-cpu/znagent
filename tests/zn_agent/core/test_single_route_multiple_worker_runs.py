@@ -33,7 +33,8 @@ class SingleRouteMultipleWorkerRunsTests(unittest.TestCase):
             root_dir = Path(tmp)
             workspace = root_dir / "workspace"
             workspace.mkdir()
-            resident = build_resident_runtime(config={"model": {}}, store_path=root_dir / "kernel.db")
+            db = root_dir / "kernel.db"
+            resident = build_resident_runtime(config={"model": {}}, store_path=db)
             try:
                 factory = _Factory()
                 resident.kernel.reconfigure_resources(
@@ -100,10 +101,27 @@ class SingleRouteMultipleWorkerRunsTests(unittest.TestCase):
                 self.assertEqual(len({run.worker_run_id for run in runs}), 3)
                 self.assertEqual(len({run.model_goal_id for run in runs}), 3)
                 self.assertEqual({run.model_route_id for run in runs}, {"single-external-route"})
+                self.assertEqual({run.provider for run in runs}, {"fixture"})
                 self.assertGreater(len(runs), len({run.model_route_id for run in runs}))
                 self.assertEqual(factory.calls, 3)
+                worker_ids = [run.worker_run_id for run in runs]
             finally:
                 resident.store.close()
+
+            restarted = build_resident_runtime(config={"model": {}}, store_path=db)
+            try:
+                persisted = [restarted.work_ledger.worker_run(worker_id) for worker_id in worker_ids]
+                self.assertTrue(all(run is not None for run in persisted))
+                self.assertEqual(
+                    {run.provider for run in persisted if run is not None},
+                    {"fixture"},
+                )
+                self.assertEqual(
+                    {run.model_route_id for run in persisted if run is not None},
+                    {"single-external-route"},
+                )
+            finally:
+                restarted.store.close()
 
 
 if __name__ == "__main__":

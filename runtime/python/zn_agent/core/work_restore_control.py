@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .evidence_bound_work import EvidenceBoundSteerableWorkLedger
+from .route_policy_intake import bind_work_event_route_policy
 from .steerable_work import SteerableWorkLedger
 from .work import WorkMessage
 from .work_control import ResidentWorkControl
@@ -204,6 +205,25 @@ class RestoreAwareWorkControl(ResidentWorkControl):
             followup,
             limit=_CONTEXT_FOLLOWUP_LIMIT,
         )
+        payload = dict(raw_payload or {})
+
+        # Steering creates the next ResidentEvent through the plan transition
+        # path rather than ordinary Work.start(). Preserve the same Work-owned
+        # privacy boundary before that event can be materialized: first reject
+        # an already-unsteerable live state, then validate/merge durable thread
+        # policy and copy it into the exact next-event payload. The ledger still
+        # repeats its own state check and owns the atomic plan transition.
+        self.ledger._assert_steerable_resident_state(active.event_id)
+        durable_thread = self.ledger.get_thread(thread.thread_id)
+        if durable_thread is None:
+            raise RuntimeError("active Work steering lost its durable WorkThread")
+        bind_work_event_route_policy(
+            self.ledger,
+            durable_thread,
+            task=task,
+            event_payload=payload,
+        )
+
         snapshot, event = self.ledger.steer_active(
             thread.thread_id,
             active.event_id,
@@ -212,7 +232,7 @@ class RestoreAwareWorkControl(ResidentWorkControl):
             reference=reference,
             kind=kind,
             priority=priority,
-            payload=dict(raw_payload or {}),
+            payload=payload,
         )
         normalized_ingress = self.ledger._normalize_thread_id(ingress_thread_id)
         if normalized_ingress != thread.thread_id:

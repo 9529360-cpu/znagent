@@ -62,7 +62,7 @@ class ModelRouter:
             return sentinel
 
         policy = self._route_policy(goal)
-        self._validate_route_policy(policy)
+        self.validate_route_policy(policy)
         candidates: list[ModelRoute] = []
         rejection_reasons: dict[str, tuple[str, ...]] = {}
 
@@ -263,7 +263,14 @@ class ModelRouter:
         return policy
 
     @classmethod
-    def _validate_route_policy(cls, policy: dict[str, Any]) -> None:
+    def validate_route_policy(cls, policy: dict[str, Any]) -> None:
+        """Validate policy syntax without selecting or constructing any provider.
+
+        This is the single validation boundary for both intake persistence and
+        hard eligibility. Callers may ask ModelRouter to validate a durable policy
+        before saving it, but only ``select`` decides which route is eligible.
+        """
+
         for field in ("pinned_provider", "pinned_model"):
             value = policy.get(field)
             if value is not None and not isinstance(value, str):

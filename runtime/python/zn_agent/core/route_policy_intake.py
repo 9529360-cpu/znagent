@@ -11,6 +11,8 @@ silently broadening or inventing user intent.
 import re
 from typing import Any
 
+from .router import ModelRouter
+
 
 _PROVIDER_ALIASES: tuple[tuple[str, str], ...] = (
     (r"\bopenai\b", "openai"),
@@ -102,7 +104,15 @@ def infer_thread_route_policy(text: str) -> dict[str, Any] | None:
 
     denied: list[str] = []
     lowered = normalized.casefold()
-    denial_markers = ("不要给", "不要让", "不要接触", "禁止", "do not send", "do not share", "must not")
+    denial_markers = (
+        "不要给",
+        "不要让",
+        "不要接触",
+        "禁止",
+        "do not send",
+        "do not share",
+        "must not",
+    )
     if any(marker.casefold() in lowered for marker in denial_markers):
         for provider in providers:
             aliases = {
@@ -118,11 +128,18 @@ def infer_thread_route_policy(text: str) -> dict[str, Any] | None:
 
 
 def merge_route_policy(base: object, overlay: object) -> dict[str, Any]:
-    """Merge policy objects without treating malformed values as empty policy.
+    """Merge only policies accepted by ModelRouter's single validator.
 
-    Validation remains ModelRouter-owned. Callers may preserve malformed explicit
-    policy so the Router fails closed instead of a lower layer silently widening
-    access.
+    This helper owns neither route selection nor authorization. It reuses the
+    ModelRouter syntax boundary before durable WorkThread persistence so a
+    structurally-valid mapping with invalid field values cannot poison the
+    thread across restart.
+
+    Provider allowlists are replacement semantics, not additive history. When a
+    newer explicit provider allowlist omits ``allow_local``, any older local
+    exception is removed; otherwise a user changing "local + GPT only" to
+    "GPT only" would silently leave local routes eligible. Denials and unrelated
+    policy dimensions continue to merge conservatively.
     """
 
     if base is None:
@@ -132,9 +149,79 @@ def merge_route_policy(base: object, overlay: object) -> dict[str, Any]:
     else:
         raise ValueError("persisted Work route_policy must be an object")
 
+    ModelRouter.validate_route_policy(base_map)
     if overlay is None:
         return base_map
     if not isinstance(overlay, dict):
         raise ValueError("explicit Work route_policy must be an object")
-    base_map.update(overlay)
-    return base_map
+
+    merged = dict(base_map)
+    if "allowed_providers" in overlay and "allow_local" not in overlay:
+        merged.pop("allow_local", None)
+    merged.update(overlay)
+    ModelRouter.validate_route_policy(merged)
+    return merged
+
+
+def bind_work_event_route_policy(
+    ledger,
+    thread,
+    *,
+    task: str,
+    event_payload: dict[str, Any],
+) -> object:
+    """Bind one WorkThread policy before its ResidentEvent can reach cognition.
+
+    Work owns project continuity, so policy is inferred/validated/persisted here
+    while the ingress event is still local and no provider can have received it.
+    The same effective policy is copied onto the durable ResidentEvent payload as
+    an explicit boundary value. Kernel may consume that event-level copy when a
+    specialized cognition path bypasses the normal CognitionRequest builder, but
+    Kernel never reads WorkThread state or infers user language itself.
+
+    Non-object explicit policy is deliberately copied through without durable
+    persistence so ModelRouter rejects it fail-closed. Mapping-shaped policy is
+    validated by ModelRouter's single syntax boundary before WorkThread save.
+    """
+
+    if not isinstance(event_payload, dict):
+        raise ValueError("Work event payload must be an object")
+    if thread is None:
+        raise RuntimeError("Work route policy lost its durable WorkThread")
+
+    persisted: object = thread.metadata.get("route_policy")
+    inferred = infer_thread_route_policy(str(task or ""))
+    classification = event_payload.get("data_classification")
+    explicit = event_payload.get("route_policy")
+
+    durable_overlay: object = dict(inferred or {})
+    if classification is not None:
+        durable_overlay = merge_route_policy(
+            durable_overlay,
+            {"data_classification": classification},
+        )
+    if isinstance(explicit, dict):
+        durable_overlay = merge_route_policy(durable_overlay, explicit)
+
+    if durable_overlay:
+        durable = merge_route_policy(persisted, durable_overlay)
+        metadata = dict(thread.metadata)
+        metadata["route_policy"] = durable
+        thread.metadata = metadata
+        from .models import utc_now
+
+        thread.updated_at = utc_now()
+        ledger._save_thread(thread)
+        persisted = durable
+    elif persisted is not None:
+        # Validate inherited durable truth before it is copied onto a new event.
+        persisted = merge_route_policy(persisted, None)
+
+    if explicit is not None and not isinstance(explicit, dict):
+        route_policy: object = explicit
+    else:
+        route_policy = persisted
+
+    if route_policy is not None:
+        event_payload["route_policy"] = route_policy
+    return route_policy

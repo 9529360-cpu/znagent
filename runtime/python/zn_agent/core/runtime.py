@@ -118,12 +118,13 @@ class ZNKernelRuntime:
         normalized_goal_id = str(goal_id or "").strip() or f"goal-{uuid.uuid4().hex[:12]}"
         goal = self.store.get_goal(normalized_goal_id)
         if goal is None:
+            effective_metadata = self._metadata_with_resident_event_route_policy(metadata)
             goal = Goal(
                 goal_id=normalized_goal_id,
                 task=normalized_task,
                 required_capabilities=normalized_capabilities,
                 priority=priority,
-                metadata=dict(metadata or {}),
+                metadata=effective_metadata,
             )
             goal.metadata[self._DURABLE_RUN_KEY] = {
                 "version": self._DURABLE_RUN_VERSION,
@@ -251,6 +252,44 @@ class ZNKernelRuntime:
             attempt["worker_result"] = self._worker_result_data(result)
             attempt["status"] = "worker_observed"
             self.store.save_goal(goal)
+
+    def _metadata_with_resident_event_route_policy(self, metadata: dict | None) -> dict:
+        """Inherit an already-bound Work event policy for direct cognition calls.
+
+        Some specialized Resident cognition paths call Kernel directly instead of
+        going through the normal CognitionRequest context builder. They already
+        carry ``resident_event_id``. Work ingress owns policy inference and
+        persistence; this method only follows that existing durable event link and
+        copies its explicit ``route_policy`` onto a new cognition Goal when the
+        caller did not already supply a direct or nested policy.
+
+        Kernel never reads WorkThread state and never infers user language here.
+        ModelRouter remains the sole hard-eligibility and fail-closed owner.
+        """
+
+        resolved = dict(metadata or {})
+        if self._metadata_has_route_policy(resolved):
+            return resolved
+        event_id = str(resolved.get("resident_event_id") or "").strip()
+        if not event_id:
+            return resolved
+        event = self.store.get_event(event_id)
+        if event is None:
+            return resolved
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        if "route_policy" in payload and payload.get("route_policy") is not None:
+            resolved["route_policy"] = payload.get("route_policy")
+        return resolved
+
+    @staticmethod
+    def _metadata_has_route_policy(metadata: dict) -> bool:
+        if metadata.get("route_policy") is not None:
+            return True
+        cognition = metadata.get("cognition_request")
+        if not isinstance(cognition, dict):
+            return False
+        context = cognition.get("context")
+        return isinstance(context, dict) and context.get("route_policy") is not None
 
     def load_goal_result(self, goal_id: str) -> KernelRunResult | None:
         goal = self.store.get_goal(str(goal_id or "").strip())
