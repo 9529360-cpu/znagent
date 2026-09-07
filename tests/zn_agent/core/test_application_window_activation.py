@@ -218,6 +218,52 @@ class ApplicationWindowActivationResidentTests(unittest.TestCase):
             finally:
                 resident.store.close()
 
+    def test_foreground_another_application_fails_exact_postcondition(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            processes: list[dict] = []
+            windows: list[dict] = []
+            resident, app, executable = self._resident(tmp, processes=processes, windows=windows)
+            resident._MAX_APPLICATION_VERIFICATION_OBSERVATIONS = 2
+            other_executable = Path(tmp) / "other.exe"
+            other_executable.write_bytes(b"")
+            processes.extend([
+                self._process(executable, 55),
+                {"pid": 99, "name": "other.exe", "exe": str(other_executable)},
+            ])
+            windows.extend([
+                self._window(hwnd=66, pid=55, foreground=False),
+                {
+                    "hwnd": 99,
+                    "pid": 99,
+                    "title": "Other App",
+                    "class_name": "OtherWindow",
+                    "visible": True,
+                    "foreground": True,
+                },
+            ])
+            native_calls: list[tuple[int, int]] = []
+
+            def activate(hwnd, pid):
+                native_calls.append((hwnd, pid))
+                return self._native_success()
+
+            resident.body._native_activate_exact_application_window = activate
+            try:
+                self._enqueue_open(resident, app)
+                result = self._run_to_terminal(resident)
+                self.assertFalse(result.success)
+                self.assertEqual(result.model_invocations, 0)
+                self.assertEqual(native_calls, [(66, 55)])
+                verification = resident.store.get_working_state().data["native_verification_result"]
+                self.assertFalse(verification["verified"])
+                self.assertEqual(verification["expected_window_handle"], 66)
+                self.assertEqual(verification["foreground_window_handle"], 99)
+                self.assertNotEqual(verification["foreground_application_id"], app.app_id)
+                self.assertEqual(len(self._actions(resident, "activate_application_window")), 1)
+                self.assertEqual(self._actions(resident, "launch_application"), [])
+            finally:
+                resident.store.close()
+
     def test_foreground_different_hwnd_of_same_app_fails_first_slice_verification(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             processes: list[dict] = []
