@@ -507,7 +507,7 @@ class BrowserTabNavigationTests(unittest.TestCase):
             second.close()
             effect = adapter.act(action, authority)
             self.assertFalse(effect.success)
-            self.assertIn("unknown managed browser page", effect.error or "")
+            self.assertEqual(second.bring_to_front_calls, 0)
         finally:
             adapter.close()
 
