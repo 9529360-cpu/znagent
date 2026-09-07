@@ -32,9 +32,41 @@ class DelegatedWorkCoordinator:
         return BoundedDelegationPlanner.decide(root)
 
     def reconcile(self, *, thread_id: str) -> None:
-        """Reconcile durable worker records without replaying unknown effects."""
+        """Reconcile durable worker records without replaying unknown effects.
 
-        self.resident.work_ledger.reconcile_stale_worker_runs(thread_id=thread_id)
+        Kernel owns external-provider dispatch durability. Work owns WorkerRun
+        lifecycle. If a restart happens after Kernel has durably finalized a
+        provider result but before Resident/Work consumes it, the result is real
+        progress and must be observed before stall detection. Observation here
+        never completes the WorkerRun or WorkItem; normal Resident integration
+        still validates schema/scope and later Body evidence.
+        """
+
+        ledger = self.resident.work_ledger
+        ledger.reconcile_stale_worker_runs(thread_id=thread_id)
+        kernel = getattr(self.resident, "kernel", None)
+        load_result = getattr(kernel, "load_goal_result", None)
+        if not callable(load_result):
+            return
+        for run in ledger.list_worker_runs(thread_id=thread_id, limit=256):
+            if run.state not in {"queued", "running"}:
+                continue
+            result = load_result(run.model_goal_id)
+            if result is None:
+                continue
+            route = getattr(result, "route", None)
+            assessment = getattr(result, "assessment", None)
+            record_worker_progress(
+                ledger,
+                run.worker_run_id,
+                stage="provider_result_persisted",
+                evidence={
+                    "model_goal_id": run.model_goal_id,
+                    "route_id": str(getattr(route, "route_id", "") or ""),
+                    "provider": str(getattr(route, "provider", "") or ""),
+                    "success": bool(getattr(assessment, "success", False)),
+                },
+            )
 
     def prepare_request(self, event, root: WorkItem, request, completed: list[WorkItem]):
         """Resume or materialize exactly one bounded current-plan WorkerRun."""
