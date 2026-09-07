@@ -345,7 +345,7 @@ class PlaywrightBrowserSceneActionMixin:
         page = self._page(session, binding.page_id)
         before_url = str(getattr(page, "url", "") or "")
         self._require_url_allowed(before_url, session.permission)
-        return page, before_url, self._provider_pages(session)
+        return page, before_url, self._scene_action_provider_pages(session)
 
     def _finish_same_page(self, session: Any, page_id: str, before_url: str) -> BrowserObservation:
         self._scene_invalidate_page(session.identity.session_id, page_id)
@@ -367,14 +367,14 @@ class PlaywrightBrowserSceneActionMixin:
         if str(getattr(page, "url", "") or "") != before_url:
             raise ManagedBrowserError(f"BrowserScene {label} unexpectedly changed the top-level URL")
 
-    def _provider_pages(self, session: Any) -> tuple[Any, ...]:
+    def _scene_action_provider_pages(self, session: Any) -> tuple[Any, ...]:
         raw = getattr(session.context, "pages", ())
         if callable(raw):
             raw = raw()
         return tuple(page for page in tuple(raw or ()) if not self._page_is_closed(page))
 
     def _no_fresh_page(self, session: Any, before: tuple[Any, ...]) -> None:
-        current = self._provider_pages(session)
+        current = self._scene_action_provider_pages(session)
         if any(not any(page is old for old in before) for page in current):
             raise ManagedBrowserError("unexpected fresh page observed")
 

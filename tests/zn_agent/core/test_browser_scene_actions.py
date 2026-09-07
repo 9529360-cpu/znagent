@@ -261,7 +261,8 @@ def _target(browser, identity, *, role=None, name=None):
 
 
 def _authorized(browser, identity, target, kind, *, args=None, expected=None):
-    observed = browser.observe_scene_target(identity.session_id, target.target_id, page_id=target.page_id)
+    page_id = browser._default_page_id(browser._sessions[identity.session_id])
+    observed = browser.observe_scene_target(identity.session_id, target.target_id, page_id=page_id)
     action = BrowserAction.create(session_id=identity.session_id, page_id=observed.page_id,
         kind=kind, target=observed.target, args=args, expected=expected)
     authority = BrowserActionAuthority.from_observation(action, observed,

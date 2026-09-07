@@ -86,10 +86,11 @@ class ManagedBrowserSceneActionsWindowsE2E(unittest.TestCase):
 
     @staticmethod
     def _scene_action(browser, identity, permission, target, kind, *, args=None, expected=None):
+        page_id = browser._default_page_id(browser._sessions[identity.session_id])
         observed = browser.observe_scene_target(
             identity.session_id,
             target.target_id,
-            page_id=target.page_id,
+            page_id=page_id,
         )
         action = BrowserAction.create(
             session_id=identity.session_id,
