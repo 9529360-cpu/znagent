@@ -35,6 +35,8 @@ class BrowserActionKind(str, Enum):
     SELECT_OPTION = "select_option"
     SCROLL_INTO_VIEW = "scroll_into_view"
     HOVER = "hover"
+    UPLOAD_FILE = "upload_file"
+    DOWNLOAD_FILE = "download_file"
     CHECK = "check"
     UNCHECK = "uncheck"
     WAIT = "wait"
@@ -162,6 +164,10 @@ class BrowserPermissionContext:
             return bool(self.allow_navigation)
         if kind in {BrowserActionKind.TYPE_TEXT, BrowserActionKind.CLEAR}:
             return bool(self.allow_page_interaction and self.allow_text_entry)
+        if kind is BrowserActionKind.UPLOAD_FILE:
+            return bool(self.allow_page_interaction and self.allow_uploads)
+        if kind is BrowserActionKind.DOWNLOAD_FILE:
+            return bool(self.allow_page_interaction and self.allow_downloads)
         if kind in _PAGE_INTERACTION_ACTIONS:
             return bool(self.allow_page_interaction)
         if kind is BrowserActionKind.WAIT:
