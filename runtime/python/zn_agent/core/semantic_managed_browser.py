@@ -21,6 +21,7 @@ from .browser import (
     BrowserTargetQueryKind,
 )
 from .browser_scene import PlaywrightBrowserSceneMixin
+from .browser_scene_actions import PlaywrightBrowserSceneActionMixin
 from .browser_tab_navigation import PlaywrightBrowserTabNavigationMixin
 from .managed_browser import (
     ManagedBrowserError,
@@ -129,6 +130,7 @@ _EXACT_NODE_EQUAL_SCRIPT = r"""
 
 class SemanticPlaywrightManagedBrowser(
     PlaywrightBrowserSceneMixin,
+    PlaywrightBrowserSceneActionMixin,
     PlaywrightBrowserTabNavigationMixin,
     PlaywrightManagedBrowser,
 ):
