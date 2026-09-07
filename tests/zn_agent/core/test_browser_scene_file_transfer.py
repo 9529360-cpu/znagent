@@ -363,7 +363,7 @@ class BrowserSceneUploadTests(unittest.TestCase):
             harness = _Harness(self._permission())
             _, evidence = _act(harness, BrowserActionKind.UPLOAD_FILE, args={"source_identity": identity}, expected={})
             self.assertTrue(evidence.success, evidence.error)
-            self.assertEqual(harness.page.chooser.path, str(source))
+            self.assertEqual(harness.page.chooser.path, identity["path"])
             self.assertEqual(evidence.data["source_sha256"], hashlib.sha256(secret.encode()).hexdigest())
             self.assertEqual(evidence.data["source_size"], len(secret.encode()))
             self.assertNotIn(secret, repr(evidence.data))
