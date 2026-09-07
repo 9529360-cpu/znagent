@@ -11,6 +11,8 @@ silently broadening or inventing user intent.
 import re
 from typing import Any
 
+from .router import ModelRouter
+
 
 _PROVIDER_ALIASES: tuple[tuple[str, str], ...] = (
     (r"\bopenai\b", "openai"),
@@ -118,11 +120,13 @@ def infer_thread_route_policy(text: str) -> dict[str, Any] | None:
 
 
 def merge_route_policy(base: object, overlay: object) -> dict[str, Any]:
-    """Merge policy objects without treating malformed values as empty policy.
+    """Merge only policies accepted by ModelRouter's single validator.
 
-    Validation remains ModelRouter-owned. Callers may preserve malformed explicit
-    policy so the Router fails closed instead of a lower layer silently widening
-    access.
+    This helper owns neither route selection nor authorization. It reuses the
+    ModelRouter syntax boundary before durable WorkThread persistence so a
+    structurally-valid mapping with invalid field values cannot poison the
+    thread across restart. Non-object explicit values are still preserved by
+    callers and rejected fail-closed when ModelRouter reads the cognition goal.
     """
 
     if base is None:
@@ -132,9 +136,13 @@ def merge_route_policy(base: object, overlay: object) -> dict[str, Any]:
     else:
         raise ValueError("persisted Work route_policy must be an object")
 
+    ModelRouter.validate_route_policy(base_map)
     if overlay is None:
         return base_map
     if not isinstance(overlay, dict):
         raise ValueError("explicit Work route_policy must be an object")
-    base_map.update(overlay)
-    return base_map
+
+    merged = dict(base_map)
+    merged.update(overlay)
+    ModelRouter.validate_route_policy(merged)
+    return merged
