@@ -323,7 +323,7 @@ class BrowserCausalPopupTests(unittest.TestCase):
         self.assertTrue(popup.closed)
         self.assertEqual(harness.session.default_page_id, "page-1")
 
-    def test_multiple_new_pages_are_ambiguous_not_guessed(self):
+    def test_multiple_new_pages_are_ambiguous_but_only_causal_popup_is_closed(self):
         opener = _Page("https://example.com/start")
         permission = BrowserPermissionContext(
             allow_navigation=True,
@@ -348,6 +348,13 @@ class BrowserCausalPopupTests(unittest.TestCase):
         self.assertFalse(evidence.success)
         self.assertIn("ambiguous new-page set", evidence.error or "")
         self.assertEqual(set(evidence.data["new_page_ids"]), {"page-2", "page-3"})
+        self.assertEqual(evidence.data["rolled_back_page_ids"], ["page-2"])
+        self.assertTrue(popup.closed)
+        self.assertFalse(extra.closed)
+        self.assertNotIn("page-2", harness.session.pages)
+        self.assertIn("page-3", harness.session.pages)
+        self.assertNotIn("page-2", harness.ownership)
+        self.assertNotIn("page-3", harness.ownership)
         self.assertEqual(harness.session.default_page_id, "page-1")
 
 
