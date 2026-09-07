@@ -131,7 +131,7 @@ class PlaywrightBrowserCausalPopupMixin:
 
         opener_matches = self._popup_opener_matches(popup, opener)
         if not opener_matches:
-            closed_ids = self._close_new_causal_pages(session, before_page_ids)
+            closed_ids = self._close_causal_popup_page(session, popup_page_id)
             opener_observation = self._capture(session, opener_page_id)
             return BrowserEffectEvidence(
                 action_id=action.action_id,
@@ -172,7 +172,7 @@ class PlaywrightBrowserCausalPopupMixin:
 
         popup_url = str(getattr(popup, "url", "") or "")
         if not self._url_allowed(popup_url, session.permission):
-            closed_ids = self._close_new_causal_pages(session, before_page_ids)
+            closed_ids = self._close_causal_popup_page(session, popup_page_id)
             opener_observation = self._capture(session, opener_page_id)
             return BrowserEffectEvidence(
                 action_id=action.action_id,
@@ -235,9 +235,9 @@ class PlaywrightBrowserCausalPopupMixin:
                 error = "causal popup click changed ZN default-page identity"
             else:
                 error = "causal popup URL postcondition did not match"
-            data["rolled_back_page_ids"] = self._close_new_causal_pages(
+            data["rolled_back_page_ids"] = self._close_causal_popup_page(
                 session,
-                before_page_ids,
+                popup_page_id,
             )
             self._restore_default_page(session, default_page_id_before)
             return BrowserEffectEvidence(
@@ -280,23 +280,28 @@ class PlaywrightBrowserCausalPopupMixin:
         if default_page_id in session.pages:
             session.default_page_id = default_page_id
 
-    def _close_new_causal_pages(
+    def _close_causal_popup_page(
         self,
         session: Any,
-        before_page_ids: set[str],
+        popup_page_id: str,
     ) -> list[str]:
+        """Roll back only the popup causally returned by opener.expect_popup().
+
+        Other pages that appeared during the same action window are merely
+        concurrent observations. They are not causally attributed to this click,
+        so this helper must not close or take ownership of them.
+        """
+
         self._reconcile_pages(session)
-        new_page_ids = [
-            page_id for page_id in session.pages if page_id not in before_page_ids
-        ]
-        for page_id in new_page_ids:
-            page = session.pages.get(page_id)
-            try:
-                close = getattr(page, "close", None)
-                if callable(close):
-                    close()
-            finally:
-                self._forget_page_ownership(session, page_id)
-                self._scene_invalidate_page(session.identity.session_id, page_id)
+        page = session.pages.get(popup_page_id)
+        if page is None:
+            return []
+        try:
+            close = getattr(page, "close", None)
+            if callable(close):
+                close()
+        finally:
+            self._forget_page_ownership(session, popup_page_id)
+            self._scene_invalidate_page(session.identity.session_id, popup_page_id)
         self._reconcile_pages(session)
-        return new_page_ids
+        return [popup_page_id]
