@@ -1,0 +1,66 @@
+name: ZN Windows Local OCR E2E
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/zn-windows-local-ocr-e2e.yml
+      - runtime/python/pyproject.toml
+      - runtime/python/zn_agent/core/visual_ocr_sense.py
+      - runtime/python/zn_agent/core/local_perception_grounding.py
+      - runtime/python/zn_agent/core/browser_scene_visual_fallback.py
+      - tests/zn_agent/e2e/test_windows_interactive_local_ocr.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zn-windows-local-ocr-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-local-ocr:
+    name: Real Windows Media OCR + UIA ordering
+    runs-on: [self-hosted, Windows, X64, zn-interactive]
+    timeout-minutes: 20
+    env:
+      CI: 'true'
+      TZ: UTC
+      PYTHONUTF8: '1'
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - name: Require Windows x64 interactive runner
+        shell: powershell
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "ZN local OCR E2E requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+          if ($env:RUNNER_NAME -ne 'zn-interactive') {
+            throw "ZN local OCR E2E requires the dedicated zn-interactive runner; got $env:RUNNER_NAME"
+          }
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare isolated runtime with Windows OCR projections
+        shell: powershell
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/local-ocr-e2e-venv -ErrorAction SilentlyContinue
+          uv venv .ci/local-ocr-e2e-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\local-ocr-e2e-venv\Scripts\python.exe'
+          uv pip install --python $python "runtime/python[browser]"
+          & $python -c "from winrt.windows.media.ocr import OcrEngine; from winrt.windows.graphics.imaging import BitmapDecoder; from winrt.windows.storage.streams import InMemoryRandomAccessStream; print('WinRT OCR projections imported')"
+          if ($LASTEXITCODE -ne 0) { throw 'WinRT OCR projection import failed' }
+      - name: Run real local OCR acceptance
+        shell: powershell
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\local-ocr-e2e-venv\Scripts\python.exe'
+          & $python tests\zn_agent\e2e\test_windows_interactive_local_ocr.py -v
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Real Windows local OCR acceptance failed'
+          }
