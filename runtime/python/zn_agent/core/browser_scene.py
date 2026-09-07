@@ -189,6 +189,14 @@ class PlaywrightBrowserSceneMixin:
         self._scene_dispose_session(str(session_id or "").strip())
         super().close_session(session_id)
 
+    def _invalidate_target_binding(self, session: Any, page_id: str) -> None:
+        self._scene_invalidate_page(session.identity.session_id, page_id)
+        super()._invalidate_target_binding(session, page_id)
+
+    def _dispose_all_target_bindings(self, session: Any) -> None:
+        self._scene_dispose_session(session.identity.session_id)
+        super()._dispose_all_target_bindings(session)
+
     def observe_browser_workspace(self, session_id: str) -> BrowserWorkspaceScene:
         session = self._session(session_id)
         self._reconcile_pages(session)
