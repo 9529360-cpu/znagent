@@ -9,7 +9,7 @@ from .action import NativeActionIntent
 from .action_authority import install_worker_authority_gate
 from .application_goal import application_open_goal
 from .broad_goal_autonomous_resident import BroadGoalAutonomousResidentRuntime
-from .machine_capability import DeviceCapabilityGraph
+from .device_capability_graph import DeviceCapabilityGraph
 from .machine_capability_body import MachineCapabilityBody
 from .models import utc_now
 
