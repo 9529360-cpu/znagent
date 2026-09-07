@@ -4,7 +4,8 @@ from __future__ import annotations
 
 Runtime ownership ends here: ZN config selects ZN cognitive resources and the
 resident is assembled without importing another product's CLI, provider
-resolver, agent object, or session lifecycle.
+resolver, agent object, or session lifecycle. Machine awareness is composed into
+that same Resident rather than creating a second agent lifecycle.
 """
 
 from dataclasses import dataclass
@@ -162,7 +163,6 @@ def build_zn_cognitive_resource_plan(
     credential_store: CredentialStore | None = None,
 ) -> ZNCognitiveResourcePlan:
     """Resolve external cognition without making its failure a resident failure."""
-
     kernel_cfg = config.get("zn_kernel") or {}
     if not isinstance(kernel_cfg, dict):
         raise ValueError("zn_kernel config must be a mapping")
@@ -170,7 +170,6 @@ def build_zn_cognitive_resource_plan(
     if not isinstance(route_specs, list):
         raise ValueError("zn_kernel.routes must be a list")
     max_attempts = max(1, int(kernel_cfg.get("max_attempts", 2)))
-
     runtime_config = materialize_zn_credentials(config, store=credential_store)
     runtime_kernel_cfg = runtime_config.get("zn_kernel") or {}
     runtime_route_specs = runtime_kernel_cfg.get("routes") or [] if isinstance(runtime_kernel_cfg, dict) else []
@@ -179,12 +178,10 @@ def build_zn_cognitive_resource_plan(
         if current is None:
             return _unavailable_plan(max_attempts=max_attempts)
         runtime_route_specs = [current]
-
     try:
         routes = resolve_zn_routes(runtime_route_specs)
     except (ValueError, RuntimeError) as exc:
         return _unavailable_plan(max_attempts=max_attempts, error=f"{type(exc).__name__}: {exc}")
-
     return ZNCognitiveResourcePlan(
         routes=routes,
         worker_factory=ZNCognitiveResourceWorkerFactory(),
@@ -200,7 +197,6 @@ def apply_zn_cognitive_config(
     credential_store: CredentialStore | None = None,
 ) -> ZNCognitiveResourcePlan:
     """Hot-apply provider resources while preserving the same kernel identity/store."""
-
     plan = build_zn_cognitive_resource_plan(config, credential_store=credential_store)
     observer = getattr(runtime, "resource_health_observer", None)
     setter = getattr(plan.worker_factory, "set_health_observer", None)
@@ -253,7 +249,6 @@ def build_resident_runtime(
     resident_cfg = effective_config.get("zn_resident") or {}
     if not isinstance(resident_cfg, dict):
         raise ValueError("zn_resident config must be a mapping")
-
     kernel = build_runtime(
         config=effective_config,
         store_path=store_path,
