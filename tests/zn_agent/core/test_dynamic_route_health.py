@@ -96,10 +96,15 @@ class DynamicRouteHealthTests(unittest.TestCase):
             fallback = _FallbackResource()
             resident = self._resident(store_path, primary, fallback)
 
+            # Pin only the setup failures. This isolates the health threshold from
+            # SelfModel soft-score learning: the test is proving that once the
+            # durable health circuit is open, the normal unpinned route selection
+            # hard-filters primary before scoring and falls back legally.
             for index in range(3):
                 result = resident.kernel.run_goal(
                     f"health failure {index}",
                     goal_id=f"health-failure-{index}",
+                    metadata={"route_policy": {"pinned_provider": "primary-provider"}},
                 )
                 self.assertEqual(result.route.route_id, "primary-route")
                 self.assertFalse(result.worker_result.success)
@@ -124,37 +129,40 @@ class DynamicRouteHealthTests(unittest.TestCase):
             resident.store.close()
 
             restored = self._resident(store_path, primary, fallback)
-            after_restart = restored.kernel.run_goal(
-                "health survives restart",
-                goal_id="health-reroute-after-restart",
-            )
-            self.assertTrue(after_restart.worker_result.success)
-            self.assertEqual(after_restart.route.route_id, "fallback-route")
-            self.assertEqual(primary.calls, 3)
-            self.assertEqual(fallback.calls, 2)
+            try:
+                after_restart = restored.kernel.run_goal(
+                    "health survives restart",
+                    goal_id="health-reroute-after-restart",
+                )
+                self.assertTrue(after_restart.worker_result.success)
+                self.assertEqual(after_restart.route.route_id, "fallback-route")
+                self.assertEqual(primary.calls, 3)
+                self.assertEqual(fallback.calls, 2)
 
-            # This is an actual provider-worker success, not a synthetic journal
-            # reset. It models the half-open probe that a later supervision slice
-            # may schedule after the bounded cooldown.
-            probe = restored.kernel.worker_factory.create(primary_route).run(
-                Goal(goal_id="health-half-open-probe", task="probe recovered provider"),
-                "bounded probe context",
-            )
-            self.assertTrue(probe.success)
-            recovered = restored.health.get(organ)
-            self.assertIsNotNone(recovered)
-            assert recovered is not None
-            self.assertTrue(recovered["healthy"])
-            self.assertEqual(recovered["consecutive_failures"], 0)
+                # This is an actual provider-worker success, not a synthetic
+                # journal reset. It models the half-open probe that a later
+                # supervision slice may schedule after the bounded cooldown.
+                probe = restored.kernel.worker_factory.create(primary_route).run(
+                    Goal(goal_id="health-half-open-probe", task="probe recovered provider"),
+                    "bounded probe context",
+                )
+                self.assertTrue(probe.success)
+                recovered = restored.health.get(organ)
+                self.assertIsNotNone(recovered)
+                assert recovered is not None
+                self.assertTrue(recovered["healthy"])
+                self.assertEqual(recovered["consecutive_failures"], 0)
 
-            selected_again = restored.kernel.run_goal(
-                "use recovered provider",
-                goal_id="health-primary-recovered",
-            )
-            self.assertTrue(selected_again.worker_result.success)
-            self.assertEqual(selected_again.route.route_id, "primary-route")
-            self.assertEqual(primary.calls, 5)
-            restored.store.close()
+                selected_again = restored.kernel.run_goal(
+                    "use recovered provider",
+                    goal_id="health-primary-recovered",
+                    metadata={"route_policy": {"pinned_provider": "primary-provider"}},
+                )
+                self.assertTrue(selected_again.worker_result.success)
+                self.assertEqual(selected_again.route.route_id, "primary-route")
+                self.assertEqual(primary.calls, 5)
+            finally:
+                restored.store.close()
 
     def test_health_resolver_failure_does_not_replace_router_semantics(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -162,48 +170,52 @@ class DynamicRouteHealthTests(unittest.TestCase):
             primary.failures_remaining = 0
             fallback = _FallbackResource()
             resident = self._resident(Path(tmp) / "kernel.db", primary, fallback)
-            resident.kernel.router.set_health_resolver(
-                lambda route: (_ for _ in ()).throw(RuntimeError("health lookup unavailable"))
-            )
+            try:
+                resident.kernel.router.set_health_resolver(
+                    lambda route: (_ for _ in ()).throw(RuntimeError("health lookup unavailable"))
+                )
 
-            result = resident.kernel.run_goal(
-                "health lookup failure",
-                goal_id="health-resolver-isolation",
-            )
-            self.assertTrue(result.worker_result.success)
-            self.assertEqual(result.route.route_id, "primary-route")
-            resident.store.close()
+                result = resident.kernel.run_goal(
+                    "health lookup failure",
+                    goal_id="health-resolver-isolation",
+                )
+                self.assertTrue(result.worker_result.success)
+                self.assertEqual(result.route.route_id, "primary-route")
+            finally:
+                resident.store.close()
 
     def test_hot_reconfiguration_rebinds_dynamic_health_resolver_and_thresholds(self):
         with tempfile.TemporaryDirectory() as tmp:
             primary = _PrimaryResource()
             fallback = _FallbackResource()
             resident = self._resident(Path(tmp) / "kernel.db", primary, fallback)
-            resolver = resident.kernel.resource_health_resolver
+            try:
+                resolver = resident.kernel.resource_health_resolver
 
-            plan = apply_zn_cognitive_config(
-                resident.kernel,
-                {
-                    "zn_kernel": {
-                        "routes": [
-                            {
-                                "id": "hot-local",
-                                "provider": "ollama",
-                                "model": "local-model",
-                                "base_url": "http://127.0.0.1:11434/v1",
-                                "capabilities": {"general": 0.9},
-                                "health_failure_threshold": 2,
-                                "health_backoff_seconds": 7,
-                            }
-                        ]
-                    }
-                },
-            )
+                plan = apply_zn_cognitive_config(
+                    resident.kernel,
+                    {
+                        "zn_kernel": {
+                            "routes": [
+                                {
+                                    "id": "hot-local",
+                                    "provider": "ollama",
+                                    "model": "local-model",
+                                    "base_url": "http://127.0.0.1:11434/v1",
+                                    "capabilities": {"general": 0.9},
+                                    "health_failure_threshold": 2,
+                                    "health_backoff_seconds": 7,
+                                }
+                            ]
+                        }
+                    },
+                )
 
-            self.assertIs(resident.kernel.router._health_resolver, resolver)
-            self.assertEqual(plan.routes[0].metadata["health_failure_threshold"], 2)
-            self.assertEqual(plan.routes[0].metadata["health_backoff_seconds"], 7)
-            resident.store.close()
+                self.assertIs(resident.kernel.router._health_resolver, resolver)
+                self.assertEqual(plan.routes[0].metadata["health_failure_threshold"], 2)
+                self.assertEqual(plan.routes[0].metadata["health_backoff_seconds"], 7)
+            finally:
+                resident.store.close()
 
 
 if __name__ == "__main__":
