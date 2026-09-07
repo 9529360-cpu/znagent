@@ -10,6 +10,7 @@ on:
       - runtime/python/zn_agent/resident.py
       - runtime/python/zn_agent/core/action.py
       - runtime/python/zn_agent/core/browser.py
+      - runtime/python/zn_agent/core/browser_scene_actions.py
       - runtime/python/zn_agent/core/browser_tab_navigation.py
       - runtime/python/zn_agent/core/browser_form_submit_body.py
       - runtime/python/zn_agent/core/browser_form_submit_resident.py
@@ -32,6 +33,7 @@ on:
       - runtime/python/zn_agent/core/side_effect_body.py
       - runtime/python/zn_agent/core/url_safety.py
       - tests/zn_agent/core/test_browser_contract.py
+      - tests/zn_agent/core/test_browser_scene_actions.py
       - tests/zn_agent/core/test_browser_tab_navigation.py
       - tests/zn_agent/core/test_browser_work_button_recovery.py
       - tests/zn_agent/core/test_browser_work_form_submit.py
@@ -56,6 +58,7 @@ on:
       - tests/zn_agent/e2e/test_windows_managed_browser.py
       - tests/zn_agent/e2e/test_windows_managed_browser_form_submit.py
       - tests/zn_agent/e2e/test_windows_managed_browser_pages.py
+      - tests/zn_agent/e2e/test_windows_managed_browser_scene_actions.py
       - tests/zn_agent/e2e/test_windows_managed_browser_select.py
       - tests/zn_agent/e2e/test_windows_managed_browser_resident_rpc.py
       - tests/zn_agent/e2e/test_windows_managed_browser_tab_navigation.py
@@ -69,6 +72,7 @@ on:
       - runtime/python/zn_agent/resident.py
       - runtime/python/zn_agent/core/action.py
       - runtime/python/zn_agent/core/browser.py
+      - runtime/python/zn_agent/core/browser_scene_actions.py
       - runtime/python/zn_agent/core/browser_tab_navigation.py
       - runtime/python/zn_agent/core/browser_form_submit_body.py
       - runtime/python/zn_agent/core/browser_form_submit_resident.py
@@ -91,6 +95,7 @@ on:
       - runtime/python/zn_agent/core/side_effect_body.py
       - runtime/python/zn_agent/core/url_safety.py
       - tests/zn_agent/core/test_browser_contract.py
+      - tests/zn_agent/core/test_browser_scene_actions.py
       - tests/zn_agent/core/test_browser_tab_navigation.py
       - tests/zn_agent/core/test_browser_work_button_recovery.py
       - tests/zn_agent/core/test_browser_work_form_submit.py
@@ -115,6 +120,7 @@ on:
       - tests/zn_agent/e2e/test_windows_managed_browser.py
       - tests/zn_agent/e2e/test_windows_managed_browser_form_submit.py
       - tests/zn_agent/e2e/test_windows_managed_browser_pages.py
+      - tests/zn_agent/e2e/test_windows_managed_browser_scene_actions.py
       - tests/zn_agent/e2e/test_windows_managed_browser_select.py
       - tests/zn_agent/e2e/test_windows_managed_browser_resident_rpc.py
       - tests/zn_agent/e2e/test_windows_managed_browser_tab_navigation.py
@@ -173,6 +179,8 @@ jobs:
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
+          & $python -m unittest tests.zn_agent.core.test_browser_scene_actions -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $python -m unittest discover -s tests/zn_agent/core -p 'test_*browser*.py' -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $python -m unittest tests.zn_agent.core.test_structured_action_text_alias -v
