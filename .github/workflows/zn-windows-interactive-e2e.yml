@@ -21,6 +21,8 @@ on:
       - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_grounding.py
       - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_reground.py
       - tests/zn_agent/e2e/test_windows_interactive_file_desktop_goal.py
+      - tests/zn_agent/e2e/test_windows_interactive_machine_capability.py
+      - tests/zn_agent/e2e/test_windows_interactive_application_activation.py
       - runtime/python/zn_agent/core/body.py
       - runtime/python/zn_agent/core/keyboard_text_body.py
       - runtime/python/zn_agent/core/visual_region_sense.py
@@ -56,6 +58,13 @@ on:
       - runtime/python/zn_agent/core/focused_text_entry_resident.py
       - runtime/python/zn_agent/core/focused_modern_text_resident.py
       - runtime/python/zn_agent/core/provider_bridge.py
+      - runtime/python/zn_agent/core/machine_capability.py
+      - runtime/python/zn_agent/core/device_capability_graph.py
+      - runtime/python/zn_agent/core/machine_capability_body.py
+      - runtime/python/zn_agent/core/application_resident.py
+      - tests/zn_agent/core/test_machine_capability.py
+      - tests/zn_agent/core/test_machine_capability_body.py
+      - tests/zn_agent/core/test_application_window_activation.py
   push:
     branches:
       - main
@@ -76,6 +85,8 @@ on:
       - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_grounding.py
       - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_reground.py
       - tests/zn_agent/e2e/test_windows_interactive_file_desktop_goal.py
+      - tests/zn_agent/e2e/test_windows_interactive_machine_capability.py
+      - tests/zn_agent/e2e/test_windows_interactive_application_activation.py
       - runtime/python/zn_agent/core/body.py
       - runtime/python/zn_agent/core/keyboard_text_body.py
       - runtime/python/zn_agent/core/visual_region_sense.py
@@ -111,6 +122,13 @@ on:
       - runtime/python/zn_agent/core/focused_text_entry_resident.py
       - runtime/python/zn_agent/core/focused_modern_text_resident.py
       - runtime/python/zn_agent/core/provider_bridge.py
+      - runtime/python/zn_agent/core/machine_capability.py
+      - runtime/python/zn_agent/core/device_capability_graph.py
+      - runtime/python/zn_agent/core/machine_capability_body.py
+      - runtime/python/zn_agent/core/application_resident.py
+      - tests/zn_agent/core/test_machine_capability.py
+      - tests/zn_agent/core/test_machine_capability_body.py
+      - tests/zn_agent/core/test_application_window_activation.py
   workflow_dispatch:
 
 permissions:
