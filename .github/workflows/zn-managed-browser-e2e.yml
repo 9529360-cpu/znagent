@@ -179,13 +179,35 @@ jobs:
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
-          & $python -m unittest discover -s tests/zn_agent/core -p 'test_*browser*.py' -v
+          $log = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-contract.log'
+          Remove-Item -Force $log -ErrorAction SilentlyContinue
+          & $python -m unittest tests.zn_agent.core.test_browser_scene_actions -v 2>&1 | Tee-Object -FilePath $log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $python -m unittest tests.zn_agent.core.test_structured_action_text_alias -v
+          & $python -m unittest discover -s tests/zn_agent/core -p 'test_*browser*.py' -v 2>&1 | Tee-Object -FilePath $log -Append
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $python -m unittest tests.zn_agent.core.test_structured_action_text_alias -v 2>&1 | Tee-Object -FilePath $log -Append
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload managed browser contract transcript
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: managed-browser-contract-transcript
+          path: .ci/managed-browser-contract.log
+          if-no-files-found: warn
+          retention-days: 7
       - name: Run real local Chromium E2E
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
-          & $python -m unittest discover -s tests/zn_agent/e2e -p 'test_windows_managed_browser*.py' -v
+          $log = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-e2e.log'
+          Remove-Item -Force $log -ErrorAction SilentlyContinue
+          & $python -m unittest discover -s tests/zn_agent/e2e -p 'test_windows_managed_browser*.py' -v 2>&1 | Tee-Object -FilePath $log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload managed browser E2E transcript
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: managed-browser-e2e-transcript
+          path: .ci/managed-browser-e2e.log
+          if-no-files-found: warn
+          retention-days: 7
