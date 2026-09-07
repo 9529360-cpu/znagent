@@ -38,8 +38,6 @@ _ROUTE_METADATA_KEYS = (
     "timeout",
     "extra_body",
     "thinking",
-    # Hard eligibility metadata. These remain attributes of the existing
-    # CognitiveResource route, not a second router/configuration system.
     "available",
     "healthy",
     "health",
@@ -83,19 +81,12 @@ def route_from_spec(spec: dict[str, Any], index: int = 0) -> ModelRoute:
         reliability=max(0.0, min(1.0, float(spec.get("reliability", 0.8)))),
         cost_weight=max(0.0, min(1.0, float(spec.get("cost_weight", 0.5)))),
         latency_weight=max(0.0, min(1.0, float(spec.get("latency_weight", 0.5)))),
-        metadata={
-            key: spec[key]
-            for key in _ROUTE_METADATA_KEYS
-            if spec.get(key) is not None
-        },
+        metadata={key: spec[key] for key in _ROUTE_METADATA_KEYS if spec.get(key) is not None},
     )
 
 
 def resolve_zn_routes(specs: Iterable[dict[str, Any]]) -> list[ModelRoute]:
-    return [
-        resolve_zn_cognitive_route(route_from_spec(spec, index))
-        for index, spec in enumerate(specs)
-    ]
+    return [resolve_zn_cognitive_route(route_from_spec(spec, index)) for index, spec in enumerate(specs)]
 
 
 def _current_model_spec(config: dict[str, Any]) -> dict[str, Any] | None:
@@ -111,9 +102,7 @@ def _current_model_spec(config: dict[str, Any]) -> dict[str, Any] | None:
             nested = raw_model
             raw_model = raw_model.get("model") or raw_model.get("id") or ""
         model = str(raw_model or "").strip()
-        provider = str(
-            nested.get("provider") or model_cfg.get("provider") or "auto"
-        ).strip() or "auto"
+        provider = str(nested.get("provider") or model_cfg.get("provider") or "auto").strip() or "auto"
         metadata = {
             key: nested.get(key, model_cfg.get(key))
             for key in _ROUTE_METADATA_KEYS
@@ -129,12 +118,6 @@ def _current_model_spec(config: dict[str, Any]) -> dict[str, Any] | None:
         "id": "default",
         "provider": provider,
         "model": model,
-        # The legacy single-model shortcut is the product's general cognitive
-        # resource and already serves these bounded WorkerRun/browser-understanding
-        # roles. Once Router capabilities become hard eligibility, make that
-        # existing contract explicit instead of restoring an undeclared `general`
-        # fallback. Fully specified zn_kernel.routes remain responsible for their
-        # own capability declarations and therefore stay fail-closed.
         "capabilities": {
             "general": 0.75,
             "reasoning": 0.75,
@@ -200,10 +183,7 @@ def build_zn_cognitive_resource_plan(
     try:
         routes = resolve_zn_routes(runtime_route_specs)
     except (ValueError, RuntimeError) as exc:
-        return _unavailable_plan(
-            max_attempts=max_attempts,
-            error=f"{type(exc).__name__}: {exc}",
-        )
+        return _unavailable_plan(max_attempts=max_attempts, error=f"{type(exc).__name__}: {exc}")
 
     return ZNCognitiveResourcePlan(
         routes=routes,
@@ -266,7 +246,7 @@ def build_resident_runtime(
     credential_store: CredentialStore | None = None,
 ):
     """Build the normal product Resident around the ZN-owned kernel."""
-    from .broad_goal_autonomous_resident import BroadGoalAutonomousResidentRuntime
+    from .application_resident import ApplicationAwareResidentRuntime
     from .budget import CognitiveBudgetManager
 
     effective_config = config if config is not None else load_zn_config()
@@ -282,12 +262,9 @@ def build_resident_runtime(
     budget = CognitiveBudgetManager(
         normal_model_calls=max(1, int(resident_cfg.get("normal_model_calls", 1))),
         high_risk_model_calls=max(1, int(resident_cfg.get("high_risk_model_calls", 2))),
-        high_risk_threshold=max(
-            0.0, min(1.0, float(resident_cfg.get("high_risk_threshold", 0.8)))
-        ),
+        high_risk_threshold=max(0.0, min(1.0, float(resident_cfg.get("high_risk_threshold", 0.8)))),
     )
-
-    return BroadGoalAutonomousResidentRuntime(kernel=kernel, budget=budget)
+    return ApplicationAwareResidentRuntime(kernel=kernel, budget=budget)
 
 
 build_runtime_from_existing_stack = build_runtime
