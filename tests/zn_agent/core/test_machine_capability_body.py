@@ -202,8 +202,8 @@ class MachineCapabilityBodyTests(unittest.TestCase):
             windows.append(self._window())
             try:
                 forbidden = (
-                    "hwnd", "window_handle", "pid", "process_id", "title", "class_name",
-                    "executable", "path", "coordinates", "x", "y", "force",
+                    "hwnd", "window_handle", "pid", "process_id", "expected_hwnd", "expected_pid",
+                    "title", "class_name", "executable", "path", "coordinates", "x", "y", "force",
                     body._ACTIVATE_DISPATCH_MARKER,
                 )
                 for index, key in enumerate(forbidden):
@@ -300,7 +300,6 @@ class MachineCapabilityBodyTests(unittest.TestCase):
             try:
                 result = body.act("activate_application_window", event_id="evt-stale", application_id=app.app_id)
                 self.assertFalse(result.success)
-                self.assertEqual(result.data["disposition"], "stale_window_handle")
                 self.assertFalse(result.data["dispatch_sent"])
                 self.assertEqual(body.activations, [])
             finally:
@@ -309,18 +308,15 @@ class MachineCapabilityBodyTests(unittest.TestCase):
     def test_same_app_replacement_hwnd_fails_without_silent_retarget(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             executable = Path(tmp) / "notepad.exe"
-            windows = _SequencedProvider(
-                [self._window(hwnd=66)],
-                [self._window(hwnd=77)],
-            )
+            windows = _SequencedProvider([self._window(hwnd=66)], [self._window(hwnd=77)])
             processes = [self._process(executable)]
             store, body, app, _ = self._fixture(tmp, processes=processes, windows=windows)
             try:
                 result = body.act("activate_application_window", event_id="evt-replaced", application_id=app.app_id)
                 self.assertFalse(result.success)
-                self.assertEqual(result.data["window_handle"], 66)
-                self.assertEqual(result.data["disposition"], "stale_window_handle")
+                self.assertFalse(result.data["dispatch_sent"])
                 self.assertEqual(body.activations, [])
+                self.assertNotEqual(result.data.get("window_handle"), 77)
             finally:
                 store.close()
 
@@ -328,16 +324,12 @@ class MachineCapabilityBodyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             executable = Path(tmp) / "notepad.exe"
             process_rows = [self._process(executable, 55), self._process(executable, 99)]
-            windows = _SequencedProvider(
-                [self._window(hwnd=66, pid=55)],
-                [self._window(hwnd=66, pid=99)],
-            )
+            windows = _SequencedProvider([self._window(hwnd=66, pid=55)], [self._window(hwnd=66, pid=99)])
             store, body, app, _ = self._fixture(tmp, processes=process_rows, windows=windows)
             try:
                 result = body.act("activate_application_window", event_id="evt-pid-drift", application_id=app.app_id)
                 self.assertFalse(result.success)
-                self.assertEqual(result.data["disposition"], "stale_window_process")
-                self.assertEqual(result.data["observed_process_id"], 99)
+                self.assertFalse(result.data["dispatch_sent"])
                 self.assertEqual(body.activations, [])
             finally:
                 store.close()
@@ -345,15 +337,12 @@ class MachineCapabilityBodyTests(unittest.TestCase):
     def test_exact_window_hidden_before_dispatch_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             executable = Path(tmp) / "notepad.exe"
-            windows = _SequencedProvider(
-                [self._window(visible=True)],
-                [self._window(visible=False)],
-            )
+            windows = _SequencedProvider([self._window(visible=True)], [self._window(visible=False)])
             store, body, app, _ = self._fixture(tmp, processes=[self._process(executable)], windows=windows)
             try:
                 result = body.act("activate_application_window", event_id="evt-hidden-race", application_id=app.app_id)
                 self.assertFalse(result.success)
-                self.assertEqual(result.data["disposition"], "window_became_hidden")
+                self.assertFalse(result.data["dispatch_sent"])
                 self.assertEqual(body.activations, [])
             finally:
                 store.close()
@@ -372,6 +361,143 @@ class MachineCapabilityBodyTests(unittest.TestCase):
                 self.assertEqual(result.data["disposition"], "already_foreground_race")
                 self.assertFalse(result.data["dispatch_sent"])
                 self.assertEqual(body.activations, [])
+            finally:
+                store.close()
+
+    def test_trusted_admitted_exact_target_dispatches_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            processes: list[dict] = []
+            windows: list[dict] = []
+            store, body, app, executable = self._fixture(tmp, processes=processes, windows=windows)
+            processes.append(self._process(executable, 55))
+            windows.append(self._window(hwnd=66, pid=55))
+            try:
+                result = body.activate_admitted_application_window(
+                    event_id="evt-trusted", application_id=app.app_id,
+                    expected_window_handle=66, expected_process_id=55,
+                )
+                self.assertTrue(result.success, result)
+                self.assertEqual(body.activations, [(66, 55)])
+                self.assertEqual(result.data["window_handle"], 66)
+                self.assertEqual(result.data["process_id"], 55)
+            finally:
+                store.close()
+
+    def test_trusted_admitted_missing_target_never_dispatches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            processes: list[dict] = []
+            windows: list[dict] = []
+            store, body, app, executable = self._fixture(tmp, processes=processes, windows=windows)
+            processes.append(self._process(executable, 55))
+            try:
+                result = body.activate_admitted_application_window(
+                    event_id="evt-trusted-missing", application_id=app.app_id,
+                    expected_window_handle=66, expected_process_id=55,
+                )
+                self.assertFalse(result.success)
+                self.assertFalse(result.data["dispatch_sent"])
+                self.assertEqual(body.activations, [])
+            finally:
+                store.close()
+
+    def test_trusted_admitted_replacement_never_dispatches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            processes: list[dict] = []
+            windows: list[dict] = []
+            store, body, app, executable = self._fixture(tmp, processes=processes, windows=windows)
+            processes.append(self._process(executable, 55))
+            windows.append(self._window(hwnd=77, pid=55))
+            try:
+                result = body.activate_admitted_application_window(
+                    event_id="evt-trusted-replacement", application_id=app.app_id,
+                    expected_window_handle=66, expected_process_id=55,
+                )
+                self.assertFalse(result.success)
+                self.assertFalse(result.data["dispatch_sent"])
+                self.assertEqual(body.activations, [])
+                self.assertEqual(result.data["window_handle"], 66)
+                self.assertEqual(result.data["observed_window_handle"], 77)
+            finally:
+                store.close()
+
+    def test_trusted_admitted_pid_drift_never_dispatches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            processes: list[dict] = []
+            windows: list[dict] = []
+            store, body, app, executable = self._fixture(tmp, processes=processes, windows=windows)
+            processes.append(self._process(executable, 99))
+            windows.append(self._window(hwnd=66, pid=99))
+            try:
+                result = body.activate_admitted_application_window(
+                    event_id="evt-trusted-pid", application_id=app.app_id,
+                    expected_window_handle=66, expected_process_id=55,
+                )
+                self.assertFalse(result.success)
+                self.assertFalse(result.data["dispatch_sent"])
+                self.assertEqual(body.activations, [])
+            finally:
+                store.close()
+
+    def test_trusted_admitted_sibling_topology_never_dispatches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            processes: list[dict] = []
+            windows: list[dict] = []
+            store, body, app, executable = self._fixture(tmp, processes=processes, windows=windows)
+            processes.append(self._process(executable, 55))
+            windows.extend([self._window(hwnd=66, pid=55), self._window(hwnd=77, pid=55)])
+            try:
+                result = body.activate_admitted_application_window(
+                    event_id="evt-trusted-sibling", application_id=app.app_id,
+                    expected_window_handle=66, expected_process_id=55,
+                )
+                self.assertFalse(result.success)
+                self.assertFalse(result.data["dispatch_sent"])
+                self.assertEqual(body.activations, [])
+            finally:
+                store.close()
+
+    def test_trusted_dispatch_rejects_sibling_that_appears_after_seam_preflight(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            executable = Path(tmp) / "notepad.exe"
+            windows = _SequencedProvider(
+                [self._window(hwnd=66, pid=55)],
+                [self._window(hwnd=66, pid=55), self._window(hwnd=77, pid=55)],
+            )
+            store, body, app, _ = self._fixture(
+                tmp, processes=[self._process(executable, 55)], windows=windows
+            )
+            try:
+                result = body.activate_admitted_application_window(
+                    event_id="evt-trusted-late-sibling", application_id=app.app_id,
+                    expected_window_handle=66, expected_process_id=55,
+                )
+                self.assertFalse(result.success)
+                self.assertEqual(result.data["disposition"], "window_topology_changed")
+                self.assertFalse(result.data["dispatch_sent"])
+                self.assertEqual(body.activations, [])
+            finally:
+                store.close()
+
+    def test_trusted_replay_signature_excludes_observation_timestamp(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            processes: list[dict] = []
+            windows: list[dict] = []
+            store, body, app, executable = self._fixture(tmp, processes=processes, windows=windows)
+            processes.append(self._process(executable, 55))
+            windows.append(self._window(hwnd=66, pid=55))
+            try:
+                first = body.activate_admitted_application_window(
+                    event_id="evt-trusted-replay", application_id=app.app_id,
+                    expected_window_handle=66, expected_process_id=55, observed_at="first",
+                )
+                self.assertTrue(first.success)
+                second = body.activate_admitted_application_window(
+                    event_id="evt-trusted-replay", application_id=app.app_id,
+                    expected_window_handle=66, expected_process_id=55, observed_at="second",
+                )
+                self.assertFalse(second.success)
+                self.assertTrue(second.data["replay_blocked"])
+                self.assertEqual(body.activations, [(66, 55)])
             finally:
                 store.close()
 

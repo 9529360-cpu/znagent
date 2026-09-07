@@ -19,8 +19,9 @@ class MachineCapabilityBody(BrowserFormSubmitBody):
 
     Public application authority is always the resolved ``application_id``. Raw
     executable paths and native window/process identifiers are never caller
-    authority. Exact launch targets and exact existing HWND/PID pairs are derived
-    again from fresh DeviceCapabilityGraph facts at the final Body boundary.
+    authority. Public activation derives its native target from fresh machine
+    facts; the Resident-only admitted-target seam preserves an already-authorized
+    exact HWND/PID without reopening those identifiers in the public ``act`` API.
     """
 
     _LAUNCH_KIND = "launch_application"
@@ -209,15 +210,122 @@ class MachineCapabilityBody(BrowserFormSubmitBody):
                 error="visible matching window lacks a matching current process identity",
             )
 
+        return self.activate_admitted_application_window(
+            event_id=event_id,
+            application_id=application.app_id,
+            expected_window_handle=int(window.hwnd),
+            expected_process_id=int(window.process_id),
+            observed_at=str(window.observed_at),
+        )
+
+    def activate_admitted_application_window(
+        self,
+        *,
+        event_id: str | None,
+        application_id: str,
+        expected_window_handle: int,
+        expected_process_id: int,
+        observed_at: str | None = None,
+    ) -> BodyActionResult:
+        """Enter activation with one Resident-admitted exact application target.
+
+        This is an internal Resident/runtime seam, not the public ``act`` schema.
+        The public action continues to accept only ``application_id``. Here the
+        exact HWND/PID are already authority selected by Resident deliberation;
+        fresh machine facts may confirm that identity or reject it, but may never
+        replace it with another same-application window.
+        """
+
+        app_id = str(application_id or "").strip()
+        try:
+            expected_hwnd = int(expected_window_handle)
+            expected_pid = int(expected_process_id)
+        except (TypeError, ValueError):
+            expected_hwnd = 0
+            expected_pid = 0
+        base_data = {
+            "application_id": app_id,
+            "window_handle": expected_hwnd,
+            "process_id": expected_pid,
+            "dispatch_sent": False,
+        }
+        if not app_id or expected_hwnd <= 0 or expected_pid <= 0:
+            return self._preflight_result(
+                self._ACTIVATE_KIND, event_id, app_id, False,
+                data={**base_data, "disposition": "invalid_admitted_target"},
+                error="resident-admitted application activation requires a non-empty app id and positive HWND/PID",
+            )
+
+        application = self.device_capabilities.application_by_id(app_id, force_refresh=True)
+        if application is None or application.app_id != app_id:
+            return self._preflight_result(
+                self._ACTIVATE_KIND, event_id, app_id, False,
+                data={**base_data, "disposition": "admitted_application_drift"},
+                error="resident-admitted application identity is no longer present in fresh inventory",
+            )
+
+        processes, windows = self.device_capabilities.application_runtime(application)
+        exact_process = next(
+            (
+                process
+                for process in processes
+                if process.process_id == expected_pid and process.resolved_app_id == app_id
+            ),
+            None,
+        )
+        visible = tuple(
+            window
+            for window in windows
+            if window.visible and window.resolved_app_id == app_id
+        )
+        exact_window = next(
+            (
+                window
+                for window in visible
+                if window.hwnd == expected_hwnd
+                and window.process_id == expected_pid
+                and window.resolved_app_id == app_id
+            ),
+            None,
+        )
+        if exact_process is None:
+            return self._preflight_result(
+                self._ACTIVATE_KIND, event_id, app_id, False,
+                data={**base_data, "disposition": "admitted_process_drift"},
+                error="resident-admitted activation PID is no longer the same application process",
+            )
+        if len(visible) != 1:
+            return self._preflight_result(
+                self._ACTIVATE_KIND, event_id, app_id, False,
+                data={
+                    **base_data,
+                    "disposition": "admitted_window_topology_drift",
+                    "window_handles": [window.hwnd for window in visible],
+                },
+                error="visible application-window topology changed after Resident admission; re-investigation is required",
+            )
+        if exact_window is None:
+            current = visible[0]
+            return self._preflight_result(
+                self._ACTIVATE_KIND, event_id, app_id, False,
+                data={
+                    **base_data,
+                    "disposition": "admitted_window_identity_drift",
+                    "observed_window_handle": current.hwnd,
+                    "observed_process_id": current.process_id,
+                },
+                error="the unique visible application window no longer matches the Resident-admitted HWND/PID",
+            )
+
         return super().act(
             self._ACTIVATE_KIND,
             event_id=event_id,
             application_id=application.app_id,
             **{
                 self._ACTIVATE_DISPATCH_MARKER: True,
-                self._ACTIVATE_WINDOW_ARG: int(window.hwnd),
-                self._ACTIVATE_PROCESS_ARG: int(window.process_id),
-                self._ACTIVATE_OBSERVED_AT_ARG: str(window.observed_at),
+                self._ACTIVATE_WINDOW_ARG: expected_hwnd,
+                self._ACTIVATE_PROCESS_ARG: expected_pid,
+                self._ACTIVATE_OBSERVED_AT_ARG: str(observed_at or exact_window.observed_at),
             },
         )
 
@@ -379,6 +487,26 @@ class MachineCapabilityBody(BrowserFormSubmitBody):
                 action, started, False,
                 {**base_data, "disposition": "window_became_hidden"},
                 "exact preflight HWND is no longer visible; refusing activation",
+            )
+
+        visible_matching = tuple(
+            window
+            for window in windows
+            if window.visible and window.resolved_app_id == app_id
+        )
+        if (
+            len(visible_matching) != 1
+            or visible_matching[0].hwnd != expected_hwnd
+            or visible_matching[0].process_id != expected_pid
+        ):
+            return self._result(
+                action, started, False,
+                {
+                    **base_data,
+                    "disposition": "window_topology_changed",
+                    "window_handles": [window.hwnd for window in visible_matching],
+                },
+                "visible application-window topology changed before native activation; refusing old authority",
             )
         if exact_window.foreground:
             return self._result(

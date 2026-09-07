@@ -394,6 +394,112 @@ class ApplicationAwareResidentRuntime(BroadGoalAutonomousResidentRuntime):
         self.store.save_working_state(state)
         return None
 
+    def _native_action_step(self, event, state, *, readiness, thought=None):
+        raw = state.data.get("native_action_intent")
+        if not isinstance(raw, dict):
+            return super()._native_action_step(
+                event,
+                state,
+                readiness=readiness,
+                thought=thought,
+            )
+
+        intent = NativeActionIntent.from_dict(raw)
+        if intent.kind != "activate_application_window":
+            return super()._native_action_step(
+                event,
+                state,
+                readiness=readiness,
+                thought=thought,
+            )
+
+        expected = intent.expected_outcome if isinstance(intent.expected_outcome, dict) else {}
+        app_id = str(intent.args.get("application_id") or "").strip()
+        expected_app_id = str(expected.get("application_id") or "").strip()
+        try:
+            expected_hwnd = int(expected.get("expected_window_handle") or 0)
+            expected_pid = int(expected.get("expected_process_id") or 0)
+        except (TypeError, ValueError):
+            expected_hwnd = 0
+            expected_pid = 0
+
+        if (
+            str(expected.get("kind") or "").strip().lower()
+            != self._APPLICATION_FOREGROUND_VERIFICATION_KIND
+            or not app_id
+            or expected_app_id != app_id
+            or expected_hwnd <= 0
+            or expected_pid <= 0
+        ):
+            return self._checkpoint_terminal_failure(
+                event,
+                state,
+                reason="application activation lost its Resident-admitted exact HWND/PID authority before Body execution",
+            )
+
+        result = self.body.activate_admitted_application_window(
+            event_id=event.event_id,
+            application_id=app_id,
+            expected_window_handle=expected_hwnd,
+            expected_process_id=expected_pid,
+        )
+        state.data["native_action_result"] = asdict(result)
+
+        if result.success:
+            verification = self._verification_contract(event, intent, result=result)
+            if verification is not None:
+                state.data["native_verification"] = verification
+                state.stage = "native_verification"
+                state.next_action = "verify the requested postcondition from current reality"
+                self._sync_execution_context(event, state)
+                self.store.save_working_state(state)
+                if thought is not None:
+                    action = "verify the body action against the requested postcondition"
+                    if action not in thought.possible_actions:
+                        thought.possible_actions = (*thought.possible_actions, action)
+                    thought.reason = (
+                        f"{thought.reason}; the body movement returned successfully but task "
+                        "completion still requires independent observation"
+                    )
+                    self._persist_enriched_thought(thought)
+                return None
+
+            self._sync_execution_context(event, state)
+            return self._complete_successful_body_action(
+                event,
+                state,
+                intent,
+                response=result.output.strip() or str(result.data),
+                reason=f"ZN completed the task through its body: {intent.kind}",
+            )
+
+        self.kernel.self_model.observe_native_outcome(
+            event.task,
+            self._required_capabilities(event),
+            success=False,
+        )
+        failure = result.error or f"body action {intent.kind} failed"
+        state.data["local_failure"] = failure
+        self._record_failed_action(
+            event,
+            state,
+            intent,
+            source="body",
+            failure=failure,
+        )
+        state.stage = "native_investigation"
+        state.next_action = "inspect the failed body movement and update the hypothesis"
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        if thought is not None:
+            if failure not in thought.unknown:
+                thought.unknown = (*thought.unknown, failure)
+            thought.reason = (
+                f"{thought.reason}; the attempted body movement produced new failure evidence"
+            )
+            self._persist_enriched_thought(thought)
+        return None
+
     def _verification_contract(self, event, intent, *, result=None):
         goal = application_open_goal(event)
         expected = intent.expected_outcome if isinstance(intent.expected_outcome, dict) else {}
