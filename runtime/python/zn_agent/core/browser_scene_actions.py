@@ -72,7 +72,7 @@ class PlaywrightBrowserSceneActionMixin:
         page_id: str = "",
     ) -> BrowserObservation:
         session = self._session(session_id)
-        binding = self._scene_binding(session, target_id, page_id=page_id)
+        binding = self._scene_action_binding(session, target_id, page_id=page_id)
         if binding.scene_target.sensitive and not session.permission.allow_sensitive_fields:
             raise ManagedBrowserError("BrowserScene action target is sensitive and not authorized")
         self._scene_revalidate_binding(session, binding)
@@ -105,17 +105,17 @@ class PlaywrightBrowserSceneActionMixin:
         action: BrowserAction,
         authority: BrowserActionAuthority,
     ) -> BrowserEffectEvidence:
-        if not self._is_scene_action(action):
+        if not self._scene_action_is_scene_action(action):
             return super().act(action, authority)
         if action.kind not in _SCENE_ACTIONS:
             return self._failure(action, error=f"ManagedBrowserError: unsupported BrowserScene action: {action.kind.value}")
 
         session = self._session(action.session_id)
         try:
-            self._validate_scene_shape(action)
+            self._scene_action_validate_shape(action)
             self._validate_authority(session, action, authority)
             assert action.target is not None
-            binding = self._scene_binding(
+            binding = self._scene_action_binding(
                 session,
                 action.target.target_id,
                 page_id=action.page_id or action.target.page_id,
@@ -123,44 +123,44 @@ class PlaywrightBrowserSceneActionMixin:
             )
             self._scene_revalidate_binding(session, binding)
             if action.kind is BrowserActionKind.FOCUS:
-                return self._focus(session, action, binding)
+                return self._scene_action_focus(session, action, binding)
             if action.kind is BrowserActionKind.TYPE_TEXT:
-                return self._type_text(session, action, binding)
+                return self._scene_action_type_text(session, action, binding)
             if action.kind is BrowserActionKind.CHECK:
-                return self._check(session, action, binding, requested=True)
+                return self._scene_action_check(session, action, binding, requested=True)
             if action.kind is BrowserActionKind.UNCHECK:
-                return self._check(session, action, binding, requested=False)
-            return self._navigation_click(session, action, authority, binding)
+                return self._scene_action_check(session, action, binding, requested=False)
+            return self._scene_action_navigation_click(session, action, authority, binding)
         except Exception as exc:
             return self._failure(action, error=f"{type(exc).__name__}: {exc}")
 
     @staticmethod
-    def _is_scene_action(action: BrowserAction) -> bool:
+    def _scene_action_is_scene_action(action: BrowserAction) -> bool:
         return bool(action.target and str(action.target.selector_hint or "").startswith(_SCENE_PREFIX))
 
-    def _validate_scene_shape(self, action: BrowserAction) -> None:
+    def _scene_action_validate_shape(self, action: BrowserAction) -> None:
         if action.target is None:
             raise ManagedBrowserError("BrowserScene action requires an exact target")
         if action.kind is BrowserActionKind.FOCUS:
-            self._exact_keys(action.args, set(), "FOCUS args")
-            self._exact_keys(action.expected, set(), "FOCUS expected")
+            self._scene_action_exact_keys(action.args, set(), "FOCUS args")
+            self._scene_action_exact_keys(action.expected, set(), "FOCUS expected")
         elif action.kind is BrowserActionKind.TYPE_TEXT:
-            self._exact_keys(action.args, {"text"}, "TYPE_TEXT args")
-            self._exact_keys(action.expected, set(), "TYPE_TEXT expected")
+            self._scene_action_exact_keys(action.args, {"text"}, "TYPE_TEXT args")
+            self._scene_action_exact_keys(action.expected, set(), "TYPE_TEXT expected")
             text, _ = self._validate_managed_text(action.args.get("text"))
             text = ""
         elif action.kind in {BrowserActionKind.CHECK, BrowserActionKind.UNCHECK}:
-            self._exact_keys(action.args, set(), f"{action.kind.value} args")
-            self._exact_keys(action.expected, set(), f"{action.kind.value} expected")
+            self._scene_action_exact_keys(action.args, set(), f"{action.kind.value} args")
+            self._scene_action_exact_keys(action.expected, set(), f"{action.kind.value} expected")
         elif action.kind is BrowserActionKind.CLICK:
-            self._exact_keys(action.args, set(), "CLICK args")
-            self._exact_keys(action.expected, {"url_equals"}, "CLICK expected")
-            self._http_url(action.expected.get("url_equals"), "CLICK expected.url_equals")
+            self._scene_action_exact_keys(action.args, set(), "CLICK args")
+            self._scene_action_exact_keys(action.expected, {"url_equals"}, "CLICK expected")
+            self._scene_action_http_url(action.expected.get("url_equals"), "CLICK expected.url_equals")
         else:
             raise ManagedBrowserError(f"unsupported BrowserScene action: {action.kind.value}")
 
     @staticmethod
-    def _exact_keys(value: dict[str, Any], allowed: set[str], label: str) -> None:
+    def _scene_action_exact_keys(value: dict[str, Any], allowed: set[str], label: str) -> None:
         actual = set(value)
         if actual == allowed:
             return
@@ -174,7 +174,7 @@ class PlaywrightBrowserSceneActionMixin:
         raise ManagedBrowserError(f"{label} must use only its declared schema ({'; '.join(details)})")
 
     @staticmethod
-    def _http_url(raw: Any, label: str) -> str:
+    def _scene_action_http_url(raw: Any, label: str) -> str:
         if not isinstance(raw, str) or not raw.strip():
             raise ManagedBrowserError(f"{label} must be a non-empty HTTP(S) URL string")
         url = raw.strip()
@@ -186,7 +186,7 @@ class PlaywrightBrowserSceneActionMixin:
             raise ManagedBrowserError(f"{label} must be an HTTP(S) URL")
         return url
 
-    def _scene_binding(
+    def _scene_action_binding(
         self,
         session: Any,
         target_id: str,
@@ -205,8 +205,8 @@ class PlaywrightBrowserSceneActionMixin:
             raise ManagedBrowserError("BrowserScene action target evidence changed before dispatch")
         return binding
 
-    def _focus(self, session: Any, action: BrowserAction, binding: Any) -> BrowserEffectEvidence:
-        page, before_url, pages = self._pre_dispatch(session, binding)
+    def _scene_action_focus(self, session: Any, action: BrowserAction, binding: Any) -> BrowserEffectEvidence:
+        page, before_url, pages = self._scene_action_pre_dispatch(session, binding)
         dispatched = False
         try:
             binding.handle.focus()
@@ -214,42 +214,49 @@ class PlaywrightBrowserSceneActionMixin:
             self._scene_revalidate_binding(session, binding)
             if not bool(binding.handle.evaluate(_FOCUS_SCRIPT)):
                 raise ManagedBrowserError("BrowserScene focus postcondition was not observed")
-            self._unchanged_url(page, before_url, "focus")
-            self._no_fresh_page(session, pages)
+            self._scene_action_unchanged_url(page, before_url, "focus")
+            self._scene_action_no_fresh_page(session, pages)
         except Exception:
             if dispatched:
-                self._dispatched_failure(session, binding.page_id)
+                self._scene_action_dispatched_failure(session, binding.page_id)
             raise
-        observed = self._finish_same_page(session, binding.page_id, before_url)
-        return self._evidence(action, observed, before_url, binding, "same_scene_target_focused", {"focused": True})
+        observed = self._scene_action_finish_same_page(session, binding.page_id, before_url)
+        return self._scene_action_evidence(
+            action,
+            observed,
+            before_url,
+            binding,
+            "same_scene_target_focused",
+            {"focused": True},
+        )
 
-    def _type_text(self, session: Any, action: BrowserAction, binding: Any) -> BrowserEffectEvidence:
+    def _scene_action_type_text(self, session: Any, action: BrowserAction, binding: Any) -> BrowserEffectEvidence:
         if binding.scene_target.role not in _TEXT_ROLES or binding.scene_target.sensitive:
             raise ManagedBrowserError("BrowserScene type_text requires a non-sensitive textbox/searchbox/textarea")
         text, expected = self._validate_managed_text(action.args.get("text"))
-        before = self._text_state(binding.handle)
+        before = self._scene_action_text_state(binding.handle)
         if before["text_length"] != 0:
             text = ""
             raise ManagedBrowserError("BrowserScene type_text first slice refuses a non-empty target")
-        page, before_url, pages = self._pre_dispatch(session, binding)
+        page, before_url, pages = self._scene_action_pre_dispatch(session, binding)
         dispatched = False
         try:
             binding.handle.fill(text)
             dispatched = True
             text = ""
             self._scene_revalidate_binding(session, binding)
-            after = self._text_state(binding.handle)
-            self._unchanged_url(page, before_url, "type_text")
-            self._no_fresh_page(session, pages)
+            after = self._scene_action_text_state(binding.handle)
+            self._scene_action_unchanged_url(page, before_url, "type_text")
+            self._scene_action_no_fresh_page(session, pages)
             if after["text_length"] != expected["text_length"] or after["text_sha256"] != expected["text_sha256"]:
                 raise ManagedBrowserError("BrowserScene type_text postcondition was not observed")
         except Exception:
             text = ""
             if dispatched:
-                self._dispatched_failure(session, binding.page_id)
+                self._scene_action_dispatched_failure(session, binding.page_id)
             raise
-        observed = self._finish_same_page(session, binding.page_id, before_url)
-        return self._evidence(
+        observed = self._scene_action_finish_same_page(session, binding.page_id, before_url)
+        return self._scene_action_evidence(
             action,
             observed,
             before_url,
@@ -265,32 +272,39 @@ class PlaywrightBrowserSceneActionMixin:
             },
         )
 
-    def _check(self, session: Any, action: BrowserAction, binding: Any, *, requested: bool) -> BrowserEffectEvidence:
+    def _scene_action_check(
+        self,
+        session: Any,
+        action: BrowserAction,
+        binding: Any,
+        *,
+        requested: bool,
+    ) -> BrowserEffectEvidence:
         role = binding.scene_target.role
         if role not in _CHECK_ROLES:
             raise ManagedBrowserError("BrowserScene check/uncheck requires checkbox or radio")
         if role == "radio" and not requested:
             raise ManagedBrowserError("BrowserScene refuses to uncheck a radio target")
-        before = self._checked_state(binding.handle)
+        before = self._scene_action_checked_state(binding.handle)
         if before is requested:
             raise ManagedBrowserError("BrowserScene checked postcondition is already observed before dispatch")
-        page, before_url, pages = self._pre_dispatch(session, binding)
+        page, before_url, pages = self._scene_action_pre_dispatch(session, binding)
         dispatched = False
         try:
             (binding.handle.check if requested else binding.handle.uncheck)()
             dispatched = True
             self._scene_revalidate_binding(session, binding)
-            after = self._checked_state(binding.handle)
-            self._unchanged_url(page, before_url, "checked-state")
-            self._no_fresh_page(session, pages)
+            after = self._scene_action_checked_state(binding.handle)
+            self._scene_action_unchanged_url(page, before_url, "checked-state")
+            self._scene_action_no_fresh_page(session, pages)
             if after is not requested:
                 raise ManagedBrowserError("BrowserScene checked-state postcondition was not observed")
         except Exception:
             if dispatched:
-                self._dispatched_failure(session, binding.page_id)
+                self._scene_action_dispatched_failure(session, binding.page_id)
             raise
-        observed = self._finish_same_page(session, binding.page_id, before_url)
-        return self._evidence(
+        observed = self._scene_action_finish_same_page(session, binding.page_id, before_url)
+        return self._scene_action_evidence(
             action,
             observed,
             before_url,
@@ -299,39 +313,45 @@ class PlaywrightBrowserSceneActionMixin:
             {"checked_before": before, "checked_after": after},
         )
 
-    def _navigation_click(self, session: Any, action: BrowserAction, authority: BrowserActionAuthority, binding: Any) -> BrowserEffectEvidence:
+    def _scene_action_navigation_click(
+        self,
+        session: Any,
+        action: BrowserAction,
+        authority: BrowserActionAuthority,
+        binding: Any,
+    ) -> BrowserEffectEvidence:
         if binding.scene_target.role not in _NAV_ROLES:
             raise ManagedBrowserError("BrowserScene navigation click currently supports link/button targets")
         if not authority.permission.allow_page_interaction:
             raise ManagedBrowserError("BrowserScene navigation click requires page-interaction permission")
         if not authority.permission.allow_navigation:
             raise ManagedBrowserError("BrowserScene navigation click requires navigation permission")
-        expected_url = self._http_url(action.expected.get("url_equals"), "CLICK expected.url_equals")
+        expected_url = self._scene_action_http_url(action.expected.get("url_equals"), "CLICK expected.url_equals")
         self._require_url_allowed(expected_url, session.permission)
-        page, before_url, pages = self._pre_dispatch(session, binding)
+        page, before_url, pages = self._scene_action_pre_dispatch(session, binding)
         if before_url == expected_url:
             raise ManagedBrowserError("BrowserScene click expected URL is already observed before dispatch")
         dispatched = False
         try:
             binding.handle.click()
             dispatched = True
-            self._no_fresh_page(session, pages)
+            self._scene_action_no_fresh_page(session, pages)
             wait_for_url = getattr(page, "wait_for_url", None)
             if not callable(wait_for_url):
                 raise ManagedBrowserError("BrowserScene navigation provider cannot wait for explicit URL completion")
             wait_for_url(expected_url, wait_until="domcontentloaded", timeout=self.navigation_timeout_ms)
-            self._no_fresh_page(session, pages)
+            self._scene_action_no_fresh_page(session, pages)
         except Exception:
             if dispatched:
-                self._dispatched_failure(session, binding.page_id)
+                self._scene_action_dispatched_failure(session, binding.page_id)
             raise
         self._scene_invalidate_page(session.identity.session_id, binding.page_id)
         observed = self._capture(session, binding.page_id)
         self._require_url_allowed(observed.url, session.permission)
-        self._no_fresh_page(session, pages)
+        self._scene_action_no_fresh_page(session, pages)
         if observed.url != expected_url:
             raise ManagedBrowserError("BrowserScene navigation click postcondition did not match observed URL")
-        return self._evidence(
+        return self._scene_action_evidence(
             action,
             observed,
             before_url,
@@ -340,14 +360,14 @@ class PlaywrightBrowserSceneActionMixin:
             {"expected_url": expected_url},
         )
 
-    def _pre_dispatch(self, session: Any, binding: Any) -> tuple[Any, str, tuple[Any, ...]]:
+    def _scene_action_pre_dispatch(self, session: Any, binding: Any) -> tuple[Any, str, tuple[Any, ...]]:
         self._scene_revalidate_binding(session, binding)
         page = self._page(session, binding.page_id)
         before_url = str(getattr(page, "url", "") or "")
         self._require_url_allowed(before_url, session.permission)
         return page, before_url, self._scene_action_provider_pages(session)
 
-    def _finish_same_page(self, session: Any, page_id: str, before_url: str) -> BrowserObservation:
+    def _scene_action_finish_same_page(self, session: Any, page_id: str, before_url: str) -> BrowserObservation:
         self._scene_invalidate_page(session.identity.session_id, page_id)
         observed = self._capture(session, page_id)
         self._require_url_allowed(observed.url, session.permission)
@@ -355,7 +375,7 @@ class PlaywrightBrowserSceneActionMixin:
             raise ManagedBrowserError("BrowserScene mutation changed the top-level URL")
         return observed
 
-    def _dispatched_failure(self, session: Any, page_id: str) -> None:
+    def _scene_action_dispatched_failure(self, session: Any, page_id: str) -> None:
         self._scene_invalidate_page(session.identity.session_id, page_id)
         try:
             self._capture(session, page_id)
@@ -363,7 +383,7 @@ class PlaywrightBrowserSceneActionMixin:
             session.last_observation.pop(page_id, None)
 
     @staticmethod
-    def _unchanged_url(page: Any, before_url: str, label: str) -> None:
+    def _scene_action_unchanged_url(page: Any, before_url: str, label: str) -> None:
         if str(getattr(page, "url", "") or "") != before_url:
             raise ManagedBrowserError(f"BrowserScene {label} unexpectedly changed the top-level URL")
 
@@ -373,13 +393,13 @@ class PlaywrightBrowserSceneActionMixin:
             raw = raw()
         return tuple(page for page in tuple(raw or ()) if not self._page_is_closed(page))
 
-    def _no_fresh_page(self, session: Any, before: tuple[Any, ...]) -> None:
+    def _scene_action_no_fresh_page(self, session: Any, before: tuple[Any, ...]) -> None:
         current = self._scene_action_provider_pages(session)
         if any(not any(page is old for old in before) for page in current):
             raise ManagedBrowserError("unexpected fresh page observed")
 
     @staticmethod
-    def _checked_state(handle: Any) -> bool:
+    def _scene_action_checked_state(handle: Any) -> bool:
         raw = handle.evaluate(_CHECK_SCRIPT)
         if not isinstance(raw, dict) or not bool(raw.get("connected")):
             raise ManagedBrowserError("BrowserScene checked target is detached")
@@ -393,7 +413,7 @@ class PlaywrightBrowserSceneActionMixin:
         return checked
 
     @staticmethod
-    def _text_state(handle: Any) -> dict[str, Any]:
+    def _scene_action_text_state(handle: Any) -> dict[str, Any]:
         raw = handle.evaluate(_TEXT_SCRIPT)
         if not isinstance(raw, dict) or not bool(raw.get("connected")):
             raise ManagedBrowserError("BrowserScene text target is detached")
@@ -411,7 +431,7 @@ class PlaywrightBrowserSceneActionMixin:
         return result
 
     @staticmethod
-    def _evidence(
+    def _scene_action_evidence(
         action: BrowserAction,
         observed: BrowserObservation,
         before_url: str,
