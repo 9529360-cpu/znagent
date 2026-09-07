@@ -69,7 +69,7 @@ class HealthAwareResidentRuntime(BrowserWorkResidentRuntime):
         return data
 
     def _install_cognitive_resource_health_observer(self) -> None:
-        """Bind provider observation after resident health exists."""
+        """Bind provider observation and routing evidence after health exists."""
 
         observer = self._observe_cognitive_resource_health
         setattr(self.kernel, "resource_health_observer", observer)
@@ -78,6 +78,16 @@ class HealthAwareResidentRuntime(BrowserWorkResidentRuntime):
         if callable(setter):
             try:
                 setter(observer)
+            except Exception:
+                pass
+
+        resolver = self._resolve_cognitive_resource_health
+        setattr(self.kernel, "resource_health_resolver", resolver)
+        router = getattr(self.kernel, "router", None)
+        route_setter = getattr(router, "set_health_resolver", None)
+        if callable(route_setter):
+            try:
+                route_setter(resolver)
             except Exception:
                 pass
 
@@ -91,6 +101,11 @@ class HealthAwareResidentRuntime(BrowserWorkResidentRuntime):
             self.health.record_success(organ)
         else:
             self.health.record_failure(organ, error)
+
+    def _resolve_cognitive_resource_health(self, route: ModelRoute) -> dict[str, Any] | None:
+        """Return only the durable observation for Router-owned eligibility."""
+
+        return self.health.get(self._cognitive_resource_health_organ(route))
 
     @staticmethod
     def _cognitive_resource_health_organ(route: ModelRoute) -> str:
