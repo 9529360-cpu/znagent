@@ -62,21 +62,35 @@ jobs:
           @'
           import json
           from zn_agent.core.cognitive_factory import resolve_zn_cognitive_route
+          from zn_agent.core.cognitive_resource import _infer_provider
           from zn_agent.core.config import load_zn_config
           from zn_agent.core.provider_bridge import build_zn_cognitive_resource_plan
           from zn_agent.core.router import ModelRouter
+
+          def provider_family(route):
+              resolved = resolve_zn_cognitive_route(route)
+              family = str(resolved.provider or "").strip().lower()
+              if family == "custom":
+                  # A configurable OpenAI-compatible transport may be labelled
+                  # "custom", but known official provider endpoints are not a
+                  # second independent provider family. Pass an empty environment
+                  # so this audit uses endpoint identity only and never ambient
+                  # credential names.
+                  endpoint_family = _infer_provider(resolved.metadata.get("base_url"), {})
+                  if endpoint_family != "custom":
+                      family = endpoint_family
+              return family
 
           plan = build_zn_cognitive_resource_plan(load_zn_config())
           safe = []
           for route in plan.routes:
               if route.provider == "none":
                   continue
-              resolved = resolve_zn_cognitive_route(route)
               safe.append(
                   {
                       "route_id": route.route_id,
                       "provider": route.provider,
-                      "provider_family": resolved.provider,
+                      "provider_family": provider_family(route),
                       "model": route.model,
                       "capabilities": sorted(route.capabilities),
                       "local": ModelRouter._is_explicit_local_route(route),
