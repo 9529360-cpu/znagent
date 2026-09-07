@@ -1,0 +1,141 @@
+name: E2E28-34 Real Supervision Recovery Acceptance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/e2e28-34-real-supervision-acceptance.yml'
+      - 'runtime/python/zn_agent/core/delegated_work_coordinator.py'
+      - 'runtime/python/zn_agent/core/health_aware_resident.py'
+      - 'runtime/python/zn_agent/core/provider_bridge.py'
+      - 'runtime/python/zn_agent/core/router.py'
+      - 'runtime/python/zn_agent/core/worker_progress.py'
+      - 'tests/zn_agent/e2e/test_e2e28_34_real_supervision_recovery.py'
+      - 'tests/zn_agent/e2e/test_e2e28_real_dynamic_health.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e28-34-real-supervision-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: 'true'
+  PYTHONUTF8: '1'
+  PYTHONUNBUFFERED: '1'
+  ZN_E2E28_34_REAL_MODEL: '1'
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+jobs:
+  real-e2e:
+    name: Real delegated supervision + restart recovery
+    runs-on: [self-hosted, Windows, X64, zn-interactive]
+    timeout-minutes: 35
+    steps:
+      - name: Require configured interactive Windows host
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "E2E-28/34 acceptance requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+          if ($env:RUNNER_NAME -ne 'zn-interactive') {
+            throw "E2E-28/34 acceptance requires zn-interactive; got $env:RUNNER_NAME"
+          }
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare isolated runtime with provider transports
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/e2e28-34-real-venv -ErrorAction SilentlyContinue
+          uv venv .ci/e2e28-34-real-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e28-34-real-venv\Scripts\python.exe'
+          Push-Location runtime/python
+          try {
+            uv pip install --python $python '.[browser,anthropic]'
+          } finally {
+            Pop-Location
+          }
+      - name: Require at least one configured real cognitive route
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e28-34-real-venv\Scripts\python.exe'
+          @'
+          import json
+          from zn_agent.core.config import load_zn_config
+          from zn_agent.core.provider_bridge import build_zn_cognitive_resource_plan
+
+          plan = build_zn_cognitive_resource_plan(load_zn_config())
+          safe = [
+              {
+                  "route_id": route.route_id,
+                  "provider": route.provider,
+                  "model": route.model,
+                  "capabilities": sorted(route.capabilities),
+              }
+              for route in plan.routes
+              if route.provider != "none" and str(route.model or "").strip()
+          ]
+          print("ZN_E2E28_34_CONFIGURED_ROUTES=" + json.dumps(safe, ensure_ascii=False), flush=True)
+          if not plan.available or not safe:
+              raise SystemExit(
+                  "E2E-28/34 requires at least one configured real cognitive resource: "
+                  + str(plan.error)
+              )
+          '@ | & $python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run guarded E2E-28/34 and fail on any skip
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e28-34-real-venv\Scripts\python.exe'
+          $log = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e28-34-real.log'
+          Remove-Item -Force $log -ErrorAction SilentlyContinue
+          @'
+          import importlib.util
+          import sys
+          import unittest
+          from pathlib import Path
+
+          suite = unittest.TestSuite()
+          files = (
+              ("zn_e2e28_34_real", "tests/zn_agent/e2e/test_e2e28_34_real_supervision_recovery.py"),
+              ("zn_e2e28_real_health", "tests/zn_agent/e2e/test_e2e28_real_dynamic_health.py"),
+          )
+          for module_name, relative_path in files:
+              test_path = Path(relative_path).resolve()
+              spec = importlib.util.spec_from_file_location(module_name, test_path)
+              if spec is None or spec.loader is None:
+                  raise SystemExit(f"unable to load E2E-28/34 test module: {relative_path}")
+              module = importlib.util.module_from_spec(spec)
+              sys.modules[spec.name] = module
+              spec.loader.exec_module(module)
+              suite.addTests(unittest.defaultTestLoader.loadTestsFromModule(module))
+          if suite.countTestCases() != 3:
+              raise SystemExit(
+                  f"expected exactly three E2E-28/34 acceptance tests, got {suite.countTestCases()}"
+              )
+          result = unittest.TextTestRunner(stream=sys.stdout, verbosity=2).run(suite)
+          print("ZN_E2E28_34_SKIPPED=" + str(len(result.skipped)), flush=True)
+          print("ZN_E2E28_34_FAILURES=" + str(len(result.failures)), flush=True)
+          print("ZN_E2E28_34_ERRORS=" + str(len(result.errors)), flush=True)
+          if result.skipped:
+              raise SystemExit("E2E-28/34 real acceptance skipped: " + repr(result.skipped))
+          if not result.wasSuccessful():
+              raise SystemExit(1)
+          '@ | & $python - 2>&1 | Tee-Object -FilePath $log
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -ne 0) { exit $exitCode }
+      - name: Upload guarded E2E-28/34 transcript
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e28-34-real-supervision-transcript
+          path: .ci/e2e28-34-real.log
+          if-no-files-found: warn
+          retention-days: 7

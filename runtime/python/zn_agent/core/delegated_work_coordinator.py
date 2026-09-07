@@ -16,10 +16,14 @@ from .evidence_bound_work import WorkerRun
 from .route_policy_intake import infer_thread_route_policy, merge_route_policy
 from .steerable_work import WorkItem
 from .worker_context_boundary import WorkerContextPack
+from .worker_progress import record_worker_progress, worker_stalled
 
 
 class DelegatedWorkCoordinator:
     """Coordinate one Resident's current flat delegated-work lifecycle."""
+
+    _WORKER_STALL_SECONDS = 120.0
+    _MAX_PHASE_ATTEMPTS = 3
 
     def __init__(self, resident) -> None:
         self.resident = resident
@@ -28,9 +32,41 @@ class DelegatedWorkCoordinator:
         return BoundedDelegationPlanner.decide(root)
 
     def reconcile(self, *, thread_id: str) -> None:
-        """Reconcile durable worker records without replaying unknown effects."""
+        """Reconcile durable worker records without replaying unknown effects.
 
-        self.resident.work_ledger.reconcile_stale_worker_runs(thread_id=thread_id)
+        Kernel owns external-provider dispatch durability. Work owns WorkerRun
+        lifecycle. If a restart happens after Kernel has durably finalized a
+        provider result but before Resident/Work consumes it, the result is real
+        progress and must be observed before stall detection. Observation here
+        never completes the WorkerRun or WorkItem; normal Resident integration
+        still validates schema/scope and later Body evidence.
+        """
+
+        ledger = self.resident.work_ledger
+        ledger.reconcile_stale_worker_runs(thread_id=thread_id)
+        kernel = getattr(self.resident, "kernel", None)
+        load_result = getattr(kernel, "load_goal_result", None)
+        if not callable(load_result):
+            return
+        for run in ledger.list_worker_runs(thread_id=thread_id, limit=256):
+            if run.state not in {"queued", "running"}:
+                continue
+            result = load_result(run.model_goal_id)
+            if result is None:
+                continue
+            route = getattr(result, "route", None)
+            assessment = getattr(result, "assessment", None)
+            record_worker_progress(
+                ledger,
+                run.worker_run_id,
+                stage="provider_result_persisted",
+                evidence={
+                    "model_goal_id": run.model_goal_id,
+                    "route_id": str(getattr(route, "route_id", "") or ""),
+                    "provider": str(getattr(route, "provider", "") or ""),
+                    "success": bool(getattr(assessment, "success", False)),
+                },
+            )
 
     def prepare_request(self, event, root: WorkItem, request, completed: list[WorkItem]):
         """Resume or materialize exactly one bounded current-plan WorkerRun."""
@@ -56,6 +92,39 @@ class DelegatedWorkCoordinator:
             ),
             None,
         )
+        if active is not None and worker_stalled(
+            active,
+            timeout_seconds=self._worker_stall_seconds(event),
+        ):
+            child = item_by_id[active.work_item_id]
+            expected_action = self.resident._worker_expected_action(child) or "unknown"
+            failure = (
+                "delegated WorkerRun made no new durable progress within the bounded "
+                f"stall window while waiting for {active.executor_kind}/{expected_action}"
+            )
+            self.resident.work_ledger.fail_worker_run(
+                active.worker_run_id,
+                error=failure,
+                result_summary=None,
+                verification_status="stalled",
+                metrics={
+                    **dict(active.metrics or {}),
+                    "supervision_failure": "no_progress",
+                },
+            )
+            self.resident.work_ledger.block_child_item(child.work_item_id, blocker=failure)
+            active = None
+            items = self.resident.work_ledger.list_work_items(root.work_thread_id, limit=256)
+            item_by_id = {item.work_item_id: item for item in items}
+            current_runs = [
+                run
+                for run in self.resident.work_ledger.list_worker_runs(
+                    thread_id=root.work_thread_id,
+                    limit=256,
+                )
+                if run.plan_version == root.plan_version
+            ]
+
         if active is not None:
             child = item_by_id[active.work_item_id]
             expected_action = self.resident._worker_expected_action(child)
@@ -75,6 +144,29 @@ class DelegatedWorkCoordinator:
         if phase is None:
             return request
         executor_kind, expected_action = phase
+        attempts = self._phase_attempt_count(
+            current_runs,
+            item_by_id,
+            executor_kind=executor_kind,
+            expected_action=expected_action,
+        )
+        if attempts >= self._MAX_PHASE_ATTEMPTS:
+            request.context = {
+                **dict(request.context or {}),
+                "delegated_supervision": {
+                    "status": "attempt_budget_exhausted",
+                    "executor_kind": executor_kind,
+                    "expected_action": expected_action,
+                    "attempts": attempts,
+                },
+            }
+            request.question += (
+                " Delegated execution for this phase exhausted its bounded WorkerRun retry "
+                "budget. Use the current failure evidence to choose a materially different "
+                "safe approach; do not request another equivalent WorkerRun retry."
+            )
+            return request
+
         child = self.resident.work_ledger.create_child_item(
             root_work_item_id=root.work_item_id,
             objective=self.resident._worker_objective(executor_kind, expected_action),
@@ -90,6 +182,18 @@ class DelegatedWorkCoordinator:
             tool_scope=profile["tool_scope"],
             authority_scope=profile["authority_scope"],
         )
+        record_worker_progress(
+            self.resident.work_ledger,
+            worker.worker_run_id,
+            stage="worker_started",
+            evidence={
+                "work_item_id": child.work_item_id,
+                "plan_version": root.plan_version,
+                "executor_kind": executor_kind,
+                "expected_action": expected_action,
+            },
+        )
+        worker = self.resident.work_ledger.worker_run(worker.worker_run_id) or worker
         return self.bind_worker_request(
             event,
             root,
@@ -99,6 +203,34 @@ class DelegatedWorkCoordinator:
             expected_action=expected_action,
             completed=completed,
         )
+
+    def _worker_stall_seconds(self, event) -> float:
+        payload = event.payload if isinstance(getattr(event, "payload", None), dict) else {}
+        raw = payload.get("worker_stall_seconds", self._WORKER_STALL_SECONDS)
+        try:
+            return max(1.0, min(3600.0, float(raw)))
+        except (TypeError, ValueError):
+            return self._WORKER_STALL_SECONDS
+
+    @staticmethod
+    def _phase_attempt_count(
+        runs: list[WorkerRun],
+        item_by_id: dict[str, WorkItem],
+        *,
+        executor_kind: str,
+        expected_action: str,
+    ) -> int:
+        prefix = f"delegated_worker_evidence: {executor_kind}/{expected_action}"
+        count = 0
+        for run in runs:
+            if run.executor_kind != executor_kind:
+                continue
+            item = item_by_id.get(run.work_item_id)
+            if item is None:
+                continue
+            if any(str(criterion).strip() == prefix for criterion in item.acceptance_criteria):
+                count += 1
+        return count
 
     def next_worker_phase(self, root: WorkItem, items, runs):
         current_children = [
@@ -323,5 +455,16 @@ class DelegatedWorkCoordinator:
         request.question += self.resident._delegated_worker_instruction(
             worker.executor_kind,
             expected_action,
+        )
+        record_worker_progress(
+            self.resident.work_ledger,
+            worker.worker_run_id,
+            stage="context_bound",
+            evidence={
+                "model_goal_id": worker.model_goal_id,
+                "work_item_id": child.work_item_id,
+                "plan_version": root.plan_version,
+                "expected_action": expected_action,
+            },
         )
         return request

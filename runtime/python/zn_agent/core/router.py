@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from datetime import datetime, timezone
 from typing import Any
 
 from .models import Goal, ModelRoute
@@ -39,12 +40,35 @@ class ModelRouter:
         "required_policy_tags",
         "required_authority_scopes",
     )
+    _DYNAMIC_HEALTH_FAILURE_THRESHOLD = 3
+    _DYNAMIC_HEALTH_BASE_BACKOFF_SECONDS = 5.0
+    _DYNAMIC_HEALTH_MAX_BACKOFF_SECONDS = 60.0
 
-    def __init__(self, routes: list[ModelRoute], self_model: SelfModel):
+    def __init__(
+        self,
+        routes: list[ModelRoute],
+        self_model: SelfModel,
+        *,
+        health_resolver: Callable[[ModelRoute], dict[str, Any] | None] | None = None,
+    ):
         if not routes:
             raise ValueError("at least one model route is required")
         self.routes = tuple(routes)
         self.self_model = self_model
+        self._health_resolver = health_resolver
+
+    def set_health_resolver(
+        self,
+        resolver: Callable[[ModelRoute], dict[str, Any] | None] | None,
+    ) -> None:
+        """Attach Resident-owned durable health evidence to Kernel routing.
+
+        The resolver supplies observations only. ModelRouter remains the sole
+        owner of route eligibility and deliberately ignores resolver failures so
+        health telemetry can never replace provider execution semantics.
+        """
+
+        self._health_resolver = resolver
 
     def select(self, goal: Goal, excluded: set[str] | None = None) -> ModelRoute:
         excluded = excluded or set()
@@ -147,6 +171,9 @@ class ModelRouter:
         health = str(metadata.get("health") or "").strip().lower()
         if metadata.get("healthy") is False or health in {"down", "failed", "unhealthy", "disabled"}:
             reasons.append("route unhealthy")
+        dynamic_health = self._dynamic_health_rejection(route)
+        if dynamic_health is not None:
+            reasons.append(dynamic_health)
 
         required = goal.required_capabilities or ("general",)
         missing = [
@@ -201,6 +228,72 @@ class ModelRouter:
             reasons.append("route lacks required authority policy scope")
 
         return reasons
+
+    def _dynamic_health_rejection(self, route: ModelRoute) -> str | None:
+        resolver = self._health_resolver
+        if resolver is None:
+            return None
+        try:
+            snapshot = resolver(route)
+        except Exception:
+            return None
+        if not isinstance(snapshot, dict) or snapshot.get("healthy") is not False:
+            return None
+        try:
+            consecutive = max(0, int(snapshot.get("consecutive_failures") or 0))
+        except (TypeError, ValueError):
+            return None
+        metadata = route.metadata if isinstance(route.metadata, dict) else {}
+        try:
+            threshold = max(
+                1,
+                int(
+                    metadata.get(
+                        "health_failure_threshold",
+                        self._DYNAMIC_HEALTH_FAILURE_THRESHOLD,
+                    )
+                ),
+            )
+        except (TypeError, ValueError):
+            threshold = self._DYNAMIC_HEALTH_FAILURE_THRESHOLD
+        if consecutive < threshold:
+            return None
+        try:
+            base_backoff = max(
+                0.0,
+                float(
+                    metadata.get(
+                        "health_backoff_seconds",
+                        self._DYNAMIC_HEALTH_BASE_BACKOFF_SECONDS,
+                    )
+                ),
+            )
+        except (TypeError, ValueError):
+            base_backoff = self._DYNAMIC_HEALTH_BASE_BACKOFF_SECONDS
+        exponent = min(8, max(0, consecutive - threshold))
+        backoff = min(
+            self._DYNAMIC_HEALTH_MAX_BACKOFF_SECONDS,
+            base_backoff * (2**exponent),
+        )
+        if self._seconds_since(snapshot.get("last_failure_at")) >= backoff:
+            # Half-open: one later goal may probe this route. A successful real
+            # provider call resets the journal; another failure opens it again.
+            return None
+        return "route dynamically unhealthy from resident health evidence"
+
+    @staticmethod
+    def _seconds_since(value: object) -> float:
+        text = str(value or "").strip()
+        if not text:
+            return 0.0
+        try:
+            observed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return 0.0
+        if observed.tzinfo is None:
+            observed = observed.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        return max(0.0, (now - observed.astimezone(timezone.utc)).total_seconds())
 
     def _declared_prior(self, route: ModelRoute, capability: str) -> float | None:
         """Return a declared capability prior, never an undeclared default.
