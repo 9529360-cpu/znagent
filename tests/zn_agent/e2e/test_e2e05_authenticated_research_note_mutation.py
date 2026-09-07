@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import secrets
 import tempfile
 import threading
 import time
@@ -25,7 +24,10 @@ from test_windows_interactive_user_browser_extension import (
 
 _HOST = "zn-extension-e2e.test"
 _SESSION_COOKIE = "zn_e2e05_session=already-authenticated-before-zn"
-_INITIAL_TITLE = "ZN E2E05 Alice Order"
+# _ExtensionBrowserFixture inherits a window finder whose real runtime contract
+# recognizes this title. Keep the initial page title aligned so fixture startup
+# proves the browser window rather than timing out on a different test title.
+_INITIAL_TITLE = "ZN User Browser Bridge E2E"
 _FRESH_TITLE = "ZN E2E05 Alice Order Fresh"
 _SAVED_TITLE = "ZN E2E05 Note Saved"
 _TASK = "查一下 Alice 最近的订单，再去官网核对退货规则，然后回来把备注更新成官网写的退货时限。"
