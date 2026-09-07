@@ -12,6 +12,7 @@ on:
       - 'runtime/python/zn_agent/core/router.py'
       - 'runtime/python/zn_agent/core/worker_progress.py'
       - 'tests/zn_agent/e2e/test_e2e28_34_real_supervision_recovery.py'
+      - 'tests/zn_agent/e2e/test_e2e28_real_dynamic_health.py'
 
 permissions:
   contents: read
@@ -101,17 +102,23 @@ jobs:
           import unittest
           from pathlib import Path
 
-          test_path = Path("tests/zn_agent/e2e/test_e2e28_34_real_supervision_recovery.py").resolve()
-          spec = importlib.util.spec_from_file_location("zn_e2e28_34_real", test_path)
-          if spec is None or spec.loader is None:
-              raise SystemExit("unable to load E2E-28/34 test module")
-          module = importlib.util.module_from_spec(spec)
-          sys.modules[spec.name] = module
-          spec.loader.exec_module(module)
-          suite = unittest.defaultTestLoader.loadTestsFromModule(module)
-          if suite.countTestCases() != 2:
+          suite = unittest.TestSuite()
+          files = (
+              ("zn_e2e28_34_real", "tests/zn_agent/e2e/test_e2e28_34_real_supervision_recovery.py"),
+              ("zn_e2e28_real_health", "tests/zn_agent/e2e/test_e2e28_real_dynamic_health.py"),
+          )
+          for module_name, relative_path in files:
+              test_path = Path(relative_path).resolve()
+              spec = importlib.util.spec_from_file_location(module_name, test_path)
+              if spec is None or spec.loader is None:
+                  raise SystemExit(f"unable to load E2E-28/34 test module: {relative_path}")
+              module = importlib.util.module_from_spec(spec)
+              sys.modules[spec.name] = module
+              spec.loader.exec_module(module)
+              suite.addTests(unittest.defaultTestLoader.loadTestsFromModule(module))
+          if suite.countTestCases() != 3:
               raise SystemExit(
-                  f"expected exactly two E2E-28/34 acceptance tests, got {suite.countTestCases()}"
+                  f"expected exactly three E2E-28/34 acceptance tests, got {suite.countTestCases()}"
               )
           result = unittest.TextTestRunner(stream=sys.stdout, verbosity=2).run(suite)
           print("ZN_E2E28_34_SKIPPED=" + str(len(result.skipped)), flush=True)
