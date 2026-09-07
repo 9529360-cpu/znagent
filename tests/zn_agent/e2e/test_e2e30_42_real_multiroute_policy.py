@@ -11,6 +11,7 @@ from zn_agent.core.config import load_zn_config
 from zn_agent.core.models import ModelRoute, WorkerResult
 from zn_agent.core.provider_bridge import build_resident_runtime, build_zn_cognitive_resource_plan
 from zn_agent.core.recovery_bounded_work import RecoveryBoundedWorkLedger
+from zn_agent.core.router import NoRouteAvailable
 from zn_agent.core.runtime import ZNKernelRuntime
 from zn_agent.core.store import KernelStore
 from zn_agent.core.work_restore_control import RestoreAwareWorkControl
@@ -128,12 +129,22 @@ class E2E30And42RealMultiRoutePolicyTests(unittest.TestCase):
         research_base, coding_base = pair
         research_route = _copy_route(
             research_base,
-            capabilities={"general": 0.70, "reasoning": 1.0, "research": 1.0},
+            capabilities={
+                "general": 0.70,
+                "reasoning": 1.0,
+                "research": 1.0,
+                "language_understanding": 1.0,
+            },
             reliability=0.95,
         )
         coding_route = _copy_route(
             coding_base,
-            capabilities={"general": 0.75, "reasoning": 1.0, "coding": 1.0},
+            capabilities={
+                "general": 0.75,
+                "reasoning": 1.0,
+                "coding": 1.0,
+                "language_understanding": 0.8,
+            },
             reliability=0.95,
         )
 
@@ -175,6 +186,7 @@ class E2E30And42RealMultiRoutePolicyTests(unittest.TestCase):
                                             "kind": run.executor_kind,
                                             "state": run.state,
                                             "route": run.model_route_id,
+                                            "provider": run.provider,
                                             "verification": run.verification_status,
                                         }
                                         for run in runs[-12:]
@@ -208,12 +220,16 @@ class E2E30And42RealMultiRoutePolicyTests(unittest.TestCase):
                 self.assertEqual(coding.model_route_id, coding_route.route_id)
                 self.assertEqual(review.model_route_id, coding_route.route_id)
                 self.assertNotEqual(research.model_route_id, coding.model_route_id)
+                self.assertEqual(research.provider, research_route.provider)
+                self.assertEqual(coding.provider, coding_route.provider)
+                self.assertEqual(review.provider, coding_route.provider)
 
                 provenance = []
                 for run in (research, coding, review):
                     route = _kernel_route_snapshot(resident, run.model_goal_id)
                     self.assertEqual(route.get("route_id"), run.model_route_id)
-                    self.assertTrue(str(route.get("provider") or "").strip())
+                    self.assertEqual(route.get("provider"), run.provider)
+                    self.assertTrue(str(run.provider or "").strip())
                     self.assertTrue(str(route.get("model") or "").strip())
                     provenance.append(
                         {
@@ -221,14 +237,11 @@ class E2E30And42RealMultiRoutePolicyTests(unittest.TestCase):
                             "work_item_id": run.work_item_id,
                             "plan_version": run.plan_version,
                             "model_route_id": run.model_route_id,
-                            "provider": route.get("provider"),
+                            "provider": run.provider,
                             "model": route.get("model"),
                             "executor_kind": run.executor_kind,
                         }
                     )
-                self.assertEqual(provenance[0]["provider"], research_route.provider)
-                self.assertEqual(provenance[1]["provider"], coding_route.provider)
-                self.assertEqual(provenance[2]["provider"], coding_route.provider)
                 print(
                     "ZN_E2E30_42_ROUTES="
                     + json.dumps(
@@ -258,12 +271,20 @@ class E2E30And42RealMultiRoutePolicyTests(unittest.TestCase):
         forbidden_base, allowed_base = pair
         forbidden = _copy_route(
             forbidden_base,
-            capabilities={"general": 1.0, "reasoning": 1.0},
+            capabilities={
+                "general": 1.0,
+                "reasoning": 1.0,
+                "language_understanding": 1.0,
+            },
             reliability=1.0,
         )
         allowed = _copy_route(
             allowed_base,
-            capabilities={"general": 1.0, "reasoning": 1.0},
+            capabilities={
+                "general": 1.0,
+                "reasoning": 1.0,
+                "language_understanding": 1.0,
+            },
             reliability=0.5,
         )
         factory = _RecordingFactory(plan.worker_factory)
@@ -341,7 +362,11 @@ class E2E30And42RealMultiRoutePolicyTests(unittest.TestCase):
         routes = [
             _copy_route(
                 route,
-                capabilities={"general": 1.0, "reasoning": 1.0},
+                capabilities={
+                    "general": 1.0,
+                    "reasoning": 1.0,
+                    "language_understanding": 1.0,
+                },
                 reliability=1.0,
             )
             for route in cloud
@@ -365,10 +390,19 @@ class E2E30And42RealMultiRoutePolicyTests(unittest.TestCase):
                 payload={},
             )
             try:
+                fail_closed = False
                 for _ in range(40):
-                    resident.live_once()
+                    try:
+                        candidate = resident.live_once()
+                    except NoRouteAvailable:
+                        fail_closed = True
+                        break
+                    if candidate is not None and not candidate.success:
+                        fail_closed = True
+                        break
                     if factory.created:
                         break
+                self.assertTrue(fail_closed, "local-only Work did not surface a fail-closed no-route outcome")
                 self.assertEqual(factory.created, [])
                 thread = ledger.get_thread("e2e-42-local-only")
                 self.assertIsNotNone(thread)
