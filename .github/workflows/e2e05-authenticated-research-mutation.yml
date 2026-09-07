@@ -79,7 +79,9 @@ jobs:
           module = importlib.util.module_from_spec(spec)
           sys.modules[spec.name] = module
           spec.loader.exec_module(module)
-          suite = unittest.defaultTestLoader.loadTestsFromModule(module)
+          suite = unittest.defaultTestLoader.loadTestsFromTestCase(
+              module.E2E05AuthenticatedResearchNoteMutationTests
+          )
           if suite.countTestCases() != 1:
               raise SystemExit(f"expected exactly one E2E-05 test, got {suite.countTestCases()}")
           result = unittest.TextTestRunner(stream=sys.stdout, verbosity=2).run(suite)
