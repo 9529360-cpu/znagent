@@ -1,0 +1,55 @@
+name: BrowserScene Action Diagnostic
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/scene-actions-diagnostic.yml'
+      - 'runtime/python/zn_agent/core/browser_scene_actions.py'
+      - 'runtime/python/zn_agent/core/semantic_managed_browser.py'
+      - 'tests/zn_agent/core/test_browser_scene_actions.py'
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+jobs:
+  focused:
+    runs-on: [self-hosted, Windows, X64, zn-ci]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare Python
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/scene-actions-diag -ErrorAction SilentlyContinue
+          uv venv .ci/scene-actions-diag --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\scene-actions-diag\Scripts\python.exe'
+          Push-Location runtime/python
+          try { uv pip install --python $python '.[browser]' } finally { Pop-Location }
+      - name: Run focused scene actions and persist output
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\scene-actions-diag\Scripts\python.exe'
+          $log = Join-Path $env:GITHUB_WORKSPACE '.ci\scene-actions-diagnostic.log'
+          New-Item -ItemType File -Path $log -Force | Out-Null
+          $output = & $python -m unittest tests.zn_agent.core.test_browser_scene_actions -v 2>&1
+          $code = $LASTEXITCODE
+          $output | Out-File -FilePath $log -Encoding utf8
+          $output | ForEach-Object { Write-Host $_ }
+          if ($code -ne 0) { exit $code }
+      - name: Upload focused transcript
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-scene-actions-diagnostic
+          path: .ci/scene-actions-diagnostic.log
+          if-no-files-found: error
+          retention-days: 1
