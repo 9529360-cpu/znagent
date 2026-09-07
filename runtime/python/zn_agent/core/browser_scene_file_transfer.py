@@ -229,6 +229,8 @@ class PlaywrightBrowserSceneFileTransferMixin:
                 raise ManagedBrowserError("browser provider cannot set files on causal chooser")
             set_files(source_path)
 
+            source_after = observe_file_identity(source_path)
+            self._require_identity_match(source_before, source_after, "upload source changed during operation")
             after_input = self._upload_input_state(chooser_element)
             expected_basename = Path(source_path).name
             expected_size = int(source_before["size_bytes"])
@@ -239,8 +241,6 @@ class PlaywrightBrowserSceneFileTransferMixin:
             if after_input["size"] != expected_size:
                 raise ManagedBrowserError("file input size postcondition did not match source identity")
 
-            source_after = observe_file_identity(source_path)
-            self._require_identity_match(source_before, source_after, "upload source changed during operation")
             self._require_same_page_postcondition(
                 session, binding.page_id, page, before_url, pages_before, label="upload"
             )
@@ -286,6 +286,8 @@ class PlaywrightBrowserSceneFileTransferMixin:
         )
         destination_before = observe_file_identity(destination)
         self._require_missing_destination(destination_before)
+        if str(destination_before.get("path") or "") != destination:
+            raise ManagedBrowserError("DOWNLOAD_FILE destination_path must already be canonical")
         parent_snapshot = self._observe_destination_parent(destination)
 
         page, before_url, pages_before = self._scene_action_pre_dispatch(session, binding)
@@ -660,8 +662,6 @@ class PlaywrightBrowserSceneFileTransferMixin:
             return False
         if not stat.S_ISREG(info.st_mode):
             return False
-        if owned_stat is None or cls._stat_marker(info) != owned_stat:
-            return False
         if identity is not None:
             try:
                 comparison = compare_file_identities(identity, observe_file_identity(destination))
@@ -669,6 +669,8 @@ class PlaywrightBrowserSceneFileTransferMixin:
                     return False
             except Exception:
                 return False
+        elif owned_stat is None or cls._stat_marker(info) != owned_stat:
+            return False
         try:
             os.unlink(destination)
             return True
