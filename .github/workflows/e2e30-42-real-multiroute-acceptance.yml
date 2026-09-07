@@ -61,29 +61,35 @@ jobs:
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e30-42-real-venv\Scripts\python.exe'
           @'
           import json
+          from zn_agent.core.cognitive_factory import resolve_zn_cognitive_route
           from zn_agent.core.config import load_zn_config
           from zn_agent.core.provider_bridge import build_zn_cognitive_resource_plan
+          from zn_agent.core.router import ModelRouter
 
           plan = build_zn_cognitive_resource_plan(load_zn_config())
-          safe = [
-              {
-                  "route_id": route.route_id,
-                  "provider": route.provider,
-                  "model": route.model,
-                  "capabilities": sorted(route.capabilities),
-                  "local": bool(route.metadata.get("local")),
-                  "deployment": route.metadata.get("deployment"),
-              }
-              for route in plan.routes
-              if route.provider != "none"
-          ]
+          safe = []
+          for route in plan.routes:
+              if route.provider == "none":
+                  continue
+              resolved = resolve_zn_cognitive_route(route)
+              safe.append(
+                  {
+                      "route_id": route.route_id,
+                      "provider": route.provider,
+                      "provider_family": resolved.provider,
+                      "model": route.model,
+                      "capabilities": sorted(route.capabilities),
+                      "local": ModelRouter._is_explicit_local_route(route),
+                      "deployment": route.metadata.get("deployment"),
+                  }
+              )
           print("ZN_E2E30_42_CONFIGURED_ROUTES=" + json.dumps(safe, ensure_ascii=False), flush=True)
           if not plan.available:
               raise SystemExit("configured cognitive resource plan unavailable: " + str(plan.error))
-          providers = {item["provider"] for item in safe}
+          providers = {item["provider_family"] for item in safe}
           if len(providers) < 2:
               raise SystemExit(
-                  "E2E-30/42 requires at least two configured real providers; found "
+                  "E2E-30/42 requires at least two configured real provider families; found "
                   + repr(sorted(providers))
               )
           '@ | & $python -
