@@ -7,6 +7,7 @@ from typing import Any
 from .browser import BrowserAction, BrowserActionAuthority, BrowserActionKind, BrowserEffectEvidence
 from .browser_scene_controls import PlaywrightBrowserSceneControlMixin
 from .browser_scene_dialog import PlaywrightBrowserSceneDialogMixin
+from .browser_scene_file_transfer import PlaywrightBrowserSceneFileTransferMixin
 from .browser_scene_js_dialog import PlaywrightBrowserSceneJsDialogMixin
 from .browser_scene_pointer import PlaywrightBrowserScenePointerMixin
 from .browser_scene_select import PlaywrightBrowserSceneSelectMixin
@@ -20,6 +21,7 @@ _ENTER_ROLES = frozenset({"textbox", "searchbox"})
 
 
 class PlaywrightBrowserSceneClearPressMixin(
+    PlaywrightBrowserSceneFileTransferMixin,
     PlaywrightBrowserSceneJsDialogMixin,
     PlaywrightBrowserSceneDialogMixin,
     PlaywrightBrowserSceneControlMixin,
