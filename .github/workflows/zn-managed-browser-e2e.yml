@@ -174,9 +174,12 @@ jobs:
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
           & $python -m unittest discover -s tests/zn_agent/core -p 'test_*browser*.py' -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $python -m unittest tests.zn_agent.core.test_structured_action_text_alias -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run real local Chromium E2E
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
           & $python -m unittest discover -s tests/zn_agent/e2e -p 'test_windows_managed_browser*.py' -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
