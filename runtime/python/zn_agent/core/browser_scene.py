@@ -557,7 +557,14 @@ class PlaywrightBrowserSceneMixin:
             fresh = binding.locator.element_handle()
             if fresh is None:
                 raise ManagedBrowserError("browser scene target is detached")
-            same = bool(binding.handle.evaluate(_EXACT_NODE_EQUAL_SCRIPT, fresh))
+            try:
+                same = bool(
+                    binding.handle.evaluate(_EXACT_NODE_EQUAL_SCRIPT, fresh)
+                )
+            except Exception as exc:
+                raise ManagedBrowserError(
+                    "browser scene target is stale because retained provider evidence is no longer usable"
+                ) from exc
             if not same:
                 raise ManagedBrowserError(
                     "browser scene target became stale after page change"
@@ -591,7 +598,7 @@ class PlaywrightBrowserSceneMixin:
                     "browser scene target accessible name changed"
                 )
         finally:
-            if fresh is not None:
+            if fresh is not None and fresh is not binding.handle:
                 self._best_effort_dispose_handle(fresh)
 
     @staticmethod
