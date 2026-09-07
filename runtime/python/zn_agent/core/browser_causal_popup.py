@@ -46,12 +46,7 @@ class PlaywrightBrowserCausalPopupMixin:
                 expected_target=action.target,
             )
             self._scene_revalidate_binding(session, binding)
-            return self._causal_popup_click(
-                session,
-                action,
-                authority,
-                binding,
-            )
+            return self._causal_popup_click(session, action, authority, binding)
         except Exception as exc:
             return self._failure(
                 action,
@@ -63,9 +58,7 @@ class PlaywrightBrowserCausalPopupMixin:
         return bool(
             action.kind is BrowserActionKind.CLICK
             and action.target is not None
-            and str(action.target.selector_hint or "").startswith(
-                _SCENE_SELECTOR_PREFIX
-            )
+            and str(action.target.selector_hint or "").startswith(_SCENE_SELECTOR_PREFIX)
             and str(action.expected.get("popup_url_equals") or "").strip()
         )
 
@@ -82,9 +75,7 @@ class PlaywrightBrowserCausalPopupMixin:
                 "causal popup click currently supports BrowserScene link/button targets"
             )
         if not authority.permission.allow_navigation:
-            raise ManagedBrowserError(
-                "causal popup click requires navigation permission"
-            )
+            raise ManagedBrowserError("causal popup click requires navigation permission")
         expected_url = str(action.expected.get("popup_url_equals") or "").strip()
         if not expected_url:
             raise ManagedBrowserError(
@@ -109,7 +100,6 @@ class PlaywrightBrowserCausalPopupMixin:
                 "browser provider cannot causally observe a popup from the opener page"
             )
 
-        popup = None
         try:
             with expect_popup() as popup_info:
                 binding.handle.click()
@@ -124,31 +114,24 @@ class PlaywrightBrowserCausalPopupMixin:
         if popup is None or popup is opener or any(
             popup is existing for existing in before_page_objects
         ):
-            self._refresh_page_observation_after_failed_mutation(
-                session,
-                opener_page_id,
-            )
+            self._refresh_page_observation_after_failed_mutation(session, opener_page_id)
             raise ManagedBrowserError(
                 "causal popup provider did not yield one fresh page identity"
             )
 
         popup_page_id = self._register_page(session, popup)
         if popup_page_id in before_page_ids:
-            self._refresh_page_observation_after_failed_mutation(
-                session,
-                opener_page_id,
-            )
+            self._refresh_page_observation_after_failed_mutation(session, opener_page_id)
             raise ManagedBrowserError(
                 "causal popup reused a browser page identity that existed before the click"
             )
         self._mark_zn_created_page(session, popup_page_id)
         self._reconcile_pages(session)
-        if default_page_id_before in session.pages:
-            session.default_page_id = default_page_id_before
+        self._restore_default_page(session, default_page_id_before)
 
         opener_matches = self._popup_opener_matches(popup, opener)
         if not opener_matches:
-            self._close_untrusted_causal_popup(session, popup_page_id, popup)
+            closed_ids = self._close_new_causal_pages(session, before_page_ids)
             opener_observation = self._capture(session, opener_page_id)
             return BrowserEffectEvidence(
                 action_id=action.action_id,
@@ -167,7 +150,7 @@ class PlaywrightBrowserCausalPopupMixin:
                     "opener_page_id": opener_page_id,
                     "popup_page_id": popup_page_id,
                     "opener_matches": False,
-                    "popup_closed": True,
+                    "rolled_back_page_ids": closed_ids,
                 },
                 error="causal popup opener identity did not match the clicked page",
             )
@@ -189,7 +172,7 @@ class PlaywrightBrowserCausalPopupMixin:
 
         popup_url = str(getattr(popup, "url", "") or "")
         if not self._url_allowed(popup_url, session.permission):
-            self._close_untrusted_causal_popup(session, popup_page_id, popup)
+            closed_ids = self._close_new_causal_pages(session, before_page_ids)
             opener_observation = self._capture(session, opener_page_id)
             return BrowserEffectEvidence(
                 action_id=action.action_id,
@@ -209,19 +192,18 @@ class PlaywrightBrowserCausalPopupMixin:
                     "popup_page_id": popup_page_id,
                     "opener_matches": True,
                     "popup_url_in_authority_scope": False,
-                    "popup_closed": True,
+                    "rolled_back_page_ids": closed_ids,
                 },
                 error="causal popup left the permitted browser boundary and was closed",
             )
 
         self._reconcile_pages(session)
+        self._restore_default_page(session, default_page_id_before)
         new_page_ids = tuple(
             page_id for page_id in session.pages if page_id not in before_page_ids
         )
         opener_observation = self._capture(session, opener_page_id)
         popup_observation = self._capture(session, popup_page_id)
-        if default_page_id_before in session.pages:
-            session.default_page_id = default_page_id_before
 
         data = {
             "provider": session.identity.provider,
@@ -253,6 +235,11 @@ class PlaywrightBrowserCausalPopupMixin:
                 error = "causal popup click changed ZN default-page identity"
             else:
                 error = "causal popup URL postcondition did not match"
+            data["rolled_back_page_ids"] = self._close_new_causal_pages(
+                session,
+                before_page_ids,
+            )
+            self._restore_default_page(session, default_page_id_before)
             return BrowserEffectEvidence(
                 action_id=action.action_id,
                 session_id=action.session_id,
@@ -288,20 +275,28 @@ class PlaywrightBrowserCausalPopupMixin:
         except Exception:
             return False
 
-    def _close_untrusted_causal_popup(
+    @staticmethod
+    def _restore_default_page(session: Any, default_page_id: str) -> None:
+        if default_page_id in session.pages:
+            session.default_page_id = default_page_id
+
+    def _close_new_causal_pages(
         self,
         session: Any,
-        popup_page_id: str,
-        popup: Any,
-    ) -> None:
-        try:
-            close = getattr(popup, "close", None)
-            if callable(close):
-                close()
-        finally:
-            self._reconcile_pages(session)
-            self._forget_page_ownership(session, popup_page_id)
-            self._scene_invalidate_page(
-                session.identity.session_id,
-                popup_page_id,
-            )
+        before_page_ids: set[str],
+    ) -> list[str]:
+        self._reconcile_pages(session)
+        new_page_ids = [
+            page_id for page_id in session.pages if page_id not in before_page_ids
+        ]
+        for page_id in new_page_ids:
+            page = session.pages.get(page_id)
+            try:
+                close = getattr(page, "close", None)
+                if callable(close):
+                    close()
+            finally:
+                self._forget_page_ownership(session, page_id)
+                self._scene_invalidate_page(session.identity.session_id, page_id)
+        self._reconcile_pages(session)
+        return new_page_ids
