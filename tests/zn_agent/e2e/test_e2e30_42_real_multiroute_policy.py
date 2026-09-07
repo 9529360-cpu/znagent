@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -66,17 +67,38 @@ def _kernel_route_snapshot(resident, model_goal_id: str) -> dict:
     return dict(route) if isinstance(route, dict) else {}
 
 
+class _RecordingWorker:
+    def __init__(self, route, delegate, deliveries):
+        self.route = route
+        self.delegate = delegate
+        self.deliveries = deliveries
+
+    def run(self, goal, kernel_context):
+        context = str(kernel_context or "")
+        self.deliveries.append(
+            {
+                "route_id": self.route.route_id,
+                "provider": self.route.provider,
+                "goal_id": goal.goal_id,
+                "context_sha256": hashlib.sha256(context.encode("utf-8")).hexdigest(),
+                "has_worker_context_pack": '"worker_context_pack"' in context,
+            }
+        )
+        return self.delegate.run(goal, kernel_context)
+
+
 class _RecordingFactory:
     def __init__(self, delegate, *, fail_route_id: str | None = None):
         self.delegate = delegate
         self.fail_route_id = fail_route_id
         self.created: list[str] = []
+        self.deliveries: list[dict[str, object]] = []
 
     def create(self, route):
         self.created.append(route.route_id)
         if route.route_id == self.fail_route_id:
             return _InjectedFailureWorker(route.route_id)
-        return self.delegate.create(route)
+        return _RecordingWorker(route, self.delegate.create(route), self.deliveries)
 
 
 class _InjectedFailureWorker:
@@ -157,7 +179,7 @@ class E2E30And42RealMultiRoutePolicyTests(unittest.TestCase):
                 max_attempts=1,
                 resource_status={"available": True, "error": None},
             )
-            ingress, event, _ = self._start_root(
+            _, event, _ = self._start_root(
                 resident,
                 root_dir,
                 thread_id="e2e-30-42-real",
@@ -269,25 +291,28 @@ class E2E30And42RealMultiRoutePolicyTests(unittest.TestCase):
     def test_real_allowlist_filters_before_provider_construction_and_persists_after_restart(self) -> None:
         config, plan, pair = self._plan_and_pair()
         forbidden_base, allowed_base = pair
+        full_capabilities = {
+            "general": 1.0,
+            "reasoning": 1.0,
+            "research": 1.0,
+            "coding": 1.0,
+            "language_understanding": 1.0,
+        }
         forbidden = _copy_route(
             forbidden_base,
-            capabilities={
-                "general": 1.0,
-                "reasoning": 1.0,
-                "language_understanding": 1.0,
-            },
+            capabilities=full_capabilities,
             reliability=1.0,
         )
         allowed = _copy_route(
             allowed_base,
-            capabilities={
-                "general": 1.0,
-                "reasoning": 1.0,
-                "language_understanding": 1.0,
-            },
+            capabilities=full_capabilities,
             reliability=0.5,
         )
         factory = _RecordingFactory(plan.worker_factory)
+        policy = {
+            "allowed_providers": [allowed.provider],
+            "denied_providers": [forbidden.provider],
+        }
 
         with tempfile.TemporaryDirectory(prefix="zn-e2e42-policy-") as tmp:
             root_dir = Path(tmp)
@@ -303,30 +328,53 @@ class E2E30And42RealMultiRoutePolicyTests(unittest.TestCase):
                 resident,
                 root_dir,
                 thread_id="e2e-42-policy",
-                task="开发一个可运行的本地小工具，先定义可观察验收标准。",
-                payload={"route_policy": {"allowed_providers": [allowed.provider]}},
+                task=GOAL,
+                payload={"route_policy": policy},
             )
             try:
-                accepted = None
-                for _ in range(120):
+                delegated_deliveries: list[dict[str, object]] = []
+                for _ in range(260):
                     candidate = resident.live_once()
                     if candidate is not None and not candidate.success:
-                        self.fail(candidate.reason or "policy root failed before acceptance formation")
-                    root = ledger.work_item_for_event(event.event_id)
-                    if root is not None and root.acceptance_criteria:
-                        accepted = root
+                        self.fail(candidate.reason or "policy Work failed before delegated context delivery")
+                    delegated_deliveries = [
+                        delivery
+                        for delivery in factory.deliveries
+                        if delivery.get("has_worker_context_pack") is True
+                    ]
+                    if delegated_deliveries:
                         break
-                self.assertIsNotNone(accepted)
+
+                self.assertTrue(
+                    delegated_deliveries,
+                    "policy acceptance never reached a real delegated WorkerContextPack provider call",
+                )
                 self.assertTrue(factory.created)
                 self.assertEqual(set(factory.created), {allowed.route_id})
                 self.assertNotIn(forbidden.route_id, factory.created)
+                self.assertEqual(
+                    {str(item.get("route_id") or "") for item in factory.deliveries},
+                    {allowed.route_id},
+                )
+                self.assertEqual(
+                    {str(item.get("route_id") or "") for item in delegated_deliveries},
+                    {allowed.route_id},
+                )
+                self.assertTrue(
+                    all(str(item.get("context_sha256") or "") for item in delegated_deliveries)
+                )
+
+                runs = ledger.list_worker_runs(thread_id="e2e-42-policy", limit=64)
+                delivered_goal_ids = {
+                    str(item.get("goal_id") or "") for item in delegated_deliveries
+                }
+                delivered_runs = [run for run in runs if run.model_goal_id in delivered_goal_ids]
+                self.assertTrue(delivered_runs)
+
                 thread = ledger.get_thread("e2e-42-policy")
                 self.assertIsNotNone(thread)
                 assert thread is not None
-                self.assertEqual(
-                    thread.metadata.get("route_policy"),
-                    {"allowed_providers": [allowed.provider]},
-                )
+                self.assertEqual(thread.metadata.get("route_policy"), policy)
                 print(
                     "ZN_E2E42_NON_RECEIPT="
                     + json.dumps(
@@ -334,6 +382,17 @@ class E2E30And42RealMultiRoutePolicyTests(unittest.TestCase):
                             "forbidden_route": forbidden.route_id,
                             "forbidden_provider": forbidden.provider,
                             "constructed_routes": factory.created,
+                            "delivered_routes": sorted(
+                                {str(item.get("route_id") or "") for item in factory.deliveries}
+                            ),
+                            "delegated_context_routes": sorted(
+                                {str(item.get("route_id") or "") for item in delegated_deliveries}
+                            ),
+                            "delegated_context_hashes": [
+                                str(item.get("context_sha256") or "")
+                                for item in delegated_deliveries
+                            ],
+                            "worker_run_ids": [run.worker_run_id for run in delivered_runs],
                             "policy": thread.metadata.get("route_policy"),
                         },
                         ensure_ascii=False,
@@ -348,17 +407,18 @@ class E2E30And42RealMultiRoutePolicyTests(unittest.TestCase):
                 thread = restarted.work_ledger.get_thread("e2e-42-policy")
                 self.assertIsNotNone(thread)
                 assert thread is not None
-                self.assertEqual(
-                    thread.metadata.get("route_policy"),
-                    {"allowed_providers": [allowed.provider]},
-                )
+                self.assertEqual(thread.metadata.get("route_policy"), policy)
+                persisted_event = restarted.store.get_event(event.event_id)
+                self.assertIsNotNone(persisted_event)
+                assert persisted_event is not None
+                self.assertEqual(persisted_event.payload.get("route_policy"), policy)
             finally:
                 restarted.store.close()
 
     def test_local_only_work_fails_closed_before_cloud_provider_construction(self) -> None:
         config, plan, pair = self._plan_and_pair()
         cloud = [route for route in pair if not bool(route.metadata.get("local"))]
-        self.assertTrue(cloud, "E2E-42 local-only fail-closed needs at least one configured cloud route")
+        self.assertTrue(cloud, "E2E-42 locality fail-closed needs at least one configured cloud route")
         routes = [
             _copy_route(
                 route,
@@ -371,60 +431,83 @@ class E2E30And42RealMultiRoutePolicyTests(unittest.TestCase):
             )
             for route in cloud
         ]
-        factory = _RecordingFactory(plan.worker_factory)
 
-        with tempfile.TemporaryDirectory(prefix="zn-e2e42-local-only-") as tmp:
-            root_dir = Path(tmp)
-            resident = build_resident_runtime(config=config, store_path=root_dir / "kernel.db")
-            resident.kernel.reconfigure_resources(
-                routes=routes,
-                worker_factory=factory,
-                max_attempts=1,
-                resource_status={"available": True, "error": None},
-            )
-            ledger, _, _ = self._start_root(
-                resident,
-                root_dir,
-                thread_id="e2e-42-local-only",
-                task="这个项目只允许本地模型处理。开发一个可运行的小工具。",
-                payload={},
-            )
-            try:
-                fail_closed = False
-                for _ in range(40):
+        cases = (
+            (
+                "local_only",
+                "这个项目只允许本地模型处理。开发一个可运行的小工具。",
+                {},
+                "ZN_E2E42_LOCAL_ONLY_FAIL_CLOSED",
+            ),
+            (
+                "cloud_denied",
+                "开发一个可运行的小工具，但这个 Work 的数据禁止发送到云端模型。",
+                {"data_classification": "cloud_denied"},
+                "ZN_E2E42_CLOUD_DENIED_FAIL_CLOSED",
+            ),
+        )
+        for classification, task, payload, marker in cases:
+            with self.subTest(classification=classification):
+                factory = _RecordingFactory(plan.worker_factory)
+                with tempfile.TemporaryDirectory(prefix=f"zn-e2e42-{classification}-") as tmp:
+                    root_dir = Path(tmp)
+                    resident = build_resident_runtime(
+                        config=config,
+                        store_path=root_dir / "kernel.db",
+                    )
+                    resident.kernel.reconfigure_resources(
+                        routes=routes,
+                        worker_factory=factory,
+                        max_attempts=1,
+                        resource_status={"available": True, "error": None},
+                    )
+                    ledger, _, _ = self._start_root(
+                        resident,
+                        root_dir,
+                        thread_id=f"e2e-42-{classification}",
+                        task=task,
+                        payload=payload,
+                    )
                     try:
-                        candidate = resident.live_once()
-                    except NoRouteAvailable:
-                        fail_closed = True
-                        break
-                    if candidate is not None and not candidate.success:
-                        fail_closed = True
-                        break
-                    if factory.created:
-                        break
-                self.assertTrue(fail_closed, "local-only Work did not surface a fail-closed no-route outcome")
-                self.assertEqual(factory.created, [])
-                thread = ledger.get_thread("e2e-42-local-only")
-                self.assertIsNotNone(thread)
-                assert thread is not None
-                self.assertEqual(
-                    thread.metadata.get("route_policy"),
-                    {"data_classification": "local_only"},
-                )
-                print(
-                    "ZN_E2E42_LOCAL_ONLY_FAIL_CLOSED="
-                    + json.dumps(
-                        {
-                            "configured_cloud_routes": [route.route_id for route in routes],
-                            "constructed_routes": factory.created,
-                            "policy": thread.metadata.get("route_policy"),
-                        },
-                        ensure_ascii=False,
-                    ),
-                    flush=True,
-                )
-            finally:
-                resident.store.close()
+                        fail_closed = False
+                        for _ in range(40):
+                            try:
+                                candidate = resident.live_once()
+                            except NoRouteAvailable:
+                                fail_closed = True
+                                break
+                            if candidate is not None and not candidate.success:
+                                fail_closed = True
+                                break
+                            if factory.created:
+                                break
+                        self.assertTrue(
+                            fail_closed,
+                            f"{classification} Work did not surface a fail-closed no-route outcome",
+                        )
+                        self.assertEqual(factory.created, [])
+                        thread = ledger.get_thread(f"e2e-42-{classification}")
+                        self.assertIsNotNone(thread)
+                        assert thread is not None
+                        self.assertEqual(
+                            thread.metadata.get("route_policy"),
+                            {"data_classification": classification},
+                        )
+                        print(
+                            marker
+                            + "="
+                            + json.dumps(
+                                {
+                                    "configured_cloud_routes": [route.route_id for route in routes],
+                                    "constructed_routes": factory.created,
+                                    "policy": thread.metadata.get("route_policy"),
+                                },
+                                ensure_ascii=False,
+                            ),
+                            flush=True,
+                        )
+                    finally:
+                        resident.store.close()
 
     def test_legal_fallback_rechecks_policy_and_invokes_only_still_eligible_real_provider(self) -> None:
         _, plan, pair = self._plan_and_pair()
