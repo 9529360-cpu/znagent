@@ -65,6 +65,17 @@ class ApplicationWindowActivationResidentTests(unittest.TestCase):
         raise AssertionError("resident did not reach a terminal result within bounded pulses")
 
     @staticmethod
+    def _run_until_native_action(resident, limit: int = 40):
+        for _ in range(limit):
+            result = resident.live_once()
+            if result is not None:
+                raise AssertionError(f"resident terminated before native action admission: {result}")
+            state = resident.store.get_working_state()
+            if state.stage == "native_action":
+                return state
+        raise AssertionError("resident did not admit a native action within bounded pulses")
+
+    @staticmethod
     def _actions(resident, kind: str):
         return [action for action in resident.body.recent_actions(100) if action.kind == kind]
 
@@ -135,6 +146,125 @@ class ApplicationWindowActivationResidentTests(unittest.TestCase):
                 activation_actions = self._actions(resident, "activate_application_window")
                 self.assertEqual(len(activation_actions), 1)
                 self.assertTrue(activation_actions[0].data["dispatch_sent"])
+                self.assertEqual(activation_actions[0].data["window_handle"], 66)
+                self.assertEqual(activation_actions[0].data["process_id"], 55)
+                self.assertEqual(self._actions(resident, "launch_application"), [])
+            finally:
+                resident.store.close()
+
+    def test_replacement_between_resident_admission_and_body_fails_before_native_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            processes: list[dict] = []
+            windows: list[dict] = []
+            resident, app, executable = self._resident(tmp, processes=processes, windows=windows)
+            processes.append(self._process(executable, 55))
+            windows.append(self._window(hwnd=66, pid=55))
+            native_calls: list[tuple[int, int]] = []
+            resident.body._native_activate_exact_application_window = lambda hwnd, pid: (
+                native_calls.append((hwnd, pid)) or self._native_success()
+            )
+            try:
+                self._enqueue_open(resident, app)
+                state = self._run_until_native_action(resident)
+                expected = state.data["native_action_intent"]["expected_outcome"]
+                self.assertEqual((expected["expected_window_handle"], expected["expected_process_id"]), (66, 55))
+                windows[:] = [self._window(hwnd=77, pid=55)]
+                result = self._run_to_terminal(resident)
+                self.assertFalse(result.success)
+                self.assertEqual(native_calls, [])
+                self.assertEqual(self._actions(resident, "launch_application"), [])
+                self.assertNotIn((77, 55), native_calls)
+            finally:
+                resident.store.close()
+
+    def test_pid_drift_between_resident_admission_and_body_fails_before_native_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            processes: list[dict] = []
+            windows: list[dict] = []
+            resident, app, executable = self._resident(tmp, processes=processes, windows=windows)
+            processes.append(self._process(executable, 55))
+            windows.append(self._window(hwnd=66, pid=55))
+            native_calls: list[tuple[int, int]] = []
+            resident.body._native_activate_exact_application_window = lambda hwnd, pid: (
+                native_calls.append((hwnd, pid)) or self._native_success()
+            )
+            try:
+                self._enqueue_open(resident, app)
+                self._run_until_native_action(resident)
+                processes[:] = [self._process(executable, 99)]
+                windows[:] = [self._window(hwnd=66, pid=99)]
+                result = self._run_to_terminal(resident)
+                self.assertFalse(result.success)
+                self.assertEqual(native_calls, [])
+                self.assertEqual(self._actions(resident, "launch_application"), [])
+            finally:
+                resident.store.close()
+
+    def test_new_sibling_after_resident_admission_fails_before_native_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            processes: list[dict] = []
+            windows: list[dict] = []
+            resident, app, executable = self._resident(tmp, processes=processes, windows=windows)
+            processes.append(self._process(executable, 55))
+            windows.append(self._window(hwnd=66, pid=55))
+            native_calls: list[tuple[int, int]] = []
+            resident.body._native_activate_exact_application_window = lambda hwnd, pid: (
+                native_calls.append((hwnd, pid)) or self._native_success()
+            )
+            try:
+                self._enqueue_open(resident, app)
+                self._run_until_native_action(resident)
+                windows.append(self._window(hwnd=77, pid=55))
+                result = self._run_to_terminal(resident)
+                self.assertFalse(result.success)
+                self.assertEqual(native_calls, [])
+                self.assertEqual(self._actions(resident, "launch_application"), [])
+            finally:
+                resident.store.close()
+
+    def test_admitted_target_disappears_without_fallback_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            processes: list[dict] = []
+            windows: list[dict] = []
+            resident, app, executable = self._resident(tmp, processes=processes, windows=windows)
+            processes.append(self._process(executable, 55))
+            windows.append(self._window(hwnd=66, pid=55))
+            native_calls: list[tuple[int, int]] = []
+            resident.body._native_activate_exact_application_window = lambda hwnd, pid: (
+                native_calls.append((hwnd, pid)) or self._native_success()
+            )
+            try:
+                self._enqueue_open(resident, app)
+                self._run_until_native_action(resident)
+                windows.clear()
+                result = self._run_to_terminal(resident)
+                self.assertFalse(result.success)
+                self.assertEqual(native_calls, [])
+                self.assertEqual(self._actions(resident, "launch_application"), [])
+            finally:
+                resident.store.close()
+
+    def test_exact_admitted_target_becoming_foreground_before_body_skips_native_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            processes: list[dict] = []
+            windows: list[dict] = []
+            resident, app, executable = self._resident(tmp, processes=processes, windows=windows)
+            processes.append(self._process(executable, 55))
+            windows.append(self._window(hwnd=66, pid=55))
+            native_calls: list[tuple[int, int]] = []
+            resident.body._native_activate_exact_application_window = lambda hwnd, pid: (
+                native_calls.append((hwnd, pid)) or self._native_success()
+            )
+            try:
+                self._enqueue_open(resident, app)
+                self._run_until_native_action(resident)
+                windows[0]["foreground"] = True
+                result = self._run_to_terminal(resident)
+                self.assertTrue(result.success, result)
+                self.assertEqual(native_calls, [])
+                activation_actions = self._actions(resident, "activate_application_window")
+                self.assertEqual(len(activation_actions), 1)
+                self.assertFalse(activation_actions[0].data["dispatch_sent"])
                 self.assertEqual(activation_actions[0].data["window_handle"], 66)
                 self.assertEqual(activation_actions[0].data["process_id"], 55)
                 self.assertEqual(self._actions(resident, "launch_application"), [])
