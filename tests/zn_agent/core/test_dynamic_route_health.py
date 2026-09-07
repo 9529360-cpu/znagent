@@ -7,6 +7,7 @@ from pathlib import Path
 from zn_agent.core.cognitive_resource import CognitiveIncrement, CognitiveResourceWorkerFactory
 from zn_agent.core.health_aware_resident import HealthAwareResidentRuntime
 from zn_agent.core.models import Goal, ModelRoute
+from zn_agent.core.provider_bridge import apply_zn_cognitive_config
 from zn_agent.core.runtime import ZNKernelRuntime
 from zn_agent.core.store import KernelStore
 
@@ -171,6 +172,37 @@ class DynamicRouteHealthTests(unittest.TestCase):
             )
             self.assertTrue(result.worker_result.success)
             self.assertEqual(result.route.route_id, "primary-route")
+            resident.store.close()
+
+    def test_hot_reconfiguration_rebinds_dynamic_health_resolver_and_thresholds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            primary = _PrimaryResource()
+            fallback = _FallbackResource()
+            resident = self._resident(Path(tmp) / "kernel.db", primary, fallback)
+            resolver = resident.kernel.resource_health_resolver
+
+            plan = apply_zn_cognitive_config(
+                resident.kernel,
+                {
+                    "zn_kernel": {
+                        "routes": [
+                            {
+                                "id": "hot-local",
+                                "provider": "ollama",
+                                "model": "local-model",
+                                "base_url": "http://127.0.0.1:11434/v1",
+                                "capabilities": {"general": 0.9},
+                                "health_failure_threshold": 2,
+                                "health_backoff_seconds": 7,
+                            }
+                        ]
+                    }
+                },
+            )
+
+            self.assertIs(resident.kernel.router._health_resolver, resolver)
+            self.assertEqual(plan.routes[0].metadata["health_failure_threshold"], 2)
+            self.assertEqual(plan.routes[0].metadata["health_backoff_seconds"], 7)
             resident.store.close()
 
 
