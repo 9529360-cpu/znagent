@@ -20,6 +20,7 @@ from .browser import (
     BrowserTargetQuery,
     BrowserTargetQueryKind,
 )
+from .browser_scene import PlaywrightBrowserSceneMixin
 from .managed_browser import (
     ManagedBrowserError,
     PlaywrightManagedBrowser,
@@ -125,8 +126,11 @@ _EXACT_NODE_EQUAL_SCRIPT = r"""
 """
 
 
-class SemanticPlaywrightManagedBrowser(PlaywrightManagedBrowser):
-    """Playwright adapter with a small fail-closed semantic target surface."""
+class SemanticPlaywrightManagedBrowser(
+    PlaywrightBrowserSceneMixin,
+    PlaywrightManagedBrowser,
+):
+    """Playwright adapter with fail-closed exact targets plus bounded scenes."""
 
     _SEMANTIC_KINDS = frozenset(
         {
