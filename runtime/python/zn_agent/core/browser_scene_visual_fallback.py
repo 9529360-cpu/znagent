@@ -103,12 +103,31 @@ class PlaywrightBrowserSceneVisualFallbackMixin:
                 raw_frame_persisted=False,
             )
 
+        # A page screenshot includes pixels from embedded frames. Do not let OCR
+        # bypass BrowserScene's cross-origin / out-of-authority frame boundary.
+        blocked_frames = [
+            frame
+            for frame in tuple(getattr(scene, "frames", ()) or ())
+            if not bool(getattr(frame, "observable", False))
+        ]
+        if blocked_frames:
+            raise ManagedBrowserError(
+                "Browser local OCR fallback refuses pages with unobservable frame pixels"
+            )
+
         # OCR can expose arbitrary page text. The first fallback slice therefore
         # requires the existing explicit sensitive-field permission rather than
         # silently widening read authority merely because DOM semantics failed.
         if not session.permission.allow_sensitive_fields:
             raise ManagedBrowserError(
                 "Browser local OCR fallback requires allow_sensitive_fields in this first slice"
+            )
+
+        # The zero-match scene is only valid for this exact URL. SPA/navigation
+        # drift between semantic sensing and pixel capture must force re-grounding.
+        if str(getattr(page, "url", "") or "") != str(getattr(scene, "url", "") or ""):
+            raise ManagedBrowserError(
+                "Browser page changed after semantic scene observation and before OCR capture"
             )
 
         cx = NativeVisualRegionSense._unit_fraction(
@@ -173,10 +192,17 @@ class PlaywrightBrowserSceneVisualFallbackMixin:
             text = str(raw.text or "")[:_MAX_WORD_TEXT]
             if not text:
                 continue
-            x1 = max(0.0, min(clip_width, float(raw.left)))
-            y1 = max(0.0, min(clip_height, float(raw.top)))
-            x2 = max(x1, min(clip_width, float(raw.left + raw.width)))
-            y2 = max(y1, min(clip_height, float(raw.top + raw.height)))
+            try:
+                raw_left = WindowsLocalOcrSense._finite_nonnegative(raw.left)
+                raw_top = WindowsLocalOcrSense._finite_nonnegative(raw.top)
+                raw_width = WindowsLocalOcrSense._finite_nonnegative(raw.width)
+                raw_height = WindowsLocalOcrSense._finite_nonnegative(raw.height)
+            except ValueError as exc:
+                raise ManagedBrowserError(str(exc)) from exc
+            x1 = max(0.0, min(clip_width, raw_left))
+            y1 = max(0.0, min(clip_height, raw_top))
+            x2 = max(x1, min(clip_width, raw_left + raw_width))
+            y2 = max(y1, min(clip_height, raw_top + raw_height))
             if x2 <= x1 or y2 <= y1:
                 continue
             words.append(
