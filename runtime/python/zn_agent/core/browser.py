@@ -24,6 +24,9 @@ class BrowserPlane(str, Enum):
 
 class BrowserActionKind(str, Enum):
     NAVIGATE = "navigate"
+    OPEN_TAB = "open_tab"
+    SWITCH_TAB = "switch_tab"
+    CLOSE_TAB = "close_tab"
     CLICK = "click"
     FOCUS = "focus"
     TYPE_TEXT = "type_text"
@@ -62,6 +65,9 @@ _NAVIGATION_ACTIONS = frozenset(
 )
 _PAGE_INTERACTION_ACTIONS = frozenset(
     {
+        BrowserActionKind.OPEN_TAB,
+        BrowserActionKind.SWITCH_TAB,
+        BrowserActionKind.CLOSE_TAB,
         BrowserActionKind.CLICK,
         BrowserActionKind.FOCUS,
         BrowserActionKind.PRESS,
