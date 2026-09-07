@@ -23,6 +23,7 @@ from .browser import (
 from .browser_causal_popup import PlaywrightBrowserCausalPopupMixin
 from .browser_scene import PlaywrightBrowserSceneMixin
 from .browser_scene_actions import PlaywrightBrowserSceneActionMixin
+from .browser_scene_clear_press import PlaywrightBrowserSceneClearPressMixin
 from .browser_tab_navigation import PlaywrightBrowserTabNavigationMixin
 from .managed_browser import (
     ManagedBrowserError,
@@ -132,6 +133,7 @@ _EXACT_NODE_EQUAL_SCRIPT = r"""
 class SemanticPlaywrightManagedBrowser(
     PlaywrightBrowserSceneMixin,
     PlaywrightBrowserCausalPopupMixin,
+    PlaywrightBrowserSceneClearPressMixin,
     PlaywrightBrowserSceneActionMixin,
     PlaywrightBrowserTabNavigationMixin,
     PlaywrightManagedBrowser,
