@@ -21,6 +21,7 @@ from .browser import (
     BrowserTargetQueryKind,
 )
 from .browser_scene import PlaywrightBrowserSceneMixin
+from .browser_tab_navigation import PlaywrightBrowserTabNavigationMixin
 from .managed_browser import (
     ManagedBrowserError,
     PlaywrightManagedBrowser,
@@ -128,6 +129,7 @@ _EXACT_NODE_EQUAL_SCRIPT = r"""
 
 class SemanticPlaywrightManagedBrowser(
     PlaywrightBrowserSceneMixin,
+    PlaywrightBrowserTabNavigationMixin,
     PlaywrightManagedBrowser,
 ):
     """Playwright adapter with fail-closed exact targets plus bounded scenes."""
