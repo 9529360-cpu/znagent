@@ -18,6 +18,15 @@ from .models import utc_now
 
 _PROGRESS_KEY = "supervision_progress"
 _DOMAIN = b"zn-worker-progress-v1\x00"
+_STAGE_RANK = {
+    "worker_started": 10,
+    "context_bound": 20,
+    "provider_result_persisted": 30,
+    "provider_result_observed": 30,
+    "effect_started": 40,
+    "effect_observed": 50,
+    "effect_verified": 60,
+}
 
 
 def record_worker_progress(
@@ -27,7 +36,7 @@ def record_worker_progress(
     stage: str,
     evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Persist one privacy-safe progress revision iff real evidence changed."""
+    """Persist one privacy-safe progress revision iff real evidence advanced."""
 
     normalized_id = str(worker_run_id or "").strip()
     normalized_stage = str(stage or "").strip().lower()
@@ -42,8 +51,13 @@ def record_worker_progress(
     fingerprint = _fingerprint(normalized_stage, evidence or {})
     metrics = dict(run.metrics or {})
     current = _progress_from_metrics(metrics, started_at=run.started_at)
+    current_stage = str(current.get("stage") or "").strip().lower()
+    if _stage_rank(normalized_stage) < _stage_rank(current_stage):
+        # Restart/rebinding may revisit an earlier control boundary. That is not
+        # new work and must not hide a stalled later stage by refreshing time.
+        return current
     if (
-        current.get("stage") == normalized_stage
+        current_stage == normalized_stage
         and current.get("fingerprint") == fingerprint
     ):
         return current
@@ -97,6 +111,13 @@ def worker_stalled(run, *, timeout_seconds: float) -> bool:
         return False
     age = max(0.0, (datetime.now(timezone.utc) - observed).total_seconds())
     return age >= timeout
+
+
+def _stage_rank(stage: str) -> int:
+    normalized = str(stage or "").strip().lower()
+    if not normalized:
+        return 0
+    return _STAGE_RANK.get(normalized, 0)
 
 
 def _progress_from_metrics(metrics: dict[str, Any], *, started_at: str | None) -> dict[str, Any]:
