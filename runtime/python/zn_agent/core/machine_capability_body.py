@@ -9,15 +9,16 @@ from typing import Any
 
 from .body import BodyAction, BodyActionResult
 from .browser_form_submit_body import BrowserFormSubmitBody
-from .machine_capability import DeviceCapabilityGraph, InstalledApplication
+from .device_capability_graph import DeviceCapabilityGraph
+from .machine_capability import InstalledApplication
 from .models import utc_now
 
 
 class MachineCapabilityBody(BrowserFormSubmitBody):
     """Extend the current final Body with one safe application launch movement.
 
-    The caller supplies only ``application_id``.  Raw executable paths, command
-    strings, parameters, protocols and URLs are not action authority.  The exact
+    The caller supplies only ``application_id``. Raw executable paths, command
+    strings, parameters, protocols and URLs are not action authority. The exact
     native launch target is re-read from fresh DeviceCapabilityGraph facts at the
     final dispatch boundary, and the inherited side-effect journal prevents blind
     replay after uncertain/observed dispatch.
@@ -118,7 +119,7 @@ class MachineCapabilityBody(BrowserFormSubmitBody):
         if not application.launchable:
             return self._result(action, started, False, {"application_id": app_id, "dispatch_sent": False}, "application lost its safe launch target before dispatch")
 
-        # Recheck immediately after the side-effect guard starts.  A race may have
+        # Recheck immediately after the side-effect guard starts. A race may have
         # made the app visible; that must not manufacture a second instance.
         processes, windows = self.device_capabilities.application_runtime(application)
         visible = tuple(window for window in windows if window.visible)
@@ -226,6 +227,15 @@ def _shell_execute_exact_target(target: str) -> int | None:
             ("hIcon", wintypes.HANDLE), ("hProcess", wintypes.HANDLE),
         ]
 
+    ole32 = ctypes.OleDLL("ole32")
+    ole32.CoInitializeEx.argtypes = [wintypes.LPVOID, wintypes.DWORD]
+    ole32.CoInitializeEx.restype = ctypes.c_long
+    # ShellExecuteEx may delegate to COM shell extensions. Microsoft documents
+    # that callers should initialize COM first; STA is the broadly compatible
+    # apartment for shell extensions.
+    hr = int(ole32.CoInitializeEx(None, 0x2))  # COINIT_APARTMENTTHREADED
+    co_initialized = hr in (0, 1)  # S_OK / S_FALSE both require CoUninitialize.
+
     info = ShellExecuteInfoW()
     info.cbSize = ctypes.sizeof(ShellExecuteInfoW)
     info.fMask = 0x00000040  # SEE_MASK_NOCLOSEPROCESS
@@ -235,18 +245,23 @@ def _shell_execute_exact_target(target: str) -> int | None:
     shell32 = ctypes.WinDLL("shell32", use_last_error=True)
     shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(ShellExecuteInfoW)]
     shell32.ShellExecuteExW.restype = wintypes.BOOL
-    if not shell32.ShellExecuteExW(ctypes.byref(info)):
-        code = ctypes.get_last_error()
-        raise OSError(code, f"ShellExecuteExW rejected resolved application target: WinError {code}")
-    if not info.hProcess:
-        return None
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.GetProcessId.argtypes = [wintypes.HANDLE]
-    kernel32.GetProcessId.restype = wintypes.DWORD
-    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-    kernel32.CloseHandle.restype = wintypes.BOOL
     try:
-        pid = int(kernel32.GetProcessId(info.hProcess) or 0)
-        return pid or None
+        if not shell32.ShellExecuteExW(ctypes.byref(info)):
+            code = ctypes.get_last_error()
+            raise OSError(code, f"ShellExecuteExW rejected resolved application target: WinError {code}")
+        if not info.hProcess:
+            return None
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetProcessId.argtypes = [wintypes.HANDLE]
+        kernel32.GetProcessId.restype = wintypes.DWORD
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        try:
+            pid = int(kernel32.GetProcessId(info.hProcess) or 0)
+            return pid or None
+        finally:
+            kernel32.CloseHandle(info.hProcess)
+            info.hProcess = None
     finally:
-        kernel32.CloseHandle(info.hProcess)
+        if co_initialized:
+            ole32.CoUninitialize()
