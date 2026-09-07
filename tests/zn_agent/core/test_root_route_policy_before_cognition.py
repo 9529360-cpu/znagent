@@ -236,6 +236,119 @@ class RootRoutePolicyBeforeCognitionTests(unittest.TestCase):
             finally:
                 restarted.store.close()
 
+    def test_steered_event_inherits_allowlist_before_restart_and_earliest_cognition(self) -> None:
+        calls: list[dict[str, str]] = []
+        created_routes: list[str] = []
+
+        def build_resource(route):
+            created_routes.append(route.route_id)
+            return _PolicyProbeResource(route, calls)
+
+        routes = [
+            ModelRoute(
+                route_id="anthropic-preferred",
+                provider="anthropic",
+                model="claude-policy-probe",
+                capabilities=self._caps(1.0),
+                reliability=1.0,
+            ),
+            ModelRoute(
+                route_id="openai-allowed",
+                provider="openai",
+                model="gpt-policy-probe",
+                capabilities=self._caps(0.7),
+                reliability=0.7,
+            ),
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "kernel.db"
+            workspace = root / "steer-policy-workspace"
+            workspace.mkdir()
+            resident = build_resident_runtime(config={"model": {}}, store_path=db)
+            control = RestoreAwareWorkControl(RecoveryBoundedWorkLedger(resident))
+            ledger = control.ledger
+            ledger.create_thread(thread_id="steer-policy", title="steer-policy")
+            ledger.attach_workspace("steer-policy", workspace, name="steer-policy workspace")
+            try:
+                resident.kernel.reconfigure_resources(
+                    routes=routes,
+                    worker_factory=CognitiveResourceWorkerFactory(resource_builder=build_resource),
+                    max_attempts=1,
+                    resource_status={"available": True, "error": None},
+                )
+                _, original = control.start(
+                    "steer-policy",
+                    "开发一个可运行的本地小工具。",
+                    payload={
+                        "model_policy": "on_demand",
+                        "route_policy": {"allowed_providers": ["openai"]},
+                    },
+                )
+                _, steered = control.start(
+                    "ui-ingress",
+                    "继续刚才，先把核心记账跑起来。",
+                    payload={"model_policy": "on_demand"},
+                )
+                self.assertNotEqual(steered.event_id, original.event_id)
+
+                thread = ledger.get_thread("steer-policy")
+                self.assertIsNotNone(thread)
+                assert thread is not None
+                self.assertEqual(
+                    thread.metadata.get("route_policy"),
+                    {"allowed_providers": ["openai"]},
+                )
+                persisted = resident.store.get_event(steered.event_id)
+                self.assertIsNotNone(persisted)
+                assert persisted is not None
+                self.assertEqual(
+                    persisted.payload.get("route_policy"),
+                    {"allowed_providers": ["openai"]},
+                )
+                self.assertEqual(created_routes, [])
+            finally:
+                resident.store.close()
+
+            restarted = build_resident_runtime(config={"model": {}}, store_path=db)
+            try:
+                restarted.kernel.reconfigure_resources(
+                    routes=routes,
+                    worker_factory=CognitiveResourceWorkerFactory(resource_builder=build_resource),
+                    max_attempts=1,
+                    resource_status={"available": True, "error": None},
+                )
+                persisted = restarted.store.get_event(steered.event_id)
+                self.assertIsNotNone(persisted)
+                assert persisted is not None
+                self.assertEqual(
+                    persisted.payload.get("route_policy"),
+                    {"allowed_providers": ["openai"]},
+                )
+
+                semantic_goal = None
+                for _ in range(32):
+                    restarted.live_once()
+                    semantic_goal = restarted.store.get_goal(
+                        f"goal-desktop-understanding-{steered.event_id}"
+                    )
+                    if semantic_goal is not None:
+                        break
+
+                self.assertIsNotNone(semantic_goal)
+                assert semantic_goal is not None
+                self.assertEqual(
+                    semantic_goal.metadata.get("route_policy"),
+                    {"allowed_providers": ["openai"]},
+                )
+                self.assertTrue(created_routes)
+                self.assertEqual(set(created_routes), {"openai-allowed"})
+                self.assertTrue(calls)
+                self.assertEqual({call["provider"] for call in calls}, {"openai"})
+            finally:
+                restarted.store.close()
+
     def test_initial_local_only_root_fails_closed_before_earliest_semantic_cognition(self) -> None:
         created_routes: list[str] = []
 
