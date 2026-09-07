@@ -56,6 +56,14 @@ class RootRoutePolicyBeforeCognitionTests(unittest.TestCase):
         )
         return ledger, event
 
+    @staticmethod
+    def _caps(score: float) -> dict[str, float]:
+        return {
+            "general": score,
+            "reasoning": score,
+            "language_understanding": score,
+        }
+
     def test_initial_root_cognition_filters_forbidden_provider_before_factory_or_context_delivery(self) -> None:
         calls: list[dict[str, str]] = []
         created_routes: list[str] = []
@@ -74,14 +82,14 @@ class RootRoutePolicyBeforeCognitionTests(unittest.TestCase):
                             route_id="anthropic-preferred",
                             provider="anthropic",
                             model="claude-policy-probe",
-                            capabilities={"general": 1.0, "reasoning": 1.0},
+                            capabilities=self._caps(1.0),
                             reliability=1.0,
                         ),
                         ModelRoute(
                             route_id="openai-allowed",
                             provider="openai",
                             model="gpt-policy-probe",
-                            capabilities={"general": 0.7, "reasoning": 0.7},
+                            capabilities=self._caps(0.7),
                             reliability=0.7,
                         ),
                     ],
@@ -97,6 +105,23 @@ class RootRoutePolicyBeforeCognitionTests(unittest.TestCase):
                     payload={},
                 )
 
+                # Policy is durable before the Resident can reach the earlier
+                # desktop semantic-understanding cognition path.
+                thread = ledger.get_thread("root-policy")
+                self.assertIsNotNone(thread)
+                assert thread is not None
+                self.assertEqual(
+                    thread.metadata.get("route_policy"),
+                    {"denied_providers": ["anthropic"]},
+                )
+                persisted_event = resident.store.get_event(event.event_id)
+                self.assertIsNotNone(persisted_event)
+                assert persisted_event is not None
+                self.assertEqual(
+                    persisted_event.payload.get("route_policy"),
+                    {"denied_providers": ["anthropic"]},
+                )
+
                 accepted = None
                 for _ in range(96):
                     terminal = resident.live_once()
@@ -107,19 +132,23 @@ class RootRoutePolicyBeforeCognitionTests(unittest.TestCase):
                         break
 
                 self.assertIsNotNone(accepted)
-                self.assertEqual(created_routes, ["openai-allowed"])
-                self.assertEqual([call["provider"] for call in calls], ["openai"])
+                self.assertTrue(created_routes)
+                self.assertEqual(set(created_routes), {"openai-allowed"})
+                self.assertTrue(calls)
+                self.assertEqual({call["provider"] for call in calls}, {"openai"})
                 self.assertFalse(any(call["provider"] == "anthropic" for call in calls))
 
-                thread = ledger.get_thread("root-policy")
-                self.assertIsNotNone(thread)
-                assert thread is not None
+                # The first direct semantic cognition Goal itself inherited the
+                # event policy even though it bypasses CognitionRequest.context.
+                semantic_goal = resident.store.get_goal(
+                    f"goal-desktop-understanding-{event.event_id}"
+                )
+                self.assertIsNotNone(semantic_goal)
+                assert semantic_goal is not None
                 self.assertEqual(
-                    thread.metadata.get("route_policy"),
+                    semantic_goal.metadata.get("route_policy"),
                     {"denied_providers": ["anthropic"]},
                 )
-                self.assertIn('"denied_providers": [', calls[0]["context"])
-                self.assertIn('"anthropic"', calls[0]["context"])
             finally:
                 resident.store.close()
 
@@ -142,14 +171,14 @@ class RootRoutePolicyBeforeCognitionTests(unittest.TestCase):
                             route_id="anthropic-preferred",
                             provider="anthropic",
                             model="claude-policy-probe",
-                            capabilities={"general": 1.0, "reasoning": 1.0},
+                            capabilities=self._caps(1.0),
                             reliability=1.0,
                         ),
                         ModelRoute(
                             route_id="openai-allowed",
                             provider="openai",
                             model="gpt-policy-probe",
-                            capabilities={"general": 0.8, "reasoning": 0.8},
+                            capabilities=self._caps(0.8),
                             reliability=0.8,
                         ),
                     ],
@@ -175,13 +204,21 @@ class RootRoutePolicyBeforeCognitionTests(unittest.TestCase):
                         break
 
                 self.assertIsNotNone(accepted)
-                self.assertEqual(created_routes, ["openai-allowed"])
-                self.assertEqual([call["provider"] for call in calls], ["openai"])
+                self.assertTrue(created_routes)
+                self.assertEqual(set(created_routes), {"openai-allowed"})
+                self.assertEqual({call["provider"] for call in calls}, {"openai"})
                 thread = ledger.get_thread("explicit-policy")
                 self.assertIsNotNone(thread)
                 assert thread is not None
                 self.assertEqual(
                     thread.metadata.get("route_policy"),
+                    {"allowed_providers": ["openai"]},
+                )
+                persisted_event = resident.store.get_event(event.event_id)
+                self.assertIsNotNone(persisted_event)
+                assert persisted_event is not None
+                self.assertEqual(
+                    persisted_event.payload.get("route_policy"),
                     {"allowed_providers": ["openai"]},
                 )
             finally:
@@ -199,7 +236,7 @@ class RootRoutePolicyBeforeCognitionTests(unittest.TestCase):
             finally:
                 restarted.store.close()
 
-    def test_initial_local_only_root_fails_closed_without_constructing_cloud_provider(self) -> None:
+    def test_initial_local_only_root_fails_closed_before_earliest_semantic_cognition(self) -> None:
         created_routes: list[str] = []
 
         def build_resource(route):
@@ -216,7 +253,7 @@ class RootRoutePolicyBeforeCognitionTests(unittest.TestCase):
                             route_id="openai-cloud",
                             provider="openai",
                             model="gpt-cloud",
-                            capabilities={"general": 1.0, "reasoning": 1.0},
+                            capabilities=self._caps(1.0),
                             reliability=1.0,
                             metadata={"local": False},
                         )
@@ -225,12 +262,27 @@ class RootRoutePolicyBeforeCognitionTests(unittest.TestCase):
                     max_attempts=1,
                     resource_status={"available": True, "error": None},
                 )
-                ledger, _ = self._attach_root(
+                ledger, event = self._attach_root(
                     resident,
                     root,
                     thread_id="local-root",
                     task="这个项目只允许本地模型处理。开发一个可运行的小工具。",
                     payload={},
+                )
+
+                thread = ledger.get_thread("local-root")
+                self.assertIsNotNone(thread)
+                assert thread is not None
+                self.assertEqual(
+                    thread.metadata.get("route_policy"),
+                    {"data_classification": "local_only"},
+                )
+                persisted_event = resident.store.get_event(event.event_id)
+                self.assertIsNotNone(persisted_event)
+                assert persisted_event is not None
+                self.assertEqual(
+                    persisted_event.payload.get("route_policy"),
+                    {"data_classification": "local_only"},
                 )
 
                 for _ in range(96):
@@ -245,13 +297,18 @@ class RootRoutePolicyBeforeCognitionTests(unittest.TestCase):
                         break
 
                 self.assertEqual(created_routes, [])
-                thread = ledger.get_thread("local-root")
-                self.assertIsNotNone(thread)
-                assert thread is not None
+                semantic_goal = resident.store.get_goal(
+                    f"goal-desktop-understanding-{event.event_id}"
+                )
+                self.assertIsNotNone(semantic_goal)
+                assert semantic_goal is not None
                 self.assertEqual(
-                    thread.metadata.get("route_policy"),
+                    semantic_goal.metadata.get("route_policy"),
                     {"data_classification": "local_only"},
                 )
+                durable = semantic_goal.metadata.get("_durable_external_run")
+                self.assertIsInstance(durable, dict)
+                self.assertEqual(durable.get("attempts"), [])
             finally:
                 resident.store.close()
 
