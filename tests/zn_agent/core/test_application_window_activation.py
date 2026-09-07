@@ -68,6 +68,21 @@ class ApplicationWindowActivationResidentTests(unittest.TestCase):
     def _actions(resident, kind: str):
         return [action for action in resident.body.recent_actions(100) if action.kind == kind]
 
+    @staticmethod
+    def _track_foreground_observations(resident):
+        original = resident.device_capabilities.foreground_application
+        observed_handles: list[int | None] = []
+
+        def probe():
+            observation = original()
+            observed_handles.append(
+                observation.window.hwnd if observation is not None else None
+            )
+            return observation
+
+        resident.device_capabilities.foreground_application = probe
+        return observed_handles
+
     def _enqueue_open(self, resident, application):
         return resident.enqueue(
             f"打开 {application.canonical_name}",
@@ -101,6 +116,7 @@ class ApplicationWindowActivationResidentTests(unittest.TestCase):
             processes.append(self._process(executable))
             windows.append(self._window())
             native_calls: list[tuple[int, int]] = []
+            foreground_observations = self._track_foreground_observations(resident)
 
             def activate(hwnd, pid):
                 native_calls.append((hwnd, pid))
@@ -114,16 +130,14 @@ class ApplicationWindowActivationResidentTests(unittest.TestCase):
                 self.assertTrue(result.success, result)
                 self.assertEqual(result.model_invocations, 0)
                 self.assertEqual(native_calls, [(66, 55)])
+                self.assertEqual(foreground_observations, [66])
+                self.assertIn("exact authority-bound hwnd/pid", result.reason.lower())
                 activation_actions = self._actions(resident, "activate_application_window")
                 self.assertEqual(len(activation_actions), 1)
                 self.assertTrue(activation_actions[0].data["dispatch_sent"])
                 self.assertEqual(activation_actions[0].data["window_handle"], 66)
                 self.assertEqual(activation_actions[0].data["process_id"], 55)
                 self.assertEqual(self._actions(resident, "launch_application"), [])
-                verification = resident.store.get_working_state().data["native_verification_result"]
-                self.assertTrue(verification["verified"])
-                self.assertEqual(verification["expected_window_handle"], 66)
-                self.assertEqual(verification["foreground_window_handle"], 66)
             finally:
                 resident.store.close()
 
@@ -198,6 +212,7 @@ class ApplicationWindowActivationResidentTests(unittest.TestCase):
             processes.append(self._process(executable))
             windows.append(self._window(foreground=False))
             native_calls: list[tuple[int, int]] = []
+            foreground_observations = self._track_foreground_observations(resident)
 
             def activate(hwnd, pid):
                 native_calls.append((hwnd, pid))
@@ -211,10 +226,9 @@ class ApplicationWindowActivationResidentTests(unittest.TestCase):
                 self.assertEqual(result.model_invocations, 0)
                 self.assertIn("foreground transition", result.reason.lower())
                 self.assertEqual(native_calls, [(66, 55)])
+                self.assertEqual(foreground_observations, [None, None, None])
                 self.assertEqual(len(self._actions(resident, "activate_application_window")), 1)
-                verification = resident.store.get_working_state().data["native_verification_result"]
-                self.assertFalse(verification["verified"])
-                self.assertEqual(verification["observation_count"], 3)
+                self.assertEqual(self._actions(resident, "launch_application"), [])
             finally:
                 resident.store.close()
 
@@ -242,6 +256,7 @@ class ApplicationWindowActivationResidentTests(unittest.TestCase):
                 },
             ])
             native_calls: list[tuple[int, int]] = []
+            foreground_observations = self._track_foreground_observations(resident)
 
             def activate(hwnd, pid):
                 native_calls.append((hwnd, pid))
@@ -253,12 +268,9 @@ class ApplicationWindowActivationResidentTests(unittest.TestCase):
                 result = self._run_to_terminal(resident)
                 self.assertFalse(result.success)
                 self.assertEqual(result.model_invocations, 0)
+                self.assertIn("foreground transition", result.reason.lower())
                 self.assertEqual(native_calls, [(66, 55)])
-                verification = resident.store.get_working_state().data["native_verification_result"]
-                self.assertFalse(verification["verified"])
-                self.assertEqual(verification["expected_window_handle"], 66)
-                self.assertEqual(verification["foreground_window_handle"], 99)
-                self.assertNotEqual(verification["foreground_application_id"], app.app_id)
+                self.assertEqual(foreground_observations, [99, 99])
                 self.assertEqual(len(self._actions(resident, "activate_application_window")), 1)
                 self.assertEqual(self._actions(resident, "launch_application"), [])
             finally:
@@ -272,6 +284,7 @@ class ApplicationWindowActivationResidentTests(unittest.TestCase):
             resident._MAX_APPLICATION_VERIFICATION_OBSERVATIONS = 2
             processes.append(self._process(executable))
             windows.append(self._window(hwnd=66, foreground=False))
+            foreground_observations = self._track_foreground_observations(resident)
 
             def activate(hwnd, pid):
                 windows.append(self._window(hwnd=77, foreground=True))
@@ -282,12 +295,10 @@ class ApplicationWindowActivationResidentTests(unittest.TestCase):
                 self._enqueue_open(resident, app)
                 result = self._run_to_terminal(resident)
                 self.assertFalse(result.success)
-                verification = resident.store.get_working_state().data["native_verification_result"]
-                self.assertEqual(verification["expected_window_handle"], 66)
-                self.assertEqual(verification["foreground_window_handle"], 77)
-                self.assertEqual(verification["foreground_application_id"], app.app_id)
-                self.assertFalse(verification["verified"])
+                self.assertIn("foreground transition", result.reason.lower())
+                self.assertEqual(foreground_observations, [77, 77])
                 self.assertEqual(len(self._actions(resident, "activate_application_window")), 1)
+                self.assertEqual(self._actions(resident, "launch_application"), [])
             finally:
                 resident.store.close()
 
