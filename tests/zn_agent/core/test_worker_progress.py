@@ -101,6 +101,41 @@ class WorkerProgressTests(unittest.TestCase):
         self.assertEqual(progress_snapshot(persisted), progress)
         self.assertEqual(persisted.state, "running")
 
+    def test_durable_provider_result_is_recovery_work_not_a_stall_retry(self) -> None:
+        progress = record_worker_progress(
+            self.ledger,
+            self.run.worker_run_id,
+            stage="provider_result_persisted",
+            evidence={
+                "model_goal_id": self.run.model_goal_id,
+                "route_id": "durable-route",
+                "success": True,
+            },
+        )
+        persisted = self.ledger.worker_run(self.run.worker_run_id)
+        self.assertIsNotNone(persisted)
+        assert persisted is not None
+        metrics = dict(persisted.metrics)
+        aged = dict(metrics.get("supervision_progress") or {})
+        aged["last_progress_at"] = "2000-01-01T00:00:00+00:00"
+        metrics["supervision_progress"] = aged
+        with self.ledger._lock, self.ledger._connect() as conn:
+            conn.execute(
+                "UPDATE worker_runs SET metrics_json=? WHERE worker_run_id=?",
+                (
+                    json.dumps(metrics, ensure_ascii=False, separators=(",", ":")),
+                    self.run.worker_run_id,
+                ),
+            )
+            conn.commit()
+
+        aged_run = self.ledger.worker_run(self.run.worker_run_id)
+        self.assertIsNotNone(aged_run)
+        assert aged_run is not None
+        self.assertEqual(progress_snapshot(aged_run)["stage"], progress["stage"])
+        self.assertFalse(worker_stalled(aged_run, timeout_seconds=1))
+        self.assertFalse(worker_stalled(aged_run, timeout_seconds=0))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
