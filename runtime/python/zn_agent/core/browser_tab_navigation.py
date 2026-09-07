@@ -148,7 +148,6 @@ class PlaywrightBrowserTabNavigationMixin:
         if not page_id:
             raise ManagedBrowserError("SWITCH_TAB requires an explicit page_id")
         page = self._page(session, page_id)
-        before_default = session.default_page_id
         before_url = str(getattr(page, "url", "") or "")
         self._require_url_allowed(before_url, session.permission)
 
@@ -156,16 +155,12 @@ class PlaywrightBrowserTabNavigationMixin:
         if not callable(bring_to_front):
             raise ManagedBrowserError("browser provider cannot activate a tab")
         bring_to_front()
-        session.default_page_id = page_id
         observation = self._capture(session, page_id)
         try:
-            visible = bool(
-                page.evaluate("document.visibilityState === 'visible'")
-            )
+            visible = bool(page.evaluate("document.visibilityState === 'visible'"))
         except Exception:
             visible = False
         if not visible:
-            session.default_page_id = before_default
             return BrowserEffectEvidence(
                 action_id=action.action_id,
                 session_id=action.session_id,
@@ -179,6 +174,7 @@ class PlaywrightBrowserTabNavigationMixin:
                 error="browser tab activation was not observed",
             )
 
+        session.default_page_id = page_id
         return BrowserEffectEvidence(
             action_id=action.action_id,
             session_id=action.session_id,
@@ -315,10 +311,18 @@ class PlaywrightBrowserTabNavigationMixin:
             existing = state.page_ownership.get(page_id)
             if existing:
                 return existing
-            default = "user_existing" if session.identity.plane is BrowserPlane.USER else "zn_created"
+            default = (
+                "user_existing"
+                if session.identity.plane is BrowserPlane.USER
+                else "zn_created"
+            )
             state.page_ownership[page_id] = default
             return default
-        return "zn_created" if session.identity.plane is BrowserPlane.MANAGED else "user_existing"
+        return (
+            "zn_created"
+            if session.identity.plane is BrowserPlane.MANAGED
+            else "user_existing"
+        )
 
     def _invalidate_scene_if_available(self, session_id: str, page_id: str) -> None:
         invalidator = getattr(self, "_scene_invalidate_page", None)
