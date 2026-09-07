@@ -280,14 +280,13 @@ class PlaywrightBrowserSceneFileTransferMixin:
             raise
 
     def _download_file(self, session: Any, action: BrowserAction, binding: Any) -> BrowserEffectEvidence:
-        destination = self._download_destination_path(action.args["destination_path"])
+        requested_destination = self._download_destination_path(action.args["destination_path"])
         expected_filename = self._safe_expected_filename(
             action.expected["suggested_filename_equals"]
         )
-        destination_before = observe_file_identity(destination)
+        destination_before = observe_file_identity(requested_destination)
         self._require_missing_destination(destination_before)
-        if str(destination_before.get("path") or "") != destination:
-            raise ManagedBrowserError("DOWNLOAD_FILE destination_path must already be canonical")
+        destination = str(destination_before["path"])
         parent_snapshot = self._observe_destination_parent(destination)
 
         page, before_url, pages_before = self._scene_action_pre_dispatch(session, binding)
