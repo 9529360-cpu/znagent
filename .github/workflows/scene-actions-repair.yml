@@ -1,0 +1,102 @@
+name: BrowserScene Action Repair
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/scene-actions-repair.yml'
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+jobs:
+  repair:
+    runs-on: [self-hosted, Windows, X64, zn-ci]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Apply BrowserScene MRO repair
+        run: |
+          uv python install 3.12
+          $python = (uv python find 3.12)
+          @'
+          from pathlib import Path
+
+          actions = Path("runtime/python/zn_agent/core/browser_scene_actions.py")
+          text = actions.read_text(encoding="utf-8")
+          replacements = (
+              ("_is_scene_action(", "_scene_action_is_scene_action("),
+              ("_validate_scene_shape(", "_scene_action_validate_shape("),
+              ("_exact_keys(", "_scene_action_exact_keys("),
+              ("_http_url(", "_scene_action_http_url("),
+              ("_scene_binding(", "_scene_action_binding("),
+              ("_focus(", "_scene_action_focus("),
+              ("_type_text(", "_scene_action_type_text("),
+              ("_check(", "_scene_action_check("),
+              ("_navigation_click(", "_scene_action_navigation_click("),
+              ("_pre_dispatch(", "_scene_action_pre_dispatch("),
+              ("_finish_same_page(", "_scene_action_finish_same_page("),
+              ("_dispatched_failure(", "_scene_action_dispatched_failure("),
+              ("_unchanged_url(", "_scene_action_unchanged_url("),
+              ("_no_fresh_page(", "_scene_action_no_fresh_page("),
+              ("_checked_state(", "_scene_action_checked_state("),
+              ("_text_state(", "_scene_action_text_state("),
+              ("_evidence(", "_scene_action_evidence("),
+          )
+          for old, new in replacements:
+              if old not in text:
+                  raise SystemExit(f"missing expected scene-action helper token: {old}")
+              text = text.replace(old, new)
+          actions.write_text(text, encoding="utf-8")
+
+          unit = Path("tests/zn_agent/core/test_browser_scene_actions.py")
+          text = unit.read_text(encoding="utf-8")
+          old_import = "from zn_agent.core.managed_browser import ManagedBrowserError\n"
+          new_import = "from zn_agent.core.managed_browser import ManagedBrowserError, PlaywrightManagedBrowser\n"
+          if text.count(old_import) != 1:
+              raise SystemExit("unexpected managed_browser import shape")
+          text = text.replace(old_import, new_import)
+          marker = "class BrowserSceneActionTests(unittest.TestCase):\n"
+          regression = '''class BrowserSceneActionTests(unittest.TestCase):
+    def test_scene_action_mixin_does_not_shadow_legacy_dispatch_helpers(self):
+        self.assertIs(SemanticPlaywrightManagedBrowser._focus, PlaywrightManagedBrowser._focus)
+        self.assertIs(SemanticPlaywrightManagedBrowser._type_text, PlaywrightManagedBrowser._type_text)
+        self.assertIs(SemanticPlaywrightManagedBrowser._check, PlaywrightManagedBrowser._check)
+
+'''
+          if text.count(marker) != 1:
+              raise SystemExit("unexpected BrowserSceneActionTests class shape")
+          text = text.replace(marker, regression, 1)
+          unit.write_text(text, encoding="utf-8")
+
+          e2e = Path("tests/zn_agent/e2e/test_windows_managed_browser_scene_actions.py")
+          text = e2e.read_text(encoding="utf-8")
+          old = "            self.assertNotEqual(replacement.observed_at, dynamic.observed_at)\n"
+          new = "            self.assertNotEqual(fresh_scene.scene_id, scene.scene_id)\n"
+          if text.count(old) != 1:
+              raise SystemExit("unexpected dynamic scene assertion shape")
+          e2e.write_text(text.replace(old, new), encoding="utf-8")
+          '@ | & $python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Commit repair
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add runtime/python/zn_agent/core/browser_scene_actions.py tests/zn_agent/core/test_browser_scene_actions.py tests/zn_agent/e2e/test_windows_managed_browser_scene_actions.py
+          git diff --cached --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git commit -m "Browser Body V2: isolate scene action mixin helpers"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
