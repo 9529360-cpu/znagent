@@ -67,24 +67,44 @@ class WindowsInteractiveMachineCapabilityE2ETests(unittest.TestCase):
                 self.assertTrue(applications, "real Windows inventory returned no installed applications")
                 self.assertEqual(len({app.app_id for app in applications}), len(applications))
 
-                # Select only a known benign GUI application discovered from this
-                # actual machine. The test never assumes a path or package id.
-                safe_names = ("Notepad", "Microsoft Paint")
+                # Select only a known benign interactive application discovered
+                # from this actual machine. The test never assumes an executable
+                # path, package id or AUMID. The dedicated runner can legitimately
+                # retain one shell app between jobs, so use several built-in
+                # candidates while still requiring one real zero-instance launch.
+                safe_names = (
+                    "Notepad",
+                    "Microsoft Paint",
+                    "Command Prompt",
+                    "Windows Terminal",
+                )
                 selected = None
+                safe_diagnostics: list[str] = []
                 for name in safe_names:
                     resolution = graph.resolve_application(name)
                     if resolution.status != "resolved" or resolution.application is None:
+                        safe_diagnostics.append(f"{name}:resolution={resolution.status}")
                         continue
                     candidate = resolution.application
                     if not candidate.launchable:
+                        safe_diagnostics.append(
+                            f"{name}:app_id={candidate.app_id}:launchable=false"
+                        )
                         continue
                     processes, windows = graph.application_runtime(candidate)
+                    visible_windows = [window for window in windows if window.visible]
+                    safe_diagnostics.append(
+                        f"{name}:app_id={candidate.app_id}:processes={len(processes)}:"
+                        f"visible_windows={len(visible_windows)}"
+                    )
                     if not processes and not windows:
                         selected = candidate
                         break
                 self.assertIsNotNone(
                     selected,
-                    "zn-interactive must expose at least one discovered, launchable, non-running benign system GUI app",
+                    "zn-interactive must expose at least one discovered, launchable, "
+                    "non-running benign system application; observations="
+                    + "; ".join(safe_diagnostics),
                 )
 
                 before_processes, _ = graph.application_runtime(selected)
