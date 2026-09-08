@@ -205,7 +205,7 @@ class ResidentWorkControl:
         current = run_version == current_plan_version
         snapshot: dict[str, Any] = {}
 
-        if not current or state == "stale":
+        if state == "stale":
             status = "superseded"
             stage = "superseded"
         elif state == "completed":
@@ -214,6 +214,9 @@ class ResidentWorkControl:
         elif state == "failed":
             status = "failed"
             stage = "failed"
+        elif not current:
+            status = "superseded"
+            stage = "superseded"
         elif state == "queued":
             status = "pending"
             stage = "waiting"
