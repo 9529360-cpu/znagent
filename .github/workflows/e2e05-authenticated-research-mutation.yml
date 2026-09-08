@@ -14,7 +14,11 @@ on:
       - 'runtime/python/zn_agent/core/user_browser_managed_research_resident.py'
       - 'runtime/python/zn_agent/core/user_browser_extension_resident.py'
       - 'runtime/python/zn_agent/core/user_browser_extension_adapter.py'
+      - 'runtime/python/zn_agent/core/user_browser_causal_popup_adapter.py'
+      - 'runtime/python/zn_agent/core/user_browser_causal_popup_behavior.py'
+      - 'runtime/python/zn_agent/core/user_browser_causal_popup_body.py'
       - 'apps/desktop/browser-extension/background.js'
+      - 'apps/desktop/browser-extension/research-background.js'
       - 'tests/zn_agent/e2e/test_e2e05_authenticated_research_note_mutation.py'
 
 permissions:
