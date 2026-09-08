@@ -12,6 +12,7 @@ from .user_browser_extension_relay import UserBrowserExtensionRelayError
 
 _CAUSAL_POSTCONDITION = "causal_child_verified_and_returned_to_exact_root"
 _CAUSAL_VERIFY_PHASE = "verify_causal_child_result"
+_CAUSAL_FAILED_PHASE = "causal_click_unverified_no_replay"
 _INSTALL_MARKER = "_zn_user_browser_causal_popup_behavior_installed"
 
 
@@ -36,6 +37,7 @@ def install_user_browser_causal_popup_behavior(resident) -> None:
     install_user_browser_causal_popup_body(resident.body)
 
     original_begin = resident._begin_native_action_cycle
+    original_native_action = resident._native_action_step
     original_complete = resident._complete_successful_body_action
     original_semantic_investigation = resident._semantic_lookup_investigation
 
@@ -63,6 +65,67 @@ def install_user_browser_causal_popup_behavior(resident) -> None:
                 created_at=intent.created_at,
             )
         return original_begin(event, state, intent)
+
+    def native_action_step(event, state, *, readiness, thought=None):
+        raw_intent = state.data.get("native_action_intent")
+        try:
+            intent = NativeActionIntent.from_dict(raw_intent) if isinstance(raw_intent, dict) else None
+        except (TypeError, ValueError):
+            intent = None
+        is_causal_click = bool(
+            intent is not None
+            and browser_semantic_lookup_goal(event) is not None
+            and str(intent.kind or "").strip().lower() == "browser_click_named_button_to_url"
+            and dict(intent.args or {}).get("causal_popup_allowed") is True
+        )
+        result = original_native_action(event, state, readiness=readiness, thought=thought)
+        if not is_causal_click or result is not None:
+            return result
+
+        raw_result = state.data.get("native_action_result")
+        if not isinstance(raw_result, dict) or raw_result.get("success") is True:
+            return result
+        result_data = raw_result.get("data") if isinstance(raw_result.get("data"), dict) else {}
+        browser_evidence = (
+            result_data.get("browser_evidence")
+            if isinstance(result_data.get("browser_evidence"), dict)
+            else {}
+        )
+        evidence_data = (
+            browser_evidence.get("data")
+            if isinstance(browser_evidence.get("data"), dict)
+            else {}
+        )
+        crossed_nonreplayable_boundary = bool(
+            result_data.get("side_effect_uncertain") is True
+            or evidence_data.get("click_sent") is True
+            or evidence_data.get("click_may_have_been_sent") is True
+        )
+        if not crossed_nonreplayable_boundary:
+            return result
+
+        failure = str(
+            raw_result.get("error")
+            or browser_evidence.get("error")
+            or "causal popup click crossed the non-replayable boundary without the required proof"
+        ).strip()
+        raw_semantic = state.data.get(resident._SEMANTIC_LOOKUP_STATE_KEY)
+        semantic = dict(raw_semantic) if isinstance(raw_semantic, dict) else {}
+        semantic["phase"] = _CAUSAL_FAILED_PHASE
+        semantic["causal_failure"] = failure[:512]
+        semantic["causal_replay_blocked"] = True
+        state.data[resident._SEMANTIC_LOOKUP_STATE_KEY] = semantic
+        state.data["local_failure"] = failure[:512]
+        resident._sync_execution_context(event, state)
+        resident.store.save_working_state(state)
+        return resident._checkpoint_terminal_failure(
+            event,
+            state,
+            reason=(
+                "the causal browser click may already have executed, but its exact child/root "
+                f"proof failed; replay is blocked: {failure[:512]}"
+            ),
+        )
 
     def complete_successful_body_action(event, state, intent, *, response: str, reason: str):
         goal = browser_semantic_lookup_goal(event)
@@ -117,7 +180,18 @@ def install_user_browser_causal_popup_behavior(resident) -> None:
     def semantic_lookup_investigation(event, state, goal: dict[str, str], *, readiness, thought=None):
         raw = state.data.get(resident._SEMANTIC_LOOKUP_STATE_KEY)
         semantic = dict(raw) if isinstance(raw, dict) else {}
-        if str(semantic.get("phase") or "") != _CAUSAL_VERIFY_PHASE:
+        phase = str(semantic.get("phase") or "")
+        if phase == _CAUSAL_FAILED_PHASE:
+            return resident._checkpoint_terminal_failure(
+                event,
+                state,
+                reason=(
+                    "causal popup verification already failed after a possibly executed click; "
+                    "replay remains blocked: "
+                    + str(semantic.get("causal_failure") or "required causal proof was not established")
+                ),
+            )
+        if phase != _CAUSAL_VERIFY_PHASE:
             return original_semantic_investigation(
                 event,
                 state,
@@ -215,6 +289,7 @@ def install_user_browser_causal_popup_behavior(resident) -> None:
         )
 
     resident._begin_native_action_cycle = begin_native_action_cycle
+    resident._native_action_step = native_action_step
     resident._complete_successful_body_action = complete_successful_body_action
     resident._semantic_lookup_investigation = semantic_lookup_investigation
     setattr(resident, _INSTALL_MARKER, True)
