@@ -335,6 +335,24 @@ class PlaywrightBrowserSceneCommandMixin:
                 )
         except Exception as exc:
             if dispatched:
+                # Re-read the provider topology at the failure boundary. This keeps
+                # failure evidence truthful even if a page appeared while the fresh
+                # BrowserScene itself was being acquired. The command never claims,
+                # closes, switches, or registers such a page.
+                try:
+                    fresh_pages, new_page_ids = self._scene_command_topology_delta(
+                        session,
+                        provider_pages_before,
+                    )
+                    self._scene_command_require_same_topology(
+                        session,
+                        provider_pages_before,
+                        default_before=default_before,
+                        fresh_pages=fresh_pages,
+                    )
+                    topology_unchanged = True
+                except Exception:
+                    topology_unchanged = False
                 # Refresh only the lower-level observation if possible. This helper
                 # invalidates the scene again; it never restores the pre-click scene.
                 self._scene_action_dispatched_failure(session, binding.page_id)
