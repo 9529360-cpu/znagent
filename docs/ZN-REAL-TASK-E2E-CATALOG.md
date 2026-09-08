@@ -1,6 +1,6 @@
 # ZN Real Task E2E Catalog
 
-> Acceptance catalog snapshot: 2026-09-04
+> Acceptance catalog scenarios snapshot: 2026-09-04; acceptance-status overlay synchronized 2026-09-08.
 >
 > This is a product acceptance set, not a fixture checklist. A scenario counts only when it starts from normal user language and ends with independently verified real outcome evidence. Internal primitive success, worker `done`, model confidence and CI green are not substitutes for the user goal becoming true.
 
@@ -27,6 +27,25 @@ For each E2E, record:
 - known unsupported cases.
 
 Do not create synthetic complexity only to make the test harder. Prefer tasks ordinary users could actually ask.
+
+### Current representative acceptance status
+
+The original 50 scenario definitions below remain stable. The following status notes record current `main` evidence without expanding a representative implementation beyond what was actually tested:
+
+| E2E | Current status | Acceptance note / boundary |
+| --- | --- | --- |
+| E2E-05 | CLOSED representative path | Real USER Browser authenticated research -> persisted mutation path is verified. This does not claim arbitrary authenticated websites or arbitrary browser mutation. |
+| E2E-07 | CLOSED representative path | Task-scoped causal USER Browser child-tab attribution, causal popup handling, authorization-generation binding, fresh opener reread, child -> root return and unverified-click no-replay are verified. General arbitrary popup/frame complexity remains broader work. |
+| E2E-08 | CLOSED representative path | Standard HTML `autocomplete="one-time-code"`, same explicitly authorized USER tab/generation/origin, manual user completion, fresh re-ground and same-Work resume are verified. ZN does not read/type/store OTP. CAPTCHA, WebAuthn/passkeys, cross-origin IdP handoff, password/payment automation are not supported by this closure. |
+| E2E-27 | CLOSED representative path | Natural-language same-Work steering, plan-version replan, stale old-worker gating and preservation/non-replay of valid historical effects are verified. Broader long-horizon steering remains open. |
+| E2E-28 | CLOSED representative path | Durable progress supervision, heartbeat/no-progress/stall detection, dynamic health-aware routing, bounded retry and policy-safe fallback/reassignment are verified for the guarded path. Not a general unlimited scheduler. |
+| E2E-29 | CLOSED | One actual model route can serve multiple isolated WorkerRuns while Root completion remains ZN-owned and independently verified. |
+| E2E-30 | CLOSED under current acceptance policy | Durable route/privacy policy, hard eligibility and route/provider provenance are verified. Closure includes an owner-approved environment waiver because a second real provider family was not configured; guarded two-provider acceptance remains and must fail closed/no-skip when such an environment is present. |
+| E2E-33 | CLOSED representative path | Same durable Work can continue after restart with fresh current evidence and completed historical effects are not blindly replayed. Broader cross-day task families remain open. |
+| E2E-34 | CLOSED representative path | Delegated restart reconciliation, no-replay recovery and restart-safe supervision are verified for the guarded path. Broader long-duration recovery remains open. |
+| E2E-42 | CLOSED under current acceptance policy | Privacy/locality hard eligibility and guarded acceptance are verified with the same documented environment-waiver semantics as E2E-30; no claim of full two-real-provider-family production evidence. |
+
+A `CLOSED representative path` entry does not automatically promote the whole capability class to `PRODUCT-CLOSED`.
 
 ## 2. Research and information work
 
@@ -96,6 +115,8 @@ Must re-observe and re-ground rather than fail from stale targets.
 Task produces popup/new tab midway.
 
 Must identify whether the popup belongs to the task, switch context deliberately, and return to the correct original context.
+
+Current representative coverage is the bounded causal USER child-tab path described in the status table above. Do not interpret it as arbitrary popup/frame support.
 
 ### E2E-08 — Manual blocker
 
@@ -298,11 +319,15 @@ Must:
 - preserve valid completed work;
 - continue without replaying prior side effects.
 
+Representative real acceptance is closed; this scenario definition remains the stable target for broader coverage.
+
 ### E2E-28 — Worker failure and reroute
 
 Coding worker repeatedly fails or selected model becomes unavailable.
 
 Must detect no-progress/resource failure, gather current evidence, reroute or change approach under user policy, and continue root goal where possible.
+
+Representative guarded acceptance is closed for current bounded supervision/health/restart semantics; broader long-task failure modes remain valid coverage work.
 
 ### E2E-29 — One model, several workers
 
@@ -312,11 +337,15 @@ Task: product development requiring research, coding and review.
 
 Must prove multi-worker capability does not depend on multi-model configuration.
 
+Status: **CLOSED / VERIFIED** for the representative real route path.
+
 ### E2E-30 — Several models, task-specific routing
 
 Environment: multiple user-approved routes.
 
 Must prove research/coding/vision/general reasoning can route differently and each route is traceable to the WorkItem it served.
+
+Current acceptance is closed under the documented environment-waiver semantics. The guarded two-provider test remains the source of truth when two real provider families are actually configured; do not infer missing production evidence from the waiver.
 
 ### E2E-31 — No pointless delegation
 
@@ -334,11 +363,15 @@ Must resolve the correct durable active Work without cloning/replaying it.
 
 Must resolve unambiguously from durable Work, re-sense current reality and continue.
 
+Representative real acceptance is closed for same-Work continuation/restart/non-replay. Cross-day breadth remains a valid product-coverage target.
+
 ### E2E-34 — Restart during delegated work
 
 Resident restarts while a WorkItem is running/waiting.
 
 Must reconcile actual worker/process state, preserve accepted work, reject unsupported stale assumptions, and continue safely.
+
+Representative guarded acceptance is closed for current bounded restart reconciliation/no-replay path.
 
 ### E2E-35 — Next-day product continuation
 
@@ -396,6 +429,8 @@ User:
 
 Must enforce before route scoring/delegation.
 
+Current acceptance is closed under the same documented policy/privacy + environment-waiver semantics as E2E-30. This does not claim two real provider families were fully production-validated in the waived environment.
+
 ### E2E-43 — Worker least authority
 
 Delegated research worker should not gain Git push, messaging, Memory write or unrelated filesystem access.
@@ -440,17 +475,32 @@ For any representative mutating task, deliberately make the worker/model claim s
 
 ZN must reject the claim and continue/replan rather than announce completion.
 
-## 15. Initial implementation priority
+## 15. Current implementation selection
 
-The first five E2Es to drive orchestration development should be:
+The old “first five E2Es to drive orchestration development” ordering is retired because E2E-29, E2E-30/42, E2E-28/34 and E2E-27/33 now have the representative closures recorded above.
 
-1. **E2E-33 + E2E-27** — natural continuation plus active steering of the same real Work.
-2. **E2E-26** — broad goal to researched, runnable small product MVP.
-3. **E2E-29** — one-model multi-worker execution.
-4. **E2E-30 / E2E-42** — multi-model routing under explicit user policy/privacy.
-5. **E2E-28 / E2E-34** — worker failure/stall plus restart-safe supervision.
+Do not re-run that historical priority list as a development plan.
 
-These should be implemented vertically. Do not implement every WorkItem field, every router policy or every worker type before the first E2E can succeed.
+Select future work from the catalog by asking which ordinary real task is still blocked on current `main`. Prefer gaps that increase real task breadth, especially:
+
+- cross-surface Browser/Desktop/File/Terminal/Application work;
+- Browser/User Browser real-site complexity beyond the bounded verified paths;
+- longer-horizon/cross-day use on top of existing steering/supervision/restart mechanisms;
+- user-readable progress, blocker and completion-evidence quality;
+- concrete Windows/application semantic gaps exposed by a real E2E.
+
+Do not make general DAG scheduling, recursive delegation or a multi-agent platform the default next target. Do not infer permission for Memory/credential/installer/updater/release-trust changes from this catalog.
+
+Implementation remains vertical:
+
+```text
+choose a real task
+-> locate the concrete current failure
+-> reuse existing ZN ownership/control planes
+-> add the smallest missing capability
+-> prove the real outcome
+-> record exact representative coverage and limitations
+```
 
 ## 16. Product metric
 
