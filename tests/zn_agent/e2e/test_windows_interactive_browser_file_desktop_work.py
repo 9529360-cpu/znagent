@@ -16,6 +16,7 @@ from pathlib import Path
 
 from zn_agent.core.daemon import ResidentRpcServer
 from zn_agent.core.provider_bridge import build_resident_runtime
+from zn_agent.core.resident_server import ResidentSocketService
 
 import test_windows_interactive_user_browser_bridge as browser_bridge_e2e
 import test_windows_interactive_user_browser_extension as extension_e2e
@@ -496,6 +497,8 @@ class WindowsInteractiveBrowserFileDesktopWorkE2ETests(unittest.TestCase):
                 store_path=root / "kernel.db",
             )
             rpc = ResidentRpcServer(resident=resident)
+            service = ResidentSocketService(rpc)
+            self.assertIs(resident.visual_region, service.visual_region)
             rpc.service.acquire()
             authorization_summary = self._authorize_current_tab(resident, browser)
             self.assertTrue(authorization_summary.get("authorized"), authorization_summary)
