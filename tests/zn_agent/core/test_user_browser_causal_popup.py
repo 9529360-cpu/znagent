@@ -71,6 +71,7 @@ class _CausalRelay:
         self.after_click_generation = _AUTH
         self.click_seen = False
         self.uncertain = False
+        self.last_click_timeout = None
 
     def authorized_tab(self):
         if self.click_seen and self.after_click_tab is None:
@@ -91,7 +92,6 @@ class _CausalRelay:
         expected_tab_id=None,
         expected_attached_at=None,
     ):
-        del timeout_seconds
         assert expected_tab_id == 81
         assert expected_attached_at == _AUTH
         if kind == "probe_current_tab":
@@ -117,6 +117,7 @@ class _CausalRelay:
                 "completed_at": "2026-09-08T00:00:02Z",
             }
         if kind == "click_named_button_to_url":
+            self.last_click_timeout = float(timeout_seconds)
             assert args == {
                 "target_name": _BUTTON,
                 "target_id": _TARGET,
@@ -177,7 +178,8 @@ class CausalPopupAuthorizedExtensionUserBrowserTests(unittest.TestCase):
         return browser, session, action, authority, browser.act(action, authority)
 
     def test_single_causal_child_succeeds_with_task_scoped_authority(self) -> None:
-        browser, session, _action, _authority, evidence = self._act(_CausalRelay())
+        relay = _CausalRelay()
+        browser, session, _action, _authority, evidence = self._act(relay)
         self.assertTrue(evidence.success, evidence.error)
         self.assertEqual(evidence.url_before, _ROOT)
         self.assertEqual(evidence.url_after, _ROOT)
@@ -187,6 +189,7 @@ class CausalPopupAuthorizedExtensionUserBrowserTests(unittest.TestCase):
         self.assertTrue(evidence.data["child_authority_task_scoped"])
         self.assertTrue(evidence.data["child_debugger_detached"])
         self.assertTrue(evidence.data["returned_to_exact_root_tab"])
+        self.assertEqual(relay.last_click_timeout, 10.0)
         self.assertEqual(browser.causal_child_result("body-e2e07-1")["child_title"], _TITLE)
         browser.close_session(session.session_id)
 
@@ -278,6 +281,7 @@ class CausalPopupAuthorizedExtensionUserBrowserTests(unittest.TestCase):
         self.assertFalse(evidence.success)
         self.assertTrue(evidence.data["click_may_have_been_sent"])
         self.assertTrue(evidence.data["requires_fresh_resense"])
+        self.assertEqual(relay.last_click_timeout, 10.0)
         self.assertIsNone(browser.causal_child_result("body-e2e07-1"))
 
 
