@@ -1,148 +1,201 @@
 # ZN Next Phase
 
-这份文件只描述下一阶段产品主线，不给 updater、rollback、signing、release trust、credential、identity 或 long-term memory 的高风险改动自动授权。
+这份文件只描述 current `main` 之后的产品选择原则和剩余产品缺口。它不给 updater、rollback、signing、release trust、credential、identity、installer 或 long-term memory 的高风险改动自动授权。
 
-Updated: 2026-09-06
+Updated: 2026-09-08
 
-## 当前已验证基线
+## 当前已关闭的 delegated baseline
 
-E2E-29 已关闭。ZN 已在真实 Windows X64、自托管 `zn-interactive`、真实模型条件下证明：
+2026-09-06～2026-09-08 已经形成一组代表性 closure；下一阶段不得重复把它们当“尚未开发”的默认主线。
 
-```text
-一个实际 model route
--> 多个 durable WorkerRun
--> research / coding / review 隔离职责
--> bounded context + scoped tools/authority
--> failed/schema-rejected attempt 终结当前 WorkerRun
--> 新语义重试获得新 durable identity
--> worker completion 不等于 Root completion
--> 独立 verifier WorkItem
--> Terminal 实际执行
--> ZN Body fresh persisted-state reread
--> Root Work acceptance
-```
+已关闭的代表性 baseline：
 
-真实模型验收 run `34022287626`，HEAD `3b2a96633ed1d593f64e5526fb35ab460bd4ebeb`：
+- **E2E-29**：一个实际 model route 服务多个隔离 WorkerRun；worker 数与模型数不绑定，Root completion 仍由 ZN 独立验收。
+- **E2E-30 / E2E-42**：durable route/privacy policy、ModelRouter hard eligibility、route/provider provenance 与 guarded multiroute acceptance 已按当前 acceptance policy 关闭。closure 包含明确的 owner-approved environment waiver，因为当时缺少第二个真实 provider family；不能宣称已有双真实 provider family 完整生产证据。
+- **E2E-28 / E2E-34**：durable worker progress supervision、heartbeat/no-progress/stall detection、dynamic health-aware routing、bounded retry、policy-safe fallback/reassignment、restart reconciliation、no-replay recovery 已有 guarded real-model representative closure。
+- **E2E-27 / E2E-33**：natural-language same-Work steering、current-plan replan、plan-version stale gating、old-worker result protection、restart continuation、completed historical effects 不 replay 已有真实 representative closure。
+- **Delegated progress**：durable delegated facts 已 privacy-safe bounded projection 到既有 `work_progress` 和 Resident UI，没有第二套 progress truth。
+- **Dependency/readiness**：durable bounded flat current-plan sibling dependency/readiness 已实现并验证，包括 fan-in、restart durability 与 corrupt/cyclic/dangling fail closed。
 
-```text
-ZN_E2E29_SKIPPED=0
-ZN_E2E29_FAILURES=0
-ZN_E2E29_ERRORS=0
-ZN_E2E29_TERMINAL.success=true
-model_route_id=default
-```
+这些 closure 证明当前 bounded substrate 已经存在，但不把 ZN 升格为通用 multi-agent platform、general DAG scheduler 或无限期后台任务系统。
 
-同一 HEAD 的标准 `ZN CI` run `34022288706` 也为 success。
+## Browser / Windows 已有的代表性 baseline
 
-因此“一个模型能否服务多个隔离 worker”不再是设计问题。下一阶段不能继续在 E2E-29 上横向扩平台。
+Current `main` 还已经拥有一批近期真实 Body 能力：
 
-## 2026-09-06 新增的 delegated-work substrate
+- E2E-05 USER Browser authenticated research -> persisted mutation；
+- E2E-07 causal USER Browser child-tab attribution / popup / return path；
+- E2E-08 standard HTML `autocomplete="one-time-code"` same-authorized-tab user-presence handoff；
+- bounded BrowserScene sensing；
+- tab lifecycle/history；
+- exact BrowserScene actions；
+- managed causal popup attribution；
+- authority-safe causal upload/download；
+- verified stateless/stateful control clicks；
+- Windows Machine Capability / Application Awareness V1；
+- exact Resident-admitted existing application window activation。
 
-在 E2E-29 基线上，现有 Resident 又补齐了一组后续真实 E2E 所需的内核边界：
+这些都只代表 bounded verified paths。特别是：E2E-08 不是“所有 MFA”；Browser Body V2 不是“任意网页”；Windows application awareness 不是“所有 Windows 操作”。
 
-- conservative `BoundedDelegationPlanner`：小任务 direct path，显式 negation 优先；
-- `DelegatedWorkCoordinator`：composition 在同一个 Resident 内，不创建第二 Resident/store/router/control plane；
-- Body action authority：真实 effect 前 revalidate WorkerRun / WorkItem / plan / workspace / admitted action；
-- strict recursive `WorkerContextPack`：bounded serialization、nested sensitive-key rejection、secret-like value rejection、provenance/classification；
-- existing `ModelRouter`：hard eligibility before soft scoring，支持 capability、pin/deny、declared availability/health、privacy/locality、policy tags、authority scopes，malformed policy fail closed。
+## 下一阶段产品目标
 
-这些是 **substrate / narrow verification**，不是下面真实 E2E 的 product closure。
+ZN 的下一阶段不再是“把 delegated Work 基础补齐”。现在更重要的是：把已经存在的 Self、Body、Senses、Situation、Thought、Will、Work、Memory、Browser、Desktop、File、Terminal、Git、Recovery 和 CognitiveResources 组合到更多普通用户真实任务里，并扩大持续性、跨 surface 和解释质量。
 
-## 产品目标
-
-ZN 的下一阶段不是继续堆基础设施，而是把已经存在的 Self、Body、Senses、Situation、Thought、Will、Work、Memory、Browser、Desktop、Computer Use、File、Terminal、Git、Recovery 和 Cognitive Resource 真正组合成普通用户能长期使用的完整任务闭环。
-
-ZN 是 **长期常驻在个人电脑里的通用型个人助理**。用户只需要表达正常的人类目标；ZN 自己判断需要的 cognition、tools、authority、verification 和 delegated SubWork。
+目标仍然是：
 
 ```text
-用户目标
--> 恢复当前 Work / Memory / Situation
--> 判断真正缺口
--> direct work OR bounded SubWork
--> 选择满足用户 policy 的 cognition + tools + authority
--> Browser / Desktop / File / Terminal / Git / API 按需参与
--> 状态变化后重新 Sense / Situation / Thought
+用户给正常人类目标
+-> ZN 恢复/建立 Root Work
+-> Sense 当前电脑和任务上下文
+-> 判断真正缺的 cognition / tools / authority / information
+-> direct work 或 bounded delegation
+-> 必要时跨 Browser / Desktop / File / Terminal / Application
+-> 状态变化后 fresh Sense / Situation / Thought
+-> 遇到 blocker / stall / user steering 时使用现有 supervision/replan/recovery
 -> 独立验证用户真正要的结果
--> 保持后续连续性
+-> 保留后续 continuation
 ```
 
-模型、worker 和工具都是资源，ZN 继续拥有用户目标、Durable Work、权限边界、现实证据、任务连续性和最终 completion judgment。
+模型、worker 和工具仍是资源；ZN 继续拥有用户目标、Durable Work、权限边界、现实证据、任务连续性和 completion judgment。
 
-## 下一阶段代码顺序
+## Remaining product gaps
 
-### 1. 真正关闭 E2E-30 + E2E-42：multi-route policy/privacy acceptance
+Current `main` 并不足以唯一指定一个“必然的下一开发任务”。因此下一阶段应从下面真实产品缺口中，按当前 E2E 阻塞程度选择最小高价值切片，而不是凭空发明 roadmap。
 
-不要再先造新的 router 或 eligibility layer。现有 `ModelRouter` 已有 hard gates，下一步必须证明这些 gates 在真实多 route 任务中真的保护用户并做对选择。
+### 1. Cross-surface real task breadth
 
-最小真实验收：
-
-- 至少多个 user-approved routes；
-- research/coding/general 等不同 SubWork 按显式 capability eligibility 选 route；
-- user pin / deny / provider restriction 真正生效；
-- `local_only` / `cloud_denied` 等数据策略在 scoring 前过滤；
-- selected route provenance 可追溯到它服务的 WorkItem/WorkerRun；
-- forbidden provider **没有收到**受限项目上下文；
-- preferred route 不可用时，只能在仍满足用户 policy/capability 的候选中 fallback；
-- 无合法候选时 fail closed，而不是绕过用户策略。
-
-**不能因为 unit tests、standard CI 或单模型 regression 绿，就把 E2E-30/E2E-42 标记为关闭。**
-
-### 2. Supervision / stall / dynamic reroute — E2E-28 + E2E-34
-
-当前已有 durable WorkerRun、stale-plan gate、reconcile foundations，但还缺系统化长期监督：
-
-- repeated no-progress detection；
-- bounded retry budget；
-- dynamic provider availability/health；
-- `ResidentHealthJournal` observation 进入 route eligibility；
-- policy-safe reroute / reassign / replan；
-- Resident restart 后 reconcile WorkerRun / WorkItem / plan/current reality；
-- completed side effect 不 replay；
-- stale worker result 不推进 current plan。
-
-静态 route metadata 的 `healthy=false` hard gate 不等于 dynamic health→reroute 已完成。
-
-### 3. Natural continuation + active steering — E2E-33 + E2E-27
-
-用户：
-
-> “昨天那个产品继续。登录先别做，先把核心记账跑起来。”
-
-必须在同一个 durable Root Work 上安全修改当前计划：保留仍有效的 completed work，取消/supersede 受影响 pending work，旧 plan running result 必须 stale-gated，已发生 side effect 不 replay。
-
-plan-version/unit tests 是 foundation，不等于这两个 E2E 已 product-close。
-
-### 4. 继续扩大真实 Body / cross-surface 闭环
-
-每当真实 E2E 暴露 Browser/Desktop/File/Terminal/OS semantic substrate 缺口，只补直接阻塞当前任务的最小能力。不要单独把“OS integration”做成新的基础设施主线。
-
-Resident 本地 control plane 当前的 loopback TCP + per-process secret + endpoint ACL 是过渡实现；Windows 长期 transport 仍应收敛到 Named Pipe + per-user SID ACL，但只有在它直接阻塞产品安全/可靠性时才提升优先级。
-
-## 调度必须服务真实任务
-
-不要为了“支持多 Agent / 多模型”先建庞大通用编排平台，再很久以后才接真实用户任务。
-
-正确顺序：
+优先选择真正需要两个或更多 surface 的普通用户任务，例如：
 
 ```text
-选择一个真实长任务
--> 看它哪里真的需要拆分、专业模型或监督
--> 在现有 Work / Will / Thought / ModelRouter / Body 上补最小缺口
--> 让这个真实 E2E 从失败变成功
--> 再把可复用机制扩展到下一个任务
+Browser research
+-> local File mutation
+-> Desktop/Application continuation
+-> Terminal/Test verification
 ```
 
-只有一个模型时系统也必须工作；E2E-29 已经把这条约束从设计变成真实验收事实。
+或：
 
-## 当前优先顺序
+```text
+USER Browser existing session
+-> causal child context
+-> return to root page
+-> local artifact/application update
+-> fresh result verification
+```
 
-1. 真实 multi-route + policy/privacy E2E（E2E-30 + E2E-42）。
-2. worker/model failure、dynamic health、stall、reroute、restart supervision（E2E-28 + E2E-34）。
-3. active Work steering + natural continuation（E2E-27 + E2E-33）。
-4. 真实 User Browser Bridge 和跨 surface Body 能力。
-5. 普通用户能看懂的任务状态、授权、失败和完成体验。
+当前已有若干两-surface代表性闭环，但复杂三-surface任务、目标漂移、应用/网页状态变化和跨 surface recovery 仍是主要产品广度问题。
 
-Installer、Release Candidate、签名、额外 CI、维护系统、文档整理、新抽象、新 provider、新状态机默认都是支撑线，不得自动抢主线。
+开发规则：只补当前任务实际缺的 Body/Sense/verification 能力，不建立新的“cross-surface framework”。
+
+### 2. Browser / User Browser breadth beyond representative slices
+
+现有 BrowserScene、tab/history、popup、file transfer、control click 与 E2E-05/07/08 已消除很多旧缺口，但下面更广问题仍可能阻塞真实站点：
+
+- 更复杂 same-origin/cross-origin frame 情况；
+- 浏览器/网页 dialogs 与复杂 navigation；
+- 动态页面结构和更广 semantic controls；
+- 真实站点的 popup/new-tab 变体；
+- 复杂授权/用户在场流程；
+- current exact semantic path 不足时的后续视觉/辅助感知需求；
+- USER Browser session 漂移后的安全 re-ground。
+
+E2E-08 只覆盖 standard HTML `one-time-code`、same authorized tab/generation/origin 的用户手工 OTP path。CAPTCHA、WebAuthn/passkey automation、cross-origin IdP handoff、password/payment automation 都不能因为 E2E-08 closure 被列为“已支持”。
+
+### 3. Long-horizon continuity and user experience
+
+现有 E2E-27/33 与 E2E-28/34 已证明 steering、supervision、dynamic health、stall/restart recovery 的代表性路径。下一步如果真实长任务仍失败，应聚焦“广度与产品体验”，而不是重新实现同一套机制。
+
+重点包括：
+
+- 跨更长时间窗口、跨天的真实 continuation；
+- 多 workstream 情况下用户可理解的 progress；
+- blocker、等待用户、reassign/retry、完成依据的解释质量；
+- steering 后哪些工作被保留/取消/过期的可理解表达；
+- 长时间环境变化后如何重新建立 current evidence。
+
+当前 delegated progress 应视为 `CONNECTED + VERIFIED NARROW / PARTIAL UX`，而不是 internal-only；但复杂长期 UX 仍未 product-close。
+
+### 4. Windows / application capability breadth
+
+Windows Machine Capability / Application Awareness 与 exact existing-window activation 已经存在。后续不应再把“machine/application awareness 尚缺”作为空泛基础设施任务。
+
+只有当真实 E2E 暴露具体应用/OS 缺口时，才增加最小语义能力，例如某个真实应用所需的 current-state sensing、safe activation/selection、structured application action 或独立 postcondition。
+
+不要把这条扩张成“先做完整 OS intelligence layer”。
+
+### 5. Installed-version continuity remains separate
+
+Installed N -> N+1 的 identity/data/Work/uncertain-side-effect continuity 仍未 product-close，但 updater、rollback、signing、release trust 属于高风险边界。
+
+本文件不自动授权这类改动。只有当 owner 明确选择该产品问题并授权相应 trust boundary 时，才能进入实现。
+
+## Selection criteria
+
+从上述缺口中选下一项时，按下面顺序判断：
+
+1. 哪个普通用户真实任务当前失败或可靠性最差？
+2. 失败点属于 cognition、Sense、Body、authority、verification、continuity 还是 UX？
+3. current `main` 已有机制能否被直接复用/扩展？
+4. 哪个最小变化可以让一个真实 E2E 从失败变成成功，而不是只增加单独 capability demo？
+5. 是否保持 one Resident / one Root Work truth / one ModelRouter / fresh evidence / non-replay？
+6. 是否有代表性 closure 被误判为“完全没有实现”，从而导致重复开发？
+
+如果没有足够证据确定唯一优先任务，就保留候选缺口，不凭空排列一个虚假的精确 roadmap。
+
+## 不再作为下一阶段开发项
+
+下面这些不能继续原样出现在“下一阶段待开发”列表中：
+
+```text
+E2E-30/42 closure 本身
+ResidentHealthJournal dynamic health -> routing 接线
+E2E-28/34 systematic no-progress/stall supervision
+restart-safe delegated reconciliation
+E2E-27/33 representative steering / continuation closure
+delegated user progress projection
+bounded flat WorkItem dependency/readiness
+```
+
+如果新的真实任务在相关区域失败，应描述为“新覆盖/新边界缺口”，并证明 existing substrate 为什么不足。
+
+## Orchestration boundary
+
+不要因为 delegated Work 已经更完整，就把下一阶段变成通用调度平台。
+
+当前 dependency/readiness 的准确范围是：
+
+```text
+bounded
+flat
+current-plan sibling dependencies
+same Root / thread / plan
+fan-in supported
+derived readiness
+restart durable
+invalid/cyclic/dangling fail closed
+```
+
+它不是：
+
+- general-purpose DAG scheduler；
+- recursive delegation tree；
+- arbitrary parallel DAG runtime；
+- critical-path scheduler；
+- resource-pool scheduler；
+- generic dependency UX。
+
+除非未来一个高价值真实任务明确证明 current bounded model 不能表达所需关系，否则不要把这些列为默认主线。
+
+## Multi-route acceptance boundary
+
+E2E-30/42 已按 current acceptance policy 关闭，但必须保留 waiver 语义：
+
+- environment 当时没有第二个真实 provider family；
+- owner-approved waiver 是 closure evidence 的一部分；
+- 不得写成已经在两个真实 provider families 上完成完整生产验证；
+- guarded two-provider acceptance 仍保留，并在真实双 provider 配置时要求 no-skip / fail closed。
+
+如果以后获得真实双 provider family evidence，它是新的 coverage strengthening，不是重做 E2E-30/42 的 routing substrate。
 
 ## E2E 在 ZN 里的定义
 
@@ -152,16 +205,22 @@ worker done != E2E success
 model answer != E2E success
 tool dispatch success != E2E success
 unit tests / CI green != product E2E success
+representative E2E closure != entire capability class product-closed
 ```
 
-E2E-29 关闭，是因为真实模型、真实 Browser、真实 workspace write、真实 Terminal/Test、独立 review 和 Root fresh persisted-state verification 形成了完整闭环。同样标准必须用于 E2E-30/42、28/34、27/33。
+一个新阶段应说明：真实用户以前在哪里失败；本次后真实成功路径是什么；用到哪些 cognition/tools/authority/verification；状态变化和 restart 如何处理；仍有哪些明确边界。
 
-## 已废弃方向
+## 已废弃 / 非默认路线
 
-专用“自我维护 / 自我修复 / upstream BUG report”路线已经删除，不属于下一阶段，不属于 backlog 优先级，也不属于未来产品路线。
+专用“自我维护 / 自我修复 / upstream BUG report”路线已删除，不属于 backlog。
 
-需要修改 ZN 自己的代码时，把 ZN 当成普通代码仓库，用通用 Work、File、Terminal、Git、Repo Test 和编码能力处理。
+同样不要默认恢复：
 
-## 完成一个阶段以后怎么汇报
+- multi-agent platform；
+- second Resident / second ModelRouter / second orchestration truth；
+- generic DAG/workflow engine；
+- credential platform；
+- installer/updater/release-trust 大改；
+- 未经真实 E2E 驱动的 OS substrate 扩建。
 
-优先说明：ZN 以前不能完成什么真实任务、现在能完成什么、成功路径、参与的 cognition/workers/tools/authority/verification、失败是否能恢复、用户还会在哪里失败，以及下一个最阻塞真实使用的问题。不要把 model 数、worker 数、Action 数、测试数、PR 数或 CI 当产品成绩。
+下一阶段仍应是：**选择真实用户任务，找到 current main 真正缺的最小能力，把完整任务闭环做实。**
