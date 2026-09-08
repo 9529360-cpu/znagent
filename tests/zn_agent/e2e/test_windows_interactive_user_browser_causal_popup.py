@@ -376,8 +376,12 @@ class E2E07UserBrowserCausalPopupTests(unittest.TestCase):
         try:
             resident = env["resident"]
             authorization_before = dict(resident.user_browser_authorization())
+            root_authority_before = resident.user_browser_extension.authorized_tab()
+            self.assertIsNotNone(root_authority_before)
+            assert root_authority_before is not None
             root_tab_id = int(authorization_before["tab_id"])
-            root_generation = str(authorization_before.get("attached_at") or "")
+            self.assertEqual(root_authority_before.tab_id, root_tab_id)
+            root_generation = str(root_authority_before.attached_at or "")
             self.assertTrue(root_generation)
 
             unrelated_url = f"http://{_HOST}:{env['port']}/unrelated"
@@ -410,8 +414,12 @@ class E2E07UserBrowserCausalPopupTests(unittest.TestCase):
             self.assertEqual(env["server"].unauthorized_requests, 0)  # type: ignore[attr-defined]
 
             authorization_after = dict(resident.user_browser_authorization())
+            root_authority_after = resident.user_browser_extension.authorized_tab()
+            self.assertIsNotNone(root_authority_after)
+            assert root_authority_after is not None
             self.assertEqual(int(authorization_after["tab_id"]), root_tab_id)
-            self.assertEqual(str(authorization_after.get("attached_at") or ""), root_generation)
+            self.assertEqual(root_authority_after.tab_id, root_tab_id)
+            self.assertEqual(str(root_authority_after.attached_at or ""), root_generation)
 
             actions = [
                 action
