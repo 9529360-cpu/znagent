@@ -1,10 +1,42 @@
 import assert from 'node:assert/strict'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
+import { build } from 'esbuild'
 import { test } from 'vitest'
 
-import { normalizeDelegatedProgress } from '../src/zn/resident-client'
+const here = path.dirname(fileURLToPath(import.meta.url))
+const desktopRoot = path.resolve(here, '..')
 
-test('delegated progress normalization keeps only bounded user-readable fields', () => {
+type DelegatedProgressResult = {
+  planVersion: number
+  status: string
+  currentPhase?: string
+  counts: Record<string, number>
+  phases: Array<{ kind: string; status: string; stage: string; updatedAt?: number }>
+}
+
+async function loadNormalizer(): Promise<(value: unknown) => DelegatedProgressResult | undefined> {
+  const result = await build({
+    entryPoints: [path.join(desktopRoot, 'src/zn/resident-client.ts')],
+    bundle: true,
+    write: false,
+    format: 'esm',
+    platform: 'browser',
+    target: 'es2023'
+  })
+  const output = result.outputFiles[0]
+  assert.ok(output)
+  const moduleUrl = `data:text/javascript;base64,${Buffer.from(output.text).toString('base64')}`
+  const module = await import(moduleUrl) as {
+    normalizeDelegatedProgress?: (value: unknown) => DelegatedProgressResult | undefined
+  }
+  assert.equal(typeof module.normalizeDelegatedProgress, 'function')
+  return module.normalizeDelegatedProgress!
+}
+
+test('delegated progress normalization keeps only bounded user-readable fields', async () => {
+  const normalizeDelegatedProgress = await loadNormalizer()
   const result = normalizeDelegatedProgress({
     plan_version: 2,
     status: 'running',
@@ -56,7 +88,8 @@ test('delegated progress normalization keeps only bounded user-readable fields',
   ]) assert.doesNotMatch(encoded, new RegExp(secret))
 })
 
-test('delegated progress normalizer ignores malformed phases and fails safe on unknown enums', () => {
+test('delegated progress normalizer ignores malformed phases and fails safe on unknown enums', async () => {
+  const normalizeDelegatedProgress = await loadNormalizer()
   const result = normalizeDelegatedProgress({
     plan_version: 7,
     status: 'INTERNAL-STATUS',
@@ -87,7 +120,8 @@ test('delegated progress normalizer ignores malformed phases and fails safe on u
   assert.doesNotMatch(JSON.stringify(result), /SECRET-INTERNAL-STAGE/)
 })
 
-test('delegated progress is optional for old or malformed resident payloads', () => {
+test('delegated progress is optional for old or malformed resident payloads', async () => {
+  const normalizeDelegatedProgress = await loadNormalizer()
   assert.equal(normalizeDelegatedProgress(undefined), undefined)
   assert.equal(normalizeDelegatedProgress({}), undefined)
   assert.equal(normalizeDelegatedProgress({ plan_version: 0, counts: {} }), undefined)
