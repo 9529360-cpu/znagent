@@ -253,7 +253,17 @@ class PlaywrightBrowserSceneControlMixin:
                     new_page_ids = ()
                     topology_unchanged = False
 
-                self._scene_action_dispatched_failure(session, binding.page_id)
+                if topology_unchanged:
+                    self._scene_action_dispatched_failure(session, binding.page_id)
+                else:
+                    # A fresh provider page must remain unclaimed. The generic
+                    # mutation-recovery helper reconciles provider pages, so on
+                    # topology drift only invalidate the old BrowserScene and
+                    # leave every fresh page untouched for a future grounding.
+                    self._scene_invalidate_page(
+                        session.identity.session_id,
+                        binding.page_id,
+                    )
                 return self._scene_control_evidence(
                     session,
                     action,
