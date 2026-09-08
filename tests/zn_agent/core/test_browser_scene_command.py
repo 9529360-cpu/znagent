@@ -65,12 +65,11 @@ class _CommandFixture:
             )
             for _ in range(completion_count)
         ]
+        roles = {_COMPLETION_ROLE: self.rows}
+        roles.setdefault(trigger_role, []).append(self.trigger_item)
         self.main = _Frame(
             url=ORIGIN + "/commands",
-            roles={
-                trigger_role: [self.trigger_item],
-                _COMPLETION_ROLE: self.rows,
-            },
+            roles=roles,
         )
         self.page = _CommandPage(url=self.main.url, main_frame=self.main)
         self.browser, self.identity, self.context, self.provider = _build(
@@ -179,7 +178,7 @@ class BrowserSceneCommandTests(unittest.TestCase):
             ("checkbox", False),
             ("radio", False),
             ("tab", False),
-            ("row", False),
+            ("cell", False),
         ):
             with self.subTest(role=role):
                 fixture = _CommandFixture(trigger_role=role)
