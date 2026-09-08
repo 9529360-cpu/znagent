@@ -272,6 +272,9 @@ def build_resident_runtime(
     from .browser_file_desktop_handoff_behavior import (
         install_browser_file_desktop_handoff_behavior,
     )
+    from .browser_file_desktop_resume_behavior import (
+        install_browser_file_desktop_resume_behavior,
+    )
     from .user_browser_causal_popup_behavior import (
         install_user_browser_causal_popup_behavior,
     )
@@ -297,6 +300,7 @@ def build_resident_runtime(
     resident = ApplicationAwareResidentRuntime(kernel=kernel, budget=budget)
     install_user_browser_causal_popup_behavior(resident)
     install_browser_file_desktop_handoff_behavior(resident)
+    install_browser_file_desktop_resume_behavior(resident)
     return resident
 
 
