@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-"""Install the bounded E2E-24 Browser -> File -> Desktop continuation.
+"""Bounded same-Work Browser -> File -> Desktop continuation for E2E-24.
 
-This is deliberately a thin behavior on the one existing Resident. It owns no
-scheduler, router, store, action primitive, browser session, or completion
-ledger. Business facts may cross phases; authority never does. Browser
-authorization, file identity, foreground HWND/PID, UIA RuntimeId and final app
-state are freshly re-established at their existing boundaries.
+The behavior decorates the one product Resident. It owns no scheduler, router,
+store, browser session, action primitive, or second completion truth. Only the
+business customer fact crosses phases; Browser authorization, file identity,
+foreground HWND/PID, UIA RuntimeId and final app evidence are freshly grounded
+at their own authority boundaries.
 """
 
 import ctypes
@@ -15,6 +15,7 @@ import os
 import re
 import uuid
 from ctypes import wintypes
+from pathlib import Path
 from typing import Any, Mapping
 
 from .action import NativeActionIntent
@@ -26,12 +27,13 @@ from .natural_file_goal import fresh_workspace_text, observe_workspace_text_sour
 
 _STATE_KEY = "resident_e2e24_browser_file_desktop"
 _INSTALL_MARKER = "_zn_e2e24_browser_file_desktop_behavior_installed"
-_GOAL_KIND = "browser_file_desktop_customer_status"
 _UNDERSTANDING_KEY = "_resident_goal_understanding"
 _DESKTOP_SEMANTIC_GOAL_KEY = "_resident_desktop_semantic_goal"
+_GOAL_KIND = "browser_file_desktop_customer_status"
 _BROWSER_CUES = ("当前网站", "这个网站", "当前页面", "这个页面")
 _DESKTOP_CUES = ("软件", "应用", "客户管理")
 _STATUS_ANCHORS = ("需跟进",)
+_IDENTIFIER_CUES = ("编号", "账号", "号码", "标识", "id", "ID")
 _FILE_HINT = re.compile(
     r"名字(?:里)?(?:像|包含|带有|带)\s*[\"“'‘]?(?P<v>[^\"”'’‘，,。；;\r\n]{1,64}?)[\"”'’]?\s*"
     r"的(?:那个|那份|那个文件|文件)?(?:客户状态)?\s*\.?\s*txt(?=[，,。；;\s]|$)",
@@ -47,7 +49,7 @@ _BROWSER_PROCESSES = {
 
 
 def install_browser_file_desktop_handoff_behavior(resident) -> None:
-    """Decorate only the bounded E2E-24 seam on the existing Resident runtime."""
+    """Install only the narrow E2E-24 compositional seam on the existing Resident."""
 
     if getattr(resident, _INSTALL_MARKER, False):
         return
@@ -62,20 +64,11 @@ def install_browser_file_desktop_handoff_behavior(resident) -> None:
         request = _request(event)
         if request is None:
             return original_orient(event, state, readiness=readiness, thought=thought)
-        progress = _progress(state)
-        phase = str(progress.get("phase") or "browser_file")
+        phase = str(_progress(state).get("phase") or "browser_file")
         if phase == "desktop_ground":
-            return _ground_desktop_goal(
-                resident,
-                event,
-                state,
-                request=request,
-                readiness=readiness,
-                thought=thought,
-            )
-        # Keep this one bounded three-surface request out of the generic browser
-        # goal proposer. Browser evidence is established from the current
-        # authorized tab in deliberation, then exact file evidence is grounded.
+            return _ground_desktop_goal(resident, event, state, request=request)
+        if phase == "desktop":
+            return original_orient(event, state, readiness=readiness, thought=thought)
         return ResidentGoalRuntime._orient_step(
             resident,
             event,
@@ -94,7 +87,8 @@ def install_browser_file_desktop_handoff_behavior(resident) -> None:
     ):
         request = _request(event)
         progress = _progress(state)
-        if request is None or str(progress.get("phase") or "browser_file") == "desktop":
+        phase = str(progress.get("phase") or "browser_file")
+        if request is None or phase == "desktop":
             return original_deliberation(
                 event,
                 state,
@@ -102,9 +96,9 @@ def install_browser_file_desktop_handoff_behavior(resident) -> None:
                 learning_evidence=learning_evidence,
                 thought=thought,
             )
-        if str(progress.get("phase") or "browser_file") == "desktop_ground":
+        if phase == "desktop_ground":
             state.stage = "native_orient"
-            state.next_action = "ground the current desktop application from fresh evidence"
+            state.next_action = "freshly ground the current desktop application"
             resident._sync_execution_context(event, state)
             resident.store.save_working_state(state)
             return None
@@ -124,9 +118,13 @@ def install_browser_file_desktop_handoff_behavior(resident) -> None:
             )
         resident._begin_native_action_cycle(event, state, intent)
         progress = _progress(state)
-        progress["phase"] = "file_write_pending"
-        progress["file_intent_id"] = intent.intent_id
-        progress["updated_at"] = utc_now()
+        progress.update(
+            {
+                "phase": "file_write_pending",
+                "file_intent_id": intent.intent_id,
+                "updated_at": utc_now(),
+            }
+        )
         state.data[_STATE_KEY] = progress
         resident._sync_execution_context(event, state)
         resident.store.save_working_state(state)
@@ -134,18 +132,14 @@ def install_browser_file_desktop_handoff_behavior(resident) -> None:
 
     def complete_successful_body_action(event, state, intent, *, response: str, reason: str):
         progress = _progress(state)
-        is_file_handoff = bool(
+        handoff = bool(
             _request(event) is not None
             and progress.get("phase") == "file_write_pending"
             and str(progress.get("file_intent_id") or "") == str(intent.intent_id or "")
             and str(intent.kind or "").lower() == "write_text"
         )
-        if not is_file_handoff:
+        if not handoff:
             return original_complete(event, state, intent, response=response, reason=reason)
-
-        # Let the mature overwrite/recovery stack perform all side-effect
-        # accounting and postcondition verification first. We intercept only the
-        # semantic terminal edge above it and continue the same event/Root Work.
         result = original_complete(event, state, intent, response=response, reason=reason)
         if result is None or not result.success:
             return result
@@ -158,7 +152,7 @@ def install_browser_file_desktop_handoff_behavior(resident) -> None:
             intent = NativeActionIntent.from_dict(raw_intent) if isinstance(raw_intent, dict) else None
         except (TypeError, ValueError):
             intent = None
-        is_file_handoff = bool(
+        handoff = bool(
             _request(event) is not None
             and progress.get("phase") == "file_write_pending"
             and intent is not None
@@ -166,7 +160,7 @@ def install_browser_file_desktop_handoff_behavior(resident) -> None:
             and str(intent.kind or "").lower() == "write_text"
         )
         result = original_resume_completion(event, state)
-        if not is_file_handoff or result is None or not result.success:
+        if not handoff or result is None or not result.success:
             return result
         return _roll_forward_verified_file(resident, event, state, intent=intent, result=result)
 
@@ -179,34 +173,30 @@ def install_browser_file_desktop_handoff_behavior(resident) -> None:
                 readiness=readiness,
                 thought=thought,
             )
-
-        bound_hwnd = int(progress.get("desktop_hwnd") or 0)
-        bound_pid = int(progress.get("desktop_process_id") or 0)
         try:
             foreground = resident.foreground_window.probe()
-            fresh_hwnd, fresh_pid = _foreground_hwnd_pid()
+            hwnd, pid = _foreground_hwnd_pid()
         except Exception as exc:
             return resident._fail_composite_goal_investigation(
                 event,
                 state,
-                reason=f"fresh E2E-24 desktop identity Sense failed closed: {type(exc).__name__}: {exc}",
+                reason=f"fresh E2E-24 desktop identity Sense failed: {type(exc).__name__}: {exc}",
             )
         if (
-            not bound_hwnd
-            or not bound_pid
-            or fresh_hwnd != bound_hwnd
-            or fresh_pid != bound_pid
-            or int(foreground.process_id) != bound_pid
+            hwnd != int(progress.get("desktop_hwnd") or 0)
+            or pid != int(progress.get("desktop_process_id") or 0)
+            or int(foreground.process_id) != pid
+            or str(foreground.process_name or "").strip().lower()
+            != str(progress.get("desktop_process_name") or "")
         ):
             return resident._fail_composite_goal_investigation(
                 event,
                 state,
                 reason=(
-                    "the exact foreground HWND/PID changed after E2E-24 desktop grounding; "
-                    "authority was not transferred to the replacement window"
+                    "the exact foreground HWND/PID changed after desktop grounding; "
+                    "E2E-24 authority was not transferred to a sibling/replacement window"
                 ),
             )
-
         desktop_progress = state.data.get(resident._DESKTOP_TASK_PROGRESS_KEY)
         desktop_progress = dict(desktop_progress) if isinstance(desktop_progress, dict) else {}
         if desktop_progress.get("submit_dispatched") is True:
@@ -224,8 +214,8 @@ def install_browser_file_desktop_handoff_behavior(resident) -> None:
                     ),
                 )
             progress["desktop_postcondition"] = {
-                "window_handle": fresh_hwnd,
-                "process_id": fresh_pid,
+                "window_handle": hwnd,
+                "process_id": pid,
                 "title": title,
                 "customer_id": customer_id,
                 "status": status,
@@ -233,7 +223,6 @@ def install_browser_file_desktop_handoff_behavior(resident) -> None:
             }
             state.data[_STATE_KEY] = progress
             resident.store.save_working_state(state)
-
         return original_desktop_investigation(
             event,
             state,
@@ -259,7 +248,7 @@ def _request(event) -> dict[str, str] | None:
         or payload.get("native_action")
         or "昨天" not in task
         or "客户" not in task
-        or "文件" not in task and "txt" not in task.lower()
+        or ("文件" not in task and "txt" not in task.lower())
         or not any(cue in task for cue in _BROWSER_CUES)
         or not any(cue in task for cue in _DESKTOP_CUES)
         or not any(cue in task for cue in ("标记", "跟进"))
@@ -267,10 +256,15 @@ def _request(event) -> dict[str, str] | None:
     ):
         return None
     status = next((cue for cue in _STATUS_ANCHORS if cue in task), "")
-    hint_match = _FILE_HINT.search(task)
-    if not status or hint_match is None:
+    if not status:
         return None
-    hint = " ".join(hint_match.group("v").strip().split())
+    hint_match = _FILE_HINT.search(task)
+    if hint_match is not None:
+        hint = " ".join(hint_match.group("v").strip().split())
+    elif "客户状态" in task:
+        hint = "客户状态"
+    else:
+        return None
     if not hint:
         return None
     return {
@@ -312,7 +306,7 @@ def _prepare_browser_and_file(resident, event, state, *, request: Mapping[str, s
             return "USER Browser authorization generation changed during E2E-24 evidence sensing"
         context = " ".join(str(observed.get("context") or "").strip().split())
         if not context or context.count(request["status_anchor"]) != 1:
-            return "authorized Browser result did not expose one unique requested status anchor"
+            return "authorized Browser evidence did not expose one unique requested status row"
         extracted, failure, invocations = _extract_customer_fact(
             resident,
             event,
@@ -361,12 +355,12 @@ def _prepare_browser_and_file(resident, event, state, *, request: Mapping[str, s
     if current_text == expected_text:
         return (
             "the exact E2E-24 file already contains the abnormal customer; this representative "
-            "path requires one fresh mutation and will not manufacture a duplicate write"
+            "path refuses to manufacture a duplicate write"
         )
     identity = source.get("identity")
     if not isinstance(identity, Mapping):
         return "exact E2E-24 file source lost its fresh identity before mutation admission"
-
+    exact_file_hint = Path(str(source["path"])).stem
     intent = NativeActionIntent(
         intent_id=f"e2e24-file-{uuid.uuid4().hex[:12]}",
         event_id=event.event_id,
@@ -393,6 +387,7 @@ def _prepare_browser_and_file(resident, event, state, *, request: Mapping[str, s
         {
             "phase": "file_ready",
             "file_hint": request["file_hint"],
+            "exact_file_hint": exact_file_hint,
             "file_before": {
                 "path": str(source["path"]),
                 "identity": dict(identity),
@@ -408,9 +403,18 @@ def _prepare_browser_and_file(resident, event, state, *, request: Mapping[str, s
 
 
 def _extract_customer_fact(resident, event, *, context: str, status_anchor: str):
+    fields = [field for field in context.split() if field != status_anchor]
+    if len(fields) == 1 and 0 < len(fields[0]) <= 160:
+        customer_id = fields[0]
+        if not any(ord(char) < 32 or ord(char) == 127 for char in customer_id):
+            return {"customer_id": customer_id, "status": status_anchor}, None, 0
+
     decision = resident.budget.decide(event, memory_hit=False, local_capability_available=False)
     if not decision.use_model:
-        return {}, "E2E-24 needs bounded language interpretation, but model use is disabled", 0
+        return {}, (
+            "fresh Browser row needs bounded language interpretation, but model use is disabled; "
+            "ZN will not guess the customer identity"
+        ), 0
     question = (
         "Interpret only this freshly sensed structured row from the exact authorized USER Browser tab. "
         "Return exactly one JSON object and no prose: "
@@ -431,17 +435,20 @@ def _extract_customer_fact(resident, event, *, context: str, status_anchor: str)
     )
     invocations = resident._model_invocations(result)
     try:
-        raw = json.loads(result.worker_result.response) if result.worker_result.success and result.assessment.success else None
-    except (TypeError, ValueError, json.JSONDecodeError):
+        raw = (
+            json.loads(result.worker_result.response)
+            if result.worker_result.success and result.assessment.success
+            else None
+        )
+    except (TypeError, ValueError):
         raw = None
     if not isinstance(raw, dict) or set(raw) != {"status", "customer_id", "customer_status"}:
-        return {}, "bounded cognition did not return the permitted E2E-24 Browser fact schema", invocations
-    if str(raw.get("status") or "").strip() != "selected":
-        return {}, "bounded cognition found the fresh Browser business identity ambiguous", invocations
+        return {}, "bounded cognition did not return the permitted Browser fact schema", invocations
     customer_id = " ".join(str(raw.get("customer_id") or "").strip().split())
     customer_status = " ".join(str(raw.get("customer_status") or "").strip().split())
     if (
-        not customer_id
+        str(raw.get("status") or "").strip() != "selected"
+        or not customer_id
         or len(customer_id) > 160
         or customer_status != status_anchor
         or context.count(customer_id) != 1
@@ -450,7 +457,7 @@ def _extract_customer_fact(resident, event, *, context: str, status_anchor: str)
     ):
         return {}, (
             "cognition output was not exactly grounded in the one fresh authorized Browser row; "
-            "ZN refused to turn model text into a business fact"
+            "model text was not accepted as a business fact"
         ), invocations
     return {"customer_id": customer_id, "status": customer_status}, None, invocations
 
@@ -460,11 +467,18 @@ def _roll_forward_verified_file(resident, event, state, *, intent, result):
     request = _request(event)
     if request is None:
         return result
+    exact_hint = str(progress.get("exact_file_hint") or "").strip()
+    if not exact_hint:
+        return resident._checkpoint_terminal_failure(
+            event,
+            state,
+            reason="verified file mutation lost its exact selected file identity",
+        )
     source, failure = observe_workspace_text_source(
         event,
         resident.body,
         workspace_path=request["workspace_path"],
-        name_hint=request["file_hint"],
+        name_hint=exact_hint,
         modified_yesterday=False,
     )
     if failure:
@@ -487,6 +501,7 @@ def _roll_forward_verified_file(resident, event, state, *, intent, result):
     progress.update(
         {
             "phase": "desktop_ground",
+            "exact_file_hint": Path(str(source["path"])).stem,
             "file_verified": {
                 "path": str(source["path"]),
                 "identity": dict(source.get("identity") or {}),
@@ -501,14 +516,21 @@ def _roll_forward_verified_file(resident, event, state, *, intent, result):
     resident._reset_investigation_after_goal_substep(event, state, intent)
     state.data.pop("native_completion", None)
     state.stage = "native_orient"
-    state.next_action = "freshly sense the current desktop application and semantically ground the customer operation"
+    state.next_action = "freshly sense the current desktop application and ground the customer operation"
     resident._sync_execution_context(event, state)
     resident.store.save_working_state(state)
     return None
 
 
-def _ground_desktop_goal(resident, event, state, *, request, readiness, thought=None):
+def _ground_desktop_goal(resident, event, state, *, request):
     progress = _progress(state)
+    exact_file_hint = str(progress.get("exact_file_hint") or "").strip()
+    if not exact_file_hint:
+        return resident._checkpoint_terminal_failure(
+            event,
+            state,
+            reason="E2E-24 desktop phase lost the freshly verified exact file identity",
+        )
     try:
         foreground = resident.foreground_window.probe()
         hwnd, pid = _foreground_hwnd_pid()
@@ -547,12 +569,6 @@ def _ground_desktop_goal(resident, event, state, *, request, readiness, thought=
         )
     edit_names = tuple(item.name for item in edits)
     button_names = tuple(item.name for item in buttons)
-    if not edit_names or not button_names:
-        return resident._checkpoint_terminal_failure(
-            event,
-            state,
-            reason="fresh E2E-24 UIA Sense exposed no safe Edit/Button candidate pair",
-        )
     selection, failure, invocations = _select_desktop_names(
         resident,
         event,
@@ -564,9 +580,9 @@ def _ground_desktop_goal(resident, event, state, *, request, readiness, thought=
     input_name, button_name = selection
     semantic = {
         "kind": DESKTOP_TASK_GOAL_KIND,
-        "source_name_hint": request["file_hint"],
-        "input_name": "the customer identifier field for the customer being followed up",
-        "button_name": "the operation that marks that exact customer for follow-up",
+        "source_name_hint": exact_file_hint,
+        "input_name": "customer identifier field",
+        "button_name": "mark the exact customer for follow-up",
         "expected_title": None,
         "source_modified_yesterday": False,
     }
@@ -600,9 +616,22 @@ def _ground_desktop_goal(resident, event, state, *, request, readiness, thought=
 
 
 def _select_desktop_names(resident, event, *, edit_names: tuple[str, ...], button_names: tuple[str, ...]):
+    input_candidates = [
+        name
+        for name in edit_names
+        if "客户" in name and any(cue in name for cue in _IDENTIFIER_CUES)
+    ]
+    button_candidates = [name for name in button_names if name and name in str(event.task or "")]
+    if len(input_candidates) == 1 and len(button_candidates) == 1:
+        if edit_names.count(input_candidates[0]) == 1 and button_names.count(button_candidates[0]) == 1:
+            return (input_candidates[0], button_candidates[0]), None, 0
+
     decision = resident.budget.decide(event, memory_hit=False, local_capability_available=False)
     if not decision.use_model:
-        return (), "E2E-24 desktop semantic grounding needs language understanding, but model use is disabled", 0
+        return (), (
+            "fresh desktop semantic candidates are ambiguous and model use is disabled; "
+            "ZN refused first-item selection"
+        ), 0
     question = (
         "Choose only among the freshly observed accessible names below for the user's current customer-management "
         "goal. Return exactly {\"status\":\"selected\",\"input_name\":\"ONE OBSERVED EDIT NAME\","
@@ -623,26 +652,23 @@ def _select_desktop_names(resident, event, *, edit_names: tuple[str, ...], butto
     )
     invocations = resident._model_invocations(result)
     try:
-        raw = json.loads(result.worker_result.response) if result.worker_result.success and result.assessment.success else None
-    except (TypeError, ValueError, json.JSONDecodeError):
+        raw = (
+            json.loads(result.worker_result.response)
+            if result.worker_result.success and result.assessment.success
+            else None
+        )
+    except (TypeError, ValueError):
         raw = None
     if not isinstance(raw, dict) or str(raw.get("status") or "") != "selected":
         return (), "fresh desktop semantic target selection was ambiguous", invocations
     input_name = " ".join(str(raw.get("input_name") or "").strip().split())
     button_name = " ".join(str(raw.get("button_name") or "").strip().split())
-    if (
-        input_names_count(edit_names, input_name) != 1
-        or input_names_count(button_names, button_name) != 1
-    ):
+    if edit_names.count(input_name) != 1 or button_names.count(button_name) != 1:
         return (), (
-            "desktop cognition did not select exactly one uniquely observed safe Edit and Button name; "
+            "desktop cognition did not select exactly one uniquely observed safe Edit and Button; "
             "ZN refused first-item fallback"
         ), invocations
     return (input_name, button_name), None, invocations
-
-
-def input_names_count(values: tuple[str, ...], selected: str) -> int:
-    return sum(1 for value in values if str(value) == str(selected))
 
 
 def _save_model_accounting(resident, event, state, progress: Mapping[str, Any]) -> None:
@@ -664,7 +690,7 @@ def _save_model_accounting(resident, event, state, progress: Mapping[str, Any]) 
 
 def _foreground_hwnd_pid() -> tuple[int, int]:
     if os.name != "nt":
-        raise RuntimeError("E2E-24 exact foreground HWND/PID sense is available only on Windows")
+        raise RuntimeError("exact foreground HWND/PID Sense is available only on Windows")
     user32 = ctypes.WinDLL("user32", use_last_error=True)
     user32.GetForegroundWindow.argtypes = []
     user32.GetForegroundWindow.restype = wintypes.HWND
