@@ -60,9 +60,18 @@ def _find_installed_browsers() -> list[tuple[str, Path]]:
 class _IsolatedUserBrowserFixture:
     """Real installed browser with an ephemeral profile and no accessibility override."""
 
-    def __init__(self, provider: str, executable: Path) -> None:
+    def __init__(
+        self,
+        provider: str,
+        executable: Path,
+        *,
+        window_title_marker: str = _TITLE,
+    ) -> None:
         self.provider = str(provider)
         self.executable = Path(executable)
+        self.window_title_marker = str(window_title_marker or "").strip()
+        if not self.window_title_marker:
+            raise ValueError("isolated browser fixture requires a non-empty window title marker")
         self.root = Path(tempfile.mkdtemp(prefix=f"zn-{self.provider}-bridge-e2e-"))
         self.profile = self.root / "profile"
         self.profile.mkdir(parents=True, exist_ok=True)
@@ -78,7 +87,7 @@ class _IsolatedUserBrowserFixture:
 <html>
 <head>
   <meta charset="utf-8">
-  <title>{_TITLE}</title>
+  <title>{self.window_title_marker}</title>
   <style>
     html, body {{ height: 100%; margin: 0; }}
     body {{ display: grid; place-items: center; font-family: sans-serif; }}
@@ -209,7 +218,7 @@ class _IsolatedUserBrowserFixture:
             title_buffer = ctypes.create_unicode_buffer(title_length + 1)
             user32.GetWindowTextW(hwnd, title_buffer, len(title_buffer))
             title = str(title_buffer.value or "")
-            if _TITLE.lower() in title.lower():
+            if self.window_title_marker.lower() in title.lower():
                 matches.append((int(hwnd), int(process_id.value), title))
                 return False
             return True
