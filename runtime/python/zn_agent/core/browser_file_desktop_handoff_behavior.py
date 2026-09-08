@@ -97,7 +97,7 @@ def install_browser_file_desktop_handoff_behavior(resident) -> None:
                 thought=thought,
             )
         if phase == "desktop_ground":
-            state.stage = "native_orient"
+            state.stage = "orient"
             state.next_action = "freshly ground the current desktop application"
             resident._sync_execution_context(event, state)
             resident.store.save_working_state(state)
@@ -515,7 +515,7 @@ def _roll_forward_verified_file(resident, event, state, *, intent, result):
     state.data[_STATE_KEY] = progress
     resident._reset_investigation_after_goal_substep(event, state, intent)
     state.data.pop("native_completion", None)
-    state.stage = "native_orient"
+    state.stage = "orient"
     state.next_action = "freshly sense the current desktop application and ground the customer operation"
     resident._sync_execution_context(event, state)
     resident.store.save_working_state(state)
