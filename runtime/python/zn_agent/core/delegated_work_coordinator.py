@@ -358,6 +358,7 @@ class DelegatedWorkCoordinator:
     ):
         """Build a strict pack and bind the request to the durable WorkerRun."""
 
+        self.resident.work_ledger.assert_dependencies_ready(child.work_item_id)
         profile = self.resident._WORKER_SCOPE_PROFILES[worker.executor_kind]
         accepted_evidence = [
             {
