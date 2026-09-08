@@ -48,6 +48,17 @@ class WorkerRun:
         return f"cog-{self.worker_run_id}"
 
 
+@dataclass(slots=True, frozen=True)
+class DependencyReadiness:
+    """Derived readiness for one WorkItem; never persisted as a second truth."""
+
+    ready: bool
+    state: str
+    dependency_ids: tuple[str, ...]
+    waiting_on: tuple[str, ...] = ()
+    reason: str | None = None
+
+
 @dataclass(slots=True)
 class WorkerContextPack:
     root_goal_summary: str
@@ -86,6 +97,7 @@ class EvidenceBoundSteerableWorkLedger(SteerableWorkLedger):
     _ACCEPTANCE_KEY = "zn_independent_acceptance"
     _WORKER_STATES = frozenset({"queued", "running", "completed", "failed", "stale"})
     _WORKER_TERMINAL_STATES = frozenset({"completed", "failed", "stale"})
+    _MAX_DEPENDENCY_GRAPH_NODES = 256
 
     def __init__(self, resident):
         super().__init__(resident)
@@ -210,6 +222,201 @@ class EvidenceBoundSteerableWorkLedger(SteerableWorkLedger):
             ).fetchone()
         return self._item_from_row(row) if row is not None else None
 
+    @staticmethod
+    def _invalid_dependency_readiness(
+        item: WorkItem,
+        reason: str,
+    ) -> DependencyReadiness:
+        return DependencyReadiness(
+            ready=False,
+            state="invalid",
+            dependency_ids=tuple(item.dependency_ids),
+            reason=str(reason or "invalid durable dependency graph")[:1200],
+        )
+
+    def _validate_dependency_subgraph(
+        self,
+        item: WorkItem,
+        *,
+        root_work_item_id: str,
+        work_thread_id: str,
+        plan_version: int,
+        visiting: set[str],
+        visited: set[str],
+    ) -> str | None:
+        if item.work_item_id in visiting:
+            return f"dependency cycle detected at {item.work_item_id}"
+        if item.work_item_id in visited:
+            return None
+        if len(visited) + len(visiting) >= self._MAX_DEPENDENCY_GRAPH_NODES:
+            return "dependency graph exceeds the bounded node limit"
+        if (
+            item.parent_work_item_id != root_work_item_id
+            or item.work_thread_id != work_thread_id
+            or item.plan_version != plan_version
+        ):
+            return f"dependency node {item.work_item_id} escaped the current Root/plan"
+
+        visiting.add(item.work_item_id)
+        direct: list[WorkItem] = []
+        for dependency_id in item.dependency_ids:
+            dependency = self._work_item_by_id(dependency_id)
+            if dependency is None:
+                visiting.remove(item.work_item_id)
+                return f"dependency {dependency_id} is missing"
+            if (
+                dependency.parent_work_item_id != root_work_item_id
+                or dependency.work_thread_id != work_thread_id
+                or dependency.plan_version != plan_version
+            ):
+                visiting.remove(item.work_item_id)
+                return f"dependency {dependency_id} belongs to another Root or plan"
+            if dependency.status not in {"proposed", "ready", "running", "blocked", "completed"}:
+                visiting.remove(item.work_item_id)
+                return f"dependency {dependency_id} has invalid state {dependency.status!r}"
+            direct.append(dependency)
+            invalid = self._validate_dependency_subgraph(
+                dependency,
+                root_work_item_id=root_work_item_id,
+                work_thread_id=work_thread_id,
+                plan_version=plan_version,
+                visiting=visiting,
+                visited=visited,
+            )
+            if invalid is not None:
+                visiting.remove(item.work_item_id)
+                return invalid
+
+        if item.status == "completed" and any(
+            dependency.status != "completed" for dependency in direct
+        ):
+            visiting.remove(item.work_item_id)
+            return f"completed dependency node {item.work_item_id} has unmet prerequisites"
+        visiting.remove(item.work_item_id)
+        visited.add(item.work_item_id)
+        return None
+
+    def dependency_readiness(self, work_item_id: str) -> DependencyReadiness:
+        """Derive readiness only from current durable Work dependency/state truth."""
+
+        normalized = str(work_item_id or "").strip()
+        if not normalized or len(normalized) > self._MAX_WORK_ITEM_ID_LENGTH:
+            raise ValueError("dependency readiness requires a bounded WorkItem ID")
+        item = self._work_item_by_id(normalized)
+        if item is None:
+            raise ValueError("dependency readiness requires an existing WorkItem")
+        current_version = self.plan_version(item.work_thread_id)
+        if item.plan_version != current_version:
+            return self._invalid_dependency_readiness(
+                item,
+                "WorkItem belongs to a stale Work plan",
+            )
+        if (
+            item.parent_work_item_id is not None
+            and item.status not in {"proposed", "ready", "running", "blocked", "completed"}
+        ):
+            return self._invalid_dependency_readiness(
+                item,
+                f"WorkItem has invalid dependency state {item.status!r}",
+            )
+        if item.parent_work_item_id is None:
+            if item.dependency_ids:
+                return self._invalid_dependency_readiness(
+                    item,
+                    "Root WorkItem must not carry dependency edges",
+                )
+            return DependencyReadiness(
+                ready=True,
+                state="ready",
+                dependency_ids=(),
+            )
+
+        root = self._work_item_by_id(item.parent_work_item_id)
+        if (
+            root is None
+            or root.parent_work_item_id is not None
+            or root.work_thread_id != item.work_thread_id
+            or root.plan_version != current_version
+        ):
+            return self._invalid_dependency_readiness(
+                item,
+                "WorkItem is not bound to the current Root",
+            )
+        if root.dependency_ids:
+            return self._invalid_dependency_readiness(
+                item,
+                "Root WorkItem carries invalid dependency edges",
+            )
+
+        invalid = self._validate_dependency_subgraph(
+            item,
+            root_work_item_id=root.work_item_id,
+            work_thread_id=item.work_thread_id,
+            plan_version=current_version,
+            visiting=set(),
+            visited=set(),
+        )
+        if invalid is not None:
+            return self._invalid_dependency_readiness(item, invalid)
+
+        if not item.dependency_ids:
+            return DependencyReadiness(
+                ready=True,
+                state="ready",
+                dependency_ids=(),
+            )
+        direct = [self._work_item_by_id(value) for value in item.dependency_ids]
+        if any(dependency is None for dependency in direct):
+            return self._invalid_dependency_readiness(
+                item,
+                "dependency disappeared during readiness check",
+            )
+        if any(
+            dependency is not None
+            and (
+                dependency.parent_work_item_id != root.work_item_id
+                or dependency.work_thread_id != item.work_thread_id
+                or dependency.plan_version != current_version
+                or dependency.status
+                not in {"proposed", "ready", "running", "blocked", "completed"}
+            )
+            for dependency in direct
+        ):
+            return self._invalid_dependency_readiness(
+                item,
+                "dependency changed to an invalid Root/plan/state during readiness check",
+            )
+        waiting_on = tuple(
+            dependency.work_item_id
+            for dependency in direct
+            if dependency is not None and dependency.status != "completed"
+        )
+        if waiting_on:
+            return DependencyReadiness(
+                ready=False,
+                state="waiting",
+                dependency_ids=tuple(item.dependency_ids),
+                waiting_on=waiting_on,
+                reason="required WorkItem dependencies are not Work-owned completed",
+            )
+        return DependencyReadiness(
+            ready=True,
+            state="ready",
+            dependency_ids=tuple(item.dependency_ids),
+        )
+
+    def assert_dependencies_ready(self, work_item_id: str) -> DependencyReadiness:
+        readiness = self.dependency_readiness(work_item_id)
+        if readiness.ready:
+            return readiness
+        waiting = ",".join(readiness.waiting_on[:8])
+        detail = str(readiness.reason or readiness.state)[:800]
+        if waiting:
+            detail = f"{detail}; waiting_on={waiting}"
+        raise ValueError(
+            f"WorkItem dependency readiness rejected {readiness.state}: {detail}"
+        )
+
     def create_child_item(
         self,
         *,
@@ -217,6 +424,7 @@ class EvidenceBoundSteerableWorkLedger(SteerableWorkLedger):
         objective: str,
         acceptance_criteria: list[str],
         title: str | None = None,
+        dependency_ids: tuple[str, ...] | list[str] = (),
     ) -> WorkItem:
         """Create one flat current-plan child with resident-owned identity/version."""
         root = self._work_item_by_id(root_work_item_id)
@@ -225,6 +433,26 @@ class EvidenceBoundSteerableWorkLedger(SteerableWorkLedger):
         current_version = self.plan_version(root.work_thread_id)
         if root.plan_version != current_version or root.status not in {"running", "blocked"}:
             raise ValueError("delegated child rejected stale or terminal Root Work")
+        if root.dependency_ids:
+            raise ValueError("delegated child rejected Root Work with invalid dependency edges")
+        dependencies = self._normalize_dependency_ids(dependency_ids)
+        for dependency_id in dependencies:
+            dependency = self._work_item_by_id(dependency_id)
+            if dependency is None:
+                raise ValueError(f"delegated child dependency does not exist: {dependency_id}")
+            if (
+                dependency.parent_work_item_id != root.work_item_id
+                or dependency.work_thread_id != root.work_thread_id
+                or dependency.plan_version != current_version
+            ):
+                raise ValueError(
+                    "delegated child dependency must be a current-plan sibling under the same Root"
+                )
+            readiness = self.dependency_readiness(dependency_id)
+            if readiness.state == "invalid":
+                raise ValueError(
+                    f"delegated child dependency graph is invalid: {readiness.reason}"
+                )
         normalized_objective = " ".join(str(objective or "").strip().split())
         if not normalized_objective or len(normalized_objective) > 1200:
             raise ValueError("delegated child objective must be non-empty and bounded")
@@ -241,6 +469,7 @@ class EvidenceBoundSteerableWorkLedger(SteerableWorkLedger):
             status="running",
             plan_version=current_version,
             acceptance_criteria=criteria,
+            dependency_ids=dependencies,
             created_at=now,
             updated_at=now,
         )
@@ -255,9 +484,11 @@ class EvidenceBoundSteerableWorkLedger(SteerableWorkLedger):
         if item.plan_version != current_version:
             raise ValueError("child completion rejected stale Work evidence")
         if item.status == "completed":
+            self.assert_dependencies_ready(item.work_item_id)
             return item
         if item.status not in {"running", "blocked", "ready"}:
             raise ValueError(f"child completion rejected state {item.status!r}")
+        self.assert_dependencies_ready(item.work_item_id)
         now = utc_now()
         item.status = "completed"
         item.result = str(result or "").strip()[:6000] or None
@@ -316,6 +547,7 @@ class EvidenceBoundSteerableWorkLedger(SteerableWorkLedger):
             or root.plan_version != current_version
         ):
             raise ValueError("WorkerRun WorkItem is not bound to the current Root")
+        self.assert_dependencies_ready(item.work_item_id)
         kind = str(executor_kind or "").strip().lower()
         if kind not in {"research", "coding", "review"}:
             raise ValueError("WorkerRun executor_kind must be research, coding, or review")
