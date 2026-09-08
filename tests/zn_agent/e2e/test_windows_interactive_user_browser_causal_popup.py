@@ -15,10 +15,7 @@ from zn_agent.core.daemon import ResidentRpcServer
 from zn_agent.core.models import ModelRoute
 from zn_agent.core.provider_bridge import build_resident_runtime
 
-from test_windows_interactive_user_browser_bridge import (
-    _find_installed_browsers,
-    WindowsInteractiveUserBrowserBridgeProviderE2ETests,
-)
+import test_windows_interactive_user_browser_bridge as bridge_e2e
 from test_windows_interactive_user_browser_extension import (
     _ExtensionBrowserFixture,
     _press_extension_action_shortcut,
@@ -185,7 +182,7 @@ document.addEventListener('visibilitychange', () => {{
 class E2E07UserBrowserCausalPopupTests(unittest.TestCase):
     @staticmethod
     def _require_input_desktop() -> None:
-        WindowsInteractiveUserBrowserBridgeProviderE2ETests._require_input_desktop()
+        bridge_e2e.WindowsInteractiveUserBrowserBridgeProviderE2ETests._require_input_desktop()
 
     @staticmethod
     def _enable_cognition(resident, cognition: _E2E07Cognition) -> None:
@@ -215,7 +212,7 @@ class E2E07UserBrowserCausalPopupTests(unittest.TestCase):
         return server, thread
 
     def _make_runtime(self):
-        browsers = _find_installed_browsers()
+        browsers = bridge_e2e._find_installed_browsers()
         if not browsers:
             self.fail("interactive Windows runner has neither stable Edge nor Chrome")
         server, server_thread = self._start_server()
@@ -224,7 +221,13 @@ class E2E07UserBrowserCausalPopupTests(unittest.TestCase):
         repo_root = Path(__file__).resolve().parents[3]
         extension = repo_root / "apps" / "desktop" / "browser-extension"
         provider, executable = browsers[0]
-        fixture = _ExtensionBrowserFixture(provider, executable, login_url, extension)
+        fixture = _ExtensionBrowserFixture(
+            provider,
+            executable,
+            login_url,
+            extension,
+            window_title_marker=_ROOT_TITLE,
+        )
         runtime_tmp = tempfile.TemporaryDirectory()
         cognition = _E2E07Cognition()
         env = {
