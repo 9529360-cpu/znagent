@@ -8,7 +8,7 @@
   "permissions": ["activeTab", "debugger", "storage"],
   "host_permissions": ["http://127.0.0.1:19991/*"],
   "background": {
-    "service_worker": "research-background.js"
+    "service_worker": "causal-popup-background.js"
   },
   "action": {
     "default_title": "Allow ZN to use this tab"
