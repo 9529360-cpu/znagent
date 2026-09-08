@@ -23,6 +23,7 @@ from .browser import (
 from .browser_causal_popup import PlaywrightBrowserCausalPopupMixin
 from .browser_scene import PlaywrightBrowserSceneMixin
 from .browser_scene_actions import PlaywrightBrowserSceneActionMixin
+from .browser_scene_command import PlaywrightBrowserSceneCommandMixin
 from .browser_scene_file_transfer import PlaywrightBrowserSceneFileTransferMixin
 from .browser_tab_navigation import PlaywrightBrowserTabNavigationMixin
 from .managed_browser import (
@@ -134,6 +135,7 @@ class SemanticPlaywrightManagedBrowser(
     PlaywrightBrowserSceneMixin,
     PlaywrightBrowserCausalPopupMixin,
     PlaywrightBrowserSceneFileTransferMixin,
+    PlaywrightBrowserSceneCommandMixin,
     PlaywrightBrowserSceneActionMixin,
     PlaywrightBrowserTabNavigationMixin,
     PlaywrightManagedBrowser,
