@@ -13,7 +13,10 @@ from .user_browser_extension_adapter import (
     ExtensionUserBrowserError,
     _ExtensionSession,
 )
-from .user_browser_extension_relay import UserBrowserExtensionCommandUncertainError
+from .user_browser_extension_relay import (
+    UserBrowserExtensionCommandUncertainError,
+    UserBrowserExtensionRelayError,
+)
 
 
 class CausalPopupAuthorizedExtensionUserBrowser(AuthorizedExtensionUserBrowser):
@@ -26,6 +29,7 @@ class CausalPopupAuthorizedExtensionUserBrowser(AuthorizedExtensionUserBrowser):
     """
 
     _CAUSAL_POSTCONDITION = "causal_child_verified_and_returned_to_exact_root"
+    _CAUSAL_COMMAND_TIMEOUT_SECONDS = 10.0
 
     def __init__(self, relay) -> None:
         super().__init__(relay)
@@ -41,6 +45,27 @@ class CausalPopupAuthorizedExtensionUserBrowser(AuthorizedExtensionUserBrowser):
 
     def discard_causal_child_result(self, task_action_id: str) -> None:
         self._causal_child_results.pop(str(task_action_id or "").strip(), None)
+
+    def _request_causal_for_session(
+        self,
+        session: _ExtensionSession,
+        kind: str,
+        *,
+        args: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Give the bounded two-stage popup proof enough time without changing global relay policy."""
+        try:
+            return self.relay.request_command(
+                kind,
+                args=args,
+                timeout_seconds=self._CAUSAL_COMMAND_TIMEOUT_SECONDS,
+                expected_tab_id=session.tab_id,
+                expected_attached_at=session.authorization_attached_at,
+            )
+        except UserBrowserExtensionCommandUncertainError:
+            raise
+        except (ValueError, UserBrowserExtensionRelayError) as exc:
+            raise ExtensionUserBrowserError(str(exc)) from exc
 
     def _act_click(
         self,
@@ -70,7 +95,7 @@ class CausalPopupAuthorizedExtensionUserBrowser(AuthorizedExtensionUserBrowser):
             action.expected.get("task_action_id"), "task action id", 160
         )
         try:
-            command = self._request_for_session(
+            command = self._request_causal_for_session(
                 session,
                 "click_named_button_to_url",
                 args={
