@@ -1,10 +1,10 @@
 # ZN Delegated Work and Resource Routing Design
 
-> Design snapshot: 2026-09-06
+> Design snapshot: 2026-09-06; current implementation overlay synchronized 2026-09-08.
 >
 > Canonical branch: `main`; active development uses short-lived `work/*` branches from current `main`.
 >
-> This document combines the delegated-work target design with a narrow current-state overlay. It does not claim that every target structure below is product-closed. Current implementation facts remain authoritative in `docs/ZN-IMPLEMENTATION-STATUS.md`, and real acceptance status remains authoritative in `docs/ZN-REAL-TASK-E2E-CATALOG.md`.
+> This document preserves the delegated-work architecture/design and records what part of that design current `main` now implements. It does not claim that every target structure below is product-closed. Current implementation facts remain authoritative in `docs/ZN-IMPLEMENTATION-STATUS.md`, and real acceptance status remains authoritative in `docs/ZN-REAL-TASK-E2E-CATALOG.md`.
 
 ## 1. Design objective
 
@@ -37,665 +37,507 @@ Memory preserves lived context/learning
 
 No new top-level orchestrator subject is introduced.
 
-## 2. Current implementation baseline
+## 2. Current implementation status
 
-As of 2026-09-06, the following are present in the active product/runtime substrate:
+As of current `main` on 2026-09-08, the bounded delegated-work substrate has moved beyond the 2026-09-06 foundation state.
 
-- durable `WorkThread`, `WorkMessage`, `WorkArtifact`, `WorkRun` in `ResidentWorkLedger`;
-- explicit Work lifecycle control in `ResidentWorkControl`;
-- resident event/outcome persistence and restart recovery;
-- non-replay / fresh-evidence safety disciplines;
-- plan-version and stale-result foundations for active Work steering/continuation;
-- bounded delegation admission owned by Resident rather than keyword coincidence alone;
-- a Resident-internal `DelegatedWorkCoordinator` that materializes/supervises delegated WorkItem/WorkerRun state without owning a second store/router/control plane;
-- durable WorkerRun lifecycle records for the flat delegated-worker path;
-- `Goal.required_capabilities`;
-- kernel-owned `ModelRouter` with hard eligibility gates before soft scoring;
-- route pin/deny, capability, declared availability/health, locality/privacy and authority-policy filtering;
-- evidence-backed external route learning in `SelfModel`;
-- multiple provider protocols and hot reconfiguration;
-- bounded `CognitiveResource` calls;
-- strict recursive `WorkerContextPack` serialization/sanitization boundary with provenance/data-classification support;
-- action-time WorkerRun authority admission at the existing Body boundary;
-- E2E-29 **CLOSED / VERIFIED** for the narrow `single-route multi-WorkerRun` substrate: one real route can serve multiple durable research/coding/review WorkerRuns and Root completion remains independently verified.
+Implemented and verified in the active path:
 
-Still not product-closed as coherent general capability:
+- durable `WorkThread`, Work items, messages, artifacts and run facts owned by existing Work/Resident storage;
+- explicit Work lifecycle control and restart recovery;
+- plan versioning and stale-result protection;
+- bounded delegation admission owned by Resident;
+- Resident-internal `DelegatedWorkCoordinator`; no second Resident/store/router/control plane;
+- durable flat WorkerRun lifecycle and provenance;
+- strict bounded `WorkerContextPack` sanitation/classification boundary;
+- action-time WorkerRun/WorkItem/plan/workspace authority revalidation at the existing Body boundary;
+- existing kernel-owned `ModelRouter` hard eligibility before soft scoring;
+- durable Work route/privacy policy, provider/model pin/deny, locality/privacy, policy-tag and authority-scope gates;
+- route/provider provenance bound to delegated runs;
+- dynamic `ResidentHealthJournal` observations wired into health-aware routing;
+- durable worker progress supervision with heartbeat/no-progress/stall detection;
+- bounded retry and policy-safe fallback/reassignment;
+- restart-safe delegated reconciliation and no-replay recovery;
+- natural-language same-Work steering, current-plan replanning and stale old-worker result gating;
+- restart continuation that does not replay already completed historical effects;
+- privacy-safe bounded delegated progress projection through the existing `work_progress` contract and Resident UI;
+- durable `WorkItem.dependency_ids` with bounded flat current-plan sibling dependency/readiness semantics, fan-in, restart durability and invalid-graph fail-closed behavior.
 
-- general hierarchical SubWork trees or recursive delegation; current implementation intentionally remains flat/bounded;
-- broad dependency-graph scheduling/readiness beyond the current narrow delegated phases;
-- dynamic `ResidentHealthJournal` → route eligibility/reroute integration;
-- systematic heartbeat/no-progress/stall supervision and restart-safe replacement WorkerRun behavior;
-- real E2E-30 multi-route task-specific routing under user policy;
-- real E2E-42 privacy/locality routing acceptance;
-- E2E-27/E2E-33 normal-language active steering/continuation product acceptance across the delegated supervision path;
-- long-task user progress UX at broad product quality.
+Representative acceptance now closed:
 
-Important distinction:
+- E2E-29 — one real model route serving multiple isolated WorkerRuns;
+- E2E-30 / E2E-42 — route policy/privacy under current acceptance semantics, with an explicit environment waiver for the missing second real provider family;
+- E2E-28 / E2E-34 — dynamic health, stall/no-progress supervision, bounded retry/reassign and restart reconciliation;
+- E2E-27 / E2E-33 — natural-language steering and restart continuation with stale-plan/non-replay discipline.
 
-```text
-substrate exists
-≠ named real-task E2E is product-closed
-```
-
-Unit tests or CI proving routing/context/authority primitives do not, by themselves, close E2E-30, E2E-42, E2E-27 or E2E-33.
-
-## 3. Core data model
-
-The smallest useful extension is to keep durable WorkItems below an existing WorkThread.
-
-### 3.1 WorkItem
-
-Target conceptual fields:
+The accurate boundary is:
 
 ```text
-WorkItem
-- item_id
-- thread_id
-- parent_item_id?          # optional hierarchy; keep shallow initially
-- title / objective
-- status                   # proposed / ready / running / blocked / completed / cancelled / superseded
-- plan_version
-- priority
-- required_capabilities
-- dependency_ids
-- executor_policy
-- authority_scope
-- acceptance_criteria
-- result_summary
-- blocker_reason
-- created_at / updated_at / completed_at
+bounded delegated substrate implemented + representative paths verified
+!= general-purpose long-task scheduler
+!= recursive multi-agent platform
+!= general DAG/workflow engine
+!= every long-horizon task product-closed
 ```
 
-Important constraints:
+Any older statement in this design that treated dynamic health routing, systematic stall supervision, restart-safe delegated reconciliation, E2E-30/42 or E2E-27/33 as wholly unimplemented is superseded by this current implementation overlay.
 
-- `thread_id` remains the Root Work identity.
-- `parent_item_id` does not create a new Resident or conversation identity.
-- completed WorkItems are not rerun merely because another item fails.
-- a user plan change may supersede a pending/running item without erasing its historical evidence.
-- current active implementation should remain flat unless a real caller/E2E proves hierarchy is necessary.
+## 3. Ownership invariants
 
-### 3.2 WorkerRun
-
-One WorkItem can have multiple attempts/runs.
+The design remains governed by these invariants:
 
 ```text
-WorkerRun
-- worker_run_id
-- item_id
-- plan_version
-- executor_kind / profile_id
-- model_route_id?
-- tool_scope
-- authority_scope
-- state                 # queued / running / waiting / completed / failed / cancelled / stale
-- started_at / heartbeat_at / finished_at
-- result_summary
-- artifact_refs
-- claimed_completion
-- verification_status
-- error / blocker
-- token/cost/latency metrics
+Resident owns Root Work.
+Worker/model is a replaceable cognition/execution resource.
+Worker done != Root completion.
+A worker cannot grant itself authority.
+Real-world effect requires current authority.
+Fresh evidence beats model/worker assertion.
+Completed/uncertain effects are not blindly replayed.
+There is one ModelRouter.
+There is one durable Work/progress truth.
+There is no second Resident or orchestration subject.
 ```
 
-A WorkerRun is disposable execution state. It is not a durable personal identity.
+Delegation is a Work mechanism, not a new identity architecture.
 
-Current code has the narrow WorkerRun lifecycle needed by the flat delegated path. Heartbeat/stall/replacement semantics remain future supervision work and must not be inferred merely because a `running` record survives restart.
+## 4. Root Work, WorkItem and WorkerRun
 
-## 4. Plan version and stale result discipline
+### 4.1 Root Work
 
-Every delegated run binds to the plan version that created it.
+Root Work is the durable user task/project owned by ZN. It survives model replacement and can survive Resident restart when current evidence permits safe continuation.
 
-Example:
+Root Work owns or references:
+
+- user goal / current acceptance target;
+- current plan version;
+- durable task facts and artifacts;
+- current blockers and user-presence state;
+- WorkItems;
+- current outcome/completion evidence.
+
+A child worker never becomes the Root Work owner.
+
+### 4.2 WorkItem
+
+A WorkItem is a bounded unit under Root Work. It can represent direct Resident work, deterministic capability work or delegated specialist work.
+
+Useful semantics include:
+
+- purpose / expected result;
+- plan version;
+- executor/resource requirements;
+- required capability/policy/authority;
+- acceptance evidence;
+- progress/blocker state;
+- bounded dependency IDs where current implementation supports them.
+
+### 4.3 WorkerRun
+
+A WorkerRun is one bounded execution attempt for a WorkItem. It is not a permanent agent identity.
+
+A WorkerRun should retain enough durable facts for:
+
+- selected route/provider provenance;
+- bounded input/context provenance;
+- progress/heartbeat state;
+- attempt/retry identity;
+- terminal result or failure/blocker;
+- verification status;
+- restart reconciliation;
+- stale-plan gating.
+
+A semantic retry gets a new run identity rather than pretending the failed/uncertain run did not happen.
+
+## 5. Flat dependency/readiness design and current boundary
+
+The design originally called for dependency/readiness semantics without turning ZN into a workflow product. Current `main` now implements a bounded first slice.
+
+### Current implementation
+
+`WorkItem.dependency_ids` is durable. Dependency edges are validated as bounded current-plan sibling references under the same Root Work/work thread.
+
+Readiness is derived from durable Work facts; it is not persisted as a second truth.
+
+Current guards include:
+
+- bounded dependency list/graph traversal;
+- same Root / thread / current plan;
+- immutable dependency edges for the current item semantics;
+- fan-in;
+- WorkerRun creation readiness gate;
+- coordinator cognition-binding readiness gate;
+- child completion gate;
+- restart durability;
+- corrupt/cyclic/dangling/cross-plan graph fail closed.
+
+Dependencies do **not** transfer or inherit worker authority, tool scope or privacy policy.
+
+### Remaining boundary
+
+The current substrate does not claim:
+
+- recursive delegation trees;
+- arbitrary DAG execution;
+- a general-purpose workflow engine;
+- critical-path scheduling;
+- resource-pool scheduling;
+- generic dependency editing/visualization UX;
+- automatic parallelism merely because two items are dependency-independent.
+
+If a future real task requires broader scheduling semantics, it should extend the existing Work truth instead of adding a separate scheduler truth.
+
+## 6. Delegation admission
+
+Delegation should occur only when it has a concrete benefit such as:
+
+- parallelizable independent work;
+- context isolation;
+- specialist cognition;
+- long-running separation;
+- independent review;
+- isolated tool/workspace execution.
+
+Small/sequential/context-heavy work should stay direct when delegation adds no value.
+
+The current `BoundedDelegationPlanner` is deliberately conservative. Explicit negation and current task evidence must beat keyword coincidence.
+
+Correct design:
 
 ```text
-plan v3: build login + ledger
-worker A starts coding login under v3
-user: “登录先别做，先把核心记账跑起来”
-ZN forms plan v4
-worker A later returns “login complete”
+Root Work
+-> inspect actual need
+-> direct path OR bounded WorkItems
+-> only delegate items where delegation helps
 ```
 
-ZN must not silently merge A into v4.
-
-Expected behavior:
+Incorrect design:
 
 ```text
-returned plan_version < current relevant plan_version
-→ mark result stale/pending review
-→ preserve artifacts/evidence
-→ determine whether any output remains reusable
-→ never let stale completion advance root Work automatically
+long prompt
+-> spawn many workers because multi-agent looks capable
 ```
 
-This is the delegated-work equivalent of ZN's existing fresh-target discipline.
+## 7. Worker context and privacy boundary
 
-The plan-version/stale-result control substrate already exists in narrow form. That is not the same as claiming E2E-27/E2E-33 are product-closed across all delegated scenarios.
+Workers should receive a purpose-built context pack, not the entire transcript, all Memory or every credential-bearing detail available to the Resident.
 
-## 5. Decomposition policy
+Current `WorkerContextPack` enforces bounded recursive serialization and privacy/safety checks such as:
 
-Do not ask a model to produce an enormous fixed DAG at the beginning of every task.
+- depth/node/item/string/final-size limits;
+- nested sensitive-key rejection;
+- secret-like value rejection;
+- provenance/data classification;
+- valid plan-version binding.
 
-Use rolling decomposition:
+Important semantics:
+
+- `private` does not automatically mean `cloud forbidden`;
+- locality/privacy eligibility is driven by explicit Work/user policy;
+- workers do not gain Memory-write, credential, user-message or spawn authority just because they receive context;
+- a context filter is not complete DLP.
+
+## 8. Resource routing
+
+### 8.1 Keep one ModelRouter
+
+All delegated cognition continues through the existing kernel-owned `ModelRouter`.
+
+Do not add:
+
+- a worker-only router;
+- provider-specific orchestration state that competes with `ModelRouter`;
+- a model-selected model handoff that bypasses kernel eligibility.
+
+### 8.2 Hard eligibility before soft scoring
+
+The intended and current selection shape is:
 
 ```text
-root goal
-→ determine current acceptance target
-→ identify a small set of next meaningful WorkItems
-→ execute/investigate
-→ fresh Situation
-→ revise/add/cancel WorkItems as reality changes
+WorkItem requirements + user/Work policy + current route facts
+-> hard eligibility
+-> only legal candidates remain
+-> dynamic health / SelfModel / reliability / cost / latency scoring
+-> selected route
+-> provenance retained on WorkerRun
 ```
 
-This better matches real computer work and ZN’s Sense/Situation/Thought loop.
+Hard eligibility includes capability, pin/deny, declared availability, locality/privacy, policy tags, authority scopes and malformed-policy fail-closed handling.
 
-Delegation is appropriate when at least one is true:
+No legal route means fail closed (`NoRouteAvailable`), not “pick an illegal fallback with a low score”.
 
-- work can proceed independently in parallel;
-- the subtask would otherwise pollute the root cognition context;
-- a specialist model/agent provides clear advantage;
-- the task is long-running and benefits from an isolated lifecycle;
-- independent review is valuable;
-- isolated terminal/workspace execution is safer.
+### 8.3 Dynamic health
 
-Keep work direct when:
+The earlier design left runtime health observation unwired. That is no longer current fact.
 
-- it is a short deterministic action;
-- it needs constant access to the exact evolving root context;
-- delegation overhead exceeds the work;
-- another worker would contend for the same unsafe mutable resource;
-- sequencing is strict and immediate.
+Current `ResidentHealthJournal` observations enter health-aware routing and delegated supervision. Representative E2E-28/34 verifies policy-safe fallback/reassignment under health/stall conditions.
 
-Current admission code is intentionally conservative and includes negative/direct semantics. For example, a request equivalent to “不要调研，也不要 review，直接实现” must not manufacture research/review WorkerRuns merely because those words appear in the sentence.
+This remains bounded health/supervision logic, not a promise of perfect provider outage handling across every provider and every long task.
 
-Model-proposed decomposition remains a proposal. Resident owns admission/materialization and must validate objective, acceptance criteria, current plan version, tool/authority scope and relevance before creating WorkerRun state.
+## 9. Multi-route privacy acceptance
 
-## 6. Dependency and readiness
+E2E-30/42 is closed under the repository’s current acceptance policy.
 
-A WorkItem becomes `ready` only when:
+The closure proves the current policy/eligibility/provenance path and guarded multiroute acceptance semantics. It also records an **owner-approved environment waiver** because the acceptance environment did not have a second real provider family configured.
+
+Therefore the design/status language must remain exact:
 
 ```text
-all required dependencies are accepted/completed
-+ required current-world evidence is fresh enough
-+ authority needed for the intended effect exists
-+ required resource class is available
-+ no current blocker invalidates the item
+policy/privacy acceptance path closed under current policy
++ two-provider guard retained
++ environment waiver explicitly recorded
+!= two real provider families fully production-validated
 ```
 
-Dependencies are task dependencies, not permission inheritance.
+When two real provider families are configured, the guarded acceptance is expected to run without skip and fail closed if the required evidence is absent.
 
-Example:
+The important invariant remains that a forbidden provider must not receive restricted context merely because it scores well.
 
-```text
-research market        -> no write authority
-choose product scope   -> may use research evidence
-develop MVP            -> file/workspace authority
-run tests              -> terminal authority
-publish/deploy          -> separate explicit external-effect authority
-```
+## 10. Worker authority
 
-Completion of research never grants deployment authority.
+Delegation never widens authority automatically.
 
-Current product code supports the bounded flat sequence needed by E2E-29; a general dependency scheduler/DAG is intentionally not introduced by this remediation.
+Before a real Body effect, the active path revalidates current durable facts such as:
 
-## 7. Resource stack selection
-
-For every ready WorkItem, ZN chooses a resource stack, not merely a model.
-
-```text
-WorkItem
-→ cognition requirement?
-→ sensing requirement?
-→ action tools?
-→ data/privacy constraints?
-→ authority?
-→ verification path?
-→ direct vs delegated?
-```
+- Root Work / WorkItem identity;
+- WorkerRun identity/state;
+- current plan version;
+- admitted action/tool class;
+- attached workspace/resource scope;
+- relevant user/Work policy.
 
 Examples:
 
-```text
-research competitor pricing
-= Web/Browser + optional research cognition + citation verification
+- research/review workers do not acquire arbitrary workspace mutation;
+- coding writes stay within the admitted workspace boundary;
+- stale-plan workers cannot keep mutating merely because they started under an older plan;
+- dependency completion does not transfer authority.
 
-fix Python bug
-= File/Git/Terminal + coding cognition + tests/runtime verification
+This is an action-admission boundary. It is not a process sandbox or blanket OS security boundary.
 
-rename 200 known files deterministically
-= File capability + preview/authority + postcondition verification
+## 11. Progress and supervision
 
-inspect why a UI flow changed
-= Desktop/Browser Sense + optional vision/reasoning cognition + fresh re-ground
-```
+### 11.1 Progress truth
 
-## 8. Model routing policy
+Execution progress is subordinate to Work truth. The system must not create a second progress database whose state can diverge from WorkItem/WorkerRun facts.
 
-Do not create a second router. Extend the existing `ModelRouter` input policy and route metadata only as real E2Es require.
+Current delegated progress is projected from durable delegated facts into the existing `work_progress` contract and Resident UI using bounded privacy-safe normalization.
 
-### 8.1 Current two-stage routing
-
-Current code now performs:
+Status is best described as:
 
 ```text
-all ModelRoutes
-→ hard eligibility gates
-→ eligible routes only
-→ SelfModel/reliability/cost/latency soft scoring
-→ selected route
+CONNECTED + VERIFIED NARROW / PARTIAL UX
 ```
 
-Hard eligibility currently covers the narrow implemented contracts for:
+The remaining problem is user-level quality and breadth, not absence of a progress path.
 
-- required capability declarations;
-- user-pinned provider/model;
-- denied provider/model;
-- declared availability/health metadata;
-- local-only / cloud-forbidden / `cloud_denied` data policy;
-- required policy tags;
-- required authority-policy scopes.
+### 11.2 No-progress / stall supervision
 
-Malformed policy/classification input fails closed. If no route is eligible, routing raises `NoRouteAvailable` rather than silently selecting a forbidden fallback.
+The earlier open design requirement is now implemented for the bounded delegated path.
 
-The internal zero-model sentinel remains a control-state compatibility path to the existing unavailable-model worker; it is not a real unavailable route that participates in normal route eligibility.
+Current supervision includes:
 
-Dynamic runtime health observations from `ResidentHealthJournal` are **not yet** wired into this eligibility layer. That remains part of E2E-28/E2E-34 supervision/reroute work.
+- durable progress/heartbeat observation;
+- no-progress/stall detection;
+- bounded retry budget;
+- health-aware routing/fallback;
+- policy-safe reassignment;
+- restart reconciliation;
+- stale-result protection;
+- no blind replay of completed historical effects.
 
-### 8.2 Additional policy evolution
+Representative E2E-28/34 closes this path.
 
-Future real E2Es may add hard gates or admission checks such as:
+Remaining product work is broader long-duration, multi-workstream and real-environment coverage, not re-adding the same supervision architecture.
+
+## 12. Restart and non-replay
+
+Restart must treat durable facts as evidence about what was recorded, not as proof that every external effect is still current.
+
+The desired/current bounded pattern is:
 
 ```text
-budget ceiling
-concurrency/rate-limit state
-latency ceiling
-richer user/project routing policy
+Resident restarts
+-> restore Root Work / current plan / WorkerRun facts
+-> reconcile active/terminal attempts
+-> retain completed durable evidence
+-> do not replay completed historical effects
+-> unresolved/uncertain effects remain uncertain
+-> stale old-plan results cannot advance current plan
+-> use fresh current-world evidence before continuing
 ```
 
-The invariant is unchanged: forbidden/ineligible must mean removed from the candidate set, not merely scored lower.
+E2E-28/34 verifies delegated restart reconciliation and E2E-27/33 verifies continuation/non-replay under steering for representative paths.
 
-### 8.3 Primary reasoning preference
+This does not mean every cross-day real-world task is already solved.
 
-Users may configure:
+## 13. User steering
+
+User steering belongs to Root Work/Will, not to a worker conversation.
+
+A user can change the current plan in normal language. The bounded current implementation supports representative same-Work steering:
 
 ```text
-primary_reasoning = GPT
-coding_preference = Codex/Claude/GPT candidates
-research_preference = GPT/Gemini candidates
-vision_preference = GPT/Gemini candidates
+user updates goal/direction
+-> current plan version changes
+-> affected pending work is superseded/replanned
+-> completed still-valid effects can be retained
+-> old-plan worker results become stale for current completion
+-> already completed historical effects are not replayed
+-> Resident continues the same Root Work from fresh evidence
 ```
 
-`primary_reasoning` means preferred ZN conversation/general cognition, not exclusive ownership of all WorkItems.
+E2E-27/33 closes the representative real-model acceptance path.
 
-### 8.4 One model, many workers
+Remaining work is broader task classes, longer time spans and user-facing explanation of what was retained/superseded.
 
-With one connected model:
+## 14. Worker completion and Root completion
+
+A worker can only produce candidate evidence/result.
+
+Correct flow:
 
 ```text
-worker count can still be > 1
-model routes = 1
+WorkerRun reports result
+-> Resident/Work verifies required evidence
+-> WorkItem may become accepted/completed
+-> Root Work independently evaluates root acceptance
+-> user goal completes only when current evidence proves it
 ```
 
-Workers have isolated WorkItem contexts and tool scopes even if they invoke the same model route.
-
-This specific narrow invariant is now real E2E evidence: E2E-29 is CLOSED / VERIFIED. Do not generalize that result into “multi-model routing is complete.”
-
-### 8.5 Multi-model routing
-
-With multiple allowed routes, the target remains:
-
-- code work can prefer coding-strength routes;
-- visual interpretation can prefer vision-capable routes;
-- bounded classification can prefer cheaper/smaller routes;
-- hard planning can stay on the preferred strong reasoning route;
-- route failure may trigger another eligible route;
-- route learning can update `SelfModel` from verified outcomes.
-
-The hard-eligibility substrate for policy/capability filtering exists. E2E-30 and E2E-42 remain the required real acceptance evidence for true multi-route task-specific/privacy routing.
-
-### 8.6 Routing is not completion authority
-
-A route is selected because it is a good cognitive resource. It never gains authority to:
-
-- approve its own external side effects;
-- treat its own text as factual evidence;
-- mark Root Work complete;
-- persist arbitrary user Memory;
-- override user routing/privacy policy.
-
-## 9. Worker context packs
-
-Default worker context should be minimal and explicit.
-
-Conceptual pack:
+Incorrect flow:
 
 ```text
-- root goal summary
-- WorkItem objective
-- current plan version
-- bounded relevant facts/evidence
-- relevant artifacts/paths/URLs
-- acceptance criteria
-- allowed tools
-- authority scope
-- forbidden actions
-- expected result/report schema
+worker says "done"
+-> Root Work complete
 ```
 
-Avoid by default:
+This invariant was exercised by E2E-29 and remains mandatory across all later delegated work.
 
-- complete user transcript;
-- entire Memory store;
-- unrelated project files;
-- all credentials;
-- all browser tabs;
-- hidden internal reasoning from other workers;
-- every prior tool log.
+## 15. One model, many workers
 
-This reduces token cost, privacy exposure and cross-task contamination.
+E2E-29 closed the architectural question of whether multiple workers require multiple model routes.
 
-Current implementation now uses a strict recursive `WorkerContextPack` boundary rather than relying on every caller to hand-truncate nested evidence. The boundary enforces bounded fields/items/strings, rejects malformed types and sensitive keys, and preserves provenance/data-classification semantics needed by later privacy routing.
-
-## 10. Worker tool/authority scopes
-
-Default principle: least authority needed for the WorkItem.
-
-Example coding worker:
+They do not.
 
 ```text
-may:
-- read selected workspace
-- modify scoped files
-- run bounded terminal/test commands
-- inspect Git diff/status
-
-may not automatically:
-- push/merge/release
-- access unrelated user files
-- message external recipients
-- read browser credentials
-- modify long-term Memory
-- spawn unlimited workers
+one model route
+-> research WorkerRun
+-> coding WorkerRun
+-> review WorkerRun
 ```
 
-A worker that needs a new side effect requests/escalates through ZN supervision.
+can be valid when the route satisfies each WorkItem’s eligibility requirements.
 
-The remediation now revalidates WorkerRun authority at the existing Body/action-admission boundary. This means research/review restrictions are not only proposal-parser conventions: the action boundary binds current Work/WorkerRun, plan version, tool/authority/target scope before real effect admission. This is an application authority boundary, not a claim of Windows OS sandbox isolation.
+Worker count and model/provider count remain independent dimensions.
 
-## 11. Supervision loop
+Multi-route support should improve capability/privacy/cost/reliability choices, not become a requirement for delegation itself.
 
-ZN supervision should be mostly event/state driven, not a large model repeatedly polling all workers.
+## 16. Current user-facing progress design
+
+The user-facing surface should explain goals/tasks/blockers/required presence/completion evidence, not provider internals.
+
+Current implementation already projects delegated progress to the Resident UI. Future UX work may improve:
+
+- human-readable current goal and current workstream;
+- completed vs running vs waiting-for-user vs blocked;
+- meaningful retry/reassignment explanation without raw route plumbing;
+- which direction changed after steering;
+- what evidence supports completion;
+- what remains unresolved.
+
+Do not expose a task-board merely because internal WorkerRuns exist. UX should follow real user value.
+
+## 17. Relationship to Browser/Desktop/File/Terminal
+
+Delegated Work is not useful without real Body capability.
+
+A WorkerRun may contribute cognition or bounded execution, but real operations remain governed by the corresponding ZN-owned Body/Sense/authority/verification contracts.
+
+Recent Browser/Windows slices strengthen the Body available to Root Work:
+
+- bounded BrowserScene and exact semantic actions;
+- tab/history lifecycle;
+- causal popup attribution;
+- authority-safe managed file transfer;
+- stateless/stateful bounded control clicks;
+- USER Browser authenticated research/mutation and causal child-tab paths;
+- representative OTP user-presence handoff;
+- Windows application inventory/identity/launch and exact existing-window activation.
+
+These are representative bounded capabilities, not permission to turn delegated workers into unrestricted browser/desktop agents.
+
+## 18. Cost and cognition budgeting
+
+ZN should spend strong cognition where it improves outcome quality, not on deterministic waiting/polling/mechanical checks.
+
+Useful accounting can remain attached to WorkerRun/route provenance:
+
+- route/provider/model;
+- latency;
+- usage/cost where available;
+- retries/failures;
+- task class/outcome evidence.
+
+Cost optimization must never bypass capability/privacy/authority eligibility or downgrade hard tasks so aggressively that task quality collapses.
+
+## 19. Anti-goals
+
+This design must not evolve ZN into:
+
+- a generic multi-agent framework;
+- a workflow/DAG engine product;
+- a model gateway product;
+- an agent chatroom;
+- recursively spawning autonomous personalities;
+- a system where workers own Memory/identity/authority;
+- a system where model confidence is completion evidence;
+- a system with a second router or second Work truth;
+- a system that replays uncertain external effects to “make progress”.
+
+## 20. Current implementation status versus remaining boundary
+
+### Implemented + verified narrow
+
+- one ZN / one Root Work owner;
+- bounded delegation admission;
+- durable WorkItem/WorkerRun facts;
+- isolated bounded worker context;
+- worker action authority revalidation;
+- one-route multi-worker (E2E-29);
+- hard policy/privacy routing;
+- dynamic health-aware routing;
+- stall/no-progress supervision;
+- bounded retry/fallback/reassignment;
+- restart reconciliation/no-replay;
+- active steering / stale-plan protection / continuation;
+- delegated user progress projection;
+- bounded flat dependency/readiness;
+- E2E-30/42, 28/34, 27/33 representative acceptance closures with their documented limitations.
+
+### Remaining boundary
+
+- broader long-horizon/cross-day real-task coverage;
+- complex multi-workstream user UX and explanation quality;
+- more cross-surface Browser/Desktop/File/Terminal/Application tasks;
+- broader real-site Browser/User Browser complexity;
+- broader Windows/application semantic capability when a real E2E requires it;
+- general recursive delegation / arbitrary DAG scheduling remains intentionally unimplemented unless a future real task proves it necessary.
+
+## 21. Product acceptance rule
+
+The end state is not “delegation code exists”. It is:
 
 ```text
-worker event / timer / tool result / user message / environment change
-→ update Work progress
-→ cheap deterministic checks
-→ only invoke Thought/model if a real decision gap exists
+normal human goal
+-> ZN keeps one durable Root Work
+-> delegates only useful bounded work
+-> routes cognition under explicit policy and current health
+-> workers act only within admitted authority
+-> progress/stall/restart/steering remain Resident-owned
+-> real Body effects use fresh evidence and non-replay discipline
+-> worker output is independently accepted/rejected
+-> Root Work completes only from current-world evidence
 ```
 
-Key supervision events:
-
-- worker completed;
-- worker failed;
-- worker heartbeat missing;
-- waiting on dependency;
-- waiting on user permission;
-- acceptance verification failed;
-- root user changed requirements;
-- outside-world state changed;
-- resource/model unavailable;
-- repeated no-progress.
-
-`DelegatedWorkCoordinator` now owns the bounded delegated lifecycle/reconciliation inside the existing Resident. It does not own a second store, router, Body or identity system.
-
-## 12. Stall/no-progress detection
-
-A long task must not spin forever.
-
-Minimum indicators:
-
-- repeated identical failure category;
-- same WorkItem attempt count without new evidence;
-- repeated target-not-found with no changed Investigation hypothesis;
-- worker heartbeat absent beyond policy;
-- model route retry without new context/evidence;
-- repeated verification failure.
-
-Response:
-
-```text
-stall detected
-→ stop blind continuation
-→ fresh Sense / inspect current Work evidence
-→ Situation
-→ Thought / Investigation
-→ change hypothesis, resource, route, tool or plan
-→ if genuinely blocked, surface one clear blocker to user
-```
-
-Current restart reconciliation preserves durable WorkerRun facts and avoids treating old state as proof of current success. A full heartbeat/no-progress/stall/replacement/reroute loop remains open and is specifically part of E2E-28/E2E-34; do not call persistence alone “automatic worker recovery.”
-
-## 13. Acceptance and verification
-
-Each WorkItem should define what evidence makes it complete.
-
-Examples:
-
-```text
-research item:
-- required questions answered
-- sources/provenance present
-- contradictions acknowledged
-
-coding item:
-- expected diff exists
-- relevant tests pass
-- target runtime behavior verified
-
-browser mutation:
-- fresh page/server/business-state evidence proves saved effect
-
-file task:
-- exact destination identity
-- bytes/content/metadata checked after write
-```
-
-Worker self-report is not acceptance evidence.
-
-Root Work completion requires all root acceptance conditions, not necessarily every historical WorkItem. Superseded/cancelled items may remain intentionally incomplete.
-
-E2E-29 explicitly preserved this distinction: WorkerRun completion and worker self-report were not accepted as Root Work completion without the independent verifier.
-
-## 14. User steering
-
-Steering must modify the active Work rather than create a disconnected new task when the user clearly refers to the current project.
-
-Examples:
-
-- “登录先不做了。”
-- “这个方案太复杂，改简单一点。”
-- “先别发布，给我看能运行的版本。”
-- “测试先用 Claude 看一下，代码继续让 Codex 做。”
-
-Target behavior:
-
-```text
-resolve active Root Work
-→ interpret steering against current plan
-→ increment/revise plan version
-→ cancel/supersede affected pending work
-→ do not replay completed side effects
-→ decide what running workers should continue/cancel/become stale
-→ resume from fresh current evidence
-```
-
-Natural continuation, active steering, plan-version and stale-result foundations are already implemented in the control substrate. The remaining acceptance gap is broader normal-language E2E-27/E2E-33 proof on the current integrated delegated/supervision path; do not describe the foundation as “not implemented,” but also do not product-close the named E2Es without real runs.
-
-## 15. Restart and cross-day continuity
-
-Persist enough to reconstruct:
-
-- Root Work goal and current acceptance target;
-- active/current plan version;
-- WorkItems and dependencies;
-- running/waiting WorkerRuns;
-- accepted evidence;
-- unresolved blockers;
-- uncertain side effects;
-- user routing/privacy policy references;
-- relevant artifacts.
-
-On restart:
-
-```text
-load durable Work
-→ inspect actual worker/process/tool state where possible
-→ reconcile completed/unknown attempts
-→ re-Sense external world
-→ never infer that an old worker heartbeat means current success
-→ continue only from reconciled evidence
-```
-
-Current code has restart-safe durable Work/WorkerRun reconciliation foundations. If an external side effect outcome is unknown, the governing behavior remains fail closed / do not blindly replay.
-
-## 16. Background autonomy
-
-Background autonomy means ZN can continue a user-authorized Root Work while the UI is not focused or across resident pulses. It does not mean unlimited self-directed activity.
-
-Boundaries:
-
-- Work goal must already exist from user intent or an explicitly authorized recurring rule;
-- no silent expansion into unrelated goals;
-- external side effects remain authority-gated;
-- rate/cost/concurrency budgets apply;
-- user can pause/cancel/steer;
-- long inactivity or uncertainty can park Work rather than inventing more work.
-
-## 17. User-facing progress model
-
-User should see something like:
-
-```text
-正在做：个人记账产品 MVP
-
-已完成
-✓ 调研 6 个同类产品
-✓ 确定第一版范围
-
-进行中
-• 核心记账功能开发
-• 数据存储测试
-
-等待
-• 发布：需要你的授权
-
-ZN 当前判断
-核心功能可以继续推进，不需要你操作。
-```
-
-Avoid exposing:
-
-- worker_run_id;
-- provider RPC internals;
-- semantic target IDs;
-- Work recovery internals;
-- route-score formulas.
-
-The user may optionally inspect advanced execution detail, but it is not the normal product surface.
-
-## 18. Metrics that matter
-
-Product metrics:
-
-- root Work completion rate;
-- long-task completion after user steering;
-- restart/cross-day continuation success;
-- worker result rejection rate when verification fails;
-- recovery from worker/model/tool failure;
-- time/cost/token per successful root task;
-- percentage of model calls attached to genuine cognition gaps;
-- percentage of deterministic mechanics completed without unnecessary large-model calls.
-
-Do not optimize for:
-
-- number of workers spawned;
-- number of providers supported;
-- raw tool-call count;
-- raw token reduction at the expense of success quality.
-
-## 19. Phased implementation / acceptance status
-
-### Stage A — Root Work steering + durable WorkItem minimum
-
-Target E2E:
-
-> “昨天那个产品继续。登录先别做，先把核心记账跑起来。”
-
-Current status:
-
-- natural continuation / active steering / plan-version / stale-result foundations exist;
-- bounded WorkItem/WorkerRun substrate exists;
-- E2E-27/E2E-33 still require current integrated real-task acceptance before product-close.
-
-### Stage B — Single-model delegated coding/research task
-
-Target E2E:
-
-> “帮我调研并开发一个小产品第一版。”
-
-Current status: **E2E-29 CLOSED / VERIFIED (narrow substrate)**.
-
-Verified invariant:
-
-- research/coding/review WorkerRuns may share one real ModelRoute;
-- worker count is independent of route count;
-- contexts/tool scopes remain bounded;
-- Root completion remains ZN-owned and independently verified.
-
-This does not mean a general-purpose multi-agent platform is complete.
-
-### Stage C — Multi-model routing under user policy
-
-Target E2E:
-
-> “平时你用 GPT 跟我沟通，代码优先 Codex，调研你自己选，项目内容不要发给其他未授权模型。”
-
-Current status:
-
-- hard capability/pin/deny/privacy/locality/authority eligibility substrate is implemented;
-- strict WorkerContextPack data classification can feed routing policy;
-- real E2E-30/E2E-42 multi-route/privacy acceptance remains open;
-- dynamic health-driven reroute remains open.
-
-### Stage D — Supervision, stall detection, reroute
-
-Target E2E:
-
-> coding worker fails twice; ZN detects no progress, gathers fresh error evidence, changes route or approach and continues without asking the user for each mechanical retry.
-
-Current status: reconciliation foundations exist; E2E-28/E2E-34 heartbeat/no-progress/dynamic-health/replacement/reroute loop remains open.
-
-### Stage E — Restart/background long task
-
-Target E2E:
-
-> “这个产品你继续做，我先去忙。” Resident restarts; ZN resumes from durable Work, reconciles attempts, continues safely, and later reports verified progress.
-
-Current status: durable restart/reconciliation foundations exist; broader background long-task product acceptance remains future work.
-
-## 20. Architectural stop signs
-
-Stop and reevaluate if implementation starts producing:
-
-- a new permanent Orchestrator/Manager agent identity;
-- another router beside `ModelRouter`;
-- a separate graph/workflow persistence store beside Work;
-- unrestricted worker inheritance of user context/credentials;
-- worker self-report treated as completion;
-- recursive agent trees before flat delegation has real E2E value;
-- polling loops that repeatedly call large models just to check status;
-- routing driven only by model brand names rather than capabilities/policy/evidence;
-- abstractions that cannot name a real E2E they unblock.
-
-## 21. Final design statement
-
-ZN remains one long-lived personal assistant. Complex work is represented as one durable Root Work with bounded WorkItems. ZN may create zero, one or many WorkerRuns; those workers may share one model or use different models. The existing kernel-owned ModelRouter first removes ineligible cognition resources under user policy/privacy/capability/authority constraints, then softly ranks only legal candidates using learned performance and route quality signals. Tools provide real-world execution through the existing Body/authority path. ZN supervises, replans, verifies and remains the only owner of the user's task.
+That is the delegated-work design. The implementation now covers a meaningful bounded subset of it; future work should expand real-task breadth without creating a second orchestration product.
