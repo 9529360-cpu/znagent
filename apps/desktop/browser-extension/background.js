@@ -2,16 +2,6 @@ const RELAY_BASE = 'http://127.0.0.1:19991'
 const PROTOCOL_VERSION = 1
 const EXTENSION_ID = 'likpiakgiamipheeekdgekdahafjinnh'
 const STORAGE_KEY = 'znAuthorizedTabId'
-const SENSITIVE_AUTOCOMPLETE = new Set([
-  'current-password',
-  'new-password',
-  'one-time-code',
-  'cc-number',
-  'cc-csc',
-  'cc-exp',
-  'cc-exp-month',
-  'cc-exp-year'
-])
 const MAX_SEMANTIC_CANDIDATES = 32
 const MAX_REFERENCE_LINKS = 16
 
@@ -105,11 +95,21 @@ function normalizedAutocomplete(value) {
     .filter(Boolean)
 }
 
-function isSensitiveTextboxAttributes(attributes) {
-  const inputType = String(attributes?.type || 'text').toLowerCase()
-  if (inputType === 'password') return true
+function sensitiveTextboxKind(attributes) {
   const autocomplete = normalizedAutocomplete(attributes?.autocomplete)
-  return autocomplete.some(token => SENSITIVE_AUTOCOMPLETE.has(token) || token.startsWith('cc-'))
+  if (autocomplete.includes('one-time-code')) return 'one_time_code'
+  const inputType = String(attributes?.type || 'text').toLowerCase()
+  if (
+    autocomplete.includes('current-password') ||
+    autocomplete.includes('new-password') ||
+    inputType === 'password'
+  ) return 'password'
+  if (autocomplete.some(token => token.startsWith('cc-'))) return 'payment'
+  return ''
+}
+
+function isSensitiveTextboxAttributes(attributes) {
+  return sensitiveTextboxKind(attributes) !== ''
 }
 
 async function sha256Text(value) {
@@ -306,7 +306,8 @@ async function observeSemanticCandidates(tabId) {
       const attributes = attributesObject(domNode?.attributes)
       const disabled = axProperty(node, 'disabled') === true || 'disabled' in attributes
       const readonly = axProperty(node, 'readonly') === true || 'readonly' in attributes
-      const sensitive = isSensitiveTextboxAttributes(attributes)
+      const sensitiveKind = sensitiveTextboxKind(attributes)
+      const sensitive = sensitiveKind !== ''
       if (sensitive) {
         candidates.push({
           role: 'textbox',
@@ -316,6 +317,7 @@ async function observeSemanticCandidates(tabId) {
           editable: false,
           clickable: false,
           sensitive: true,
+          sensitive_kind: sensitiveKind,
           redacted: true,
           text_length: 0,
           text_sha256: await sha256Text(''),

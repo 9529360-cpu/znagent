@@ -74,6 +74,7 @@ export type ZnWorkProgress = {
   status: string
   stage: string
   nextAction: string
+  blockedBy?: string
   terminal: boolean
   finalized: boolean
   updatedAt: number
@@ -533,12 +534,14 @@ function normalizeWorkProgress(value: unknown): ZnWorkProgress {
       }]
     })
   const error = String(item.error || '').trim()
+  const blockedBy = String(item.blocked_by || item.blockedBy || '').trim()
   return {
     eventId,
     threadId,
     status: String(item.status || 'pending'),
     stage: String(item.stage || 'queued'),
     nextAction: String(item.next_action || item.nextAction || ''),
+    ...(blockedBy ? { blockedBy } : {}),
     terminal: item.terminal === true,
     finalized: item.finalized === true,
     updatedAt: timestamp(item.updated_at || item.updatedAt),

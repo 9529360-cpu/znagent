@@ -173,6 +173,28 @@ class AuthorizedExtensionUserBrowser:
                     "extension semantic candidate observation returned unsupported role"
                 )
             name = self._bounded_text(raw.get("name"), "candidate name", 160)
+            sensitive = raw.get("sensitive") is True
+            sensitive_kind = str(raw.get("sensitive_kind") or "").strip()
+            if sensitive_kind not in {"", "one_time_code", "password", "payment"}:
+                raise ExtensionUserBrowserError(
+                    "extension semantic candidate observation returned unsupported sensitive kind"
+                )
+            if not sensitive and sensitive_kind:
+                raise ExtensionUserBrowserError(
+                    "non-sensitive semantic candidate cannot claim a sensitive kind"
+                )
+            if sensitive and role != "textbox":
+                raise ExtensionUserBrowserError(
+                    "only textbox semantic candidates may be marked sensitive"
+                )
+            if sensitive and raw.get("redacted") is not True:
+                raise ExtensionUserBrowserError(
+                    "sensitive semantic candidate was not redacted at the extension edge"
+                )
+            if sensitive and (str(raw.get("text") or "") or str(raw.get("value") or "")):
+                raise ExtensionUserBrowserError(
+                    "sensitive semantic candidate exposed secret text"
+                )
             candidate: dict[str, Any] = {
                 "role": role,
                 "name": name,
@@ -180,7 +202,8 @@ class AuthorizedExtensionUserBrowser:
                 "visible": raw.get("visible") is True,
                 "editable": raw.get("editable") is True,
                 "clickable": raw.get("clickable") is True,
-                "sensitive": raw.get("sensitive") is True,
+                "sensitive": sensitive,
+                "sensitive_kind": sensitive_kind,
                 "form_method": str(raw.get("form_method") or "").strip().lower(),
                 "form_action": str(raw.get("form_action") or "").strip(),
                 "form_signature": str(raw.get("form_signature") or "").strip(),
@@ -205,6 +228,17 @@ class AuthorizedExtensionUserBrowser:
                         ),
                     }
                 )
+                if sensitive and (
+                    candidate["text_length"] != 0
+                    or candidate["text_sha256"] != hashlib.sha256(b"").hexdigest()
+                    or candidate["form_method"]
+                    or candidate["form_action"]
+                    or candidate["form_signature"]
+                    or candidate["query_parameter"]
+                ):
+                    raise ExtensionUserBrowserError(
+                        "sensitive semantic candidate leaked value or form metadata"
+                    )
             candidates.append(candidate)
         return {
             "tab_id": self._tab_id(result),

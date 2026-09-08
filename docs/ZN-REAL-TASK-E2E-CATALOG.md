@@ -103,6 +103,8 @@ Task hits MFA/captcha/user-presence requirement.
 
 Must stop before guessing, explain the precise blocker, wait for user action, then re-sense and continue.
 
+Implemented representative path (2026-09-08): a standard HTML `autocomplete="one-time-code"` challenge in the same explicitly authorized USER-browser tab. The extension classifies the field without reading its value; Resident parks the same Work/Event with `blocked_by=user_presence_required`; after the user manually completes the challenge, Resident requires the original `tab_id`, authorization `attached_at` generation, and same origin, then performs a fresh Sense/re-ground before continuing. The Windows interactive E2E proves the OTP never enters cognition, Resident state/progress, Body history, or durable SQLite serialization. This does **not** claim CAPTCHA solving, WebAuthn/passkey automation, cross-origin IdP handoff, password entry, or payment-field automation.
+
 ## 4. Files, documents and office work
 
 ### E2E-09 — Find yesterday’s document and edit

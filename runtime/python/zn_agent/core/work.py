@@ -653,11 +653,16 @@ class ResidentWorkLedger:
         finalized = work_run.ledger_state == "finalized"
         working = self.resident.store.get_working_state()
         active = working.current_event_id == normalized_event and not terminal
+        blocked_by = str(working.blocked_by or "").strip() if active else ""
         if terminal:
             stage = "complete" if event.status == EventStatus.COMPLETED else "failed"
             next_action = "complete"
         elif active:
-            stage = str(working.stage or "processing")
+            stage = (
+                "waiting_for_user"
+                if blocked_by == "user_presence_required"
+                else str(working.stage or "processing")
+            )
             next_action = str(working.next_action or "continue resident work")
         elif event.status == EventStatus.PENDING:
             stage = "queued"
@@ -735,6 +740,7 @@ class ResidentWorkLedger:
             "status": event.status.value,
             "stage": stage,
             "next_action": next_action,
+            "blocked_by": blocked_by or None,
             "terminal": terminal,
             "finalized": finalized,
             "updated_at": event.updated_at,
