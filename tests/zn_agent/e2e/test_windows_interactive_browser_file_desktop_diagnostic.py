@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import unittest
 
 import test_windows_interactive_browser_file_desktop_work as e2e24
 
@@ -78,3 +79,7 @@ class WindowsInteractiveBrowserFileDesktopDiagnosticE2ETests(
             + json.dumps(diagnostic, ensure_ascii=False, default=str)
         )
         return final, trace
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
