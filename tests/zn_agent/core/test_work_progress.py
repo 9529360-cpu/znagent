@@ -66,6 +66,39 @@ class ResidentWorkProgressTests(unittest.TestCase):
             )
             resident.store.close()
 
+    def test_user_presence_blocker_projects_waiting_for_user_without_terminalizing_work(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            ledger = ResidentWorkLedger(resident)
+            _, event = ledger.start("work-user-presence", "finish browser task")
+            self.assertIsNotNone(resident.store.claim_event(event.event_id))
+            next_action = (
+                "请在当前已授权浏览器标签页完成一次性验证码/多因素验证。"
+                "ZN 不会读取或输入验证码；完成后会重新读取页面并继续当前任务。"
+            )
+            resident.store.save_working_state(
+                WorkingState(
+                    current_event_id=event.event_id,
+                    stage="native_investigation",
+                    next_action=next_action,
+                    blocked_by="user_presence_required",
+                    data={},
+                )
+            )
+
+            progress = ledger.progress("work-user-presence", event.event_id)
+
+            self.assertEqual(progress["status"], "processing")
+            self.assertEqual(progress["stage"], "waiting_for_user")
+            self.assertEqual(progress["blocked_by"], "user_presence_required")
+            self.assertEqual(progress["next_action"], next_action)
+            self.assertFalse(progress["terminal"])
+            self.assertFalse(progress["finalized"])
+            resident.store.close()
+
     def test_active_side_effect_recovery_is_sanitized_and_survives_reconstruction(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

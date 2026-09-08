@@ -206,5 +206,95 @@ class AuthorizedExtensionUserBrowserTests(unittest.TestCase):
         browser.close_session(session.session_id)
 
 
+class _SemanticCandidateRelay(_UncertainMutationRelay):
+    def __init__(self, candidate):
+        self.candidate = dict(candidate)
+
+    def request_command(
+        self, kind, *, args=None, timeout_seconds=5.0, expected_tab_id=None, expected_attached_at=None
+    ):
+        if kind == "probe_current_tab" and isinstance(args, dict) and args.get("observe_semantic_candidates") is True:
+            return {
+                "success": True,
+                "result": {
+                    "tab_id": 71,
+                    "url": _URL,
+                    "title": "Account",
+                    "candidates": [self.candidate],
+                    "truncated": False,
+                },
+                "authorization_attached_at": _AUTH_AT,
+                "completed_at": "2026-09-08T00:00:00Z",
+            }
+        return super().request_command(
+            kind,
+            args=args,
+            timeout_seconds=timeout_seconds,
+            expected_tab_id=expected_tab_id,
+            expected_attached_at=expected_attached_at,
+        )
+
+
+class AuthorizedExtensionSemanticCandidateTests(unittest.TestCase):
+    @staticmethod
+    def _otp_candidate(**updates):
+        candidate = {
+            "role": "textbox",
+            "name": "安全代码",
+            "enabled": True,
+            "visible": True,
+            "editable": False,
+            "clickable": False,
+            "sensitive": True,
+            "sensitive_kind": "one_time_code",
+            "redacted": True,
+            "text_length": 0,
+            "text_sha256": _digest(""),
+            "form_method": "",
+            "form_action": "",
+            "form_signature": "",
+            "query_parameter": "",
+        }
+        candidate.update(updates)
+        return candidate
+
+    def test_one_time_code_projects_only_bounded_redacted_kind(self) -> None:
+        browser = AuthorizedExtensionUserBrowser(_SemanticCandidateRelay(self._otp_candidate()))
+        sense = browser.observe_semantic_candidates()
+        candidate = sense["candidates"][0]
+        self.assertEqual(candidate["sensitive_kind"], "one_time_code")
+        self.assertEqual(candidate["text_length"], 0)
+        self.assertEqual(candidate["text_sha256"], _digest(""))
+        self.assertNotIn("text", candidate)
+        self.assertNotIn("value", candidate)
+
+    def test_unknown_sensitive_kind_fails_closed(self) -> None:
+        browser = AuthorizedExtensionUserBrowser(
+            _SemanticCandidateRelay(self._otp_candidate(sensitive_kind="arbitrary-secret-kind"))
+        )
+        with self.assertRaisesRegex(Exception, "unsupported sensitive kind"):
+            browser.observe_semantic_candidates()
+
+    def test_non_sensitive_candidate_cannot_forge_sensitive_kind(self) -> None:
+        browser = AuthorizedExtensionUserBrowser(
+            _SemanticCandidateRelay(
+                self._otp_candidate(
+                    sensitive=False,
+                    sensitive_kind="one_time_code",
+                    redacted=False,
+                )
+            )
+        )
+        with self.assertRaisesRegex(Exception, "cannot claim a sensitive kind"):
+            browser.observe_semantic_candidates()
+
+    def test_sensitive_candidate_cannot_carry_secret_value(self) -> None:
+        browser = AuthorizedExtensionUserBrowser(
+            _SemanticCandidateRelay(self._otp_candidate(value="814205"))
+        )
+        with self.assertRaisesRegex(Exception, "exposed secret text"):
+            browser.observe_semantic_candidates()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

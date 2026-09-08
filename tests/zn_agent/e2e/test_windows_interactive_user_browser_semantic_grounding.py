@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import ctypes
 import json
+import sqlite3
 import subprocess
+from ctypes import wintypes
 import tempfile
 import threading
 import time
@@ -32,6 +35,7 @@ _TEXT = "alice@example.test"
 _STATUS = "已发货"
 _TASK = f"在这个已经登录的网站里，把 {_TEXT} 这个客户的订单找出来，确认现在是什么状态。"
 _SESSION_COOKIE = "zn_semantic_browser_session=already-authenticated-before-zn"
+_OTP = "814205"
 
 
 class _SemanticBrowserCognition:
@@ -94,6 +98,17 @@ class _Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
+        if parsed.path == "/mfa-complete":
+            values = parse_qs(parsed.query, keep_blank_values=True).get("otp", [])
+            if len(values) != 1 or values[0] != _OTP:
+                self._write(403, "text/plain; charset=utf-8", b"invalid otp")
+                return
+            self.server.mfa_completions += 1  # type: ignore[attr-defined]
+            self.send_response(302)
+            self.send_header("Location", "/account?mode=normal")
+            self.end_headers()
+            return
+
         if parsed.path == "/drift":
             body = json.dumps({"drift": bool(self.server.enable_drift)}).encode("utf-8")  # type: ignore[attr-defined]
             self._write(200, "application/json", body)
@@ -146,9 +161,18 @@ class _Handler(BaseHTTPRequestHandler):
 <label>备注<textarea aria-label="备注"></textarea></label>"""
             button = "搜索订单"
         elif mode == "sensitive":
+            body = f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>{_TITLE}</title></head>
+<body><h1>需要多因素验证</h1>
+<form action="/mfa-complete" method="get">
+<label>安全代码<input aria-label="安全代码" name="otp" type="password" autocomplete="one-time-code"></label>
+<button type="submit" aria-label="继续">继续</button>
+</form></body></html>"""
+            return body.encode("utf-8")
+        elif mode == "credential":
             fields = """
 <label>客户名称<input aria-label="客户名称" type="text" autocomplete="off"></label>
-<label>安全代码<input aria-label="安全代码" name="customer" type="password" autocomplete="one-time-code"></label>
+<label>安全代码<input aria-label="安全代码" name="customer" type="password" autocomplete="current-password"></label>
 <label>备注<textarea aria-label="备注"></textarea></label>"""
             button = "搜索订单"
         else:
@@ -240,6 +264,7 @@ class WindowsInteractiveUserBrowserSemanticGroundingE2ETests(unittest.TestCase):
         server.unauthorized_requests = 0  # type: ignore[attr-defined]
         server.enable_drift = False  # type: ignore[attr-defined]
         server.drift_applied = 0  # type: ignore[attr-defined]
+        server.mfa_completions = 0  # type: ignore[attr-defined]
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         return server, thread
@@ -404,6 +429,143 @@ class WindowsInteractiveUserBrowserSemanticGroundingE2ETests(unittest.TestCase):
                 time.sleep(0.03)
         return result, trace
 
+    @staticmethod
+    def _human_type_otp_and_submit(fixture) -> None:
+        fixture.activate()
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.keybd_event.argtypes = [wintypes.BYTE, wintypes.BYTE, wintypes.DWORD, ctypes.c_size_t]
+        user32.keybd_event.restype = None
+        key_up = 0x0002
+        keys = [0x09, *[0x30 + int(char) for char in _OTP], 0x0D]
+        for key in keys:
+            user32.keybd_event(key, 0, 0, 0)
+            user32.keybd_event(key, 0, key_up, 0)
+            time.sleep(0.03)
+
+    def test_one_time_code_waits_for_user_without_model_or_body_action_then_resumes_same_work(self) -> None:
+        self._require_input_desktop()
+        env = self._make_runtime("sensitive")
+        try:
+            event_id = self._start_work(env, "otp")
+            resident = env["resident"]
+            deadline = time.monotonic() + 12
+            while time.monotonic() < deadline:
+                resident.live_once()
+                state = resident.store.get_working_state()
+                if state.blocked_by == "user_presence_required":
+                    break
+                time.sleep(0.03)
+            state = resident.store.get_working_state()
+            self.assertEqual(state.current_event_id, event_id)
+            self.assertEqual(state.stage, "native_investigation")
+            self.assertEqual(state.blocked_by, "user_presence_required")
+            blocker = state.data[resident._USER_PRESENCE_BLOCKER_STATE_KEY]
+            authorization = resident.user_browser_extension.authorized_tab()
+            self.assertEqual(blocker["kind"], "one_time_code")
+            self.assertEqual(blocker["tab_id"], authorization.tab_id)
+            self.assertEqual(blocker["attached_at"], authorization.attached_at)
+            self.assertEqual(set(blocker), {"kind", "tab_id", "attached_at", "origin", "detected_at", "resume_phase"})
+
+            calls_at_block = env["cognition"].calls
+            self.assertEqual(calls_at_block, 1)
+            actions_at_block = [a for a in resident.body.recent_actions(512) if a.event_id == event_id]
+            self.assertEqual(actions_at_block, [])
+            self.assertNotIn('"name": "安全代码"', "\n".join(env["cognition"].questions))
+            progress = env["rpc"].handle({
+                "id": "progress-otp",
+                "method": "work_progress",
+                "params": {"thread_id": "semantic-browser-otp", "event_id": event_id},
+            })["result"]["progress"]
+            self.assertEqual(progress["stage"], "waiting_for_user")
+            self.assertEqual(progress["blocked_by"], "user_presence_required")
+            self.assertFalse(progress["terminal"])
+            for _ in range(3):
+                resident.live_once()
+            self.assertEqual(env["cognition"].calls, calls_at_block)
+            self.assertEqual([a for a in resident.body.recent_actions(512) if a.event_id == event_id], [])
+
+            sense = resident._extension_user_browser.observe_semantic_candidates()
+            encoded_sense = json.dumps(sense, ensure_ascii=False, sort_keys=True)
+            self.assertNotIn(_OTP, encoded_sense)
+            otp_candidates = [item for item in sense["candidates"] if item.get("sensitive_kind") == "one_time_code"]
+            self.assertEqual(len(otp_candidates), 1)
+            self.assertEqual(otp_candidates[0]["text_length"], 0)
+
+            self._human_type_otp_and_submit(env["fixture"])
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                if int(env["server"].mfa_completions) == 1:  # type: ignore[attr-defined]
+                    break
+                time.sleep(0.05)
+            self.assertEqual(int(env["server"].mfa_completions), 1)  # type: ignore[attr-defined]
+
+            result, trace = self._run_to_terminal(env, event_id)
+            self.assertIsNotNone(result, json.dumps(trace[-20:], ensure_ascii=False, default=str))
+            self.assertTrue(result.success, result.reason)
+            self.assertEqual(result.response, f"{_TEXT}: {_STATUS}")
+            authorization_after = resident.user_browser_extension.authorized_tab()
+            self.assertEqual(authorization_after.tab_id, authorization.tab_id)
+            self.assertEqual(authorization_after.attached_at, authorization.attached_at)
+            self.assertEqual(env["server"].result_queries["authorized"], [_TEXT])  # type: ignore[attr-defined]
+
+            final_state = resident.store.get_working_state()
+            all_actions = [a for a in resident.body.recent_actions(512) if a.event_id == event_id]
+            secret_surfaces = [
+                "\n".join(env["cognition"].questions),
+                json.dumps(final_state.data, ensure_ascii=False, default=str),
+                json.dumps(progress, ensure_ascii=False, default=str),
+                repr(all_actions),
+            ]
+            for surface in secret_surfaces:
+                self.assertNotIn(_OTP, surface)
+            db_path = Path(env["runtime_tmp"].name) / "kernel.db"
+            with sqlite3.connect(db_path) as conn:
+                work_messages = conn.execute(
+                    "SELECT text, detail_json FROM work_messages WHERE thread_id=? ORDER BY created_at",
+                    ("semantic-browser-otp",),
+                ).fetchall()
+            self.assertNotIn(_OTP, json.dumps(work_messages, ensure_ascii=False, default=str))
+            db_bytes = db_path.read_bytes()
+            self.assertNotIn(_OTP.encode("utf-8"), db_bytes)
+        finally:
+            self._close_runtime(env)
+
+    def test_user_presence_reauthorization_generation_change_fails_closed(self) -> None:
+        self._require_input_desktop()
+        env = self._make_runtime("sensitive")
+        try:
+            event_id = self._start_work(env, "otp-reauthorize")
+            resident = env["resident"]
+            deadline = time.monotonic() + 12
+            while time.monotonic() < deadline:
+                resident.live_once()
+                if resident.store.get_working_state().blocked_by == "user_presence_required":
+                    break
+                time.sleep(0.03)
+            original = resident.user_browser_extension.authorized_tab()
+            env["fixture"].activate()
+            _press_extension_action_shortcut()
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and resident.user_browser_extension_status().get("authorized"):
+                time.sleep(0.05)
+            env["fixture"].activate()
+            _press_extension_action_shortcut()
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                current = resident.user_browser_extension.authorized_tab()
+                if current is not None and current.attached_at != original.attached_at:
+                    break
+                time.sleep(0.05)
+            current = resident.user_browser_extension.authorized_tab()
+            self.assertIsNotNone(current)
+            self.assertNotEqual(current.attached_at, original.attached_at)
+            result, trace = self._run_to_terminal(env, event_id, timeout=10)
+            self.assertIsNotNone(result, json.dumps(trace[-12:], ensure_ascii=False, default=str))
+            self.assertFalse(result.success)
+            self.assertEqual([a for a in resident.body.recent_actions(512) if a.event_id == event_id], [])
+        finally:
+            self._close_runtime(env)
+
     def test_ordinary_goal_regrounds_after_semantic_label_and_node_drift_then_verifies_result(self) -> None:
         self._require_input_desktop()
         env = self._make_runtime("drift")
@@ -490,11 +652,11 @@ class WindowsInteractiveUserBrowserSemanticGroundingE2ETests(unittest.TestCase):
         finally:
             self._close_runtime(env)
 
-    def test_sensitive_semantic_target_cannot_be_selected_by_model(self) -> None:
+    def test_non_otp_sensitive_credential_remains_ineligible_for_autonomous_entry(self) -> None:
         self._require_input_desktop()
-        env = self._make_runtime("sensitive")
+        env = self._make_runtime("credential")
         try:
-            event_id = self._start_work(env, "sensitive")
+            event_id = self._start_work(env, "credential")
             result, trace = self._run_to_terminal(env, event_id)
             self.assertIsNotNone(result, json.dumps(trace[-12:], ensure_ascii=False, default=str))
             self.assertFalse(result.success)

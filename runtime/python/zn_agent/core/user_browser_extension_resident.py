@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
@@ -46,6 +47,7 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
 
     _NATURAL_SEARCH_STATE_KEY = "resident_user_browser_natural_search"
     _SEMANTIC_LOOKUP_STATE_KEY = "resident_user_browser_semantic_lookup"
+    _USER_PRESENCE_BLOCKER_STATE_KEY = "resident_user_browser_user_presence_blocker"
     _MAX_SEMANTIC_REGROUNDS = 3
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
@@ -258,6 +260,9 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
         readiness,
         thought=None,
     ):
+        blocker = state.data.get(self._USER_PRESENCE_BLOCKER_STATE_KEY)
+        if isinstance(blocker, dict):
+            return self._user_presence_wait_step(event, state, blocker)
         if self.user_browser_extension.authorized_tab() is None:
             return self._fail_composite_goal_investigation(
                 event,
@@ -275,6 +280,8 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
         if phase == "ground_input":
             try:
                 sense = self._extension_user_browser.observe_semantic_candidates()
+                if self._user_presence_blocker_from_sense(sense):
+                    return self._park_for_user_presence(event, state, sense, resume_phase="ground_input")
                 grounded = self._ground_semantic_input(event, goal, sense)
             except Exception as exc:
                 return self._fail_composite_goal_investigation(
@@ -305,6 +312,8 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
         if phase == "ground_button":
             try:
                 sense = self._extension_user_browser.observe_semantic_candidates()
+                if self._user_presence_blocker_from_sense(sense):
+                    return self._park_for_user_presence(event, state, sense, resume_phase="ground_button")
                 grounded = self._ground_semantic_button(event, goal, sense)
             except Exception as exc:
                 return self._fail_composite_goal_investigation(
@@ -334,6 +343,13 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
 
         if phase == "verify_result":
             try:
+                sense = self._extension_user_browser.observe_semantic_candidates()
+                if self._user_presence_blocker_from_sense(sense):
+                    return self._park_for_user_presence(event, state, sense, resume_phase="verify_result")
+                if sense.get("truncated") is True:
+                    raise UserBrowserExtensionRelayError(
+                        "fresh result-page Sense was truncated, so a user-presence blocker cannot be excluded"
+                    )
                 observed = self._extension_user_browser.observe_anchor_context(goal["subject_value"])
                 expected_url = str(semantic.get("expected_url") or "").strip()
                 if not expected_url or observed["url"] != expected_url:
@@ -374,6 +390,153 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
             state,
             reason="semantic browser task lost its bounded investigation phase; no side effect attempted",
         )
+
+    @staticmethod
+    def _user_presence_blocker_from_sense(sense: dict[str, Any]) -> bool:
+        return any(
+            item.get("role") == "textbox"
+            and item.get("sensitive") is True
+            and item.get("sensitive_kind") == "one_time_code"
+            and item.get("visible") is True
+            and item.get("enabled") is True
+            for item in list(sense.get("candidates") or [])
+            if isinstance(item, dict)
+        )
+
+    @staticmethod
+    def _user_presence_origin(url: Any) -> str:
+        parsed = urlsplit(str(url or "").strip())
+        if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+            raise UserBrowserExtensionRelayError(
+                "user-presence handoff left the permitted HTTP(S) origin boundary"
+            )
+        return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+
+    def _park_for_user_presence(
+        self,
+        event,
+        state,
+        sense: dict[str, Any],
+        *,
+        resume_phase: str,
+    ):
+        authorized = self.user_browser_extension.authorized_tab()
+        if authorized is None or int(sense.get("tab_id") or 0) != authorized.tab_id:
+            return self._fail_composite_goal_investigation(
+                event,
+                state,
+                reason="OTP blocker evidence did not belong to the currently authorized tab",
+            )
+        if resume_phase not in {"ground_input", "ground_button", "verify_result"}:
+            return self._fail_composite_goal_investigation(
+                event,
+                state,
+                reason="OTP blocker had no bounded semantic resume phase",
+            )
+        state.data[self._USER_PRESENCE_BLOCKER_STATE_KEY] = {
+            "kind": "one_time_code",
+            "tab_id": authorized.tab_id,
+            "attached_at": authorized.attached_at,
+            "origin": self._user_presence_origin(sense.get("url")),
+            "detected_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "resume_phase": resume_phase,
+        }
+        # The dispatch state remains native_investigation; blocked_by is the durable
+        # user-presence gate and Work progress projects it as waiting_for_user.
+        state.stage = "native_investigation"
+        state.blocked_by = "user_presence_required"
+        state.next_action = (
+            "请在当前已授权浏览器标签页完成一次性验证码/多因素验证。"
+            "ZN 不会读取或输入验证码；完成后会重新读取页面并继续当前任务。"
+        )
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        return None
+
+    def _user_presence_wait_step(self, event, state, blocker: dict[str, Any]):
+        authorized = self.user_browser_extension.authorized_tab()
+        if authorized is None:
+            return self._fail_composite_goal_investigation(
+                event, state, reason="authorized browser tab was revoked during user-presence handoff"
+            )
+        if (
+            authorized.tab_id != int(blocker.get("tab_id") or 0)
+            or authorized.attached_at != str(blocker.get("attached_at") or "")
+        ):
+            return self._fail_composite_goal_investigation(
+                event,
+                state,
+                reason=(
+                    "browser authorization changed during user-presence handoff; "
+                    "ZN will not transfer the pending Work to another tab or authorization generation"
+                ),
+            )
+        self._adopt_authorized_extension_browser()
+        try:
+            sense = self._extension_user_browser.observe_semantic_candidates()
+        except Exception as exc:
+            return self._fail_composite_goal_investigation(
+                event,
+                state,
+                reason=f"fresh Sense during user-presence handoff failed closed: {type(exc).__name__}: {exc}",
+            )
+        authorized_after = self.user_browser_extension.authorized_tab()
+        if (
+            authorized_after is None
+            or authorized_after.tab_id != authorized.tab_id
+            or authorized_after.attached_at != authorized.attached_at
+            or int(sense.get("tab_id") or 0) != authorized.tab_id
+        ):
+            return self._fail_composite_goal_investigation(
+                event, state, reason="browser authorization changed while re-sensing after user presence"
+            )
+        try:
+            current_origin = self._user_presence_origin(sense.get("url"))
+        except Exception as exc:
+            return self._fail_composite_goal_investigation(
+                event, state, reason=f"user-presence origin verification failed: {type(exc).__name__}: {exc}"
+            )
+        if current_origin != str(blocker.get("origin") or ""):
+            return self._fail_composite_goal_investigation(
+                event, state, reason="user-presence handoff crossed the original authorized origin"
+            )
+        if self._user_presence_blocker_from_sense(sense) or sense.get("truncated") is True:
+            state.stage = "native_investigation"
+            state.blocked_by = "user_presence_required"
+            state.next_action = (
+                "请在当前已授权浏览器标签页完成一次性验证码/多因素验证。"
+                "ZN 不会读取或输入验证码；完成后会重新读取页面并继续当前任务。"
+            )
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return None
+
+        raw_semantic = state.data.get(self._SEMANTIC_LOOKUP_STATE_KEY)
+        semantic = dict(raw_semantic) if isinstance(raw_semantic, dict) else {"regrounds": 0}
+        resume_phase = str(blocker.get("resume_phase") or "")
+        semantic = self._resume_phase_after_user_presence(semantic, resume_phase)
+        state.data[self._SEMANTIC_LOOKUP_STATE_KEY] = semantic
+        state.data.pop(self._USER_PRESENCE_BLOCKER_STATE_KEY, None)
+        state.blocked_by = None
+        state.stage = "native_investigation"
+        state.next_action = "freshly re-sense and re-ground the authorized page after user presence"
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        # Resume deliberately stops here; the next Resident pulse performs a new Sense.
+        return None
+
+    @staticmethod
+    def _resume_phase_after_user_presence(
+        semantic: dict[str, Any], resume_phase: str
+    ) -> dict[str, Any]:
+        if resume_phase not in {"ground_input", "ground_button", "verify_result"}:
+            raise UserBrowserExtensionRelayError("invalid semantic phase after user presence")
+        preserved: dict[str, Any] = {"phase": resume_phase, "regrounds": int(semantic.get("regrounds") or 0)}
+        if resume_phase == "verify_result":
+            expected_url = str(semantic.get("expected_url") or "").strip()
+            if expected_url:
+                preserved["expected_url"] = expected_url
+        return preserved
 
     def _ground_semantic_input(
         self,
