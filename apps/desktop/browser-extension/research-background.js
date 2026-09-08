@@ -22,10 +22,9 @@ function boundedControlFree(value, limit) {
 
 function causalPopupWatcher(rootTabId, expectedUrl) {
   let actionWindowOpen = false
-  let unrelatedCreatedCount = 0
   let rootRemoved = false
   let rootReplaced = false
-  const causalTabs = []
+  const createdTabIds = []
   const removedTabs = new Set()
   const replacedTabs = new Set()
   const windowOpenEvents = []
@@ -34,11 +33,7 @@ function causalPopupWatcher(rootTabId, expectedUrl) {
     if (!actionWindowOpen) return
     const createdId = Number(tab?.id || 0)
     if (!Number.isInteger(createdId) || createdId <= 0 || createdId === rootTabId) return
-    if (Number(tab?.openerTabId || 0) === rootTabId) {
-      causalTabs.push({ tabId: createdId, openerTabId: rootTabId })
-    } else {
-      unrelatedCreatedCount += 1
-    }
+    if (!createdTabIds.includes(createdId)) createdTabIds.push(createdId)
   }
   const onRemoved = tabId => {
     if (!actionWindowOpen) return
@@ -75,8 +70,7 @@ function causalPopupWatcher(rootTabId, expectedUrl) {
     closeActionWindow() { actionWindowOpen = false },
     snapshot() {
       return {
-        causalTabs: causalTabs.slice(),
-        unrelatedCreatedCount,
+        createdTabIds: createdTabIds.slice(),
         rootRemoved,
         rootReplaced,
         removedTabs: new Set(removedTabs),
@@ -93,51 +87,125 @@ function causalPopupWatcher(rootTabId, expectedUrl) {
   }
 }
 
+async function classifyFreshActionWindowTabs(state, rootTabId) {
+  const causalTabs = []
+  const unrelatedTabs = []
+  const unresolvedTabs = []
+  for (const rawId of state.createdTabIds || []) {
+    const tabId = Number(rawId || 0)
+    if (!Number.isInteger(tabId) || tabId <= 0 || tabId === rootTabId) continue
+    if (state.removedTabs.has(tabId) || state.replacedTabs.has(tabId)) {
+      unresolvedTabs.push(tabId)
+      continue
+    }
+    let tab
+    try {
+      tab = await chrome.tabs.get(tabId)
+    } catch {
+      unresolvedTabs.push(tabId)
+      continue
+    }
+    const openerTabId = Number(tab?.openerTabId || 0)
+    if (openerTabId === rootTabId) {
+      causalTabs.push({ tabId, openerTabId: rootTabId })
+    } else if (openerTabId > 0) {
+      unrelatedTabs.push({ tabId, openerTabId })
+    } else {
+      unresolvedTabs.push(tabId)
+    }
+  }
+  return { causalTabs, unrelatedTabs, unresolvedTabs }
+}
+
 async function waitForCausalChildOrSameTab(watcher, rootTabId, expectedUrl) {
   const deadline = Date.now() + 3000
   let stableSince = 0
+  let lastClassification = { causalTabs: [], unrelatedTabs: [], unresolvedTabs: [] }
   while (Date.now() < deadline) {
     const state = watcher.snapshot()
     if (state.rootRemoved || state.rootReplaced) {
       throw new Error('root tab disappeared or was replaced during causal popup action')
     }
-    if (state.causalTabs.length > 1) {
-      throw new Error('multiple root-opener child tabs were created by one action; refusing ambiguity')
-    }
     if (state.windowOpenEvents.length > 1) {
       throw new Error('multiple root Page.windowOpen events occurred in one action; refusing ambiguity')
     }
+    if (state.windowOpenEvents.length === 1 && state.windowOpenEvents[0].matchesExpected !== true) {
+      throw new Error('root Page.windowOpen URL did not match the expected child contract')
+    }
+
+    lastClassification = await classifyFreshActionWindowTabs(state, rootTabId)
+    if (lastClassification.causalTabs.length > 1) {
+      throw new Error('multiple freshly proven root-opener child tabs were created by one action; refusing ambiguity')
+    }
     if (
-      state.causalTabs.length === 1 &&
+      lastClassification.causalTabs.length === 1 &&
+      lastClassification.unresolvedTabs.length === 0 &&
       state.windowOpenEvents.length === 1 &&
       state.windowOpenEvents[0].matchesExpected === true
     ) {
-      const child = state.causalTabs[0]
+      const child = lastClassification.causalTabs[0]
       if (child.tabId === rootTabId || state.removedTabs.has(child.tabId) || state.replacedTabs.has(child.tabId)) {
         throw new Error('causal child identity disappeared or was replaced before evidence completed')
       }
       if (!stableSince) stableSince = Date.now()
-      if (Date.now() - stableSince >= 120) return { kind: 'causal_child', child, state }
+      if (Date.now() - stableSince >= 120) {
+        return {
+          kind: 'causal_child',
+          child,
+          state: {
+            ...state,
+            causalTabs: lastClassification.causalTabs.slice(),
+            unrelatedCreatedCount: lastClassification.unrelatedTabs.length
+          }
+        }
+      }
     } else {
       stableSince = 0
     }
 
-    if (state.causalTabs.length === 0 && state.windowOpenEvents.length === 0) {
+    if (
+      lastClassification.causalTabs.length === 0 &&
+      lastClassification.unresolvedTabs.length === 0 &&
+      state.windowOpenEvents.length === 0
+    ) {
       try {
         const root = await currentTabEvidence(rootTabId)
-        if (root.url === expectedUrl) return { kind: 'same_tab', root, state }
+        if (root.url === expectedUrl) {
+          return {
+            kind: 'same_tab',
+            root,
+            state: {
+              ...state,
+              causalTabs: [],
+              unrelatedCreatedCount: lastClassification.unrelatedTabs.length
+            }
+          }
+        }
       } catch {
         // A transient navigation state is not success; keep waiting for fresh evidence.
       }
     }
     await sleep(20)
   }
+
   const state = watcher.snapshot()
-  if (state.windowOpenEvents.length === 1 && state.windowOpenEvents[0].url !== expectedUrl) {
+  lastClassification = await classifyFreshActionWindowTabs(state, rootTabId)
+  if (state.windowOpenEvents.length === 1 && state.windowOpenEvents[0].matchesExpected !== true) {
     throw new Error('root Page.windowOpen URL did not match the expected child contract')
   }
+  if (lastClassification.unresolvedTabs.length > 0) {
+    throw new Error(
+      `action-window tab creation remained unresolved after fresh opener re-read; created=${state.createdTabIds.length} unresolved=${lastClassification.unresolvedTabs.length} window_open=${state.windowOpenEvents.length}`
+    )
+  }
+  if (lastClassification.causalTabs.length === 1 && state.windowOpenEvents.length === 0) {
+    throw new Error('one fresh root-opener child was proven but root Page.windowOpen corroboration was not observed')
+  }
+  if (lastClassification.causalTabs.length === 0 && state.windowOpenEvents.length === 1) {
+    throw new Error('root Page.windowOpen was observed but no freshly re-read root-opener child was proven')
+  }
   throw new Error(
-    'neither exact same-tab navigation nor one exact root-opener child was proven inside the action window'
+    `neither exact same-tab navigation nor one exact root-opener child was proven inside the action window; created=${state.createdTabIds.length} causal=${lastClassification.causalTabs.length} unrelated=${lastClassification.unrelatedTabs.length} window_open=${state.windowOpenEvents.length}`
   )
 }
 
