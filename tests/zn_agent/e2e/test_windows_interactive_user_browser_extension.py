@@ -31,6 +31,7 @@ _HOST = "zn-extension-e2e.test"
 _SESSION_COOKIE_NAME = "zn_existing_session"
 _SESSION_COOKIE_VALUE = "already-authenticated-before-zn"
 _SESSION_COOKIE = f"{_SESSION_COOKIE_NAME}={_SESSION_COOKIE_VALUE}"
+_EDGE_DEV_MODE_WARNING_SNOOZE_END_TIME = "99999999999000000"
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -118,7 +119,39 @@ class _ExtensionBrowserFixture(_IsolatedUserBrowserFixture):
         self.url = str(url)
         self.extension = Path(extension).resolve()
 
+    def _prepare_edge_extension_profile(self) -> None:
+        if self.provider != "edge":
+            return
+        default_profile = self.profile / "Default"
+        default_profile.mkdir(parents=True, exist_ok=True)
+        preferences_path = default_profile / "Preferences"
+        preferences: dict[str, object] = {}
+        if preferences_path.is_file():
+            try:
+                loaded = json.loads(preferences_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise RuntimeError(
+                    "isolated Edge extension profile has unreadable Preferences"
+                ) from exc
+            if isinstance(loaded, dict):
+                preferences = loaded
+
+        extensions = preferences.get("extensions")
+        if not isinstance(extensions, dict):
+            extensions = {}
+            preferences["extensions"] = extensions
+        ui = extensions.get("ui")
+        if not isinstance(ui, dict):
+            ui = {}
+            extensions["ui"] = ui
+        ui["dev_mode_warning_snooze_end_time"] = _EDGE_DEV_MODE_WARNING_SNOOZE_END_TIME
+        preferences_path.write_text(
+            json.dumps(preferences, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+
     def start(self) -> None:
+        self._prepare_edge_extension_profile()
         args = [
             str(self.executable),
             f"--user-data-dir={self.profile}",
@@ -183,6 +216,27 @@ class WindowsInteractiveUserBrowserExtensionE2ETests(unittest.TestCase):
     @staticmethod
     def _require_input_desktop() -> None:
         WindowsInteractiveUserBrowserBridgeProviderE2ETests._require_input_desktop()
+
+    def test_edge_fixture_snoozes_developer_mode_warning_in_ephemeral_profile(self) -> None:
+        repo_root = Path(__file__).resolve().parents[3]
+        extension = repo_root / "apps" / "desktop" / "browser-extension"
+        fixture = _ExtensionBrowserFixture(
+            "edge",
+            Path("msedge.exe"),
+            "http://example.invalid/",
+            extension,
+        )
+        try:
+            fixture._prepare_edge_extension_profile()
+            preferences_path = fixture.profile / "Default" / "Preferences"
+            preferences = json.loads(preferences_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                preferences["extensions"]["ui"]["dev_mode_warning_snooze_end_time"],
+                _EDGE_DEV_MODE_WARNING_SNOOZE_END_TIME,
+            )
+            self.assertTrue(str(preferences_path).startswith(str(fixture.root)))
+        finally:
+            fixture.close()
 
     def test_existing_authenticated_session_completes_normal_named_text_task(self) -> None:
         self._require_input_desktop()
