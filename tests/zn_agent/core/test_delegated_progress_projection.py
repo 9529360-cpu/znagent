@@ -5,12 +5,15 @@ import json
 import tempfile
 import unittest
 from contextlib import closing
+from datetime import datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from zn_agent.core.daemon import ResidentRpcServer
+from zn_agent.core.evidence_bound_work import WorkerContextPack
 from zn_agent.core.provider_bridge import build_resident_runtime
-from zn_agent.core.work_restore_control import RestoreAwareWorkControl
 from zn_agent.core.recovery_bounded_work import RecoveryBoundedWorkLedger
+from zn_agent.core.work_restore_control import RestoreAwareWorkControl
 from zn_agent.core.worker_progress import record_worker_progress
 
 
@@ -58,6 +61,12 @@ class DelegatedProgressProjectionTests(unittest.TestCase):
             )
             conn.commit()
 
+    def _make_thread_yesterday(self) -> None:
+        thread = self.ledger.get_thread("delegated-progress")
+        assert thread is not None
+        thread.updated_at = (datetime.now().astimezone() - timedelta(days=1)).isoformat()
+        self.ledger._save_thread(thread)
+
     def test_running_delegation_projects_bounded_current_progress(self) -> None:
         research_child, research = self._child_run("research")
         self.ledger.complete_worker_run(
@@ -94,11 +103,23 @@ class DelegatedProgressProjectionTests(unittest.TestCase):
     def test_internal_fields_context_and_raw_errors_never_leak(self) -> None:
         _, run = self._child_run("coding")
         secret_context = "SECRET-CONTEXT-CONTENT"
+        context_pack = WorkerContextPack(
+            root_goal_summary=secret_context,
+            work_item_objective="SECRET-WORK-OBJECTIVE",
+            acceptance_criteria=("SECRET-ACCEPTANCE",),
+            plan_version=1,
+            relevant_evidence=({"private": "SECRET-EVIDENCE"},),
+            artifact_refs=({"path": "SECRET-ARTIFACT"},),
+            tool_scope=("SECRET-TOOL",),
+            authority_scope=("SECRET-AUTHORITY",),
+            forbidden_actions=("SECRET-FORBIDDEN",),
+            expected_result_schema={"private": "SECRET-SCHEMA"},
+        )
         record_worker_progress(
             self.ledger,
             run.worker_run_id,
             stage="context_bound",
-            evidence={"private_text": secret_context},
+            evidence=context_pack.to_dict(),
         )
         with self.ledger._lock, closing(self.ledger._connect()) as conn:
             conn.execute(
@@ -122,7 +143,15 @@ class DelegatedProgressProjectionTests(unittest.TestCase):
             "SECRET-ROUTE",
             "SECRET-PROVIDER",
             "SECRET-ERROR",
-            secret_context,
+            "SECRET-CONTEXT-CONTENT",
+            "SECRET-WORK-OBJECTIVE",
+            "SECRET-ACCEPTANCE",
+            "SECRET-EVIDENCE",
+            "SECRET-ARTIFACT",
+            "SECRET-TOOL",
+            "SECRET-AUTHORITY",
+            "SECRET-FORBIDDEN",
+            "SECRET-SCHEMA",
             "fingerprint",
             "tool_scope",
             "authority_scope",
@@ -150,17 +179,21 @@ class DelegatedProgressProjectionTests(unittest.TestCase):
 
     def test_steering_marks_old_plan_worker_superseded_not_running(self) -> None:
         _, old = self._child_run("coding")
-        self.ledger._set_plan_version("delegated-progress", 2)
-        self.ledger.reconcile_stale_worker_runs(thread_id="delegated-progress")
+        self._make_thread_yesterday()
+        self.ledger.create_thread(thread_id="steering-ui", title="New work")
+
+        _, new_event = self.control.start(
+            "steering-ui",
+            "昨天那个继续。登录先别做，先把核心记账跑起来，界面简单一点。",
+        )
         old_after = self.ledger.worker_run(old.worker_run_id)
         assert old_after is not None
         self.assertEqual(old_after.state, "stale")
+        self.assertEqual(self.ledger.plan_version("delegated-progress"), 2)
 
-        current_root = self.ledger.work_item_for_event(self.event_id)
+        current_root = self.ledger.work_item_for_event(new_event.event_id)
         assert current_root is not None
-        current_root.plan_version = 2
-        current_root.status = "running"
-        self.ledger._save_item(current_root)
+        self.assertEqual(current_root.plan_version, 2)
         self.root = current_root
         _, current = self._child_run("coding")
         record_worker_progress(
@@ -170,10 +203,8 @@ class DelegatedProgressProjectionTests(unittest.TestCase):
             evidence={"plan": 2},
         )
 
-        progress = self.ledger.progress("delegated-progress", self.event_id)
-        progress["current_plan_version"] = 2
-        projection = self.control._delegation_projection("delegated-progress", progress)
-        assert projection is not None
+        projection = self.control.progress("delegated-progress", new_event.event_id)["delegation"]
+        self.assertEqual(projection["plan_version"], 2)
         self.assertEqual(projection["current_phase"], "coding")
         self.assertEqual(projection["counts"]["running"], 1)
         self.assertGreaterEqual(projection["counts"]["superseded"], 1)
@@ -236,9 +267,15 @@ class DelegatedProgressProjectionTests(unittest.TestCase):
         before_plan = self.ledger.plan_version("delegated-progress")
         before_events = len(self.resident.store.list_events(limit=256))
 
-        for _ in range(3):
-            projection = self.control.progress("delegated-progress", self.event_id)["delegation"]
-            self.assertEqual(projection["current_phase"], "research")
+        with (
+            patch.object(self.resident.kernel, "run_goal", wraps=self.resident.kernel.run_goal) as provider_call,
+            patch.object(self.resident, "live_once", wraps=self.resident.live_once) as resident_dispatch,
+        ):
+            for _ in range(3):
+                projection = self.control.progress("delegated-progress", self.event_id)["delegation"]
+                self.assertEqual(projection["current_phase"], "research")
+            provider_call.assert_not_called()
+            resident_dispatch.assert_not_called()
 
         after_runs = [
             (item.worker_run_id, item.state, item.plan_version, dict(item.metrics))
