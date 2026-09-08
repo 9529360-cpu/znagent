@@ -8,6 +8,7 @@ from typing import Any
 
 from .models import ResidentRunResult, utc_now
 from .work import ResidentWorkLedger, WorkMessage, WorkRun, _event_message_id
+from .worker_progress import progress_snapshot
 
 
 class ResidentWorkControl:
@@ -20,6 +21,18 @@ class ResidentWorkControl:
     restart cannot lose Work ownership or reinterpret a durable cancelled
     outcome as an ordinary failed Work result.
     """
+
+    _DELEGATED_KINDS = frozenset({"research", "coding", "review"})
+    _DELEGATED_STAGE_MAP = {
+        "worker_started": "starting",
+        "context_bound": "preparing",
+        "provider_result_persisted": "result_ready",
+        "provider_result_observed": "result_ready",
+        "effect_started": "acting",
+        "effect_observed": "verifying",
+        "effect_verified": "verified",
+    }
+    _DELEGATED_PHASE_LIMIT = 32
 
     def __init__(self, ledger: ResidentWorkLedger):
         self.ledger = ledger
@@ -177,6 +190,154 @@ class ResidentWorkControl:
         thread.metadata = metadata
         return thread, messages
 
+    @classmethod
+    def _delegated_kind(cls, value: object) -> str:
+        kind = str(value or "").strip().lower()
+        return kind if kind in cls._DELEGATED_KINDS else "work"
+
+    @classmethod
+    def _delegated_phase(cls, run, *, current_plan_version: int) -> dict[str, Any]:
+        state = str(getattr(run, "state", "") or "").strip().lower()
+        try:
+            run_version = int(getattr(run, "plan_version", 0) or 0)
+        except (TypeError, ValueError):
+            run_version = 0
+        current = run_version == current_plan_version
+        snapshot: dict[str, Any] = {}
+
+        if not current or state == "stale":
+            status = "superseded"
+            stage = "superseded"
+        elif state == "completed":
+            status = "completed"
+            stage = "completed"
+        elif state == "failed":
+            status = "failed"
+            stage = "failed"
+        elif state == "queued":
+            status = "pending"
+            stage = "waiting"
+        elif state == "running":
+            status = "running"
+            snapshot = progress_snapshot(run)
+            internal_stage = str(snapshot.get("stage") or "").strip().lower()
+            stage = (
+                "starting"
+                if not internal_stage
+                else cls._DELEGATED_STAGE_MAP.get(internal_stage, "working")
+            )
+        else:
+            status = "pending"
+            stage = "working"
+
+        updated_at = (
+            getattr(run, "finished_at", None)
+            if status in {"completed", "failed", "superseded"}
+            else snapshot.get("last_progress_at") if snapshot else None
+        ) or getattr(run, "started_at", None)
+        phase = {
+            "kind": cls._delegated_kind(getattr(run, "executor_kind", None)),
+            "status": status,
+            "stage": stage,
+        }
+        if updated_at:
+            phase["updated_at"] = str(updated_at)
+        return phase
+
+    def _delegation_projection(
+        self,
+        thread_id: str,
+        progress: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Project durable WorkerRuns into a bounded privacy-safe user view.
+
+        This path is observation only. It never records a heartbeat, changes a
+        WorkerRun/WorkItem, invokes a provider, dispatches Body work, or creates
+        progress persistence. The projection intentionally copies only a small
+        allowlist and never exposes WorkerRun identity, route/provider data,
+        scopes, metrics/fingerprints, context packs, artifacts, results, or raw
+        errors.
+        """
+
+        list_worker_runs = getattr(self.ledger, "list_worker_runs", None)
+        if not callable(list_worker_runs):
+            return None
+        try:
+            current_plan_version = int(progress.get("current_plan_version") or 0)
+        except (TypeError, ValueError):
+            return None
+        if current_plan_version < 1:
+            return None
+
+        runs = list_worker_runs(thread_id=thread_id, limit=256)
+        if not runs:
+            return None
+
+        counts = {
+            "pending": 0,
+            "running": 0,
+            "completed": 0,
+            "failed": 0,
+            "superseded": 0,
+        }
+        current_phases: list[dict[str, Any]] = []
+        historical_phases: list[dict[str, Any]] = []
+        for run in runs:
+            phase = self._delegated_phase(
+                run,
+                current_plan_version=current_plan_version,
+            )
+            counts[phase["status"]] += 1
+            if phase["status"] == "superseded":
+                historical_phases.append(phase)
+            else:
+                current_phases.append(phase)
+
+        running = [phase for phase in current_phases if phase["status"] == "running"]
+        pending = [phase for phase in current_phases if phase["status"] == "pending"]
+        failed = [phase for phase in current_phases if phase["status"] == "failed"]
+        completed = [phase for phase in current_phases if phase["status"] == "completed"]
+        if running:
+            status = "running"
+            current_phase = running[-1]["kind"]
+        elif pending:
+            status = "pending"
+            current_phase = pending[0]["kind"]
+        elif failed:
+            status = "failed"
+            current_phase = failed[-1]["kind"]
+        elif completed:
+            status = "completed"
+            current_phase = completed[-1]["kind"]
+        else:
+            status = "superseded"
+            current_phase = None
+
+        phases = current_phases[: self._DELEGATED_PHASE_LIMIT]
+        remaining = self._DELEGATED_PHASE_LIMIT - len(phases)
+        if remaining > 0:
+            phases.extend(historical_phases[-remaining:])
+
+        projection: dict[str, Any] = {
+            "plan_version": current_plan_version,
+            "status": status,
+            "counts": counts,
+            "phases": phases,
+        }
+        if current_phase is not None:
+            projection["current_phase"] = current_phase
+        return projection
+
+    def _with_delegation_projection(
+        self,
+        thread_id: str,
+        progress: dict[str, Any],
+    ) -> dict[str, Any]:
+        delegation = self._delegation_projection(thread_id, progress)
+        if delegation is not None:
+            progress["delegation"] = delegation
+        return progress
+
     def start(self, thread_id: str, task: str, **kwargs):
         self.reconcile_cancelled_runs(thread_id=thread_id)
         return self.ledger.start(thread_id, task, **kwargs)
@@ -211,9 +372,10 @@ class ResidentWorkControl:
                     "error": None,
                 }
             )
-            return progress
+            return self._with_delegation_projection(normalized_thread, progress)
 
-        return self.ledger.progress(normalized_thread, normalized_event)
+        progress = self.ledger.progress(normalized_thread, normalized_event)
+        return self._with_delegation_projection(normalized_thread, progress)
 
     def cancel(
         self,
