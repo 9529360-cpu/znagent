@@ -101,8 +101,20 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 class _ExtensionBrowserFixture(_IsolatedUserBrowserFixture):
-    def __init__(self, provider: str, executable: Path, url: str, extension: Path):
-        super().__init__(provider, executable)
+    def __init__(
+        self,
+        provider: str,
+        executable: Path,
+        url: str,
+        extension: Path,
+        *,
+        window_title_marker: str = _TITLE,
+    ):
+        super().__init__(
+            provider,
+            executable,
+            window_title_marker=window_title_marker,
+        )
         self.url = str(url)
         self.extension = Path(extension).resolve()
 
