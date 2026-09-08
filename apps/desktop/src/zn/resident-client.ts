@@ -32,6 +32,42 @@ export type ZnWorkRecovery = {
   reason?: string
 }
 
+export type ZnDelegatedPhaseKind = 'research' | 'coding' | 'review' | 'work'
+export type ZnDelegatedStatus = 'pending' | 'running' | 'completed' | 'failed' | 'superseded'
+export type ZnDelegatedStage =
+  | 'waiting'
+  | 'starting'
+  | 'preparing'
+  | 'result_ready'
+  | 'acting'
+  | 'verifying'
+  | 'verified'
+  | 'working'
+  | 'completed'
+  | 'failed'
+  | 'superseded'
+
+export type ZnDelegatedPhaseProgress = {
+  kind: ZnDelegatedPhaseKind
+  status: ZnDelegatedStatus
+  stage: ZnDelegatedStage
+  updatedAt?: number
+}
+
+export type ZnDelegatedProgress = {
+  planVersion: number
+  status: ZnDelegatedStatus
+  currentPhase?: ZnDelegatedPhaseKind
+  counts: {
+    pending: number
+    running: number
+    completed: number
+    failed: number
+    superseded: number
+  }
+  phases: ZnDelegatedPhaseProgress[]
+}
+
 export type ZnWorkProgress = {
   eventId: string
   threadId: string
@@ -43,6 +79,7 @@ export type ZnWorkProgress = {
   updatedAt: number
   error?: string
   recovery?: ZnWorkRecovery
+  delegation?: ZnDelegatedProgress
   thought?: {
     at: number
     focus: string
@@ -129,6 +166,15 @@ function timestamp(value: unknown): number {
   return Date.now()
 }
 
+function optionalTimestamp(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return undefined
+}
+
 function role(value: unknown): ZnThreadRole {
   return value === 'user' || value === 'activity' ? value : 'zn'
 }
@@ -163,6 +209,84 @@ function restoreApplicationStatus(value: unknown): ZnRestoreApplicationStatus {
     value === 'blocked'
   ) return value
   return 'blocked'
+}
+
+function delegatedKind(value: unknown): ZnDelegatedPhaseKind {
+  return value === 'research' || value === 'coding' || value === 'review' ? value : 'work'
+}
+
+function delegatedStatus(value: unknown): ZnDelegatedStatus {
+  if (
+    value === 'pending' ||
+    value === 'running' ||
+    value === 'completed' ||
+    value === 'failed' ||
+    value === 'superseded'
+  ) return value
+  return 'pending'
+}
+
+function delegatedStage(value: unknown): ZnDelegatedStage {
+  if (
+    value === 'waiting' ||
+    value === 'starting' ||
+    value === 'preparing' ||
+    value === 'result_ready' ||
+    value === 'acting' ||
+    value === 'verifying' ||
+    value === 'verified' ||
+    value === 'working' ||
+    value === 'completed' ||
+    value === 'failed' ||
+    value === 'superseded'
+  ) return value
+  return 'working'
+}
+
+function boundedCount(value: unknown): number {
+  const count = Number(value)
+  if (!Number.isFinite(count) || count < 0) return 0
+  return Math.min(256, Math.floor(count))
+}
+
+export function normalizeDelegatedProgress(value: unknown): ZnDelegatedProgress | undefined {
+  const item = record(value)
+  if (!item) return undefined
+  const planVersion = Number(item.plan_version ?? item.planVersion)
+  if (!Number.isInteger(planVersion) || planVersion < 1) return undefined
+  const rawCounts = record(item.counts)
+  if (!rawCounts) return undefined
+
+  const rawPhases = Array.isArray(item.phases) ? item.phases.slice(0, 32) : []
+  const phases = rawPhases.flatMap(value => {
+    const phase = record(value)
+    if (!phase || typeof phase.kind !== 'string' || !phase.kind.trim()) return []
+    const updatedAt = optionalTimestamp(phase.updated_at ?? phase.updatedAt)
+    return [{
+      kind: delegatedKind(phase.kind),
+      status: delegatedStatus(phase.status),
+      stage: delegatedStage(phase.stage),
+      ...(updatedAt !== undefined ? { updatedAt } : {})
+    }]
+  })
+  const currentPhaseRaw = item.current_phase ?? item.currentPhase
+  const currentPhase = typeof currentPhaseRaw === 'string' && currentPhaseRaw.trim()
+    ? delegatedKind(currentPhaseRaw)
+    : undefined
+
+  return {
+    planVersion,
+    status: delegatedStatus(item.status),
+    ...(currentPhase ? { currentPhase } : {}),
+    counts: {
+      pending: boundedCount(rawCounts.pending),
+      running: boundedCount(rawCounts.running),
+      completed: boundedCount(rawCounts.completed),
+      failed: boundedCount(rawCounts.failed),
+      superseded: boundedCount(rawCounts.superseded)
+    },
+    phases
+  }
 }
 
 function normalizeRestoreProposal(value: unknown): ZnRestoreProposal | undefined {
@@ -374,6 +498,7 @@ function normalizeWorkProgress(value: unknown): ZnWorkProgress {
   if (!eventId || !threadId) throw new Error('Resident work progress is missing identity')
 
   const recovery = normalizeWorkRecovery(item.recovery)
+  const delegation = normalizeDelegatedProgress(item.delegation)
   const rawThought = record(item.thought)
   const thought = rawThought
     ? {
@@ -419,6 +544,7 @@ function normalizeWorkProgress(value: unknown): ZnWorkProgress {
     updatedAt: timestamp(item.updated_at || item.updatedAt),
     ...(error ? { error } : {}),
     ...(recovery ? { recovery } : {}),
+    ...(delegation ? { delegation } : {}),
     ...(thought ? { thought } : {}),
     ...(investigation ? { investigation } : {}),
     bodyActions

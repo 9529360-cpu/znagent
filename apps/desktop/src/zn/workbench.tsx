@@ -66,6 +66,26 @@ function restoreProposalStatusLabel(status: ZnRestoreProposalStatus): string {
   return 'Restore proposal blocked'
 }
 
+function delegatedKindLabel(kind: string): string {
+  if (kind === 'research') return 'Research'
+  if (kind === 'coding') return 'Coding'
+  if (kind === 'review') return 'Review'
+  return 'Work'
+}
+
+function delegatedStageLabel(stage: string): string {
+  if (stage === 'result_ready') return 'result ready'
+  return stage.replaceAll('_', ' ')
+}
+
+function delegatedStatusMarker(status: string): string {
+  if (status === 'completed') return '✓'
+  if (status === 'running') return '●'
+  if (status === 'failed') return '×'
+  if (status === 'superseded') return '↺'
+  return '○'
+}
+
 function credentialLabel(settings: ZnProviderSettings | null): string {
   if (!settings) return 'Credential status unavailable'
   const { credential } = settings
@@ -626,6 +646,16 @@ export function ZnWorkbench() {
                     <article className="zn-message activity" aria-live="polite">
                       <div className="zn-message-label">Resident progress · {workProgress.status}</div>
                       <div className="zn-message-body">{workProgress.stage} · {workProgress.nextAction || 'continuing work'}</div>
+                      {workProgress.delegation ? (
+                        <div className="zn-activity-detail" aria-label="Delegated work progress">
+                          <div><strong>Delegated work</strong> · {workProgress.delegation.status}</div>
+                          {workProgress.delegation.phases.map((phase, index) => (
+                            <div key={`${phase.kind}-${phase.status}-${phase.updatedAt || 0}-${index}`}>
+                              {delegatedStatusMarker(phase.status)} {delegatedKindLabel(phase.kind)} · {delegatedStageLabel(phase.stage)}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
                       {workProgress.recovery?.replayBlocked ? (
                         <div className="zn-notice">
                           <strong>Outside-world effect is uncertain.</strong> ZN will not replay this action automatically. Stopping this Work prevents further ZN action, but it cannot undo or prove what already happened outside ZN.
