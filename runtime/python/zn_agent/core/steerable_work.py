@@ -28,6 +28,7 @@ class WorkItem:
     plan_version: int
     parent_work_item_id: str | None = None
     acceptance_criteria: list[str] = field(default_factory=list)
+    dependency_ids: list[str] = field(default_factory=list)
     result: str | None = None
     blocker: str | None = None
     created_at: str = field(default_factory=utc_now)
@@ -39,6 +40,8 @@ class SteerableWorkLedger(RecoveryBoundedWorkLedger):
     """Recovery-bounded Work with the smallest steering/versioning extension."""
 
     _ACTIVE_ITEM_STATES = ("proposed", "ready", "running", "blocked")
+    _MAX_DEPENDENCIES = 32
+    _MAX_WORK_ITEM_ID_LENGTH = 200
 
     def __init__(self, resident):
         super().__init__(resident)
@@ -65,6 +68,7 @@ class SteerableWorkLedger(RecoveryBoundedWorkLedger):
                     status TEXT NOT NULL,
                     plan_version INTEGER NOT NULL,
                     acceptance_criteria_json TEXT NOT NULL,
+                    dependency_ids_json TEXT NOT NULL DEFAULT '[]',
                     result TEXT,
                     blocker TEXT,
                     created_at TEXT NOT NULL,
@@ -88,11 +92,66 @@ class SteerableWorkLedger(RecoveryBoundedWorkLedger):
                     ON work_run_plans(work_item_id, plan_version);
                 """
             )
+            columns = {
+                str(row["name"]) for row in conn.execute("PRAGMA table_info(work_items)")
+            }
+            if "dependency_ids_json" not in columns:
+                conn.execute(
+                    "ALTER TABLE work_items ADD COLUMN dependency_ids_json "
+                    "TEXT NOT NULL DEFAULT '[]'"
+                )
             conn.commit()
 
-    @staticmethod
-    def _item_from_row(row) -> WorkItem:
+    @classmethod
+    def _normalize_dependency_ids(
+        cls,
+        values,
+        *,
+        corruption: bool = False,
+    ) -> list[str]:
+        error = RuntimeError if corruption else ValueError
+        if isinstance(values, (str, bytes)):
+            raise error("WorkItem dependency IDs must be a bounded sequence")
+        try:
+            raw_values = list(values)
+        except TypeError as exc:
+            raise error("WorkItem dependency IDs must be a bounded sequence") from exc
+        if len(raw_values) > cls._MAX_DEPENDENCIES:
+            raise error("WorkItem dependency list exceeds the bounded limit of 32")
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw in raw_values:
+            if not isinstance(raw, str):
+                raise error("WorkItem dependency IDs must be strings")
+            value = raw.strip()
+            if (
+                not value
+                or value != raw
+                or len(value) > cls._MAX_WORK_ITEM_ID_LENGTH
+            ):
+                raise error("WorkItem dependency ID is empty, non-canonical, or unbounded")
+            if value in seen:
+                raise error("WorkItem dependency IDs must not contain duplicates")
+            seen.add(value)
+            normalized.append(value)
+        return normalized
+
+    @classmethod
+    def _dependency_ids_from_json(cls, raw) -> list[str]:
+        if not isinstance(raw, str):
+            raise RuntimeError("durable Work dependency metadata is malformed")
+        try:
+            value = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise RuntimeError("durable Work dependency metadata is malformed") from exc
+        if not isinstance(value, list):
+            raise RuntimeError("durable Work dependency metadata must be a JSON list")
+        return cls._normalize_dependency_ids(value, corruption=True)
+
+    @classmethod
+    def _item_from_row(cls, row) -> WorkItem:
         raw = json.loads(row["acceptance_criteria_json"] or "[]")
+        dependency_ids = cls._dependency_ids_from_json(row["dependency_ids_json"])
         return WorkItem(
             work_item_id=str(row["work_item_id"]),
             work_thread_id=str(row["work_thread_id"]),
@@ -108,6 +167,7 @@ class SteerableWorkLedger(RecoveryBoundedWorkLedger):
             acceptance_criteria=(
                 [str(value) for value in raw] if isinstance(raw, list) else []
             ),
+            dependency_ids=dependency_ids,
             result=str(row["result"]) if row["result"] is not None else None,
             blocker=str(row["blocker"]) if row["blocker"] is not None else None,
             created_at=str(row["created_at"]),
@@ -173,13 +233,32 @@ class SteerableWorkLedger(RecoveryBoundedWorkLedger):
         return int(row["plan_version"]) if row is not None else None
 
     def _save_item(self, item: WorkItem) -> None:
+        dependency_ids = self._normalize_dependency_ids(item.dependency_ids)
+        if item.parent_work_item_id is None and dependency_ids:
+            raise ValueError("Root WorkItem cannot carry dependency edges")
+        dependency_json = json.dumps(
+            dependency_ids,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         with self._lock, closing(self._connect()) as conn:
+            existing = conn.execute(
+                "SELECT dependency_ids_json FROM work_items WHERE work_item_id=?",
+                (item.work_item_id,),
+            ).fetchone()
+            if existing is not None:
+                durable_dependency_ids = self._dependency_ids_from_json(
+                    existing["dependency_ids_json"]
+                )
+                if durable_dependency_ids != dependency_ids:
+                    raise ValueError("WorkItem dependency edges are immutable")
             conn.execute(
                 """
                 INSERT INTO work_items(
                     work_item_id,work_thread_id,parent_work_item_id,title,objective,status,
-                    plan_version,acceptance_criteria_json,result,blocker,created_at,updated_at,completed_at
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    plan_version,acceptance_criteria_json,dependency_ids_json,result,blocker,
+                    created_at,updated_at,completed_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(work_item_id) DO UPDATE SET
                     status=excluded.status,result=excluded.result,blocker=excluded.blocker,
                     updated_at=excluded.updated_at,completed_at=excluded.completed_at
@@ -193,6 +272,7 @@ class SteerableWorkLedger(RecoveryBoundedWorkLedger):
                     item.status,
                     int(item.plan_version),
                     json.dumps(item.acceptance_criteria, ensure_ascii=False, separators=(",", ":")),
+                    dependency_json,
                     item.result,
                     item.blocker,
                     item.created_at,
@@ -284,6 +364,7 @@ class SteerableWorkLedger(RecoveryBoundedWorkLedger):
                 "status": item.status,
                 "plan_version": item.plan_version,
                 "acceptance_criteria": list(item.acceptance_criteria),
+                "dependency_ids": list(item.dependency_ids),
                 "result": item.result,
                 "blocker": item.blocker,
                 "created_at": item.created_at,
@@ -488,8 +569,9 @@ class SteerableWorkLedger(RecoveryBoundedWorkLedger):
                 """
                 INSERT INTO work_items(
                     work_item_id,work_thread_id,parent_work_item_id,title,objective,status,
-                    plan_version,acceptance_criteria_json,result,blocker,created_at,updated_at,completed_at
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    plan_version,acceptance_criteria_json,dependency_ids_json,result,blocker,
+                    created_at,updated_at,completed_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     work_item_id,
@@ -499,6 +581,7 @@ class SteerableWorkLedger(RecoveryBoundedWorkLedger):
                     objective_text,
                     "running",
                     int(next_version),
+                    "[]",
                     "[]",
                     None,
                     None,
