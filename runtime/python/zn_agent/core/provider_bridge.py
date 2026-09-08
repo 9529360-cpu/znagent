@@ -38,8 +38,6 @@ _ROUTE_METADATA_KEYS = (
     "timeout",
     "extra_body",
     "thinking",
-    # Hard eligibility metadata. These remain attributes of the existing
-    # CognitiveResource route, not a second router/configuration system.
     "available",
     "healthy",
     "health",
@@ -48,8 +46,6 @@ _ROUTE_METADATA_KEYS = (
     "location",
     "policy_tags",
     "authority_scopes",
-    # Dynamic health remains Router-owned. These values tune only the bounded
-    # circuit-breaker thresholds applied to ResidentHealthJournal evidence.
     "health_failure_threshold",
     "health_backoff_seconds",
 )
@@ -133,12 +129,6 @@ def _current_model_spec(config: dict[str, Any]) -> dict[str, Any] | None:
         "id": "default",
         "provider": provider,
         "model": model,
-        # The legacy single-model shortcut is the product's general cognitive
-        # resource and already serves these bounded WorkerRun/browser-understanding
-        # roles. Once Router capabilities become hard eligibility, make that
-        # existing contract explicit instead of restoring an undeclared `general`
-        # fallback. Fully specified zn_kernel.routes remain responsible for their
-        # own capability declarations and therefore stay fail-closed.
         "capabilities": {
             "general": 0.75,
             "reasoning": 0.75,
@@ -279,6 +269,9 @@ def build_resident_runtime(
     """Build the normal product Resident around the ZN-owned kernel."""
     from .application_resident import ApplicationAwareResidentRuntime
     from .budget import CognitiveBudgetManager
+    from .user_browser_causal_popup_behavior import (
+        install_user_browser_causal_popup_behavior,
+    )
 
     effective_config = config if config is not None else load_zn_config()
     resident_cfg = effective_config.get("zn_resident") or {}
@@ -298,7 +291,9 @@ def build_resident_runtime(
         ),
     )
 
-    return ApplicationAwareResidentRuntime(kernel=kernel, budget=budget)
+    resident = ApplicationAwareResidentRuntime(kernel=kernel, budget=budget)
+    install_user_browser_causal_popup_behavior(resident)
+    return resident
 
 
 build_runtime_from_existing_stack = build_runtime
