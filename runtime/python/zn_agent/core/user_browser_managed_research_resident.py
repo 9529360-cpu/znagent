@@ -122,10 +122,6 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
         return None
 
     def _orient_step(self, event, state, *, readiness, thought=None):
-        # These tasks are already fully bounded by Resident-owned language rules
-        # and intentionally support model_policy=never. Do not let the generic
-        # foreground-browser cognition router consume them first. Fresh browser
-        # evidence still owns every world fact and every target identity.
         if self._natural_managed_reference_search(event) or self._natural_authenticated_return_note_update(event):
             return ResidentGoalRuntime._orient_step(
                 self,
@@ -470,17 +466,30 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
                 "url": str(initial.get("url") or ""),
                 "title": initial_title,
                 "textbox_target_id": initial_target,
+                "textbox_name": str(initial_note.get("textbox_name") or ""),
+                "textbox_query_parameter": str(initial_note.get("textbox_query_parameter") or ""),
+                "button_target_id": str(initial_note.get("button_target_id") or ""),
+                "button_name": str(initial_note.get("button_name") or ""),
+                "form_signature": str(initial_note.get("form_signature") or ""),
                 "observed_at": str(initial.get("observed_at") or ""),
             },
             "fresh_authorized_page": {
                 "url": str(fresh_tab.get("url") or ""),
                 "title": fresh_title,
                 "textbox_target_id": fresh_target,
+                "textbox_name": str(fresh_note.get("textbox_name") or ""),
+                "textbox_query_parameter": str(fresh_note.get("textbox_query_parameter") or ""),
+                "button_target_id": str(fresh_note.get("button_target_id") or ""),
+                "button_name": str(fresh_note.get("button_name") or ""),
+                "form_signature": str(fresh_note.get("form_signature") or ""),
                 "observed_at": str(fresh_tab.get("observed_at") or ""),
             },
             "authorized_page_changed_during_research": bool(
                 (initial_target and fresh_target and initial_target != fresh_target)
                 or initial_title != fresh_title
+                or str(initial_note.get("textbox_name") or "") != str(fresh_note.get("textbox_name") or "")
+                or str(initial_note.get("button_name") or "") != str(fresh_note.get("button_name") or "")
+                or str(initial_note.get("form_signature") or "") != str(fresh_note.get("form_signature") or "")
             ),
             "authorization_attached_at": str(context.get("attached_at") or ""),
             "note_form": fresh_note,
@@ -804,13 +813,12 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
         current_url = str(sense.get("url") or "").strip()
         current_origin = cls._origin_url(current_url)
         candidates = list(sense.get("candidates") or [])
-        textboxes = []
+        safe_textboxes: list[tuple[dict[str, Any], str, str, str, bool]] = []
         for item in candidates:
             if not isinstance(item, dict) or str(item.get("role") or "").lower() != "textbox":
                 continue
             name = " ".join(str(item.get("name") or "").strip().split())
-            lowered = name.lower()
-            if not name or not any(cue in lowered for cue in _NOTE_INPUT_CUES):
+            if not name:
                 continue
             if not (
                 item.get("enabled") is True
@@ -826,20 +834,36 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
             action = str(item.get("form_action") or "").strip()
             if cls._origin_url(action) != current_origin:
                 continue
-            textboxes.append((item, name, action))
-        if len(textboxes) != 1:
+            query_parameter = " ".join(str(item.get("query_parameter") or "").strip().split())
+            semantic_values = (name.lower(), query_parameter.lower())
+            has_note_cue = any(cue in value for value in semantic_values for cue in _NOTE_INPUT_CUES)
+            safe_textboxes.append((item, name, action, query_parameter, has_note_cue))
+
+        semantic_textboxes = [candidate for candidate in safe_textboxes if candidate[4]]
+        if len(semantic_textboxes) == 1:
+            selected_textbox = semantic_textboxes[0]
+        elif len(semantic_textboxes) > 1:
             raise UserBrowserExtensionRelayError(
-                "fresh authorized page did not expose exactly one safe empty POST note textbox"
+                "fresh authorized page exposed multiple safe POST textboxes with note semantics"
             )
-        textbox, textbox_name, form_action = textboxes[0]
+        elif len(safe_textboxes) == 1:
+            # Structural fallback is intentionally bounded: it is only valid when
+            # the fresh page exposes one safe same-origin empty POST textbox total.
+            # No DOM order, screen position, stale target, or model guess resolves ambiguity.
+            selected_textbox = safe_textboxes[0]
+        else:
+            raise UserBrowserExtensionRelayError(
+                "fresh authorized page did not expose one uniquely grounded safe empty POST note textbox"
+            )
+
+        textbox, textbox_name, form_action, query_parameter, _has_note_cue = selected_textbox
         signature = str(textbox.get("form_signature") or "").strip()
-        buttons = []
+        safe_buttons: list[tuple[dict[str, Any], str, bool]] = []
         for item in candidates:
             if not isinstance(item, dict) or str(item.get("role") or "").lower() != "button":
                 continue
             name = " ".join(str(item.get("name") or "").strip().split())
-            lowered = name.lower()
-            if not name or not any(cue in lowered for cue in _NOTE_SAVE_CUES):
+            if not name:
                 continue
             if not (
                 item.get("enabled") is True
@@ -851,15 +875,30 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
                 and str(item.get("form_action") or "").strip() == form_action
             ):
                 continue
-            buttons.append((item, name))
-        if len(buttons) != 1:
+            has_save_cue = any(cue in name.lower() for cue in _NOTE_SAVE_CUES)
+            safe_buttons.append((item, name, has_save_cue))
+
+        semantic_buttons = [candidate for candidate in safe_buttons if candidate[2]]
+        if len(semantic_buttons) == 1:
+            selected_button = semantic_buttons[0]
+        elif len(semantic_buttons) > 1:
             raise UserBrowserExtensionRelayError(
-                "fresh authorized page did not expose exactly one safe same-form note save button"
+                "fresh authorized page exposed multiple safe same-form buttons with save semantics"
             )
-        _button, button_name = buttons[0]
+        elif len(safe_buttons) == 1:
+            # As with the textbox, the fallback is structural only when the
+            # current form has exactly one safe clickable POST button.
+            selected_button = safe_buttons[0]
+        else:
+            raise UserBrowserExtensionRelayError(
+                "fresh authorized page did not expose one uniquely grounded safe same-form note save button"
+            )
+
+        _button, button_name, _has_save_cue = selected_button
         return {
             "url": current_url,
             "textbox_name": textbox_name,
+            "textbox_query_parameter": query_parameter,
             "button_name": button_name,
             "form_signature": signature,
             "expected_url": form_action,
