@@ -1,6 +1,6 @@
 # E2E-15 — Windows Desktop bounded unexpected-modal recovery
 
-Status: representative path verified on PR head; final CLOSED wording is reserved until merge and post-merge `main` verification.
+Status: CLOSED representative path on current main.
 
 Updated: 2026-09-09
 
@@ -33,9 +33,22 @@ After one proven pointer dispatch, the implementation never blindly replays. Rec
 
 ## Real Windows evidence
 
-Exact-head Windows Interactive run #282 passed the isolated E2E-15 acceptance and then the complete current product-route interactive suite.
+Historical PR acceptance included an earlier verified pre-documentation Windows Interactive run #282. The final PR head was `f1513a34b798fbb07cfc2d903f63d621c085e90e`.
 
-The isolated E2E emitted:
+PR #237 was merged through the normal GitHub path as:
+
+```text
+merge SHA: d5a5be80d6d35328685be07fc54be76d1bcc955c
+```
+
+On that merge SHA, post-merge canonical validation was green:
+
+- ZN CI #1694: success;
+- ZN Windows Interactive Desktop E2E #293: success, including isolated E2E-15 and the complete current product-route interactive suite;
+- ZN Work Recovery E2E #329: success;
+- ZN Managed Browser E2E #279: success.
+
+The current-main isolated E2E emitted:
 
 ```json
 {
@@ -47,8 +60,8 @@ The isolated E2E emitted:
   "modal_absent": true,
   "parent_ready": true,
   "same_root_work": true,
-  "old_edit_runtime": [42, 74123372],
-  "fresh_edit_runtime": [42, 74188908],
+  "old_edit_runtime": [42, 67832336],
+  "fresh_edit_runtime": [42, 67897872],
   "final_title": "ZN 对应订单记录已打开",
   "wait_for_input_idle": false
 }
@@ -89,26 +102,12 @@ No modal side effect is replayed after dispatch uncertainty or after a recorded 
 
 ## Regression gates
 
-On the verified pre-documentation PR head:
+Before merge, the final PR head passed its applicable exact-head gates. After merge, current `main` at `d5a5be80d6d35328685be07fc54be76d1bcc955c` passed the canonical validation listed above.
 
-- ZN Source Boundary / Windows: success;
-- Electron / TypeScript / Windows: success;
-- ZN Kernel / Python / Windows: success;
-- ZN Work Recovery E2E: success;
-- ZN Managed Browser E2E: success;
-- ZN Windows Interactive Desktop E2E #282: success, including isolated E2E-15 and the full current product-route interactive suite.
+An unrelated E2E-28 dynamic-health timing flake exposed during the same development window was isolated to PR #238. Its root cause was a test assertion placed after the Router's intentional 60-second OPEN-to-HALF_OPEN cap; #238 changed only the guarded acceptance ordering, preserved Router semantics, passed the real E2E-28/34 acceptance and ZN CI, and was merged separately first as `8cd2ff73038bbdba33017f71d91893296b7c082c`.
 
-An unrelated E2E-28 dynamic-health timing flake exposed during the same development window was isolated to PR #238. Its root cause was a test assertion placed after the Router's intentional 60-second OPEN-to-HALF_OPEN cap; #238 changed only the guarded acceptance ordering, preserved Router semantics, passed the real E2E-28/34 acceptance and ZN CI, and was merged separately before this PR was rebased/merged forward.
+## Closure
 
-## Closure rule
-
-Do not use final `CLOSED` language for E2E-15 until:
-
-1. documentation-sync head has applicable exact-head gates green;
-2. PR #237 is merged through the normal GitHub path;
-3. current `main` is re-queried;
-4. post-merge canonical checks are green on the merge SHA.
-
-Only after those steps is the final verdict allowed:
+The merge and post-merge conditions have now been satisfied.
 
 `CLOSED — E2E-15 bounded Windows unexpected modal recovery representative path is verified on current main.`
