@@ -3,9 +3,7 @@ from __future__ import annotations
 import unittest
 from dataclasses import replace
 
-from zn_agent.core.desktop_modal_recovery_behavior import (
-    MAX_DESKTOP_MODAL_RECOVERY_OBSERVATIONS,
-)
+from zn_agent.core.desktop_modal_recovery_behavior import MAX_DESKTOP_MODAL_RECOVERY_OBSERVATIONS
 from zn_agent.core.modal_window_sense import (
     ModalButtonObservation,
     ModalWindowObservation,
@@ -61,7 +59,8 @@ def _modal(
         parent_process_id=PID,
         parent_title="订单处理",
         owner_hwnd=PARENT_HWND,
-        root_owner_hwnd=PARENT_HWND,
+        root_owner_hwnd=DIALOG_HWND,
+        parent_root_owner_hwnd=PARENT_HWND,
         is_modal=True,
         dialog_interaction_state=WINDOW_INTERACTION_READY,
         parent_interaction_state=WINDOW_INTERACTION_BLOCKED_BY_MODAL,
@@ -77,9 +76,7 @@ def _modal(
 class DesktopModalSenseTests(unittest.TestCase):
     def test_exact_owned_modal_with_blocked_parent_is_admitted(self) -> None:
         observation = _modal()
-        sense = NativeModalWindowSense(
-            probe_fn=lambda hwnd, pid, name: observation,
-        )
+        sense = NativeModalWindowSense(probe_fn=lambda hwnd, pid, name: observation)
         self.assertEqual(
             sense.probe(
                 parent_hwnd=PARENT_HWND,
@@ -90,67 +87,43 @@ class DesktopModalSenseTests(unittest.TestCase):
         )
 
     def test_is_modal_false_is_rejected(self) -> None:
-        observation = replace(_modal(), is_modal=False)
-        sense = NativeModalWindowSense(probe_fn=lambda *_: observation)
+        sense = NativeModalWindowSense(probe_fn=lambda *_: replace(_modal(), is_modal=False))
         with self.assertRaisesRegex(ValueError, "exact blocking parent relationship"):
-            sense.probe(
-                parent_hwnd=PARENT_HWND,
-                parent_process_id=PID,
-                parent_process_name=PROCESS,
-            )
+            sense.probe(parent_hwnd=PARENT_HWND, parent_process_id=PID, parent_process_name=PROCESS)
 
     def test_parent_must_be_blocked_by_modal_window(self) -> None:
-        observation = replace(
-            _modal(),
-            parent_interaction_state=WINDOW_INTERACTION_READY,
+        sense = NativeModalWindowSense(
+            probe_fn=lambda *_: replace(_modal(), parent_interaction_state=WINDOW_INTERACTION_READY)
         )
-        sense = NativeModalWindowSense(probe_fn=lambda *_: observation)
         with self.assertRaises(ValueError):
-            sense.probe(
-                parent_hwnd=PARENT_HWND,
-                parent_process_id=PID,
-                parent_process_name=PROCESS,
-            )
+            sense.probe(parent_hwnd=PARENT_HWND, parent_process_id=PID, parent_process_name=PROCESS)
 
     def test_cross_process_dialog_is_rejected(self) -> None:
-        observation = replace(
-            _modal(),
-            dialog_process_id=9999,
-            dialog_process_name="installer.exe",
-        )
+        observation = replace(_modal(), dialog_process_id=9999, dialog_process_name="installer.exe")
         sense = NativeModalWindowSense(probe_fn=lambda *_: observation)
         with self.assertRaises(ValueError):
-            sense.probe(
-                parent_hwnd=PARENT_HWND,
-                parent_process_id=PID,
-                parent_process_name=PROCESS,
-            )
+            sense.probe(parent_hwnd=PARENT_HWND, parent_process_id=PID, parent_process_name=PROCESS)
 
-    def test_wrong_owner_or_root_owner_is_rejected(self) -> None:
-        for observation in (
-            replace(_modal(), owner_hwnd=777),
-            replace(_modal(), root_owner_hwnd=777),
-        ):
-            with self.subTest(observation=observation):
-                sense = NativeModalWindowSense(probe_fn=lambda *_args, row=observation: row)
-                with self.assertRaises(ValueError):
-                    sense.probe(
-                        parent_hwnd=PARENT_HWND,
-                        parent_process_id=PID,
-                        parent_process_name=PROCESS,
-                    )
+    def test_direct_owner_must_be_exact_parent(self) -> None:
+        sense = NativeModalWindowSense(probe_fn=lambda *_: replace(_modal(), owner_hwnd=777))
+        with self.assertRaises(ValueError):
+            sense.probe(parent_hwnd=PARENT_HWND, parent_process_id=PID, parent_process_name=PROCESS)
+
+    def test_root_owner_identity_must_exist_and_remain_stable(self) -> None:
+        sense = NativeModalWindowSense(probe_fn=lambda *_: replace(_modal(), root_owner_hwnd=0))
+        with self.assertRaises(ValueError):
+            sense.probe(parent_hwnd=PARENT_HWND, parent_process_id=PID, parent_process_name=PROCESS)
+        admitted = _modal()
+        fresh = replace(admitted, root_owner_hwnd=9999)
+        self.assertFalse(modal_action_still_current(admitted, admitted.buttons[0], fresh, fresh.buttons[0]))
 
     def test_button_must_belong_to_exact_dialog_subtree(self) -> None:
         observation = _modal(buttons=(_button(dialog_hwnd=8888),))
         sense = NativeModalWindowSense(probe_fn=lambda *_: observation)
         with self.assertRaisesRegex(ValueError, "containment"):
-            sense.probe(
-                parent_hwnd=PARENT_HWND,
-                parent_process_id=PID,
-                parent_process_name=PROCESS,
-            )
+            sense.probe(parent_hwnd=PARENT_HWND, parent_process_id=PID, parent_process_name=PROCESS)
 
-    def test_exact_parent_recovery_never_transfers_identity(self) -> None:
+    def test_exact_parent_recovery_requires_exact_dialog_absence_and_never_transfers_identity(self) -> None:
         good = ParentWindowRecoveryObservation(
             parent_hwnd=PARENT_HWND,
             parent_process_id=PID,
@@ -158,6 +131,8 @@ class DesktopModalSenseTests(unittest.TestCase):
             parent_title="订单处理",
             parent_class_name="WindowsForms10.Window",
             parent_interaction_state=WINDOW_INTERACTION_READY,
+            dismissed_dialog_hwnd=DIALOG_HWND,
+            dismissed_dialog_exists=False,
             visible=True,
             enabled=True,
             foreground=True,
@@ -174,26 +149,38 @@ class DesktopModalSenseTests(unittest.TestCase):
                 parent_hwnd=PARENT_HWND,
                 parent_process_id=PID,
                 parent_process_name=PROCESS,
+                dismissed_dialog_hwnd=DIALOG_HWND,
             ),
             good,
         )
-        sense = NativeModalWindowSense(
+        replaced_parent = NativeModalWindowSense(
             probe_fn=lambda *_: None,
             parent_recovery_probe_fn=lambda *_: replace(good, parent_hwnd=9999),
         )
         with self.assertRaisesRegex(ValueError, "authority"):
-            sense.probe_parent_recovery(
+            replaced_parent.probe_parent_recovery(
                 parent_hwnd=PARENT_HWND,
                 parent_process_id=PID,
                 parent_process_name=PROCESS,
+                dismissed_dialog_hwnd=DIALOG_HWND,
+            )
+        wrong_dialog = NativeModalWindowSense(
+            probe_fn=lambda *_: None,
+            parent_recovery_probe_fn=lambda *_: replace(good, dismissed_dialog_hwnd=8888),
+        )
+        with self.assertRaisesRegex(ValueError, "authority"):
+            wrong_dialog.probe_parent_recovery(
+                parent_hwnd=PARENT_HWND,
+                parent_process_id=PID,
+                parent_process_name=PROCESS,
+                dismissed_dialog_hwnd=DIALOG_HWND,
             )
 
 
 class DesktopModalSafetyClassificationTests(unittest.TestCase):
     def test_one_explicit_defer_continue_action_is_safe(self) -> None:
         action, failure = select_safe_modal_action(
-            _modal(),
-            user_goal="把订单编号拿到当前软件里找到对应记录。",
+            _modal(), user_goal="把订单编号拿到当前软件里找到对应记录。"
         )
         self.assertIsNone(failure)
         self.assertIsNotNone(action)
@@ -206,10 +193,7 @@ class DesktopModalSafetyClassificationTests(unittest.TestCase):
                 _button("继续工作", runtime_id=(42, 8)),
             )
         )
-        action, failure = select_safe_modal_action(
-            observation,
-            user_goal="继续当前订单任务。",
-        )
+        action, failure = select_safe_modal_action(observation, user_goal="继续当前订单任务。")
         self.assertIsNone(action)
         self.assertIn("exactly one", failure or "")
 
@@ -238,14 +222,14 @@ class DesktopModalSafetyClassificationTests(unittest.TestCase):
         self.assertIn("decision", failure or "")
 
     def test_password_or_credential_modal_is_rejected(self) -> None:
-        observation = _modal(password=True)
-        action, failure = select_safe_modal_action(observation, user_goal="继续订单任务。")
+        action, failure = select_safe_modal_action(_modal(password=True), user_goal="继续订单任务。")
         self.assertIsNone(action)
         self.assertIn("password", failure or "")
 
     def test_update_now_is_never_the_safe_action(self) -> None:
-        observation = _modal(buttons=(_button("立即更新"),))
-        action, _ = select_safe_modal_action(observation, user_goal="继续订单任务。")
+        action, _ = select_safe_modal_action(
+            _modal(buttons=(_button("立即更新"),)), user_goal="继续订单任务。"
+        )
         self.assertIsNone(action)
 
 
@@ -260,27 +244,15 @@ class DesktopModalFreshAuthorityTests(unittest.TestCase):
             ),
             captured_at="2026-09-09T00:00:02Z",
         )
-        admitted_button = admitted.buttons[0]
-        fresh_button = fresh.buttons[0]
         self.assertFalse(
-            modal_action_still_current(
-                admitted,
-                admitted_button,
-                fresh,
-                fresh_button,
-            )
+            modal_action_still_current(admitted, admitted.buttons[0], fresh, fresh.buttons[0])
         )
 
     def test_same_exact_modal_button_authority_remains_current(self) -> None:
         admitted = _modal()
         fresh = replace(admitted, captured_at="2026-09-09T00:00:02Z")
         self.assertTrue(
-            modal_action_still_current(
-                admitted,
-                admitted.buttons[0],
-                fresh,
-                fresh.buttons[0],
-            )
+            modal_action_still_current(admitted, admitted.buttons[0], fresh, fresh.buttons[0])
         )
 
     def test_recovery_polling_is_bounded(self) -> None:
