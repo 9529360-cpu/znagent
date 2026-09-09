@@ -140,16 +140,11 @@ class E2E28RealDynamicHealthTests(unittest.TestCase):
                 self.assertEqual(health["consecutive_failures"], 3)
                 self.assertFalse(health["healthy"])
 
-                fallback = resident.kernel.run_goal(
-                    "Return one concise observation after the failed route is isolated.",
-                    required_capabilities=("general",),
-                    goal_id="e2e28-health-real-fallback",
-                )
-                self.assertTrue(fallback.worker_result.success, fallback.worker_result.error)
-                self.assertEqual(fallback.route.route_id, real_route.route_id)
-                self.assertEqual(factory.injected_runs, 3)
-                self.assertEqual(factory.real_runs, 1)
-
+                # Prove explicit policy fail-closed while the breaker is still
+                # deterministically OPEN. The Router intentionally caps dynamic
+                # health backoff at 60 seconds before allowing one HALF_OPEN
+                # probe, so this assertion must not be placed after an
+                # unbounded-duration real provider call.
                 with self.assertRaises(NoRouteAvailable):
                     resident.kernel.run_goal(
                         "Do not violate the pinned provider policy just to recover.",
@@ -161,6 +156,16 @@ class E2E28RealDynamicHealthTests(unittest.TestCase):
                             }
                         },
                     )
+                self.assertEqual(factory.injected_runs, 3)
+                self.assertEqual(factory.real_runs, 0)
+
+                fallback = resident.kernel.run_goal(
+                    "Return one concise observation after the failed route is isolated.",
+                    required_capabilities=("general",),
+                    goal_id="e2e28-health-real-fallback",
+                )
+                self.assertTrue(fallback.worker_result.success, fallback.worker_result.error)
+                self.assertEqual(fallback.route.route_id, real_route.route_id)
                 self.assertEqual(factory.injected_runs, 3)
                 self.assertEqual(factory.real_runs, 1)
 
