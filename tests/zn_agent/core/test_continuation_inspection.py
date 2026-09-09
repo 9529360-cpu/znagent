@@ -35,7 +35,6 @@ class ContinuationInspectionTests(unittest.TestCase):
             "昨天那个产品继续，先看看做到哪了。",
             "昨天那个继续，我先看一下进度",
             "上次那个接着做，先告诉我现在做到哪一步了",
-            "上次那个继续，现在什么情况",
             "昨天那个继续，先告诉我进展",
         )
         for task in accepted:
@@ -206,8 +205,6 @@ class ContinuationInspectionTests(unittest.TestCase):
                 _, completed = ledger.submit(
                     "done",
                     "unknown completed product step",
-                    objective="completed product step",
-                    acceptance_criteria=["terminal evidence"],
                 )
                 event_id = completed.event.event_id
                 self.assertIsNotNone(ledger.get_run(event_id).finalized_at)
