@@ -246,11 +246,28 @@ class RestoreAwareWorkControl(ResidentWorkControl):
             or str(detail.get("inspected_event_id") or "") != event_id
         ):
             return progress
-        progress["continuation_inspection"] = self._continuation_inspection_projection(
+        projection = self._continuation_inspection_projection(
             thread_id,
             event_id,
             progress,
         )
+        projection["reference"] = str(detail.get("reference") or "continuation")
+        progress["continuation_inspection"] = projection
+        artifact_summary = ", ".join(
+            f"{item.get('path') or item.get('name')}={item.get('current', {}).get('status', 'unknown')}"
+            for item in projection.get("artifacts", [])[:_INSPECTION_ARTIFACT_LIMIT]
+        )
+        summary = (
+            f"Current Work: {projection['root_goal']} · plan v{projection['plan_version']} · "
+            f"completed {len(projection['completed'])}, active {len(projection['active'])}, "
+            f"blocked {len(projection['blocked'])} · "
+            f"fresh environment {'changed' if projection['drift_detected'] else 'checked'}"
+        )
+        if artifact_summary:
+            summary += f" · artifacts {artifact_summary}"
+        summary += " · inspection only; execution was not resumed"
+        progress["stage"] = "inspection_complete"
+        progress["next_action"] = self._public_text(summary, limit=1400)
         return progress
 
     def _inspect_referenced_work(
@@ -568,7 +585,7 @@ class RestoreAwareWorkControl(ResidentWorkControl):
             "mode": "continuation_inspection",
             "read_only": True,
             "inspection_complete": True,
-            "reference": "yesterday",
+            "reference": "continuation",
             "work_status": str(root.status),
             "root_goal": self._public_text(root.objective, limit=800),
             "plan_version": plan_version,
