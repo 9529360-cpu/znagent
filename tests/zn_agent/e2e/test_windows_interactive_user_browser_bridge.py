@@ -160,9 +160,19 @@ class _IsolatedUserBrowserFixture:
         user32.BringWindowToTop.restype = wintypes.BOOL
         user32.SetForegroundWindow.argtypes = [wintypes.HWND]
         user32.SetForegroundWindow.restype = wintypes.BOOL
+        user32.GetForegroundWindow.argtypes = []
+        user32.GetForegroundWindow.restype = wintypes.HWND
         user32.ShowWindow(self.hwnd, 5)
         user32.BringWindowToTop(self.hwnd)
         user32.SetForegroundWindow(self.hwnd)
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if int(user32.GetForegroundWindow() or 0) == int(self.hwnd):
+                return
+            time.sleep(0.02)
+        raise RuntimeError(
+            f"{self.provider} fixture could not become the exact foreground window"
+        )
 
     def _process_family_ids(self) -> set[int]:
         if self.process is None:
