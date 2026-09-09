@@ -8,6 +8,7 @@ on:
       - .github/workflows/zn-windows-interactive-e2e.yml
       - apps/desktop/browser-extension/background.js
       - apps/desktop/browser-extension/manifest.json
+      - tests/zn_agent/e2e/_run_owned_unittest_module.py
       - tests/zn_agent/e2e/test_windows_interactive_pointer_uia.py
       - tests/zn_agent/e2e/test_windows_interactive_text_entry.py
       - tests/zn_agent/e2e/test_windows_interactive_uia_text_capability.py
@@ -76,6 +77,7 @@ on:
       - .github/workflows/zn-windows-interactive-e2e.yml
       - apps/desktop/browser-extension/background.js
       - apps/desktop/browser-extension/manifest.json
+      - tests/zn_agent/e2e/_run_owned_unittest_module.py
       - tests/zn_agent/e2e/test_windows_interactive_pointer_uia.py
       - tests/zn_agent/e2e/test_windows_interactive_text_entry.py
       - tests/zn_agent/e2e/test_windows_interactive_uia_text_capability.py
@@ -199,6 +201,7 @@ jobs:
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-e2e-venv\Scripts\python.exe'
+          $ownedRunner = Join-Path $env:GITHUB_WORKSPACE 'tests\zn_agent\e2e\_run_owned_unittest_module.py'
           $excluded = @(
             'test_windows_interactive_authorized_user_browser_cdp.py',
             'test_windows_interactive_user_browser_named_goal.py',
@@ -212,7 +215,7 @@ jobs:
           }
           foreach ($test in $tests) {
             Write-Host "=== interactive module: $($test.Name) ==="
-            & $python $test.FullName -v
+            & $python $ownedRunner $test.FullName
             if ($LASTEXITCODE -ne 0) {
               throw "Interactive E2E module failed: $($test.Name)"
             }
