@@ -42,6 +42,7 @@ Product-closed
 | User Browser Bridge | CONNECTED + VERIFIED NARROW | E2E-05 authenticated research→mutation、E2E-07 causal child-tab、E2E-08 OTP user-presence representative paths 已关闭；真实网站和更复杂认证/导航仍需扩大 |
 | File / workspace tasks | CONNECTED + VERIFIED NARROW | 歧义来源、复杂整理和更广任务类型 |
 | Windows machine/application awareness | CONNECTED + VERIFIED NARROW | inventory/identity/launch/fresh verification 与 exact admitted existing-window activation 已有；任意应用生命周期/窗口拓扑仍未 product-close |
+| Windows unexpected-modal recovery | VERIFIED NARROW; E2E-15 representative path verified | exact same-process directly owned UIA modal、blocked parent、唯一 deterministic safe defer/continue action、input 前 fresh revalidation、单次 side effect、modal absence + exact parent readiness、old RuntimeId rejection + fresh re-ground 已在真实 WinForms `ShowDialog()` path 验证；任意 dialog/UAC/credentials/save-discard/file-picker/payment/installer/update decisions 不在 closure 内 |
 | Desktop computer use | CONNECTED + VERIFIED NARROW | 通用跨应用连续任务、目标漂移和更复杂应用语义 |
 | Browser + File + Desktop | VERIFIED NARROW; E2E-24 representative path closed | same-Root exact business identity、USER Browser authority、exact workspace target、fresh file reread、exact foreground HWND/PID、UIA re-ground 与 final app verification 已在一个 bounded path 中验证；更复杂三-surface task/recovery 仍需扩大 |
 | Cognitive resources | CONNECTED + VERIFIED | ZN-owned provider seam、多 route、热重配、provenance 已存在；更广 provider/product coverage 继续扩大 |
@@ -128,6 +129,14 @@ CONNECTED + VERIFIED NARROW / PARTIAL UX
 
 ## 代表性 E2E closure
 
+### E2E-15 — bounded Windows unexpected-modal recovery
+
+2026-09-09 已验证一个 bounded representative path：同一 Root Work 在真实 Desktop 任务中已经 grounded 原始 UIA target 后，真实 WinForms fixture 通过 `ShowDialog()` 打开同进程 blocking modal。Resident 不接收 harness 提供的 modal HWND/RuntimeId/action，而是从 fresh foreground + Win32 owner + UIA `IsModal` + parent `BlockedByModalWindow` 建立 exact modal authority，在 exact dialog subtree 中只允许唯一 deterministic safe defer/continue/close-notice action。
+
+input 前必须 fresh revalidate exact dialog/Button authority；stale/ambiguous/cross-process/wrong-owner evidence fail closed。实际验收只 dispatch 一次 `稍后继续`，`立即更新` side effect 为 0；modal 消失后，只有 exact parent HWND/PID/process、visible/enabled/foreground、UIA `ReadyForUserInteraction` 都成立才恢复原 Work，旧 Desktop observation/action cycle 被丢弃并 fresh re-ground。旧/新 Edit RuntimeId 不同，最终 title `ZN 对应订单记录已打开` 独立证明原任务完成。
+
+成功实跑中 `wait_for_input_idle=false`。它只保留为 telemetry，不参与 hard readiness gate；权威恢复证据来自 exact Win32/UIA identity、modal absence 和 parent readiness。该 closure 不包括 credentials/UAC/elevation/security/save-discard/delete/overwrite/file-picker/payment/purchase/installer/restart/update decision 或 arbitrary Windows dialogs；不允许 blind replay。
+
 ### E2E-24 — Browser + File + Desktop
 
 2026-09-09 已关闭一个 bounded representative path：普通自然语言任务保持同一 Root Work，从已经登录且显式授权的 USER Browser 当前 tab 识别随机异常客户，选择唯一符合“昨天修改 + 名称语义”的 workspace 文件，写入一次并 fresh reread exact target；随后从当前 foreground app 重新建立 exact HWND/PID 与 UIA semantic authority，把同一客户记录标记待跟进一次，并用 fresh application title 独立证明最终状态。
@@ -193,7 +202,7 @@ Browser 近期 verified narrow slices 包括：
 
 这些都坚持 exact current target、fresh revalidation、authority 和 independent postcondition。不要扩张成任意 popup/frame/dialog/site、general keyboard、OCR/visual fallback 或完整 web automation。
 
-Windows 当前已有 Machine Capability / Application Awareness V1，以及后续 exact admitted existing-window activation。应用 inventory/identity、Installed/Running/Window/Foreground facts、identity-bound launch、fresh process/window verification、Resident-admitted app/HWND/PID revalidation 都已有代表性验证。不要扩张成全 Windows application lifecycle 或任意窗口自动化。
+Windows 当前已有 Machine Capability / Application Awareness V1、exact admitted existing-window activation，以及 E2E-15 bounded unexpected-modal recovery。应用 inventory/identity、Installed/Running/Window/Foreground facts、identity-bound launch、fresh process/window verification、Resident-admitted app/HWND/PID revalidation 都已有代表性验证；blocking modal 代表性路径还增加了 exact direct-owner/UIA modal semantics、single safe action、non-replay 和 fresh re-ground。不要扩张成全 Windows application lifecycle、任意窗口拓扑或 arbitrary dialog automation。
 
 ## 当前主要剩余产品缺口
 
@@ -202,7 +211,7 @@ Windows 当前已有 Machine Capability / Application Awareness V1，以及后�
 1. **Cross-surface real tasks**：在 E2E-24 bounded closure 之外，Browser + Desktop + File/Terminal/Application 更复杂任务的连续完成率和 recovery。
 2. **Browser/User Browser breadth**：真实站点变化、复杂 frame/dialog/navigation、更多授权/用户在场边界；E2E-08 只覆盖代表性 OTP path。
 3. **Long-horizon experience**：在现有 supervision/steering/restart substrate 上扩大跨天、长周期、多个 workstream 的真实使用与 progress/explanation UX。
-4. **Windows/application breadth**：当前 machine/application substrate 之外，由真实 E2E 暴露的应用语义、窗口/系统能力缺口。
+4. **Windows/application breadth**：在 E2E-15 bounded same-process safe modal closure 和当前 machine/application substrate 之外，由真实 E2E 暴露的应用语义、跨进程/system dialog、复杂窗口/系统能力缺口。
 5. **Upgrade continuity**：installed N -> N+1 的身份、数据、Work、rollback/uncertain-effect 连续性仍未 product-close。
 
 如果 current main 不能从真实 E2E 唯一确定下一开发任务，应按真实用户任务阻塞程度选择，而不是凭空新增 roadmap。
@@ -215,6 +224,7 @@ Windows 当前已有 Machine Capability / Application Awareness V1，以及后�
 - general-purpose DAG scheduler / recursive delegation；
 - 所有 MFA；
 - 任意网页或任意 popup/frame/dialog；
+- arbitrary Windows dialog recovery、UAC/credential/security/save-discard/file-picker/payment/installer/update decisions；
 - arbitrary Browser/File/Desktop automation 或 general RPA；
 - 完整 DLP / OS sandbox；
 - 所有长期任务已解决；

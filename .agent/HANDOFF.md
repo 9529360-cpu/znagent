@@ -13,18 +13,18 @@
 当前已核实的检查点（不是永久 HEAD）是：
 
 ```text
-main: 3c4f1ff3920cbc948aa5dd7e78bb812cb0708c09
-main commit: Docs: synchronize capability status with current main (#235)
-active PR: #236 E2E-24: verify same-Work Browser -> File -> Desktop handoff
-last pre-documentation verified PR head: 2dd41b079a10a520b81c2fefac01f0a9c3575ce4
-ZN CI #1660: success
-ZN Windows Interactive Desktop E2E #262: success
-ZN Managed Browser E2E #251: success
-ZN Work Recovery E2E #301: success
-E2E28-34 Real Supervision Recovery Acceptance #41: success
+main: 8cd2ff73038bbdba33017f71d91893296b7c082c
+main commit: Stabilize E2E-28 dynamic-health open-window assertion (#238)
+active PR: #237 E2E-15: recover bounded Windows modal interruptions
+last pre-documentation verified E2E-15 head: ab441f0e6c25634e0e9a099a23a70fd9a26e6e95
+ZN CI on that pre-documentation head: success
+ZN Windows Interactive Desktop E2E #282: success
+ZN Managed Browser E2E: success
+ZN Work Recovery E2E: success
+E2E28-34 timing fix: PR #238 merged separately after guarded real-model acceptance + ZN CI success
 ```
 
-PR #236 在上述 pre-documentation head 已完成代码/E2E gate；文档同步本身会产生新的 PR head，必须在合并前重新查询并验证该新 head 的适用 CI/E2E。只有合并后再查询 current `main` 和 post-merge canonical checks，才能把该任务标成最终 CLOSED。
+PR #237 的 pre-documentation head 已完成代码/真实 Windows E2E gate，并已把 #238 merge 后的新 `main` 正常并入分支。文档同步会产生新的 PR head；必须在合并前重新查询并验证最终 documentation head 的适用 CI/E2E。只有合并后再查询 current `main` 和 post-merge canonical checks，才能把 E2E-15 标成最终 CLOSED。
 
 如果 `main` 已前进，以新代码和新验证为准。
 
@@ -67,6 +67,8 @@ ZN 仍是唯一 Resident、唯一 Root Work owner。worker/model 仍是可替换
 
 已经通过 guarded real-model acceptance 关闭代表性路径：durable progress supervision、dynamic health-aware routing、bounded stall retry、restart reconciliation、no-replay recovery 与 policy-safe fallback/reassignment 已接上真实 Delegated Work 路径。
 
+2026-09-09 暴露过一个 guarded acceptance timing flake：测试把 `health_backoff_seconds=300` 当成硬等待窗口，但 Router 的真实契约会把动态 health backoff 封顶 60 秒后允许 HALF_OPEN probe。PR #238 只把 pinned-policy fail-closed 断言移到 breaker 明确 OPEN 的确定窗口，未修改 Router/health semantics，并通过真实 E2E-28/34 acceptance + ZN CI 后单独合并到 `main`。
+
 这不等于无限期后台执行、任意调度策略或所有长任务场景都已经 product-closed。
 
 ### E2E-27 / E2E-33
@@ -106,15 +108,25 @@ same Work resumes
 
 明确没有声称支持：CAPTCHA solving、WebAuthn/passkey automation、cross-origin IdP handoff、password automation、payment-field automation。
 
+### E2E-15
+
+PR #237 已在 pre-documentation head `ab441f0e6c25634e0e9a099a23a70fd9a26e6e95` 上完成真实 Windows interactive representative acceptance。真实 WinForms fixture 在原 Desktop target 已 grounding 后通过 `ShowDialog()` 打开同进程 modal；harness 不向 Resident 提供 modal HWND、RuntimeId 或恢复 action，也不替 Resident 关闭 modal。
+
+Resident 仍是同一个 Resident、同一 Root Work、同一 pointer lifecycle。admission 需要 exact parent HWND/PID/process、foreground topology change、同进程 dialog、`GW_OWNER(dialog)==parent`、UIA `IsModal=true`、parent `BlockedByModalWindow`，并且 exact dialog subtree 里只能存在一个 deterministic safe defer/continue/close-notice action。input 前 fresh revalidate exact modal/Button authority；stale/ambiguous/wrong-owner/cross-process evidence fail closed。
+
+真实证据：`dialog_dispatch_count=1`、safe action=`稍后继续`、`unsafe_update_count=0`、`modal_absent=true`、`parent_ready=true`、`same_root_work=true`、旧/新 Edit RuntimeId 不同，最终 title=`ZN 对应订单记录已打开`。成功实跑里 `wait_for_input_idle=false`，因此它只保留为 telemetry；hard readiness 来自 exact Win32/UIA identity、modal absence、visible/enabled/foreground 与 UIA `ReadyForUserInteraction`。
+
+不要把该 closure 扩张成 arbitrary Windows dialog automation。credentials/password、UAC/elevation/security、save/discard/delete/overwrite、file picker、payment/purchase、installer/restart/update decision、跨进程或歧义 dialog 都不在 autonomous safe slice；modal side effect 不 blind replay。
+
 ### E2E-24
 
-PR #236 已在 pre-documentation head `2dd41b079a10a520b81c2fefac01f0a9c3575ce4` 上完成真实 Windows interactive representative acceptance：一个自然语言任务保持同一 Root Work，从已经登录且显式授权的 USER Browser 当前 tab 识别随机异常客户，写入唯一 exact yesterday workspace target 一次并 fresh reread，随后从当前 Desktop foreground 重新建立 exact HWND/PID + UIA semantic authority，把同一客户记录标记待跟进一次，并用 fresh app title 独立验证。
+PR #236 已完成真实 Windows interactive representative acceptance：一个自然语言任务保持同一 Root Work，从已经登录且显式授权的 USER Browser 当前 tab 识别随机异常客户，写入唯一 exact yesterday workspace target 一次并 fresh reread，随后从当前 Desktop foreground 重新建立 exact HWND/PID + UIA semantic authority，把同一客户记录标记待跟进一次，并用 fresh app title 独立验证。
 
 对抗性路径会在 Desktop grounding 后真实重建目标控件并改变 RuntimeId；旧 UIA evidence 必须被拒绝、重新从当前 automation tree re-ground。两个同等文件候选时必须 fail closed，不得写文件或改桌面记录。
 
 该 closure 只证明 bounded same-Work USER Browser -> File -> Desktop customer-record path。不要扩张成 arbitrary website/file/app automation、generic cross-surface workflow engine、general RPA、second orchestrator 或 general DAG scheduler。
 
-为让真实 interactive acceptance 稳定反映产品而不削弱生产安全边界，本次还收敛了测试/CI 环境：Windows Interactive runtime 显式安装 Playwright Chromium；Edge ephemeral test profile snooze developer-mode extension warning；共用 isolated USER Browser fixture 的 `activate()` 必须确认 exact HWND 已成为 foreground 后才继续。生产侧 exact foreground HWND/PID fail-closed 校验没有被放宽。
+为让真实 interactive acceptance 稳定反映产品而不削弱生产安全边界，Windows Interactive runtime 显式安装 Playwright Chromium；Edge ephemeral test profile snooze developer-mode extension warning；共用 isolated USER Browser fixture 的 `activate()` 必须确认 exact HWND 已成为 foreground 后才继续。生产侧 exact foreground HWND/PID fail-closed 校验没有被放宽。
 
 ### Browser Body V2 bounded substrate
 
@@ -135,6 +147,8 @@ PR #236 已在 pre-documentation head `2dd41b079a10a520b81c2fefac01f0a9c3575ce4`
 当前已有 Windows Machine Capability / Application Awareness V1：多源应用 inventory、deterministic identity resolution、Installed/Running/Window/Foreground 分离事实、bounded machine facts、identity-bound launch，以及 fresh process/window verification。
 
 随后 existing-app activation 已收紧为 safe exact admitted application/HWND/PID path：minimized restore / foreground request 后必须 fresh exact foreground proof；replacement/PID/topology drift 在 native side effect 前 fail closed。
+
+E2E-15 在此之上增加的是一个 bounded same-process safe-modal interruption slice，不是第二个 DialogAgent/OS Agent，也不是任意窗口自动化 framework。
 
 这仍不是任意应用生命周期、任意窗口拓扑或全 Windows automation 的 product closure。
 
@@ -165,6 +179,7 @@ bounded flat WorkItem dependency/readiness
 E2E-05 representative authenticated research mutation
 E2E-07 representative causal child-tab path
 E2E-08 representative OTP user-presence handoff
+E2E-15 bounded same-process safe modal recovery representative path
 E2E-24 bounded same-Root USER Browser -> File -> Desktop representative path
 ```
 
@@ -181,6 +196,7 @@ E2E-24 bounded same-Root USER Browser -> File -> Desktop representative path
 - bounded flat dependency/readiness != general-purpose DAG scheduler。
 - E2E-30/42 waiver != two-real-provider production proof。
 - E2E-08 representative OTP handoff != all MFA support。
+- E2E-15 representative same-process safe modal recovery != arbitrary Windows dialogs / UAC / credential or business decisions。
 - E2E-24 representative three-surface closure != arbitrary cross-surface automation / general RPA。
 - Browser Body V2 representative slices != arbitrary web automation。
 - current delegated supervision != unlimited/general background scheduler。
@@ -195,6 +211,6 @@ E2E-24 bounded same-Root USER Browser -> File -> Desktop representative path
 - E2E-24 bounded closure 之外更复杂的真实 cross-surface task（Browser + Desktop + File/Terminal/Application）；
 - Browser/User Browser 在真实站点、frame/dialog/复杂 navigation 等更广场景的可靠性；
 - 现有 supervision/steering 基础上的更长周期真实连续体验与 progress/explanation UX；
-- 当前真实应用/OS capability 缺口导致的具体 E2E 阻塞。
+- E2E-15 bounded modal slice 之外，由当前真实应用/OS capability 缺口导致的具体 E2E 阻塞。
 
 不要因为“下一阶段”这个词自动授权 Memory、credential、installer/updater/release trust 等高风险大改；不要把 general DAG scheduler、recursive delegation 或 multi-agent platform 当默认路线。

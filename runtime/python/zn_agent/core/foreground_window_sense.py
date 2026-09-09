@@ -23,6 +23,7 @@ class ForegroundWindowObservation:
     class_name: str
     captured_at: str
     source: str = "windows-user32"
+    window_handle: int = 0
 
 
 ForegroundWindowProbeFn = Callable[[], ForegroundWindowObservation]
@@ -40,6 +41,8 @@ class NativeForegroundWindowSense:
             raise TypeError("foreground window probe must return ForegroundWindowObservation")
         if int(observation.process_id) <= 0:
             raise ValueError("foreground window probe returned an invalid process id")
+        if int(observation.window_handle) < 0:
+            raise ValueError("foreground window probe returned an invalid window handle")
         if not str(observation.process_name or "").strip():
             raise ValueError("foreground window probe returned no process name")
         if not (str(observation.title or "").strip() or str(observation.class_name or "").strip()):
@@ -100,4 +103,5 @@ class NativeForegroundWindowSense:
             class_name=class_name,
             captured_at=utc_now(),
             source="windows-user32",
+            window_handle=int(hwnd),
         )
