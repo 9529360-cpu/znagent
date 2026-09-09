@@ -4,7 +4,7 @@
 >
 > 真实代码、真实 Git、真实测试和真实 E2E 高于本文件。
 
-Updated: 2026-09-08
+Updated: 2026-09-09
 
 ## 1. 产品判断标准
 
@@ -115,7 +115,7 @@ E2E-08 明确不支持 CAPTCHA solving、WebAuthn/passkey automation、cross-ori
 | Foreground / focused-control sensing | VERIFIED | 更复杂窗口切换和应用生命周期 |
 | Pointer / keyboard / text entry | VERIFIED NARROW | 完整真实任务继续验证 |
 | Semantic desktop target re-ground | VERIFIED NARROW | 控件变化、窗口漂移、替代入口 |
-| Cross-app task execution | PARTIAL | Browser + Desktop + File/Terminal/Application 三 surface 联合任务 |
+| Cross-app task execution | VERIFIED NARROW; E2E-24 closed representative path | same-Root USER Browser -> exact File -> exact Desktop customer record 已有 bounded real closure；更复杂 Browser/Desktop/File/Terminal/Application 联合任务仍开放 |
 
 ## 6. Files / workspace / terminal / Git
 
@@ -144,6 +144,8 @@ normal human goal
 -> independent root completion evidence
 -> durable continuation
 ```
+
+E2E-24 已关闭一个 bounded 三-surface representative path：同一 Root Work 从显式授权的已登录 USER Browser 保持 exact business identity，经唯一 exact workspace target 的一次写入 + fresh reread，再重新建立当前 Desktop HWND/PID/UIA semantic authority并完成一次 exact record mutation；stale UIA RuntimeId 需要 fresh re-ground，ambiguous file target 必须 fail closed。它不等于 arbitrary cross-surface automation 或 general RPA。
 
 ## 8. Recovery / non-replay
 
@@ -178,6 +180,7 @@ Recovery 是为了让真实任务继续，不是独立产品路线。
 - E2E-05 closed representative authenticated research/mutation；
 - E2E-07 closed bounded causal USER child-tab path；
 - E2E-08 closed representative OTP user-presence path；
+- E2E-24 closed representative same-Root USER Browser -> exact File -> exact Desktop customer-record path；
 - E2E-27/33 closed representative steering/continuation；
 - E2E-28/34 closed representative supervision/dynamic-health/restart；
 - E2E-29 closed one-route multi-worker；
@@ -197,7 +200,7 @@ Installer、CI、Release、签名本身不是当前产品主线。Installed N ->
 
 不再按旧顺序重复开发 E2E-30/42、28/34、27/33 的 substrate。下一项应从真实剩余产品缺口中选择：
 
-1. 更复杂 cross-surface real tasks；
+1. E2E-24 bounded closure 之外更复杂的 cross-surface real tasks；
 2. Browser/User Browser 在真实站点和复杂 frame/dialog/navigation/用户在场边界的广度；
 3. 现有 supervision/steering/restart 基础上的跨天/长期 continuity + progress/explanation UX；
 4. 由真实 E2E 暴露的 Windows/application semantic gap；
