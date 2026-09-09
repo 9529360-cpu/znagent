@@ -30,8 +30,6 @@ _MAX_RECOVERY_OBSERVATIONS = 12
 
 
 def install_desktop_modal_recovery_behavior(resident) -> None:
-    """Install the modal Situation seam on the one normal product Resident."""
-
     if getattr(resident, _INSTALL_MARKER, False):
         return
 
@@ -44,13 +42,7 @@ def install_desktop_modal_recovery_behavior(resident) -> None:
 
     def desktop_task_investigation(event, state, *, readiness, thought=None):
         if desktop_task_goal(event) is None:
-            return original_investigation(
-                event,
-                state,
-                readiness=readiness,
-                thought=thought,
-            )
-
+            return original_investigation(event, state, readiness=readiness, thought=thought)
         progress = _progress(state)
         phase = str(progress.get("phase") or "")
         if phase == "stale_modal_target_blocked":
@@ -95,23 +87,11 @@ def install_desktop_modal_recovery_behavior(resident) -> None:
                     parent=parent,
                 )
 
-        result = original_investigation(
-            event,
-            state,
-            readiness=readiness,
-            thought=thought,
-        )
+        result = original_investigation(event, state, readiness=readiness, thought=thought)
         _remember_parent_and_target(resident, state)
         return result
 
-    def deliberation_step(
-        event,
-        state,
-        *,
-        readiness,
-        learning_evidence,
-        thought=None,
-    ):
+    def deliberation_step(event, state, *, readiness, learning_evidence, thought=None):
         progress = _progress(state)
         if desktop_task_goal(event) is None or progress.get("phase") != "modal_ready":
             return original_deliberation(
@@ -160,6 +140,7 @@ def install_desktop_modal_recovery_behavior(resident) -> None:
                 "dialog_hwnd": int(modal["dialog_hwnd"]),
                 "owner_hwnd": int(modal["owner_hwnd"]),
                 "root_owner_hwnd": int(modal["root_owner_hwnd"]),
+                "parent_root_owner_hwnd": int(modal["parent_root_owner_hwnd"]),
                 "safe_action_name": str(modal["safe_action_name"]),
                 "safe_action_runtime_id": runtime_id,
                 "safe_action_center_x_fraction": float(modal["safe_action_center_x_fraction"]),
@@ -199,7 +180,6 @@ def install_desktop_modal_recovery_behavior(resident) -> None:
     def final_input_precondition(event, state, intent, contract, prepared):
         if not _is_modal_intent(event, intent):
             return original_final_precondition(event, state, intent, contract, prepared)
-
         progress = _progress(state)
         admitted = progress.get("modal")
         expected = intent.expected_outcome
@@ -213,10 +193,7 @@ def install_desktop_modal_recovery_behavior(resident) -> None:
             )
             if fresh is None:
                 raise RuntimeError("exact modal disappeared before admitted input")
-            fresh_button, failure = select_safe_modal_action(
-                fresh,
-                user_goal=str(event.task or ""),
-            )
+            fresh_button, failure = select_safe_modal_action(fresh, user_goal=str(event.task or ""))
             if fresh_button is None:
                 raise RuntimeError(str(failure or "fresh modal no longer has one safe action"))
             if not _same_modal_authority(admitted, expected, fresh, fresh_button):
@@ -236,15 +213,10 @@ def install_desktop_modal_recovery_behavior(resident) -> None:
     def verify_pointer_click_effect(event, state, intent, contract, *, thought=None):
         if not _is_modal_intent(event, intent):
             return original_verify_pointer(event, state, intent, contract, thought=thought)
-
         progress = _progress(state)
         execution = state.data.get(resident._POINTER_CLICK_EXECUTION_KEY)
         action_result = state.data.get("native_action_result")
-        action_id = (
-            str(execution.get("action_id") or "").strip()
-            if isinstance(execution, dict)
-            else ""
-        )
+        action_id = str(execution.get("action_id") or "").strip() if isinstance(execution, dict) else ""
         dispatch_proven = bool(
             isinstance(execution, dict)
             and str(execution.get("intent_id") or "") == intent.intent_id
@@ -326,10 +298,7 @@ def _investigate_interruption(resident, event, state, *, progress, parent):
                 "blocking modal relationship; refusing authority transfer"
             ),
         )
-    safe_action, failure = select_safe_modal_action(
-        modal,
-        user_goal=str(event.task or ""),
-    )
+    safe_action, failure = select_safe_modal_action(modal, user_goal=str(event.task or ""))
     if safe_action is None:
         return resident._fail_composite_goal_investigation(
             event,
@@ -345,7 +314,6 @@ def _investigate_interruption(resident, event, state, *, progress, parent):
             state,
             reason="one modal dismiss input was already dispatched; refusing any replay",
         )
-
     pre_runtime = [int(v) for v in progress.get("latest_target_runtime_id") or ()]
     progress.update(
         {
@@ -378,6 +346,7 @@ def _same_modal_authority(admitted, expected, fresh, fresh_button) -> bool:
         and int(fresh.parent_hwnd) == int(expected["parent_hwnd"])
         and int(fresh.owner_hwnd) == int(expected["owner_hwnd"])
         and int(fresh.root_owner_hwnd) == int(expected["root_owner_hwnd"])
+        and int(fresh.parent_root_owner_hwnd) == int(expected["parent_root_owner_hwnd"])
         and fresh.is_modal
         and fresh.dialog_visible
         and fresh.dialog_enabled
@@ -386,23 +355,15 @@ def _same_modal_authority(admitted, expected, fresh, fresh_button) -> bool:
         and int(admitted.get("parent_hwnd") or 0) == int(fresh.parent_hwnd)
         and int(admitted.get("owner_hwnd") or 0) == int(fresh.owner_hwnd)
         and int(admitted.get("root_owner_hwnd") or 0) == int(fresh.root_owner_hwnd)
+        and int(admitted.get("parent_root_owner_hwnd") or 0) == int(fresh.parent_root_owner_hwnd)
         and tuple(fresh_button.runtime_id) == admitted_runtime
         and int(fresh_button.dialog_hwnd) == int(fresh.dialog_hwnd)
         and int(fresh_button.process_id) == int(fresh.dialog_process_id)
-        and str(fresh_button.name or "").strip()
-        == str(expected.get("safe_action_name") or "").strip()
+        and str(fresh_button.name or "").strip() == str(expected.get("safe_action_name") or "").strip()
         and fresh_button.is_enabled
         and not fresh_button.is_offscreen
-        and abs(
-            float(fresh_button.center_x_fraction)
-            - float(expected["safe_action_center_x_fraction"])
-        )
-        <= 0.002
-        and abs(
-            float(fresh_button.center_y_fraction)
-            - float(expected["safe_action_center_y_fraction"])
-        )
-        <= 0.002
+        and abs(float(fresh_button.center_x_fraction) - float(expected["safe_action_center_x_fraction"])) <= 0.002
+        and abs(float(fresh_button.center_y_fraction) - float(expected["safe_action_center_y_fraction"])) <= 0.002
     )
 
 
@@ -451,7 +412,6 @@ def _remember_parent_and_target(resident, state) -> None:
     process_name = str(foreground.get("process_name") or "").strip().lower()
     if hwnd <= 0 or pid <= 0 or not process_name:
         return
-
     progress = _progress(state)
     existing = _parent(progress)
     if existing is not None and (
@@ -490,17 +450,19 @@ def _recover_exact_parent(
 ):
     progress = _progress(state)
     parent = _parent(progress)
-    if parent is None:
+    modal = progress.get("modal")
+    if parent is None or not isinstance(modal, dict) or int(modal.get("dialog_hwnd") or 0) <= 0:
         return resident._fail_composite_goal_investigation(
             event,
             state,
-            reason="modal dismiss lost its exact pre-modal parent authority",
+            reason="modal dismiss lost its exact pre-modal parent/dialog authority",
         )
     try:
         recovered = resident.modal_window.probe_parent_recovery(
             parent_hwnd=int(parent["window_handle"]),
             parent_process_id=int(parent["process_id"]),
             parent_process_name=str(parent["process_name"]),
+            dismissed_dialog_hwnd=int(modal["dialog_hwnd"]),
         )
     except Exception as exc:
         return resident._fail_composite_goal_investigation(
@@ -516,6 +478,8 @@ def _recover_exact_parent(
     observations = int(progress.get("recovery_observations") or 0) + 1
     recovered_ok = bool(
         recovered.modal_absent
+        and not recovered.dismissed_dialog_exists
+        and int(recovered.dismissed_dialog_hwnd) == int(modal["dialog_hwnd"])
         and recovered.foreground
         and recovered.visible
         and recovered.enabled
@@ -523,8 +487,7 @@ def _recover_exact_parent(
         and int(recovered.parent_interaction_state) == WINDOW_INTERACTION_READY
         and int(recovered.parent_hwnd) == int(parent["window_handle"])
         and int(recovered.parent_process_id) == int(parent["process_id"])
-        and str(recovered.parent_process_name or "").strip().lower()
-        == str(parent["process_name"])
+        and str(recovered.parent_process_name or "").strip().lower() == str(parent["process_name"])
     )
     progress["recovery_observations"] = observations
     progress["last_recovery_observation"] = asdict(recovered)
@@ -537,13 +500,13 @@ def _recover_exact_parent(
                 state,
                 reason=(
                     "one modal dismiss was dispatched, but bounded fresh observations did not prove "
-                    "the exact original parent ReadyForUserInteraction; no replay is allowed"
+                    "exact dialog disappearance plus exact parent ReadyForUserInteraction; no replay"
                 ),
             )
         state.data.pop("local_failure", None)
         state.stage = "native_investigation"
         state.next_action = (
-            "bounded fresh poll for exact parent recovery after modal dismiss; do not replay input"
+            "bounded fresh poll for exact dialog disappearance and parent recovery; do not replay input"
         )
         resident._sync_execution_context(event, state)
         resident.store.save_working_state(state)
@@ -557,13 +520,7 @@ def _recover_exact_parent(
     state.data.pop(resident._DESKTOP_TASK_OBSERVATION_KEY, None)
     state.data.pop("local_failure", None)
     resident.store.save_working_state(state)
-
-    result = original_investigation(
-        event,
-        state,
-        readiness=readiness,
-        thought=thought,
-    )
+    result = original_investigation(event, state, readiness=readiness, thought=thought)
     _remember_parent_and_target(resident, state)
     return result
 
