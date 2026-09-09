@@ -56,7 +56,7 @@ class _ModalRecoveryOrderApp(_GroundingOrderApp):
     @staticmethod
     def _read_count(path: Path) -> int:
         try:
-            return int(path.read_text(encoding="utf-8").strip() or "0")
+            return int(path.read_text(encoding="utf-8-sig").strip() or "0")
         except (OSError, ValueError):
             return 0
 
@@ -132,9 +132,7 @@ function Add-OrderControls {{
     $script:searchButton.Location = '520,113'
     $script:searchButton.Size = '125,45'
     $script:searchButton.Add_Click({{
-        if ($script:orderBox.Text -eq '{SOURCE_VALUE}') {{
-            $form.Text = '{SUCCESS_TITLE}'
-        }}
+        if ($script:orderBox.Text -eq '{SOURCE_VALUE}') {{ $form.Text = '{SUCCESS_TITLE}' }}
     }})
     $form.Controls.Add($script:orderBox)
     $form.Controls.Add($script:searchButton)
@@ -167,7 +165,7 @@ function Increment-Count([string]$path) {{
     if (Test-Path -LiteralPath $path) {{
         try {{ $count = [int](Get-Content -LiteralPath $path -Raw) }} catch {{ $count = 0 }}
     }}
-    Set-Content -LiteralPath $path -Value ($count + 1) -Encoding UTF8
+    [IO.File]::WriteAllText($path, [string]($count + 1))
 }}
 
 Add-OrderControls
@@ -198,14 +196,8 @@ $timer.Add_Tick({{
         $risky.AccessibleName = '{RISKY_ACTION}'
         $risky.Location = '230,105'
         $risky.Size = '115,42'
-        $safe.Add_Click({{
-            Increment-Count $safeFile
-            $dialog.Close()
-        }})
-        $risky.Add_Click({{
-            Increment-Count $riskyFile
-            $dialog.Close()
-        }})
+        $safe.Add_Click({{ Increment-Count $safeFile; $dialog.Close() }})
+        $risky.Add_Click({{ Increment-Count $riskyFile; $dialog.Close() }})
         $dialog.Controls.AddRange(@($message, $safe, $risky))
         [void]$dialog.ShowDialog($form)
         $dialog.Dispose()
@@ -232,27 +224,18 @@ class WindowsInteractiveDesktopModalRecoveryE2ETests(unittest.TestCase):
             app.start()
             resident = None
             try:
-                resident = build_resident_runtime(
-                    config={"model": {}},
-                    store_path=root / "kernel.db",
-                )
+                resident = build_resident_runtime(config={"model": {}}, store_path=root / "kernel.db")
                 service = ResidentSocketService(ResidentRpcServer(resident=resident))
                 self.assertIs(resident.visual_region, service.visual_region)
-                proposal = _SemanticProposal()
                 WindowsInteractiveDesktopSemanticGroundingE2ETests._enable_cognition(
-                    resident,
-                    proposal,
+                    resident, _SemanticProposal()
                 )
                 ledger = RecoveryBoundedWorkLedger(resident)
                 thread = "desktop-modal-recovery-e2e"
                 ledger.create_thread(thread_id=thread)
                 ledger.attach_workspace(thread, workspace)
                 app.activate()
-                _, event = ledger.start(
-                    thread,
-                    TASK,
-                    payload={"model_policy": "on_demand"},
-                )
+                _, event = ledger.start(thread, TASK, payload={"model_policy": "on_demand"})
                 self.assertIsNone(explicit_desktop_task_goal_hint(event))
 
                 observation_key = getattr(
@@ -274,23 +257,18 @@ class WindowsInteractiveDesktopModalRecoveryE2ETests(unittest.TestCase):
                     observation = observation if isinstance(observation, dict) else {}
                     target = observation.get("target")
                     target = target if isinstance(target, dict) else {}
-                    phase = str(observation.get("phase") or "")
                     actions = [
                         action
                         for action in resident.body.recent_actions(512)
                         if action.event_id == event.event_id
                     ]
-
                     if (
                         not modal_triggered
-                        and phase == "focus"
+                        and str(observation.get("phase") or "") == "focus"
                         and target.get("runtime_id")
-                        and not any(
-                            action.kind in {"pointer_click", "keyboard_text"}
-                            for action in actions
-                        )
+                        and not any(a.kind in {"pointer_click", "keyboard_text"} for a in actions)
                     ):
-                        old_edit_runtime = tuple(int(value) for value in target["runtime_id"])
+                        old_edit_runtime = tuple(int(v) for v in target["runtime_id"])
                         app.trigger_modal()
                         modal_deadline = time.monotonic() + 8
                         while time.monotonic() < modal_deadline:
@@ -309,8 +287,8 @@ class WindowsInteractiveDesktopModalRecoveryE2ETests(unittest.TestCase):
                             pass
                     current = resident.live_once()
                     post = resident.store.get_working_state()
-                    modal_state = post.data.get(_MODAL_STATE_KEY)
-                    modal_state = modal_state if isinstance(modal_state, dict) else {}
+                    recovery = post.data.get(_MODAL_STATE_KEY)
+                    recovery = recovery if isinstance(recovery, dict) else {}
                     post_observation = post.data.get(observation_key)
                     post_observation = post_observation if isinstance(post_observation, dict) else {}
                     post_target = post_observation.get("target")
@@ -321,7 +299,7 @@ class WindowsInteractiveDesktopModalRecoveryE2ETests(unittest.TestCase):
                         and not app.modal_hwnd()
                         and post_target.get("runtime_id")
                     ):
-                        candidate = tuple(int(value) for value in post_target["runtime_id"])
+                        candidate = tuple(int(v) for v in post_target["runtime_id"])
                         if candidate != old_edit_runtime:
                             fresh_edit_runtime = candidate
                     trace.append(
@@ -329,10 +307,7 @@ class WindowsInteractiveDesktopModalRecoveryE2ETests(unittest.TestCase):
                             "stage": post.stage,
                             "next_action": post.next_action,
                             "desktop_phase": post_observation.get("phase"),
-                            "modal_phase": modal_state.get("phase"),
-                            "modal_title": (modal_state.get("modal") or {}).get("dialog_title")
-                            if isinstance(modal_state.get("modal"), dict)
-                            else None,
+                            "modal_phase": recovery.get("phase"),
                             "safe_count": app.safe_count(),
                             "risky_count": app.risky_count(),
                             "app_title": app.title(),
@@ -344,9 +319,9 @@ class WindowsInteractiveDesktopModalRecoveryE2ETests(unittest.TestCase):
                     if result is None:
                         time.sleep(0.025)
 
-                self.assertTrue(modal_triggered, json.dumps(trace[-20:], ensure_ascii=False, default=str))
+                self.assertTrue(modal_triggered, json.dumps(trace[-20:], ensure_ascii=False))
                 self.assertTrue(modal_seen)
-                self.assertIsNotNone(result, json.dumps(trace[-30:], ensure_ascii=False, default=str))
+                self.assertIsNotNone(result, json.dumps(trace[-30:], ensure_ascii=False))
                 self.assertTrue(result.success, result.reason)
                 self.assertEqual(app.safe_count(), 1)
                 self.assertEqual(app.risky_count(), 0)
@@ -365,9 +340,12 @@ class WindowsInteractiveDesktopModalRecoveryE2ETests(unittest.TestCase):
                 self.assertTrue(modal.get("is_modal"))
                 self.assertEqual(modal.get("parent_interaction_state"), 3)
                 self.assertEqual(modal.get("owner_hwnd"), app.hwnd)
-                self.assertEqual(modal.get("root_owner_hwnd"), app.hwnd)
+                self.assertEqual(modal.get("root_owner_hwnd"), modal.get("dialog_hwnd"))
+                self.assertEqual(modal.get("parent_root_owner_hwnd"), app.hwnd)
                 self.assertEqual(recovery.get("dispatch_count"), 1)
                 self.assertTrue(recovered.get("modal_absent"))
+                self.assertFalse(recovered.get("dismissed_dialog_exists"))
+                self.assertEqual(recovered.get("dismissed_dialog_hwnd"), modal.get("dialog_hwnd"))
                 self.assertEqual(recovered.get("parent_hwnd"), app.hwnd)
                 self.assertEqual(recovered.get("parent_interaction_state"), 2)
                 self.assertTrue(recovered.get("foreground"))
@@ -380,8 +358,8 @@ class WindowsInteractiveDesktopModalRecoveryE2ETests(unittest.TestCase):
                     for action in resident.body.recent_actions(512)
                     if action.event_id == event.event_id
                 ]
-                self.assertEqual(sum(action.kind == "keyboard_text" for action in actions), 1)
-                self.assertEqual(sum(action.kind == "pointer_click" for action in actions), 3)
+                self.assertEqual(sum(a.kind == "keyboard_text" for a in actions), 1)
+                self.assertEqual(sum(a.kind == "pointer_click" for a in actions), 3)
                 outcome = resident.store.get_event_outcome(event.event_id)
                 self.assertIsNotNone(outcome)
                 self.assertTrue(outcome.success)
@@ -396,10 +374,12 @@ class WindowsInteractiveDesktopModalRecoveryE2ETests(unittest.TestCase):
                             "dialog_hwnd": modal.get("dialog_hwnd"),
                             "owner_hwnd": modal.get("owner_hwnd"),
                             "root_owner_hwnd": modal.get("root_owner_hwnd"),
+                            "parent_root_owner_hwnd": modal.get("parent_root_owner_hwnd"),
                             "is_modal": modal.get("is_modal"),
                             "parent_interaction_state": modal.get("parent_interaction_state"),
                             "safe_action": modal.get("safe_action_name"),
                             "dialog_dispatch_count": recovery.get("dispatch_count"),
+                            "modal_absent": recovered.get("modal_absent"),
                             "old_edit_runtime": list(old_edit_runtime),
                             "fresh_edit_runtime": list(fresh_edit_runtime),
                             "final_title": app.title(),
