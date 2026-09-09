@@ -2,13 +2,16 @@ from __future__ import annotations
 
 """Explicit control-plane authority for Work restore, continuation, and steering."""
 
+import hashlib
 import re
 import uuid
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from .evidence_bound_work import EvidenceBoundSteerableWorkLedger
+from .models import utc_now
 from .route_policy_intake import bind_work_event_route_policy
 from .steerable_work import SteerableWorkLedger
 from .work import WorkMessage
@@ -16,6 +19,14 @@ from .work_control import ResidentWorkControl
 
 
 _CONTINUE = re.compile(r"(?:继续做|接着做|继续|接着)")
+_BARE_CURRENT_CONTINUE = re.compile(
+    r"^(?:那)?(?:继续(?:做)?|接着(?:做)?)(?:吧|一下)?[。！!？?]*$"
+)
+_INSPECTION_FOLLOWUPS = (
+    re.compile(r"^(?:我)?先?看(?:看|一下)?(?:现在)?(?:做到哪(?:一步)?(?:了)?|进度|进展|什么情况)$"),
+    re.compile(r"^先?告诉我(?:现在)?(?:做到哪(?:一步)?(?:了)?|进度|进展|什么情况)$"),
+    re.compile(r"^(?:我)?先?看看?现在什么情况$"),
+)
 _LATEST_REFERENCE = ("刚才", "刚刚", "上次", "之前那个", "前面那个")
 _YESTERDAY_REFERENCE = ("昨天", "昨日")
 _STEERING_CUES = (
@@ -35,6 +46,14 @@ _STEERING_CUES = (
 _CONTEXT_TASK_LIMIT = 500
 _CONTEXT_RESULT_LIMIT = 500
 _CONTEXT_FOLLOWUP_LIMIT = 1000
+_INSPECTION_ITEM_LIMIT = 16
+_INSPECTION_ARTIFACT_LIMIT = 4
+_INSPECTION_TEXT_LIMIT = 800
+_INSPECTION_ARTIFACT_READ_LIMIT = 50_000
+_SECRET_ASSIGNMENT = re.compile(
+    r"(?i)\b(api[_ -]?key|access[_ -]?token|auth[_ -]?token|password|secret|authorization)\b\s*[:=]\s*[^\s,;]+"
+)
+_SECRET_TOKEN = re.compile(r"\b(?:sk-[A-Za-z0-9_-]{12,}|eyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})\b")
 
 
 class RestoreAwareWorkControl(ResidentWorkControl):
@@ -42,8 +61,10 @@ class RestoreAwareWorkControl(ResidentWorkControl):
 
     Bare continuation reconnects to the exact active event. An explicit plan
     change such as ``登录先别做，先把核心记账跑起来`` increments the same Root
-    Work's plan version and supersedes the old active plan. Completed Work
-    follow-ups still start a fresh event without replaying the completed event.
+    Work's plan version and supersedes the old active plan. A bounded
+    continuation inspection is a read-only status operation over that same Work;
+    it never grants execution permission. Completed Work follow-ups still start
+    a fresh event without replaying the completed event.
     """
 
     def __init__(self, ledger):
@@ -77,6 +98,17 @@ class RestoreAwareWorkControl(ResidentWorkControl):
         return followup or None
 
     @classmethod
+    def continuation_inspection_followup(cls, task: str) -> str | None:
+        """Recognize only an explicit continuation plus a narrow status query."""
+        if cls.continuation_reference(task) is None:
+            return None
+        followup = cls.continuation_followup(task)
+        if followup is None:
+            return None
+        normalized = re.sub(r"[。！!？?，,；;]+$", "", followup.strip())
+        return normalized if any(pattern.fullmatch(normalized) for pattern in _INSPECTION_FOLLOWUPS) else None
+
+    @classmethod
     def active_steering_followup(cls, task: str) -> str | None:
         """Recognize explicit active-plan edits without treating every suffix as steering."""
         followup = cls.continuation_followup(task)
@@ -84,14 +116,62 @@ class RestoreAwareWorkControl(ResidentWorkControl):
             return None
         return followup if any(cue in followup for cue in _STEERING_CUES) else None
 
+    @staticmethod
+    def _bare_current_continue(task: str) -> bool:
+        normalized = " ".join(str(task or "").strip().split())
+        return bool(normalized and _BARE_CURRENT_CONTINUE.fullmatch(normalized))
+
+    def _latest_message_is_inspection(self, thread_id: str) -> bool:
+        messages = self.ledger.list_messages(thread_id, limit=1)
+        if not messages:
+            return False
+        latest = messages[-1]
+        return bool(latest.role == "user" and latest.detail.get("inspection") is True)
+
     def start(self, thread_id: str, task: str, **kwargs):
         reference = self.continuation_reference(task)
         if reference is None:
+            # ``继续`` is intentionally admitted only after a durable inspection
+            # message on this exact thread. This keeps the new behavior bounded
+            # and lets a restart preserve the status-first -> resume sequence
+            # without relying on the in-memory ingress alias helper.
+            if self._bare_current_continue(task):
+                normalized_thread = self.ledger._normalize_thread_id(thread_id)
+                current = self.ledger.get_thread(normalized_thread)
+                if current is not None and self._latest_message_is_inspection(normalized_thread):
+                    self.reconcile_cancelled_runs(thread_id=normalized_thread)
+                    active = self.ledger._active_run_for_thread(normalized_thread)
+                    if active is None:
+                        raise ValueError(
+                            "the inspected Work is already complete; say what should happen next so ZN can form a fresh task instead of replaying the completed event"
+                        )
+                    return self._resume_referenced_active_work(
+                        current,
+                        active,
+                        task,
+                        reference="current",
+                        ingress_thread_id=normalized_thread,
+                    )
             return super().start(thread_id, task, **kwargs)
 
         self.reconcile_cancelled_runs()
         thread = self._referenced_thread(reference)
         active = self.ledger._active_run_for_thread(thread.thread_id)
+        inspection = self.continuation_inspection_followup(task)
+        if inspection is not None:
+            if kwargs:
+                raise ValueError("continuation inspection is read-only and does not accept execution options")
+            inspected_run = active or self._latest_completed_run(thread.thread_id)
+            if inspected_run is None:
+                raise ValueError("the referenced Work has no durable resident event to inspect")
+            return self._inspect_referenced_work(
+                thread,
+                inspected_run,
+                task,
+                reference=reference,
+                ingress_thread_id=thread_id,
+            )
+
         followup = self.continuation_followup(task)
         if active is not None:
             steering = self.active_steering_followup(task)
@@ -137,8 +217,376 @@ class RestoreAwareWorkControl(ResidentWorkControl):
         if work_run is not None and work_run.thread_id != normalized_thread:
             alias = self._continuation_ingress_aliases.get(normalized_event)
             if alias == normalized_thread:
-                return super().progress(work_run.thread_id, normalized_event)
-        return super().progress(normalized_thread, normalized_event)
+                progress = super().progress(work_run.thread_id, normalized_event)
+                return self._with_continuation_inspection(
+                    work_run.thread_id,
+                    normalized_event,
+                    progress,
+                )
+        progress = super().progress(normalized_thread, normalized_event)
+        return self._with_continuation_inspection(
+            normalized_thread,
+            normalized_event,
+            progress,
+        )
+
+    def _with_continuation_inspection(
+        self,
+        thread_id: str,
+        event_id: str,
+        progress: dict[str, Any],
+    ) -> dict[str, Any]:
+        messages = self.ledger.list_messages(thread_id, limit=1)
+        if not messages:
+            return progress
+        latest = messages[-1]
+        detail = latest.detail if latest.role == "user" else {}
+        if (
+            detail.get("inspection") is not True
+            or str(detail.get("inspected_event_id") or "") != event_id
+        ):
+            return progress
+        progress["continuation_inspection"] = self._continuation_inspection_projection(
+            thread_id,
+            event_id,
+            progress,
+        )
+        return progress
+
+    def _inspect_referenced_work(
+        self,
+        thread,
+        run,
+        task: str,
+        *,
+        reference: str,
+        ingress_thread_id: str,
+    ):
+        event = self.resident.store.get_event(run.event_id)
+        if event is None:
+            raise RuntimeError("referenced Work lost its durable resident event")
+
+        normalized_ingress = self.ledger._normalize_thread_id(ingress_thread_id)
+        if normalized_ingress != thread.thread_id:
+            self._continuation_ingress_aliases[run.event_id] = normalized_ingress
+
+        self.ledger._append(
+            thread,
+            WorkMessage(
+                message_id=f"msg-{uuid.uuid4().hex[:16]}",
+                thread_id=thread.thread_id,
+                role="user",
+                text=" ".join(str(task or "").strip().split()),
+                detail={
+                    "continuation": True,
+                    "inspection": True,
+                    "reference": reference,
+                    "inspected_event_id": run.event_id,
+                    "new_resident_event": False,
+                    "execution_permission": False,
+                },
+            ),
+        )
+        return self.get_snapshot(thread.thread_id), event
+
+    @classmethod
+    def _public_text(cls, value: Any, *, limit: int = _INSPECTION_TEXT_LIMIT) -> str:
+        text = " ".join(str(value or "").strip().split())
+        text = _SECRET_ASSIGNMENT.sub(lambda match: f"{match.group(1)}=<redacted>", text)
+        text = _SECRET_TOKEN.sub("<redacted>", text)
+        return text[: max(0, int(limit))]
+
+    @staticmethod
+    def _contained_relative(workspace: Path, target: Path) -> str | None:
+        try:
+            return target.resolve(strict=False).relative_to(workspace.resolve(strict=False)).as_posix()
+        except (OSError, RuntimeError, ValueError):
+            return None
+
+    def _artifact_target(self, workspace: Path, artifact) -> tuple[Path, str] | None:
+        relative = str(artifact.metadata.get("workspace_relative_path") or "").strip()
+        if relative:
+            candidate = (workspace / relative).resolve(strict=False)
+            contained = self._contained_relative(workspace, candidate)
+            if contained is None:
+                return None
+            return candidate, contained
+        path = str(artifact.path or "").strip()
+        if not path:
+            return None
+        candidate = Path(path).expanduser().resolve(strict=False)
+        contained = self._contained_relative(workspace, candidate)
+        if contained is None:
+            return None
+        return candidate, contained
+
+    def _inspect_artifacts(
+        self,
+        thread_id: str,
+        event_id: str,
+        workspace: Path,
+        *,
+        workspace_present: bool,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        selected: list[tuple[Any, Path, str]] = []
+        seen: set[str] = set()
+        for artifact in self.ledger.list_artifacts(thread_id, limit=32):
+            if str(artifact.kind or "") != "file":
+                continue
+            target = self._artifact_target(workspace, artifact)
+            if target is None:
+                continue
+            candidate, relative = target
+            key = relative.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            selected.append((artifact, candidate, relative))
+            if len(selected) >= _INSPECTION_ARTIFACT_LIMIT:
+                break
+
+        result: list[dict[str, Any]] = []
+        drift = False
+        for artifact, candidate, relative in selected:
+            historical = {
+                "status": "recorded",
+                "recorded_at": str(artifact.created_at),
+            }
+            current: dict[str, Any]
+            if not workspace_present:
+                current = {
+                    "status": "workspace_missing",
+                    "observed_at": utc_now(),
+                }
+                drift = True
+            else:
+                observed = self.resident.body.act(
+                    "inspect_path",
+                    event_id=event_id,
+                    path=str(candidate),
+                )
+                observed_at = str(observed.completed_at)
+                if not observed.success:
+                    current = {"status": "unavailable", "observed_at": observed_at}
+                    drift = True
+                elif not bool(observed.data.get("exists")):
+                    current = {"status": "missing", "observed_at": observed_at}
+                    drift = True
+                elif str(observed.data.get("type") or "") != "file":
+                    current = {"status": "type_changed", "observed_at": observed_at}
+                    drift = True
+                else:
+                    read = self.resident.body.act(
+                        "read_text",
+                        event_id=event_id,
+                        path=str(candidate),
+                        max_chars=_INSPECTION_ARTIFACT_READ_LIMIT,
+                    )
+                    read_at = str(read.completed_at)
+                    historical_complete = artifact.metadata.get("truncated") is not True
+                    current_complete = read.success and read.data.get("truncated") is not True
+                    if historical_complete and current_complete:
+                        historical_hash = hashlib.sha256(
+                            str(artifact.content or "").encode("utf-8", errors="replace")
+                        ).hexdigest()
+                        current_hash = hashlib.sha256(
+                            str(read.output or "").encode("utf-8", errors="replace")
+                        ).hexdigest()
+                        matches = historical_hash == current_hash
+                        current = {
+                            "status": "unchanged" if matches else "modified",
+                            "observed_at": read_at,
+                            "matches_historical": matches,
+                        }
+                        drift = drift or not matches
+                    else:
+                        current = {
+                            "status": "present" if read.success else "unreadable",
+                            "observed_at": read_at,
+                            "matches_historical": None,
+                        }
+                        drift = drift or not read.success
+            result.append(
+                {
+                    "name": self._public_text(artifact.name, limit=160),
+                    "kind": "file",
+                    "path": relative,
+                    "historical": historical,
+                    "current": current,
+                }
+            )
+        return result, drift
+
+    def _current_environment_projection(
+        self,
+        thread_id: str,
+        event_id: str,
+        thread,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], bool]:
+        workspace_ref = self.ledger.workspace_for(thread)
+        if workspace_ref is None:
+            return (
+                {
+                    "workspace_attached": False,
+                    "workspace_present": False,
+                    "git": None,
+                    "inspected_at": utc_now(),
+                },
+                [],
+                False,
+            )
+
+        workspace = Path(workspace_ref.path).expanduser().resolve(strict=False)
+        observed = self.resident.body.act(
+            "inspect_path",
+            event_id=event_id,
+            path=str(workspace),
+        )
+        workspace_present = bool(
+            observed.success
+            and observed.data.get("exists") is True
+            and observed.data.get("type") == "directory"
+        )
+        environment: dict[str, Any] = {
+            "workspace_attached": True,
+            "workspace_name": self._public_text(workspace_ref.name, limit=160),
+            "workspace_present": workspace_present,
+            "workspace_observed_at": str(observed.completed_at),
+            "git": None,
+        }
+        drift = not workspace_present
+
+        if workspace_present:
+            git = self.resident.body.act(
+                "git_state",
+                event_id=event_id,
+                path=str(workspace),
+                limit=64,
+            )
+            if git.success:
+                git_root = Path(str(git.data.get("root") or "")).resolve(strict=False)
+                relation = (
+                    "workspace_root"
+                    if git_root == workspace
+                    else "workspace_within_repo"
+                    if self._contained_relative(git_root, workspace) is not None
+                    else "unexpected_root"
+                )
+                if relation == "unexpected_root":
+                    drift = True
+                environment["git"] = {
+                    "is_repository": True,
+                    "branch": self._public_text(git.data.get("branch"), limit=120),
+                    "head": self._public_text(git.data.get("head_short"), limit=32),
+                    "dirty": bool(git.data.get("dirty")),
+                    "changed_files": max(0, int(git.data.get("changed_files") or 0)),
+                    "workspace_relation": relation,
+                    "observed_at": str(git.completed_at),
+                }
+            else:
+                environment["git"] = {
+                    "is_repository": False,
+                    "observed_at": str(git.completed_at),
+                }
+
+        artifacts, artifact_drift = self._inspect_artifacts(
+            thread_id,
+            event_id,
+            workspace,
+            workspace_present=workspace_present,
+        )
+        drift = drift or artifact_drift
+        environment["drift_detected"] = drift
+        environment["inspected_at"] = utc_now()
+        return environment, artifacts, drift
+
+    def _continuation_inspection_projection(
+        self,
+        thread_id: str,
+        event_id: str,
+        progress: dict[str, Any],
+    ) -> dict[str, Any]:
+        thread = self.ledger.get_thread(thread_id)
+        if thread is None:
+            raise RuntimeError("continuation inspection lost its durable WorkThread")
+        plan_version = int(self.ledger.plan_version(thread_id))
+        items = self.ledger.list_work_items(thread_id, limit=256)
+        current = [item for item in items if item.plan_version == plan_version]
+        roots = [item for item in current if item.parent_work_item_id is None]
+        if len(roots) != 1:
+            raise RuntimeError("continuation inspection requires one exact current Root WorkItem")
+        root = roots[0]
+        children = [item for item in current if item.parent_work_item_id == root.work_item_id]
+        children = children[:_INSPECTION_ITEM_LIMIT]
+
+        def item_view(item) -> dict[str, Any]:
+            result = {
+                "title": self._public_text(item.title, limit=240),
+                "objective": self._public_text(item.objective, limit=500),
+                "status": str(item.status),
+                "updated_at": str(item.updated_at),
+            }
+            if item.completed_at:
+                result["completed_at"] = str(item.completed_at)
+            if item.blocker:
+                result["blocker"] = self._public_text(item.blocker, limit=600)
+            return result
+
+        completed = [item_view(item) for item in children if item.status == "completed"]
+        active = [
+            item_view(item)
+            for item in children
+            if item.status in {"proposed", "ready", "running"}
+        ]
+        blocked = [item_view(item) for item in children if item.status == "blocked"]
+        blockers = [
+            {
+                "title": view["title"],
+                "historical": view.get("blocker") or "blocked in durable Work truth",
+                "current_status": "not_reprobed",
+            }
+            for view in blocked
+        ]
+        if root.blocker:
+            blockers.insert(
+                0,
+                {
+                    "title": self._public_text(root.title, limit=240),
+                    "historical": self._public_text(root.blocker, limit=600),
+                    "current_status": "not_reprobed",
+                },
+            )
+        blockers = blockers[:_INSPECTION_ITEM_LIMIT]
+
+        environment, artifacts, drift = self._current_environment_projection(
+            thread_id,
+            event_id,
+            thread,
+        )
+        updated_values = [str(item.updated_at) for item in current if item.updated_at]
+        projection: dict[str, Any] = {
+            "mode": "continuation_inspection",
+            "read_only": True,
+            "inspection_complete": True,
+            "reference": "yesterday",
+            "work_status": str(root.status),
+            "root_goal": self._public_text(root.objective, limit=800),
+            "plan_version": plan_version,
+            "plan": [item_view(item) for item in children],
+            "completed": completed,
+            "active": active,
+            "blocked": blocked,
+            "blockers": blockers,
+            "artifacts": artifacts,
+            "environment": environment,
+            "drift_detected": drift,
+            "last_durable_progress_at": max(updated_values) if updated_values else str(root.updated_at),
+            "inspected_at": str(environment.get("inspected_at") or utc_now()),
+        }
+        delegation = progress.get("delegation")
+        if isinstance(delegation, dict):
+            projection["delegation"] = delegation
+        return projection
 
     def _resume_referenced_active_work(
         self,
