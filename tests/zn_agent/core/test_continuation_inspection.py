@@ -234,6 +234,51 @@ class ContinuationInspectionTests(unittest.TestCase):
             finally:
                 resident.store.close()
 
+    def test_status_projection_redacts_secret_like_durable_text_and_internal_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = self._runtime(Path(tmp) / "kernel.db")
+            try:
+                control = RestoreAwareWorkControl(RecoveryBoundedWorkLedger(resident))
+                ledger = control.ledger
+                ledger.create_thread(thread_id="private", title="Private product")
+                secret = "sk-0123456789abcdefghijklmnop"
+                _, event = ledger.start(
+                    "private",
+                    f"开发产品 api_key={secret}",
+                    objective=f"开发产品 api_key={secret}",
+                    acceptance_criteria=["bounded status"],
+                )
+                root = ledger.work_item_for_event(event.event_id)
+                self.assertIsNotNone(root)
+                blocked = ledger.create_child_item(
+                    root_work_item_id=root.work_item_id,
+                    objective="验证服务",
+                    acceptance_criteria=["service ready"],
+                    title="Service check",
+                )
+                ledger.block_child_item(
+                    blocked.work_item_id,
+                    blocker=f"authorization={secret}",
+                )
+                self._age_thread(ledger, "private")
+                ledger.create_thread(thread_id="shell", title="New work")
+
+                _, inspected = control.start("shell", TASK)
+                projection = control.progress("shell", inspected.event_id)[
+                    "continuation_inspection"
+                ]
+                rendered = str(projection)
+
+                self.assertNotIn(secret, rendered)
+                self.assertIn("<redacted>", rendered)
+                self.assertNotIn(root.work_item_id, rendered)
+                self.assertNotIn(blocked.work_item_id, rendered)
+                self.assertNotIn(event.event_id, rendered)
+                self.assertNotIn("provider", rendered.lower())
+                self.assertNotIn("authority_scope", rendered.lower())
+            finally:
+                resident.store.close()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
