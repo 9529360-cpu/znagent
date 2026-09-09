@@ -185,6 +185,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw 'Playwright Chromium runtime installation failed for interactive E2E'
           }
+      - name: Run E2E-15 modal recovery acceptance in isolation
+        shell: powershell
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-e2e-venv\Scripts\python.exe'
+          & $python tests/zn_agent/e2e/test_windows_interactive_desktop_modal_recovery.py WindowsInteractiveDesktopModalRecoveryE2ETests.test_unexpected_same_process_modal_is_safely_dismissed_then_original_work_regrounds -v
+          if ($LASTEXITCODE -ne 0) {
+            throw 'E2E-15 isolated modal recovery acceptance failed'
+          }
       - name: Run current product-route interactive E2Es in isolated modules
         shell: powershell
         run: |
@@ -192,7 +201,8 @@ jobs:
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-e2e-venv\Scripts\python.exe'
           $excluded = @(
             'test_windows_interactive_authorized_user_browser_cdp.py',
-            'test_windows_interactive_user_browser_named_goal.py'
+            'test_windows_interactive_user_browser_named_goal.py',
+            'test_windows_interactive_desktop_modal_recovery.py'
           )
           $tests = Get-ChildItem tests/zn_agent/e2e/test_windows_interactive_*.py |
             Where-Object { $_.Name -notin $excluded } |
