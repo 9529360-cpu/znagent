@@ -45,6 +45,7 @@ The original 50 scenario definitions below remain stable. The following status n
 | E2E-30 | CLOSED under current acceptance policy | Durable route/privacy policy, hard eligibility and route/provider provenance are verified. Closure includes an owner-approved environment waiver because a second real provider family was not configured; guarded two-provider acceptance remains and must fail closed/no-skip when such an environment is present. |
 | E2E-33 | CLOSED representative path | Same durable Work can continue after restart with fresh current evidence and completed historical effects are not blindly replayed. Broader cross-day task families remain open. |
 | E2E-34 | CLOSED representative path | Delegated restart reconciliation, no-replay recovery and restart-safe supervision are verified for the guarded path. Broader long-duration recovery remains open. |
+| E2E-35 | CLOSED representative path | `昨天那个产品继续，先看看做到哪了。` resolves one durable yesterday Work and reconstructs goal/plan/completed/blocked/artifacts/delegated progress plus fresh bounded workspace/Git/artifact evidence without new event/model/WorkerRun/WorkItem-plan mutation; overnight artifact drift is reported without rewriting historical completion. It is not arbitrary history search or general long-horizon orchestration. |
 | E2E-42 | CLOSED under current acceptance policy | Privacy/locality hard eligibility and guarded acceptance are verified with the same documented environment-waiver semantics as E2E-30; no claim of full two-real-provider-family production evidence. |
 
 A `CLOSED representative path` entry does not automatically promote the whole capability class to `PRODUCT-CLOSED`.
@@ -387,6 +388,12 @@ User:
 
 Must reconstruct root goal, plan, completed items, blockers, artifacts and current environment without requiring the user to restate the project.
 
+Representative closure (2026-09-09): a fresh UI ingress with only the sentence above resolves exactly one durable yesterday Work and reuses the same WorkThread, Root Work, current plan and existing Resident event. The status-first interaction derives goal/plan/completed/active/blocked/blocker/artifact/delegated facts from the existing durable Work truth, and performs only bounded fresh read-only Body observations of the attached workspace, Git state and up to four Work-owned artifact references. It creates no new Resident event, invokes no model, creates no WorkerRun and does not mutate WorkItem status/plan. Historical artifact evidence is kept separate from current observations: the happy path reports the representative artifacts unchanged, while an overnight modified file and deleted file are reported as `modified` and `missing` with `drift_detected=true` without erasing historical completion.
+
+The inspection message is durable but explicitly has no execution permission. Desktop treats `inspection_complete` as completion of the read-only interaction, not terminal/finalized Work, so the user can immediately say `继续`; bare continue is admitted only when the exact current thread's latest durable user message is an inspection and then reuses the same active event, including after restart. Completed Work can be inspected but bare replay remains forbidden. Zero or multiple yesterday candidates fail closed.
+
+PR-head evidence: `ZN Work Recovery E2E #336`, `E2E27-33 Real Steering Replan Acceptance #9`, and `ZN CI #1703` all passed before documentation synchronization. This is a bounded next-day status-first closure only; it does not claim arbitrary history search, multi-week/month project reconstruction, cross-device continuity, a generic project-management dashboard, general long-horizon orchestration, general DAG scheduling or recursive multi-agent runtime.
+
 ### E2E-36 — Uncertain side effect across restart
 
 A mutation may have happened before crash.
@@ -483,7 +490,7 @@ ZN must reject the claim and continue/replan rather than announce completion.
 
 ## 15. Current implementation selection
 
-The old “first five E2Es to drive orchestration development” ordering is retired because E2E-29, E2E-30/42, E2E-28/34 and E2E-27/33 now have the representative closures recorded above.
+The old “first five E2Es to drive orchestration development” ordering is retired because E2E-29, E2E-30/42, E2E-28/34, E2E-27/33 and E2E-35 now have the representative closures recorded above.
 
 Do not re-run that historical priority list as a development plan.
 
@@ -491,7 +498,7 @@ Select future work from the catalog by asking which ordinary real task is still 
 
 - cross-surface Browser/Desktop/File/Terminal/Application work beyond the bounded E2E-24 representative closure;
 - Browser/User Browser real-site complexity beyond the bounded verified paths;
-- longer-horizon/cross-day use on top of existing steering/supervision/restart mechanisms;
+- longer-horizon/cross-day use beyond E2E-35's bounded yesterday status-first path, on top of existing steering/supervision/restart mechanisms;
 - user-readable progress, blocker and completion-evidence quality;
 - concrete Windows/application semantic gaps beyond the bounded E2E-15 same-process safe-modal representative closure.
 

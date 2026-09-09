@@ -37,7 +37,7 @@ Product-closed
 | --- | --- | --- |
 | Resident Self / Body / Senses / Situation / Thought / Will | CONNECTED + VERIFIED | 真实任务广度仍需扩大 |
 | Durable Work / restart recovery | CONNECTED + VERIFIED | 更长周期、跨天和更多真实任务上的连续体验仍需扩大 |
-| Work continuity / steering | VERIFIED NARROW; E2E-27/33 representative path closed | natural-language same-Work steering、plan-version replan、stale old-worker gating、restart continuation 已验证；更广长期使用仍开放 |
+| Work continuity / steering | VERIFIED NARROW; E2E-27/33/35 representative paths closed | natural-language same-Work steering、plan-version replan、stale old-worker gating、restart continuation，以及 bounded next-day status-first reconstruction/continue 已验证；更广长期使用仍开放 |
 | Managed Browser / BrowserScene | CONNECTED + VERIFIED NARROW | 已有 bounded BrowserScene、tab/history、exact scene actions、causal popup、file transfer、stateless/stateful control clicks；复杂 frames/dialogs/general keyboard/OCR/任意网页仍未覆盖 |
 | User Browser Bridge | CONNECTED + VERIFIED NARROW | E2E-05 authenticated research→mutation、E2E-07 causal child-tab、E2E-08 OTP user-presence representative paths 已关闭；真实网站和更复杂认证/导航仍需扩大 |
 | File / workspace tasks | CONNECTED + VERIFIED NARROW | 歧义来源、复杂整理和更广任务类型 |
@@ -129,6 +129,18 @@ CONNECTED + VERIFIED NARROW / PARTIAL UX
 
 ## 代表性 E2E closure
 
+### E2E-35 — next-day product continuation/status-first inspection
+
+2026-09-09 已验证 bounded representative path：用户从新的 UI ingress 只说 `昨天那个产品继续，先看看做到哪了。`，Resident 从 durable yesterday Work 唯一解析到原 WorkThread，复用同一 Root Work、current plan 和已有 Resident event；status projection 直接从 durable WorkItems/blockers/artifacts/delegated facts 派生，并对 attached workspace、Git 与最多 4 个 Work-owned artifacts 做 bounded fresh read-only Body Sense。
+
+验收硬事实：`new_event_count=0`、`model_invocation_delta=0`、`worker_run_delta=0`、`mutation_action_delta=0`，Root/plan/WorkItem statuses 不变；happy path 能恢复 root goal、2 个 completed children、1 个 blocked child、2 个 artifacts，workspace/Git current evidence 存在。overnight 修改/删除 artifact 的对抗路径分别报告 `modified` / `missing` 并置 `drift_detected=true`，但 historical artifact evidence 与 completed Work truth 不被改写。
+
+inspection 只追加 durable user inspection message，明确 `execution_permission=false`；Desktop 的 `inspection_complete` 结束的是这次只读 interaction，不 terminalize/finalize 原 Work。随后 exact current thread 的 `继续`/`那继续吧` 只在最新 durable message 为 inspection 时复用同一 active event，包括 restart 后；completed Work 可检查，但 bare replay 继续 fail closed；zero/multiple yesterday candidates fail closed。
+
+PR-head 验证证据：`ZN Work Recovery E2E #336`、`E2E27-33 Real Steering Replan Acceptance #9`、`ZN CI #1703` 均为 success。merge 后 canonical main SHA / post-merge CI 必须重新查询，不把 PR head 当永久证据。
+
+这只是 next-day status-first 的窄代表性 closure，不代表 arbitrary history search、多周/多月项目重建、跨设备 continuity、通用 project dashboard、general long-horizon orchestrator、general DAG scheduler 或 recursive multi-agent runtime 已完成。
+
 ### E2E-15 — bounded Windows unexpected-modal recovery
 
 2026-09-09 已验证一个 bounded representative path：同一 Root Work 在真实 Desktop 任务中已经 grounded 原始 UIA target 后，真实 WinForms fixture 通过 `ShowDialog()` 打开同进程 blocking modal。Resident 不接收 harness 提供的 modal HWND/RuntimeId/action，而是从 fresh foreground + Win32 owner + UIA `IsModal` + parent `BlockedByModalWindow` 建立 exact modal authority，在 exact dialog subtree 中只允许唯一 deterministic safe defer/continue/close-notice action。
@@ -210,7 +222,7 @@ Windows 当前已有 Machine Capability / Application Awareness V1、exact admit
 
 1. **Cross-surface real tasks**：在 E2E-24 bounded closure 之外，Browser + Desktop + File/Terminal/Application 更复杂任务的连续完成率和 recovery。
 2. **Browser/User Browser breadth**：真实站点变化、复杂 frame/dialog/navigation、更多授权/用户在场边界；E2E-08 只覆盖代表性 OTP path。
-3. **Long-horizon experience**：在现有 supervision/steering/restart substrate 上扩大跨天、长周期、多个 workstream 的真实使用与 progress/explanation UX。
+3. **Long-horizon experience**：在现有 E2E-27/33/35 continuity、E2E-28/34 supervision substrate 上扩大超过 bounded yesterday reference 的跨天/长周期、多 workstream 真实使用与 progress/explanation UX。
 4. **Windows/application breadth**：在 E2E-15 bounded same-process safe modal closure 和当前 machine/application substrate 之外，由真实 E2E 暴露的应用语义、跨进程/system dialog、复杂窗口/系统能力缺口。
 5. **Upgrade continuity**：installed N -> N+1 的身份、数据、Work、rollback/uncertain-effect 连续性仍未 product-close。
 
@@ -228,6 +240,7 @@ Windows 当前已有 Machine Capability / Application Awareness V1、exact admit
 - arbitrary Browser/File/Desktop automation 或 general RPA；
 - 完整 DLP / OS sandbox；
 - 所有长期任务已解决；
+- arbitrary history search / 多周多月 project reconstruction / cross-device continuity；
 - 双真实 provider family 已有完整生产证据；
 - Memory、credential、installer/updater/release trust 已因此获得自动扩张授权。
 

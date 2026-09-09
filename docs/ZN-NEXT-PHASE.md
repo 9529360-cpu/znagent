@@ -6,7 +6,7 @@ Updated: 2026-09-09
 
 ## 当前已关闭的 delegated baseline
 
-2026-09-06～2026-09-08 已经形成一组代表性 closure；下一阶段不得重复把它们当“尚未开发”的默认主线。
+2026-09-06～2026-09-09 已经形成一组代表性 closure；下一阶段不得重复把它们当“尚未开发”的默认主线。
 
 已关闭的代表性 baseline：
 
@@ -14,6 +14,7 @@ Updated: 2026-09-09
 - **E2E-30 / E2E-42**：durable route/privacy policy、ModelRouter hard eligibility、route/provider provenance 与 guarded multiroute acceptance 已按当前 acceptance policy 关闭。closure 包含明确的 owner-approved environment waiver，因为当时缺少第二个真实 provider family；不能宣称已有双真实 provider family 完整生产证据。
 - **E2E-28 / E2E-34**：durable worker progress supervision、heartbeat/no-progress/stall detection、dynamic health-aware routing、bounded retry、policy-safe fallback/reassignment、restart reconciliation、no-replay recovery 已有 guarded real-model representative closure。
 - **E2E-27 / E2E-33**：natural-language same-Work steering、current-plan replan、plan-version stale gating、old-worker result protection、restart continuation、completed historical effects 不 replay 已有真实 representative closure。
+- **E2E-35**：`昨天那个产品继续，先看看做到哪了。` 的 bounded status-first continuation 已验证：同一 WorkThread/Root/current plan/Resident event，durable goal/plan/completed/blocked/artifact/delegation projection，fresh read-only workspace/Git/artifact observation，zero model/WorkerRun/new-event/WorkItem-plan mutation，drift detection，以及 inspection 后同一 active Work 的 bare continue。
 - **Delegated progress**：durable delegated facts 已 privacy-safe bounded projection 到既有 `work_progress` 和 Resident UI，没有第二套 progress truth。
 - **Dependency/readiness**：durable bounded flat current-plan sibling dependency/readiness 已实现并验证，包括 fan-in、restart durability 与 corrupt/cyclic/dangling fail closed。
 
@@ -104,11 +105,11 @@ E2E-08 只覆盖 standard HTML `one-time-code`、same authorized tab/generation/
 
 ### 3. Long-horizon continuity and user experience
 
-现有 E2E-27/33 与 E2E-28/34 已证明 steering、supervision、dynamic health、stall/restart recovery 的代表性路径。下一步如果真实长任务仍失败，应聚焦“广度与产品体验”，而不是重新实现同一套机制。
+现有 E2E-27/33、E2E-28/34 与 E2E-35 已证明 steering、supervision、dynamic health、stall/restart recovery，以及 bounded next-day status-first reconstruction/continue 的代表性路径。下一步如果真实长任务仍失败，应聚焦“广度与产品体验”，而不是重新实现同一套机制。
 
 重点包括：
 
-- 跨更长时间窗口、跨天的真实 continuation；
+- 超出 E2E-35 bounded yesterday reference 的更长时间窗口、多候选/更复杂项目引用和真实 continuation；
 - 多 workstream 情况下用户可理解的 progress；
 - blocker、等待用户、reassign/retry、完成依据的解释质量；
 - steering 后哪些工作被保留/取消/过期的可理解表达；
@@ -155,6 +156,7 @@ ResidentHealthJournal dynamic health -> routing 接线
 E2E-28/34 systematic no-progress/stall supervision
 restart-safe delegated reconciliation
 E2E-27/33 representative steering / continuation closure
+E2E-35 bounded next-day status-first continuation closure
 delegated user progress projection
 bounded flat WorkItem dependency/readiness
 E2E-15 bounded same-process safe modal recovery representative closure

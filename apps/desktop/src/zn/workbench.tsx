@@ -346,7 +346,7 @@ export function ZnWorkbench() {
         const progressThreadId = started.progress.threadId
         let current = started.progress
         let finalThread = started.progress.finalized ? started.thread : undefined
-        while (!current.terminal) {
+        while (!current.terminal && current.stage !== 'inspection_complete') {
           await sleep(700)
           const update = await loadZnWorkProgress(progressThreadId, current.eventId)
           current = update.progress
@@ -354,6 +354,10 @@ export function ZnWorkbench() {
           if (update.thread) finalThread = update.thread
         }
 
+        if (current.stage === 'inspection_complete') {
+          void loadZnResidentSnapshot().then(setResidentSnapshot).catch(() => undefined)
+          return
+        }
         if (!current.finalized) {
           throw new Error(current.error || 'Resident work ended without a durable work outcome')
         }

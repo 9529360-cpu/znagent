@@ -50,3 +50,18 @@ test('delegated renderer path never references internal WorkerRun routing or fin
     'rawError'
   ]) assert.doesNotMatch(delegatedSection, new RegExp(internalName, 'i'))
 })
+
+test('continuation inspection returns control to the composer without finalizing the durable Work', () => {
+  const workbench = read('src/zn/workbench.tsx')
+
+  assert.match(workbench, /while \(!current\.terminal && current\.stage !== 'inspection_complete'\)/)
+  assert.match(workbench, /if \(current\.stage === 'inspection_complete'\) \{[\s\S]*?return[\s\S]*?\}/)
+
+  const inspectionBranchStart = workbench.indexOf("if (current.stage === 'inspection_complete')")
+  const inspectionBranchEnd = workbench.indexOf("if (!current.finalized)", inspectionBranchStart)
+  assert.ok(inspectionBranchStart >= 0)
+  assert.ok(inspectionBranchEnd > inspectionBranchStart)
+  const inspectionBranch = workbench.slice(inspectionBranchStart, inspectionBranchEnd)
+  assert.doesNotMatch(inspectionBranch, /terminal\s*=/)
+  assert.doesNotMatch(inspectionBranch, /finalized\s*=/)
+})
