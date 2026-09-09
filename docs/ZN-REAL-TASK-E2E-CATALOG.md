@@ -37,6 +37,7 @@ The original 50 scenario definitions below remain stable. The following status n
 | E2E-05 | CLOSED representative path | Real USER Browser authenticated research -> persisted mutation path is verified. This does not claim arbitrary authenticated websites or arbitrary browser mutation. |
 | E2E-07 | CLOSED representative path | Task-scoped causal USER Browser child-tab attribution, causal popup handling, authorization-generation binding, fresh opener reread, child -> root return and unverified-click no-replay are verified. General arbitrary popup/frame complexity remains broader work. |
 | E2E-08 | CLOSED representative path | Standard HTML `autocomplete="one-time-code"`, same explicitly authorized USER tab/generation/origin, manual user completion, fresh re-ground and same-Work resume are verified. ZN does not read/type/store OTP. CAPTCHA, WebAuthn/passkeys, cross-origin IdP handoff, password/payment automation are not supported by this closure. |
+| E2E-15 | CLOSED representative path | Real WinForms `ShowDialog()` interruption inside one Desktop Work is recovered only when fresh exact same-process direct-owner/UIA-modal/blocked-parent evidence admits exactly one deterministic safe defer/continue action. One dismiss is dispatched, risky update is untouched, modal absence + exact parent readiness are freshly proven, stale UIA RuntimeId is rejected and the original Work re-grounds and completes. Credentials/UAC/security/save-discard/file-picker/payment/installer/update decisions and arbitrary dialogs remain unsupported. |
 | E2E-24 | CLOSED representative path | One normal-language same-Root Work preserves the exact abnormal customer from an explicitly authorized USER Browser tab through one exact yesterday workspace file into the current desktop customer record. The exact file is freshly reread, desktop state is independently re-sensed, stale UIA RuntimeId replacement is re-grounded, and ambiguous file targets fail closed. This is not arbitrary three-surface automation or general RPA. |
 | E2E-27 | CLOSED representative path | Natural-language same-Work steering, plan-version replan, stale old-worker gating and preservation/non-replay of valid historical effects are verified. Broader long-horizon steering remains open. |
 | E2E-28 | CLOSED representative path | Durable progress supervision, heartbeat/no-progress/stall detection, dynamic health-aware routing, bounded retry and policy-safe fallback/reassignment are verified for the guarded path. Not a general unlimited scheduler. |
@@ -184,6 +185,8 @@ Must preserve identity mapping across applications and prevent wrong-record writ
 Same as E2E-13 but an autosave/update/error dialog appears.
 
 Must classify dialog, act or ask appropriately, and continue original goal.
+
+Representative closure (2026-09-09): a normal-language Desktop task remains inside the same Root Work after a real WinForms `ShowDialog()` interrupts the already-grounded target. The harness does not reveal the modal HWND, RuntimeId or action. Resident establishes fresh exact parent/modal authority from foreground HWND/PID/process, direct `GW_OWNER`, UIA `IsModal` and parent `BlockedByModalWindow`; only one deterministic safe defer/continue/close-notice Button in that exact dialog subtree may be admitted. Exact modal/Button authority is freshly revalidated before input. The verified path dispatches one `稍后继续`, never invokes `立即更新`, proves the exact modal disappeared and the exact parent is visible/enabled/foreground/UIA Ready, rejects the stale pre-dialog target RuntimeId, freshly re-grounds a different RuntimeId and completes the original Work with independent final-title evidence. `WaitForInputIdle` is telemetry only and was `false` in the successful real run. This closure does **not** include ambiguous dialogs, credentials/passwords, UAC/elevation/security, save/discard/delete/overwrite, file pickers, payment/purchase, installer/restart/update decisions, cross-process dialogs or blind replay.
 
 ## 6. Coding and repository work
 
@@ -490,7 +493,7 @@ Select future work from the catalog by asking which ordinary real task is still 
 - Browser/User Browser real-site complexity beyond the bounded verified paths;
 - longer-horizon/cross-day use on top of existing steering/supervision/restart mechanisms;
 - user-readable progress, blocker and completion-evidence quality;
-- concrete Windows/application semantic gaps exposed by a real E2E.
+- concrete Windows/application semantic gaps beyond the bounded E2E-15 same-process safe-modal representative closure.
 
 Do not make general DAG scheduling, recursive delegation or a multi-agent platform the default next target. Do not infer permission for Memory/credential/installer/updater/release-trust changes from this catalog.
 
