@@ -483,7 +483,6 @@ def _recover_exact_parent(
         and recovered.foreground
         and recovered.visible
         and recovered.enabled
-        and recovered.wait_for_input_idle
         and int(recovered.parent_interaction_state) == WINDOW_INTERACTION_READY
         and int(recovered.parent_hwnd) == int(parent["window_handle"])
         and int(recovered.parent_process_id) == int(parent["process_id"])
@@ -500,7 +499,8 @@ def _recover_exact_parent(
                 state,
                 reason=(
                     "one modal dismiss was dispatched, but bounded fresh observations did not prove "
-                    "exact dialog disappearance plus exact parent ReadyForUserInteraction; no replay"
+                    "exact dialog disappearance plus exact parent ReadyForUserInteraction; no replay; "
+                    f"last_recovery_observation={asdict(recovered)!r}"
                 ),
             )
         state.data.pop("local_failure", None)
