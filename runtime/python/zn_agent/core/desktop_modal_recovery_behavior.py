@@ -27,6 +27,7 @@ _STATE_KEY = "resident_desktop_modal_recovery"
 _INSTALL_MARKER = "_zn_desktop_modal_recovery_behavior_installed"
 _MODAL_DISMISS_KIND = "desktop_modal_safe_dismissed"
 _MAX_RECOVERY_OBSERVATIONS = 12
+_MAX_PREINPUT_RETRIES = 1
 
 
 def install_desktop_modal_recovery_behavior(resident) -> None:
@@ -109,12 +110,6 @@ def install_desktop_modal_recovery_behavior(resident) -> None:
                 state,
                 reason="modal recovery lost exact dialog/parent evidence before action admission",
             )
-        if int(progress.get("dispatch_count") or 0) != 0:
-            return resident._fail_composite_goal_investigation(
-                event,
-                state,
-                reason="modal recovery already dispatched input and will not replay it",
-            )
         runtime_id = [int(v) for v in modal.get("safe_action_runtime_id") or ()]
         if not runtime_id:
             return resident._fail_composite_goal_investigation(
@@ -122,6 +117,17 @@ def install_desktop_modal_recovery_behavior(resident) -> None:
                 state,
                 reason="modal recovery lost exact safe Button RuntimeId authority",
             )
+
+        prior_modal_intent_id = str(progress.get("modal_intent_id") or "").strip()
+        execution = state.data.get(resident._POINTER_CLICK_EXECUTION_KEY)
+        replay_block = _modal_replay_block_reason(progress, execution)
+        if replay_block is not None:
+            return resident._checkpoint_terminal_failure(
+                event,
+                state,
+                reason=replay_block,
+            )
+
         intent = NativeActionIntent(
             intent_id=f"desktop-modal-{uuid.uuid4().hex[:12]}",
             event_id=event.event_id,
@@ -153,12 +159,8 @@ def install_desktop_modal_recovery_behavior(resident) -> None:
             ),
             source="resident_choice",
         )
-        if resident._action_blocked_by_current_evidence(event, state, intent):
-            return resident._checkpoint_terminal_failure(
-                event,
-                state,
-                reason="the same modal input is blocked by unchanged evidence; refusing replay",
-            )
+        if prior_modal_intent_id:
+            progress["preinput_retry_count"] = int(progress.get("preinput_retry_count") or 0) + 1
         resident._begin_native_action_cycle(event, state, intent)
         progress["modal_intent_id"] = intent.intent_id
         progress["updated_at"] = utc_now()
@@ -272,6 +274,45 @@ def install_desktop_modal_recovery_behavior(resident) -> None:
     setattr(resident, _INSTALL_MARKER, True)
 
 
+def _modal_replay_block_reason(
+    progress: dict[str, Any],
+    execution: object,
+) -> str | None:
+    """Return a fail-closed reason only when modal click replay may be unsafe.
+
+    Generic failed-action evidence intentionally blocks repeating the same Body
+    movement under unchanged investigation facts. Modal recovery needs a narrower
+    distinction: a failure that happened before the pointer-click durable
+    ``started`` marker proves no click input could have been sent, while any
+    matching execution marker means the side effect is actual or uncertain and
+    must never be replayed. One pre-input retry is enough for transient pointer
+    positioning/baseline publication without turning this into an unbounded loop.
+    """
+
+    if int(progress.get("dispatch_count") or 0) != 0:
+        return "modal recovery already dispatched input and will not replay it"
+
+    prior_intent_id = str(progress.get("modal_intent_id") or "").strip()
+    if not prior_intent_id:
+        return None
+
+    if isinstance(execution, dict) and str(execution.get("intent_id") or "") == prior_intent_id:
+        status = str(execution.get("status") or "").strip().lower() or "unknown"
+        input_sent = execution.get("input_sent")
+        return (
+            "the prior modal click reached durable execution state "
+            f"{status!r} (input_sent={input_sent!r}); refusing any replay"
+        )
+
+    retries = int(progress.get("preinput_retry_count") or 0)
+    if retries >= _MAX_PREINPUT_RETRIES:
+        return (
+            "modal click preparation failed before input more than once under the same exact modal; "
+            "bounded recovery stops instead of retrying indefinitely"
+        )
+    return None
+
+
 def _investigate_interruption(resident, event, state, *, progress, parent):
     try:
         modal = resident.modal_window.probe(
@@ -362,8 +403,16 @@ def _same_modal_authority(admitted, expected, fresh, fresh_button) -> bool:
         and str(fresh_button.name or "").strip() == str(expected.get("safe_action_name") or "").strip()
         and fresh_button.is_enabled
         and not fresh_button.is_offscreen
-        and abs(float(fresh_button.center_x_fraction) - float(expected["safe_action_center_x_fraction"])) <= 0.002
-        and abs(float(fresh_button.center_y_fraction) - float(expected["safe_action_center_y_fraction"])) <= 0.002
+        and abs(
+            float(fresh_button.center_x_fraction)
+            - float(expected["safe_action_center_x_fraction"])
+        )
+        <= 0.002
+        and abs(
+            float(fresh_button.center_y_fraction)
+            - float(expected["safe_action_center_y_fraction"])
+        )
+        <= 0.002
     )
 
 
@@ -486,7 +535,8 @@ def _recover_exact_parent(
         and int(recovered.parent_interaction_state) == WINDOW_INTERACTION_READY
         and int(recovered.parent_hwnd) == int(parent["window_handle"])
         and int(recovered.parent_process_id) == int(parent["process_id"])
-        and str(recovered.parent_process_name or "").strip().lower() == str(parent["process_name"])
+        and str(recovered.parent_process_name or "").strip().lower()
+        == str(parent["process_name"])
     )
     progress["recovery_observations"] = observations
     progress["last_recovery_observation"] = asdict(recovered)
@@ -528,3 +578,4 @@ def _recover_exact_parent(
 DESKTOP_MODAL_RECOVERY_STATE_KEY = _STATE_KEY
 DESKTOP_MODAL_DISMISS_KIND = _MODAL_DISMISS_KIND
 MAX_DESKTOP_MODAL_RECOVERY_OBSERVATIONS = _MAX_RECOVERY_OBSERVATIONS
+MAX_DESKTOP_MODAL_PREINPUT_RETRIES = _MAX_PREINPUT_RETRIES
