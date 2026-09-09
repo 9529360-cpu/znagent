@@ -194,55 +194,6 @@ class WindowsInteractiveBrowserResultFileWorkE2ETests(unittest.TestCase):
             self.assertNotIn("path", task.lower())
 
             managed_paths = [path for path, _cookie in server.managed_requests]  # type: ignore[attr-defined]
-            if not managed_paths:
-                event_record = resident.store.get_event(event_id)
-                outcome = resident.store.get_event_outcome(event_id)
-                authorization = resident.user_browser_authorization()
-                actions = [
-                    {
-                        "kind": item.kind,
-                        "success": item.success,
-                        "error": item.error,
-                    }
-                    for item in reversed(resident.body.recent_actions(512))
-                    if item.event_id == event_id
-                ]
-                print(
-                    "ZN_BROWSER_RESULT_FILE_FAILURE_TRACE="
-                    + json.dumps(
-                        {
-                            "request_recognized": resident._natural_browser_result_file_request(event_record)
-                            is not None,
-                            "event_status": str(event_record.status),
-                            "event_last_error": event_record.last_error,
-                            "outcome": {
-                                "success": getattr(outcome, "success", None),
-                                "reason": getattr(outcome, "reason", None),
-                                "model_invocations": getattr(outcome, "model_invocations", None),
-                            }
-                            if outcome is not None
-                            else None,
-                            "authorization": {
-                                "authorized": bool(authorization.get("authorized")),
-                                "provider": authorization.get("provider"),
-                                "authorization_scope": authorization.get("authorization_scope"),
-                            },
-                            "server": {
-                                "login_requests": int(server.login_requests),  # type: ignore[attr-defined]
-                                "account_requests": int(server.account_requests),  # type: ignore[attr-defined]
-                                "authenticated_account_requests": int(server.authenticated_account_requests),  # type: ignore[attr-defined]
-                                "state_requests": int(server.state_requests),  # type: ignore[attr-defined]
-                                "managed_request_count": len(server.managed_requests),  # type: ignore[attr-defined]
-                                "results_requests": int(server.results_requests),  # type: ignore[attr-defined]
-                                "unauthorized_requests": int(server.unauthorized_requests),  # type: ignore[attr-defined]
-                            },
-                            "actions": actions,
-                        },
-                        ensure_ascii=False,
-                        sort_keys=True,
-                        default=str,
-                    )
-                )
             self.assertIn("/ref-a", managed_paths)
             self.assertIn("/ref-b", managed_paths)
             self.assertIn(
