@@ -13,18 +13,17 @@
 当前已核实的检查点（不是永久 HEAD）是：
 
 ```text
-main: 8cd2ff73038bbdba33017f71d91893296b7c082c
-main commit: Stabilize E2E-28 dynamic-health open-window assertion (#238)
-active PR: #237 E2E-15: recover bounded Windows modal interruptions
-last pre-documentation verified E2E-15 head: ab441f0e6c25634e0e9a099a23a70fd9a26e6e95
-ZN CI on that pre-documentation head: success
-ZN Windows Interactive Desktop E2E #282: success
-ZN Managed Browser E2E: success
-ZN Work Recovery E2E: success
-E2E28-34 timing fix: PR #238 merged separately after guarded real-model acceptance + ZN CI success
+historical checkpoint: PR #238 merged as 8cd2ff73038bbdba33017f71d91893296b7c082c
+E2E-15 final PR head: f1513a34b798fbb07cfc2d903f63d621c085e90e
+E2E-15 PR #237 merged as: d5a5be80d6d35328685be07fc54be76d1bcc955c
+verified main checkpoint after E2E-15 merge: d5a5be80d6d35328685be07fc54be76d1bcc955c
+ZN CI #1694: success
+ZN Windows Interactive Desktop E2E #293: success
+ZN Work Recovery E2E #329: success
+ZN Managed Browser E2E #279: success
 ```
 
-PR #237 的 pre-documentation head 已完成代码/真实 Windows E2E gate，并已把 #238 merge 后的新 `main` 正常并入分支。文档同步会产生新的 PR head；必须在合并前重新查询并验证最终 documentation head 的适用 CI/E2E。只有合并后再查询 current `main` 和 post-merge canonical checks，才能把 E2E-15 标成最终 CLOSED。
+PR #237 已通过正常 GitHub 路径合并，且上述 merge SHA 上的 post-merge canonical checks 已完成并通过；E2E-15 因此已达到 `CLOSED representative path`。`d5a5be80...` 只是写入本 HANDOFF 时重新核实的 checkpoint，不是永久 HEAD。
 
 如果 `main` 已前进，以新代码和新验证为准。
 
@@ -110,7 +109,9 @@ same Work resumes
 
 ### E2E-15
 
-PR #237 已在 pre-documentation head `ab441f0e6c25634e0e9a099a23a70fd9a26e6e95` 上完成真实 Windows interactive representative acceptance。真实 WinForms fixture 在原 Desktop target 已 grounding 后通过 `ShowDialog()` 打开同进程 modal；harness 不向 Resident 提供 modal HWND、RuntimeId 或恢复 action，也不替 Resident 关闭 modal。
+PR #237 的 final PR head `f1513a34b798fbb07cfc2d903f63d621c085e90e` 已完成真实 Windows interactive representative acceptance，并于 2026-09-09 通过正常 GitHub 路径合并为 `d5a5be80d6d35328685be07fc54be76d1bcc955c`。历史上更早的 pre-documentation verified head `ab441f0e6c25634e0e9a099a23a70fd9a26e6e95` 仍只是过程证据，不再代表 current state。merge 后 current-main canonical checks 也已通过。
+
+真实 WinForms fixture 在原 Desktop target 已 grounding 后通过 `ShowDialog()` 打开同进程 modal；harness 不向 Resident 提供 modal HWND、RuntimeId 或恢复 action，也不替 Resident 关闭 modal。
 
 Resident 仍是同一个 Resident、同一 Root Work、同一 pointer lifecycle。admission 需要 exact parent HWND/PID/process、foreground topology change、同进程 dialog、`GW_OWNER(dialog)==parent`、UIA `IsModal=true`、parent `BlockedByModalWindow`，并且 exact dialog subtree 里只能存在一个 deterministic safe defer/continue/close-notice action。input 前 fresh revalidate exact modal/Button authority；stale/ambiguous/wrong-owner/cross-process evidence fail closed。
 
