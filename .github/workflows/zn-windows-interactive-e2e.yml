@@ -173,6 +173,10 @@ jobs:
           uv venv .ci/interactive-e2e-venv --python 3.12
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-e2e-venv\Scripts\python.exe'
           uv pip install --python $python "runtime/python[browser]"
+          & $python -m playwright install chromium
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Playwright Chromium runtime installation failed for interactive E2E'
+          }
       - name: Run current product-route interactive E2Es in isolated modules
         shell: powershell
         run: |
@@ -232,6 +236,10 @@ jobs:
           uv venv .ci/interactive-diagnostics-venv --python 3.12
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-diagnostics-venv\Scripts\python.exe'
           uv pip install --python $python "runtime/python[browser]"
+          & $python -m playwright install chromium
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Playwright Chromium runtime installation failed for interactive diagnostics'
+          }
       - name: Run full interactive diagnostic suite including legacy paths
         shell: powershell
         run: |

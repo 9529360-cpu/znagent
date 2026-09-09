@@ -1,6 +1,6 @@
 # ZN Real Task E2E Catalog
 
-> Acceptance catalog scenarios snapshot: 2026-09-04; acceptance-status overlay synchronized 2026-09-08.
+> Acceptance catalog scenarios snapshot: 2026-09-04; acceptance-status overlay synchronized 2026-09-09.
 >
 > This is a product acceptance set, not a fixture checklist. A scenario counts only when it starts from normal user language and ends with independently verified real outcome evidence. Internal primitive success, worker `done`, model confidence and CI green are not substitutes for the user goal becoming true.
 
@@ -37,6 +37,7 @@ The original 50 scenario definitions below remain stable. The following status n
 | E2E-05 | CLOSED representative path | Real USER Browser authenticated research -> persisted mutation path is verified. This does not claim arbitrary authenticated websites or arbitrary browser mutation. |
 | E2E-07 | CLOSED representative path | Task-scoped causal USER Browser child-tab attribution, causal popup handling, authorization-generation binding, fresh opener reread, child -> root return and unverified-click no-replay are verified. General arbitrary popup/frame complexity remains broader work. |
 | E2E-08 | CLOSED representative path | Standard HTML `autocomplete="one-time-code"`, same explicitly authorized USER tab/generation/origin, manual user completion, fresh re-ground and same-Work resume are verified. ZN does not read/type/store OTP. CAPTCHA, WebAuthn/passkeys, cross-origin IdP handoff, password/payment automation are not supported by this closure. |
+| E2E-24 | CLOSED representative path | One normal-language same-Root Work preserves the exact abnormal customer from an explicitly authorized USER Browser tab through one exact yesterday workspace file into the current desktop customer record. The exact file is freshly reread, desktop state is independently re-sensed, stale UIA RuntimeId replacement is re-grounded, and ambiguous file targets fail closed. This is not arbitrary three-surface automation or general RPA. |
 | E2E-27 | CLOSED representative path | Natural-language same-Work steering, plan-version replan, stale old-worker gating and preservation/non-replay of valid historical effects are verified. Broader long-horizon steering remains open. |
 | E2E-28 | CLOSED representative path | Durable progress supervision, heartbeat/no-progress/stall detection, dynamic health-aware routing, bounded retry and policy-safe fallback/reassignment are verified for the guarded path. Not a general unlimited scheduler. |
 | E2E-29 | CLOSED | One actual model route can serve multiple isolated WorkerRuns while Root completion remains ZN-owned and independently verified. |
@@ -275,6 +276,8 @@ User:
 
 Must maintain source/record identity across all three surfaces and independently verify final mutations.
 
+Representative closure (2026-09-09): one normal-language same-Root Work starts from an already authenticated, explicitly authorized USER Browser tab, identifies one randomized abnormal customer, persists that exact customer into the uniquely eligible yesterday workspace file exactly once, freshly rereads that exact file, then re-establishes current Desktop authority from the foreground HWND/PID and exact UIA semantics before mutating the matching customer record exactly once. The adversarial path recreates the target desktop control so stale RuntimeId evidence must be rejected and freshly re-grounded; an ambiguous-file case must produce no file or desktop side effect. Final file contents and the customer-manager title independently prove the same business identity reached both mutations. This closure does **not** claim arbitrary websites/files/apps, a generic cross-surface workflow engine, general RPA, or a general DAG scheduler.
+
 ### E2E-25 — Browser + coding + local result
 
 User:
@@ -483,7 +486,7 @@ Do not re-run that historical priority list as a development plan.
 
 Select future work from the catalog by asking which ordinary real task is still blocked on current `main`. Prefer gaps that increase real task breadth, especially:
 
-- cross-surface Browser/Desktop/File/Terminal/Application work;
+- cross-surface Browser/Desktop/File/Terminal/Application work beyond the bounded E2E-24 representative closure;
 - Browser/User Browser real-site complexity beyond the bounded verified paths;
 - longer-horizon/cross-day use on top of existing steering/supervision/restart mechanisms;
 - user-readable progress, blocker and completion-evidence quality;

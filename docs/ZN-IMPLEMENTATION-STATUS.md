@@ -2,7 +2,7 @@
 
 这是一份当前实现事实表，不是 roadmap。真实代码、真实 Git、真实测试和真实 E2E 高于本文件。
 
-Updated: 2026-09-08
+Updated: 2026-09-09
 
 ## 仓库状态规则
 
@@ -43,7 +43,7 @@ Product-closed
 | File / workspace tasks | CONNECTED + VERIFIED NARROW | 歧义来源、复杂整理和更广任务类型 |
 | Windows machine/application awareness | CONNECTED + VERIFIED NARROW | inventory/identity/launch/fresh verification 与 exact admitted existing-window activation 已有；任意应用生命周期/窗口拓扑仍未 product-close |
 | Desktop computer use | CONNECTED + VERIFIED NARROW | 通用跨应用连续任务、目标漂移和更复杂应用语义 |
-| Browser + File / Browser + Desktop | VERIFIED NARROW | 更多三-surface 联合与复杂 replanning |
+| Browser + File + Desktop | VERIFIED NARROW; E2E-24 representative path closed | same-Root exact business identity、USER Browser authority、exact workspace target、fresh file reread、exact foreground HWND/PID、UIA re-ground 与 final app verification 已在一个 bounded path 中验证；更复杂三-surface task/recovery 仍需扩大 |
 | Cognitive resources | CONNECTED + VERIFIED | ZN-owned provider seam、多 route、热重配、provenance 已存在；更广 provider/product coverage 继续扩大 |
 | Model routing hard eligibility | CONNECTED + VERIFIED NARROW | route/privacy policy、pin/deny/locality、dynamic health-aware routing 已接入；E2E-30/42 closure 包含 environment waiver，不等于双真实 provider family 生产证据 |
 | Dynamic provider health -> routing | VERIFIED NARROW; E2E-28/34 representative path closed | `ResidentHealthJournal` 动态 observation 已进入 routing；更广 provider failures/长期运行仍需扩大 |
@@ -128,6 +128,12 @@ CONNECTED + VERIFIED NARROW / PARTIAL UX
 
 ## 代表性 E2E closure
 
+### E2E-24 — Browser + File + Desktop
+
+2026-09-09 已关闭一个 bounded representative path：普通自然语言任务保持同一 Root Work，从已经登录且显式授权的 USER Browser 当前 tab 识别随机异常客户，选择唯一符合“昨天修改 + 名称语义”的 workspace 文件，写入一次并 fresh reread exact target；随后从当前 foreground app 重新建立 exact HWND/PID 与 UIA semantic authority，把同一客户记录标记待跟进一次，并用 fresh application title 独立证明最终状态。
+
+对抗性覆盖包括：Desktop target 在 grounding 后被真实重建并产生新 RuntimeId，旧 UIA evidence 必须被拒绝后 fresh re-ground；两个同等候选文件时 fail closed，不能产生 file/desktop side effect。该 closure 不等于 arbitrary Browser/File/Desktop task、generic cross-surface workflow engine、general RPA 或 general DAG scheduler。
+
 ### E2E-29 — one model, multiple WorkerRuns
 
 2026-09-06 已有真实模型代表性验收：一个实际 route 可连续服务隔离 research/coding/review WorkerRun；worker completion 不夺取 Root completion。
@@ -191,9 +197,9 @@ Windows 当前已有 Machine Capability / Application Awareness V1，以及后�
 
 ## 当前主要剩余产品缺口
 
-下面是仍然真实存在的“广度/产品体验”缺口，不再把已经关闭的三组 delegated E2E 当新开发任务：
+下面是仍然真实存在的“广度/产品体验”缺口，不再把已经关闭的代表性 E2E 当新开发任务：
 
-1. **Cross-surface real tasks**：Browser + Desktop + File/Terminal/Application 在更复杂真实任务中的连续完成率和 recovery。
+1. **Cross-surface real tasks**：在 E2E-24 bounded closure 之外，Browser + Desktop + File/Terminal/Application 更复杂任务的连续完成率和 recovery。
 2. **Browser/User Browser breadth**：真实站点变化、复杂 frame/dialog/navigation、更多授权/用户在场边界；E2E-08 只覆盖代表性 OTP path。
 3. **Long-horizon experience**：在现有 supervision/steering/restart substrate 上扩大跨天、长周期、多个 workstream 的真实使用与 progress/explanation UX。
 4. **Windows/application breadth**：当前 machine/application substrate 之外，由真实 E2E 暴露的应用语义、窗口/系统能力缺口。
@@ -209,6 +215,7 @@ Windows 当前已有 Machine Capability / Application Awareness V1，以及后�
 - general-purpose DAG scheduler / recursive delegation；
 - 所有 MFA；
 - 任意网页或任意 popup/frame/dialog；
+- arbitrary Browser/File/Desktop automation 或 general RPA；
 - 完整 DLP / OS sandbox；
 - 所有长期任务已解决；
 - 双真实 provider family 已有完整生产证据；
