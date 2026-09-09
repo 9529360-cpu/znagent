@@ -260,8 +260,12 @@ class E2E06BrowserDriftRecoveryTests(unittest.TestCase):
                 time.sleep(0.05)
             authorization = resident.user_browser_authorization()
             self.assertEqual(authorization.get("provider"), "zn-extension-user-browser")
-            attached_at = str(authorization.get("attached_at") or "")
-            authorized_tab_id = int(authorization.get("tab_id") or 0)
+            authorized = resident.user_browser_extension.authorized_tab()
+            self.assertIsNotNone(authorized)
+            assert authorized is not None
+            attached_at = str(authorized.attached_at)
+            authorized_tab_id = int(authorized.tab_id)
+            self.assertTrue(attached_at)
             self.assertGreater(authorized_tab_id, 0)
 
             thread_id = "e2e06-browser-drift-recovery"
@@ -356,9 +360,11 @@ class E2E06BrowserDriftRecoveryTests(unittest.TestCase):
             self.assertEqual([path for path, _ in server.managed_requests], ["/official-return-policy"])  # type: ignore[attr-defined]
             self.assertTrue(all(_SESSION_COOKIE not in cookie for _path, cookie in server.managed_requests))  # type: ignore[attr-defined]
 
-            current_auth = resident.user_browser_authorization()
-            self.assertEqual(int(current_auth.get("tab_id") or 0), authorized_tab_id)
-            self.assertEqual(str(current_auth.get("attached_at") or ""), attached_at)
+            current_authorized = resident.user_browser_extension.authorized_tab()
+            self.assertIsNotNone(current_authorized)
+            assert current_authorized is not None
+            self.assertEqual(int(current_authorized.tab_id), authorized_tab_id)
+            self.assertEqual(str(current_authorized.attached_at), attached_at)
             self.assertEqual(str(evidence_snapshot.get("authorization_attached_at") or ""), attached_at)
 
             fixture.activate()
@@ -386,8 +392,8 @@ class E2E06BrowserDriftRecoveryTests(unittest.TestCase):
                         "same_root_work": progress["thread_id"] == thread_id,
                         "model_invocations": run_result.model_invocations,
                         "existing_authenticated_user_session": True,
-                        "authorized_tab_id_stable": int(current_auth.get("tab_id") or 0) == authorized_tab_id,
-                        "same_authorization_generation_through_mutation": str(current_auth.get("attached_at") or "") == attached_at,
+                        "authorized_tab_id_stable": int(current_authorized.tab_id) == authorized_tab_id,
+                        "same_authorization_generation_through_mutation": str(current_authorized.attached_at) == attached_at,
                         "managed_received_user_cookie": False,
                         "layout_and_dom_drift_applied": bool(server.drift_applied),  # type: ignore[attr-defined]
                         "initial_textbox_name": initial.get("textbox_name"),
