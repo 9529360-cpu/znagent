@@ -408,7 +408,7 @@ export function ZnWorkbench() {
         provider: providerName,
         model: providerModel,
         baseUrl: providerBaseUrl,
-        ...(providerApiKey.trim() ? { apiKey: providerApiKey.trim() } : {})
+        ...(providerApiKey.trim() ? { apiKey: providerApiKey } : {})
       })
       applyProviderSettings(settings)
       setProviderNotice('Provider settings applied to the current resident.')
@@ -626,7 +626,7 @@ export function ZnWorkbench() {
                 <p className="zn-muted">Check the ZN stable channel without source-repository credentials.</p>
                 <div className="zn-inline-actions">
                   <button type="button" disabled={updateBusy} onClick={() => void checkUpdates()}>{updateBusy ? 'Checking…' : 'Check for updates'}</button>
-                  {updateStatus?.updateAvailable ? <button className="zn-primary" disabled={updateBusy} onClick={() => void applyUpdate()}>Apply {updateStatus.availableVersion || 'update'}</button> : null}
+                  {updateStatus?.updateAvailable ? <button className="zn-primary" type="button" disabled={updateBusy} onClick={() => void applyUpdate()}>Apply {updateStatus.availableVersion || 'update'}</button> : null}
                 </div>
                 {updateStatus ? <pre className="zn-compact-pre">{renderUnknown(updateStatus)}</pre> : null}
               </section>
@@ -771,7 +771,7 @@ export function ZnWorkbench() {
               {selectedArtifact ? <div className="zn-artifact-preview"><div className="zn-artifact-preview-head"><strong>{selectedArtifact.name}</strong>{selectedArtifact.path ? <span title={selectedArtifact.path}>{selectedArtifact.path}</span> : null}</div><pre>{selectedArtifact.content || 'No textual preview available.'}</pre>{selectedArtifact.metadata?.truncated ? <div className="zn-artifact-note">Preview is bounded; content was truncated.</div> : null}</div> : null}
             </section>
           ) : (
-            <section className="zn-context-section zn-context-grow"><div className="zn-context-title">Current resident state</div><pre>{residentSnapshot ? renderUnknown(residentSnapshot) : 'Waiting for resident…'}</pre><div className="zn-context-title zn-context-title-spaced">Artifacts</div><p className="zn-muted zn-small">Relevant files, diffs and invoked terminal output appear here after resident work produces relevant evidence.</p></section>
+            <section className="zn-context-section zn-context-grow"><div className="zn-context-title">Current resident state</div><pre>{residentSnapshot ? renderUnknown(residentSnapshot) : 'Waiting for resident…'}</pre><div className="zn-context-title zn-context-title-spaced">Artifacts</div><p className="zn-muted zn-small">Relevant files, diffs and invoked terminal output appear here after resident work produces them.</p></section>
           )}
         </aside>
       ) : null}
