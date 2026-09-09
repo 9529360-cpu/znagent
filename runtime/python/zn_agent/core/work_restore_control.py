@@ -128,6 +128,20 @@ class RestoreAwareWorkControl(ResidentWorkControl):
         latest = messages[-1]
         return bool(latest.role == "user" and latest.detail.get("inspection") is True)
 
+    @staticmethod
+    def _inspection_execution_options(kwargs: dict[str, Any]) -> dict[str, Any]:
+        options = dict(kwargs)
+        kind = str(options.pop("kind", "desktop_user_event") or "desktop_user_event")
+        priority = int(options.pop("priority", 0) or 0)
+        payload = options.pop("payload", None)
+        if kind != "desktop_user_event":
+            options["kind"] = kind
+        if priority != 0:
+            options["priority"] = priority
+        if payload not in (None, {}):
+            options["payload"] = payload
+        return options
+
     def start(self, thread_id: str, task: str, **kwargs):
         reference = self.continuation_reference(task)
         if reference is None:
@@ -159,7 +173,8 @@ class RestoreAwareWorkControl(ResidentWorkControl):
         active = self.ledger._active_run_for_thread(thread.thread_id)
         inspection = self.continuation_inspection_followup(task)
         if inspection is not None:
-            if kwargs:
+            execution_options = self._inspection_execution_options(kwargs)
+            if execution_options:
                 raise ValueError("continuation inspection is read-only and does not accept execution options")
             inspected_run = active or self._latest_completed_run(thread.thread_id)
             if inspected_run is None:
