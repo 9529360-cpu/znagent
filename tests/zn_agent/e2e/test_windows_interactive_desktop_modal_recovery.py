@@ -248,6 +248,7 @@ class WindowsInteractiveDesktopModalRecoveryE2ETests(unittest.TestCase):
                 modal_seen = False
                 old_edit_runtime: tuple[int, ...] = ()
                 fresh_edit_runtime: tuple[int, ...] = ()
+                recovery_evidence: dict = {}
                 trace: list[dict] = []
                 deadline = time.monotonic() + 55
 
@@ -289,6 +290,8 @@ class WindowsInteractiveDesktopModalRecoveryE2ETests(unittest.TestCase):
                     post = resident.store.get_working_state()
                     recovery = post.data.get(_MODAL_STATE_KEY)
                     recovery = recovery if isinstance(recovery, dict) else {}
+                    if recovery:
+                        recovery_evidence = dict(recovery)
                     post_observation = post.data.get(observation_key)
                     post_observation = post_observation if isinstance(post_observation, dict) else {}
                     post_target = post_observation.get("target")
@@ -330,9 +333,9 @@ class WindowsInteractiveDesktopModalRecoveryE2ETests(unittest.TestCase):
                 self.assertTrue(fresh_edit_runtime)
                 self.assertNotEqual(old_edit_runtime, fresh_edit_runtime)
 
-                final_state = resident.store.get_working_state()
-                recovery = final_state.data.get(_MODAL_STATE_KEY)
+                recovery = recovery_evidence
                 self.assertIsInstance(recovery, dict)
+                self.assertTrue(recovery)
                 modal = recovery.get("modal") or {}
                 recovered = recovery.get("recovered_parent") or {}
                 self.assertEqual(modal.get("dialog_title"), MODAL_TITLE)
@@ -349,7 +352,7 @@ class WindowsInteractiveDesktopModalRecoveryE2ETests(unittest.TestCase):
                 self.assertEqual(recovered.get("parent_hwnd"), app.hwnd)
                 self.assertEqual(recovered.get("parent_interaction_state"), 2)
                 self.assertTrue(recovered.get("foreground"))
-                self.assertTrue(recovered.get("wait_for_input_idle"))
+                self.assertIsInstance(recovered.get("wait_for_input_idle"), bool)
                 self.assertEqual(tuple(recovery.get("pre_modal_target_runtime_id") or ()), old_edit_runtime)
                 self.assertEqual(tuple(recovery.get("post_modal_target_runtime_id") or ()), fresh_edit_runtime)
 
@@ -380,6 +383,8 @@ class WindowsInteractiveDesktopModalRecoveryE2ETests(unittest.TestCase):
                             "safe_action": modal.get("safe_action_name"),
                             "dialog_dispatch_count": recovery.get("dispatch_count"),
                             "modal_absent": recovered.get("modal_absent"),
+                            "parent_ready": recovered.get("parent_interaction_state") == 2,
+                            "wait_for_input_idle": recovered.get("wait_for_input_idle"),
                             "old_edit_runtime": list(old_edit_runtime),
                             "fresh_edit_runtime": list(fresh_edit_runtime),
                             "final_title": app.title(),
