@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-"""Bounded Windows modal-window semantics for the current desktop task.
+"""Fresh Windows modal semantics for one admitted desktop parent.
 
-This module is a read-only Sense.  It establishes an exact blocking relationship
-from Win32 ownership plus UI Automation WindowPattern state, and scopes candidate
-controls to the exact dialog subtree.  It never decides application authority,
-never sends input, and never treats a title string as proof of modality.
+The Sense is read-only.  Modality is established from exact Win32 ownership and
+UI Automation WindowPattern state, never from a title heuristic.  Candidate
+controls are enumerated only inside the exact dialog automation subtree.
 """
 
 import os
@@ -52,6 +51,7 @@ class ModalWindowObservation:
     parent_title: str
     owner_hwnd: int
     root_owner_hwnd: int
+    parent_root_owner_hwnd: int
     is_modal: bool
     dialog_interaction_state: int
     parent_interaction_state: int
@@ -72,6 +72,8 @@ class ParentWindowRecoveryObservation:
     parent_title: str
     parent_class_name: str
     parent_interaction_state: int
+    dismissed_dialog_hwnd: int
+    dismissed_dialog_exists: bool
     visible: bool
     enabled: bool
     foreground: bool
@@ -82,15 +84,16 @@ class ParentWindowRecoveryObservation:
 
 
 ModalProbeFn = Callable[[int, int, str], ModalWindowObservation | None]
-ParentRecoveryProbeFn = Callable[[int, int, str], ParentWindowRecoveryObservation]
+ParentRecoveryProbeFn = Callable[[int, int, str, int], ParentWindowRecoveryObservation]
 
 
 @dataclass(slots=True)
-class _ModalRequest:
+class _Request:
     kind: str
     parent_hwnd: int
     parent_process_id: int
     parent_process_name: str
+    dismissed_dialog_hwnd: int
     done: threading.Event
     result: ModalWindowObservation | ParentWindowRecoveryObservation | None = None
     error: str | None = None
@@ -105,7 +108,7 @@ class _WindowsModalReader:
     _CUIAUTOMATION8_CLSID = "{e22ad333-b25f-460c-83d0-0581107395c9}"
 
     def __init__(self) -> None:
-        self._requests: queue.Queue[_ModalRequest] = queue.Queue(maxsize=1)
+        self._requests: queue.Queue[_Request] = queue.Queue(maxsize=1)
         self._started = threading.Event()
         self._failure: str | None = None
         self._thread = threading.Thread(
@@ -119,43 +122,36 @@ class _WindowsModalReader:
         if self._failure:
             raise RuntimeError(self._failure)
 
-    def modal(
-        self,
-        parent_hwnd: int,
-        parent_process_id: int,
-        parent_process_name: str,
-    ) -> ModalWindowObservation | None:
-        return self._request(
-            "modal",
-            parent_hwnd,
-            parent_process_id,
-            parent_process_name,
-        )
+    def modal(self, parent_hwnd: int, parent_process_id: int, parent_process_name: str):
+        return self._request("modal", parent_hwnd, parent_process_id, parent_process_name, 0)
 
     def parent_recovery(
         self,
         parent_hwnd: int,
         parent_process_id: int,
         parent_process_name: str,
+        dismissed_dialog_hwnd: int,
     ) -> ParentWindowRecoveryObservation:
         result = self._request(
             "parent_recovery",
             parent_hwnd,
             parent_process_id,
             parent_process_name,
+            dismissed_dialog_hwnd,
         )
         if not isinstance(result, ParentWindowRecoveryObservation):
             raise RuntimeError("Windows modal recovery probe returned no parent observation")
         return result
 
-    def _request(self, kind: str, hwnd: int, pid: int, process_name: str):
+    def _request(self, kind: str, hwnd: int, pid: int, process_name: str, dismissed: int):
         if self._failure:
             raise RuntimeError(self._failure)
-        request = _ModalRequest(
+        request = _Request(
             kind=kind,
             parent_hwnd=int(hwnd),
             parent_process_id=int(pid),
             parent_process_name=str(process_name),
+            dismissed_dialog_hwnd=int(dismissed),
             done=threading.Event(),
         )
         try:
@@ -173,30 +169,26 @@ class _WindowsModalReader:
         try:
             import sys
 
-            comtypes_was_loaded = "comtypes" in sys.modules
-            had_coinitialize_flag = hasattr(sys, "coinit_flags")
-            previous_coinitialize_flag = getattr(sys, "coinit_flags", None)
-            if not comtypes_was_loaded:
+            comtypes_loaded = "comtypes" in sys.modules
+            had_flag = hasattr(sys, "coinit_flags")
+            previous_flag = getattr(sys, "coinit_flags", None)
+            if not comtypes_loaded:
                 sys.coinit_flags = 0
             try:
                 import comtypes
                 import comtypes.client as com_client
                 from comtypes.client import CreateObject, GetModule
             finally:
-                if not comtypes_was_loaded:
-                    if had_coinitialize_flag:
-                        sys.coinit_flags = previous_coinitialize_flag
+                if not comtypes_loaded:
+                    if had_flag:
+                        sys.coinit_flags = previous_flag
                     else:
                         del sys.coinit_flags
-            if comtypes_was_loaded:
+            if comtypes_loaded:
                 comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
-
             com_client.gen_dir = None
             client = GetModule("UIAutomationCore.dll")
-            automation = CreateObject(
-                self._CUIAUTOMATION8_CLSID,
-                interface=client.IUIAutomation2,
-            )
+            automation = CreateObject(self._CUIAUTOMATION8_CLSID, interface=client.IUIAutomation2)
             automation.ConnectionTimeout = self._CONNECTION_TIMEOUT_MS
             automation.TransactionTimeout = self._TRANSACTION_TIMEOUT_MS
         except Exception as exc:
@@ -226,6 +218,7 @@ class _WindowsModalReader:
                         parent_hwnd=request.parent_hwnd,
                         parent_process_id=request.parent_process_id,
                         parent_process_name=request.parent_process_name,
+                        dismissed_dialog_hwnd=request.dismissed_dialog_hwnd,
                     )
                 else:
                     raise RuntimeError("unknown Windows modal Sense request")
@@ -246,10 +239,7 @@ class _WindowsModalReader:
         user32.GetWindow.restype = wintypes.HWND
         user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
         user32.GetAncestor.restype = wintypes.HWND
-        user32.GetWindowThreadProcessId.argtypes = [
-            wintypes.HWND,
-            ctypes.POINTER(wintypes.DWORD),
-        ]
+        user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
         user32.GetWindowThreadProcessId.restype = wintypes.DWORD
         user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
         user32.GetWindowTextLengthW.restype = ctypes.c_int
@@ -257,6 +247,8 @@ class _WindowsModalReader:
         user32.GetWindowTextW.restype = ctypes.c_int
         user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
         user32.GetClassNameW.restype = ctypes.c_int
+        user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+        user32.GetSystemMetrics.restype = ctypes.c_int
         user32.IsWindow.argtypes = [wintypes.HWND]
         user32.IsWindow.restype = wintypes.BOOL
         user32.IsWindowVisible.argtypes = [wintypes.HWND]
@@ -294,18 +286,6 @@ class _WindowsModalReader:
         return str(buffer.value or "") if length > 0 else ""
 
     @staticmethod
-    def _window_pattern(element, client):
-        raw = element.GetCurrentPattern(client.UIA_WindowPatternId)
-        if not raw:
-            raise RuntimeError("window does not expose UI Automation WindowPattern")
-        return raw.QueryInterface(client.IUIAutomationWindowPattern)
-
-    @classmethod
-    def _interaction_state(cls, element, client) -> tuple[bool, int, object]:
-        pattern = cls._window_pattern(element, client)
-        return bool(pattern.CurrentIsModal), int(pattern.CurrentWindowInteractionState), pattern
-
-    @staticmethod
     def _process_name(pid: int) -> str:
         try:
             import psutil
@@ -316,6 +296,18 @@ class _WindowsModalReader:
         if not name:
             raise RuntimeError("window process name is unavailable")
         return name
+
+    @staticmethod
+    def _window_pattern(element, client):
+        raw = element.GetCurrentPattern(client.UIA_WindowPatternId)
+        if not raw:
+            raise RuntimeError("window does not expose UI Automation WindowPattern")
+        return raw.QueryInterface(client.IUIAutomationWindowPattern)
+
+    @classmethod
+    def _interaction_state(cls, element, client):
+        pattern = cls._window_pattern(element, client)
+        return bool(pattern.CurrentIsModal), int(pattern.CurrentWindowInteractionState), pattern
 
     @classmethod
     def _probe_modal(
@@ -330,41 +322,43 @@ class _WindowsModalReader:
         user32 = cls._user32()
         if not user32.IsWindow(parent_hwnd):
             raise RuntimeError("exact desktop parent HWND no longer exists")
-        actual_parent_pid = cls._window_pid(user32, parent_hwnd)
-        actual_parent_name = cls._process_name(actual_parent_pid)
+        parent_pid = cls._window_pid(user32, parent_hwnd)
+        parent_name = cls._process_name(parent_pid)
         if (
-            actual_parent_pid != int(parent_process_id)
-            or actual_parent_name.casefold() != str(parent_process_name).strip().casefold()
+            parent_pid != int(parent_process_id)
+            or parent_name.casefold() != str(parent_process_name).strip().casefold()
         ):
             raise RuntimeError("exact desktop parent HWND/PID process identity changed")
 
-        foreground_hwnd = int(user32.GetForegroundWindow() or 0)
-        if not foreground_hwnd:
+        dialog_hwnd = int(user32.GetForegroundWindow() or 0)
+        if not dialog_hwnd:
             raise RuntimeError("Windows did not report a foreground window")
-        if foreground_hwnd == int(parent_hwnd):
+        if dialog_hwnd == int(parent_hwnd):
             return None
-
-        dialog_pid = cls._window_pid(user32, foreground_hwnd)
+        dialog_pid = cls._window_pid(user32, dialog_hwnd)
         dialog_name = cls._process_name(dialog_pid)
-        if (
-            dialog_pid != int(parent_process_id)
-            or dialog_name.casefold() != str(parent_process_name).strip().casefold()
-        ):
+        if dialog_pid != parent_pid or dialog_name.casefold() != parent_name.casefold():
             raise RuntimeError("foreground interruption is not the admitted parent process")
 
-        owner_hwnd = int(user32.GetWindow(foreground_hwnd, 4) or 0)  # GW_OWNER
-        root_owner_hwnd = int(user32.GetAncestor(foreground_hwnd, 3) or 0)  # GA_ROOTOWNER
-        if owner_hwnd != int(parent_hwnd) or root_owner_hwnd != int(parent_hwnd):
-            raise RuntimeError("foreground same-process window is not exact owned/root-owned modal")
+        owner_hwnd = int(user32.GetWindow(dialog_hwnd, 4) or 0)  # GW_OWNER
+        root_owner_hwnd = int(user32.GetAncestor(dialog_hwnd, 3) or 0)  # GA_ROOTOWNER
+        parent_root_owner_hwnd = int(user32.GetAncestor(parent_hwnd, 3) or 0)
+        # Real WinForms ShowDialog(owner) proves the causal relationship through
+        # GW_OWNER.  GA_ROOTOWNER is still recorded as topology evidence, but on
+        # WinForms it can legally be the dialog itself rather than the owner.
+        if owner_hwnd != int(parent_hwnd):
+            raise RuntimeError("foreground same-process window is not exactly owned by admitted parent")
+        if root_owner_hwnd <= 0 or parent_root_owner_hwnd <= 0:
+            raise RuntimeError("Win32 root-owner identity is unavailable")
 
-        dialog_element = automation.ElementFromHandle(foreground_hwnd)
+        dialog_element = automation.ElementFromHandle(dialog_hwnd)
         parent_element = automation.ElementFromHandle(parent_hwnd)
         if not dialog_element or not parent_element:
             raise RuntimeError("UI Automation could not bind exact modal/parent HWNDs")
         is_modal, dialog_state, _ = cls._interaction_state(dialog_element, client)
         _, parent_state, _ = cls._interaction_state(parent_element, client)
-        visible = bool(user32.IsWindowVisible(foreground_hwnd))
-        enabled = bool(user32.IsWindowEnabled(foreground_hwnd))
+        visible = bool(user32.IsWindowVisible(dialog_hwnd))
+        enabled = bool(user32.IsWindowEnabled(dialog_hwnd))
         if not is_modal:
             raise RuntimeError("owned foreground window does not expose IsModal=true")
         if parent_state != _WINDOW_INTERACTION_BLOCKED_BY_MODAL:
@@ -376,7 +370,7 @@ class _WindowsModalReader:
             automation,
             client,
             dialog_element,
-            dialog_hwnd=foreground_hwnd,
+            dialog_hwnd=dialog_hwnd,
             process_id=dialog_pid,
         )
         text_names, contains_password = cls._dialog_semantics(
@@ -386,16 +380,17 @@ class _WindowsModalReader:
             process_id=dialog_pid,
         )
         return ModalWindowObservation(
-            dialog_hwnd=foreground_hwnd,
+            dialog_hwnd=dialog_hwnd,
             dialog_process_id=dialog_pid,
             dialog_process_name=dialog_name,
-            dialog_title=cls._window_text(user32, foreground_hwnd),
-            dialog_class_name=cls._window_class(user32, foreground_hwnd),
+            dialog_title=cls._window_text(user32, dialog_hwnd),
+            dialog_class_name=cls._window_class(user32, dialog_hwnd),
             parent_hwnd=int(parent_hwnd),
-            parent_process_id=actual_parent_pid,
+            parent_process_id=parent_pid,
             parent_title=cls._window_text(user32, parent_hwnd),
             owner_hwnd=owner_hwnd,
             root_owner_hwnd=root_owner_hwnd,
+            parent_root_owner_hwnd=parent_root_owner_hwnd,
             is_modal=True,
             dialog_interaction_state=dialog_state,
             parent_interaction_state=parent_state,
@@ -408,15 +403,7 @@ class _WindowsModalReader:
         )
 
     @classmethod
-    def _dialog_buttons(
-        cls,
-        automation,
-        client,
-        dialog_element,
-        *,
-        dialog_hwnd: int,
-        process_id: int,
-    ) -> tuple[ModalButtonObservation, ...]:
+    def _dialog_buttons(cls, automation, client, dialog_element, *, dialog_hwnd: int, process_id: int):
         type_condition = automation.CreatePropertyCondition(
             client.UIA_ControlTypePropertyId,
             _UIA_BUTTON_CONTROL_TYPE,
@@ -425,22 +412,16 @@ class _WindowsModalReader:
             client.UIA_ProcessIdPropertyId,
             int(process_id),
         )
-        condition = automation.CreateAndCondition(type_condition, process_condition)
-        matches = dialog_element.FindAll(client.TreeScope_Descendants, condition)
+        matches = dialog_element.FindAll(
+            client.TreeScope_Descendants,
+            automation.CreateAndCondition(type_condition, process_condition),
+        )
         count = int(matches.Length)
         if count > _MAX_DIALOG_BUTTONS:
             raise RuntimeError("modal exposes too many Button candidates for bounded recovery")
-
         user32 = cls._user32()
-        width = int(user32.GetSystemMetrics(0)) if hasattr(user32, "GetSystemMetrics") else 0
-        height = int(user32.GetSystemMetrics(1)) if hasattr(user32, "GetSystemMetrics") else 0
-        if width <= 0 or height <= 0:
-            import ctypes
-
-            user32.GetSystemMetrics.argtypes = [ctypes.c_int]
-            user32.GetSystemMetrics.restype = ctypes.c_int
-            width = int(user32.GetSystemMetrics(0))
-            height = int(user32.GetSystemMetrics(1))
+        width = int(user32.GetSystemMetrics(0))
+        height = int(user32.GetSystemMetrics(1))
         if width <= 0 or height <= 0:
             raise RuntimeError("primary desktop dimensions are unavailable")
 
@@ -454,12 +435,9 @@ class _WindowsModalReader:
                 continue
             runtime_id = tuple(int(value) for value in element.GetRuntimeId())
             rectangle = element.CurrentBoundingRectangle
-            left = float(rectangle.left)
-            top = float(rectangle.top)
-            right = float(rectangle.right)
-            bottom = float(rectangle.bottom)
-            center_x = (left + right) / 2.0
-            center_y = (top + bottom) / 2.0
+            left, top = float(rectangle.left), float(rectangle.top)
+            right, bottom = float(rectangle.right), float(rectangle.bottom)
+            center_x, center_y = (left + right) / 2.0, (top + bottom) / 2.0
             if (
                 not runtime_id
                 or not bool(element.CurrentIsEnabled)
@@ -484,23 +462,15 @@ class _WindowsModalReader:
         return tuple(buttons)
 
     @classmethod
-    def _dialog_semantics(
-        cls,
-        automation,
-        client,
-        dialog_element,
-        *,
-        process_id: int,
-    ) -> tuple[tuple[str, ...], bool]:
-        all_descendants = dialog_element.FindAll(
+    def _dialog_semantics(cls, automation, client, dialog_element, *, process_id: int):
+        descendants = dialog_element.FindAll(
             client.TreeScope_Descendants,
             automation.CreatePropertyCondition(client.UIA_ProcessIdPropertyId, int(process_id)),
         )
         names: list[str] = []
         contains_password = False
-        count = min(int(all_descendants.Length), 80)
-        for index in range(count):
-            element = all_descendants.GetElement(index)
+        for index in range(min(int(descendants.Length), 80)):
+            element = descendants.GetElement(index)
             if not element:
                 continue
             control_type = int(element.CurrentControlType)
@@ -511,13 +481,12 @@ class _WindowsModalReader:
                     )
                 except Exception:
                     contains_password = True
-            if control_type != _UIA_TEXT_CONTROL_TYPE:
-                continue
-            name = " ".join(str(element.CurrentName or "").strip().split())
-            if name and len(name) <= _MAX_NAME_CHARS and name not in names:
-                names.append(name)
-                if len(names) >= _MAX_DIALOG_TEXT_ITEMS:
-                    break
+            if control_type == _UIA_TEXT_CONTROL_TYPE:
+                name = " ".join(str(element.CurrentName or "").strip().split())
+                if name and len(name) <= _MAX_NAME_CHARS and name not in names:
+                    names.append(name)
+                    if len(names) >= _MAX_DIALOG_TEXT_ITEMS:
+                        break
         return tuple(names), contains_password
 
     @classmethod
@@ -529,8 +498,11 @@ class _WindowsModalReader:
         parent_hwnd: int,
         parent_process_id: int,
         parent_process_name: str,
+        dismissed_dialog_hwnd: int,
     ) -> ParentWindowRecoveryObservation:
         user32 = cls._user32()
+        if dismissed_dialog_hwnd <= 0:
+            raise RuntimeError("exact dismissed dialog HWND is required for recovery proof")
         if not user32.IsWindow(parent_hwnd):
             raise RuntimeError("exact desktop parent HWND disappeared after modal dismiss")
         pid = cls._window_pid(user32, parent_hwnd)
@@ -547,16 +519,11 @@ class _WindowsModalReader:
         foreground = int(user32.GetForegroundWindow() or 0) == int(parent_hwnd)
         visible = bool(user32.IsWindowVisible(parent_hwnd))
         enabled = bool(user32.IsWindowEnabled(parent_hwnd))
+        dismissed_exists = bool(user32.IsWindow(dismissed_dialog_hwnd))
         try:
             idle = bool(pattern.WaitForInputIdle(cls._WAIT_FOR_INPUT_IDLE_MS))
         except Exception:
             idle = False
-        modal_absent = bool(
-            foreground
-            and interaction_state == _WINDOW_INTERACTION_READY
-            and visible
-            and enabled
-        )
         return ParentWindowRecoveryObservation(
             parent_hwnd=int(parent_hwnd),
             parent_process_id=pid,
@@ -564,17 +531,19 @@ class _WindowsModalReader:
             parent_title=cls._window_text(user32, parent_hwnd),
             parent_class_name=cls._window_class(user32, parent_hwnd),
             parent_interaction_state=interaction_state,
+            dismissed_dialog_hwnd=int(dismissed_dialog_hwnd),
+            dismissed_dialog_exists=dismissed_exists,
             visible=visible,
             enabled=enabled,
             foreground=foreground,
-            modal_absent=modal_absent,
+            modal_absent=not dismissed_exists,
             wait_for_input_idle=idle,
             captured_at=utc_now(),
         )
 
 
 class NativeModalWindowSense:
-    """Prove one exact current blocking modal or one exact recovered parent."""
+    """Prove one exact blocking modal and exact post-dismiss parent recovery."""
 
     def __init__(
         self,
@@ -587,18 +556,8 @@ class NativeModalWindowSense:
         self._reader: _WindowsModalReader | None = None
         self._lock = threading.Lock()
 
-    def probe(
-        self,
-        *,
-        parent_hwnd: int,
-        parent_process_id: int,
-        parent_process_name: str,
-    ) -> ModalWindowObservation | None:
-        hwnd, pid, name = self._parent_identity(
-            parent_hwnd,
-            parent_process_id,
-            parent_process_name,
-        )
+    def probe(self, *, parent_hwnd: int, parent_process_id: int, parent_process_name: str):
+        hwnd, pid, name = self._parent_identity(parent_hwnd, parent_process_id, parent_process_name)
         observation = (
             self.probe_fn(hwnd, pid, name)
             if self.probe_fn is not None
@@ -615,16 +574,16 @@ class NativeModalWindowSense:
         parent_hwnd: int,
         parent_process_id: int,
         parent_process_name: str,
+        dismissed_dialog_hwnd: int,
     ) -> ParentWindowRecoveryObservation:
-        hwnd, pid, name = self._parent_identity(
-            parent_hwnd,
-            parent_process_id,
-            parent_process_name,
-        )
+        hwnd, pid, name = self._parent_identity(parent_hwnd, parent_process_id, parent_process_name)
+        dismissed = int(dismissed_dialog_hwnd)
+        if dismissed <= 0:
+            raise ValueError("exact dismissed dialog HWND is required")
         observation = (
-            self.parent_recovery_probe_fn(hwnd, pid, name)
+            self.parent_recovery_probe_fn(hwnd, pid, name, dismissed)
             if self.parent_recovery_probe_fn is not None
-            else self._native_reader().parent_recovery(hwnd, pid, name)
+            else self._native_reader().parent_recovery(hwnd, pid, name, dismissed)
         )
         if not isinstance(observation, ParentWindowRecoveryObservation):
             raise TypeError("parent recovery probe must return ParentWindowRecoveryObservation")
@@ -632,6 +591,7 @@ class NativeModalWindowSense:
             int(observation.parent_hwnd) != hwnd
             or int(observation.parent_process_id) != pid
             or str(observation.parent_process_name or "").strip().casefold() != name.casefold()
+            or int(observation.dismissed_dialog_hwnd) != dismissed
         ):
             raise ValueError("parent recovery observation changed exact HWND/PID authority")
         return observation
@@ -645,22 +605,15 @@ class NativeModalWindowSense:
             return self._reader
 
     @staticmethod
-    def _parent_identity(hwnd: int, pid: int, process_name: str) -> tuple[int, int, str]:
-        exact_hwnd = int(hwnd)
-        exact_pid = int(pid)
+    def _parent_identity(hwnd: int, pid: int, process_name: str):
+        exact_hwnd, exact_pid = int(hwnd), int(pid)
         exact_name = str(process_name or "").strip()
         if exact_hwnd <= 0 or exact_pid <= 0 or not exact_name:
             raise ValueError("modal Sense requires exact current parent HWND/PID/process identity")
         return exact_hwnd, exact_pid, exact_name
 
     @staticmethod
-    def _validate_modal(
-        observation: ModalWindowObservation,
-        *,
-        hwnd: int,
-        pid: int,
-        process_name: str,
-    ) -> None:
+    def _validate_modal(observation, *, hwnd: int, pid: int, process_name: str) -> None:
         if not isinstance(observation, ModalWindowObservation):
             raise TypeError("modal probe must return ModalWindowObservation")
         if (
@@ -672,10 +625,10 @@ class NativeModalWindowSense:
             or str(observation.dialog_process_name or "").strip().casefold()
             != process_name.casefold()
             or int(observation.owner_hwnd) != hwnd
-            or int(observation.root_owner_hwnd) != hwnd
+            or int(observation.root_owner_hwnd) <= 0
+            or int(observation.parent_root_owner_hwnd) <= 0
             or not observation.is_modal
-            or int(observation.parent_interaction_state)
-            != _WINDOW_INTERACTION_BLOCKED_BY_MODAL
+            or int(observation.parent_interaction_state) != _WINDOW_INTERACTION_BLOCKED_BY_MODAL
             or not observation.dialog_visible
             or not observation.dialog_enabled
         ):
@@ -699,23 +652,13 @@ def select_safe_modal_action(
     *,
     user_goal: str,
 ) -> tuple[ModalButtonObservation | None, str | None]:
-    """Return one narrowly safe defer/continue action, otherwise fail closed.
-
-    This is deliberately an effect classifier, not a title matcher.  It is only
-    used while one desktop goal is already active, rejects credential/data-loss/
-    security prompt semantics, and admits exactly one explicit action whose
-    effect is to preserve the current work by dismissing/defering the notice.
-    """
-
     goal = " ".join(str(user_goal or "").strip().split())
     if not goal:
         return None, "safe modal classification requires the current user goal"
     if observation.contains_password_edit:
         return None, "modal contains a password/credential input"
 
-    dialog_text = " ".join(
-        [observation.dialog_title, *observation.text_names]
-    ).casefold()
+    dialog_text = " ".join([observation.dialog_title, *observation.text_names]).casefold()
     blocker_terms = (
         "保存", "不保存", "放弃更改", "丢弃", "删除", "覆盖", "重置", "恢复出厂",
         "密码", "口令", "恢复代码", "验证码", "凭据", "windows 安全", "安全中心",
@@ -727,17 +670,11 @@ def select_safe_modal_action(
     if any(term in dialog_text for term in blocker_terms):
         return None, "modal semantics require a user/business/security decision"
 
-    safe_effect_names = {
-        "稍后继续": "defer_notice_continue_work",
-        "继续工作": "continue_current_work",
-        "关闭提示": "dismiss_notice_continue_work",
-        "知道了": "acknowledge_notice_continue_work",
-        "remind me later": "defer_notice_continue_work",
-        "continue working": "continue_current_work",
-        "close notice": "dismiss_notice_continue_work",
-        "got it": "acknowledge_notice_continue_work",
+    safe_names = {
+        "稍后继续", "继续工作", "关闭提示", "知道了",
+        "remind me later", "continue working", "close notice", "got it",
     }
-    risky_action_terms = (
+    risky_terms = (
         "立即更新", "立即安装", "现在更新", "现在安装", "重启", "重新启动", "购买",
         "支付", "删除", "覆盖", "重置", "保存", "不保存", "丢弃",
         "update now", "install now", "restart now", "purchase", "pay", "delete",
@@ -746,9 +683,9 @@ def select_safe_modal_action(
     candidates: list[ModalButtonObservation] = []
     for button in observation.buttons:
         normalized = " ".join(str(button.name or "").strip().casefold().split())
-        if any(term in normalized for term in risky_action_terms):
+        if any(term in normalized for term in risky_terms):
             continue
-        if normalized in safe_effect_names:
+        if normalized in safe_names:
             candidates.append(button)
     if len(candidates) != 1:
         return None, (
@@ -769,6 +706,7 @@ def modal_action_still_current(
         and int(fresh.parent_hwnd) == int(admitted.parent_hwnd)
         and int(fresh.owner_hwnd) == int(admitted.owner_hwnd)
         and int(fresh.root_owner_hwnd) == int(admitted.root_owner_hwnd)
+        and int(fresh.parent_root_owner_hwnd) == int(admitted.parent_root_owner_hwnd)
         and fresh.is_modal
         and int(fresh.parent_interaction_state) == _WINDOW_INTERACTION_BLOCKED_BY_MODAL
         and tuple(fresh_button.runtime_id) == tuple(admitted_button.runtime_id)
