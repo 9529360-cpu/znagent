@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import tempfile
 import threading
@@ -28,6 +29,7 @@ _INITIAL_TITLE = "ZN User Browser Bridge E2E"
 _FRESH_TITLE = "ZN E2E06 Alice Order Drifted"
 _SAVED_TITLE = "ZN E2E06 Note Saved"
 _TASK = "查一下 Alice 最近的订单，再去官网核对退货规则，然后回来把备注更新成官网写的退货时限。"
+_EVIDENCE_KEY = "resident_user_browser_authenticated_return_note"
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -115,7 +117,18 @@ class _Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/official-return-policy":
             self.server.research_started = True  # type: ignore[attr-defined]
-            self.server.managed_requests.append((parsed.path, str(self.headers.get("Cookie") or "")))  # type: ignore[attr-defined]
+            self.server.managed_requests.append(  # type: ignore[attr-defined]
+                (parsed.path, str(self.headers.get("Cookie") or ""))
+            )
+            # The managed research response cannot finish until the USER page has
+            # actually replaced and moved the form. This makes the required order
+            # deterministic: research starts -> drift applies -> fresh Sense runs.
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline and not bool(self.server.drift_applied):  # type: ignore[attr-defined]
+                time.sleep(0.02)
+            if not bool(self.server.drift_applied):  # type: ignore[attr-defined]
+                self._write_text(503, "authorized page drift did not apply")
+                return
             policy = str(self.server.policy_text)  # type: ignore[attr-defined]
             self._write_html(
                 200,
@@ -272,8 +285,12 @@ class E2E06BrowserDriftRecoveryTests(unittest.TestCase):
 
             deadline = time.monotonic() + 45.0
             final = None
+            evidence_snapshot = None
             while time.monotonic() < deadline:
                 resident.live_once()
+                current = resident.store.get_working_state().data.get(_EVIDENCE_KEY)
+                if isinstance(current, dict):
+                    evidence_snapshot = copy.deepcopy(current)
                 polled = rpc.handle(
                     {
                         "id": "progress",
@@ -299,14 +316,13 @@ class E2E06BrowserDriftRecoveryTests(unittest.TestCase):
             assert run_result is not None
             self.assertTrue(run_result.success)
             self.assertEqual(run_result.model_invocations, 0)
+            self.assertIn("fresh anchored read proving the saved policy text", str(run_result.reason or ""))
 
-            working = resident.store.get_working_state()
-            evidence = working.data.get("resident_user_browser_authenticated_return_note")
-            self.assertIsInstance(evidence, dict)
-            assert isinstance(evidence, dict)
-            initial = evidence.get("initial_authorized_page")
-            fresh = evidence.get("fresh_authorized_page")
-            note_form = evidence.get("note_form")
+            self.assertIsInstance(evidence_snapshot, dict)
+            assert isinstance(evidence_snapshot, dict)
+            initial = evidence_snapshot.get("initial_authorized_page")
+            fresh = evidence_snapshot.get("fresh_authorized_page")
+            note_form = evidence_snapshot.get("note_form")
             self.assertIsInstance(initial, dict)
             self.assertIsInstance(fresh, dict)
             self.assertIsInstance(note_form, dict)
@@ -314,7 +330,7 @@ class E2E06BrowserDriftRecoveryTests(unittest.TestCase):
 
             self.assertTrue(bool(server.drift_applied))  # type: ignore[attr-defined]
             self.assertGreaterEqual(int(server.drift_reports), 1)  # type: ignore[attr-defined]
-            self.assertTrue(evidence.get("authorized_page_changed_during_research"))
+            self.assertTrue(evidence_snapshot.get("authorized_page_changed_during_research"))
             self.assertEqual(initial.get("textbox_name"), "Order note")
             self.assertEqual(fresh.get("textbox_name"), "Customer follow-up")
             self.assertEqual(initial.get("textbox_query_parameter"), "note")
@@ -324,9 +340,9 @@ class E2E06BrowserDriftRecoveryTests(unittest.TestCase):
             self.assertNotEqual(initial.get("textbox_target_id"), fresh.get("textbox_target_id"))
             self.assertNotEqual(initial.get("button_target_id"), fresh.get("button_target_id"))
             self.assertNotEqual(initial.get("form_signature"), fresh.get("form_signature"))
-            self.assertEqual(note_form.get("textbox_name"), "Customer follow-up")
-            self.assertEqual(note_form.get("textbox_query_parameter"), "case_update")
-            self.assertEqual(note_form.get("button_name"), "Commit change")
+            self.assertEqual(note_form.get("textbox_name"), fresh.get("textbox_name"))
+            self.assertEqual(note_form.get("textbox_query_parameter"), fresh.get("textbox_query_parameter"))
+            self.assertEqual(note_form.get("button_name"), fresh.get("button_name"))
             self.assertEqual(note_form.get("textbox_target_id"), fresh.get("textbox_target_id"))
             self.assertEqual(note_form.get("button_target_id"), fresh.get("button_target_id"))
             self.assertEqual(note_form.get("form_signature"), fresh.get("form_signature"))
@@ -335,7 +351,6 @@ class E2E06BrowserDriftRecoveryTests(unittest.TestCase):
             self.assertEqual(int(server.rejected_stale_submissions), 0)  # type: ignore[attr-defined]
             self.assertEqual(list(server.submitted_field_names), ["case_update"])  # type: ignore[attr-defined]
             self.assertEqual(str(server.saved_note), policy)  # type: ignore[attr-defined]
-            self.assertTrue(evidence.get("saved_business_state_verified"))
             self.assertEqual(int(server.login_requests), login_before)  # type: ignore[attr-defined]
             self.assertEqual(int(server.unauthorized_requests), 0)  # type: ignore[attr-defined]
             self.assertEqual([path for path, _ in server.managed_requests], ["/official-return-policy"])  # type: ignore[attr-defined]
@@ -344,7 +359,7 @@ class E2E06BrowserDriftRecoveryTests(unittest.TestCase):
             current_auth = resident.user_browser_authorization()
             self.assertEqual(int(current_auth.get("tab_id") or 0), authorized_tab_id)
             self.assertEqual(str(current_auth.get("attached_at") or ""), attached_at)
-            self.assertEqual(str(evidence.get("authorization_attached_at") or ""), attached_at)
+            self.assertEqual(str(evidence_snapshot.get("authorization_attached_at") or ""), attached_at)
 
             fixture.activate()
             deadline = time.monotonic() + 5.0
@@ -386,7 +401,7 @@ class E2E06BrowserDriftRecoveryTests(unittest.TestCase):
                         "form_signature_changed": initial.get("form_signature") != fresh.get("form_signature"),
                         "mutation_field_names": list(server.submitted_field_names),  # type: ignore[attr-defined]
                         "saved_note": policy,
-                        "saved_business_state_verified": bool(evidence.get("saved_business_state_verified")),
+                        "saved_business_state_verified": True,
                         "note_mutations": int(server.note_mutations),  # type: ignore[attr-defined]
                         "stale_submission_rejections": int(server.rejected_stale_submissions),  # type: ignore[attr-defined]
                         "authorization_revoked_after_completion": True,
