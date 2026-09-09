@@ -3,7 +3,11 @@ from __future__ import annotations
 import unittest
 from dataclasses import replace
 
-from zn_agent.core.desktop_modal_recovery_behavior import MAX_DESKTOP_MODAL_RECOVERY_OBSERVATIONS
+from zn_agent.core.desktop_modal_recovery_behavior import (
+    MAX_DESKTOP_MODAL_PREINPUT_RETRIES,
+    MAX_DESKTOP_MODAL_RECOVERY_OBSERVATIONS,
+    _modal_replay_block_reason,
+)
 from zn_agent.core.modal_window_sense import (
     ModalButtonObservation,
     ModalWindowObservation,
@@ -231,6 +235,67 @@ class DesktopModalSafetyClassificationTests(unittest.TestCase):
             _modal(buttons=(_button("立即更新"),)), user_goal="继续订单任务。"
         )
         self.assertIsNone(action)
+
+
+class DesktopModalReplayGuardTests(unittest.TestCase):
+    def test_first_modal_attempt_is_not_blocked_by_generic_history(self) -> None:
+        self.assertIsNone(_modal_replay_block_reason({"dispatch_count": 0}, None))
+
+    def test_one_retry_is_allowed_only_before_pointer_execution_starts(self) -> None:
+        progress = {
+            "dispatch_count": 0,
+            "modal_intent_id": "desktop-modal-first",
+            "preinput_retry_count": 0,
+        }
+        self.assertIsNone(_modal_replay_block_reason(progress, None))
+        self.assertEqual(MAX_DESKTOP_MODAL_PREINPUT_RETRIES, 1)
+
+    def test_second_preinput_retry_is_bounded_and_blocked(self) -> None:
+        progress = {
+            "dispatch_count": 0,
+            "modal_intent_id": "desktop-modal-second",
+            "preinput_retry_count": 1,
+        }
+        reason = _modal_replay_block_reason(progress, None)
+        self.assertIsNotNone(reason)
+        self.assertIn("failed before input more than once", reason or "")
+
+    def test_any_matching_durable_execution_state_blocks_replay(self) -> None:
+        progress = {
+            "dispatch_count": 0,
+            "modal_intent_id": "desktop-modal-prior",
+            "preinput_retry_count": 0,
+        }
+        for status, input_sent in (
+            ("started", None),
+            ("completed", None),
+            ("failed", None),
+            ("aborted", False),
+        ):
+            with self.subTest(status=status):
+                reason = _modal_replay_block_reason(
+                    progress,
+                    {
+                        "intent_id": "desktop-modal-prior",
+                        "status": status,
+                        "input_sent": input_sent,
+                    },
+                )
+                self.assertIsNotNone(reason)
+                self.assertIn("refusing any replay", reason or "")
+
+    def test_unrelated_old_pointer_execution_does_not_own_modal_replay_truth(self) -> None:
+        progress = {
+            "dispatch_count": 0,
+            "modal_intent_id": "desktop-modal-prior",
+            "preinput_retry_count": 0,
+        }
+        self.assertIsNone(
+            _modal_replay_block_reason(
+                progress,
+                {"intent_id": "ordinary-desktop-pointer", "status": "completed"},
+            )
+        )
 
 
 class DesktopModalFreshAuthorityTests(unittest.TestCase):
