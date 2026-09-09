@@ -2,7 +2,7 @@
 
 这份文件只描述 current `main` 之后的产品选择原则和剩余产品缺口。它不给 updater、rollback、signing、release trust、credential、identity、installer 或 long-term memory 的高风险改动自动授权。
 
-Updated: 2026-09-08
+Updated: 2026-09-09
 
 ## 当前已关闭的 delegated baseline
 
@@ -26,6 +26,7 @@ Current `main` 还已经拥有一批近期真实 Body 能力：
 - E2E-05 USER Browser authenticated research -> persisted mutation；
 - E2E-07 causal USER Browser child-tab attribution / popup / return path；
 - E2E-08 standard HTML `autocomplete="one-time-code"` same-authorized-tab user-presence handoff；
+- **E2E-15 bounded Windows unexpected-modal recovery**：同一 Resident / 同一 Work 内，fresh exact parent/modal/button authority、唯一安全 defer/continue action、单次 side effect、modal disappearance、parent readiness、旧 UIA RuntimeId 失效与 fresh re-ground 已在真实 WinForms `ShowDialog()` 路径验证；
 - bounded BrowserScene sensing；
 - tab lifecycle/history；
 - exact BrowserScene actions；
@@ -35,7 +36,7 @@ Current `main` 还已经拥有一批近期真实 Body 能力：
 - Windows Machine Capability / Application Awareness V1；
 - exact Resident-admitted existing application window activation。
 
-这些都只代表 bounded verified paths。特别是：E2E-08 不是“所有 MFA”；Browser Body V2 不是“任意网页”；Windows application awareness 不是“所有 Windows 操作”。
+这些都只代表 bounded verified paths。特别是：E2E-08 不是“所有 MFA”；E2E-15 不是“任意 Windows dialog 自动处理”；Browser Body V2 不是“任意网页”；Windows application awareness 不是“所有 Windows 操作”。
 
 ## 下一阶段产品目标
 
@@ -117,7 +118,9 @@ E2E-08 只覆盖 standard HTML `one-time-code`、same authorized tab/generation/
 
 ### 4. Windows / application capability breadth
 
-Windows Machine Capability / Application Awareness 与 exact existing-window activation 已经存在。后续不应再把“machine/application awareness 尚缺”作为空泛基础设施任务。
+Windows Machine Capability / Application Awareness、exact existing-window activation，以及 E2E-15 bounded unexpected-modal recovery 已经存在。后续不应再把“machine/application awareness 尚缺”或“Windows dialog recovery 完全没有”作为空泛基础设施任务。
+
+E2E-15 的准确边界是：exact same-process directly owned UIA modal、parent `BlockedByModalWindow`、唯一 deterministic safe defer/continue/close-notice action、input 前 fresh revalidation、单次 side effect、modal absence + exact parent UIA/Win32 readiness 后 fresh desktop re-ground。`WaitForInputIdle` 只作为 telemetry，不是硬 gate；credentials/UAC/security/save-discard/delete/overwrite/file-picker/payment/installer/restart/update decision、跨进程或歧义 dialog 仍 fail closed。
 
 只有当真实 E2E 暴露具体应用/OS 缺口时，才增加最小语义能力，例如某个真实应用所需的 current-state sensing、safe activation/selection、structured application action 或独立 postcondition。
 
@@ -154,6 +157,7 @@ restart-safe delegated reconciliation
 E2E-27/33 representative steering / continuation closure
 delegated user progress projection
 bounded flat WorkItem dependency/readiness
+E2E-15 bounded same-process safe modal recovery representative closure
 ```
 
 如果新的真实任务在相关区域失败，应描述为“新覆盖/新边界缺口”，并证明 existing substrate 为什么不足。
