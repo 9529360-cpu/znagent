@@ -121,7 +121,7 @@ class E2E06BrowserDriftGroundingTests(unittest.TestCase):
                 _sense(
                     _textbox(),
                     _button(name="Commit change"),
-                    _button(name="Send update"),
+                    _button(name="Approve change"),
                 )
             )
 
