@@ -215,3 +215,13 @@ E2E-24 bounded same-Root USER Browser -> File -> Desktop representative path
 - E2E-15 bounded modal slice 之外，由当前真实应用/OS capability 缺口导致的具体 E2E 阻塞。
 
 不要因为“下一阶段”这个词自动授权 Memory、credential、installer/updater/release trust 等高风险大改；不要把 general DAG scheduler、recursive delegation 或 multi-agent platform 当默认路线。
+
+## E2E-35 — next-day product continuation/status-first inspection
+
+2026-09-09，PR #240 的 bounded representative path 已通过真实 PR-head 验证：`ZN Work Recovery E2E #336`、`E2E27-33 Real Steering Replan Acceptance #9`、`ZN CI #1703` 均为 success。最终合并 SHA 必须在 merge 后重新查询，不能把当前 PR head 当 canonical main。
+
+用户代表句保持为：`昨天那个产品继续，先看看做到哪了。`。当前实现解析唯一 yesterday Work，复用同一 WorkThread、Root Work、current plan 和既有 Resident event，以现有 durable Work truth 派生 root goal、plan、completed/blocked items、blockers、artifacts 与 delegated progress；当前 workspace/Git/artifact 只通过 bounded read-only Body Sense 重新检查。inspection 不创建新 Resident event、不调用模型、不创建 WorkerRun、不改变 WorkItem status/plan，也不给执行授权。历史 artifact evidence 与当前 `unchanged`/`modified`/`missing` observation 分开保存/展示，当前漂移不会改写历史完成事实。
+
+Desktop 把 `inspection_complete` 当成一次只读交互结束，而不是 Work terminal/finalized，因此输入框立即可继续使用；随后同一 thread 的 `继续`/`那继续吧` 只在最新 durable message 确认为 inspection 时复用同一 active event，包含 restart 后场景。已完成 Work 可以只读检查，但 bare replay 仍 fail closed；zero/multiple yesterday candidates 也 fail closed。
+
+边界：这是一个 next-day product continuation/status-first 的窄代表性 closure，不代表 arbitrary history search、多周/多月项目重建、跨设备 continuity、通用项目管理 dashboard、general long-horizon orchestrator、general DAG scheduler 或 recursive multi-agent runtime 已完成。新的 continuity 失败应先判断是否超出这条 bounded slice，而不是重新造第二套 Work/progress truth。
