@@ -153,14 +153,16 @@ class E2E02ResearchToEditableFileTests(unittest.TestCase):
                     self.assertIn(market_id, text)
                     self.assertIn(analysis_id, text)
                     self.assertIn("Acme Robotics industry adoption is expanding.", text)
-                    self.assertIn(str(artifact), run.response)
 
                     evidence_items = [item for item in ledger.list_work_items("e2e-02", limit=64) if "research_bundle:v1" in item.acceptance_criteria]
                     self.assertEqual(len(evidence_items), 1)
                     bundle = json.loads(evidence_items[0].result or "{}")
                     self.assertTrue(bundle["artifact"]["fresh_reread_verified"])
                     self.assertTrue(bundle["artifact"]["identity_exact_after_reread"])
-                    self.assertEqual(Path(bundle["artifact"]["path"]), artifact)
+                    verified_path = Path(bundle["artifact"]["path"])
+                    self.assertTrue(verified_path.exists())
+                    self.assertEqual(verified_path.resolve(), artifact.resolve())
+                    self.assertIn(str(verified_path), run.response)
                     verification_items = [item for item in ledger.list_work_items("e2e-02", limit=64) if "research_artifact_verification:v1" in item.acceptance_criteria]
                     self.assertEqual(len(verification_items), 1)
                     self.assertEqual(resource.extract_calls, 1)
