@@ -38,8 +38,17 @@ class E2E10SpreadsheetCleanupTests(unittest.TestCase):
         workbook.save(path)
 
     def _setup(self, base: Path, project: Path, thread_id: str):
-        resident = build_resident_runtime(config={"model": {}}, store_path=base / "kernel.db")
-        self.addCleanup(resident.store.close)
+        db_path = base.parent / f"zn-e2e10-{os.getpid()}-{thread_id}.db"
+        for suffix in ("", "-wal", "-shm"):
+            Path(str(db_path) + suffix).unlink(missing_ok=True)
+        resident = build_resident_runtime(config={"model": {}}, store_path=db_path)
+
+        def cleanup() -> None:
+            resident.store.close()
+            for suffix in ("", "-wal", "-shm"):
+                Path(str(db_path) + suffix).unlink(missing_ok=True)
+
+        self.addCleanup(cleanup)
         ledger = resident.work_ledger
         ledger.create_thread(thread_id=thread_id)
         ledger.attach_workspace(thread_id, project)
@@ -80,8 +89,8 @@ class E2E10SpreadsheetCleanupTests(unittest.TestCase):
             before_sha = self._sha(source)
             before_mtime = source.stat().st_mtime_ns
 
-            resident, ledger = self._setup(base, project, "e2e10")
-            _, run = ledger.submit("e2e10", TASK, payload={"downloads_path": str(downloads)})
+            resident, ledger = self._setup(base, project, "success")
+            _, run = ledger.submit("success", TASK, payload={"downloads_path": str(downloads)})
             self.assertTrue(run.success, run)
             self.assertEqual(run.model_invocations, 0)
             destination = project / "sales-cleaned.xlsx"
@@ -105,8 +114,7 @@ class E2E10SpreadsheetCleanupTests(unittest.TestCase):
             self.assertEqual(sum(item.kind == "write_xlsx_copy" for item in actions), 1)
             self.assertGreaterEqual(sum(item.kind == "inspect_xlsx" for item in actions), 3)
             evidence_item = next(
-                item
-                for item in ledger.list_work_items("e2e10", limit=64)
+                item for item in ledger.list_work_items("success", limit=64)
                 if "spreadsheet_cleanup_work:v1" in item.acceptance_criteria
             )
             evidence = json.loads(evidence_item.result)
@@ -115,7 +123,7 @@ class E2E10SpreadsheetCleanupTests(unittest.TestCase):
             self.assertTrue(evidence["verification"]["zero_exact_duplicate_rows"])
             self.assertTrue(evidence["verification"]["amount_number_format_uniform"])
 
-    def test_two_yesterday_files_and_ambiguous_amount_columns_fail_closed(self) -> None:
+    def test_source_and_amount_ambiguity_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             downloads = base / "Downloads"
@@ -157,7 +165,7 @@ class E2E10SpreadsheetCleanupTests(unittest.TestCase):
             self.assertEqual(self._sha(source), before)
             self.assertFalse(list(project.glob("*.xlsx")))
 
-    def test_formula_and_complex_workbook_fail_closed(self) -> None:
+    def test_formula_and_chart_fail_closed(self) -> None:
         for mode in ("formula", "chart"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
                 base = Path(tmp)
