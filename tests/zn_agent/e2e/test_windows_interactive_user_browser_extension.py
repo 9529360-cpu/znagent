@@ -190,26 +190,109 @@ class _ExtensionBrowserFixture(_IsolatedUserBrowserFixture):
 
 
 def _press_extension_action_shortcut() -> None:
-    """Generate the user gesture bound to manifest command `_execute_action`."""
+    """Generate one verified Windows user-gesture chord for `_execute_action`.
+
+    ``keybd_event`` is superseded and reports no delivery result.  Use one
+    ``SendInput`` batch, matching ZN's production keyboard primitive, so the
+    modifier/key transitions cannot be interleaved between six independent API
+    calls and the fixture fails loudly if Windows accepts only part of the chord.
+    """
 
     user32 = ctypes.WinDLL("user32", use_last_error=True)
-    user32.keybd_event.argtypes = [
-        wintypes.BYTE,
-        wintypes.BYTE,
-        wintypes.DWORD,
-        ctypes.c_size_t,
-    ]
-    user32.keybd_event.restype = None
+    ulong_ptr = (
+        ctypes.c_ulonglong
+        if ctypes.sizeof(ctypes.c_void_p) == 8
+        else ctypes.c_ulong
+    )
+
+    class MouseInput(ctypes.Structure):
+        _fields_ = [
+            ("dx", wintypes.LONG),
+            ("dy", wintypes.LONG),
+            ("mouseData", wintypes.DWORD),
+            ("dwFlags", wintypes.DWORD),
+            ("time", wintypes.DWORD),
+            ("dwExtraInfo", ulong_ptr),
+        ]
+
+    class KeyboardInput(ctypes.Structure):
+        _fields_ = [
+            ("wVk", wintypes.WORD),
+            ("wScan", wintypes.WORD),
+            ("dwFlags", wintypes.DWORD),
+            ("time", wintypes.DWORD),
+            ("dwExtraInfo", ulong_ptr),
+        ]
+
+    class HardwareInput(ctypes.Structure):
+        _fields_ = [
+            ("uMsg", wintypes.DWORD),
+            ("wParamL", wintypes.WORD),
+            ("wParamH", wintypes.WORD),
+        ]
+
+    class InputUnion(ctypes.Union):
+        # INPUT uses the size of its largest union member.  Keep all Win32
+        # members so sizeof(Input) remains correct on Win64.
+        _fields_ = [
+            ("mi", MouseInput),
+            ("ki", KeyboardInput),
+            ("hi", HardwareInput),
+        ]
+
+    class Input(ctypes.Structure):
+        _anonymous_ = ("union",)
+        _fields_ = [
+            ("type", wintypes.DWORD),
+            ("union", InputUnion),
+        ]
+
+    input_keyboard = 1
     key_up = 0x0002
     vk_control = 0x11
     vk_shift = 0x10
     vk_5 = 0x35
-    user32.keybd_event(vk_control, 0, 0, 0)
-    user32.keybd_event(vk_shift, 0, 0, 0)
-    user32.keybd_event(vk_5, 0, 0, 0)
-    user32.keybd_event(vk_5, 0, key_up, 0)
-    user32.keybd_event(vk_shift, 0, key_up, 0)
-    user32.keybd_event(vk_control, 0, key_up, 0)
+
+    user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+    user32.GetAsyncKeyState.restype = ctypes.c_short
+    dirty = [
+        name
+        for name, vk in (
+            ("control", vk_control),
+            ("shift", vk_shift),
+            ("5", vk_5),
+        )
+        if int(user32.GetAsyncKeyState(vk)) & 0x8000
+    ]
+    if dirty:
+        raise RuntimeError(
+            "interactive extension shortcut cannot be injected while keys are already down: "
+            + ",".join(dirty)
+        )
+
+    event_values = [
+        Input(type=input_keyboard, ki=KeyboardInput(vk_control, 0, 0, 0, 0)),
+        Input(type=input_keyboard, ki=KeyboardInput(vk_shift, 0, 0, 0, 0)),
+        Input(type=input_keyboard, ki=KeyboardInput(vk_5, 0, 0, 0, 0)),
+        Input(type=input_keyboard, ki=KeyboardInput(vk_5, 0, key_up, 0, 0)),
+        Input(type=input_keyboard, ki=KeyboardInput(vk_shift, 0, key_up, 0, 0)),
+        Input(type=input_keyboard, ki=KeyboardInput(vk_control, 0, key_up, 0, 0)),
+    ]
+    events = (Input * len(event_values))(*event_values)
+    user32.SendInput.argtypes = [
+        wintypes.UINT,
+        ctypes.POINTER(Input),
+        ctypes.c_int,
+    ]
+    user32.SendInput.restype = wintypes.UINT
+    ctypes.set_last_error(0)
+    sent = int(user32.SendInput(len(events), events, ctypes.sizeof(Input)))
+    if sent != len(events):
+        error = ctypes.get_last_error()
+        raise RuntimeError(
+            "Windows SendInput accepted only "
+            f"{sent}/{len(events)} extension-shortcut events; winerror={error}"
+        )
 
 
 class WindowsInteractiveUserBrowserExtensionE2ETests(unittest.TestCase):
