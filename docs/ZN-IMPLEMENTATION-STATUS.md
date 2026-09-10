@@ -2,7 +2,7 @@
 
 这是一份当前实现事实表，不是 roadmap。真实代码、真实 Git、真实测试和真实 E2E 高于本文件。
 
-Updated: 2026-09-09
+Updated: 2026-09-10
 
 ## 仓库状态规则
 
@@ -37,6 +37,7 @@ Product-closed
 | --- | --- | --- |
 | Resident Self / Body / Senses / Situation / Thought / Will | CONNECTED + VERIFIED | 真实任务广度仍需扩大 |
 | Durable Work / restart recovery | CONNECTED + VERIFIED | 更长周期、跨天和更多真实任务上的连续体验仍需扩大 |
+| Uncertain outside-world side effects | VERIFIED NARROW; E2E-36 representative path closed | exact replay-sensitive attempt 跨 restart 保持 fail closed；显式 user resolution 与 machine evidence 分离，retry authority 只终结一个旧 attempt 并要求 fresh guarded attempt；不是通用 exactly-once 或任意第三方 recovery |
 | Work continuity / steering | VERIFIED NARROW; E2E-27/33/35 representative paths closed | natural-language same-Work steering、plan-version replan、stale old-worker gating、restart continuation，以及 bounded next-day status-first reconstruction/continue 已验证；更广长期使用仍开放 |
 | Managed Browser / BrowserScene | CONNECTED + VERIFIED NARROW | 已有 bounded BrowserScene、tab/history、exact scene actions、causal popup、file transfer、stateless/stateful control clicks；复杂 frames/dialogs/general keyboard/OCR/任意网页仍未覆盖 |
 | User Browser Bridge | CONNECTED + VERIFIED NARROW | E2E-05 authenticated research→mutation、E2E-07 causal child-tab、E2E-08 OTP user-presence representative paths 已关闭；真实网站和更复杂认证/导航仍需扩大 |
@@ -128,6 +129,18 @@ CONNECTED + VERIFIED NARROW / PARTIAL UX
 复杂 multi-workstream 展示、长期任务解释质量、面向普通用户的阻塞/完成依据表达仍需扩大。
 
 ## 代表性 E2E closure
+
+### E2E-36 — uncertain side effect across restart
+
+2026-09-10 已验证 bounded representative path。对 replay-sensitive mutation，Resident 在 dispatch 前先持久化 exact side-effect attempt；当 crash/restart 后结果仍不确定时继续 `user_decision_required`，不会把 timeout/中断解释成普通失败，也不会 blind replay。
+
+显式控制只有两个 effect-resolution 结论：`effect_happened` 与 `retry_authorized`。前者把旧 attempt 记录为 audit-distinct `user_confirmed_effect`，不再次 dispatch mutation；后者记录为 `user_authorized_retry`，只终结该 exact 旧 attempt 并把 checkpoint 送回普通 `native_action`，下一次真实 dispatch 仍必须经过既有 `SideEffectAwareBody.act()` guard 并生成 fresh attempt。若 fresh attempt 再次变成 uncertain，旧授权不会继承。machine `verified_effect` / `verified_absent` 语义完全保留，不被人工判断冒充。
+
+Store 在同一 SQLite transaction 中验证并更新 exact event/attempt/WorkingState recovery ownership；stale attempt、cross-thread/event、non-recovery 或 conflicting decision 均 fail closed 且不产生部分状态。Work control 与 `work_resolve_uncertain` RPC 只投影 bounded decision/attempt 信息，不暴露 action arguments。
+
+PR-head representative evidence：Windows `ZN Work Recovery E2E` 实跑 `170/170 OK`，三条 restart E2E 分别证明 effect-happened no replay、retry 形成一个 fresh attempt/一个真实 effect、第二次 uncertain 不继承旧 authority；ZN Kernel 全量 core 回归也通过。merge 后 canonical main SHA / post-merge CI 必须重新查询，不把 PR head 当永久证据。
+
+这不是 arbitrary third-party exactly-once guarantee，也不表示所有 outside-world side effect 都可以自动判断或恢复；它关闭的是 exact attempt-bound、Resident-owned、fail-closed 的代表性 restart/user-resolution 路径。
 
 ### E2E-35 — next-day product continuation/status-first inspection
 
@@ -238,6 +251,7 @@ Windows 当前已有 Machine Capability / Application Awareness V1、exact admit
 - 任意网页或任意 popup/frame/dialog；
 - arbitrary Windows dialog recovery、UAC/credential/security/save-discard/file-picker/payment/installer/update decisions；
 - arbitrary Browser/File/Desktop automation 或 general RPA；
+- arbitrary third-party exactly-once semantics 或所有 outside-world side effect 自动恢复；
 - 完整 DLP / OS sandbox；
 - 所有长期任务已解决；
 - arbitrary history search / 多周多月 project reconstruction / cross-device continuity；
