@@ -52,6 +52,14 @@ def _compatibility_profile(experience: VerifiedExperience) -> dict[str, Any]:
         "action_variant": expected.get("action_variant"),
         "expected_kind": str(expected.get("kind") or "unknown"),
         "expected_exit_code": expected.get("expected_exit_code"),
+        # A learned procedure is project/workspace local when current execution
+        # produced a workdir fingerprint.  The fingerprint is already the
+        # privacy-safe identity emitted by VerifiedExperience; no raw path is
+        # persisted in the candidate.  Keeping it in the compatibility key
+        # prevents equally-shaped work in project B from maturing or selecting
+        # project A's preference while still allowing different files inside the
+        # same project to reinforce one competence.
+        "project_scope_fingerprint": expected.get("workdir_fingerprint"),
         "effect_class": str(result.get("effect_class") or "unknown"),
         "failure_class": (
             str(result.get("failure_class"))
