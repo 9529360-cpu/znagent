@@ -120,18 +120,22 @@ class E2E39LearnedPathDrift(unittest.TestCase):
             )
         if rows[0].verdict != "contradicted":
             raise AssertionError(f"expected contradicted verdict, got {rows[0].verdict}")
-
         cls._git(root, "add", "--", target.name)
         terminal = cls._run(resident)
         if not terminal.success:
             raise AssertionError(terminal.reason)
 
     @classmethod
-    def _build_inhibited(cls, root: Path, targets: list[Path], db: Path):
+    def _build_two_drifts(cls, root: Path, targets: list[Path], db: Path):
         resident = build_resident_runtime(config={"model": {}}, store_path=db)
         cls._train_practiced(resident, root, targets)
         cls._prediction_drift_once(resident, root, targets[4], 4)
         cls._prediction_drift_once(resident, root, targets[5], 5)
+        return resident
+
+    @classmethod
+    def _build_inhibited(cls, root: Path, targets: list[Path], db: Path):
+        resident = cls._build_two_drifts(root, targets, db)
         inhibited = cls._candidate(resident)
         if inhibited.support_count != 4 or inhibited.contradiction_count != 2:
             raise AssertionError(
@@ -148,9 +152,7 @@ class E2E39LearnedPathDrift(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
             targets = self._repo(root)
-            resident = build_resident_runtime(
-                config={"model": {}}, store_path=root / ".zn" / "kernel.db"
-            )
+            resident = build_resident_runtime(config={"model": {}}, store_path=root / ".zn" / "kernel.db")
             self._train_practiced(resident, root, targets)
             missing = root / "disappeared.txt"
             event = resident.enqueue(
@@ -159,11 +161,7 @@ class E2E39LearnedPathDrift(unittest.TestCase):
             )
             result = self._run(resident)
             self.assertFalse(result.success)
-            movements = [
-                item.kind
-                for item in resident.body.recent_actions(500)
-                if item.event_id == event.event_id
-            ]
+            movements = [item.kind for item in resident.body.recent_actions(500) if item.event_id == event.event_id]
             self.assertIn("inspect_path", movements)
             self.assertIn("git_state", movements)
             self.assertNotIn("command", movements)
@@ -194,11 +192,24 @@ class E2E39LearnedPathDrift(unittest.TestCase):
             self._reach_learned_verification(resident, root, targets[5], 5)
             resident.store.close()
 
+    def test_two_prediction_drifts_aggregate_into_same_scoped_competence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            targets = self._repo(root)
+            resident = self._build_two_drifts(root, targets, root / ".zn" / "kernel.db")
+            candidate = self._candidate(resident)
+            self.assertEqual(candidate.support_count, 4)
+            self.assertEqual(candidate.contradiction_count, 2)
+            resident.store.close()
+
     def test_two_prediction_drifts_inhibit_scoped_competence(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
             targets = self._repo(root)
-            resident = self._build_inhibited(root, targets, root / ".zn" / "kernel.db")
+            resident = self._build_two_drifts(root, targets, root / ".zn" / "kernel.db")
+            candidate = self._candidate(resident)
+            self.assertTrue(candidate.inhibited)
+            self.assertEqual(candidate.maturity_state, "inhibited")
             resident.store.close()
 
     def test_prediction_drift_inhibition_persists_restart(self):
