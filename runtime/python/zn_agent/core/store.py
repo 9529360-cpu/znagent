@@ -94,8 +94,6 @@ class KernelStore:
 
     def get_goal(self, goal_id: str) -> Goal | None:
         with self._lock:
-            row = self._conn.execute("SELECT data FROM goals WHERE id=?", (goal_id,)).fetchone()
-        if not row:
             row = self._conn.execute("SELECT data FROM goals WHERE goal_id=?", (goal_id,)).fetchone()
         if not row:
             return None
