@@ -208,6 +208,33 @@ class ResidentRpcServer:
                         ),
                     )
                 )
+        elif method == "work_resolve_uncertain":
+            thread_id = str(params.get("thread_id") or "").strip()
+            event_id = str(params.get("event_id") or "").strip()
+            attempt_id = str(params.get("attempt_id") or "").strip()
+            decision = str(params.get("decision") or "").strip().lower()
+            if not thread_id:
+                raise ValueError("work_resolve_uncertain requires thread_id")
+            if not event_id:
+                raise ValueError("work_resolve_uncertain requires event_id")
+            if not attempt_id:
+                raise ValueError("work_resolve_uncertain requires attempt_id")
+            progress = self.work_control.resolve_uncertain(
+                thread_id,
+                event_id,
+                attempt_id=attempt_id,
+                decision=decision,
+            )
+            result = {"progress": progress}
+            if progress.get("finalized"):
+                result["thread"] = self._work_snapshot(
+                    self.work_control.get_snapshot(
+                        thread_id,
+                        message_limit=max(
+                            1, min(500, int(params.get("message_limit") or 120))
+                        ),
+                    )
+                )
         elif method == "work_cancel":
             thread_id = str(params.get("thread_id") or "").strip()
             event_id = str(params.get("event_id") or "").strip()
