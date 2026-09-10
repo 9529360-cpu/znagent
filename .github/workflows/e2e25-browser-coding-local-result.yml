@@ -1,0 +1,133 @@
+name: E2E25 Current Docs Adaptation Acceptance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/e2e25-browser-coding-local-result.yml'
+      - 'runtime/python/zn_agent/core/current_api_docs_adaptation_resident.py'
+      - 'runtime/python/zn_agent/core/provider_bridge.py'
+      - 'runtime/python/zn_agent/core/broad_goal_research_resident.py'
+      - 'runtime/python/zn_agent/core/broad_goal_completion_resident.py'
+      - 'runtime/python/zn_agent/core/delegated_work_coordinator.py'
+      - 'runtime/python/zn_agent/core/action_authority.py'
+      - 'runtime/python/zn_agent/core/worker_context_boundary.py'
+      - 'tests/zn_agent/core/test_e2e25_current_reference_and_workspace_read_baseline.py'
+      - 'tests/zn_agent/e2e/test_e2e25_api_docs_code_adaptation.py'
+      - 'apps/desktop/browser-extension/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e25-current-docs-adaptation-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: 'true'
+  PYTHONUTF8: '1'
+  PYTHONUNBUFFERED: '1'
+  ZN_E2E25_REAL_MODEL: '1'
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+jobs:
+  real-e2e:
+    name: Current docs to existing code to real result
+    runs-on: [self-hosted, Windows, X64, zn-interactive]
+    timeout-minutes: 45
+    steps:
+      - name: Require configured interactive Windows host
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "E2E-25 acceptance requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+          if ($env:RUNNER_NAME -ne 'zn-interactive') {
+            throw "E2E-25 acceptance requires zn-interactive; got $env:RUNNER_NAME"
+          }
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare isolated runtime with browser and provider transports
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/e2e25-real-venv -ErrorAction SilentlyContinue
+          uv venv .ci/e2e25-real-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e25-real-venv\Scripts\python.exe'
+          Push-Location runtime/python
+          try {
+            uv pip install --python $python '.[browser,anthropic]'
+          } finally {
+            Pop-Location
+          }
+      - name: Run deterministic E2E-25 contracts
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e25-real-venv\Scripts\python.exe'
+          & $python -m unittest -v tests.zn_agent.core.test_e2e25_current_reference_and_workspace_read_baseline
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Require at least one configured real cognitive route
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e25-real-venv\Scripts\python.exe'
+          @'
+          import json
+          from zn_agent.core.config import load_zn_config
+          from zn_agent.core.provider_bridge import build_zn_cognitive_resource_plan
+          plan = build_zn_cognitive_resource_plan(load_zn_config())
+          safe = [
+              {"route_id": r.route_id, "provider": r.provider, "model": r.model, "capabilities": sorted(r.capabilities)}
+              for r in plan.routes if r.provider != "none" and str(r.model or "").strip()
+          ]
+          print("ZN_E2E25_CONFIGURED_ROUTES=" + json.dumps(safe, ensure_ascii=False), flush=True)
+          if not plan.available or not safe:
+              raise SystemExit("E2E-25 requires a configured real cognitive resource: " + str(plan.error))
+          '@ | & $python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run exactly one guarded real E2E-25 and fail on skip
+        run: |
+          $env:PYTHONPATH = (Join-Path $env:GITHUB_WORKSPACE 'runtime\python') + ';' + (Join-Path $env:GITHUB_WORKSPACE 'tests\zn_agent\e2e')
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e25-real-venv\Scripts\python.exe'
+          $log = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e25-real.log'
+          Remove-Item -Force $log -ErrorAction SilentlyContinue
+          @'
+          import importlib.util
+          import sys
+          import unittest
+          from pathlib import Path
+          path = Path("tests/zn_agent/e2e/test_e2e25_api_docs_code_adaptation.py").resolve()
+          spec = importlib.util.spec_from_file_location("zn_e2e25_real", path)
+          if spec is None or spec.loader is None:
+              raise SystemExit("unable to load E2E-25 test module")
+          module = importlib.util.module_from_spec(spec)
+          sys.modules[spec.name] = module
+          spec.loader.exec_module(module)
+          suite = unittest.defaultTestLoader.loadTestsFromTestCase(
+              module.E2E25ApiDocsCodeAdaptationTests
+          )
+          if suite.countTestCases() != 1:
+              raise SystemExit(f"expected exactly one E2E-25 acceptance test, got {suite.countTestCases()}")
+          result = unittest.TextTestRunner(stream=sys.stdout, verbosity=2).run(suite)
+          print("ZN_E2E25_SKIPPED=" + str(len(result.skipped)), flush=True)
+          print("ZN_E2E25_FAILURES=" + str(len(result.failures)), flush=True)
+          print("ZN_E2E25_ERRORS=" + str(len(result.errors)), flush=True)
+          if result.skipped:
+              raise SystemExit("E2E-25 real acceptance skipped: " + repr(result.skipped))
+          if not result.wasSuccessful():
+              raise SystemExit(1)
+          '@ | & $python - 2>&1 | Tee-Object -FilePath $log
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -ne 0) { exit $exitCode }
+      - name: Upload guarded E2E-25 transcript
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e25-current-docs-code-adaptation-transcript
+          path: .ci/e2e25-real.log
+          if-no-files-found: warn
+          retention-days: 7
