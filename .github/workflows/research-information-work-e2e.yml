@@ -55,6 +55,11 @@ jobs:
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\research-venv\Scripts\python.exe'
           & $python tests/zn_agent/core/test_research_information_work.py -v
+      - name: Research Resident failover and blocker regression
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\research-venv\Scripts\python.exe'
+          & $python tests/zn_agent/core/test_research_information_resident.py -v
       - name: E2E-01 multi-source research
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
