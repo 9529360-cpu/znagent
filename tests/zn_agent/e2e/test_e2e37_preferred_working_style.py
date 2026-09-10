@@ -54,39 +54,63 @@ class E2E37PreferredWorkingStyle(unittest.TestCase):
             "required_capabilities": ["it/git", "filesystem"],
         }
 
+    @classmethod
+    def _train_git_project(
+        cls,
+        resident,
+        root: Path,
+        targets: list[Path],
+        *,
+        prefix: str,
+    ) -> list[str]:
+        event_ids: list[str] = []
+        for index, target in enumerate(targets):
+            target.write_text(f"{prefix}-{index}\n", encoding="utf-8")
+            event = resident.enqueue(
+                "stage this repository path in the current Git index",
+                payload=cls._payload(root, target),
+            )
+            result = cls._run(resident)
+            if not result.success:
+                raise AssertionError(result.reason)
+            event_ids.append(event.event_id)
+        return event_ids
+
     def test_current_project_reuses_only_bounded_verified_context_with_provenance(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp).resolve()
             project = base / "project-a"
             noise_project = base / "project-b"
             targets = self._repo(project, [f"a-{index}.txt" for index in range(5)])
-            noise_targets = self._repo(noise_project, [f"b-{index}.txt" for index in range(4)])
+            noise_targets = self._repo(
+                noise_project, [f"b-{index}.txt" for index in range(4)]
+            )
             db = base / "zn" / "kernel.db"
             resident = build_resident_runtime(config={"model": {}}, store_path=db)
 
-            prior_event_ids: list[str] = []
-            for index, target in enumerate(targets[:4]):
-                target.write_text(f"changed-a-{index}\n", encoding="utf-8")
-                event = resident.enqueue(
-                    "stage this repository path in the current Git index",
-                    payload=self._payload(project, target),
-                )
-                self.assertTrue(self._run(resident).success)
-                prior_event_ids.append(event.event_id)
+            prior_event_ids = self._train_git_project(
+                resident,
+                project,
+                targets[:4],
+                prefix="changed-a",
+            )
+            noise_event_ids = self._train_git_project(
+                resident,
+                noise_project,
+                noise_targets,
+                prefix="changed-b",
+            )
 
-            # Real but irrelevant historical Work in a second project/action family.
-            for index, target in enumerate(noise_targets):
-                event = resident.enqueue(
-                    "replace this project note with the requested current text",
-                    payload={
-                        "path": str(target),
-                        "content": f"noise-{index}\n",
-                        "model_policy": "never",
-                        "required_capabilities": ["filesystem"],
-                    },
-                )
-                self.assertTrue(self._run(resident).success)
-                self.assertTrue(resident.verified_experiences.for_event(event.event_id))
+            # Same action family, same maturity and same runtime, but two project
+            # identities must remain two learned competences. This is the harder
+            # isolation case than merely adding an unrelated action family.
+            learned_git = [
+                item
+                for item in resident.verified_experiences.candidate_tendencies(limit=16)
+                if item.expected_kind == "git_path_staged"
+                and item.maturity_state == "practiced"
+            ]
+            self.assertEqual(len(learned_git), 2)
 
             current = targets[4]
             current.write_text("fresh-current-state\n", encoding="utf-8")
@@ -119,17 +143,20 @@ class E2E37PreferredWorkingStyle(unittest.TestCase):
             self.assertEqual(selected.get("reliability"), 1.0)
             self.assertLessEqual(len(selected.get("source_event_ids") or []), 4)
             self.assertLessEqual(len(selected.get("source_experience_ids") or []), 4)
-            self.assertTrue(set(selected.get("source_event_ids") or []).issubset(set(prior_event_ids)))
+            selected_events = set(selected.get("source_event_ids") or [])
+            self.assertTrue(selected_events.issubset(set(prior_event_ids)))
+            self.assertTrue(selected_events.isdisjoint(set(noise_event_ids)))
 
             # The bounded context is provenance/fingerprint metadata, not a dump
-            # of another project's private text/path contents.
+            # of either project's raw path or file contents.
             serialized = repr(context)
+            self.assertNotIn(str(project), serialized)
             self.assertNotIn(str(noise_project), serialized)
-            self.assertNotIn("noise-", serialized)
+            self.assertNotIn("changed-b", serialized)
 
             before = [
                 item.kind
-                for item in resident.body.recent_actions(400)
+                for item in resident.body.recent_actions(500)
                 if item.event_id == event.event_id
             ]
             self.assertIn("inspect_path", before)
@@ -140,25 +167,54 @@ class E2E37PreferredWorkingStyle(unittest.TestCase):
             self.assertTrue(terminal.success)
             after = [
                 item.kind
-                for item in resident.body.recent_actions(400)
+                for item in resident.body.recent_actions(500)
                 if item.event_id == event.event_id
             ]
             self.assertIn("command", after)
             self.assertGreaterEqual(after.count("git_state"), 2)
             self.assertEqual(
-                self._git(project, "diff", "--cached", "--name-only", "--", current.name),
+                self._git(
+                    project,
+                    "diff",
+                    "--cached",
+                    "--name-only",
+                    "--",
+                    current.name,
+                ),
                 current.name,
             )
             resident.store.close()
 
-    def test_ambiguous_prior_style_without_current_project_identity_fails_closed(self):
+    def test_two_historical_projects_without_current_identity_fail_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp).resolve()
-            resident = build_resident_runtime(
-                config={"model": {}}, store_path=root / "kernel.db"
+            base = Path(tmp).resolve()
+            first_project = base / "alpha"
+            second_project = base / "beta"
+            first_targets = self._repo(
+                first_project, [f"alpha-{index}.txt" for index in range(2)]
             )
-            # Deliberately provide no project/path/current target identity. The
-            # resident must not invent it from history or dispatch any mutation.
+            second_targets = self._repo(
+                second_project, [f"beta-{index}.txt" for index in range(2)]
+            )
+            resident = build_resident_runtime(
+                config={"model": {}}, store_path=base / "kernel.db"
+            )
+            self._train_git_project(
+                resident, first_project, first_targets, prefix="alpha-change"
+            )
+            self._train_git_project(
+                resident, second_project, second_targets, prefix="beta-change"
+            )
+            candidates = [
+                item
+                for item in resident.verified_experiences.candidate_tendencies(limit=16)
+                if item.expected_kind == "git_path_staged"
+            ]
+            self.assertEqual(len(candidates), 2)
+
+            # Both prior procedures are real and equally plausible, but the new
+            # request supplies no current project/path identity. History cannot
+            # invent the target or mutation args, so the request must fail closed.
             event = resident.enqueue(
                 "还是按照我以前这个项目的方式处理。",
                 payload={"model_policy": "never", "required_capabilities": ["it/git"]},
@@ -167,7 +223,7 @@ class E2E37PreferredWorkingStyle(unittest.TestCase):
             self.assertFalse(result.success)
             movements = [
                 item.kind
-                for item in resident.body.recent_actions(100)
+                for item in resident.body.recent_actions(200)
                 if item.event_id == event.event_id
             ]
             self.assertNotIn("command", movements)
