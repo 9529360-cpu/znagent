@@ -670,3 +670,41 @@ world changes
 The end goal is not to imitate a biological brain literally.
 
 The end goal is a resident subject that can truthfully say, in computational terms: **I learned how to do this, and I still know how even when the models are gone.**
+
+<!-- memory-learned-behavior-1.0-closure -->
+## 16. Implementation closure note — Memory & Learned Behavior 1.0 (2026-09-10)
+
+Earlier sections intentionally describe L4/L5 and procedural memory prospectively. The current implementation now closes one representative product slice and should be read with this narrower status update:
+
+**Status: VERIFIED NARROW / representative path closed.**
+
+The path is deliberately built by extending, not replacing, the existing layers:
+
+```text
+fresh current event + Investigation
+→ privacy-safe current project/workdir fingerprint
+→ bounded VerifiedExperience retrieval
+→ CandidateProceduralTendency maturity
+→ existing current applicability gate
+→ practiced resident-owned procedure preference
+→ skip one redundant native deliberation pulse
+→ ordinary Body / authority / anti-replay lifecycle
+→ fresh independent postcondition observation
+→ verified or contradicted experience
+→ maturity strengthens, degrades, inhibits or relearns
+```
+
+For the representative Git staging family, repeated distinct verified events can therefore make ZN measurably less deliberative without making it less grounded. The learned record answers “which familiar current-safe procedure is preferred”; it never answers “what target currently exists”, never supplies current sensitive values and never grants mutation authority.
+
+Project specificity is part of the learning identity: when a verified episode has a workdir fingerprint, procedural aggregation includes that privacy-safe fingerprint in its compatibility key. This prevents same-shaped verified work from another repository from becoming evidence for the current repository while still allowing multiple target files in the same repository to reinforce one competence.
+
+The L4 threshold reuses the transparent existing `practiced` state rather than introducing a new model-decided maturity label. Four distinct independently verified supporting events and reliability >= 0.80 are required for the representative fast path. One success is never sufficient.
+
+L5 is also product-active on this path. Current precondition mismatch prevents the learned mutation from dispatching. Post-action prediction error is recorded as contradicted verified experience and returns control to Investigation. Repeated recent contradiction can inhibit the competence; because the evidence is durable, restart does not erase that downgrade. Later compatible verified events can restore reliability gradually, but one new success cannot immediately restore `practiced` after repeated contradiction.
+
+The representative E2E measurement is deliberately behavioral, not an enum assertion: cold Git staging requires at least one native `deliberate` pulse; after practice, a new target/event uses fewer deliberation pulses while both cold and practiced paths retain current `inspect_path`, current Git sensing, Body mutation and independent Git postcondition verification.
+
+No River/ADWIN runtime dependency was added. Its drift-detection principle remains a research reference; the deterministic verified-event/recent-contradiction baseline is sufficient for this narrow closure and is easier to audit. No Voyager-style GPT control plane or DAgger teacher-as-truth path was introduced: external cognition remains a fallible suggestion source and only independent reality verification creates positive learning evidence.
+
+This status does **not** mean “Memory is complete”, “human-like long-term memory is complete” or “any workflow can now be learned”. General multi-step procedure representation, broader task families and higher-level consolidation remain future work and must earn their own real E2E evidence.
+

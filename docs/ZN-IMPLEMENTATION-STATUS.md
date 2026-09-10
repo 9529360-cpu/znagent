@@ -275,3 +275,32 @@ Windows 当前已有 Machine Capability / Application Awareness V1、exact admit
 ```
 
 每次只补高价值真实 E2E 真正缺的能力，不回到“先造完整 multi-agent/router/framework，再很久以后验证用户任务”的路线。
+
+<!-- memory-learned-behavior-1.0-closure -->
+## 2026-09-10 — Memory & Learned Behavior 1.0
+
+Status: **VERIFIED NARROW / representative path closed** for E2E-37, E2E-38 and E2E-39.
+
+Implementation facts:
+
+- active construction in `runtime/python/zn_agent/core/provider_bridge.py` now composes `MemoryLearnedBehaviorResidentRuntime` over the existing current Resident inheritance chain;
+- `runtime/python/zn_agent/core/learned_behavior_resident.py` adds bounded provenance-bearing prior working context and one L4 fast-path policy; it does not add a second planner, memory database, action registry, capability registry or skill executor;
+- `runtime/python/zn_agent/core/procedural_tendency.py` now includes the already-privacy-safe `workdir_fingerprint` in compatibility identity when present, separating same-procedure competence between projects while still allowing different targets inside one project to reinforce each other;
+- the maturity threshold remains deterministic and existing: one success cannot create a candidate, two distinct supports form `candidate`, three can become `supported`, and four distinct supports with reliability >= 0.80 can become `practiced`; model-only text and unverified actions still have no positive learning authority;
+- the representative L4 path may skip one `native_deliberation` pulse only after current Investigation has already formed current safe intents and existing applicability checks select a `practiced` tendency;
+- existing current Sense, user/event authority, Body arguments, side-effect attempt ownership, anti-replay and independent postcondition verification remain authoritative;
+- existing durable contradicted `VerifiedExperience` aggregation supplies L5 downgrade/inhibition/relearning: repeated contradiction can inhibit, restart preserves it, and later verified events must rebuild reliability rather than one success immediately restoring maturity.
+
+Acceptance coverage:
+
+- `tests/zn_agent/core/test_learned_behavior_resident.py`
+- `tests/zn_agent/core/test_project_scoped_procedural_learning.py`
+- `tests/zn_agent/e2e/test_e2e37_preferred_working_style.py`
+- `tests/zn_agent/e2e/test_e2e38_learned_verified_workflow.py`
+- `tests/zn_agent/e2e/test_e2e39_learned_path_drift.py`
+- `.github/workflows/memory-learned-behavior-e2e.yml`
+
+No destructive `StructuredMemory` or identity migration was required. Provenance for this trust-bearing slice comes from the existing durable verified-experience store; `StructuredMemory` is not upgraded into an action-authority source.
+
+Explicit remaining boundary: no general multi-step procedure engine, general personal memory UI, cross-device memory, arbitrary skill code generation, or universal provider-independent open-ended reasoning is claimed.
+

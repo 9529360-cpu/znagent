@@ -537,3 +537,33 @@ For delegated/multi-model work, add:
 > How many of those tasks continue to succeed when the user changes direction, a worker/model/tool fails, the Resident restarts, or the task spans hours/days?
 
 Worker count, model count and tool-call count are implementation details, not product success metrics.
+
+<!-- memory-learned-behavior-1.0-closure -->
+## 2026-09-10 — E2E-37 / E2E-38 / E2E-39 — Memory & Learned Behavior 1.0
+
+Status: **CLOSED representative path / VERIFIED NARROW**.
+
+The closed representative task family is deterministic single-path Git staging through the normal active Resident. This is not a synthetic learning action and it does not claim arbitrary workflow learning.
+
+- **E2E-37 — Reuse a preferred way of working:** two different repositories build the same mature Git procedure independently. A new natural-language request equivalent to “use the way I used before on this project” performs fresh current path/Git sensing, retrieves only a bounded currently-applicable prior context, preserves bounded verified-experience/event provenance, excludes the other project, and then executes through the ordinary Body + postcondition lifecycle. With two real historical projects but no current project/target identity, history is not allowed to invent a target or mutation arguments and the request fails closed.
+- **E2E-38 — Learn from repeated verified workflow:** four distinct independently verified events mature the existing candidate tendency to `practiced`. On a new event, new file and new current target state, the active Resident uses current Investigation to re-form legal action intents, then a practiced/currently-applicable competence skips one redundant `native_deliberation` pulse. Fresh `inspect_path`, pre-action `git_state`, Body mutation, post-action `git_state` and independent `VerifiedExperience` verification remain. After Resident restart with external models unavailable, the bounded learned mechanical competence still works.
+- **E2E-39 — Learned path invalidated by reality:** a missing current target blocks learned command dispatch before action. For post-action drift, the real Git mutation occurs and the index is changed before the independent verification pulse; the Resident records contradiction/prediction error, revokes the event-local learned route and returns to Investigation. Two recent contradictions persistently inhibit the competence across restart. One later success is insufficient to restore `practiced`; repeated new independently verified evidence can gradually relearn it.
+
+Measured learning assertion for the representative family:
+
+```text
+cold/unfamiliar: >= 1 resident deliberate pulse
+practiced/familiar: fewer deliberate pulses
+
+both paths:
+current inspect_path retained
+current git_state retained
+Body mutation retained
+fresh postcondition git_state retained
+independent verification retained
+```
+
+The dedicated CI gate is `.github/workflows/memory-learned-behavior-e2e.yml`; canonical `ZN CI` continues to gate the full core suite and existing source/desktop boundaries.
+
+Explicit non-claims: this does not close general memory, arbitrary multi-step workflow learning, cross-device memory, automatic executable skill generation, or universal provider-free operation.
+

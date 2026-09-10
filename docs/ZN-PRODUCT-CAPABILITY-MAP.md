@@ -218,3 +218,23 @@ Installer、CI、Release、签名本身不是当前产品主线。Installed N ->
 对长任务再问：**当用户中途改方向、worker/model/tool 失败、Resident 重启或任务跨天时，ZN 是否仍能在 current evidence 下盯住同一个目标继续办？**
 
 如果答案没有明显改善，就不能把“更多模型、更多 worker、更多调度代码”当成产品主线已经推进。
+
+<!-- memory-learned-behavior-1.0-closure -->
+## Memory & Learned Behavior 1.0 — representative capability closure (2026-09-10)
+
+Status: **VERIFIED NARROW / representative path closed**.
+
+The active product Resident now has one bounded resident-owned procedural fast path on top of the existing `VerifiedExperience -> CandidateProceduralTendency -> reality-gated influence` chain. The representative family is single-path Git staging because the repository already provides deterministic current Sense, replay-sensitive Body execution and independent Git postcondition verification for it.
+
+What is product-real now:
+
+- project/workspace-local procedural candidates use the existing privacy-safe workdir fingerprint in their compatibility identity, so equally-shaped history from another repository cannot mature or select the current project's competence;
+- natural prior-style requests can surface bounded currently-applicable verified context with event/experience provenance rather than dumping memory/transcripts;
+- only `practiced` competence (four or more distinct verified events and reliability at least 0.80 under the existing deterministic maturity rules) may remove one redundant native deliberation pulse;
+- current event authority and fresh Investigation still supply the real target, workdir and action arguments; history supplies no credentials, private contents, raw command payloads or stale target identity;
+- SideEffect/anti-replay, Body execution and fresh independent postcondition verification are unchanged;
+- current mismatch blocks the fast path; prediction error records contradiction, returns to Investigation and repeated recent contradictions can persistently inhibit the competence;
+- durable verified evidence survives Resident restart, and the already-learned bounded mechanical path remains usable with external models unavailable.
+
+This closes E2E-37/38/39 only as a representative product slice. It is not a claim that arbitrary workflows are learnable or that Memory as a whole is complete.
+
