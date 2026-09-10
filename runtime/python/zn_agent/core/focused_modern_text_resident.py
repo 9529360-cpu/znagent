@@ -120,6 +120,86 @@ class FocusedModernTextResidentRuntime(FocusedTextEntryResidentRuntime):
                     pass
             return result
 
+    def resolve_uncertain_event(
+        self,
+        event_id: str,
+        *,
+        attempt_id: str,
+        decision: str,
+    ):
+        """Consume one explicit user decision without dispatching a new mutation.
+
+        Store first commits the user evidence and checkpoint transition atomically.
+        ``retry_authorized`` stops there: the next normal resident pulse must pass
+        through ``SideEffectAwareBody.act`` and therefore creates a new attempt.
+        ``effect_happened`` may advance only to read-only verification or a
+        completion checkpoint; it never calls the original mutation again.
+        """
+
+        normalized = str(event_id or "").strip()
+        if not normalized:
+            raise ValueError("resident uncertain-effect resolution requires event_id")
+        normalized_decision = str(decision or "").strip().lower()
+        if normalized_decision not in {"effect_happened", "retry_authorized"}:
+            raise ValueError("resident uncertain-effect resolution requires a supported decision")
+
+        with self._cycle_lock:
+            event = self.store.get_event(normalized)
+            if event is None:
+                raise ValueError(f"unknown resident event: {normalized}")
+            state = self.store.resolve_uncertain_event(
+                normalized,
+                attempt_id=attempt_id,
+                decision=normalized_decision,
+            )
+            if normalized_decision == "retry_authorized":
+                return None
+            return self._resume_user_confirmed_side_effect(event, state)
+
+    def _resume_user_confirmed_side_effect(self, event, state):
+        raw = state.data.get("native_action_intent")
+        recovery = state.data.get(self._SIDE_EFFECT_RECOVERY_KEY)
+        if not isinstance(raw, dict) or not isinstance(recovery, dict):
+            return self._hold_side_effect_recovery(
+                event,
+                state,
+                reason="user-confirmed side-effect recovery metadata is incomplete",
+            )
+        if (
+            str(recovery.get("status") or "") != "user_confirmed_effect"
+            or str(recovery.get("decision") or "") != "effect_happened"
+            or recovery.get("replay_blocked") is not False
+        ):
+            return self._hold_side_effect_recovery(
+                event,
+                state,
+                reason="user-confirmed side-effect recovery is not durably resolved",
+            )
+
+        intent = NativeActionIntent.from_dict(raw)
+        contract = self._verification_contract(event, intent, result=None)
+        if contract is not None:
+            state.data["native_verification"] = contract
+            state.stage = "native_verification"
+            state.next_action = "independently verify current reality after explicit user confirmation"
+            state.blocked_by = None
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return None
+
+        self._sync_execution_context(event, state)
+        return self._complete_successful_body_action(
+            event,
+            state,
+            intent,
+            response="outside-world effect confirmed by explicit user resolution",
+            reason=(
+                "The user explicitly confirmed that the replay-sensitive outside-world effect "
+                "happened after an indeterminate dispatch; ZN completed without replay and "
+                "did not record that confirmation as machine verification"
+            ),
+        )
+
     @staticmethod
     def _generic_guarded_side_effect(intent: NativeActionIntent) -> bool:
         kind = str(intent.kind or "").strip().lower()
@@ -262,6 +342,7 @@ class FocusedModernTextResidentRuntime(FocusedTextEntryResidentRuntime):
             "signature": str(data.get("side_effect_signature") or "")[:16],
             "verification_kind": "text_equals" if can_reverify else None,
             "decision": "reverify_effect" if can_reverify else "user_decision_required",
+            "user_resolution_supported": True,
         }
         state.data[self._SIDE_EFFECT_RECOVERY_KEY] = recovery
         state.data.pop("local_failure", None)
@@ -331,7 +412,10 @@ class FocusedModernTextResidentRuntime(FocusedTextEntryResidentRuntime):
             )
 
         recovery = dict(raw_recovery)
-        if str(recovery.get("decision") or "") != "reverify_effect":
+        decision = str(recovery.get("decision") or "")
+        if decision == "effect_happened":
+            return self._resume_user_confirmed_side_effect(event, state)
+        if decision != "reverify_effect":
             return None
 
         intent = NativeActionIntent.from_dict(raw_intent)

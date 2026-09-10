@@ -23,6 +23,10 @@ TABLE = "resident_side_effect_attempts"
 MAX_COMPLETED_ATTEMPTS = 4096
 _DELETE_GUARD_TRIGGER = "trg_resident_side_effect_attempt_delete_terminal_only_v1"
 _TERMINAL_PRUNE_TRIGGER = "trg_resident_side_effect_attempt_prune_terminal_v1"
+USER_RESOLUTION_STATUS = {
+    "effect_happened": "user_confirmed_effect",
+    "retry_authorized": "user_authorized_retry",
+}
 
 
 def connect(path: str | Path) -> sqlite3.Connection:
@@ -162,6 +166,37 @@ def resolve_attempt(
             attempt_id,
             event_id,
         ),
+    )
+    return int(cursor.rowcount)
+
+
+def user_resolution_status(decision: str) -> str:
+    """Map an explicit user decision to an audit-distinct terminal status."""
+
+    normalized = str(decision or "").strip().lower()
+    try:
+        return USER_RESOLUTION_STATUS[normalized]
+    except KeyError as exc:
+        raise ValueError(
+            f"unsupported uncertain side-effect decision: {normalized or '<empty>'}"
+        ) from exc
+
+
+def resolve_user_attempt(
+    conn: sqlite3.Connection,
+    *,
+    attempt_id: str,
+    event_id: str,
+    decision: str,
+    resolved_at: str | None = None,
+) -> int:
+    """Persist explicit user authority without impersonating machine evidence."""
+
+    status = user_resolution_status(decision)
+    cursor = conn.execute(
+        f"UPDATE {TABLE} SET status=?,completed_at=COALESCE(completed_at,?) "
+        "WHERE attempt_id=? AND event_id=? AND status IN ('started','observed')",
+        (status, resolved_at or utc_now(), attempt_id, event_id),
     )
     return int(cursor.rowcount)
 

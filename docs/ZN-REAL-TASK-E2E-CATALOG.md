@@ -1,6 +1,6 @@
 # ZN Real Task E2E Catalog
 
-> Acceptance catalog scenarios snapshot: 2026-09-04; acceptance-status overlay synchronized 2026-09-09.
+> Acceptance catalog scenarios snapshot: 2026-09-04; acceptance-status overlay synchronized 2026-09-10.
 >
 > This is a product acceptance set, not a fixture checklist. A scenario counts only when it starts from normal user language and ends with independently verified real outcome evidence. Internal primitive success, worker `done`, model confidence and CI green are not substitutes for the user goal becoming true.
 
@@ -30,7 +30,7 @@ Do not create synthetic complexity only to make the test harder. Prefer tasks or
 
 ### Current representative acceptance status
 
-The original 50 scenario definitions below remain stable. The following status notes record current `main` evidence without expanding a representative implementation beyond what was actually tested:
+The original 50 scenario definitions below remain stable. The following status notes record current evidence without expanding a representative implementation beyond what was actually tested:
 
 | E2E | Current status | Acceptance note / boundary |
 | --- | --- | --- |
@@ -46,6 +46,7 @@ The original 50 scenario definitions below remain stable. The following status n
 | E2E-33 | CLOSED representative path | Same durable Work can continue after restart with fresh current evidence and completed historical effects are not blindly replayed. Broader cross-day task families remain open. |
 | E2E-34 | CLOSED representative path | Delegated restart reconciliation, no-replay recovery and restart-safe supervision are verified for the guarded path. Broader long-duration recovery remains open. |
 | E2E-35 | CLOSED representative path | `昨天那个产品继续，先看看做到哪了。` resolves one durable yesterday Work and reconstructs goal/plan/completed/blocked/artifacts/delegated progress plus fresh bounded workspace/Git/artifact evidence without new event/model/WorkerRun/WorkItem-plan mutation; overnight artifact drift is reported without rewriting historical completion. It is not arbitrary history search or general long-horizon orchestration. |
+| E2E-36 | CLOSED representative path | Exact replay-sensitive attempt remains fail-closed across restart. User may explicitly resolve only the current attempt as `effect_happened` or `retry_authorized`; retry must create a fresh guarded attempt and old authority never carries forward. User evidence stays audit-distinct from machine `verified_effect` / `verified_absent`. This is not arbitrary exactly-once or generic third-party recovery. |
 | E2E-42 | CLOSED under current acceptance policy | Privacy/locality hard eligibility and guarded acceptance are verified with the same documented environment-waiver semantics as E2E-30; no claim of full two-real-provider-family production evidence. |
 
 A `CLOSED representative path` entry does not automatically promote the whole capability class to `PRODUCT-CLOSED`.
@@ -400,6 +401,16 @@ A mutation may have happened before crash.
 
 Must not replay until current evidence determines effect state or user explicitly resolves the uncertainty.
 
+Representative closure (2026-09-10): replay-sensitive Body dispatch persists an exact side-effect attempt before the mutation boundary. If the process exits while the outside-world outcome remains indeterminate, reconstruction keeps the same Work/event blocked at `user_decision_required`; timeout/interruption is not converted to ordinary failure and no blind replay occurs.
+
+The explicit resolution surface is attempt-bound. `effect_happened` records `user_confirmed_effect` and never dispatches the mutation again. `retry_authorized` records `user_authorized_retry` only for that old attempt, returns the existing checkpoint to the normal guarded native-action path, and any later dispatch must create a fresh attempt through `SideEffectAwareBody.act()`. If that fresh attempt becomes uncertain too, the earlier authorization cannot unlock it. User evidence remains audit-distinct from machine-only `verified_effect` / `verified_absent`.
+
+The Store transition validates event/attempt/recovery/intent identity and commits attempt + WorkingState changes atomically. Stale attempt, wrong thread/event, non-recovery checkpoint and conflicting decisions fail closed with zero partial mutation. Work control and `work_resolve_uncertain` expose only bounded resolution metadata rather than raw action authority.
+
+Representative PR-head evidence: Windows `ZN Work Recovery E2E` ran `170/170` successfully, including three restart scenarios for no-replay confirmation, one-fresh-attempt retry, and non-inherited retry authority; full ZN core regression also passed. Merge SHA and post-merge main evidence must be re-queried after merge.
+
+This closure does **not** claim arbitrary third-party exactly-once delivery, automatic recovery for every side effect, or that user confirmation is equivalent to independent machine evidence.
+
 ## 11. Memory and learned behavior
 
 ### E2E-37 — Reuse a preferred way of working
@@ -490,7 +501,7 @@ ZN must reject the claim and continue/replan rather than announce completion.
 
 ## 15. Current implementation selection
 
-The old “first five E2Es to drive orchestration development” ordering is retired because E2E-29, E2E-30/42, E2E-28/34, E2E-27/33 and E2E-35 now have the representative closures recorded above.
+The old “first five E2Es to drive orchestration development” ordering is retired because E2E-29, E2E-30/42, E2E-28/34, E2E-27/33, E2E-35 and E2E-36 now have the representative closures recorded above.
 
 Do not re-run that historical priority list as a development plan.
 

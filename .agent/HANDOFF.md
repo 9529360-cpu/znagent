@@ -1,6 +1,6 @@
 # ZN Maintainer Handoff
 
-> Updated: 2026-09-09
+> Updated: 2026-09-10
 >
 > Canonical branch: `main`
 >
@@ -75,6 +75,18 @@ ZN 仍是唯一 Resident、唯一 Root Work owner。worker/model 仍是可替换
 已经关闭代表性真实路径：natural-language same-Work steering、current-plan replanning、plan-version stale gating、old-worker result protection、restart continuation，以及 completed historical effects 不 replay。
 
 更广任务类型、跨天和更长期真实使用覆盖仍需继续扩大。
+
+### E2E-36
+
+2026-09-10，PR #244 已完成 exact attempt-bound uncertain-side-effect restart resolution 的 representative closure。replay-sensitive Body action 在 dispatch 前持久化 attempt；restart 后如果 outside-world outcome 仍不确定，Work 保持 `user_decision_required`，既不把中断当普通失败，也不 blind replay。
+
+显式 user resolution 只允许当前 exact attempt 的 `effect_happened` 或 `retry_authorized`。前者写入 audit-distinct `user_confirmed_effect` 并禁止再次 dispatch；后者写入 `user_authorized_retry`，只终结旧 attempt，再回到普通 Body guard，真正重试必须生成 fresh attempt。fresh attempt 如果再次 uncertain，旧授权不能继承。machine `verified_effect` / `verified_absent` 保持独立机器证据语义。
+
+Store 以单一 SQLite transaction 绑定 event/attempt/WorkingState/recovery/native-intent identity；stale/cross-thread/non-recovery/conflicting control fail closed 且不产生部分状态。Work control 与 `work_resolve_uncertain` 只公开 bounded recovery metadata，不把原 action args 变成 control-plane authority。
+
+PR-head evidence 已实跑：`ZN Work Recovery E2E` 为 `170/170 OK`，E2E-36 三条真实 restart 路径均通过；ZN CI、Windows Interactive Desktop E2E、Managed Browser E2E 也通过。最终 merge SHA 与 post-merge canonical checks 必须在 merge 后重新查询，不能把 PR head 当 permanent main identity。
+
+边界：这不是任意第三方 exactly-once guarantee，不表示所有 outside-world effects 都可自动恢复，也不把用户确认冒充 independent machine evidence。
 
 ## User Browser / Browser / Windows 当前事实
 
@@ -182,6 +194,7 @@ E2E-07 representative causal child-tab path
 E2E-08 representative OTP user-presence handoff
 E2E-15 bounded same-process safe modal recovery representative path
 E2E-24 bounded same-Root USER Browser -> File -> Desktop representative path
+E2E-36 exact attempt-bound uncertain-side-effect restart resolution
 ```
 
 如果新的真实任务仍在这些区域失败，应先确认是覆盖广度/新边界问题，而不是重新造一套已经存在的机制。
@@ -199,6 +212,7 @@ E2E-24 bounded same-Root USER Browser -> File -> Desktop representative path
 - E2E-08 representative OTP handoff != all MFA support。
 - E2E-15 representative same-process safe modal recovery != arbitrary Windows dialogs / UAC / credential or business decisions。
 - E2E-24 representative three-surface closure != arbitrary cross-surface automation / general RPA。
+- E2E-36 representative uncertain-side-effect closure != arbitrary exactly-once / generic third-party recovery。
 - Browser Body V2 representative slices != arbitrary web automation。
 - current delegated supervision != unlimited/general background scheduler。
 - 没有完整 DLP、OS sandbox 或 blanket credential authority。
