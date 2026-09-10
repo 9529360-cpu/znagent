@@ -61,18 +61,27 @@ class E2E39LearnedPathDrift(unittest.TestCase):
         return event
 
     @staticmethod
-    def _candidate(resident):
-        matches = [
+    def _git_candidates(resident):
+        return [
             item
             for item in resident.verified_experiences.candidate_tendencies(limit=16)
             if item.expected_kind == "git_path_staged"
         ]
+
+    @classmethod
+    def _candidate(cls, resident, *, tendency_id: str | None = None):
+        matches = cls._git_candidates(resident)
+        if tendency_id is not None:
+            matches = [item for item in matches if item.tendency_id == tendency_id]
         if len(matches) != 1:
-            raise AssertionError(f"expected one scoped git competence, got {len(matches)}")
+            suffix = f" for tendency {tendency_id}" if tendency_id else ""
+            raise AssertionError(
+                f"expected one matching scoped git competence{suffix}, got {len(matches)}"
+            )
         return matches[0]
 
     @classmethod
-    def _train_practiced(cls, resident, root: Path, targets: list[Path]) -> None:
+    def _train_practiced(cls, resident, root: Path, targets: list[Path]) -> str:
         for index, target in enumerate(targets[:4]):
             cls._success(resident, root, target, index)
         practiced = cls._candidate(resident)
@@ -80,6 +89,7 @@ class E2E39LearnedPathDrift(unittest.TestCase):
             raise AssertionError(
                 f"expected practiced competence, got {practiced.maturity_state}"
             )
+        return practiced.tendency_id
 
     @classmethod
     def _reach_learned_verification(cls, resident, root: Path, target: Path, index: int):
@@ -128,25 +138,25 @@ class E2E39LearnedPathDrift(unittest.TestCase):
     @classmethod
     def _build_two_drifts(cls, root: Path, targets: list[Path], db: Path):
         resident = build_resident_runtime(config={"model": {}}, store_path=db)
-        cls._train_practiced(resident, root, targets)
+        learned_tendency_id = cls._train_practiced(resident, root, targets)
         cls._prediction_drift_once(resident, root, targets[4], 4)
         cls._prediction_drift_once(resident, root, targets[5], 5)
-        return resident
+        return resident, learned_tendency_id
 
     @classmethod
     def _build_inhibited(cls, root: Path, targets: list[Path], db: Path):
-        resident = cls._build_two_drifts(root, targets, db)
-        inhibited = cls._candidate(resident)
+        resident, learned_tendency_id = cls._build_two_drifts(root, targets, db)
+        inhibited = cls._candidate(resident, tendency_id=learned_tendency_id)
         if inhibited.support_count != 4 or inhibited.contradiction_count != 2:
             raise AssertionError(
-                "drift evidence did not aggregate into the scoped competence: "
+                "drift evidence did not aggregate into the learned procedure identity: "
                 f"support={inhibited.support_count}, contradiction={inhibited.contradiction_count}"
             )
         if not inhibited.inhibited or inhibited.maturity_state != "inhibited":
             raise AssertionError(
                 f"expected inhibited competence, got {inhibited.maturity_state}, inhibited={inhibited.inhibited}"
             )
-        return resident
+        return resident, learned_tendency_id
 
     def test_pre_action_drift_blocks_mutation(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -172,9 +182,9 @@ class E2E39LearnedPathDrift(unittest.TestCase):
             root = Path(tmp).resolve()
             targets = self._repo(root)
             resident = build_resident_runtime(config={"model": {}}, store_path=root / ".zn" / "kernel.db")
-            self._train_practiced(resident, root, targets)
+            learned_tendency_id = self._train_practiced(resident, root, targets)
             self._prediction_drift_once(resident, root, targets[4], 4)
-            candidate = self._candidate(resident)
+            candidate = self._candidate(resident, tendency_id=learned_tendency_id)
             self.assertEqual(candidate.support_count, 4)
             self.assertEqual(candidate.contradiction_count, 1)
             self.assertEqual(candidate.reliability, 0.8)
@@ -192,22 +202,38 @@ class E2E39LearnedPathDrift(unittest.TestCase):
             self._reach_learned_verification(resident, root, targets[5], 5)
             resident.store.close()
 
-    def test_two_prediction_drifts_aggregate_into_same_scoped_competence(self):
+    def test_two_prediction_drifts_aggregate_into_original_procedure_identity(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
             targets = self._repo(root)
-            resident = self._build_two_drifts(root, targets, root / ".zn" / "kernel.db")
-            candidate = self._candidate(resident)
+            resident, learned_tendency_id = self._build_two_drifts(
+                root, targets, root / ".zn" / "kernel.db"
+            )
+            candidate = self._candidate(resident, tendency_id=learned_tendency_id)
             self.assertEqual(candidate.support_count, 4)
             self.assertEqual(candidate.contradiction_count, 2)
+
+            # Recovery may independently verify another bounded Git mechanism.
+            # That is a distinct procedure, not evidence to merge into or use in
+            # place of the original learned tendency under test.
+            learned_variant = candidate.applicability.get("stable_action_variant")
+            for alternate in self._git_candidates(resident):
+                if alternate.tendency_id == learned_tendency_id:
+                    continue
+                self.assertNotEqual(
+                    alternate.applicability.get("stable_action_variant"),
+                    learned_variant,
+                )
             resident.store.close()
 
-    def test_two_prediction_drifts_inhibit_scoped_competence(self):
+    def test_two_prediction_drifts_inhibit_original_procedure_identity(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
             targets = self._repo(root)
-            resident = self._build_two_drifts(root, targets, root / ".zn" / "kernel.db")
-            candidate = self._candidate(resident)
+            resident, learned_tendency_id = self._build_two_drifts(
+                root, targets, root / ".zn" / "kernel.db"
+            )
+            candidate = self._candidate(resident, tendency_id=learned_tendency_id)
             self.assertTrue(candidate.inhibited)
             self.assertEqual(candidate.maturity_state, "inhibited")
             resident.store.close()
@@ -217,10 +243,10 @@ class E2E39LearnedPathDrift(unittest.TestCase):
             root = Path(tmp).resolve()
             targets = self._repo(root)
             db = root / ".zn" / "kernel.db"
-            resident = self._build_inhibited(root, targets, db)
+            resident, learned_tendency_id = self._build_inhibited(root, targets, db)
             resident.store.close()
             restarted = build_resident_runtime(config={"model": {}}, store_path=db)
-            restored = self._candidate(restarted)
+            restored = self._candidate(restarted, tendency_id=learned_tendency_id)
             self.assertTrue(restored.inhibited)
             self.assertEqual(restored.maturity_state, "inhibited")
             self.assertEqual(restored.support_count, 4)
@@ -232,17 +258,17 @@ class E2E39LearnedPathDrift(unittest.TestCase):
             root = Path(tmp).resolve()
             targets = self._repo(root)
             db = root / ".zn" / "kernel.db"
-            resident = self._build_inhibited(root, targets, db)
+            resident, learned_tendency_id = self._build_inhibited(root, targets, db)
             resident.store.close()
             restarted = build_resident_runtime(config={"model": {}}, store_path=db)
             self._success(restarted, root, targets[6], 6)
-            after_one = self._candidate(restarted)
+            after_one = self._candidate(restarted, tendency_id=learned_tendency_id)
             self.assertNotEqual(after_one.maturity_state, "practiced")
             self.assertEqual(after_one.support_count, 5)
             self.assertEqual(after_one.contradiction_count, 2)
             for index, target in enumerate(targets[7:10], start=7):
                 self._success(restarted, root, target, index)
-            recovered = self._candidate(restarted)
+            recovered = self._candidate(restarted, tendency_id=learned_tendency_id)
             self.assertEqual(recovered.support_count, 8)
             self.assertEqual(recovered.contradiction_count, 2)
             self.assertEqual(recovered.reliability, 0.8)
