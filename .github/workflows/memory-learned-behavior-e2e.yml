@@ -50,39 +50,18 @@ jobs:
           uv venv .ci/memory-venv --python 3.12
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\memory-venv\Scripts\python.exe'
           uv pip install --python $python runtime/python
-          New-Item -ItemType Directory -Force -Path .ci/memory-logs | Out-Null
       - name: E2E-37 preferred working style
-        id: e2e37
-        continue-on-error: true
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\memory-venv\Scripts\python.exe'
-          & $python tests/zn_agent/e2e/test_e2e37_preferred_working_style.py -v 2>&1 | Tee-Object -FilePath .ci/memory-logs/e2e37.txt
-          exit $LASTEXITCODE
+          & $python tests/zn_agent/e2e/test_e2e37_preferred_working_style.py -v
       - name: E2E-38 learned verified workflow
-        id: e2e38
-        continue-on-error: true
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\memory-venv\Scripts\python.exe'
-          & $python tests/zn_agent/e2e/test_e2e38_learned_verified_workflow.py -v 2>&1 | Tee-Object -FilePath .ci/memory-logs/e2e38.txt
-          exit $LASTEXITCODE
+          & $python tests/zn_agent/e2e/test_e2e38_learned_verified_workflow.py -v
       - name: E2E-39 learned path drift
-        id: e2e39
-        continue-on-error: true
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\memory-venv\Scripts\python.exe'
-          & $python tests/zn_agent/e2e/test_e2e39_learned_path_drift.py -v 2>&1 | Tee-Object -FilePath .ci/memory-logs/e2e39.txt
-          exit $LASTEXITCODE
-      - name: Upload Memory E2E diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: memory-e2e-diagnostics
-          path: .ci/memory-logs/*.txt
-          if-no-files-found: error
-          retention-days: 3
-      - name: Enforce Memory E2E acceptance
-        if: steps.e2e37.outcome == 'failure' || steps.e2e38.outcome == 'failure' || steps.e2e39.outcome == 'failure'
-        run: exit 1
+          & $python tests/zn_agent/e2e/test_e2e39_learned_path_drift.py -v
