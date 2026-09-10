@@ -143,7 +143,9 @@ def _current_model_spec(config: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def _unavailable_plan(*, max_attempts: int, error: str | None = None) -> ZNCognitiveResourcePlan:
+def _unavailable_plan(
+    *, max_attempts: int, error: str | None = None
+) -> ZNCognitiveResourcePlan:
     metadata: dict[str, Any] = {"model_available": False}
     if error:
         metadata["configuration_error"] = error
@@ -184,7 +186,11 @@ def build_zn_cognitive_resource_plan(
 
     runtime_config = materialize_zn_credentials(config, store=credential_store)
     runtime_kernel_cfg = runtime_config.get("zn_kernel") or {}
-    runtime_route_specs = runtime_kernel_cfg.get("routes") or [] if isinstance(runtime_kernel_cfg, dict) else []
+    runtime_route_specs = (
+        runtime_kernel_cfg.get("routes") or []
+        if isinstance(runtime_kernel_cfg, dict)
+        else []
+    )
     if not runtime_route_specs:
         current = _current_model_spec(runtime_config)
         if current is None:
@@ -267,10 +273,12 @@ def build_resident_runtime(
     credential_store: CredentialStore | None = None,
 ):
     """Build the normal product Resident around the ZN-owned kernel."""
-    from .application_resident import ApplicationAwareResidentRuntime
     from .budget import CognitiveBudgetManager
     from .browser_file_desktop_handoff_behavior import (
         install_browser_file_desktop_handoff_behavior,
+    )
+    from .current_api_docs_adaptation_resident import (
+        CurrentApiDocsAdaptationResidentRuntime,
     )
     from .desktop_modal_recovery_behavior import (
         install_desktop_modal_recovery_behavior,
@@ -293,11 +301,12 @@ def build_resident_runtime(
         normal_model_calls=max(1, int(resident_cfg.get("normal_model_calls", 1))),
         high_risk_model_calls=max(1, int(resident_cfg.get("high_risk_model_calls", 2))),
         high_risk_threshold=max(
-            0.0, min(1.0, float(resident_cfg.get("high_risk_threshold", 0.8)))
+            0.0,
+            min(1.0, float(resident_cfg.get("high_risk_threshold", 0.8))),
         ),
     )
 
-    resident = ApplicationAwareResidentRuntime(kernel=kernel, budget=budget)
+    resident = CurrentApiDocsAdaptationResidentRuntime(kernel=kernel, budget=budget)
     install_user_browser_causal_popup_behavior(resident)
     install_browser_file_desktop_handoff_behavior(resident)
     install_desktop_modal_recovery_behavior(resident)
