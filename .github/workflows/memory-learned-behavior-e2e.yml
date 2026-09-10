@@ -75,7 +75,12 @@ jobs:
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\memory-venv\Scripts\python.exe'
           & $python tests/zn_agent/e2e/test_e2e39_learned_path_drift.py E2E39LearnedPathDrift.test_second_event_after_one_drift_can_still_enter_learned_verification -v
-      - name: E2E-39B3 two drifts inhibit scoped competence
+      - name: E2E-39B3a two drifts aggregate in one scoped competence
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\memory-venv\Scripts\python.exe'
+          & $python tests/zn_agent/e2e/test_e2e39_learned_path_drift.py E2E39LearnedPathDrift.test_two_prediction_drifts_aggregate_into_same_scoped_competence -v
+      - name: E2E-39B3b two drifts inhibit scoped competence
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\memory-venv\Scripts\python.exe'
