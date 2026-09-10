@@ -4,7 +4,7 @@
 >
 > 真实代码、真实 Git、真实测试和真实 E2E 高于本文件。
 
-Updated: 2026-09-09
+Updated: 2026-09-10
 
 ## 1. 产品判断标准
 
@@ -153,10 +153,12 @@ E2E-24 已关闭一个 bounded 三-surface representative path：同一 Root Wor
 | --- | --- | --- |
 | Resident restart recovery | CONNECTED + VERIFIED NARROW | 更多跨天/复杂真实 Work breadth |
 | Delegated restart reconciliation | VERIFIED NARROW; E2E-28/34 | bounded restart-safe reconcile/no-replay 已有；更广任务继续覆盖 |
-| Unknown external-effect handling | FAIL-CLOSED foundations exist | 不确定副作用继续不盲重放 |
+| Unknown external-effect handling | VERIFIED NARROW; E2E-36 closed representative path | exact replay-sensitive attempt 跨 restart 保持 fail closed；machine evidence 与显式 user resolution 分离，retry authority 只对应一个旧 attempt；不是通用 exactly-once 或任意第三方 recovery |
 | Fresh evidence before mutation | CORE RULE | 扩展到所有新任务和 delegated result acceptance |
 | Independent completion verification | VERIFIED NARROW | 复杂 Work 继续覆盖 |
 | Stale delegated result protection | VERIFIED NARROW | steering/restart/reassign breadth |
+
+2026-09-10 E2E-36 representative closure：exact attempt-bound 显式 resolution 持久化在既有 Store 中。`effect_happened` 不会再次 dispatch mutation；`retry_authorized` 只终结旧 attempt，并重新经过普通 Body guard，由下一次 dispatch 创建 fresh attempt。人工判断与 machine `verified_effect` / `verified_absent` 保持审计可区分。
 
 Recovery 是为了让真实任务继续，不是独立产品路线。
 
@@ -184,7 +186,8 @@ Recovery 是为了让真实任务继续，不是独立产品路线。
 - E2E-27/33 closed representative steering/continuation；
 - E2E-28/34 closed representative supervision/dynamic-health/restart；
 - E2E-29 closed one-route multi-worker；
-- E2E-30/42 closed under documented current acceptance + environment-waiver semantics。
+- E2E-30/42 closed under documented current acceptance + environment-waiver semantics；
+- E2E-36 closed representative uncertain-side-effect restart resolution：exact attempt-bound `effect_happened` / `retry_authorized`，user evidence 与 machine `verified_effect` / `verified_absent` 审计分离，retry 必须形成 fresh guarded attempt。
 
 这些 closure 不等于 50 个 E2E 全部完成，也不等于上述 capability classes 全部 product-closed。
 
