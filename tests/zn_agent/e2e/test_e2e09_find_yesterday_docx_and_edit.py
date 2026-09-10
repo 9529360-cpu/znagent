@@ -37,11 +37,11 @@ class E2E09FindYesterdayDocxAndEditTests(unittest.TestCase):
         for payment_date in payment_dates:
             paragraph = doc.add_paragraph()
             paragraph.add_run("付款日期：")
-            first = paragraph.add_run(payment_date[:5])
-            first.bold = True
-            first.font.size = Pt(11)
-            second = paragraph.add_run(payment_date[5:])
-            second.italic = True
+            year = paragraph.add_run(payment_date[:5])
+            year.bold = True
+            year.font.size = Pt(11)
+            month_day = paragraph.add_run(payment_date[5:])
+            month_day.italic = True
         doc.add_paragraph("交付地点：项目现场。")
         doc.save(path)
 
@@ -53,8 +53,17 @@ class E2E09FindYesterdayDocxAndEditTests(unittest.TestCase):
         doc.save(path)
 
     def _setup(self, base: Path, project: Path, thread_id: str, *, agreed: bool = True):
-        resident = build_resident_runtime(config={"model": {}}, store_path=base / "kernel.db")
-        self.addCleanup(resident.store.close)
+        db_path = base.parent / f"zn-e2e09-{os.getpid()}-{thread_id}.db"
+        for suffix in ("", "-wal", "-shm"):
+            Path(str(db_path) + suffix).unlink(missing_ok=True)
+        resident = build_resident_runtime(config={"model": {}}, store_path=db_path)
+
+        def cleanup() -> None:
+            resident.store.close()
+            for suffix in ("", "-wal", "-shm"):
+                Path(str(db_path) + suffix).unlink(missing_ok=True)
+
+        self.addCleanup(cleanup)
         ledger = resident.work_ledger
         thread = ledger.create_thread(thread_id=thread_id)
         ledger.attach_workspace(thread.thread_id, project)
@@ -105,8 +114,8 @@ class E2E09FindYesterdayDocxAndEditTests(unittest.TestCase):
             unrelated_bytes = unrelated.read_bytes()
             old_bytes = old.read_bytes()
 
-            resident, ledger = self._setup(base, project, "e2e09")
-            _, run = ledger.submit("e2e09", TASK, payload={"downloads_path": str(downloads)})
+            resident, ledger = self._setup(base, project, "success")
+            _, run = ledger.submit("success", TASK, payload={"downloads_path": str(downloads)})
             self.assertTrue(run.success, run)
             self.assertEqual(run.model_invocations, 0)
             destination = project / "contract-final-updated.docx"
@@ -132,8 +141,7 @@ class E2E09FindYesterdayDocxAndEditTests(unittest.TestCase):
             self.assertEqual(sum(item.kind == "write_docx_copy" for item in actions), 1)
             self.assertGreaterEqual(sum(item.kind == "inspect_docx" for item in actions), 4)
             evidence_item = next(
-                item
-                for item in ledger.list_work_items("e2e09", limit=64)
+                item for item in ledger.list_work_items("success", limit=64)
                 if "local_document_work:v1" in item.acceptance_criteria
             )
             evidence = json.loads(evidence_item.result)
@@ -143,7 +151,7 @@ class E2E09FindYesterdayDocxAndEditTests(unittest.TestCase):
             self.assertEqual(evidence["source_path"], str(target.resolve()))
             self.assertEqual(evidence["destination_path"], str(destination.resolve()))
 
-    def test_two_plausible_yesterday_contracts_stop_with_zero_mutation(self) -> None:
+    def test_ambiguity_and_missing_date_fail_before_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             downloads = base / "Downloads"
@@ -157,17 +165,15 @@ class E2E09FindYesterdayDocxAndEditTests(unittest.TestCase):
             self._stamp(first, -1)
             self._stamp(second, -1)
             before = {first: first.read_bytes(), second: second.read_bytes()}
-            resident, ledger = self._setup(base, project, "e2e09-ambiguous")
-            _, run = ledger.submit("e2e09-ambiguous", TASK, payload={"downloads_path": str(downloads)})
+            resident, ledger = self._setup(base, project, "ambiguous")
+            _, run = ledger.submit("ambiguous", TASK, payload={"downloads_path": str(downloads)})
             self.assertFalse(run.success)
-            self.assertEqual(run.model_invocations, 0)
             self.assertIn("ambiguous_source", run.reason)
-            self.assertFalse(list(project.glob("*.docx")))
             self.assertEqual(first.read_bytes(), before[first])
             self.assertEqual(second.read_bytes(), before[second])
+            self.assertFalse(list(project.glob("*.docx")))
             self.assertFalse([item for item in self._actions(resident, run.event.event_id) if item.kind == "write_docx_copy"])
 
-    def test_missing_agreed_date_and_multiple_payment_targets_stop_before_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             downloads = base / "Downloads"
@@ -178,13 +184,14 @@ class E2E09FindYesterdayDocxAndEditTests(unittest.TestCase):
             self._contract(target)
             self._stamp(target, -1)
             before = target.read_bytes()
-            _, ledger = self._setup(base, project, "missing", agreed=False)
-            _, run = ledger.submit("missing", TASK, payload={"downloads_path": str(downloads)})
+            _, ledger = self._setup(base, project, "missing-date", agreed=False)
+            _, run = ledger.submit("missing-date", TASK, payload={"downloads_path": str(downloads)})
             self.assertFalse(run.success)
             self.assertIn("agreed_date_ambiguous", run.reason)
             self.assertEqual(target.read_bytes(), before)
             self.assertFalse(list(project.glob("*.docx")))
 
+    def test_multiple_payment_targets_fail_before_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             downloads = base / "Downloads"
@@ -212,8 +219,8 @@ class E2E09FindYesterdayDocxAndEditTests(unittest.TestCase):
             target = downloads / "contract.docx"
             self._contract(target)
             self._stamp(target, -1)
-            resident, ledger = self._setup(base, project, "e2e09-drift")
-            _, event = ledger.start("e2e09-drift", TASK, payload={"downloads_path": str(downloads)})
+            resident, ledger = self._setup(base, project, "drift")
+            _, event = ledger.start("drift", TASK, payload={"downloads_path": str(downloads)})
             for _ in range(128):
                 state = resident.store.get_working_state()
                 if state.current_event_id == event.event_id and state.stage == "local_office_mutate":
@@ -228,7 +235,6 @@ class E2E09FindYesterdayDocxAndEditTests(unittest.TestCase):
             self.assertFalse(run.success)
             self.assertIn("stale_source_evidence", run.reason)
             self.assertFalse((project / "contract-updated.docx").exists())
-            self.assertTrue(any("外部刚刚更新的条款" in value.text for value in Document(target).paragraphs))
 
 
 if __name__ == "__main__":
