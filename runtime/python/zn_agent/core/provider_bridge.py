@@ -277,12 +277,10 @@ def build_resident_runtime(
     from .browser_file_desktop_handoff_behavior import (
         install_browser_file_desktop_handoff_behavior,
     )
-    from .current_api_docs_adaptation_resident import (
-        CurrentApiDocsAdaptationResidentRuntime,
-    )
     from .desktop_modal_recovery_behavior import (
         install_desktop_modal_recovery_behavior,
     )
+    from .learned_behavior_resident import MemoryLearnedBehaviorResidentRuntime
     from .user_browser_causal_popup_behavior import (
         install_user_browser_causal_popup_behavior,
     )
@@ -306,7 +304,7 @@ def build_resident_runtime(
         ),
     )
 
-    resident = CurrentApiDocsAdaptationResidentRuntime(kernel=kernel, budget=budget)
+    resident = MemoryLearnedBehaviorResidentRuntime(kernel=kernel, budget=budget)
     install_user_browser_causal_popup_behavior(resident)
     install_browser_file_desktop_handoff_behavior(resident)
     install_desktop_modal_recovery_behavior(resident)

@@ -366,11 +366,11 @@ def evaluate_candidate_applicability(
         else:
             untested.append("verification_signature")
 
-    current_target = str(
-        args.get("path") or expected.get("path") or ""
-    ).strip()
+    current_target = str(args.get("path") or expected.get("path") or "").strip()
     current_target_fingerprint = _fingerprint_text(current_target)
     stable_target = applicability.get("stable_target_fingerprint")
+    stable_workdir = applicability.get("stable_workdir_fingerprint")
+    observed_paths = _observed_path_fingerprints(current_facts)
     if stable_target:
         if current_target_fingerprint is None:
             untested.append("target_context")
@@ -378,20 +378,34 @@ def evaluate_candidate_applicability(
             mismatched.append("target_context")
         else:
             matched.append("target_context")
-            observed_paths = _observed_path_fingerprints(current_facts)
             if current_target_fingerprint in observed_paths:
                 matched.append("target_observed")
                 reality_matched.append("target_observed")
             else:
                 untested.append("target_observed")
     elif int(applicability.get("target_variants") or 0) > 0:
-        untested.append("generalized_target")
+        # Mature scoped-memory systems narrow retrieval by namespace first, then
+        # bind the retrieved behavior to current runtime context.  For the one
+        # bounded Git family, a stable repository is that namespace. Historical
+        # targets are deliberately *not* authority for a new path: the current
+        # goal must be freshly re-proven and the exact current target observed.
+        if (
+            candidate.expected_kind == "git_path_staged"
+            and stable_workdir
+            and bool(expected.get("current_goal_proven"))
+        ):
+            if current_target_fingerprint is None:
+                untested.append("target_context")
+            elif current_target_fingerprint not in observed_paths:
+                untested.append("target_observed")
+            else:
+                matched.append("target_observed")
+                reality_matched.append("target_observed")
+        else:
+            untested.append("generalized_target")
 
-    current_workdir = str(
-        args.get("workdir") or expected.get("workdir") or ""
-    ).strip()
+    current_workdir = str(args.get("workdir") or expected.get("workdir") or "").strip()
     current_workdir_fingerprint = _fingerprint_text(current_workdir)
-    stable_workdir = applicability.get("stable_workdir_fingerprint")
     if stable_workdir:
         if current_workdir_fingerprint is None:
             untested.append("workdir_context")
@@ -428,7 +442,7 @@ def evaluate_candidate_applicability(
         "workdir_fingerprint": current_workdir_fingerprint,
         "verification_signature_hash": current_signature,
         "git_goal_proven": bool(expected.get("current_goal_proven")),
-        "observed_path_fingerprints": sorted(_observed_path_fingerprints(current_facts))[:16],
+        "observed_path_fingerprints": sorted(observed_paths)[:16],
         "observed_git_root_fingerprint": _observed_git_root_fingerprint(current_facts),
     }
     context_fingerprint = _fingerprint(safe_context)

@@ -494,3 +494,17 @@ Do not preserve useful knowledge only in chat. If a principle changes how future
 The goal is simple:
 
 > Over time, more of the intelligence needed for reliable everyday computer life should belong to ZN itself, while models remain powerful but replaceable cognitive resources.
+
+<!-- memory-learned-behavior-1.0-closure -->
+## 2026-09-10 — Resident-owned learned behavior representative path
+
+Status: **VERIFIED NARROW**.
+
+The normal product builder now returns `MemoryLearnedBehaviorResidentRuntime`, composed above the prior active Resident chain. This is a resident behavior layer, not a second agent/runtime: Self, Work, Situation, Investigation, Thought, Body, authority, side-effect recovery and verification continue to be owned by the same Resident lifecycle.
+
+For a mature bounded Git staging procedure, fresh Investigation first establishes the current path/repository/Git facts and derives the current legal action intents. Existing procedural applicability then decides whether a `practiced` resident-owned tendency matches those current facts. Only then may the Resident skip one redundant native deliberation pulse and enter the ordinary action cycle with the **current** intent. History never reconstructs Body arguments.
+
+A prediction mismatch immediately gives current reality priority. Pre-action mismatch blocks dispatch; post-action verification mismatch records contradiction, revokes the learned route for the event and returns to Investigation. Repeated contradiction can durably inhibit the tendency across Resident restart, after which new verified experience must rebuild support/reliability gradually.
+
+This gives Resident intelligence one concrete “experience changed future cognition cost” closure while preserving the core rule that less unnecessary cognition must never mean less sensing, authority or verification.
+

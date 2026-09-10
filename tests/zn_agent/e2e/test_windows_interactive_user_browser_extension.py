@@ -32,6 +32,9 @@ _SESSION_COOKIE_NAME = "zn_existing_session"
 _SESSION_COOKIE_VALUE = "already-authenticated-before-zn"
 _SESSION_COOKIE = f"{_SESSION_COOKIE_NAME}={_SESSION_COOKIE_VALUE}"
 _EDGE_DEV_MODE_WARNING_SNOOZE_END_TIME = "99999999999000000"
+_EXTENSION_ID = "likpiakgiamipheeekdgekdahafjinnh"
+_EXTENSION_ACTION_COMMAND = "_execute_action"
+_EXTENSION_ACTION_SHORTCUT = "Ctrl+Shift+5"
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -150,6 +153,59 @@ class _ExtensionBrowserFixture(_IsolatedUserBrowserFixture):
             encoding="utf-8",
         )
 
+    def _wait_for_extension_action_shortcut(self, deadline: float) -> None:
+        """Wait for Chromium's active command binding, not just manifest intent.
+
+        Chromium persists effective extension keybindings in the profile-level
+        ``extensions.commands`` preference.  A manifest ``suggested_key`` can be
+        unassigned or not yet installed into CommandService when the first browser
+        window is already visible.  The interactive fixture must therefore prove
+        the actual binding before synthesizing the explicit user gesture.
+        """
+
+        preferences_path = self.profile / "Default" / "Preferences"
+        last_bindings: dict[str, object] = {}
+        last_error: Exception | None = None
+        while time.monotonic() < deadline:
+            try:
+                preferences = json.loads(preferences_path.read_text(encoding="utf-8"))
+                extensions = preferences.get("extensions")
+                bindings = (
+                    extensions.get("commands")
+                    if isinstance(extensions, dict)
+                    else None
+                )
+                if isinstance(bindings, dict):
+                    last_bindings = bindings
+                    for platform_shortcut, raw_binding in bindings.items():
+                        if not isinstance(raw_binding, dict):
+                            continue
+                        if str(raw_binding.get("extension") or "") != _EXTENSION_ID:
+                            continue
+                        if str(raw_binding.get("command_name") or "") != _EXTENSION_ACTION_COMMAND:
+                            continue
+                        shortcut = str(platform_shortcut).split(":", 1)[-1]
+                        if shortcut.casefold() == _EXTENSION_ACTION_SHORTCUT.casefold():
+                            return
+            except (OSError, json.JSONDecodeError) as exc:
+                # Chromium may atomically replace or still be flushing the profile
+                # while the first window is becoming visible.  Only a proven active
+                # binding is success; transient file state is retried until deadline.
+                last_error = exc
+            time.sleep(0.05)
+
+        observed = [
+            str(key)
+            for key, value in last_bindings.items()
+            if isinstance(value, dict)
+            and str(value.get("extension") or "") == _EXTENSION_ID
+        ]
+        raise RuntimeError(
+            "browser window appeared before the ZN extension action shortcut became "
+            "an active Chromium command binding; "
+            f"observed={observed!r}, last_error={last_error!r}"
+        )
+
     def start(self) -> None:
         self._prepare_edge_extension_profile()
         args = [
@@ -181,6 +237,7 @@ class _ExtensionBrowserFixture(_IsolatedUserBrowserFixture):
             match = self._find_fixture_window()
             if match is not None:
                 self.hwnd, self.window_pid, self.window_title = match
+                self._wait_for_extension_action_shortcut(deadline)
                 self.activate()
                 return
             time.sleep(0.05)
@@ -190,26 +247,109 @@ class _ExtensionBrowserFixture(_IsolatedUserBrowserFixture):
 
 
 def _press_extension_action_shortcut() -> None:
-    """Generate the user gesture bound to manifest command `_execute_action`."""
+    """Generate one verified Windows user-gesture chord for `_execute_action`.
+
+    ``keybd_event`` is superseded and reports no delivery result.  Use one
+    ``SendInput`` batch, matching ZN's production keyboard primitive, so the
+    modifier/key transitions cannot be interleaved between six independent API
+    calls and the fixture fails loudly if Windows accepts only part of the chord.
+    """
 
     user32 = ctypes.WinDLL("user32", use_last_error=True)
-    user32.keybd_event.argtypes = [
-        wintypes.BYTE,
-        wintypes.BYTE,
-        wintypes.DWORD,
-        ctypes.c_size_t,
-    ]
-    user32.keybd_event.restype = None
+    ulong_ptr = (
+        ctypes.c_ulonglong
+        if ctypes.sizeof(ctypes.c_void_p) == 8
+        else ctypes.c_ulong
+    )
+
+    class MouseInput(ctypes.Structure):
+        _fields_ = [
+            ("dx", wintypes.LONG),
+            ("dy", wintypes.LONG),
+            ("mouseData", wintypes.DWORD),
+            ("dwFlags", wintypes.DWORD),
+            ("time", wintypes.DWORD),
+            ("dwExtraInfo", ulong_ptr),
+        ]
+
+    class KeyboardInput(ctypes.Structure):
+        _fields_ = [
+            ("wVk", wintypes.WORD),
+            ("wScan", wintypes.WORD),
+            ("dwFlags", wintypes.DWORD),
+            ("time", wintypes.DWORD),
+            ("dwExtraInfo", ulong_ptr),
+        ]
+
+    class HardwareInput(ctypes.Structure):
+        _fields_ = [
+            ("uMsg", wintypes.DWORD),
+            ("wParamL", wintypes.WORD),
+            ("wParamH", wintypes.WORD),
+        ]
+
+    class InputUnion(ctypes.Union):
+        # INPUT uses the size of its largest union member.  Keep all Win32
+        # members so sizeof(Input) remains correct on Win64.
+        _fields_ = [
+            ("mi", MouseInput),
+            ("ki", KeyboardInput),
+            ("hi", HardwareInput),
+        ]
+
+    class Input(ctypes.Structure):
+        _anonymous_ = ("union",)
+        _fields_ = [
+            ("type", wintypes.DWORD),
+            ("union", InputUnion),
+        ]
+
+    input_keyboard = 1
     key_up = 0x0002
     vk_control = 0x11
     vk_shift = 0x10
     vk_5 = 0x35
-    user32.keybd_event(vk_control, 0, 0, 0)
-    user32.keybd_event(vk_shift, 0, 0, 0)
-    user32.keybd_event(vk_5, 0, 0, 0)
-    user32.keybd_event(vk_5, 0, key_up, 0)
-    user32.keybd_event(vk_shift, 0, key_up, 0)
-    user32.keybd_event(vk_control, 0, key_up, 0)
+
+    user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+    user32.GetAsyncKeyState.restype = ctypes.c_short
+    dirty = [
+        name
+        for name, vk in (
+            ("control", vk_control),
+            ("shift", vk_shift),
+            ("5", vk_5),
+        )
+        if int(user32.GetAsyncKeyState(vk)) & 0x8000
+    ]
+    if dirty:
+        raise RuntimeError(
+            "interactive extension shortcut cannot be injected while keys are already down: "
+            + ",".join(dirty)
+        )
+
+    event_values = [
+        Input(type=input_keyboard, ki=KeyboardInput(vk_control, 0, 0, 0, 0)),
+        Input(type=input_keyboard, ki=KeyboardInput(vk_shift, 0, 0, 0, 0)),
+        Input(type=input_keyboard, ki=KeyboardInput(vk_5, 0, 0, 0, 0)),
+        Input(type=input_keyboard, ki=KeyboardInput(vk_5, 0, key_up, 0, 0)),
+        Input(type=input_keyboard, ki=KeyboardInput(vk_shift, 0, key_up, 0, 0)),
+        Input(type=input_keyboard, ki=KeyboardInput(vk_control, 0, key_up, 0, 0)),
+    ]
+    events = (Input * len(event_values))(*event_values)
+    user32.SendInput.argtypes = [
+        wintypes.UINT,
+        ctypes.POINTER(Input),
+        ctypes.c_int,
+    ]
+    user32.SendInput.restype = wintypes.UINT
+    ctypes.set_last_error(0)
+    sent = int(user32.SendInput(len(events), events, ctypes.sizeof(Input)))
+    if sent != len(events):
+        error = ctypes.get_last_error()
+        raise RuntimeError(
+            "Windows SendInput accepted only "
+            f"{sent}/{len(events)} extension-shortcut events; winerror={error}"
+        )
 
 
 class WindowsInteractiveUserBrowserExtensionE2ETests(unittest.TestCase):

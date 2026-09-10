@@ -239,3 +239,28 @@ E2E-36 exact attempt-bound uncertain-side-effect restart resolution
 Desktop 把 `inspection_complete` 当成一次只读交互结束，而不是 Work terminal/finalized，因此输入框立即可继续使用；随后同一 thread 的 `继续`/`那继续吧` 只在最新 durable message 确认为 inspection 时复用同一 active event，包含 restart 后场景。已完成 Work 可以只读检查，但 bare replay 仍 fail closed；zero/multiple yesterday candidates 也 fail closed。
 
 边界：这是一个 next-day product continuation/status-first 的窄代表性 closure，不代表 arbitrary history search、多周/多月项目重建、跨设备 continuity、通用项目管理 dashboard、general long-horizon orchestrator、general DAG scheduler 或 recursive multi-agent runtime 已完成。新的 continuity 失败应先判断是否超出这条 bounded slice，而不是重新造第二套 Work/progress truth。
+
+<!-- memory-learned-behavior-1.0-closure -->
+## 2026-09-10 handoff — Memory & Learned Behavior 1.0 / PR #245
+
+Base used for the work: `17f22fefcda32db9eb20d3a9a6f080157a4e0c5d` (`E2E-36: explicit uncertain side-effect resolution (#244)`). Development branch: `work/memory-learned-behavior-v1`. PR: `#245`.
+
+Representative closure status: **E2E-37 CLOSED, E2E-38 CLOSED, E2E-39 CLOSED; Memory & Learned Behavior VERIFIED NARROW / representative path closed**, subject to the canonical merge checks on the final PR head.
+
+What changed:
+
+- active Resident composition adds `MemoryLearnedBehaviorResidentRuntime`;
+- procedural compatibility becomes project/workspace-local when a privacy-safe workdir fingerprint exists;
+- bounded verified prior context can support “use my previous way on this project” without transcript dumping or historical Body args;
+- `practiced` current-applicable competence can remove one redundant native deliberation pulse on the real single-path Git staging family;
+- current Sense, authority, SideEffect/anti-replay and independent verification remain mandatory;
+- pre-action mismatch blocks dispatch; post-action prediction error records contradiction and returns to Investigation;
+- two recent contradictions can durably inhibit; restart preserves downgrade; later verified evidence relearns gradually rather than one-shot restoring maturity;
+- restart with external models unavailable preserves the bounded learned mechanical competence.
+
+Research before implementation: HumanCompatibleAI/imitation DAgger (aggregate learner-visited experience, but teacher is not truth), MineDojo/Voyager (reusable skills + environment feedback/self-verification, but no GPT-owned control plane), and River/ADWIN (drift principle only; no production dependency without benchmark justification).
+
+Acceptance files: `tests/zn_agent/core/test_learned_behavior_resident.py`, `tests/zn_agent/core/test_project_scoped_procedural_learning.py`, `tests/zn_agent/e2e/test_e2e37_preferred_working_style.py`, `tests/zn_agent/e2e/test_e2e38_learned_verified_workflow.py`, `tests/zn_agent/e2e/test_e2e39_learned_path_drift.py`, plus `.github/workflows/memory-learned-behavior-e2e.yml`.
+
+Do not broaden this handoff into a claim that arbitrary workflows, human-like memory, code-generating learned skills or cross-device memory are closed.
+
