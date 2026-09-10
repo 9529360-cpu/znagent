@@ -179,6 +179,7 @@ Recovery 是为了让真实任务继续，不是独立产品路线。
 
 `docs/ZN-REAL-TASK-E2E-CATALOG.md` 保持 50 个原始真实任务定义。当前需要记住的代表性 closure：
 
+- E2E-01/02/03 closed representative bounded Research & Information Work path；
 - E2E-05 closed representative authenticated research/mutation；
 - E2E-07 closed bounded causal USER child-tab path；
 - E2E-08 closed representative OTP user-presence path；
@@ -201,13 +202,14 @@ Installer、CI、Release、签名本身不是当前产品主线。Installed N ->
 
 ## 13. 当前产品选择原则
 
-不再按旧顺序重复开发 E2E-30/42、28/34、27/33 的 substrate。下一项应从真实剩余产品缺口中选择：
+不再按旧顺序重复开发 E2E-01/02/03、E2E-30/42、28/34、27/33 的 bounded substrate。下一项应从真实剩余产品缺口中选择：
 
 1. E2E-24 bounded closure 之外更复杂的 cross-surface real tasks；
 2. Browser/User Browser 在真实站点和复杂 frame/dialog/navigation/用户在场边界的广度；
-3. 现有 supervision/steering/restart 基础上的跨天/长期 continuity + progress/explanation UX；
-4. 由真实 E2E 暴露的 Windows/application semantic gap；
-5. 只有 owner 明确选择并授权时才进入高风险 installed-version continuity / release-trust work。
+3. E2E-01/02/03 bounded closure 之外的 Research breadth，例如 authenticated research、PDF/复杂 source、更多 surface 组合和 citation UX；
+4. 现有 supervision/steering/restart 基础上的跨天/长期 continuity + progress/explanation UX；
+5. 由真实 E2E 暴露的 Windows/application semantic gap；
+6. 只有 owner 明确选择并授权时才进入高风险 installed-version continuity / release-trust work。
 
 如果 current evidence 不能确定唯一下一任务，就保留选择标准，不凭空发明 roadmap。
 
@@ -238,3 +240,24 @@ What is product-real now:
 
 This closes E2E-37/38/39 only as a representative product slice. It is not a claim that arbitrary workflows are learnable or that Memory as a whole is complete.
 
+<!-- research-information-work-1.0-closure -->
+## Research & Information Work 1.0 — representative capability closure (2026-09-10)
+
+Status: **VERIFIED NARROW / E2E-01/02/03 representative paths closed**.
+
+Current `main` now has a bounded Resident-owned public-web Research path that reuses the existing `WebResource`, `ModelRouter`, durable Work, Body and file-identity owners instead of introducing a second Research agent/orchestrator/router/store.
+
+Product-real scope:
+
+- normal user research language can enter the active Resident and perform bounded multi-source search→extract;
+- search candidates are not treated as evidence; only successfully extracted source-document content enters the bounded Evidence Pack;
+- canonical source identity, requested/final URL provenance, provider provenance, capture/published freshness metadata, partial extraction failures and cross-source conflicts are preserved;
+- promoted findings/recommendations require exact source IDs and exact observed evidence excerpts; numeric/date/price anchors are locally checked and unsupported claims are rejected;
+- all providers unavailable or fewer than two independent readable sources blocks rather than falling back to model memory;
+- ambiguous same-Work references auto-resolve only when unique; zero/multiple candidates ask the user before any search;
+- durable research bundles survive Resident restart and still-fresh evidence can continue synthesis without reacquisition;
+- optional E2E-02 delivery writes only to the uniquely attached Work workspace, then performs fresh file identity observation, reread and content/source-ID verification.
+
+Implementation was merged through PR #246 to canonical `main` as `f77e5f5d6b93af04f0bbb974dedea6529dbc9934`. Exact-head acceptance before merge was green across ZN CI #1784, Research E2E #14, Work Recovery #406, Managed Browser #344, Windows Interactive Desktop #363, Memory & Learned Behavior #41, E2E28-34 #120 and E2E25 #55.
+
+Explicit remaining boundary: no arbitrary-internet Deep Research, authenticated-browser research, arbitrary PDF/Office/multimedia research, general citation engine, knowledge graph/vector DB, recursive research swarm or cross-device research sync is claimed.

@@ -34,6 +34,9 @@ The original 50 scenario definitions below remain stable. The following status n
 
 | E2E | Current status | Acceptance note / boundary |
 | --- | --- | --- |
+| E2E-01 | CLOSED representative path | Ordinary natural-language public-web research uses existing WebResource search→extract, preserves canonical source identity/provenance/freshness and conflicts, and promotes only exact source-grounded claims/recommendations. Requires at least two independent readable sources; no model-memory fallback. Not arbitrary Deep Research. |
+| E2E-02 | CLOSED representative path | The same bounded Research path can write a real editable Markdown artifact only into one exact attached Work workspace, then fresh-observe identity, reread the exact file and verify required sections/source IDs/content; ambiguous destination fails closed with zero mutation. Not arbitrary Office/PDF authoring. |
+| E2E-03 | CLOSED representative path | Bounded same-Work ambiguity handling auto-resolves only a unique referent; zero/multiple plausible referents ask the user before search. Durable research evidence survives Resident restart and can continue synthesis without reacquiring still-fresh evidence. Not arbitrary history/reference resolution. |
 | E2E-05 | CLOSED representative path | Real USER Browser authenticated research -> persisted mutation path is verified. This does not claim arbitrary authenticated websites or arbitrary browser mutation. |
 | E2E-07 | CLOSED representative path | Task-scoped causal USER Browser child-tab attribution, causal popup handling, authorization-generation binding, fresh opener reread, child -> root return and unverified-click no-replay are verified. General arbitrary popup/frame complexity remains broader work. |
 | E2E-08 | CLOSED representative path | Standard HTML `autocomplete="one-time-code"`, same explicitly authorized USER tab/generation/origin, manual user completion, fresh re-ground and same-Work resume are verified. ZN does not read/type/store OTP. CAPTCHA, WebAuthn/passkeys, cross-origin IdP handoff, password/payment automation are not supported by this closure. |
@@ -82,6 +85,12 @@ User:
 > “看看大家最近为什么都在讨论这个东西，给我弄明白。”
 
 Must prove ZN can investigate ambiguous reference/context rather than forcing structured keywords immediately.
+
+Representative closure (2026-09-10): E2E-01/02/03 are now **CLOSED representative path / VERIFIED NARROW** through the normal active Resident. The path reuses the existing configured `WebResource` and performs bounded search→extract; search snippets/provider answers are discovery only, while extracted source-document text forms the Evidence Pack. Canonical source identity, requested/final URL provenance, provider provenance, capture/published freshness, partial extraction failures and cross-source conflicts are retained. Promoted findings/recommendations must cite exact source IDs plus exact observed excerpts, and numeric/date/price anchors are locally checked so unsupported claims are rejected.
+
+At least two independent readable sources are required; unavailable providers or insufficient readable evidence block instead of falling back to model memory. Ambiguous same-Work references auto-resolve only when unique, otherwise the user is asked before any search. Research bundles are persisted in the existing durable Work ledger; restart can continue synthesis from still-fresh evidence without reacquisition. E2E-02 writes only to one exact attached Work workspace and proves the final Markdown by fresh file identity observation + exact reread; ambiguous destination produces zero mutation.
+
+Implementation merged via PR #246 to canonical `main` as `f77e5f5d6b93af04f0bbb974dedea6529dbc9934`. Exact-head acceptance before merge was green across Research E2E #14, ZN CI #1784, Work Recovery #406, Managed Browser #344, Windows Interactive Desktop #363, Memory & Learned Behavior #41, E2E28-34 #120 and E2E25 #55. This does not claim arbitrary-internet Deep Research, authenticated-browser research, arbitrary PDF/Office/multimedia research, a general citation engine, knowledge graph/vector DB, recursive research swarm or cross-device research sync.
 
 ## 3. Authenticated browser work
 
@@ -501,19 +510,20 @@ ZN must reject the claim and continue/replan rather than announce completion.
 
 ## 15. Current implementation selection
 
-The old “first five E2Es to drive orchestration development” ordering is retired because E2E-29, E2E-30/42, E2E-28/34, E2E-27/33, E2E-35 and E2E-36 now have the representative closures recorded above.
+The old “first five E2Es to drive orchestration development” ordering is retired because E2E-01/02/03, E2E-29, E2E-30/42, E2E-28/34, E2E-27/33, E2E-35 and E2E-36 now have the representative closures recorded above.
 
 Do not re-run that historical priority list as a development plan.
 
 Select future work from the catalog by asking which ordinary real task is still blocked on current `main`. Prefer gaps that increase real task breadth, especially:
 
+- Research breadth beyond E2E-01/02/03, such as authenticated research, PDF/complex-source extraction, citation UX and additional surface combinations;
 - cross-surface Browser/Desktop/File/Terminal/Application work beyond the bounded E2E-24 representative closure;
 - Browser/User Browser real-site complexity beyond the bounded verified paths;
 - longer-horizon/cross-day use beyond E2E-35's bounded yesterday status-first path, on top of existing steering/supervision/restart mechanisms;
 - user-readable progress, blocker and completion-evidence quality;
 - concrete Windows/application semantic gaps beyond the bounded E2E-15 same-process safe-modal representative closure.
 
-Do not make general DAG scheduling, recursive delegation or a multi-agent platform the default next target. Do not infer permission for Memory/credential/installer/updater/release-trust changes from this catalog.
+Do not make general DAG scheduling, recursive delegation, a multi-agent platform, a second ResearchAgent, knowledge graph/vector DB, or a general citation engine the default next target. Do not infer permission for Memory/credential/installer/updater/release-trust changes from this catalog.
 
 Implementation remains vertical:
 
@@ -566,4 +576,3 @@ independent verification retained
 The dedicated CI gate is `.github/workflows/memory-learned-behavior-e2e.yml`; canonical `ZN CI` continues to gate the full core suite and existing source/desktop boundaries.
 
 Explicit non-claims: this does not close general memory, arbitrary multi-step workflow learning, cross-device memory, automatic executable skill generation, or universal provider-free operation.
-
