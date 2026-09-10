@@ -380,6 +380,43 @@ class ResidentWorkControl:
         progress = self.ledger.progress(normalized_thread, normalized_event)
         return self._with_delegation_projection(normalized_thread, progress)
 
+    def resolve_uncertain(
+        self,
+        thread_id: str,
+        event_id: str,
+        *,
+        attempt_id: str,
+        decision: str,
+    ) -> dict[str, Any]:
+        """Apply one explicit uncertain-effect decision to an active Work run."""
+
+        normalized_thread = self.ledger._normalize_thread_id(thread_id)
+        normalized_event = str(event_id or "").strip()
+        normalized_attempt = str(attempt_id or "").strip()
+        normalized_decision = str(decision or "").strip().lower()
+        if not normalized_event:
+            raise ValueError("work uncertain-effect resolution requires event_id")
+        if not normalized_attempt:
+            raise ValueError("work uncertain-effect resolution requires attempt_id")
+        if normalized_decision not in {"effect_happened", "retry_authorized"}:
+            raise ValueError("unsupported work uncertain-effect decision")
+
+        work_run = self.ledger.get_run(normalized_event)
+        if work_run is None or work_run.thread_id != normalized_thread:
+            raise ValueError("unknown work event for thread")
+        if work_run.ledger_state != "active":
+            raise RuntimeError("work uncertain-effect resolution requires an active Work run")
+
+        resolver = getattr(self.resident, "resolve_uncertain_event", None)
+        if not callable(resolver):
+            raise RuntimeError("resident does not support explicit uncertain-effect resolution")
+        resolver(
+            normalized_event,
+            attempt_id=normalized_attempt,
+            decision=normalized_decision,
+        )
+        return self.progress(normalized_thread, normalized_event)
+
     def cancel(
         self,
         thread_id: str,
