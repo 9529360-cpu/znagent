@@ -22,6 +22,15 @@ def _value(item: Any, name: str, default: Any = None) -> Any:
     return getattr(item, name, default)
 
 
+def _source_metadata(item: Any) -> dict[str, Any]:
+    metadata: dict[str, Any] = {"provider": "exa"}
+    for key in ("publishedDate", "published_date", "author", "score"):
+        value = _value(item, key)
+        if value is not None:
+            metadata[key] = value
+    return metadata
+
+
 class ExaWebResource:
     name = "exa"
 
@@ -83,6 +92,7 @@ class ExaWebResource:
                     url=str(_value(result, "url", "") or ""),
                     description=description,
                     position=index + 1,
+                    metadata=_source_metadata(result),
                 )
             )
         return items
@@ -99,7 +109,7 @@ class ExaWebResource:
             return [
                 WebDocument(
                     url=url,
-                    metadata={"sourceURL": url},
+                    metadata={"sourceURL": url, "requestedURL": url, "provider": "exa"},
                     error=detail,
                 )
                 for url in normalized
@@ -113,13 +123,18 @@ class ExaWebResource:
             content = str(_value(result, "text", "") or "")
             if url:
                 returned_urls.add(url)
+            metadata = _source_metadata(result)
+            metadata["sourceURL"] = url or normalized[0]
+            metadata["title"] = title
+            if url in normalized:
+                metadata["requestedURL"] = url
             documents.append(
                 WebDocument(
                     url=url or normalized[0],
                     title=title,
                     content=content,
                     raw_content=content,
-                    metadata={"sourceURL": url or normalized[0], "title": title},
+                    metadata=metadata,
                 )
             )
 
@@ -131,7 +146,7 @@ class ExaWebResource:
                 documents.append(
                     WebDocument(
                         url=url,
-                        metadata={"sourceURL": url},
+                        metadata={"sourceURL": url, "requestedURL": url, "provider": "exa"},
                         error="Exa returned no document for this URL",
                     )
                 )
