@@ -50,13 +50,18 @@ jobs:
           uv venv .ci/memory-venv --python 3.12
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\memory-venv\Scripts\python.exe'
           uv pip install --python $python runtime/python
-      - name: Run Memory and Learned Behavior representative E2E
+      - name: E2E-37 preferred working style
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\memory-venv\Scripts\python.exe'
           & $python tests/zn_agent/e2e/test_e2e37_preferred_working_style.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: E2E-38 learned verified workflow
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\memory-venv\Scripts\python.exe'
           & $python tests/zn_agent/e2e/test_e2e38_learned_verified_workflow.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: E2E-39 learned path drift
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\memory-venv\Scripts\python.exe'
           & $python tests/zn_agent/e2e/test_e2e39_learned_path_drift.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
