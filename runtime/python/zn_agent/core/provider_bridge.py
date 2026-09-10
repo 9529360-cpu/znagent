@@ -280,7 +280,9 @@ def build_resident_runtime(
     from .desktop_modal_recovery_behavior import (
         install_desktop_modal_recovery_behavior,
     )
-    from .research_information_resident import ResearchInformationResidentRuntime
+    from .research_information_product_resident import (
+        ProductResearchInformationResidentRuntime,
+    )
     from .user_browser_causal_popup_behavior import (
         install_user_browser_causal_popup_behavior,
     )
@@ -312,7 +314,7 @@ def build_resident_runtime(
     except Exception as exc:
         research_web_error = f"{type(exc).__name__}: {exc}"
 
-    resident = ResearchInformationResidentRuntime(
+    resident = ProductResearchInformationResidentRuntime(
         kernel=kernel,
         budget=budget,
         research_web_resource=research_web_resource,
