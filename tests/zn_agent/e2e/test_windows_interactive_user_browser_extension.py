@@ -32,6 +32,9 @@ _SESSION_COOKIE_NAME = "zn_existing_session"
 _SESSION_COOKIE_VALUE = "already-authenticated-before-zn"
 _SESSION_COOKIE = f"{_SESSION_COOKIE_NAME}={_SESSION_COOKIE_VALUE}"
 _EDGE_DEV_MODE_WARNING_SNOOZE_END_TIME = "99999999999000000"
+_EXTENSION_ID = "likpiakgiamipheeekdgekdahafjinnh"
+_EXTENSION_ACTION_COMMAND = "_execute_action"
+_EXTENSION_ACTION_SHORTCUT = "Ctrl+Shift+5"
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -150,6 +153,59 @@ class _ExtensionBrowserFixture(_IsolatedUserBrowserFixture):
             encoding="utf-8",
         )
 
+    def _wait_for_extension_action_shortcut(self, deadline: float) -> None:
+        """Wait for Chromium's active command binding, not just manifest intent.
+
+        Chromium persists effective extension keybindings in the profile-level
+        ``extensions.commands`` preference.  A manifest ``suggested_key`` can be
+        unassigned or not yet installed into CommandService when the first browser
+        window is already visible.  The interactive fixture must therefore prove
+        the actual binding before synthesizing the explicit user gesture.
+        """
+
+        preferences_path = self.profile / "Default" / "Preferences"
+        last_bindings: dict[str, object] = {}
+        last_error: Exception | None = None
+        while time.monotonic() < deadline:
+            try:
+                preferences = json.loads(preferences_path.read_text(encoding="utf-8"))
+                extensions = preferences.get("extensions")
+                bindings = (
+                    extensions.get("commands")
+                    if isinstance(extensions, dict)
+                    else None
+                )
+                if isinstance(bindings, dict):
+                    last_bindings = bindings
+                    for platform_shortcut, raw_binding in bindings.items():
+                        if not isinstance(raw_binding, dict):
+                            continue
+                        if str(raw_binding.get("extension") or "") != _EXTENSION_ID:
+                            continue
+                        if str(raw_binding.get("command_name") or "") != _EXTENSION_ACTION_COMMAND:
+                            continue
+                        shortcut = str(platform_shortcut).split(":", 1)[-1]
+                        if shortcut.casefold() == _EXTENSION_ACTION_SHORTCUT.casefold():
+                            return
+            except (OSError, json.JSONDecodeError) as exc:
+                # Chromium may atomically replace or still be flushing the profile
+                # while the first window is becoming visible.  Only a proven active
+                # binding is success; transient file state is retried until deadline.
+                last_error = exc
+            time.sleep(0.05)
+
+        observed = [
+            str(key)
+            for key, value in last_bindings.items()
+            if isinstance(value, dict)
+            and str(value.get("extension") or "") == _EXTENSION_ID
+        ]
+        raise RuntimeError(
+            "browser window appeared before the ZN extension action shortcut became "
+            "an active Chromium command binding; "
+            f"observed={observed!r}, last_error={last_error!r}"
+        )
+
     def start(self) -> None:
         self._prepare_edge_extension_profile()
         args = [
@@ -181,6 +237,7 @@ class _ExtensionBrowserFixture(_IsolatedUserBrowserFixture):
             match = self._find_fixture_window()
             if match is not None:
                 self.hwnd, self.window_pid, self.window_title = match
+                self._wait_for_extension_action_shortcut(deadline)
                 self.activate()
                 return
             time.sleep(0.05)
