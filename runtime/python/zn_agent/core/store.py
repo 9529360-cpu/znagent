@@ -6,6 +6,7 @@ import threading
 from pathlib import Path
 from typing import Any, Iterable
 
+from . import side_effect_attempts
 from .models import (
     AgentEvent, AgentIdentity, Assessment, CapabilityEstimate, EventOutcome,
     EventStatus, ExecutionPath, Experience, Goal, GoalStatus,
@@ -93,6 +94,8 @@ class KernelStore:
 
     def get_goal(self, goal_id: str) -> Goal | None:
         with self._lock:
+            row = self._conn.execute("SELECT data FROM goals WHERE id=?", (goal_id,)).fetchone()
+        if not row:
             row = self._conn.execute("SELECT data FROM goals WHERE goal_id=?", (goal_id,)).fetchone()
         if not row:
             return None
@@ -405,6 +408,138 @@ class KernelStore:
                 (self._dump(idle_data),),
             )
         return event
+
+    def resolve_uncertain_event(
+        self,
+        event_id: str,
+        *,
+        attempt_id: str,
+        decision: str,
+    ) -> WorkingState:
+        """Atomically bind one explicit user decision to the current uncertain attempt.
+
+        Human authority is deliberately separate from resident-owned verification.
+        The old attempt and its exact WorkingState checkpoint change in the same
+        SQLite transaction. A retry decision only retires that one attempt; it
+        never stores reusable replay authority and never dispatches a mutation.
+        """
+
+        normalized_event = str(event_id or "").strip()
+        normalized_attempt = str(attempt_id or "").strip()
+        normalized_decision = str(decision or "").strip().lower()
+        if not normalized_event:
+            raise ValueError("uncertain event resolution requires event_id")
+        if not normalized_attempt:
+            raise ValueError("uncertain event resolution requires attempt_id")
+        target_status = side_effect_attempts.user_resolution_status(normalized_decision)
+
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT data FROM events WHERE event_id=?",
+                (normalized_event,),
+            ).fetchone()
+            if not row:
+                raise ValueError(f"unknown resident event: {normalized_event}")
+            event = self._event_from_data(row["data"])
+            if event.status not in {EventStatus.PROCESSING, EventStatus.PENDING}:
+                raise RuntimeError("uncertain event resolution requires unfinished resident work")
+            if self._conn.execute(
+                "SELECT 1 FROM event_outcomes WHERE event_id=?", (normalized_event,)
+            ).fetchone():
+                raise RuntimeError("uncertain resident event already has a durable outcome")
+
+            state_row = self._conn.execute("SELECT data FROM working_state WHERE id=1").fetchone()
+            if not state_row:
+                raise RuntimeError("uncertain event resolution requires a side-effect recovery checkpoint")
+            try:
+                working = json.loads(state_row["data"])
+            except Exception as exc:
+                raise RuntimeError("uncertain event resolution found a malformed working checkpoint") from exc
+
+            working_event_id = str(working.get("current_event_id") or "").strip()
+            working_stage = str(working.get("stage") or "").strip().lower()
+            blocked_by = str(working.get("blocked_by") or "").strip().lower()
+            working_data = working.get("data")
+            recovery = working_data.get("side_effect_recovery") if isinstance(working_data, dict) else None
+            if (
+                working_event_id != normalized_event
+                or working_stage != "side_effect_recovery"
+                or blocked_by != "outside_world_effect_uncertain"
+                or not isinstance(recovery, dict)
+                or recovery.get("replay_blocked") is not True
+                or str(recovery.get("decision") or "").strip().lower() != "user_decision_required"
+            ):
+                raise RuntimeError(
+                    "uncertain event resolution requires the event's unresolved user-decision checkpoint"
+                )
+            if str(recovery.get("attempt_id") or "").strip() != normalized_attempt:
+                raise RuntimeError("uncertain event resolution attempt does not match the active recovery checkpoint")
+
+            intent = working_data.get("native_action_intent") if isinstance(working_data, dict) else None
+            if not isinstance(intent, dict):
+                raise RuntimeError("uncertain event resolution requires the resident's current native action intent")
+            recovery_intent = str(recovery.get("intent_id") or "").strip()
+            intent_id = str(intent.get("intent_id") or "").strip()
+            if recovery_intent and intent_id != recovery_intent:
+                raise RuntimeError("uncertain event resolution intent does not match the active recovery checkpoint")
+            recovery_kind = str(recovery.get("kind") or "").strip().lower()
+            intent_kind = str(intent.get("kind") or "").strip().lower()
+            if not recovery_kind or intent_kind != recovery_kind:
+                raise RuntimeError("uncertain event resolution action kind does not match the active recovery checkpoint")
+
+            try:
+                attempt = self._conn.execute(
+                    f"SELECT event_id,status,kind,signature_hash FROM {self._SIDE_EFFECT_TABLE} WHERE attempt_id=?",
+                    (normalized_attempt,),
+                ).fetchone()
+            except sqlite3.OperationalError as exc:
+                raise RuntimeError("side-effect attempt ledger is unavailable") from exc
+            if (
+                not attempt
+                or str(attempt["event_id"]) != normalized_event
+                or str(attempt["status"]) not in {"started", "observed"}
+                or str(attempt["kind"] or "").strip().lower() != recovery_kind
+            ):
+                raise RuntimeError("side-effect recovery checkpoint does not own the requested uncertain attempt")
+            recovery_signature = str(recovery.get("signature") or "").strip().lower()
+            attempt_signature = str(attempt["signature_hash"] or "").strip().lower()
+            if recovery_signature and not attempt_signature.startswith(recovery_signature):
+                raise RuntimeError("uncertain event resolution signature does not match the active recovery checkpoint")
+
+            now = utc_now()
+            changed = side_effect_attempts.resolve_user_attempt(
+                self._conn,
+                attempt_id=normalized_attempt,
+                event_id=normalized_event,
+                decision=normalized_decision,
+                resolved_at=now,
+            )
+            if changed != 1:
+                raise RuntimeError("side-effect attempt changed before user resolution could be committed")
+
+            recovery.update(
+                {
+                    "status": target_status,
+                    "decision": normalized_decision,
+                    "resolution_source": "user",
+                    "resolved_at": now,
+                    "replay_blocked": False,
+                }
+            )
+            working_data["side_effect_recovery"] = recovery
+            working["blocked_by"] = None
+            if normalized_decision == "retry_authorized":
+                working["stage"] = "native_action"
+                working["next_action"] = "perform one new guarded attempt after explicit user retry authorization"
+            else:
+                working["stage"] = "side_effect_recovery"
+                working["next_action"] = "continue without replay from explicit user confirmation"
+            working["updated_at"] = now
+            self._conn.execute(
+                "INSERT OR REPLACE INTO working_state(id,data) VALUES(1,?)",
+                (self._dump(working),),
+            )
+            return WorkingState(**working)
 
     def cancel_uncertain_event(
         self,
