@@ -65,11 +65,26 @@ jobs:
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\memory-venv\Scripts\python.exe'
           & $python tests/zn_agent/e2e/test_e2e39_learned_path_drift.py E2E39LearnedPathDrift.test_pre_action_drift_blocks_mutation -v
-      - name: E2E-39B prediction drift inhibits and persists
+      - name: E2E-39B1 one drift downgrades without premature inhibition
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\memory-venv\Scripts\python.exe'
-          & $python tests/zn_agent/e2e/test_e2e39_learned_path_drift.py E2E39LearnedPathDrift.test_prediction_drift_inhibits_and_persists -v
+          & $python tests/zn_agent/e2e/test_e2e39_learned_path_drift.py E2E39LearnedPathDrift.test_one_prediction_drift_keeps_candidate_practiced_but_downgraded -v
+      - name: E2E-39B2 second event can still use learned path
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\memory-venv\Scripts\python.exe'
+          & $python tests/zn_agent/e2e/test_e2e39_learned_path_drift.py E2E39LearnedPathDrift.test_second_event_after_one_drift_can_still_enter_learned_verification -v
+      - name: E2E-39B3 two drifts inhibit scoped competence
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\memory-venv\Scripts\python.exe'
+          & $python tests/zn_agent/e2e/test_e2e39_learned_path_drift.py E2E39LearnedPathDrift.test_two_prediction_drifts_inhibit_scoped_competence -v
+      - name: E2E-39B4 inhibition persists restart
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\memory-venv\Scripts\python.exe'
+          & $python tests/zn_agent/e2e/test_e2e39_learned_path_drift.py E2E39LearnedPathDrift.test_prediction_drift_inhibition_persists_restart -v
       - name: E2E-39C inhibited competence relearns gradually
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
