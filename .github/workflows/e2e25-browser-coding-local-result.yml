@@ -47,8 +47,21 @@ jobs:
         with:
           version: '0.11.6'
           enable-cache: false
-      - name: Run focused current-main gap tests
+      - name: Prepare isolated runtime
         run: |
           uv python install 3.12
+          Remove-Item -Recurse -Force .ci/e2e25-baseline-venv -ErrorAction SilentlyContinue
+          uv venv .ci/e2e25-baseline-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e25-baseline-venv\Scripts\python.exe'
+          Push-Location runtime/python
+          try {
+            uv pip install --python $python '.'
+          } finally {
+            Pop-Location
+          }
+      - name: Run focused current-main gap tests
+        run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
-          uv run --python 3.12 python -m unittest -v tests.zn_agent.core.test_e2e25_current_reference_and_workspace_read_baseline
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e25-baseline-venv\Scripts\python.exe'
+          & $python -m unittest -v tests.zn_agent.core.test_e2e25_current_reference_and_workspace_read_baseline
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
