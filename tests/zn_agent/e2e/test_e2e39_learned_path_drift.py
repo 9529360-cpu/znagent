@@ -82,7 +82,7 @@ class E2E39LearnedPathDrift(unittest.TestCase):
             )
 
     @classmethod
-    def _prediction_drift_once(cls, resident, root: Path, target: Path, index: int) -> None:
+    def _reach_learned_verification(cls, resident, root: Path, target: Path, index: int):
         target.write_text(f"prediction-drift-{index}\n", encoding="utf-8")
         event = resident.enqueue(
             "stage this repository path in the current Git index",
@@ -101,10 +101,12 @@ class E2E39LearnedPathDrift(unittest.TestCase):
                     raise AssertionError(
                         f"prediction-drift acceptance did not use active learned fast path: {fast!r}"
                     )
-                break
-        else:
-            raise AssertionError("learned path never reached independent verification")
+                return event
+        raise AssertionError("learned path never reached independent verification")
 
+    @classmethod
+    def _prediction_drift_once(cls, resident, root: Path, target: Path, index: int) -> None:
+        event = cls._reach_learned_verification(resident, root, target, index)
         cls._git(root, "reset", "-q", "HEAD", "--", target.name)
         if resident.live_once() is not None:
             raise AssertionError("contradicted verification must return to investigation")
@@ -119,8 +121,6 @@ class E2E39LearnedPathDrift(unittest.TestCase):
         if rows[0].verdict != "contradicted":
             raise AssertionError(f"expected contradicted verdict, got {rows[0].verdict}")
 
-        # Satisfy the requested state externally, then let ZN observe completion.
-        # This verifies revocation/recovery without replaying the contradicted move.
         cls._git(root, "add", "--", target.name)
         terminal = cls._run(resident)
         if not terminal.success:
@@ -152,7 +152,6 @@ class E2E39LearnedPathDrift(unittest.TestCase):
                 config={"model": {}}, store_path=root / ".zn" / "kernel.db"
             )
             self._train_practiced(resident, root, targets)
-
             missing = root / "disappeared.txt"
             event = resident.enqueue(
                 "stage this repository path in the current Git index",
@@ -170,14 +169,45 @@ class E2E39LearnedPathDrift(unittest.TestCase):
             self.assertNotIn("command", movements)
             resident.store.close()
 
-    def test_prediction_drift_inhibits_and_persists(self):
+    def test_one_prediction_drift_keeps_candidate_practiced_but_downgraded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            targets = self._repo(root)
+            resident = build_resident_runtime(config={"model": {}}, store_path=root / ".zn" / "kernel.db")
+            self._train_practiced(resident, root, targets)
+            self._prediction_drift_once(resident, root, targets[4], 4)
+            candidate = self._candidate(resident)
+            self.assertEqual(candidate.support_count, 4)
+            self.assertEqual(candidate.contradiction_count, 1)
+            self.assertEqual(candidate.reliability, 0.8)
+            self.assertEqual(candidate.maturity_state, "practiced")
+            self.assertFalse(candidate.inhibited)
+            resident.store.close()
+
+    def test_second_event_after_one_drift_can_still_enter_learned_verification(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            targets = self._repo(root)
+            resident = build_resident_runtime(config={"model": {}}, store_path=root / ".zn" / "kernel.db")
+            self._train_practiced(resident, root, targets)
+            self._prediction_drift_once(resident, root, targets[4], 4)
+            self._reach_learned_verification(resident, root, targets[5], 5)
+            resident.store.close()
+
+    def test_two_prediction_drifts_inhibit_scoped_competence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            targets = self._repo(root)
+            resident = self._build_inhibited(root, targets, root / ".zn" / "kernel.db")
+            resident.store.close()
+
+    def test_prediction_drift_inhibition_persists_restart(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
             targets = self._repo(root)
             db = root / ".zn" / "kernel.db"
             resident = self._build_inhibited(root, targets, db)
             resident.store.close()
-
             restarted = build_resident_runtime(config={"model": {}}, store_path=db)
             restored = self._candidate(restarted)
             self.assertTrue(restored.inhibited)
@@ -193,14 +223,12 @@ class E2E39LearnedPathDrift(unittest.TestCase):
             db = root / ".zn" / "kernel.db"
             resident = self._build_inhibited(root, targets, db)
             resident.store.close()
-
             restarted = build_resident_runtime(config={"model": {}}, store_path=db)
             self._success(restarted, root, targets[6], 6)
             after_one = self._candidate(restarted)
             self.assertNotEqual(after_one.maturity_state, "practiced")
             self.assertEqual(after_one.support_count, 5)
             self.assertEqual(after_one.contradiction_count, 2)
-
             for index, target in enumerate(targets[7:10], start=7):
                 self._success(restarted, root, target, index)
             recovered = self._candidate(restarted)
