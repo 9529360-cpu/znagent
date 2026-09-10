@@ -50,6 +50,11 @@ jobs:
           uv venv .ci/research-venv --python 3.12
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\research-venv\Scripts\python.exe'
           uv pip install --python $python runtime/python
+      - name: Existing managed-research composition regression
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\research-venv\Scripts\python.exe'
+          & $python -m unittest tests.zn_agent.core.test_user_browser_managed_research_resident.UserBrowserManagedResearchResidentTests.test_final_resident_composition_uses_readable_managed_adapter -v
       - name: Research evidence core regression
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
