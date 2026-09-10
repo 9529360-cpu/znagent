@@ -45,21 +45,13 @@ def _fingerprint(value: Any) -> str:
 def _compatibility_profile(experience: VerifiedExperience) -> dict[str, Any]:
     expected = dict(experience.expected_outcome or {})
     result = dict(experience.result_features or {})
-    return {
+    profile = {
         "group_key": str(experience.group_key),
         "domains": list(experience.domains),
         "action_kind": str(experience.action_kind or "unknown"),
         "action_variant": expected.get("action_variant"),
         "expected_kind": str(expected.get("kind") or "unknown"),
         "expected_exit_code": expected.get("expected_exit_code"),
-        # A learned procedure is project/workspace local when current execution
-        # produced a workdir fingerprint.  The fingerprint is already the
-        # privacy-safe identity emitted by VerifiedExperience; no raw path is
-        # persisted in the candidate.  Keeping it in the compatibility key
-        # prevents equally-shaped work in project B from maturing or selecting
-        # project A's preference while still allowing different files inside the
-        # same project to reinforce one competence.
-        "project_scope_fingerprint": expected.get("workdir_fingerprint"),
         "effect_class": str(result.get("effect_class") or "unknown"),
         "failure_class": (
             str(result.get("failure_class"))
@@ -67,6 +59,14 @@ def _compatibility_profile(experience: VerifiedExperience) -> dict[str, Any]:
             else None
         ),
     }
+    # Scope only the bounded Git staging competence added by Memory 1.0. This
+    # follows namespace-first retrieval without rewriting the identity of older
+    # unscoped procedural candidates. The value is already a privacy-safe hash;
+    # raw repository paths never enter the candidate.
+    project_scope = expected.get("workdir_fingerprint")
+    if str(expected.get("kind") or "").strip().lower() == "git_path_staged" and project_scope:
+        profile["project_scope_fingerprint"] = project_scope
+    return profile
 
 
 def _stable_anchor(
@@ -268,8 +268,8 @@ def aggregate_candidate_tendencies(
                 {item.situation_evidence_fingerprint for item in supports}
             ),
             "action_signature_variants": len(
-                {item.action_signature_hash for item in supports}
-            ),
+                {item.action_signature_hash for item in supports
+            }),
         }
 
         candidates.append(
