@@ -12,8 +12,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from playwright.sync_api import sync_playwright
-
 from zn_agent.core.config import load_zn_config
 from zn_agent.core.daemon import ResidentRpcServer
 from zn_agent.core.provider_bridge import (
@@ -22,6 +20,7 @@ from zn_agent.core.provider_bridge import (
 )
 
 from test_windows_interactive_user_browser_bridge import (
+    _find_installed_browsers,
     WindowsInteractiveUserBrowserBridgeProviderE2ETests,
 )
 from test_windows_interactive_user_browser_extension import (
@@ -31,28 +30,10 @@ from test_windows_interactive_user_browser_extension import (
 
 
 _HOST = "zn-extension-e2e.test"
+_TITLE = "ZN E2E25 API Docs"
 _USER_COOKIE = "zn_e2e25_user_session=private-user-browser-only"
 _GOAL = "按这个网站的新 API 文档把项目适配一下，然后跑起来确认能用。"
 _MAX_PULSES = 700
-
-
-def _bundled_chromium_executable() -> Path:
-    """Use Playwright's extension-capable Chromium, not branded Chrome/Edge.
-
-    Current stable Chrome and Edge no longer accept the side-load flags used by
-    this real extension fixture. The bundled Chromium keeps the same real
-    browser-window + extension + explicit-current-tab authorization path while
-    avoiding a branded-browser mechanism that is no longer supported.
-    """
-
-    with sync_playwright() as playwright:
-        executable = Path(playwright.chromium.executable_path)
-    if not executable.is_file():
-        raise RuntimeError(
-            "Playwright Chromium is not installed; guarded E2E-25 requires "
-            "`python -m playwright install chromium`"
-        )
-    return executable
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -67,12 +48,12 @@ class _Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if parsed.path == "/docs":
-            body = b"""<!doctype html><html><head><title>ZN E2E25 API Docs</title></head><body>
+            body = f"""<!doctype html><html><head><title>{_TITLE}</title></head><body>
 <h1>Items API version 2</h1>
 <p>Current contract: GET /v2/items</p>
-<pre>{\"items\":[{\"id\":\"alpha\",\"status\":\"ready\"}]}</pre>
+<pre>{{\"items\":[{{\"id\":\"alpha\",\"status\":\"ready\"}}]}}</pre>
 <p>Deprecated: GET /v1/items is removed and returns HTTP 410.</p>
-</body></html>"""
+</body></html>""".encode("utf-8")
             self._write(200, body, "text/html; charset=utf-8")
             return
         if parsed.path == "/v1/items":
@@ -120,6 +101,9 @@ class E2E25ApiDocsCodeAdaptationTests(unittest.TestCase):
         ]
         if not plan.available or not real_routes:
             self.skipTest("E2E-25 real acceptance requires a configured cognitive resource")
+        browsers = _find_installed_browsers()
+        if not browsers:
+            self.fail("interactive Windows runner has neither stable Edge nor Chrome")
 
         repo_root = Path(__file__).resolve().parents[3]
         extension = repo_root / "apps" / "desktop" / "browser-extension"
@@ -131,9 +115,14 @@ class E2E25ApiDocsCodeAdaptationTests(unittest.TestCase):
         seed_url = f"http://{_HOST}:{port}/seed"
         api_base = f"http://127.0.0.1:{port}"
 
-        provider = "playwright-chromium"
-        executable = _bundled_chromium_executable()
-        fixture = _ExtensionBrowserFixture(provider, executable, seed_url, extension)
+        provider, executable = browsers[0]
+        fixture = _ExtensionBrowserFixture(
+            provider,
+            executable,
+            seed_url,
+            extension,
+            window_title_marker=_TITLE,
+        )
         runtime_tmp = tempfile.TemporaryDirectory(prefix="zn-e2e25-")
         resident = None
         rpc = None
