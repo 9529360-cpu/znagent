@@ -45,6 +45,8 @@ _CONTINUATION_INTENT_MARKERS = (
     "continue the investigation",
 )
 
+_OFFICE_SOURCE_KEYS = ("downloads_path", "source_workspace_path")
+
 
 class ProductResearchInformationResidentRuntime(ResearchInformationResidentRuntime):
     """Final product Resident with narrow Research and local Office admission."""
@@ -52,6 +54,34 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         install_local_office_behavior(self)
+
+        # RecoveryBoundedWorkLedger keeps the exact destination authority on the
+        # durable Work thread.  Office ingress also carries an explicitly
+        # authorized source workspace, but does not duplicate the attached
+        # destination path into every event payload.  Normalize that durable
+        # Work evidence at the product boundary before the Office behavior
+        # evaluates its authority preconditions.
+        office_advance = self._advance_event_step
+
+        def advance_with_work_workspace(event, state, *, readiness, learning_evidence, thought=None):
+            payload = getattr(event, "payload", {}) or {}
+            has_office_source = any(str(payload.get(key) or "").strip() for key in _OFFICE_SOURCE_KEYS)
+            if has_office_source and not str(payload.get("workspace_path") or "").strip():
+                thread_id = str(payload.get("work_thread_id") or "").strip()
+                thread = self.work_ledger.get_thread(thread_id) if thread_id else None
+                association = self.work_ledger.workspace_for(thread) if thread is not None else None
+                if association is not None:
+                    payload["workspace_path"] = association.path
+                    event.payload = payload
+            return office_advance(
+                event,
+                state,
+                readiness=readiness,
+                learning_evidence=learning_evidence,
+                thought=thought,
+            )
+
+        self._advance_event_step = advance_with_work_workspace
 
     def _is_research_event(self, event) -> bool:
         # Research Work is a product Work path, not a catch-all replacement for
