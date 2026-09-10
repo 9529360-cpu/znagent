@@ -66,6 +66,26 @@ class LearnedBehaviorResidentTests(unittest.TestCase):
             raise AssertionError(result.reason)
         return event, result
 
+    @staticmethod
+    def _git_candidates(resident):
+        return [
+            item
+            for item in resident.verified_experiences.candidate_tendencies(limit=16)
+            if item.expected_kind == "git_path_staged"
+        ]
+
+    @classmethod
+    def _candidate(cls, resident, *, tendency_id: str | None = None):
+        matches = cls._git_candidates(resident)
+        if tendency_id is not None:
+            matches = [item for item in matches if item.tendency_id == tendency_id]
+        if len(matches) != 1:
+            suffix = f" for tendency {tendency_id}" if tendency_id else ""
+            raise AssertionError(
+                f"expected one matching scoped git competence{suffix}, got {len(matches)}"
+            )
+        return matches[0]
+
     def test_product_builder_uses_memory_learned_behavior_runtime(self):
         with tempfile.TemporaryDirectory() as tmp:
             resident = build_resident_runtime(
@@ -139,6 +159,10 @@ class LearnedBehaviorResidentTests(unittest.TestCase):
             for index, target in enumerate(targets[:4]):
                 self._verified_stage(resident, root, target, index)
 
+            learned = self._candidate(resident)
+            learned_tendency_id = learned.tendency_id
+            learned_variant = learned.applicability.get("stable_action_variant")
+
             for offset, target in enumerate(targets[4:6], start=4):
                 target.write_text(f"drift-{offset}\n", encoding="utf-8")
                 event = resident.enqueue(
@@ -151,13 +175,14 @@ class LearnedBehaviorResidentTests(unittest.TestCase):
                     self.assertIsNone(result)
                     state = resident.store.get_working_state()
                     if state.current_event_id == event.event_id and state.stage == "native_verification":
+                        fast = state.data.get("procedural_fast_path")
+                        self.assertIsInstance(fast, dict)
+                        self.assertEqual(fast.get("status"), "active")
+                        self.assertEqual(fast.get("tendency_id"), learned_tendency_id)
                         reached_verification = True
                         break
                 self.assertTrue(reached_verification)
 
-                # The movement really happened, then current reality changed before
-                # the independent verification pulse. This is a real prediction error,
-                # not a mocked verifier result.
                 self._git(root, "reset", "-q", "HEAD", "--", target.name)
                 verification_result = resident.live_once()
                 self.assertIsNone(verification_result)
@@ -167,47 +192,37 @@ class LearnedBehaviorResidentTests(unittest.TestCase):
                 self.assertEqual(len(event_experiences), 1)
                 self.assertEqual(event_experiences[0].verdict, "contradicted")
 
-                # Resolve current user goal outside the old learned route so the
-                # resident can observe completion without replaying that failed move.
                 self._git(root, "add", "--", target.name)
                 terminal = self._run(resident)
                 self.assertTrue(terminal.success)
 
-            candidate = [
-                item
-                for item in resident.verified_experiences.candidate_tendencies(limit=16)
-                if item.expected_kind == "git_path_staged"
-            ][0]
+            candidate = self._candidate(resident, tendency_id=learned_tendency_id)
             self.assertEqual(candidate.contradiction_count, 2)
             self.assertEqual(candidate.maturity_state, "inhibited")
             self.assertTrue(candidate.inhibited)
+
+            for alternate in self._git_candidates(resident):
+                if alternate.tendency_id == learned_tendency_id:
+                    continue
+                self.assertNotEqual(
+                    alternate.applicability.get("stable_action_variant"),
+                    learned_variant,
+                )
             resident.store.close()
 
             restarted = build_resident_runtime(config={"model": {}}, store_path=db)
-            restored = [
-                item
-                for item in restarted.verified_experiences.candidate_tendencies(limit=16)
-                if item.expected_kind == "git_path_staged"
-            ][0]
+            restored = self._candidate(restarted, tendency_id=learned_tendency_id)
             self.assertTrue(restored.inhibited)
 
             self._git(root, "reset", "-q", "HEAD", "--", targets[6].name)
             self._verified_stage(restarted, root, targets[6], 6)
-            after_one = [
-                item
-                for item in restarted.verified_experiences.candidate_tendencies(limit=16)
-                if item.expected_kind == "git_path_staged"
-            ][0]
+            after_one = self._candidate(restarted, tendency_id=learned_tendency_id)
             self.assertNotEqual(after_one.maturity_state, "practiced")
 
             for index, target in enumerate(targets[7:10], start=7):
                 self._git(root, "reset", "-q", "HEAD", "--", target.name)
                 self._verified_stage(restarted, root, target, index)
-            relearned = [
-                item
-                for item in restarted.verified_experiences.candidate_tendencies(limit=16)
-                if item.expected_kind == "git_path_staged"
-            ][0]
+            relearned = self._candidate(restarted, tendency_id=learned_tendency_id)
             self.assertEqual(relearned.support_count, 8)
             self.assertEqual(relearned.contradiction_count, 2)
             self.assertEqual(relearned.reliability, 0.8)
