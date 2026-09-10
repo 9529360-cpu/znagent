@@ -29,7 +29,6 @@ from test_windows_interactive_user_browser_extension import (
 )
 
 
-_HOST = "zn-extension-e2e.test"
 _TITLE = "ZN E2E25 API Docs"
 _USER_COOKIE = "zn_e2e25_user_session=private-user-browser-only"
 _GOAL = "按这个网站的新 API 文档把项目适配一下，然后跑起来确认能用。"
@@ -112,7 +111,10 @@ class E2E25ApiDocsCodeAdaptationTests(unittest.TestCase):
         server_thread = threading.Thread(target=server.serve_forever, daemon=True)
         server_thread.start()
         port = int(server.server_address[1])
-        seed_url = f"http://{_HOST}:{port}/seed"
+        # The USER Browser and Managed Browser are intentionally separate. Use a
+        # system-resolvable loopback URL so both can reach the same current-page
+        # source without copying the USER Browser's host resolver/session state.
+        seed_url = f"http://127.0.0.1:{port}/seed"
         api_base = f"http://127.0.0.1:{port}"
 
         provider, executable = browsers[0]
@@ -238,6 +240,7 @@ class E2E25ApiDocsCodeAdaptationTests(unittest.TestCase):
                 if pulse % 50 == 0:
                     state = resident.store.get_working_state()
                     runs = resident.work_ledger.list_worker_runs(thread_id=thread_id, limit=64)
+                    current_items = resident.work_ledger.list_work_items(thread_id, limit=128)
                     print(
                         "ZN_E2E25_HEARTBEAT="
                         + json.dumps(
@@ -251,8 +254,17 @@ class E2E25ApiDocsCodeAdaptationTests(unittest.TestCase):
                                         "state": run.state,
                                         "verification": run.verification_status,
                                         "error": str(run.error or "")[:700],
+                                        "result": str(run.result_summary or "")[:900],
                                     }
                                     for run in runs[-10:]
+                                ],
+                                "items": [
+                                    {
+                                        "status": item.status,
+                                        "acceptance": list(item.acceptance_criteria),
+                                        "blocker": str(item.blocker or "")[:700],
+                                    }
+                                    for item in current_items[-14:]
                                 ],
                             },
                             ensure_ascii=False,
