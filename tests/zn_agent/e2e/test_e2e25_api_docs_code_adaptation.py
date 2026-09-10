@@ -12,6 +12,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from playwright.sync_api import sync_playwright
+
 from zn_agent.core.config import load_zn_config
 from zn_agent.core.daemon import ResidentRpcServer
 from zn_agent.core.provider_bridge import (
@@ -20,7 +22,6 @@ from zn_agent.core.provider_bridge import (
 )
 
 from test_windows_interactive_user_browser_bridge import (
-    _find_installed_browsers,
     WindowsInteractiveUserBrowserBridgeProviderE2ETests,
 )
 from test_windows_interactive_user_browser_extension import (
@@ -33,6 +34,25 @@ _HOST = "zn-extension-e2e.test"
 _USER_COOKIE = "zn_e2e25_user_session=private-user-browser-only"
 _GOAL = "按这个网站的新 API 文档把项目适配一下，然后跑起来确认能用。"
 _MAX_PULSES = 700
+
+
+def _bundled_chromium_executable() -> Path:
+    """Use Playwright's extension-capable Chromium, not branded Chrome/Edge.
+
+    Current stable Chrome and Edge no longer accept the side-load flags used by
+    this real extension fixture. The bundled Chromium keeps the same real
+    browser-window + extension + explicit-current-tab authorization path while
+    avoiding a branded-browser mechanism that is no longer supported.
+    """
+
+    with sync_playwright() as playwright:
+        executable = Path(playwright.chromium.executable_path)
+    if not executable.is_file():
+        raise RuntimeError(
+            "Playwright Chromium is not installed; guarded E2E-25 requires "
+            "`python -m playwright install chromium`"
+        )
+    return executable
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -100,9 +120,6 @@ class E2E25ApiDocsCodeAdaptationTests(unittest.TestCase):
         ]
         if not plan.available or not real_routes:
             self.skipTest("E2E-25 real acceptance requires a configured cognitive resource")
-        browsers = _find_installed_browsers()
-        if not browsers:
-            self.fail("interactive Windows runner has neither stable Edge nor Chrome")
 
         repo_root = Path(__file__).resolve().parents[3]
         extension = repo_root / "apps" / "desktop" / "browser-extension"
@@ -114,7 +131,8 @@ class E2E25ApiDocsCodeAdaptationTests(unittest.TestCase):
         seed_url = f"http://{_HOST}:{port}/seed"
         api_base = f"http://127.0.0.1:{port}"
 
-        provider, executable = browsers[0]
+        provider = "playwright-chromium"
+        executable = _bundled_chromium_executable()
         fixture = _ExtensionBrowserFixture(provider, executable, seed_url, extension)
         runtime_tmp = tempfile.TemporaryDirectory(prefix="zn-e2e25-")
         resident = None
@@ -163,6 +181,7 @@ class E2E25ApiDocsCodeAdaptationTests(unittest.TestCase):
 
             fixture.start()
             deadline = time.monotonic() + 12.0
+            docs_with_user_cookie = []
             while time.monotonic() < deadline:
                 docs_with_user_cookie = [
                     r for r in server.requests  # type: ignore[attr-defined]
@@ -256,6 +275,7 @@ class E2E25ApiDocsCodeAdaptationTests(unittest.TestCase):
             self.assertIsNotNone(terminal, "E2E-25 did not reach evidence-bound Root completion")
             assert terminal is not None
             self.assertTrue(terminal.success, terminal.reason)
+            self.assertGreater(terminal.model_invocations, 0, "guarded E2E-25 did not use the configured real model")
             root = resident.work_ledger.work_item_for_event(event_id)
             self.assertIsNotNone(root)
             assert root is not None
@@ -315,12 +335,13 @@ class E2E25ApiDocsCodeAdaptationTests(unittest.TestCase):
             read_positions = [i for i, action in enumerate(actions) if action.kind == "read_text" and str(action.data.get("path") or "").endswith("client.py")]
             write_positions = [i for i, action in enumerate(actions) if action.kind == "write_text"]
             self.assertTrue(read_positions and write_positions)
+            self.assertEqual(len(write_positions), 1, "representative adaptation should make one minimal source write")
             self.assertLess(min(read_positions), min(write_positions), "existing source was not Body-read before mutation")
             self.assertTrue(all(Path(str(action.data.get("path") or action.output)).resolve().is_relative_to(workspace.resolve()) for action in actions if action.kind == "write_text"))
             self.assertTrue(any(action.kind == "command" and action.success for action in actions))
 
-            git_state = resident.body.act("git_state", event_id=event_id, root=str(workspace))
-            git_diff = resident.body.act("git_diff", event_id=event_id, root=str(workspace))
+            git_state = resident.body.act("git_state", event_id=event_id, path=str(workspace))
+            git_diff = resident.body.act("git_diff", event_id=event_id, path=str(workspace))
             fresh_file = resident.body.act("read_text", event_id=event_id, path=str(client), max_chars=5000)
             self.assertTrue(git_state.success)
             self.assertTrue(git_diff.success)
