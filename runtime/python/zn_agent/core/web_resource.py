@@ -93,17 +93,19 @@ class TavilyWebResource:
         for index, result in enumerate(raw.get("results") or []):
             if not isinstance(result, dict):
                 continue
+            metadata = {
+                key: result[key]
+                for key in ("score", "published_date")
+                if result.get(key) is not None
+            }
+            metadata["provider"] = self.name
             items.append(
                 WebSearchItem(
                     title=str(result.get("title") or ""),
                     url=str(result.get("url") or ""),
                     description=str(result.get("content") or ""),
                     position=index + 1,
-                    metadata={
-                        key: result[key]
-                        for key in ("score", "published_date")
-                        if result.get(key) is not None
-                    },
+                    metadata=metadata,
                 )
             )
         return items
@@ -124,33 +126,42 @@ class TavilyWebResource:
             url = str(result.get("url") or fallback)
             title = str(result.get("title") or "")
             content = str(result.get("raw_content") or result.get("content") or "")
+            metadata = {"sourceURL": url, "title": title, "provider": self.name}
+            if url in normalized:
+                metadata["requestedURL"] = url
             documents.append(
                 WebDocument(
                     url=url,
                     title=title,
                     content=content,
                     raw_content=content,
-                    metadata={"sourceURL": url, "title": title},
+                    metadata=metadata,
                 )
             )
         for failed in raw.get("failed_results") or []:
             if not isinstance(failed, dict):
                 continue
             url = str(failed.get("url") or fallback)
+            metadata = {"sourceURL": url, "provider": self.name}
+            if url in normalized:
+                metadata["requestedURL"] = url
             documents.append(
                 WebDocument(
                     url=url,
                     error=str(failed.get("error") or "extraction failed"),
-                    metadata={"sourceURL": url},
+                    metadata=metadata,
                 )
             )
         for failed_url in raw.get("failed_urls") or []:
             url = str(failed_url or fallback)
+            metadata = {"sourceURL": url, "provider": self.name}
+            if url in normalized:
+                metadata["requestedURL"] = url
             documents.append(
                 WebDocument(
                     url=url,
                     error="extraction failed",
-                    metadata={"sourceURL": url},
+                    metadata=metadata,
                 )
             )
         return documents
