@@ -12,7 +12,6 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.chart import BarChart, Reference
 
 from zn_agent.core.provider_bridge import build_resident_runtime
-from zn_agent.core.recovery_bounded_work import RecoveryBoundedWorkLedger
 from zn_agent.core.spreadsheet_work import AMOUNT_NUMBER_FORMAT
 
 TASK = "把昨天那个表整理一下，重复项去掉，金额列统一格式，别动原文件，给我一个处理好的版本。"
@@ -38,10 +37,10 @@ class E2E10SpreadsheetCleanupTests(unittest.TestCase):
             sheet.cell(index, 3).number_format = formats[index - 2]
         workbook.save(path)
 
-    @staticmethod
-    def _setup(base: Path, project: Path, thread_id: str):
+    def _setup(self, base: Path, project: Path, thread_id: str):
         resident = build_resident_runtime(config={"model": {}}, store_path=base / "kernel.db")
-        ledger = RecoveryBoundedWorkLedger(resident)
+        self.addCleanup(resident.store.close)
+        ledger = resident.work_ledger
         ledger.create_thread(thread_id=thread_id)
         ledger.attach_workspace(thread_id, project)
         return resident, ledger
@@ -105,14 +104,16 @@ class E2E10SpreadsheetCleanupTests(unittest.TestCase):
             actions = self._actions(resident, run.event.event_id)
             self.assertEqual(sum(item.kind == "write_xlsx_copy" for item in actions), 1)
             self.assertGreaterEqual(sum(item.kind == "inspect_xlsx" for item in actions), 3)
-            items = ledger.list_work_items("e2e10", limit=64)
-            evidence_item = next(item for item in items if "spreadsheet_cleanup_work:v1" in item.acceptance_criteria)
+            evidence_item = next(
+                item
+                for item in ledger.list_work_items("e2e10", limit=64)
+                if "spreadsheet_cleanup_work:v1" in item.acceptance_criteria
+            )
             evidence = json.loads(evidence_item.result)
             self.assertEqual(evidence["status"], "complete")
             self.assertTrue(evidence["verification"]["source_sha256_unchanged"])
             self.assertTrue(evidence["verification"]["zero_exact_duplicate_rows"])
             self.assertTrue(evidence["verification"]["amount_number_format_uniform"])
-            resident.store.close()
 
     def test_two_yesterday_files_and_ambiguous_amount_columns_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -128,13 +129,12 @@ class E2E10SpreadsheetCleanupTests(unittest.TestCase):
             self._stamp(first, -1)
             self._stamp(second, -1)
             before = (self._sha(first), self._sha(second))
-            resident, ledger = self._setup(base, project, "ambiguous-source")
+            _, ledger = self._setup(base, project, "ambiguous-source")
             _, run = ledger.submit("ambiguous-source", TASK, payload={"downloads_path": str(downloads)})
             self.assertFalse(run.success)
             self.assertIn("ambiguous_source", run.reason)
             self.assertEqual((self._sha(first), self._sha(second)), before)
             self.assertFalse(list(project.glob("*.xlsx")))
-            resident.store.close()
 
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -150,13 +150,12 @@ class E2E10SpreadsheetCleanupTests(unittest.TestCase):
             workbook.save(source)
             self._stamp(source, -1)
             before = self._sha(source)
-            resident, ledger = self._setup(base, project, "ambiguous-amount")
+            _, ledger = self._setup(base, project, "ambiguous-amount")
             _, run = ledger.submit("ambiguous-amount", TASK, payload={"downloads_path": str(downloads)})
             self.assertFalse(run.success)
             self.assertIn("ambiguous_amount_column", run.reason)
             self.assertEqual(self._sha(source), before)
             self.assertFalse(list(project.glob("*.xlsx")))
-            resident.store.close()
 
     def test_formula_and_complex_workbook_fail_closed(self) -> None:
         for mode in ("formula", "chart"):
@@ -180,13 +179,12 @@ class E2E10SpreadsheetCleanupTests(unittest.TestCase):
                 workbook.save(source)
                 self._stamp(source, -1)
                 before = self._sha(source)
-                resident, ledger = self._setup(base, project, f"blocked-{mode}")
+                _, ledger = self._setup(base, project, f"blocked-{mode}")
                 _, run = ledger.submit(f"blocked-{mode}", TASK, payload={"downloads_path": str(downloads)})
                 self.assertFalse(run.success)
                 self.assertIn("unsupported_workbook_structure", run.reason)
                 self.assertEqual(self._sha(source), before)
                 self.assertFalse(list(project.glob("*.xlsx")))
-                resident.store.close()
 
     def test_source_drift_and_output_collision_stop_without_overwrite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -214,7 +212,6 @@ class E2E10SpreadsheetCleanupTests(unittest.TestCase):
             self.assertFalse(run.success)
             self.assertIn("stale_source_evidence", run.reason)
             self.assertFalse((project / "sales-cleaned.xlsx").exists())
-            resident.store.close()
 
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -235,7 +232,6 @@ class E2E10SpreadsheetCleanupTests(unittest.TestCase):
             self.assertEqual(destination.read_bytes(), b"sentinel")
             self.assertEqual(self._sha(source), before)
             self.assertFalse([item for item in self._actions(resident, run.event.event_id) if item.kind == "write_xlsx_copy"])
-            resident.store.close()
 
 
 if __name__ == "__main__":
