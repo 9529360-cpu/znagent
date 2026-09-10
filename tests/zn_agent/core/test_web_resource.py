@@ -43,6 +43,7 @@ class WebResourceTests(unittest.TestCase):
                                 "url": "https://example.test/a",
                                 "content": "evidence",
                                 "score": 0.9,
+                                "published_date": "2026-09-10",
                             }
                         ]
                     }
@@ -54,6 +55,8 @@ class WebResourceTests(unittest.TestCase):
         self.assertEqual(items[0].title, "ZN result")
         self.assertEqual(items[0].description, "evidence")
         self.assertEqual(items[0].position, 1)
+        self.assertEqual(items[0].metadata["provider"], "tavily")
+        self.assertEqual(items[0].metadata["published_date"], "2026-09-10")
         _url, call = client.calls[0]
         self.assertEqual(call["headers"]["Authorization"], "Bearer key")
         self.assertEqual(call["headers"]["X-Client-Name"], "zn-agent")
@@ -90,7 +93,10 @@ class WebResourceTests(unittest.TestCase):
             ["https://example.test/a", "https://example.test/b"]
         )
         self.assertEqual(docs[0].content, "body")
+        self.assertEqual(docs[0].metadata["provider"], "tavily")
+        self.assertEqual(docs[0].metadata["requestedURL"], "https://example.test/a")
         self.assertEqual(docs[1].error, "denied")
+        self.assertEqual(docs[1].metadata["provider"], "tavily")
 
     def test_http_failure_is_resource_error_not_fake_observation(self):
         client = _Client([_Response({}, status_code=429, text="rate limited")])
