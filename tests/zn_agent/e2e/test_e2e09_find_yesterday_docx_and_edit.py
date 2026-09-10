@@ -11,7 +11,6 @@ from docx import Document
 from docx.shared import Pt
 
 from zn_agent.core.provider_bridge import build_resident_runtime
-from zn_agent.core.recovery_bounded_work import RecoveryBoundedWorkLedger
 from zn_agent.core.work import WorkMessage
 
 TASK = "找到我昨天下载的那份合同，把付款日期改成我们说好的日期，保存到项目文件夹。"
@@ -53,21 +52,22 @@ class E2E09FindYesterdayDocxAndEditTests(unittest.TestCase):
         doc.add_paragraph("没有合同付款日期字段。")
         doc.save(path)
 
-    @staticmethod
-    def _setup(base: Path, project: Path, thread_id: str):
+    def _setup(self, base: Path, project: Path, thread_id: str, *, agreed: bool = True):
         resident = build_resident_runtime(config={"model": {}}, store_path=base / "kernel.db")
-        ledger = RecoveryBoundedWorkLedger(resident)
+        self.addCleanup(resident.store.close)
+        ledger = resident.work_ledger
         thread = ledger.create_thread(thread_id=thread_id)
         ledger.attach_workspace(thread.thread_id, project)
-        ledger._append(
-            thread,
-            WorkMessage(
-                message_id=f"fixture-{thread_id}",
-                thread_id=thread.thread_id,
-                role="user",
-                text=AGREED,
-            ),
-        )
+        if agreed:
+            ledger._append(
+                thread,
+                WorkMessage(
+                    message_id=f"fixture-{thread_id}",
+                    thread_id=thread.thread_id,
+                    role="user",
+                    text=AGREED,
+                ),
+            )
         return resident, ledger
 
     @staticmethod
@@ -131,15 +131,17 @@ class E2E09FindYesterdayDocxAndEditTests(unittest.TestCase):
             actions = self._actions(resident, run.event.event_id)
             self.assertEqual(sum(item.kind == "write_docx_copy" for item in actions), 1)
             self.assertGreaterEqual(sum(item.kind == "inspect_docx" for item in actions), 4)
-            items = ledger.list_work_items("e2e09", limit=64)
-            evidence_item = next(item for item in items if "local_document_work:v1" in item.acceptance_criteria)
+            evidence_item = next(
+                item
+                for item in ledger.list_work_items("e2e09", limit=64)
+                if "local_document_work:v1" in item.acceptance_criteria
+            )
             evidence = json.loads(evidence_item.result)
             self.assertEqual(evidence["status"], "complete")
             self.assertTrue(evidence["verification"]["source_unchanged"])
             self.assertTrue(evidence["verification"]["payment_date_exact"])
             self.assertEqual(evidence["source_path"], str(target.resolve()))
             self.assertEqual(evidence["destination_path"], str(destination.resolve()))
-            resident.store.close()
 
     def test_two_plausible_yesterday_contracts_stop_with_zero_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -164,7 +166,6 @@ class E2E09FindYesterdayDocxAndEditTests(unittest.TestCase):
             self.assertEqual(first.read_bytes(), before[first])
             self.assertEqual(second.read_bytes(), before[second])
             self.assertFalse([item for item in self._actions(resident, run.event.event_id) if item.kind == "write_docx_copy"])
-            resident.store.close()
 
     def test_missing_agreed_date_and_multiple_payment_targets_stop_before_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -177,16 +178,12 @@ class E2E09FindYesterdayDocxAndEditTests(unittest.TestCase):
             self._contract(target)
             self._stamp(target, -1)
             before = target.read_bytes()
-            resident = build_resident_runtime(config={"model": {}}, store_path=base / "kernel.db")
-            ledger = RecoveryBoundedWorkLedger(resident)
-            ledger.create_thread(thread_id="missing")
-            ledger.attach_workspace("missing", project)
+            _, ledger = self._setup(base, project, "missing", agreed=False)
             _, run = ledger.submit("missing", TASK, payload={"downloads_path": str(downloads)})
             self.assertFalse(run.success)
             self.assertIn("agreed_date_ambiguous", run.reason)
             self.assertEqual(target.read_bytes(), before)
             self.assertFalse(list(project.glob("*.docx")))
-            resident.store.close()
 
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -198,13 +195,12 @@ class E2E09FindYesterdayDocxAndEditTests(unittest.TestCase):
             self._contract(target, payment_dates=("2026年9月15日", "2026年9月16日"))
             self._stamp(target, -1)
             before = target.read_bytes()
-            resident, ledger = self._setup(base, project, "multi-target")
+            _, ledger = self._setup(base, project, "multi-target")
             _, run = ledger.submit("multi-target", TASK, payload={"downloads_path": str(downloads)})
             self.assertFalse(run.success)
             self.assertIn("ambiguous_payment_date_target", run.reason)
             self.assertEqual(target.read_bytes(), before)
             self.assertFalse(list(project.glob("*.docx")))
-            resident.store.close()
 
     def test_source_drift_after_binding_rejects_stale_evidence_and_creates_no_copy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -233,7 +229,6 @@ class E2E09FindYesterdayDocxAndEditTests(unittest.TestCase):
             self.assertIn("stale_source_evidence", run.reason)
             self.assertFalse((project / "contract-updated.docx").exists())
             self.assertTrue(any("外部刚刚更新的条款" in value.text for value in Document(target).paragraphs))
-            resident.store.close()
 
 
 if __name__ == "__main__":
