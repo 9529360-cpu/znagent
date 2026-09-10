@@ -1,0 +1,54 @@
+name: E2E25 Current Docs Adaptation Acceptance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/e2e25-browser-coding-local-result.yml'
+      - 'tests/zn_agent/core/test_e2e25_current_reference_and_workspace_read_baseline.py'
+      - 'runtime/python/zn_agent/core/broad_goal_research_resident.py'
+      - 'runtime/python/zn_agent/core/broad_goal_completion_resident.py'
+      - 'runtime/python/zn_agent/core/current_api_docs_adaptation_resident.py'
+      - 'runtime/python/zn_agent/core/provider_bridge.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e25-current-docs-adaptation-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: 'true'
+  PYTHONUTF8: '1'
+  PYTHONUNBUFFERED: '1'
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+jobs:
+  baseline-gap:
+    name: Baseline current-reference and pre-write-read gaps
+    runs-on: [self-hosted, Windows, X64, zn-interactive]
+    timeout-minutes: 10
+    steps:
+      - name: Require configured interactive Windows host
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "E2E-25 baseline requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+          if ($env:RUNNER_NAME -ne 'zn-interactive') {
+            throw "E2E-25 baseline requires zn-interactive; got $env:RUNNER_NAME"
+          }
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Run focused current-main gap tests
+        run: |
+          uv python install 3.12
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          uv run --python 3.12 python -m unittest -v tests.zn_agent.core.test_e2e25_current_reference_and_workspace_read_baseline
