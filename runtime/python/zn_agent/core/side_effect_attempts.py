@@ -50,8 +50,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             started_at TEXT NOT NULL,
             completed_at TEXT,
             result_action_id TEXT,
-            result_success INTEGER,
-            resolved_at TEXT
+            result_success INTEGER
         );
         CREATE INDEX IF NOT EXISTS idx_resident_side_effect_attempt
             ON {TABLE}(event_id, signature_hash, started_at DESC);
@@ -88,12 +87,6 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         END;
         """
     )
-    columns = {
-        str(row["name"] if isinstance(row, sqlite3.Row) else row[1])
-        for row in conn.execute(f"PRAGMA table_info({TABLE})").fetchall()
-    }
-    if "resolved_at" not in columns:
-        conn.execute(f"ALTER TABLE {TABLE} ADD COLUMN resolved_at TEXT")
 
 
 def start_attempt(
@@ -123,7 +116,7 @@ def start_attempt(
 def attempt(conn: sqlite3.Connection, attempt_id: str) -> sqlite3.Row | None:
     return conn.execute(
         f"SELECT attempt_id,event_id,signature_hash,kind,status,started_at,"
-        f"completed_at,result_action_id,result_success,resolved_at FROM {TABLE} WHERE attempt_id=?",
+        f"completed_at,result_action_id,result_success FROM {TABLE} WHERE attempt_id=?",
         (attempt_id,),
     ).fetchone()
 
@@ -162,16 +155,14 @@ def resolve_attempt(
     status: str,
     evidence_action_id: str | None = None,
 ) -> int:
-    now = utc_now()
     cursor = conn.execute(
         f"UPDATE {TABLE} SET status=?,completed_at=COALESCE(completed_at,?),"
-        "result_action_id=COALESCE(result_action_id,?),resolved_at=COALESCE(resolved_at,?) "
+        "result_action_id=COALESCE(result_action_id,?) "
         "WHERE attempt_id=? AND event_id=? AND status IN ('started','observed')",
         (
             status,
-            now,
+            utc_now(),
             evidence_action_id,
-            now,
             attempt_id,
             event_id,
         ),
@@ -180,13 +171,15 @@ def resolve_attempt(
 
 
 def user_resolution_status(decision: str) -> str:
-    """Map one explicit operator decision to an audit-distinct terminal status."""
+    """Map an explicit user decision to an audit-distinct terminal status."""
 
     normalized = str(decision or "").strip().lower()
     try:
         return USER_RESOLUTION_STATUS[normalized]
     except KeyError as exc:
-        raise ValueError(f"unsupported uncertain side-effect decision: {normalized or '<empty>'}") from exc
+        raise ValueError(
+            f"unsupported uncertain side-effect decision: {normalized or '<empty>'}"
+        ) from exc
 
 
 def resolve_user_attempt(
@@ -200,12 +193,10 @@ def resolve_user_attempt(
     """Persist explicit user authority without impersonating machine evidence."""
 
     status = user_resolution_status(decision)
-    now = resolved_at or utc_now()
     cursor = conn.execute(
-        f"UPDATE {TABLE} SET status=?,completed_at=COALESCE(completed_at,?),"
-        "resolved_at=COALESCE(resolved_at,?) "
+        f"UPDATE {TABLE} SET status=?,completed_at=COALESCE(completed_at,?) "
         "WHERE attempt_id=? AND event_id=? AND status IN ('started','observed')",
-        (status, now, now, attempt_id, event_id),
+        (status, resolved_at or utc_now(), attempt_id, event_id),
     )
     return int(cursor.rowcount)
 
@@ -223,7 +214,7 @@ def replay_blocking_attempt(
     placeholders = ",".join("?" for _ in normalized_statuses)
     return conn.execute(
         f"SELECT attempt_id,event_id,signature_hash,kind,status,started_at,"
-        f"completed_at,result_action_id,result_success,resolved_at FROM {TABLE} "
+        f"completed_at,result_action_id,result_success FROM {TABLE} "
         "WHERE event_id=? AND signature_hash=? "
         f"AND status IN ({placeholders}) ORDER BY started_at DESC LIMIT 1",
         (event_id, signature_hash, *normalized_statuses),
@@ -244,7 +235,7 @@ def event_attempts(
     return list(
         conn.execute(
             f"SELECT attempt_id,event_id,signature_hash,kind,status,started_at,"
-            f"completed_at,result_action_id,result_success,resolved_at FROM {TABLE} "
+            f"completed_at,result_action_id,result_success FROM {TABLE} "
             f"WHERE event_id=? AND status IN ({placeholders}) "
             "ORDER BY started_at DESC LIMIT ?",
             (event_id, *normalized_statuses, max(1, int(limit))),
