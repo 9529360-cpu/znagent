@@ -37,6 +37,7 @@ Product-closed
 | --- | --- | --- |
 | Resident Self / Body / Senses / Situation / Thought / Will | CONNECTED + VERIFIED | 真实任务广度仍需扩大 |
 | Durable Work / restart recovery | CONNECTED + VERIFIED | 更长周期、跨天和更多真实任务上的连续体验仍需扩大 |
+| Research & Information Work | VERIFIED NARROW; E2E-01/02/03 representative paths closed | bounded public-web multi-source search→extract、source identity/provenance/freshness/conflict、evidence-grounded cognition、same-Work restart continuation、optional exact-workspace Markdown fresh reread 已验证；不是 arbitrary Deep Research/authenticated-browser research/general citation engine/knowledge graph/vector DB/recursive swarm |
 | Uncertain outside-world side effects | VERIFIED NARROW; E2E-36 representative path closed | exact replay-sensitive attempt 跨 restart 保持 fail closed；显式 user resolution 与 machine evidence 分离，retry authority 只终结一个旧 attempt 并要求 fresh guarded attempt；不是通用 exactly-once 或任意第三方 recovery |
 | Work continuity / steering | VERIFIED NARROW; E2E-27/33/35 representative paths closed | natural-language same-Work steering、plan-version replan、stale old-worker gating、restart continuation，以及 bounded next-day status-first reconstruction/continue 已验证；更广长期使用仍开放 |
 | Managed Browser / BrowserScene | CONNECTED + VERIFIED NARROW | 已有 bounded BrowserScene、tab/history、exact scene actions、causal popup、file transfer、stateless/stateful control clicks；复杂 frames/dialogs/general keyboard/OCR/任意网页仍未覆盖 |
@@ -129,6 +130,22 @@ CONNECTED + VERIFIED NARROW / PARTIAL UX
 复杂 multi-workstream 展示、长期任务解释质量、面向普通用户的阻塞/完成依据表达仍需扩大。
 
 ## 代表性 E2E closure
+
+### E2E-01 / E2E-02 / E2E-03 — Research & Information Work 1.0
+
+2026-09-10 已验证并合并一个 bounded representative path。普通用户 research language 进入 active product Resident 后，复用 existing configured `WebResource` 做 multi-source search→extract；search candidate/snippet/provider answer 不被当作证据，只有 successfully extracted source-document content 进入 bounded Evidence Pack。
+
+source identity 通过 canonical HTTP(S) URL 统一，保留 requested/observed URL、provider provenance、captured/published freshness 与 extraction failure；同 canonical source 通过多个 provider 只计一个独立 source，unexpected cross-host drift 以 identity mismatch 拒绝。跨来源冲突保持为 first-class structured conflict，不做静默平均/选择。
+
+model synthesis 只产生 candidate claims。promoted finding/recommendation 必须携带 exact source ID + exact observed excerpt；numeric/date/price anchors 额外做本地支持检查，unsupported claim 被拒绝。all providers unavailable、no cognition 或少于两个独立 readable sources 都 block，不回退到 model memory。
+
+ambiguity 只在 same-Work bounded context 下处理：唯一 referent 可直接继续；0/多个 plausible referents 必须先问用户且 zero search。research bundle 持久化在 existing Work ledger；restart 后可从 still-fresh evidence 继续 synthesis，不重复 acquisition。
+
+E2E-02 只在唯一 attached Work workspace 写真实 UTF-8 Markdown；写后通过 existing Body + `observe_file_identity` fresh observe、exact reread、再次 identity compare 和 required section/source-ID/content verification 才完成。多个 plausible destination 时 fail closed 且 zero mutation。
+
+实现通过 PR #246 squash merge 到 canonical `main`，merge SHA `f77e5f5d6b93af04f0bbb974dedea6529dbc9934`。最终 PR head `66526479b4e205a2123476375d5602b097748bb5` 的 applicable workflows 全绿：ZN CI #1784、Research E2E #14、Work Recovery #406、Managed Browser #344、Windows Interactive Desktop #363、Memory & Learned Behavior #41、E2E28-34 #120、E2E25 #55。
+
+明确边界：这是 `VERIFIED NARROW / representative path closed`，不是 arbitrary-internet Deep Research、authenticated-browser research、arbitrary PDF/DOCX/XLSX/slides/multimedia research、general citation engine、knowledge graph/vector DB、recursive research swarm 或 cross-device research sync。
 
 ### E2E-36 — uncertain side effect across restart
 
@@ -233,11 +250,12 @@ Windows 当前已有 Machine Capability / Application Awareness V1、exact admit
 
 下面是仍然真实存在的“广度/产品体验”缺口，不再把已经关闭的代表性 E2E 当新开发任务：
 
-1. **Cross-surface real tasks**：在 E2E-24 bounded closure 之外，Browser + Desktop + File/Terminal/Application 更复杂任务的连续完成率和 recovery。
-2. **Browser/User Browser breadth**：真实站点变化、复杂 frame/dialog/navigation、更多授权/用户在场边界；E2E-08 只覆盖代表性 OTP path。
-3. **Long-horizon experience**：在现有 E2E-27/33/35 continuity、E2E-28/34 supervision substrate 上扩大超过 bounded yesterday reference 的跨天/长周期、多 workstream 真实使用与 progress/explanation UX。
-4. **Windows/application breadth**：在 E2E-15 bounded same-process safe modal closure 和当前 machine/application substrate 之外，由真实 E2E 暴露的应用语义、跨进程/system dialog、复杂窗口/系统能力缺口。
-5. **Upgrade continuity**：installed N -> N+1 的身份、数据、Work、rollback/uncertain-effect 连续性仍未 product-close。
+1. **Research breadth**：E2E-01/02/03 bounded closure 之外的 authenticated research、PDF/复杂 source extraction、citation UX、更多 surface 组合和更长周期 evidence refresh。
+2. **Cross-surface real tasks**：在 E2E-24 bounded closure 之外，Browser + Desktop + File/Terminal/Application 更复杂任务的连续完成率和 recovery。
+3. **Browser/User Browser breadth**：真实站点变化、复杂 frame/dialog/navigation、更多授权/用户在场边界；E2E-08 只覆盖代表性 OTP path。
+4. **Long-horizon experience**：在现有 E2E-27/33/35 continuity、E2E-28/34 supervision substrate 上扩大超过 bounded yesterday reference 的跨天/长周期、多 workstream 真实使用与 progress/explanation UX。
+5. **Windows/application breadth**：在 E2E-15 bounded same-process safe modal closure 和当前 machine/application substrate 之外，由真实 E2E 暴露的应用语义、跨进程/system dialog、复杂窗口/系统能力缺口。
+6. **Upgrade continuity**：installed N -> N+1 的身份、数据、Work、rollback/uncertain-effect 连续性仍未 product-close。
 
 如果 current main 不能从真实 E2E 唯一确定下一开发任务，应按真实用户任务阻塞程度选择，而不是凭空新增 roadmap。
 
@@ -245,6 +263,7 @@ Windows 当前已有 Machine Capability / Application Awareness V1、exact admit
 
 当前实现不等于：
 
+- arbitrary-internet Deep Research / authenticated-browser research / general citation engine；
 - 完整 multi-agent orchestration 平台；
 - general-purpose DAG scheduler / recursive delegation；
 - 所有 MFA；
@@ -303,4 +322,3 @@ Acceptance coverage:
 No destructive `StructuredMemory` or identity migration was required. Provenance for this trust-bearing slice comes from the existing durable verified-experience store; `StructuredMemory` is not upgraded into an action-authority source.
 
 Explicit remaining boundary: no general multi-step procedure engine, general personal memory UI, cross-device memory, arbitrary skill code generation, or universal provider-independent open-ended reasoning is claimed.
-
