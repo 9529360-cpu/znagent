@@ -119,6 +119,7 @@ class FirecrawlWebResource:
                 for key in ("score", "category", "publishedDate", "published_date")
                 if result.get(key) is not None
             }
+            metadata["provider"] = self.name
             items.append(
                 WebSearchItem(
                     title=title,
@@ -138,7 +139,7 @@ class FirecrawlWebResource:
                 results.append(
                     WebDocument(
                         url=url,
-                        metadata={"sourceURL": url, "requestedURL": url},
+                        metadata={"sourceURL": url, "requestedURL": url, "provider": self.name},
                         error="Blocked: URL targets a private, internal, unresolved, or unsafe network address",
                     )
                 )
@@ -153,7 +154,7 @@ class FirecrawlWebResource:
                 results.append(
                     WebDocument(
                         url=url,
-                        metadata={"sourceURL": url, "requestedURL": url},
+                        metadata={"sourceURL": url, "requestedURL": url, "provider": self.name},
                         error=f"Firecrawl scrape failed: {exc}",
                     )
                 )
@@ -169,7 +170,7 @@ class FirecrawlWebResource:
                     WebDocument(
                         url=final_url,
                         title=title,
-                        metadata={"sourceURL": final_url, "requestedURL": url},
+                        metadata={"sourceURL": final_url, "requestedURL": url, "provider": self.name},
                         error="Blocked: redirected URL targets a private, internal, unresolved, or unsafe network address",
                     )
                 )
@@ -181,6 +182,7 @@ class FirecrawlWebResource:
             normalized_metadata = dict(metadata)
             normalized_metadata["sourceURL"] = final_url
             normalized_metadata["requestedURL"] = url
+            normalized_metadata["provider"] = self.name
             if title:
                 normalized_metadata.setdefault("title", title)
             results.append(

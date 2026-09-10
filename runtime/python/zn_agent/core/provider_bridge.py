@@ -280,10 +280,13 @@ def build_resident_runtime(
     from .desktop_modal_recovery_behavior import (
         install_desktop_modal_recovery_behavior,
     )
-    from .learned_behavior_resident import MemoryLearnedBehaviorResidentRuntime
+    from .research_information_product_resident import (
+        ProductResearchInformationResidentRuntime,
+    )
     from .user_browser_causal_popup_behavior import (
         install_user_browser_causal_popup_behavior,
     )
+    from .web_resource import build_zn_web_resource
 
     effective_config = config if config is not None else load_zn_config()
     resident_cfg = effective_config.get("zn_resident") or {}
@@ -304,7 +307,19 @@ def build_resident_runtime(
         ),
     )
 
-    resident = MemoryLearnedBehaviorResidentRuntime(kernel=kernel, budget=budget)
+    research_web_resource = None
+    research_web_error = None
+    try:
+        research_web_resource = build_zn_web_resource(effective_config)
+    except Exception as exc:
+        research_web_error = f"{type(exc).__name__}: {exc}"
+
+    resident = ProductResearchInformationResidentRuntime(
+        kernel=kernel,
+        budget=budget,
+        research_web_resource=research_web_resource,
+        research_web_error=research_web_error,
+    )
     install_user_browser_causal_popup_behavior(resident)
     install_browser_file_desktop_handoff_behavior(resident)
     install_desktop_modal_recovery_behavior(resident)

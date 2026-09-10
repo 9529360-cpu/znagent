@@ -1,0 +1,82 @@
+name: Research and Information Work E2E
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI: 'true'
+  TZ: UTC
+  PYTHONUTF8: '1'
+  PYTHONUNBUFFERED: '1'
+  ZN_AGENT_HOME: ${{ github.workspace }}/.ci/zn-research-home
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+concurrency:
+  group: zn-research-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  research-information-work:
+    name: E2E-01-03 / Windows
+    runs-on: [self-hosted, Windows, X64, zn-ci]
+    timeout-minutes: 20
+    env:
+      UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare isolated runtime
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:ZN_AGENT_HOME | Out-Null
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/research-venv -ErrorAction SilentlyContinue
+          uv venv .ci/research-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\research-venv\Scripts\python.exe'
+          uv pip install --python $python runtime/python
+      - name: Existing managed-research composition regression
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\research-venv\Scripts\python.exe'
+          & $python -m unittest tests.zn_agent.core.test_user_browser_managed_research_resident.UserBrowserManagedResearchResidentTests.test_final_resident_composition_uses_readable_managed_adapter -v
+      - name: Research evidence core regression
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\research-venv\Scripts\python.exe'
+          & $python tests/zn_agent/core/test_research_information_work.py -v
+      - name: Research Resident failover and blocker regression
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\research-venv\Scripts\python.exe'
+          & $python tests/zn_agent/core/test_research_information_resident.py -v
+      - name: E2E-01 multi-source research
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\research-venv\Scripts\python.exe'
+          & $python tests/zn_agent/e2e/test_e2e01_multi_source_research.py -v
+      - name: E2E-02 research to editable file
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\research-venv\Scripts\python.exe'
+          & $python tests/zn_agent/e2e/test_e2e02_research_to_editable_file.py -v
+      - name: E2E-03 ambiguity and restart continuity
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\research-venv\Scripts\python.exe'
+          & $python tests/zn_agent/e2e/test_e2e03_ambiguous_research_context.py -v

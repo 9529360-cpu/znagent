@@ -20,6 +20,7 @@ class _Client:
                     title="Exa result",
                     url="https://example.test/a",
                     highlights=["first", "second"],
+                    publishedDate="2026-09-10",
                 )
             ]
         )
@@ -32,6 +33,7 @@ class _Client:
                     title="A",
                     url="https://example.test/a",
                     text="document body",
+                    publishedDate="2026-09-09",
                 )
             ]
         )
@@ -45,6 +47,8 @@ class ExaWebResourceTests(unittest.TestCase):
         self.assertEqual(items[0].title, "Exa result")
         self.assertEqual(items[0].description, "first second")
         self.assertEqual(items[0].position, 1)
+        self.assertEqual(items[0].metadata["provider"], "exa")
+        self.assertEqual(items[0].metadata["publishedDate"], "2026-09-10")
         self.assertEqual(client.search_calls[0][1]["num_results"], 4)
         self.assertEqual(client.search_calls[0][1]["contents"], {"highlights": True})
 
@@ -54,8 +58,12 @@ class ExaWebResourceTests(unittest.TestCase):
             ["https://example.test/a", "https://example.test/missing"]
         )
         self.assertEqual(docs[0].content, "document body")
+        self.assertEqual(docs[0].metadata["provider"], "exa")
+        self.assertEqual(docs[0].metadata["publishedDate"], "2026-09-09")
+        self.assertEqual(docs[0].metadata["requestedURL"], "https://example.test/a")
         missing = [doc for doc in docs if doc.url.endswith("/missing")][0]
         self.assertIn("no document", missing.error.lower())
+        self.assertEqual(missing.metadata["provider"], "exa")
         self.assertEqual(client.extract_calls[0][1], {"text": True})
 
     def test_builder_selects_exa_from_zn_config_without_old_plugin_registry(self):

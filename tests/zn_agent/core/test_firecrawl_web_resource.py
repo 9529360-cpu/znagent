@@ -40,6 +40,7 @@ class FirecrawlWebResourceTests(unittest.TestCase):
                                     "url": "https://a.test",
                                     "description": "evidence",
                                     "score": 0.8,
+                                    "publishedDate": "2026-09-10",
                                 }
                             ]
                         },
@@ -54,6 +55,8 @@ class FirecrawlWebResourceTests(unittest.TestCase):
         self.assertEqual(items[0].title, "A")
         self.assertEqual(items[0].description, "evidence")
         self.assertEqual(items[0].metadata["score"], 0.8)
+        self.assertEqual(items[0].metadata["provider"], "firecrawl")
+        self.assertEqual(items[0].metadata["publishedDate"], "2026-09-10")
         url, call = client.calls[0]
         self.assertEqual(url, "https://api.firecrawl.dev/v2/search")
         self.assertEqual(call["json"]["limit"], 4)
@@ -77,6 +80,7 @@ class FirecrawlWebResourceTests(unittest.TestCase):
         self.assertEqual(client.calls, [])
         self.assertIsNotNone(docs[0].error)
         self.assertIn("Blocked", docs[0].error)
+        self.assertEqual(docs[0].metadata["provider"], "firecrawl")
 
     def test_extract_rechecks_redirected_final_url(self):
         client = _Client(
@@ -106,6 +110,7 @@ class FirecrawlWebResourceTests(unittest.TestCase):
         self.assertEqual(docs[0].url, "http://10.0.0.8/internal")
         self.assertIn("redirected URL", docs[0].error)
         self.assertEqual(docs[0].content, "")
+        self.assertEqual(docs[0].metadata["provider"], "firecrawl")
 
     def test_extract_prefers_markdown_and_preserves_metadata(self):
         client = _Client(
@@ -119,6 +124,7 @@ class FirecrawlWebResourceTests(unittest.TestCase):
                             "metadata": {
                                 "title": "Page",
                                 "sourceURL": "https://public.test/final",
+                                "publishedDate": "2026-09-09",
                             },
                         },
                     }
@@ -135,6 +141,9 @@ class FirecrawlWebResourceTests(unittest.TestCase):
         self.assertEqual(docs[0].url, "https://public.test/final")
         self.assertEqual(docs[0].content, "# body")
         self.assertEqual(docs[0].metadata["title"], "Page")
+        self.assertEqual(docs[0].metadata["provider"], "firecrawl")
+        self.assertEqual(docs[0].metadata["publishedDate"], "2026-09-09")
+        self.assertEqual(docs[0].metadata["requestedURL"], "https://public.test/start")
 
     def test_explicit_builder_uses_zn_firecrawl_config(self):
         client = _Client([])
