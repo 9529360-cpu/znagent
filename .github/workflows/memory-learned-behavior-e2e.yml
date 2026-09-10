@@ -60,8 +60,18 @@ jobs:
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\memory-venv\Scripts\python.exe'
           & $python tests/zn_agent/e2e/test_e2e38_learned_verified_workflow.py -v
-      - name: E2E-39 learned path drift
+      - name: E2E-39A pre-action drift blocks learned mutation
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\memory-venv\Scripts\python.exe'
-          & $python tests/zn_agent/e2e/test_e2e39_learned_path_drift.py -v
+          & $python tests/zn_agent/e2e/test_e2e39_learned_path_drift.py E2E39LearnedPathDrift.test_pre_action_drift_blocks_mutation -v
+      - name: E2E-39B prediction drift inhibits and persists
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\memory-venv\Scripts\python.exe'
+          & $python tests/zn_agent/e2e/test_e2e39_learned_path_drift.py E2E39LearnedPathDrift.test_prediction_drift_inhibits_and_persists -v
+      - name: E2E-39C inhibited competence relearns gradually
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\memory-venv\Scripts\python.exe'
+          & $python tests/zn_agent/e2e/test_e2e39_learned_path_drift.py E2E39LearnedPathDrift.test_inhibited_competence_relearns_gradually -v
