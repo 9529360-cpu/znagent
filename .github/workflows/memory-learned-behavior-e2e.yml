@@ -1,0 +1,62 @@
+name: Memory and Learned Behavior E2E
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI: 'true'
+  TZ: UTC
+  PYTHONUTF8: '1'
+  PYTHONUNBUFFERED: '1'
+  ZN_AGENT_HOME: ${{ github.workspace }}/.ci/zn-memory-home
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+concurrency:
+  group: zn-memory-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  memory-learned-behavior:
+    name: E2E-37-39 / Windows
+    runs-on: [self-hosted, Windows, X64, zn-ci]
+    timeout-minutes: 20
+    env:
+      UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare isolated runtime
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:ZN_AGENT_HOME | Out-Null
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/memory-venv -ErrorAction SilentlyContinue
+          uv venv .ci/memory-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\memory-venv\Scripts\python.exe'
+          uv pip install --python $python runtime/python
+      - name: Run Memory and Learned Behavior representative E2E
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\memory-venv\Scripts\python.exe'
+          & $python tests/zn_agent/e2e/test_e2e37_preferred_working_style.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $python tests/zn_agent/e2e/test_e2e38_learned_verified_workflow.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $python tests/zn_agent/e2e/test_e2e39_learned_path_drift.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
