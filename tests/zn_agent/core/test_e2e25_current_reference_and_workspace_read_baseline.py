@@ -182,6 +182,58 @@ class E2E25CurrentReferenceAndWorkspaceReadTests(unittest.TestCase):
         phase = resident._next_worker_phase(root, [research_meta], [accepted_research])
         self.assertEqual(phase, ("coding", "read_workspace_file"))
 
+    def test_root_verification_requires_all_current_plan_phase_and_body_evidence(self) -> None:
+        resident = self._resident()
+        root = self._root()
+        meta_specs = [
+            ("research-meta", "research", "research_current_page"),
+            ("read-meta", "coding", "read_workspace_file"),
+            ("write-meta", "coding", "write_file"),
+            ("run-meta", "coding", "run_python"),
+            ("review-meta", "review", "run_python"),
+        ]
+        meta_items = [
+            self._item(
+                item_id,
+                status="completed",
+                criterion=f"delegated_worker_evidence: {executor}/{action}",
+            )
+            for item_id, executor, action in meta_specs
+        ]
+        runs = [
+            SimpleNamespace(
+                work_item_id=item_id,
+                executor_kind=executor,
+                plan_version=1,
+                state="completed",
+                verification_status="accepted",
+            )
+            for item_id, executor, _action in meta_specs
+        ]
+        real_items = [
+            self._item("page", status="completed", criterion="page_read: http://127.0.0.1/docs"),
+            self._item("read", status="completed", criterion="file_read: client.py"),
+            self._item("write", status="completed", criterion="text_equals: client.py"),
+            self._item("coding-run", status="completed", criterion="command_exit: 0"),
+            self._item("review-run", status="completed", criterion="command_exit: 0"),
+        ]
+        resident.work_ledger.list_work_items = lambda _thread_id, limit=256: meta_items + real_items
+        resident.work_ledger.list_worker_runs = lambda thread_id, limit=256: runs
+
+        complete, reason = resident._e2e25_required_phase_evidence(root)
+        self.assertTrue(complete, reason)
+
+        runs[0].verification_status = "execution_failed"
+        complete, reason = resident._e2e25_required_phase_evidence(root)
+        self.assertFalse(complete)
+        self.assertIn("research/research_current_page", reason)
+
+        runs[0].verification_status = "accepted"
+        real_items[0].status = "blocked"
+        complete, reason = resident._e2e25_required_phase_evidence(root)
+        self.assertFalse(complete)
+        self.assertIn("page_read", reason)
+
     def test_workspace_read_parser_rejects_absolute_parent_missing_and_sensitive_paths(self) -> None:
         resident = self._resident()
         root = self._root()
