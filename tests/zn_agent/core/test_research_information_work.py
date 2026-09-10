@@ -30,6 +30,12 @@ class ResearchInformationWorkTests(unittest.TestCase):
             captured_at="2026-09-10T10:00:00+00:00",
         )
 
+    def _failed_source(self, url: str, error: str = "timeout"):
+        return build_source_observation(
+            WebSearchItem(title="failed", url=url, position=1, metadata={"provider": "fixture"}),
+            WebDocument(url=url, error=error, metadata={"provider": "fixture", "sourceURL": url}),
+        )
+
     def test_canonical_identity_dedupes_tracking_variants_and_provider_duplicates(self) -> None:
         left = self._source("https://example.com/pricing?utm_source=exa", "Alpha price is $99.", provider="exa")
         right = self._source("https://example.com/pricing#price", "Alpha price is $99.", provider="tavily")
@@ -74,15 +80,25 @@ class ResearchInformationWorkTests(unittest.TestCase):
 
     def test_failed_extraction_is_not_counted_as_read_and_partial_success_is_retained(self) -> None:
         good = self._source("https://a.example/source", "Fact A.")
-        bad = build_source_observation(
-            WebSearchItem(title="bad", url="https://b.example/source", position=2),
-            WebDocument(url="https://b.example/source", error="timeout", metadata={"provider": "fixture", "sourceURL": "https://b.example/source"}),
-        )
+        bad = self._failed_source("https://b.example/source")
         bundle = ResearchBundle(goal="research", resolved_subject="subject", search_queries=["subject"], sources=[good, bad])
         self.assertEqual([item.source_id for item in independent_read_sources(bundle)], [good.source_id])
         self.assertIn("fewer than two independent extracted sources", research_completion_errors(bundle))
         self.assertEqual(bad.extraction_status, "failed")
         self.assertEqual(bad.error, "timeout")
+
+    def test_two_failed_extractions_do_not_block_three_successful_sources_from_remaining_usable(self) -> None:
+        observations = [
+            self._failed_source("https://failed-a.example/source"),
+            self._source("https://good-a.example/source", "Fact A."),
+            self._failed_source("https://failed-b.example/source"),
+            self._source("https://good-b.example/source", "Fact B."),
+            self._source("https://good-c.example/source", "Fact C."),
+        ]
+        bounded = dedupe_source_observations(observations)
+        self.assertEqual(len(bounded), 5)
+        self.assertEqual(len(independent_read_sources(ResearchBundle(goal="research", resolved_subject="subject", search_queries=["subject"], sources=bounded))), 3)
+        self.assertEqual(len([item for item in bounded if item.extraction_status == "failed"]), 2)
 
     def test_unsupported_numeric_claim_is_not_promoted_even_with_unrelated_valid_quote(self) -> None:
         source = self._source("https://a.example/price", "Alpha price is $99 today.")
