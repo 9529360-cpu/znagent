@@ -44,6 +44,7 @@ Product-closed
 | User Browser Bridge | CONNECTED + VERIFIED NARROW | E2E-05 authenticated research→mutation、E2E-07 causal child-tab、E2E-08 OTP user-presence representative paths 已关闭；真实网站和更复杂认证/导航仍需扩大 |
 | File / workspace tasks | CONNECTED + VERIFIED NARROW | 歧义来源、复杂整理和更广任务类型 |
 | Local Documents & Spreadsheet Work | VERIFIED NARROW; E2E-09/10 representative paths closed | bounded real DOCX payment-date edit + real XLSX exact-dedup/amount-format cleanup 已验证；复杂 Office package/公式/表格/图表/宏/任意文档编辑仍开放；不是 Word complete / Excel complete / Office Suite complete |
+| Document Research Completion | VERIFIED NARROW; E2E-12 representative path closed | one exact attached-workspace real DOCX、1–3 explicit placeholders、existing public WebResource search→extract、prompt-safe evidence screening、two-source replacement support、deterministic omitted-conflict blocking、new-copy mutation 与 fresh reopen verification 已验证；不是 arbitrary DOCX completion、arbitrary Deep Research、general prompt-injection solution 或 Word/Office complete |
 | Windows machine/application awareness | CONNECTED + VERIFIED NARROW | inventory/identity/launch/fresh verification 与 exact admitted existing-window activation 已有；任意应用生命周期/窗口拓扑仍未 product-close |
 | Windows unexpected-modal recovery | VERIFIED NARROW; E2E-15 representative path verified | exact same-process directly owned UIA modal、blocked parent、唯一 deterministic safe defer/continue action、input 前 fresh revalidation、单次 side effect、modal absence + exact parent readiness、old RuntimeId rejection + fresh re-ground 已在真实 WinForms `ShowDialog()` path 验证；任意 dialog/UAC/credentials/save-discard/file-picker/payment/installer/update decisions 不在 closure 内 |
 | Desktop computer use | CONNECTED + VERIFIED NARROW | 通用跨应用连续任务、目标漂移和更复杂应用语义 |
@@ -160,6 +161,20 @@ exact-head applicable gates 全绿：Local Documents and Spreadsheet Work E2E #9
 
 这两个 closure 没有增加 WordAgent/ExcelAgent/OfficeAgent、第二 Resident、Office GUI automation、第二 file truth 或 TXT package hack。依赖仅新增 `python-docx==1.2.0` 与 `openpyxl==3.1.5`。准确状态是 **VERIFIED NARROW / representative paths closed**，明确不是 Word complete、Excel complete、Office Suite complete，也不代表任意 DOCX/XLSX/PDF/PPT、宏、字段、嵌入对象、公式、表、图表、pivot/Power Query/external links 已支持。
 
+### E2E-12 — Document Research Completion 1.0
+
+2026-09-11 已验证一个 bounded representative path。普通用户自然语言进入同一 active Product Resident / Root Work / Body；只接受 exact Root Work attached workspace 内一个真实 `.docx`，第一版只处理 1–3 个显式 `【待补充：...】` placeholder。target identity 由 deterministic DOCX inspection 绑定，模型不能选择 document path、destination、Body action、tool、permission、mutation scope 或 completion truth。
+
+Research 复用 existing configured `WebResource` search→extract 和已有 source identity / exact quote / anchor validation。Search snippet/provider answer 只作 discovery；successfully extracted source-document observations 才是 evidence，至少需要两个独立 readable sources。retrieved content 在 synthesis 前经过 deterministic instruction-like prompt-injection source screening；被拒绝来源保留 source ID/canonical URL/evidence fingerprint/reason provenance，但不进入 synthesis evidence pack。模型 synthesis 仍只是 candidate。
+
+mutation 前还必须经过本地 safety gate：每个 replacement 至少由两个独立 prompt-safe extracted sources 支持，support quote 必须是该 source 的 exact observed substring，并对 replacement 中 price/date/percentage anchors 逐来源一致校验；此外 deterministic target-relevant source-anchor consistency 会扫描 readable evidence，所以即使模型返回合法 schema 和 `conflicts: []`，只要同目标存在矛盾 price/date/percentage anchor 也会以 `source_conflict` 阻断 mutation。两个 merge blocker 都有反例：模型漏报 `$99` vs `$129` source conflict，以及恶意 retrieved content 诱导出完全合法 schema replacement；两者在 `write_docx_completion_copy` 前停止，completed-copy mutation count 为 0。
+
+成功路径只写新的 `-completed.docx`；source bytes 保持不变，run-aware span replacement 不使用 `Paragraph.text` 重建段落，并验证 non-target text、run topology、run formatting、all placeholders replaced。随后 fresh reopen source/destination，重新比较 identity、source target set、structure fingerprint 和 destination placeholder count；只有全部现实验证成立才把 Root Work 标记完成。unknown、insufficient prompt-safe sources、invalid schema/support、source/target drift、unsupported OOXML 和 output collision 都 all-or-nothing fail closed。
+
+PR #250 implementation exact-head `65d5ec40f705f4e6e4c624b4a3287f27a949d8dc` 的 applicable workflows 最终全部 success：Document Research Completion E2E #5、ZN CI #1804、Research and Information Work E2E #34、Local Documents and Spreadsheet Work E2E #17、ZN Windows Interactive Desktop E2E #378、Memory and Learned Behavior E2E #61。E2E-12 #5 实际跑了 Python 3.11/3.12/3.13 dependency/core compatibility、merge-blocker counterexamples、real localhost HTTP + real DOCX E2E-12、E2E-01 和 E2E-09 regressions；ZN CI 的 Python core、Electron/TypeScript 和 source-boundary jobs 全部 success。
+
+准确状态是 **VERIFIED NARROW / representative path closed**。这不代表 arbitrary DOCX completion、arbitrary document structures、arbitrary-internet Deep Research、authenticated-browser research、universal prompt-injection detection、general citation/reconciliation、Word complete 或 Office Suite complete。
+
 ### E2E-36 — uncertain side effect across restart
 
 2026-09-10 已验证 bounded representative path。对 replay-sensitive mutation，Resident 在 dispatch 前先持久化 exact side-effect attempt；当 crash/restart 后结果仍不确定时继续 `user_decision_required`，不会把 timeout/中断解释成普通失败，也不会 blind replay。
@@ -263,8 +278,8 @@ Windows 当前已有 Machine Capability / Application Awareness V1、exact admit
 
 下面是仍然真实存在的“广度/产品体验”缺口，不再把已经关闭的代表性 E2E 当新开发任务：
 
-1. **Research breadth**：E2E-01/02/03 bounded closure 之外的 authenticated research、PDF/复杂 source extraction、citation UX、更多 surface 组合和更长周期 evidence refresh。
-2. **Local Office breadth**：E2E-09/10 bounded closure 之外的复杂 DOCX/XLSX 结构、更广文档/表格操作、Browser/Research/Desktop 与 Office 的组合；不得把本次 closure 扩写成 Word complete / Excel complete / Office Suite complete。
+1. **Research breadth**：E2E-01/02/03 与 E2E-12 bounded closures 之外的 authenticated research、PDF/复杂 source extraction、citation UX、更多 surface 组合和更长周期 evidence refresh。
+2. **Local Office breadth**：E2E-09/10/12 bounded closures 之外的复杂 DOCX/XLSX 结构、更广文档/表格操作、Browser/Research/Desktop 与 Office 的更广组合；不得把这些 closures 扩写成 Word complete / Excel complete / Office Suite complete。
 3. **Cross-surface real tasks**：在 E2E-24 bounded closure 之外，Browser + Desktop + File/Terminal/Application 更复杂任务的连续完成率和 recovery。
 4. **Browser/User Browser breadth**：真实站点变化、复杂 frame/dialog/navigation、更多授权/用户在场边界；E2E-08 只覆盖代表性 OTP path。
 5. **Long-horizon experience**：在现有 E2E-27/33/35 continuity、E2E-28/34 supervision substrate 上扩大超过 bounded yesterday reference 的跨天/长周期、多 workstream 真实使用与 progress/explanation UX。
@@ -278,6 +293,7 @@ Windows 当前已有 Machine Capability / Application Awareness V1、exact admit
 当前实现不等于：
 
 - arbitrary-internet Deep Research / authenticated-browser research / general citation engine；
+- arbitrary DOCX completion / universal prompt-injection defense；
 - Word complete / Excel complete / Office Suite complete / arbitrary Office automation；
 - 完整 multi-agent orchestration 平台；
 - general-purpose DAG scheduler / recursive delegation；
