@@ -240,10 +240,14 @@ class E2E11BrowserDataToSpreadsheetTests(unittest.TestCase):
                 any(item.kind == "append_xlsx_rows_copy" for item in self._actions(resident, event.event_id))
             )
 
-    def test_real_multiple_tables_output_collision_and_complex_xlsx_fail_closed(self):
-        with self.subTest("multiple tables"), tempfile.TemporaryDirectory() as tmp:
+    def test_real_multiple_tables_fail_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            resident, ledger, workspace, session_id, page_id = self._setup(root, "two-tables", path="/two")
+            resident, ledger, workspace, session_id, page_id = self._setup(
+                root,
+                "two-tables",
+                path="/two",
+            )
             source = workspace / "sales.xlsx"
             self._workbook(source)
             _, run = ledger.submit(
@@ -255,7 +259,8 @@ class E2E11BrowserDataToSpreadsheetTests(unittest.TestCase):
             self.assertIn("ambiguous_browser_table", run.reason)
             self.assertFalse((workspace / "sales-webdata.xlsx").exists())
 
-        with self.subTest("collision"), tempfile.TemporaryDirectory() as tmp:
+    def test_real_output_collision_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             resident, ledger, workspace, session_id, page_id = self._setup(root, "collision")
             source = workspace / "sales.xlsx"
@@ -271,7 +276,8 @@ class E2E11BrowserDataToSpreadsheetTests(unittest.TestCase):
             self.assertIn("output_collision", run.reason)
             self.assertEqual(destination.read_bytes(), b"sentinel")
 
-        with self.subTest("formula"), tempfile.TemporaryDirectory() as tmp:
+    def test_real_complex_xlsx_formula_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             resident, ledger, workspace, session_id, page_id = self._setup(root, "formula")
             source = workspace / "sales.xlsx"
