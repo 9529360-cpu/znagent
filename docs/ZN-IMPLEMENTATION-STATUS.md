@@ -2,7 +2,7 @@
 
 这是一份当前实现事实表，不是 roadmap。真实代码、真实 Git、真实测试和真实 E2E 高于本文件。
 
-Updated: 2026-09-10
+Updated: 2026-09-11
 
 ## 仓库状态规则
 
@@ -43,6 +43,7 @@ Product-closed
 | Managed Browser / BrowserScene | CONNECTED + VERIFIED NARROW | 已有 bounded BrowserScene、tab/history、exact scene actions、causal popup、file transfer、stateless/stateful control clicks；复杂 frames/dialogs/general keyboard/OCR/任意网页仍未覆盖 |
 | User Browser Bridge | CONNECTED + VERIFIED NARROW | E2E-05 authenticated research→mutation、E2E-07 causal child-tab、E2E-08 OTP user-presence representative paths 已关闭；真实网站和更复杂认证/导航仍需扩大 |
 | File / workspace tasks | CONNECTED + VERIFIED NARROW | 歧义来源、复杂整理和更广任务类型 |
+| Local Documents & Spreadsheet Work | VERIFIED NARROW; E2E-09/10 representative paths closed | bounded real DOCX payment-date edit + real XLSX exact-dedup/amount-format cleanup 已验证；复杂 Office package/公式/表格/图表/宏/任意文档编辑仍开放；不是 Word complete / Excel complete / Office Suite complete |
 | Windows machine/application awareness | CONNECTED + VERIFIED NARROW | inventory/identity/launch/fresh verification 与 exact admitted existing-window activation 已有；任意应用生命周期/窗口拓扑仍未 product-close |
 | Windows unexpected-modal recovery | VERIFIED NARROW; E2E-15 representative path verified | exact same-process directly owned UIA modal、blocked parent、唯一 deterministic safe defer/continue action、input 前 fresh revalidation、单次 side effect、modal absence + exact parent readiness、old RuntimeId rejection + fresh re-ground 已在真实 WinForms `ShowDialog()` path 验证；任意 dialog/UAC/credentials/save-discard/file-picker/payment/installer/update decisions 不在 closure 内 |
 | Desktop computer use | CONNECTED + VERIFIED NARROW | 通用跨应用连续任务、目标漂移和更复杂应用语义 |
@@ -147,6 +148,18 @@ E2E-02 只在唯一 attached Work workspace 写真实 UTF-8 Markdown；写后通
 
 明确边界：这是 `VERIFIED NARROW / representative path closed`，不是 arbitrary-internet Deep Research、authenticated-browser research、arbitrary PDF/DOCX/XLSX/slides/multimedia research、general citation engine、knowledge graph/vector DB、recursive research swarm 或 cross-device research sync。
 
+### E2E-09 / E2E-10 — Local Documents & Spreadsheet Work 1.0
+
+2026-09-11 已验证并合并两个 bounded representative paths。实现 PR #248 final head 为 `37a7c2c975525ab01ba101ef6708d04bdd43a0b4`，已 squash merge 到 canonical `main`，merge SHA `22a0537ffe082a695355da42fde9a09d576916a8`。
+
+E2E-09 从普通自然语言进入现有 Product Resident / Work / Body，在显式授权 source workspace 与 attached project workspace 内 bounded 枚举昨天 DOCX。只有唯一候选、唯一付款日期目标和当前 Work 中唯一已确认日期时才允许修改；真实 `python-docx` / WordprocessingML 解析后按 visible-text-to-run offsets 只修改 touched `Run.text`，不使用 `Paragraph.text` 重建段落。保存新 DOCX 后 reopen 并验证日期、结构/run formatting 和 source identity；源文件保持不变。两份 plausible DOCX、缺约定日期、0/多个付款日期、source drift 或 unsupported OOXML package 均 fail closed / zero mutation。
+
+E2E-10 同样进入现有 Resident/Work/Body，但是 deterministic zero-model path：真实 XLSX 只在 one-sheet、rectangular scalar-data、唯一 exact `金额` / `Amount` header 范围内处理。duplicate 定义为 normalized read 后全部业务单元格完全相同，保留首行且稳定顺序；numeric amount cells 保持 numeric type/value，只把 `number_format` 统一成 `#,##0.00`。输出新 XLSX，源 byte identity 不变，并 reopen 验证 headers/rows/order/types/formats/other columns/source。多候选、金额列歧义、formula-heavy/complex workbook、source drift、output collision 均 fail closed。
+
+exact-head applicable gates 全绿：Local Documents and Spreadsheet Work E2E #9、ZN CI #1796、Research and Information Work E2E #26、ZN Work Recovery E2E #416、ZN Managed Browser E2E #354、ZN Windows Interactive Desktop E2E #372、Memory and Learned Behavior E2E #53。Office workflow 中 Python 3.11/3.12/3.13 dependency+core compatibility、E2E-09、E2E-10、natural-file、Research Resident 和 Work Recovery regression 都实际 success，关键 steps 未 skip。
+
+这两个 closure 没有增加 WordAgent/ExcelAgent/OfficeAgent、第二 Resident、Office GUI automation、第二 file truth 或 TXT package hack。依赖仅新增 `python-docx==1.2.0` 与 `openpyxl==3.1.5`。准确状态是 **VERIFIED NARROW / representative paths closed**，明确不是 Word complete、Excel complete、Office Suite complete，也不代表任意 DOCX/XLSX/PDF/PPT、宏、字段、嵌入对象、公式、表、图表、pivot/Power Query/external links 已支持。
+
 ### E2E-36 — uncertain side effect across restart
 
 2026-09-10 已验证 bounded representative path。对 replay-sensitive mutation，Resident 在 dispatch 前先持久化 exact side-effect attempt；当 crash/restart 后结果仍不确定时继续 `user_decision_required`，不会把 timeout/中断解释成普通失败，也不会 blind replay。
@@ -234,7 +247,7 @@ guarded two-provider acceptance 保留；真正配置两个 provider family 时�
 
 Browser 近期 verified narrow slices 包括：
 
-- bounded BrowserScene sensing；
+- bounded `BrowserScene` sensing；
 - tab lifecycle/history；
 - exact BrowserScene focus/type/check/uncheck/navigation；
 - managed causal popup attribution；
@@ -251,11 +264,12 @@ Windows 当前已有 Machine Capability / Application Awareness V1、exact admit
 下面是仍然真实存在的“广度/产品体验”缺口，不再把已经关闭的代表性 E2E 当新开发任务：
 
 1. **Research breadth**：E2E-01/02/03 bounded closure 之外的 authenticated research、PDF/复杂 source extraction、citation UX、更多 surface 组合和更长周期 evidence refresh。
-2. **Cross-surface real tasks**：在 E2E-24 bounded closure 之外，Browser + Desktop + File/Terminal/Application 更复杂任务的连续完成率和 recovery。
-3. **Browser/User Browser breadth**：真实站点变化、复杂 frame/dialog/navigation、更多授权/用户在场边界；E2E-08 只覆盖代表性 OTP path。
-4. **Long-horizon experience**：在现有 E2E-27/33/35 continuity、E2E-28/34 supervision substrate 上扩大超过 bounded yesterday reference 的跨天/长周期、多 workstream 真实使用与 progress/explanation UX。
-5. **Windows/application breadth**：在 E2E-15 bounded same-process safe modal closure 和当前 machine/application substrate 之外，由真实 E2E 暴露的应用语义、跨进程/system dialog、复杂窗口/系统能力缺口。
-6. **Upgrade continuity**：installed N -> N+1 的身份、数据、Work、rollback/uncertain-effect 连续性仍未 product-close。
+2. **Local Office breadth**：E2E-09/10 bounded closure 之外的复杂 DOCX/XLSX 结构、更广文档/表格操作、Browser/Research/Desktop 与 Office 的组合；不得把本次 closure 扩写成 Word complete / Excel complete / Office Suite complete。
+3. **Cross-surface real tasks**：在 E2E-24 bounded closure 之外，Browser + Desktop + File/Terminal/Application 更复杂任务的连续完成率和 recovery。
+4. **Browser/User Browser breadth**：真实站点变化、复杂 frame/dialog/navigation、更多授权/用户在场边界；E2E-08 只覆盖代表性 OTP path。
+5. **Long-horizon experience**：在现有 E2E-27/33/35 continuity、E2E-28/34 supervision substrate 上扩大超过 bounded yesterday reference 的跨天/长周期、多 workstream 真实使用与 progress/explanation UX。
+6. **Windows/application breadth**：在 E2E-15 bounded same-process safe modal closure 和当前 machine/application substrate 之外，由真实 E2E 暴露的应用语义、跨进程/system dialog、复杂窗口/系统能力缺口。
+7. **Upgrade continuity**：installed N -> N+1 的身份、数据、Work、rollback/uncertain-effect 连续性仍未 product-close。
 
 如果 current main 不能从真实 E2E 唯一确定下一开发任务，应按真实用户任务阻塞程度选择，而不是凭空新增 roadmap。
 
@@ -264,6 +278,7 @@ Windows 当前已有 Machine Capability / Application Awareness V1、exact admit
 当前实现不等于：
 
 - arbitrary-internet Deep Research / authenticated-browser research / general citation engine；
+- Word complete / Excel complete / Office Suite complete / arbitrary Office automation；
 - 完整 multi-agent orchestration 平台；
 - general-purpose DAG scheduler / recursive delegation；
 - 所有 MFA；
