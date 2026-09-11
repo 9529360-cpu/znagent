@@ -66,7 +66,7 @@ class E2E09FindYesterdayDocxAndEditTests(unittest.TestCase):
         self.addCleanup(cleanup)
         ledger = resident.work_ledger
         thread = ledger.create_thread(thread_id=thread_id)
-        ledger.attach_workspace(thread.thread_id, project)
+        thread = ledger.attach_workspace(thread.thread_id, project)
         if agreed:
             ledger._append(
                 thread,
