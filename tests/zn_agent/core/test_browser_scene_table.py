@@ -5,6 +5,7 @@ import unittest
 from dataclasses import asdict
 from types import SimpleNamespace
 
+from zn_agent.core.browser import BrowserPlane, BrowserSessionIdentity
 from zn_agent.core.browser_scene_table import PlaywrightBrowserSceneTableMixin
 from zn_agent.core.managed_browser import ManagedBrowserError
 
@@ -22,8 +23,21 @@ class _Handle:
 
 
 class _Harness(PlaywrightBrowserSceneTableMixin):
-    def __init__(self, *, role="table", raw=None, stale=False, main_frame=True):
-        self.session = SimpleNamespace(identity=SimpleNamespace(session_id="session-1"))
+    def __init__(
+        self,
+        *,
+        role="table",
+        raw=None,
+        stale=False,
+        main_frame=True,
+        plane=BrowserPlane.MANAGED,
+    ):
+        identity = BrowserSessionIdentity.create(
+            plane=plane,
+            provider="fake-table-browser",
+            profile_scope="user_existing" if plane is BrowserPlane.USER else "ephemeral",
+        )
+        self.session = SimpleNamespace(identity=identity)
         self.page = SimpleNamespace(main_frame=object())
         frame = self.page.main_frame if main_frame else object()
         self.target = SimpleNamespace(target_id="scene-table-1")
@@ -58,7 +72,7 @@ class _Harness(PlaywrightBrowserSceneTableMixin):
         self.revalidated = 0
 
     def _session(self, session_id):
-        if session_id != "session-1":
+        if session_id != self.session.identity.session_id:
             raise ManagedBrowserError("unknown session")
         return self.session
 
@@ -79,7 +93,8 @@ class _Harness(PlaywrightBrowserSceneTableMixin):
 class BrowserSceneTableTests(unittest.TestCase):
     def test_exact_table_extracts_header_and_data_in_order(self):
         harness = _Harness()
-        table = harness.observe_scene_table("session-1", "scene-table-1", page_id="page-1")
+        session_id = harness.session.identity.session_id
+        table = harness.observe_scene_table(session_id, "scene-table-1", page_id="page-1")
         self.assertEqual(harness.revalidated, 1)
         self.assertEqual(table.page_id, "page-1")
         self.assertEqual(table.target_id, "scene-table-1")
@@ -93,10 +108,18 @@ class BrowserSceneTableTests(unittest.TestCase):
             ],
         )
 
+    def test_user_plane_rejected_before_structured_table_payload_read(self):
+        harness = _Harness(plane=BrowserPlane.USER)
+        session_id = harness.session.identity.session_id
+        with self.assertRaisesRegex(ManagedBrowserError, "managed browser plane"):
+            harness.observe_scene_table(session_id, "scene-table-1", page_id="page-1")
+        self.assertEqual(harness.revalidated, 0)
+        self.assertEqual(harness.handle.calls, [])
+
     def test_hard_caps_are_clamped_to_64_32_512(self):
         harness = _Harness()
         harness.observe_scene_table(
-            "session-1",
+            harness.session.identity.session_id,
             "scene-table-1",
             max_rows=9999,
             max_cells_per_row=9999,
@@ -110,14 +133,14 @@ class BrowserSceneTableTests(unittest.TestCase):
     def test_non_table_rejected_before_table_payload_read(self):
         harness = _Harness(role="button")
         with self.assertRaisesRegex(ManagedBrowserError, "table target"):
-            harness.observe_scene_table("session-1", "scene-table-1")
+            harness.observe_scene_table(harness.session.identity.session_id, "scene-table-1")
         self.assertEqual(harness.revalidated, 1)
         self.assertEqual(harness.handle.calls, [])
 
     def test_non_main_frame_rejected_before_table_payload_read(self):
         harness = _Harness(main_frame=False)
         with self.assertRaisesRegex(ManagedBrowserError, "main-frame"):
-            harness.observe_scene_table("session-1", "scene-table-1")
+            harness.observe_scene_table(harness.session.identity.session_id, "scene-table-1")
         self.assertEqual(harness.handle.calls, [])
 
     def test_detached_malformed_and_provider_failure_are_rejected(self):
@@ -128,8 +151,9 @@ class BrowserSceneTableTests(unittest.TestCase):
         )
         for raw, expected in cases:
             with self.subTest(expected=expected):
+                harness = _Harness(raw=raw)
                 with self.assertRaisesRegex(ManagedBrowserError, expected):
-                    _Harness(raw=raw).observe_scene_table("session-1", "scene-table-1")
+                    harness.observe_scene_table(harness.session.identity.session_id, "scene-table-1")
 
     def test_truncation_signal_is_preserved(self):
         harness = _Harness(
@@ -141,7 +165,7 @@ class BrowserSceneTableTests(unittest.TestCase):
                 "truncated": True,
             }
         )
-        table = harness.observe_scene_table("session-1", "scene-table-1")
+        table = harness.observe_scene_table(harness.session.identity.session_id, "scene-table-1")
         self.assertEqual(table.row_count_observed, 100)
         self.assertTrue(table.truncated)
 
@@ -149,17 +173,19 @@ class BrowserSceneTableTests(unittest.TestCase):
         for reason in ("cell_span", "aria_rowcount_mismatch", "aria_colcount_mismatch"):
             with self.subTest(reason=reason):
                 raw = {"connected": True, "supported": True, "complex_reason": reason}
+                harness = _Harness(raw=raw)
                 with self.assertRaisesRegex(ManagedBrowserError, reason):
-                    _Harness(raw=raw).observe_scene_table("session-1", "scene-table-1")
+                    harness.observe_scene_table(harness.session.identity.session_id, "scene-table-1")
 
     def test_stale_target_rejected_before_table_payload_read(self):
         harness = _Harness(stale=True)
         with self.assertRaisesRegex(ManagedBrowserError, "stale"):
-            harness.observe_scene_table("session-1", "scene-table-1")
+            harness.observe_scene_table(harness.session.identity.session_id, "scene-table-1")
         self.assertEqual(harness.handle.calls, [])
 
     def test_structured_result_does_not_expose_html_or_page_wide_text(self):
-        table = _Harness().observe_scene_table("session-1", "scene-table-1")
+        harness = _Harness()
+        table = harness.observe_scene_table(harness.session.identity.session_id, "scene-table-1")
         serialized = json.dumps(asdict(table), ensure_ascii=False).lower()
         self.assertNotIn("html", serialized)
         self.assertNotIn("page_text", serialized)
