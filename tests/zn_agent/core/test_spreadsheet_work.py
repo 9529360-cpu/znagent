@@ -5,6 +5,8 @@ import unittest
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.cell.rich_text import CellRichText, TextBlock
+from openpyxl.cell.text import InlineFont
 from openpyxl.chart import BarChart, Reference
 
 from zn_agent.core.spreadsheet_work import (
@@ -173,7 +175,7 @@ class SpreadsheetWorkTests(unittest.TestCase):
                     ("订单号", "客户", "金额"),
                     (1001, "A", 1200),
                     ("1002", "B", "99.50"),
-                    ("=1+1", "C", "8.00"),
+                    ("1003", "C", "8.00") if False else ("=1+1", "C", "8.00"),
                 ],
             )
             self.assertEqual(sheet.cell(2, 1).data_type, "n")
@@ -184,6 +186,38 @@ class SpreadsheetWorkTests(unittest.TestCase):
             final = inspect_xlsx_append_target(destination)
             self.assertEqual(final["semantic_fingerprint"], result["destination_semantic_fingerprint"])
             self.assertEqual(final["existing_row_count"], 3)
+
+    def test_rich_text_append_target_fails_closed_without_round_trip_loss(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "rich-text.xlsx"
+            destination = root / "rich-text-webdata.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["订单号", "客户", "金额"])
+            sheet.append([1001, "placeholder", 1200])
+            sheet["B2"] = CellRichText(
+                ["Hello ", TextBlock(InlineFont(b=True), "World")]
+            )
+            workbook.save(source)
+            source_bytes = source.read_bytes()
+
+            inspection = inspect_xlsx_append_target(source)
+            self.assertFalse(inspection["ready"])
+            self.assertEqual(inspection["blocker"], "unsupported_workbook_structure")
+            self.assertIn("rich text", inspection["detail"])
+            with self.assertRaisesRegex(RuntimeError, "unsupported_workbook_structure"):
+                append_xlsx_rows_copy(
+                    source,
+                    destination,
+                    precondition_identity=inspection["identity"],
+                    headers=["订单号", "客户", "金额"],
+                    rows=[["1002", "B", "99.50"]],
+                )
+            self.assertFalse(destination.exists())
+            self.assertEqual(source.read_bytes(), source_bytes)
+            reopened = load_workbook(source, rich_text=True)
+            self.assertIsInstance(reopened.active["B2"].value, CellRichText)
 
     def test_append_header_malformed_row_source_drift_collision_and_complex_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
