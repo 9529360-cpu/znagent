@@ -175,7 +175,7 @@ class SpreadsheetWorkTests(unittest.TestCase):
                     ("订单号", "客户", "金额"),
                     (1001, "A", 1200),
                     ("1002", "B", "99.50"),
-                    ("1003", "C", "8.00") if False else ("=1+1", "C", "8.00"),
+                    ("=1+1", "C", "8.00"),
                 ],
             )
             self.assertEqual(sheet.cell(2, 1).data_type, "n")
