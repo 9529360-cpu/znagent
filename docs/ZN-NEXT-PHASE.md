@@ -2,15 +2,16 @@
 
 这份文件只描述 current `main` 之后的产品选择原则和剩余产品缺口。它不给 updater、rollback、signing、release trust、credential、identity、installer 或 long-term memory 的高风险改动自动授权。
 
-Updated: 2026-09-10
+Updated: 2026-09-11
 
 ## 当前已关闭的 delegated baseline
 
-2026-09-06～2026-09-10 已经形成一组代表性 closure；下一阶段不得重复把它们当“尚未开发”的默认主线。
+2026-09-06～2026-09-11 已经形成一组代表性 closure；下一阶段不得重复把它们当“尚未开发”的默认主线。
 
 已关闭的代表性 baseline：
 
 - **E2E-01 / E2E-02 / E2E-03 Research & Information Work**：普通自然语言 public-web research 已有 bounded representative closure：existing `WebResource` search→extract、多源 source identity/provenance/freshness、冲突保留、claim-to-evidence grounding、同 Work durable continuation/restart，以及唯一 attached workspace 下的可编辑 Markdown fresh reread/identity verification。该 closure 是 `VERIFIED NARROW`，不等于 arbitrary-internet Deep Research、authenticated-browser research、任意 PDF/Office authoring、general citation engine、knowledge graph/vector DB 或 recursive research swarm。
+- **E2E-09 / E2E-10 Local Documents & Spreadsheet Work**：真实 DOCX payment-date edit 与 zero-model XLSX exact-dedup/amount-format cleanup 已有 bounded representative closure；source authority/identity、ambiguity fail-closed、新输出文件和 reopen verification 已验证。实现 PR #248 squash merge 为 `22a0537ffe082a695355da42fde9a09d576916a8`。这不是 Word complete、Excel complete 或 Office Suite complete。
 - **E2E-29**：一个实际 model route 服务多个隔离 WorkerRun；worker 数与模型数不绑定，Root completion 仍由 ZN 独立验收。
 - **E2E-30 / E2E-42**：durable route/privacy policy、ModelRouter hard eligibility、route/provider provenance 与 guarded multiroute acceptance 已按当前 acceptance policy 关闭。closure 包含明确的 owner-approved environment waiver，因为当时缺少第二个真实 provider family；不能宣称已有双真实 provider family 完整生产证据。
 - **E2E-28 / E2E-34**：durable worker progress supervision、heartbeat/no-progress/stall detection、dynamic health-aware routing、bounded retry、policy-safe fallback/reassignment、restart reconciliation、no-replay recovery 已有 guarded real-model representative closure。
@@ -19,7 +20,7 @@ Updated: 2026-09-10
 - **Delegated progress**：durable delegated facts 已 privacy-safe bounded projection 到既有 `work_progress` 和 Resident UI，没有第二套 progress truth。
 - **Dependency/readiness**：durable bounded flat current-plan sibling dependency/readiness 已实现并验证，包括 fan-in、restart durability 与 corrupt/cyclic/dangling fail closed。
 
-这些 closure 证明当前 bounded substrate 已经存在，但不把 ZN 升格为通用 multi-agent platform、general DAG scheduler、无限期后台任务系统或通用 Deep Research 平台。
+这些 closure 证明当前 bounded substrate 已经存在，但不把 ZN 升格为通用 multi-agent platform、general DAG scheduler、无限期后台任务系统、通用 Deep Research 平台或完整 Office 自动化套件。
 
 ## Browser / Windows 已有的代表性 baseline
 
@@ -42,7 +43,7 @@ Current `main` 还已经拥有一批近期真实 Body 能力：
 
 ## 下一阶段产品目标
 
-ZN 的下一阶段不再是“把 delegated Work 基础补齐”，也不再是“补一个 ResearchAgent”。现在更重要的是：把已经存在的 Self、Body、Senses、Situation、Thought、Will、Work、Memory、Research/Web、Browser、Desktop、File、Terminal、Git、Recovery 和 CognitiveResources 组合到更多普通用户真实任务里，并扩大持续性、跨 surface、研究广度和解释质量。
+ZN 的下一阶段不再是“把 delegated Work 基础补齐”，也不再是“补一个 ResearchAgent”或“从头补 Office 基础”。现在更重要的是：把已经存在的 Self、Body、Senses、Situation、Thought、Will、Work、Memory、Research/Web、Browser、Desktop、File、DOCX/XLSX、Terminal、Git、Recovery 和 CognitiveResources 组合到更多普通用户真实任务里，并扩大持续性、跨 surface、研究/文档广度和解释质量。
 
 目标仍然是：
 
@@ -53,7 +54,7 @@ ZN 的下一阶段不再是“把 delegated Work 基础补齐”，也不再是�
 -> 判断真正缺的 cognition / tools / authority / information
 -> direct work 或 bounded delegation
 -> 必要时做 bounded multi-source public-web research
--> 必要时跨 Browser / Desktop / File / Terminal / Application
+-> 必要时跨 Browser / Desktop / File / Office / Terminal / Application
 -> 状态变化后 fresh Sense / Situation / Thought
 -> 遇到 blocker / stall / user steering 时使用现有 supervision/replan/recovery
 -> 独立验证用户真正要的结果
@@ -72,7 +73,7 @@ Current `main` 并不足以唯一指定一个“必然的下一开发任务”�
 
 ```text
 Browser/Web research
--> local File mutation
+-> local File/Office mutation
 -> Desktop/Application continuation
 -> Terminal/Test verification
 ```
@@ -87,9 +88,9 @@ USER Browser existing session
 -> fresh result verification
 ```
 
-当前已有若干两-surface和一个 bounded Research→editable-file 代表性闭环，但复杂三-surface任务、目标漂移、应用/网页状态变化和跨 surface recovery 仍是主要产品广度问题。
+当前已有若干两-surface、一个 bounded Research→editable-file 和 E2E-09/10 Local Office 代表性闭环，但复杂三-surface任务、目标漂移、应用/网页/文档状态变化和跨 surface recovery 仍是主要产品广度问题。
 
-开发规则：只补当前任务实际缺的 Body/Sense/Research/verification 能力，不建立新的“cross-surface framework”或第二套 Research orchestration。
+开发规则：只补当前任务实际缺的 Body/Sense/Research/Office/verification 能力，不建立新的“cross-surface framework”、第二套 Research orchestration 或 OfficeAgent。
 
 ### 2. Browser / User Browser breadth beyond representative slices
 
@@ -134,7 +135,21 @@ E2E-01/02/03 已关闭 bounded public-web Research representative path，因此�
 
 不要因此建立第二个 ResearchAgent、第二套 Work/store/router、general citation engine、knowledge graph/vector DB 或 recursive research swarm。
 
-### 5. Windows / application capability breadth
+### 5. Local Office breadth beyond E2E-09/10
+
+E2E-09/10 已关闭两个 bounded representative paths，因此不要再把“真实 DOCX 修改”或“真实 XLSX 清理”整体描述成完全没有实现。
+
+仍然开放的是：
+
+- 更复杂 DOCX package、headers/footers、fields/content controls、tracked changes、drawings/embedded objects、复杂表格等；
+- XLSX formulas、tables、charts/drawings、pivots、external links/Power Query、merges、多 sheet 等；
+- 更广文档/表格变换，而不是只有付款日期替换和 exact-row dedupe/amount format；
+- Browser/Research/Desktop 与 Office 的真实组合任务，例如 E2E-11/12 类路径；
+- PDF/PPT 等未由 E2E-09/10 覆盖的 Office/document 类任务。
+
+继续复用 existing Product Resident / Work / Body / file identity；不要建立 WordAgent、ExcelAgent、OfficeAgent、第二套 file store 或默认 Office GUI automation。准确状态是 `VERIFIED NARROW`，不是 Word complete、Excel complete 或 Office Suite complete。
+
+### 6. Windows / application capability breadth
 
 Windows Machine Capability / Application Awareness、exact existing-window activation，以及 E2E-15 bounded unexpected-modal recovery 已经存在。后续不应再把“machine/application awareness 尚缺”或“Windows dialog recovery 完全没有”作为空泛基础设施任务。
 
@@ -144,7 +159,7 @@ E2E-15 的准确边界是：exact same-process directly owned UIA modal、parent
 
 不要把这条扩张成“先做完整 OS intelligence layer”。
 
-### 6. Installed-version continuity remains separate
+### 7. Installed-version continuity remains separate
 
 Installed N -> N+1 的 identity/data/Work/uncertain-side-effect continuity 仍未 product-close，但 updater、rollback、signing、release trust 属于高风险边界。
 
@@ -169,6 +184,7 @@ Installed N -> N+1 的 identity/data/Work/uncertain-side-effect continuity 仍�
 
 ```text
 E2E-01/02/03 bounded Research & Information Work representative closure
+E2E-09/10 bounded Local Documents & Spreadsheet Work representative closure
 E2E-30/42 closure 本身
 ResidentHealthJournal dynamic health -> routing 接线
 E2E-28/34 systematic no-progress/stall supervision
@@ -243,6 +259,7 @@ representative E2E closure != entire capability class product-closed
 - multi-agent platform；
 - second Resident / second ModelRouter / second orchestration truth；
 - second ResearchAgent / Research store/router/orchestrator；
+- WordAgent / ExcelAgent / OfficeAgent / second file truth；
 - generic DAG/workflow engine；
 - credential platform；
 - installer/updater/release-trust 大改；

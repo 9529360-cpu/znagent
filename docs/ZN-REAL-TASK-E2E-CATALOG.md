@@ -1,6 +1,6 @@
 # ZN Real Task E2E Catalog
 
-> Acceptance catalog scenarios snapshot: 2026-09-04; acceptance-status overlay synchronized 2026-09-10.
+> Acceptance catalog scenarios snapshot: 2026-09-04; acceptance-status overlay synchronized 2026-09-11.
 >
 > This is a product acceptance set, not a fixture checklist. A scenario counts only when it starts from normal user language and ends with independently verified real outcome evidence. Internal primitive success, worker `done`, model confidence and CI green are not substitutes for the user goal becoming true.
 
@@ -40,6 +40,8 @@ The original 50 scenario definitions below remain stable. The following status n
 | E2E-05 | CLOSED representative path | Real USER Browser authenticated research -> persisted mutation path is verified. This does not claim arbitrary authenticated websites or arbitrary browser mutation. |
 | E2E-07 | CLOSED representative path | Task-scoped causal USER Browser child-tab attribution, causal popup handling, authorization-generation binding, fresh opener reread, child -> root return and unverified-click no-replay are verified. General arbitrary popup/frame complexity remains broader work. |
 | E2E-08 | CLOSED representative path | Standard HTML `autocomplete="one-time-code"`, same explicitly authorized USER tab/generation/origin, manual user completion, fresh re-ground and same-Work resume are verified. ZN does not read/type/store OTP. CAPTCHA, WebAuthn/passkeys, cross-origin IdP handoff, password/payment automation are not supported by this closure. |
+| E2E-09 | CLOSED representative path | Real yesterday DOCX selection is bounded to authorized source + attached project workspaces; only one contract, one agreed Work date and one payment-date target may mutate. Run-aware `python-docx` editing writes a new DOCX, preserves source identity, and reopens/verifies output; ambiguity, source drift and unsupported OOXML fail closed. Not general Word support. |
+| E2E-10 | CLOSED representative path | Zero-model real XLSX cleanup removes exact duplicate business rows stably and normalizes numeric cells under one exact `金额`/`Amount` header to `#,##0.00`, writes a new workbook, preserves source bytes and reopens/verifies values/types/order/format; ambiguity/complex workbook/drift/collision fail closed. Not general Excel support. |
 | E2E-15 | CLOSED representative path | Real WinForms `ShowDialog()` interruption inside one Desktop Work is recovered only when fresh exact same-process direct-owner/UIA-modal/blocked-parent evidence admits exactly one deterministic safe defer/continue action. One dismiss is dispatched, risky update is untouched, modal absence + exact parent readiness are freshly proven, stale UIA RuntimeId is rejected and the original Work re-grounds and completes. Credentials/UAC/security/save-discard/file-picker/payment/installer/update decisions and arbitrary dialogs remain unsupported. |
 | E2E-24 | CLOSED representative path | One normal-language same-Root Work preserves the exact abnormal customer from an explicitly authorized USER Browser tab through one exact yesterday workspace file into the current desktop customer record. The exact file is freshly reread, desktop state is independently re-sensed, stale UIA RuntimeId replacement is re-grounded, and ambiguous file targets fail closed. This is not arbitrary three-surface automation or general RPA. |
 | E2E-27 | CLOSED representative path | Natural-language same-Work steering, plan-version replan, stale old-worker gating and preservation/non-replay of valid historical effects are verified. Broader long-horizon steering remains open. |
@@ -156,6 +158,16 @@ User:
 > “把昨天那个表整理一下，重复项去掉，金额列统一格式，别动原文件，给我一个处理好的版本。”
 
 Must preserve original, produce correct transformed copy, verify row/content invariants.
+
+Representative closure (2026-09-11): E2E-09 and E2E-10 are **CLOSED representative path / VERIFIED NARROW** through the existing active Product Resident / Work / Body lifecycle. Implementation PR #248 final head `37a7c2c975525ab01ba101ef6708d04bdd43a0b4` was squash-merged to canonical `main` as `22a0537ffe082a695355da42fde9a09d576916a8`.
+
+For E2E-09, ZN performs bounded yesterday-DOCX selection only inside an explicitly authorized source workspace plus the exact attached project workspace. It requires one plausible contract, one explicit agreed date from current Work and one payment-date target. Real `python-docx`/WordprocessingML parsing maps visible text to runs and changes only touched `Run.text` values, then saves a new DOCX and reopens it to verify the new date, surrounding topology/run formatting and exact unchanged source identity. Multiple candidates, missing agreed date, zero/multiple payment-date targets, source drift or unsupported OOXML structures fail closed with zero output mutation.
+
+For E2E-10, the representative path is deterministic and asserts `model_invocations == 0`. A real XLSX must be a bounded one-sheet rectangular scalar workbook with one exact `金额` or `Amount` header. Exact duplicate means every normalized business cell in the row is identical; the first occurrence is retained in stable order. Numeric amount cells keep their numeric value/type and only receive `number_format="# ,##0.00"` semantics normalized in implementation as `#,##0.00`. A new XLSX is written; the source byte identity remains unchanged; the output is reopened to verify rows, headers, order, types, formats and unrelated cells. Ambiguous source/header, formulas or complex workbook structures, source drift and output collision fail closed.
+
+Exact-head acceptance before merge was green across Local Documents and Spreadsheet Work E2E #9, ZN CI #1796, Research and Information Work E2E #26, ZN Work Recovery E2E #416, ZN Managed Browser E2E #354, ZN Windows Interactive Desktop E2E #372 and Memory and Learned Behavior E2E #53. The Office workflow actually ran Python 3.11/3.12/3.13 dependency/core compatibility, E2E-09, E2E-10 and the natural-file/Research/Work-Recovery regressions; the key E2E steps were not skipped.
+
+This closure adds no WordAgent, ExcelAgent, OfficeAgent, second Resident, Office GUI automation or second file truth. It does **not** claim Word complete, Excel complete, Office Suite complete, arbitrary Office automation, arbitrary DOCX/XLSX structures, PDF/PPT, macros, fields, embedded objects, formulas, tables, charts, pivots, Power Query or external links.
 
 ### E2E-11 — Browser data into spreadsheet
 
@@ -510,20 +522,21 @@ ZN must reject the claim and continue/replan rather than announce completion.
 
 ## 15. Current implementation selection
 
-The old “first five E2Es to drive orchestration development” ordering is retired because E2E-01/02/03, E2E-29, E2E-30/42, E2E-28/34, E2E-27/33, E2E-35 and E2E-36 now have the representative closures recorded above.
+The old “first five E2Es to drive orchestration development” ordering is retired because E2E-01/02/03, E2E-09/10, E2E-29, E2E-30/42, E2E-28/34, E2E-27/33, E2E-35 and E2E-36 now have the representative closures recorded above.
 
 Do not re-run that historical priority list as a development plan.
 
 Select future work from the catalog by asking which ordinary real task is still blocked on current `main`. Prefer gaps that increase real task breadth, especially:
 
 - Research breadth beyond E2E-01/02/03, such as authenticated research, PDF/complex-source extraction, citation UX and additional surface combinations;
+- Local Office breadth beyond E2E-09/10, including complex DOCX/XLSX structures, broader document/spreadsheet transforms, E2E-11/12 Browser/Research + Office combinations, and other document formats;
 - cross-surface Browser/Desktop/File/Terminal/Application work beyond the bounded E2E-24 representative closure;
 - Browser/User Browser real-site complexity beyond the bounded verified paths;
 - longer-horizon/cross-day use beyond E2E-35's bounded yesterday status-first path, on top of existing steering/supervision/restart mechanisms;
 - user-readable progress, blocker and completion-evidence quality;
 - concrete Windows/application semantic gaps beyond the bounded E2E-15 same-process safe-modal representative closure.
 
-Do not make general DAG scheduling, recursive delegation, a multi-agent platform, a second ResearchAgent, knowledge graph/vector DB, or a general citation engine the default next target. Do not infer permission for Memory/credential/installer/updater/release-trust changes from this catalog.
+Do not make general DAG scheduling, recursive delegation, a multi-agent platform, a second ResearchAgent, WordAgent/ExcelAgent/OfficeAgent, knowledge graph/vector DB, or a general citation engine the default next target. Do not infer permission for Memory/credential/installer/updater/release-trust changes from this catalog.
 
 Implementation remains vertical:
 

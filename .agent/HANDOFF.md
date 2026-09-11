@@ -1,6 +1,6 @@
 # ZN Maintainer Handoff
 
-> Updated: 2026-09-10
+> Updated: 2026-09-11
 >
 > Canonical branch: `main`
 >
@@ -13,30 +13,26 @@
 当前最新已核实 checkpoint（不是永久 HEAD）：
 
 ```text
-Research & Information Work PR #246 final head: 66526479b4e205a2123476375d5602b097748bb5
-PR #246 squash-merged to main as: f77e5f5d6b93af04f0bbb974dedea6529dbc9934
-verified main checkpoint after merge: f77e5f5d6b93af04f0bbb974dedea6529dbc9934
-ZN CI #1784: success
-Research and Information Work E2E #14: success
-ZN Work Recovery E2E #406: success
-ZN Managed Browser E2E #344: success
-ZN Windows Interactive Desktop E2E #363: success
-Memory and Learned Behavior E2E #41: success
-E2E28-34 Real Supervision Recovery Acceptance #120: success
-E2E25 Current Docs Adaptation Acceptance #55: success
+Local Documents & Spreadsheet Work PR #248 final head: 37a7c2c975525ab01ba101ef6708d04bdd43a0b4
+PR #248 squash-merged to main as: 22a0537ffe082a695355da42fde9a09d576916a8
+verified main checkpoint after merge: 22a0537ffe082a695355da42fde9a09d576916a8
+ZN CI #1796: success
+Local Documents and Spreadsheet Work E2E #9: success
+Research and Information Work E2E #26: success
+ZN Work Recovery E2E #416: success
+ZN Managed Browser E2E #354: success
+ZN Windows Interactive Desktop E2E #372: success
+Memory and Learned Behavior E2E #53: success
 ```
 
 历史检查点仍可用于追溯，但不能覆盖上面的 current evidence：
 
 ```text
+Research & Information Work PR #246 final head: 66526479b4e205a2123476375d5602b097748bb5
+PR #246 squash-merged to main as: f77e5f5d6b93af04f0bbb974dedea6529dbc9934
 historical checkpoint: PR #238 merged as 8cd2ff73038bbdba33017f71d91893296b7c082c
 E2E-15 final PR head: f1513a34b798fbb07cfc2d903f63d621c085e90e
 E2E-15 PR #237 merged as: d5a5be80d6d35328685be07fc54be76d1bcc955c
-verified main checkpoint after E2E-15 merge: d5a5be80d6d35328685be07fc54be76d1bcc955c
-ZN CI #1694: success
-ZN Windows Interactive Desktop E2E #293: success
-ZN Work Recovery E2E #329: success
-ZN Managed Browser E2E #279: success
 ```
 
 如果 `main` 已前进，以新代码和新验证为准。
@@ -82,9 +78,19 @@ PR #246 已在 2026-09-10 squash merge 到 canonical `main`，merge SHA `f77e5f5
 
 最终 PR head `66526479b4e205a2123476375d5602b097748bb5` 的 applicable gates 全绿：ZN CI #1784、Research E2E #14、Work Recovery #406、Managed Browser #344、Windows Interactive Desktop #363、Memory & Learned Behavior #41、E2E28-34 #120、E2E25 #55。
 
-一个重要诊断事实：此前 ZN CI #1783 在 35-minute Python Kernel timeout 前记录过 existing managed-research composition test 的 `ERROR`，但 exact failing test 单独在最终 head 上通过，Research E2E #14 也通过，随后完整 ZN CI #1784 全绿。因此没有为这个现象添加 speculative production patch，也没有提高 timeout 来掩盖问题。
-
 明确非声明：arbitrary-internet Deep Research、authenticated USER-browser research、arbitrary PDF/DOCX/XLSX/slides/multimedia research、general citation engine、knowledge graph/vector DB、recursive research swarm、cross-device research sync 均未因本次 closure 自动完成。
+
+### E2E-09 / E2E-10 — Local Documents & Spreadsheet Work 1.0
+
+PR #248 已在 2026-09-11 squash merge 到 canonical `main`，merge SHA `22a0537ffe082a695355da42fde9a09d576916a8`。准确状态是：**VERIFIED NARROW / representative paths closed**。这是两个窄的真实 Office Open XML 工作流，不是 Word complete、Excel complete 或 Office Suite complete。
+
+E2E-09 已验证普通用户句子“找到我昨天下载的那份合同，把付款日期改成我们说好的日期，保存到项目文件夹。”进入现有 Product Resident / Work / Body 路径。ZN 只在显式授权 source workspace 与 attached project workspace 内做 bounded yesterday DOCX selection，要求唯一合同、唯一付款日期目标和唯一已确认日期；真实 `python-docx` / WordprocessingML 解析后按 visible-text-to-run offsets 修改 touched `Run.text`，保存新 DOCX，再 reopen 验证目标日期、结构/运行格式与 source identity。多候选、缺少约定日期、0/多个付款日期、source drift 或 unsupported package 均 fail closed / zero mutation。
+
+E2E-10 已验证普通用户句子“把昨天那个表整理一下，重复项去掉，金额列统一格式，别动原文件，给我一个处理好的版本。”走同一 Resident/Work/Body lifecycle，且 `model_invocations == 0`。真实 XLSX 以 `openpyxl` 解析；只在 one-sheet、rectangular scalar-data、唯一 exact `金额` / `Amount` header 的 bounded scope 内做全业务单元格 exact duplicate 去重、stable first-row retention，并只把 numeric amount cells 的 `number_format` 统一成 `#,##0.00`；源值/类型不变，源文件 byte identity 不变，输出新 XLSX 后 reopen 验证。ambiguous source/header、formula-heavy/complex workbook、source drift 或 output collision 均 fail closed。
+
+最终 PR head `37a7c2c975525ab01ba101ef6708d04bdd43a0b4` 的 applicable gates 全绿：Local Documents and Spreadsheet Work E2E #9、ZN CI #1796、Research #26、Work Recovery #416、Managed Browser #354、Windows Interactive Desktop #372、Memory & Learned Behavior #53。Office workflow 内 Python 3.11/3.12/3.13 core compatibility、E2E-09、E2E-10、natural-file、Research Resident、Work Recovery regression 全部 success；E2E-09/10 关键 steps 未 skip。
+
+实现没有增加 WordAgent/ExcelAgent/OfficeAgent、第二 Resident、Office GUI automation、第二套 file store 或 TXT hack。生产依赖只新增 pinned `python-docx==1.2.0` 与 `openpyxl==3.1.5`。复杂 DOCX package parts、任意表格结构、宏/字段/嵌入对象，以及 formulas/tables/charts/pivots/external links/merges 等复杂 XLSX 结构仍不在本 closure 内。
 
 ### E2E-29
 
@@ -218,6 +224,7 @@ E2E-01/02/03 bounded Research & Information Work representative closure
 multi-source source identity/provenance/freshness/conflict substrate
 durable research bundle / restart continuation
 research -> exact attached-workspace Markdown verification
+E2E-09/10 bounded Local Documents & Spreadsheet Work representative closure
 E2E-30/42 route/privacy acceptance
 dynamic ResidentHealthJournal -> routing
 E2E-28/34 systematic stall/no-progress supervision
@@ -241,6 +248,8 @@ E2E-36 exact attempt-bound uncertain-side-effect restart resolution
 - model/worker 是 replaceable cognition/execution resource，不拥有 ZN identity、Memory、authority 或 completion truth。
 - worker `done` != Root completion。
 - Research 复用 existing WebResource/Work/ModelRouter；不要建立第二个 ResearchAgent/Research store/router/orchestrator。
+- Local DOCX/XLSX 工作复用 existing Product Resident / Work / Body；不要建立 WordAgent/ExcelAgent/OfficeAgent 或第二套 file truth。
+- E2E-09/10 representative closure != Word complete / Excel complete / Office Suite complete。
 - search/provider answer != extracted evidence；claim promotion 必须保持 evidence grounding。
 - real-world effect 必须通过 authority + fresh evidence；completed effects 不盲目 replay。
 - 只有一个 ModelRouter；不要增加第二套路由控制面。
@@ -262,6 +271,7 @@ E2E-36 exact attempt-bound uncertain-side-effect restart resolution
 从 current main 继续时，优先在 `docs/ZN-REAL-TASK-E2E-CATALOG.md` 和真实产品路径里选择仍然失败/覆盖不足的普通用户任务，尤其是：
 
 - E2E-01/02/03 之外的 Research breadth：authenticated research、PDF/复杂 source extraction、citation UX、更多 cross-surface research；
+- E2E-09/10 之外的 Local Office breadth：更复杂 DOCX/XLSX 结构、更多文档/表格操作，以及 Research/Browser/Desktop 与 Office 的组合；
 - E2E-24 bounded closure 之外更复杂的真实 cross-surface task（Browser + Desktop + File/Terminal/Application）；
 - Browser/User Browser 在真实站点、frame/dialog/复杂 navigation 等更广场景的可靠性；
 - 现有 supervision/steering 基础上的更长周期真实连续体验与 progress/explanation UX；
@@ -290,12 +300,12 @@ What changed:
 
 - active Resident composition adds `MemoryLearnedBehaviorResidentRuntime`;
 - procedural compatibility becomes project/workspace-local when a privacy-safe workdir fingerprint exists;
-- bounded verified prior context can support “use my previous way on this project” without transcript dumping or historical Body args;
-- `practiced` current-applicable competence can remove one redundant native deliberation pulse on the real single-path Git staging family;
-- current Sense, authority, SideEffect/anti-replay and independent verification remain mandatory;
-- pre-action mismatch blocks dispatch; post-action prediction error records contradiction and returns to Investigation;
-- two recent contradictions can durably inhibit; restart preserves downgrade; later verified evidence relearns gradually rather than one-shot restoring maturity;
-- restart with external models unavailable preserves the bounded learned mechanical competence.
+- bounded verified prior context can support “use my previous way on this project” without transcript dumping or historical Body args；
+- `practiced` current-applicable competence can remove one redundant native deliberation pulse on the real single-path Git staging family；
+- current Sense, authority, SideEffect/anti-replay and independent verification remain mandatory；
+- pre-action mismatch blocks dispatch；post-action prediction error records contradiction and returns to Investigation；
+- two recent contradictions can durably inhibit；restart preserves downgrade；later verified evidence relearns gradually rather than one-shot restoring maturity；
+- restart with external models unavailable preserves the bounded learned mechanical competence。
 
 Research before implementation: HumanCompatibleAI/imitation DAgger (aggregate learner-visited experience, but teacher is not truth), MineDojo/Voyager (reusable skills + environment feedback/self-verification, but no GPT-owned control plane), and River/ADWIN (drift principle only; no production dependency without benchmark justification).
 

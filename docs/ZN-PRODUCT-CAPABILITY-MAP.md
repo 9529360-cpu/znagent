@@ -4,7 +4,7 @@
 >
 > 真实代码、真实 Git、真实测试和真实 E2E 高于本文件。
 
-Updated: 2026-09-10
+Updated: 2026-09-11
 
 ## 1. 产品判断标准
 
@@ -123,9 +123,13 @@ E2E-08 明确不支持 CAPTCHA solving、WebAuthn/passkey automation、cross-ori
 | --- | --- | --- |
 | File read/write/search | CONNECTED + VERIFIED NARROW | 模糊来源、复杂整理、多文件任务 |
 | Workspace evidence / exact source identity | PARTIAL | 歧义来源先解决身份再允许外部副作用 |
+| Local DOCX edit | VERIFIED NARROW; E2E-09 CLOSED representative path | bounded yesterday-contract payment-date replacement、source preservation、new-output reopen verification 已验证；复杂 DOCX/package/任意 Word 编辑仍开放 |
+| Local XLSX cleanup | VERIFIED NARROW; E2E-10 CLOSED representative path | zero-model exact-row dedupe + numeric amount-format normalization、source preservation、reopen verification 已验证；公式/表/图表/pivot/复杂 Excel 仍开放 |
 | Terminal/process | VERIFIED | 继续作为真实任务执行资源 |
 | Git / repo task support | PARTIAL | 普通项目能力发展；不给 ZN 自身仓库特殊权限 |
 | Coding specialist + real tools | VERIFIED NARROW | 扩大真实 repo 场景 |
+
+E2E-09/10 复用 existing Product Resident / Work / Body，不增加 WordAgent、ExcelAgent、OfficeAgent、第二 Resident、Office GUI automation 或第二套 file truth。实现通过 PR #248 squash merge 到 canonical `main` 为 `22a0537ffe082a695355da42fde9a09d576916a8`；最终 head `37a7c2c975525ab01ba101ef6708d04bdd43a0b4` 的 Local Office #9、ZN CI #1796、Research #26、Work Recovery #416、Managed Browser #354、Windows Interactive #372、Memory #53 均成功。准确边界是 **VERIFIED NARROW / representative paths closed**，不是 Word complete、Excel complete 或 Office Suite complete。
 
 ## 7. Multi-surface and long-task real work
 
@@ -183,6 +187,7 @@ Recovery 是为了让真实任务继续，不是独立产品路线。
 - E2E-05 closed representative authenticated research/mutation；
 - E2E-07 closed bounded causal USER child-tab path；
 - E2E-08 closed representative OTP user-presence path；
+- E2E-09/10 closed representative bounded Local Documents & Spreadsheet Work paths；
 - E2E-24 closed representative same-Root USER Browser -> exact File -> exact Desktop customer-record path；
 - E2E-27/33 closed representative steering/continuation；
 - E2E-28/34 closed representative supervision/dynamic-health/restart；
@@ -190,7 +195,7 @@ Recovery 是为了让真实任务继续，不是独立产品路线。
 - E2E-30/42 closed under documented current acceptance + environment-waiver semantics；
 - E2E-36 closed representative uncertain-side-effect restart resolution：exact attempt-bound `effect_happened` / `retry_authorized`，user evidence 与 machine `verified_effect` / `verified_absent` 审计分离，retry 必须形成 fresh guarded attempt。
 
-这些 closure 不等于 50 个 E2E 全部完成，也不等于上述 capability classes 全部 product-closed。
+这些 closure 不等于 50 个 E2E 全部完成，也不等于上述 capability classes 全部 product-closed。特别是 E2E-09/10 不等于 Word complete、Excel complete 或 Office Suite complete。
 
 ## 11. Release / update continuity
 
@@ -202,14 +207,15 @@ Installer、CI、Release、签名本身不是当前产品主线。Installed N ->
 
 ## 13. 当前产品选择原则
 
-不再按旧顺序重复开发 E2E-01/02/03、E2E-30/42、28/34、27/33 的 bounded substrate。下一项应从真实剩余产品缺口中选择：
+不再按旧顺序重复开发 E2E-01/02/03、E2E-09/10、E2E-30/42、28/34、27/33 的 bounded substrate。下一项应从真实剩余产品缺口中选择：
 
 1. E2E-24 bounded closure 之外更复杂的 cross-surface real tasks；
 2. Browser/User Browser 在真实站点和复杂 frame/dialog/navigation/用户在场边界的广度；
 3. E2E-01/02/03 bounded closure 之外的 Research breadth，例如 authenticated research、PDF/复杂 source、更多 surface 组合和 citation UX；
-4. 现有 supervision/steering/restart 基础上的跨天/长期 continuity + progress/explanation UX；
-5. 由真实 E2E 暴露的 Windows/application semantic gap；
-6. 只有 owner 明确选择并授权时才进入高风险 installed-version continuity / release-trust work。
+4. E2E-09/10 bounded closure 之外的 Local Office breadth，例如复杂 DOCX/XLSX、更多文档/表格变换，以及 Research/Browser/Desktop 与 Office 的组合；
+5. 现有 supervision/steering/restart 基础上的跨天/长期 continuity + progress/explanation UX；
+6. 由真实 E2E 暴露的 Windows/application semantic gap；
+7. 只有 owner 明确选择并授权时才进入高风险 installed-version continuity / release-trust work。
 
 如果 current evidence 不能确定唯一下一任务，就保留选择标准，不凭空发明 roadmap。
 
