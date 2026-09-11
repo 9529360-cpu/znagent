@@ -32,11 +32,39 @@ _TABLE = """
 </table>
 """
 
+_HIDDEN_ROW_TABLE = """
+<table aria-label="Orders">
+  <thead><tr><th>订单号</th><th>客户</th><th>金额</th></tr></thead>
+  <tbody>
+    <tr><td>1002</td><td>B</td><td>99.50</td></tr>
+  </tbody>
+  <tbody style="display:none">
+    <tr><td>SECRET-1003</td><td>Hidden</td><td>8.00</td></tr>
+  </tbody>
+</table>
+"""
+
+_ARIA_HIDDEN_ROW_TABLE = """
+<table aria-label="Orders">
+  <thead><tr><th>订单号</th><th>客户</th><th>金额</th></tr></thead>
+  <tbody>
+    <tr><td>1002</td><td>B</td><td>99.50</td></tr>
+  </tbody>
+  <tbody aria-hidden="true">
+    <tr><td>SECRET-1003</td><td>Hidden</td><td>8.00</td></tr>
+  </tbody>
+</table>
+"""
+
 
 class _FixtureHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/two":
             body = _TABLE + _TABLE.replace('aria-label="Orders"', 'aria-label="Other Orders"')
+        elif self.path == "/hidden-row":
+            body = _HIDDEN_ROW_TABLE
+        elif self.path == "/aria-hidden-row":
+            body = _ARIA_HIDDEN_ROW_TABLE
         else:
             body = _TABLE
         payload = (
@@ -238,6 +266,54 @@ class E2E11BrowserDataToSpreadsheetTests(unittest.TestCase):
             self.assertFalse((workspace / "sales-webdata.xlsx").exists())
             self.assertFalse(
                 any(item.kind == "append_xlsx_rows_copy" for item in self._actions(resident, event.event_id))
+            )
+
+    def test_real_hidden_table_region_fails_closed_before_xlsx_publish(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            resident, ledger, workspace, session_id, page_id = self._setup(
+                root,
+                "hidden-row",
+                path="/hidden-row",
+            )
+            source = workspace / "sales.xlsx"
+            self._workbook(source)
+            _, run = ledger.submit(
+                "hidden-row",
+                TASK,
+                payload=self._payload(source, session_id, page_id),
+            )
+            self.assertFalse(run.success)
+            self.assertEqual(run.model_invocations, 0)
+            self.assertIn("browser_table_observation_failed", run.reason)
+            self.assertIn("hidden_row", run.reason)
+            self.assertFalse((workspace / "sales-webdata.xlsx").exists())
+            self.assertFalse(
+                any(item.kind == "append_xlsx_rows_copy" for item in self._actions(resident, run.event.event_id))
+            )
+
+    def test_real_aria_hidden_ancestor_row_fails_closed_before_xlsx_publish(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            resident, ledger, workspace, session_id, page_id = self._setup(
+                root,
+                "aria-hidden-row",
+                path="/aria-hidden-row",
+            )
+            source = workspace / "sales.xlsx"
+            self._workbook(source)
+            _, run = ledger.submit(
+                "aria-hidden-row",
+                TASK,
+                payload=self._payload(source, session_id, page_id),
+            )
+            self.assertFalse(run.success)
+            self.assertEqual(run.model_invocations, 0)
+            self.assertIn("browser_table_observation_failed", run.reason)
+            self.assertIn("hidden_row", run.reason)
+            self.assertFalse((workspace / "sales-webdata.xlsx").exists())
+            self.assertFalse(
+                any(item.kind == "append_xlsx_rows_copy" for item in self._actions(resident, run.event.event_id))
             )
 
     def test_real_multiple_tables_fail_closed(self):
