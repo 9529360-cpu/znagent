@@ -353,3 +353,16 @@ Acceptance coverage:
 No destructive `StructuredMemory` or identity migration was required. Provenance for this trust-bearing slice comes from the existing durable verified-experience store; `StructuredMemory` is not upgraded into an action-authority source.
 
 Explicit remaining boundary: no general multi-step procedure engine, general personal memory UI, cross-device memory, arbitrary skill code generation, or universal provider-independent open-ended reasoning is claimed.
+
+<!-- e2e11-browser-spreadsheet-closure -->
+## 2026-09-11 — E2E-11 Browser data into spreadsheet
+
+Status: **VERIFIED NARROW / CLOSED representative path on PR #251 exact-head `f2d408a3980ce2f862503aa77faf021c4c5b1050`; not merged to `main` yet**.
+
+The implemented path reuses the existing Product Resident / Root Work / Body / BrowserScene / file identity / spreadsheet owners. It requires exact `browser_session_id`, `page_id`, attached `workspace_path` and explicit source `spreadsheet_path`; source discovery or guessing is not allowed. The current page must expose exactly one main-frame simple table. Table sensing is structured and bounded (64 total rows including header, 32 cells per row, 512 characters per cell), exports no HTML/page-wide text, and rejects stale/detached evidence, multiple tables, spans, malformed/partial materialization and ARIA row/column mismatches.
+
+The first row is the exact ordered header and later rows are rectangular string cells. Before mutation the Browser table is freshly re-observed and fingerprint-matched. XLSX append-copy is independently conservative: one worksheet, nonempty unique stable string headers, header-only or rectangular scalar data; formulas, macros, merges, tables, charts/drawings, pivots, external links and other complex structures fail closed. Browser values are appended as strings with no type inference. Source identity must remain exact and unchanged; destination is a new `<source-stem>-webdata.xlsx`, never overwritten, temp-saved/reopened/verified and then freshly reopened again after publish.
+
+Durable Work evidence uses `browser_spreadsheet_import:v1`; success requires fresh Browser + source XLSX + destination XLSX verification and `model_invocations == 0`. Real Chromium + real openpyxl acceptance is green on ZN Managed Browser E2E #359, including the explicit E2E-11 step. The same exact head also passed Local Documents and Spreadsheet Work #27, ZN CI #1814, Research #44, E2E05 #65, E2E06 #8, Document Research #15, Memory #71 and Windows Interactive #388.
+
+This section supersedes earlier statements in this file that omit E2E-11 from closed representative paths. It does not claim arbitrary website tables, virtualized grids, multi-table choice, complex workbook mutation, Excel complete, Office Suite complete or general Browser→Office automation. PR #251 remains open and unmerged, so no canonical merge SHA is claimed.
