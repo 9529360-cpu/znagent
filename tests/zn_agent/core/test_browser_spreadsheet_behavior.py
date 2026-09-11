@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 from openpyxl import Workbook, load_workbook
 
+from zn_agent.core.browser import BrowserPlane, BrowserSessionIdentity
 from zn_agent.core.browser_scene import BrowserFrameScene, BrowserScene, BrowserSceneTarget
 from zn_agent.core.browser_scene_table import BrowserStructuredTable, BrowserTableCell, BrowserTableRow
 from zn_agent.core.provider_bridge import build_resident_runtime
@@ -17,18 +18,24 @@ TASK = "把这个网站里的数据整理进我现在这个表里。"
 
 
 class _FakeBrowser:
-    def __init__(self, *, headers=None, rows=None, table_count=1):
+    def __init__(self, *, headers=None, rows=None, table_count=1, plane=BrowserPlane.MANAGED):
         self.headers = list(headers or ["订单号", "客户", "金额"])
         self.rows = [list(row) for row in (rows or [["1002", "B", "99.50"], ["1003", "C", "8.00"]])]
         self.table_count = table_count
         self.observe_count = 0
         self.table_observe_count = 0
         self.url = "https://example.test/orders"
+        self.plane = plane
+        self.identity = BrowserSessionIdentity.create(
+            plane=plane,
+            provider="fake-user-browser" if plane is BrowserPlane.USER else "fake-managed-browser",
+            profile_scope="user_existing" if plane is BrowserPlane.USER else "ephemeral",
+        )
 
     def _session(self, session_id):
         if session_id != "session-1":
             raise RuntimeError("unknown managed browser session")
-        return SimpleNamespace(identity=SimpleNamespace(provider="fake-managed-browser"))
+        return SimpleNamespace(identity=self.identity)
 
     def observe_scene(self, session_id, *, page_id=""):
         if session_id != "session-1" or page_id != "page-1":
@@ -188,6 +195,27 @@ class BrowserSpreadsheetBehaviorTests(unittest.TestCase):
             self.assertTrue(evidence["fresh_browser_verification_fingerprint"])
             self.assertTrue(evidence["fresh_source_xlsx_identity_result"])
             self.assertTrue(evidence["fresh_destination_reopen_result"]["ready"])
+
+    def test_browser_spreadsheet_user_plane_fails_closed_without_mutation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            browser = _FakeBrowser(plane=BrowserPlane.USER)
+            resident, ledger, workspace = self._resident(root, "user-plane", browser=browser)
+            source = workspace / "sales.xlsx"
+            self._workbook(source)
+            _, run = ledger.submit("user-plane", TASK, payload=self._payload(source))
+            self.assertFalse(run.success)
+            self.assertEqual(run.model_invocations, 0)
+            self.assertIn("unsupported_browser_plane", run.reason)
+            self.assertEqual(browser.observe_count, 0)
+            self.assertEqual(browser.table_observe_count, 0)
+            self.assertFalse((workspace / "sales-webdata.xlsx").exists())
+            self.assertFalse(
+                any(
+                    item.kind == "append_xlsx_rows_copy"
+                    for item in self._actions(resident, run.event.event_id)
+                )
+            )
 
     def test_missing_browser_or_unauthorized_spreadsheet_context_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
