@@ -58,7 +58,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             & $python -m unittest discover -s tests/zn_agent/core -p 'test_office_document_work.py' -v
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            & $python -m unittest discover -s tests/zn_agent/core -p 'test_document_research_completion_behavior.py' -v
+            & $python -m unittest discover -s tests/zn_agent/core -p 'test_document_research_completion*.py' -v
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
       - name: E2E-12 real DOCX research completion representative path
