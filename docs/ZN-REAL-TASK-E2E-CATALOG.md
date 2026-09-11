@@ -273,7 +273,7 @@ Expected:
 
 ### E2E-20 — Multi-model coding route policy
 
-Environment: GPT + coding specialist + another general model.
+Environment: multiple user-approved routes.
 
 User:
 
@@ -615,3 +615,16 @@ The first row is treated as the exact ordered unique string header; subsequent r
 Completion requires fresh Browser + source XLSX + destination XLSX evidence, durable `browser_spreadsheet_import:v1`, and `model_invocations == 0`. Real acceptance passed ZN Managed Browser E2E #359 with the explicit E2E-11 Chromium→XLSX step, plus Local Documents and Spreadsheet Work #27, ZN CI #1814, Research #44, E2E05 #65, E2E06 #8, Document Research #15, Memory #71 and Windows Interactive Desktop #388 on that exact implementation head.
 
 Explicit non-claims: arbitrary website tables, multi-table choice, virtualized grids, complex ARIA grids, arbitrary XLSX structures, formulas/charts/tables/pivots/merges, Excel complete, Office Suite complete and general Browser/Research/Desktop→Office automation remain outside this closure. No canonical merge SHA is recorded until PR #251 is actually merged.
+
+<!-- e2e11-browser-spreadsheet-repair-closure -->
+## 2026-09-12 — E2E-11 merge-blocker repair acceptance overlay
+
+This overlay supersedes all earlier E2E-11 “current exact-head” wording in this catalog. `f2d408a3980ce2f862503aa77faf021c4c5b1050` is retained only as historical pre-review acceptance evidence.
+
+Status: **CLOSED representative path / VERIFIED NARROW on repair implementation checkpoint `9ac5f403f17d85834e3a300e1065fc85f5747cb2`; PR #251 remains open and unmerged**.
+
+The repaired representative path is strictly MANAGED Browser only at both provider/session identity and Product behavior admission; an Authorized USER Browser cannot inherit table-sensing authority. Native/ARIA simple-table evidence must prove layout visibility for the table and each materialized row/cell, including ancestor `aria-hidden`; hidden/unprovably visible regions fail closed with no spreadsheet mutation. XLSX append-copy inspection preserves rich-text structure during read and rejects `CellRichText` as unsupported, preventing a lossy rich-text→plain-string round trip. E2E-10 loader semantics remain unchanged; browser cells remain literal strings, source XLSX stays unchanged, destination remains exclusive/no-overwrite, and fresh Browser/source/destination verification with zero model remains required.
+
+Repair-checkpoint workflows are all success: ZN Managed Browser E2E #373 with the explicit non-skipped E2E-11 Chromium→XLSX step, Local Documents and Spreadsheet Work #41, ZN CI #1828, Research #58, E2E05 #79, E2E06 #22, Document Research #29, Memory #85 and Windows Interactive #402. Real Chromium covers both hidden layout and ancestor `aria-hidden`; openpyxl 3.1.5 rich-text rejection runs on Python 3.11/3.12/3.13.
+
+The documentation-only synchronization creates a later live PR head, so final merge readiness must use that head’s applicable CI rather than treating `9ac5f403...` as a permanent current HEAD. No merge SHA is claimed. USER Browser table import, arbitrary website tables, multi-table choice, ARIA grid/treegrid, pagination/virtualization, cross-origin iframe tables, complex Excel, rich-text support and general Office automation remain unsupported by this closure.

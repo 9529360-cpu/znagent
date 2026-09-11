@@ -280,3 +280,16 @@ Before mutation the Browser source is freshly re-observed and fingerprint-matche
 Exact-head acceptance was green across ZN Managed Browser E2E #359 (including the explicit `Run E2E-11 real Browser data to spreadsheet` step), Local Documents and Spreadsheet Work E2E #27, ZN CI #1814, Research and Information Work #44, E2E05 #65, E2E06 #8, Document Research #15, Memory #71 and Windows Interactive Desktop #388.
 
 This note supersedes older statements in this document that treat E2E-11 itself as an open representative task. It does not claim arbitrary website tables, virtual grids, multi-table selection, complex Excel workbooks, Excel complete, Office Suite complete or general Browser→Office automation.
+
+<!-- e2e11-browser-spreadsheet-repair-closure -->
+## E2E-11 merge-blocker repair acceptance (2026-09-12)
+
+This repair note supersedes every earlier E2E-11 “current exact-head” reference in this file. The earlier `f2d408a3980ce2f862503aa77faf021c4c5b1050` checkpoint remains historical pre-review evidence only.
+
+Status: **VERIFIED NARROW / CLOSED representative path on repair implementation checkpoint `9ac5f403f17d85834e3a300e1065fc85f5747cb2`; PR #251 remains open and unmerged**.
+
+The repaired admission is explicitly **MANAGED Browser only** at both the provider capability boundary and the Product behavior boundary; USER-plane sessions fail closed before structured table payload reading or XLSX mutation. Simple-table completeness now also requires layout-aware visibility for the table and every materialized row/cell, with ancestor `aria-hidden=true` treated as hidden; hidden or unprovably visible table regions fail closed instead of being filtered and imported. XLSX append-copy inspection now loads rich text with preservation enabled and rejects `CellRichText` as `unsupported_workbook_structure`; this is rejection, not rich-text support, and E2E-10 keeps its previous loader semantics.
+
+Repair-checkpoint acceptance is green across ZN Managed Browser E2E #373 (including the explicit, non-skipped `Run E2E-11 real Browser data to spreadsheet` step), Local Documents and Spreadsheet Work E2E #41, ZN CI #1828, Research and Information Work E2E #58, E2E05 #79, E2E06 #22, Document Research #29, Memory #85 and Windows Interactive Desktop #402. Real Chromium regressions cover hidden-layout and ancestor-`aria-hidden` rows; real openpyxl 3.1.5 regressions cover rich-text fail-closed behavior on Python 3.11/3.12/3.13.
+
+A later documentation-only commit changes the live PR head, so merge readiness must still be judged from that live head and its applicable CI; this implementation checkpoint is evidence, not a self-referential permanent HEAD. No canonical merge SHA is claimed. User Browser table import, arbitrary website tables, grid/treegrid, pagination/virtualization, complex Excel, rich-text support and general Office automation remain outside this closure.

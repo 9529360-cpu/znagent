@@ -348,3 +348,16 @@ The first row becomes the exact ordered unique string header and remaining rows 
 Durable child Work evidence is `browser_spreadsheet_import:v1`; the happy path is zero-model. Exact-head verification passed ZN Managed Browser E2E #359 with the explicit `Run E2E-11 real Browser data to spreadsheet` step, plus Local Documents and Spreadsheet Work #27, ZN CI #1814, Research #44, E2E05 #65, E2E06 #8, Document Research #15, Memory #71 and Windows Interactive Desktop #388.
 
 Do not broaden this into arbitrary website tables, virtual grids, multi-table choice, arbitrary XLSX mutation, Excel complete, Office Suite complete or general Browser→Office automation. Do not record a canonical merge SHA until PR #251 is actually merged.
+
+<!-- e2e11-browser-spreadsheet-repair-closure -->
+## 2026-09-12 handoff — E2E-11 merge-blocker repair / PR #251
+
+This repair handoff supersedes every earlier E2E-11 “current exact-head” reference in this file. The earlier `f2d408a3980ce2f862503aa77faf021c4c5b1050` checkpoint remains historical pre-review evidence only.
+
+Status: **VERIFIED NARROW / CLOSED representative path on repair implementation checkpoint `9ac5f403f17d85834e3a300e1065fc85f5747cb2`; PR #251 remains open and unmerged**.
+
+Three review blockers were closed without broadening the product. Structured table sensing is MANAGED Browser only at both provider/session identity and Product behavior admission; USER-plane adapters/sessions are rejected before table payload read or XLSX mutation. Simple-table evidence now requires layout-aware visibility for the table and every materialized row/cell, with ancestor `aria-hidden=true` rejected; hidden regions fail closed rather than being silently filtered. XLSX append-copy inspection enables openpyxl rich-text preservation and rejects `CellRichText` as unsupported, preventing lossy flattening; this does not add rich-text support and does not change E2E-10 loader semantics.
+
+Repair implementation checkpoint `9ac5f403f17d85834e3a300e1065fc85f5747cb2` passed every applicable PR workflow: ZN Managed Browser E2E #373 (including the explicit non-skipped `Run E2E-11 real Browser data to spreadsheet` step), Local Documents and Spreadsheet Work #41, ZN CI #1828, Research #58, E2E05 #79, E2E06 #22, Document Research #29, Memory #85 and Windows Interactive Desktop #402. Real Chromium covers hidden-layout and ancestor-`aria-hidden` rows; rich-text rejection runs against openpyxl 3.1.5 on Python 3.11/3.12/3.13.
+
+A documentation-only synchronization commit necessarily creates a later live PR head. Merge readiness must therefore be judged from that live head and its applicable CI; `9ac5f403...` is the fully verified repair implementation checkpoint, not a self-referential permanent HEAD. No canonical merge SHA is claimed. USER Browser table import, arbitrary tables, grid/treegrid, pagination/virtualization, complex Excel, rich-text support and general Browser→Office automation remain outside this closure.
