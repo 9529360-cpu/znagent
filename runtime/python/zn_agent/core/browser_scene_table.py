@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from .browser import BrowserPlane
 from .managed_browser import ManagedBrowserError
 from .models import utc_now
 
@@ -22,10 +23,26 @@ _TABLE_SCRIPT = r"""
   if (!supported) return {connected: true, supported: false};
 
   const norm = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
-  const hidden = (node) => {
-    if (!node || node.hidden || node.getAttribute?.("aria-hidden") === "true") return true;
-    const style = window.getComputedStyle(node);
-    return style.display === "none" || style.visibility === "hidden";
+  const ariaHiddenByAncestor = (node) => {
+    for (let current = node; current; current = current.parentElement) {
+      if (String(current.getAttribute?.("aria-hidden") || "").trim().toLowerCase() === "true") {
+        return true;
+      }
+    }
+    return false;
+  };
+  const provablyVisible = (node) => {
+    if (!node || !node.isConnected || node.hidden || ariaHiddenByAncestor(node)) return false;
+    if (typeof node.checkVisibility !== "function") return false;
+    try {
+      return Boolean(node.checkVisibility({
+        contentVisibilityAuto: true,
+        opacityProperty: true,
+        visibilityProperty: true,
+      }));
+    } catch {
+      return false;
+    }
   };
   const positiveCount = (name) => {
     if (!element.hasAttribute?.(name)) return null;
@@ -36,6 +53,9 @@ _TABLE_SCRIPT = r"""
     return {invalid: false, value};
   };
 
+  if (!provablyVisible(element)) {
+    return {connected: true, supported: true, complex_reason: "hidden_table"};
+  }
   if (element.querySelector("table, [role='table']")) {
     return {connected: true, supported: true, complex_reason: "nested_table"};
   }
@@ -45,7 +65,7 @@ _TABLE_SCRIPT = r"""
     : Array.from(element.querySelectorAll(
         ":scope > [role='row'], :scope > [role='rowgroup'] > [role='row']"
       ));
-  if (rowNodes.some(hidden)) {
+  if (rowNodes.some((row) => !provablyVisible(row))) {
     return {connected: true, supported: true, complex_reason: "hidden_row"};
   }
 
@@ -65,7 +85,7 @@ _TABLE_SCRIPT = r"""
       : Array.from(row.querySelectorAll(
           ":scope > [role='columnheader'], :scope > [role='rowheader'], :scope > [role='cell']"
         ));
-    if (cellNodes.some(hidden)) {
+    if (cellNodes.some((cell) => !provablyVisible(cell))) {
       return {connected: true, supported: true, complex_reason: "hidden_cell"};
     }
     if (cellNodes.some((cell) =>
@@ -147,6 +167,10 @@ class PlaywrightBrowserSceneTableMixin:
         max_cell_text: int = _MAX_CELL_TEXT,
     ) -> BrowserStructuredTable:
         session = self._session(session_id)
+        if session.identity.plane is not BrowserPlane.MANAGED:
+            raise ManagedBrowserError(
+                "structured table observation is supported only on the managed browser plane"
+            )
         binding = self._scene_action_binding(
             session,
             str(target_id or "").strip(),
