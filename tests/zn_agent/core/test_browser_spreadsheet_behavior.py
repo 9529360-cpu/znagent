@@ -102,8 +102,10 @@ class BrowserSpreadsheetBehaviorTests(unittest.TestCase):
         workbook.save(path)
 
     def _resident(self, root: Path, thread_id: str, *, browser=None):
-        db_path = root / f"zn-browser-sheet-{thread_id}-{os.getpid()}.db"
+        db_tmp = tempfile.TemporaryDirectory()
+        db_path = Path(db_tmp.name) / f"zn-browser-sheet-{thread_id}-{os.getpid()}.db"
         resident = build_resident_runtime(config={"model": {}}, store_path=db_path)
+        self.addCleanup(db_tmp.cleanup)
         resident.managed_browser = browser or _FakeBrowser()
         self.addCleanup(resident.store.close)
         ledger = resident.work_ledger
