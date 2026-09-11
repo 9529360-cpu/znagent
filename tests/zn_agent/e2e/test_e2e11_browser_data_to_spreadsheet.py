@@ -111,8 +111,10 @@ class E2E11BrowserDataToSpreadsheetTests(unittest.TestCase):
         raise AssertionError(f"event did not reach {stage}")
 
     def _setup(self, root: Path, thread_id: str, *, path: str = "/one"):
-        db_path = root / f"zn-e2e11-{thread_id}-{os.getpid()}.db"
+        db_tmp = tempfile.TemporaryDirectory()
+        db_path = Path(db_tmp.name) / f"zn-e2e11-{thread_id}-{os.getpid()}.db"
         resident = build_resident_runtime(config={"model": {}}, store_path=db_path)
+        self.addCleanup(db_tmp.cleanup)
         ledger = resident.work_ledger
         workspace = root / "workspace"
         workspace.mkdir()
