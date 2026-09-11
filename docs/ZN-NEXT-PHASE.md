@@ -12,6 +12,7 @@ Updated: 2026-09-11
 
 - **E2E-01 / E2E-02 / E2E-03 Research & Information Work**：普通自然语言 public-web research 已有 bounded representative closure：existing `WebResource` search→extract、多源 source identity/provenance/freshness、冲突保留、claim-to-evidence grounding、同 Work durable continuation/restart，以及唯一 attached workspace 下的可编辑 Markdown fresh reread/identity verification。该 closure 是 `VERIFIED NARROW`，不等于 arbitrary-internet Deep Research、authenticated-browser research、任意 PDF/Office authoring、general citation engine、knowledge graph/vector DB 或 recursive research swarm。
 - **E2E-09 / E2E-10 Local Documents & Spreadsheet Work**：真实 DOCX payment-date edit 与 zero-model XLSX exact-dedup/amount-format cleanup 已有 bounded representative closure；source authority/identity、ambiguity fail-closed、新输出文件和 reopen verification 已验证。实现 PR #248 squash merge 为 `22a0537ffe082a695355da42fde9a09d576916a8`。这不是 Word complete、Excel complete 或 Office Suite complete。
+- **E2E-12 Document Research Completion**：普通自然语言“把这个方案补完整，不确定的地方你自己查资料，但别乱编。”已有 bounded representative closure：只处理 exact attached workspace 内一个真实 DOCX 的 1–3 个显式 `【待补充：...】`，复用 existing `WebResource` search→extract 与同一 Product Resident / Work / Body；search snippet 仅作 discovery，成功 extracted source-document 才能进入 evidence。retrieved content 先经过 deterministic instruction-like prompt-injection source screening；每个 replacement 在 mutation 前要求至少两个独立 prompt-safe extracted sources 的一致 exact-quote/anchor 支持，并由本地 target-relevant price/date/percentage consistency gate 检测模型漏报的 source conflict。unknown、conflict、unsafe source、unsupported support、source drift、output collision 均 all-or-nothing fail closed；成功只写新 DOCX copy，源文件不变，并 fresh reopen 验证 target、identity、非目标文本与 run formatting。PR #250 implementation exact-head `65d5ec40f705f4e6e4c624b4a3287f27a949d8dc` 的 Document Research Completion E2E #5、ZN CI #1804、Research #34、Local Documents #17、Windows Interactive #378、Memory #61 全部 success。准确状态是 `VERIFIED NARROW / CLOSED representative path`，不是 arbitrary DOCX completion、arbitrary Deep Research、general prompt-injection solution 或完整 Word/Office 自动化。
 - **E2E-29**：一个实际 model route 服务多个隔离 WorkerRun；worker 数与模型数不绑定，Root completion 仍由 ZN 独立验收。
 - **E2E-30 / E2E-42**：durable route/privacy policy、ModelRouter hard eligibility、route/provider provenance 与 guarded multiroute acceptance 已按当前 acceptance policy 关闭。closure 包含明确的 owner-approved environment waiver，因为当时缺少第二个真实 provider family；不能宣称已有双真实 provider family 完整生产证据。
 - **E2E-28 / E2E-34**：durable worker progress supervision、heartbeat/no-progress/stall detection、dynamic health-aware routing、bounded retry、policy-safe fallback/reassignment、restart reconciliation、no-replay recovery 已有 guarded real-model representative closure。
@@ -88,7 +89,7 @@ USER Browser existing session
 -> fresh result verification
 ```
 
-当前已有若干两-surface、一个 bounded Research→editable-file 和 E2E-09/10 Local Office 代表性闭环，但复杂三-surface任务、目标漂移、应用/网页/文档状态变化和跨 surface recovery 仍是主要产品广度问题。
+当前已有若干两-surface、一个 bounded Research→editable-file、E2E-09/10 Local Office 和 E2E-12 Research→DOCX completion 代表性闭环，但复杂三-surface任务、目标漂移、应用/网页/文档状态变化和跨 surface recovery 仍是主要产品广度问题。
 
 开发规则：只补当前任务实际缺的 Body/Sense/Research/Office/verification 能力，不建立新的“cross-surface framework”、第二套 Research orchestration 或 OfficeAgent。
 
@@ -120,11 +121,11 @@ E2E-08 只覆盖 standard HTML `one-time-code`、same authorized tab/generation/
 
 当前 delegated progress 应视为 `CONNECTED + VERIFIED NARROW / PARTIAL UX`，而不是 internal-only；但复杂长期 UX 仍未 product-close。
 
-### 4. Research breadth beyond E2E-01/02/03
+### 4. Research breadth beyond E2E-01/02/03 and E2E-12
 
-E2E-01/02/03 已关闭 bounded public-web Research representative path，因此不要再把“多来源搜索、source identity/provenance/freshness、conflict、grounded synthesis、restart continuity、research→editable Markdown”整体描述成未开发。
+E2E-01/02/03 已关闭 bounded public-web Research representative path；E2E-12 又关闭了一个 bounded public-Web-evidence→real-DOCX completion 组合路径。因此不要再把“多来源搜索、source identity/provenance/freshness、conflict、grounded synthesis、restart continuity、research→editable Markdown”整体描述成未开发，也不要把“Research 不能进入真实 DOCX 补全”继续当作完全空白。
 
-仍然开放的是超出该 bounded slice 的产品广度，例如：
+仍然开放的是超出这些 bounded slices 的产品广度，例如：
 
 - arbitrary-internet / much-longer-horizon Deep Research；
 - authenticated USER-browser research 与 public-web evidence 的安全组合；
@@ -135,17 +136,17 @@ E2E-01/02/03 已关闭 bounded public-web Research representative path，因此�
 
 不要因此建立第二个 ResearchAgent、第二套 Work/store/router、general citation engine、knowledge graph/vector DB 或 recursive research swarm。
 
-### 5. Local Office breadth beyond E2E-09/10
+### 5. Local Office breadth beyond E2E-09/10/12
 
-E2E-09/10 已关闭两个 bounded representative paths，因此不要再把“真实 DOCX 修改”或“真实 XLSX 清理”整体描述成完全没有实现。
+E2E-09/10 已关闭两个 bounded Local Office representative paths，E2E-12 已关闭一个 bounded Research→DOCX completion representative path，因此不要再把“真实 DOCX 修改”“真实 XLSX 清理”或“外部研究证据进入一个窄 DOCX 补全路径”整体描述成完全没有实现。
 
 仍然开放的是：
 
 - 更复杂 DOCX package、headers/footers、fields/content controls、tracked changes、drawings/embedded objects、复杂表格等；
 - XLSX formulas、tables、charts/drawings、pivots、external links/Power Query、merges、多 sheet 等；
-- 更广文档/表格变换，而不是只有付款日期替换和 exact-row dedupe/amount format；
-- Browser/Research/Desktop 与 Office 的真实组合任务，例如 E2E-11/12 类路径；
-- PDF/PPT 等未由 E2E-09/10 覆盖的 Office/document 类任务。
+- 更广文档/表格变换，而不是只有付款日期替换、exact-row dedupe/amount format 和 1–3 个显式 placeholder 补全；
+- Browser/Research/Desktop 与 Office 的更广真实组合任务，例如 E2E-11 和超出 E2E-12 bounded scope 的路径；
+- PDF/PPT 等未由 E2E-09/10/12 覆盖的 Office/document 类任务。
 
 继续复用 existing Product Resident / Work / Body / file identity；不要建立 WordAgent、ExcelAgent、OfficeAgent、第二套 file store 或默认 Office GUI automation。准确状态是 `VERIFIED NARROW`，不是 Word complete、Excel complete 或 Office Suite complete。
 
@@ -185,6 +186,7 @@ Installed N -> N+1 的 identity/data/Work/uncertain-side-effect continuity 仍�
 ```text
 E2E-01/02/03 bounded Research & Information Work representative closure
 E2E-09/10 bounded Local Documents & Spreadsheet Work representative closure
+E2E-12 bounded evidence-driven DOCX completion representative closure
 E2E-30/42 closure 本身
 ResidentHealthJournal dynamic health -> routing 接线
 E2E-28/34 systematic no-progress/stall supervision

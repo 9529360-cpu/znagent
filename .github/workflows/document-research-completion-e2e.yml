@@ -1,0 +1,78 @@
+name: Document Research Completion E2E
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI: 'true'
+  TZ: UTC
+  PYTHONUTF8: '1'
+  PYTHONUNBUFFERED: '1'
+  ZN_AGENT_HOME: ${{ github.workspace }}/.ci/zn-document-research-home
+  UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+concurrency:
+  group: zn-document-research-completion-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  document-research-completion:
+    name: E2E-12 / Windows
+    runs-on: [self-hosted, Windows, X64, zn-ci]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Python 3.11-3.13 dependency and E2E-12 core compatibility
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:ZN_AGENT_HOME | Out-Null
+          foreach ($version in @('3.11', '3.12', '3.13')) {
+            uv python install $version
+            $suffix = $version.Replace('.', '')
+            $venv = Join-Path $env:GITHUB_WORKSPACE ".ci\document-research-$suffix"
+            Remove-Item -Recurse -Force $venv -ErrorAction SilentlyContinue
+            uv venv $venv --python $version
+            $python = Join-Path $venv 'Scripts\python.exe'
+            uv pip install --python $python runtime/python
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+            & $python -c "import sys, docx; assert sys.version_info[:2] == tuple(map(int, '$version'.split('.'))); assert docx.__version__ == '1.2.0'"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & $python -m unittest discover -s tests/zn_agent/core -p 'test_office_document_work.py' -v
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & $python -m unittest discover -s tests/zn_agent/core -p 'test_document_research_completion*.py' -v
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: E2E-12 real DOCX research completion representative path
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\document-research-312\Scripts\python.exe'
+          & $python tests/zn_agent/e2e/test_e2e12_document_with_missing_information.py -v
+      - name: E2E-01 multi-source research regression
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\document-research-312\Scripts\python.exe'
+          & $python tests/zn_agent/e2e/test_e2e01_multi_source_research.py -v
+      - name: E2E-09 DOCX regression
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\document-research-312\Scripts\python.exe'
+          & $python tests/zn_agent/e2e/test_e2e09_find_yesterday_docx_and_edit.py -v
