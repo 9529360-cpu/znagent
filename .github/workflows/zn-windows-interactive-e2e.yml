@@ -25,7 +25,12 @@ on:
       - tests/zn_agent/e2e/test_windows_interactive_file_desktop_goal.py
       - tests/zn_agent/e2e/test_windows_interactive_machine_capability.py
       - tests/zn_agent/e2e/test_windows_interactive_application_activation.py
+      - runtime/python/pyproject.toml
       - runtime/python/zn_agent/core/body.py
+      - runtime/python/zn_agent/core/local_office_behavior.py
+      - runtime/python/zn_agent/core/office_document.py
+      - runtime/python/zn_agent/core/spreadsheet_work.py
+      - runtime/python/zn_agent/core/research_information_product_resident.py
       - runtime/python/zn_agent/core/keyboard_text_body.py
       - runtime/python/zn_agent/core/visual_region_sense.py
       - runtime/python/zn_agent/core/foreground_window_sense.py
@@ -94,7 +99,12 @@ on:
       - tests/zn_agent/e2e/test_windows_interactive_file_desktop_goal.py
       - tests/zn_agent/e2e/test_windows_interactive_machine_capability.py
       - tests/zn_agent/e2e/test_windows_interactive_application_activation.py
+      - runtime/python/pyproject.toml
       - runtime/python/zn_agent/core/body.py
+      - runtime/python/zn_agent/core/local_office_behavior.py
+      - runtime/python/zn_agent/core/office_document.py
+      - runtime/python/zn_agent/core/spreadsheet_work.py
+      - runtime/python/zn_agent/core/research_information_product_resident.py
       - runtime/python/zn_agent/core/keyboard_text_body.py
       - runtime/python/zn_agent/core/visual_region_sense.py
       - runtime/python/zn_agent/core/foreground_window_sense.py

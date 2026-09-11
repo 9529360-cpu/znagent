@@ -1,13 +1,8 @@
 from __future__ import annotations
 
-"""Narrow product-ingress intent guard for Research & Information Work.
+"""Narrow product ingress for Research and Local Office representative Work."""
 
-The evidence/runtime implementation stays in ``ResearchInformationResidentRuntime``.
-This final product seam only decides whether an ordinary durable Work event is
-actually an information-research request, so generic native investigation work
-is never stolen by a broad keyword match.
-"""
-
+from .local_office_behavior import install_local_office_behavior
 from .research_information_resident import ResearchInformationResidentRuntime
 
 
@@ -52,7 +47,11 @@ _CONTINUATION_INTENT_MARKERS = (
 
 
 class ProductResearchInformationResidentRuntime(ResearchInformationResidentRuntime):
-    """Admit only bounded durable information-research goals into Research Work."""
+    """Final product Resident with narrow Research and local Office admission."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        install_local_office_behavior(self)
 
     def _is_research_event(self, event) -> bool:
         # Research Work is a product Work path, not a catch-all replacement for
