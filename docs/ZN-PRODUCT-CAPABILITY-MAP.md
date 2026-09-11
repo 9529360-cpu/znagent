@@ -267,3 +267,16 @@ Product-real scope:
 Implementation was merged through PR #246 to canonical `main` as `f77e5f5d6b93af04f0bbb974dedea6529dbc9934`. Exact-head acceptance before merge was green across ZN CI #1784, Research E2E #14, Work Recovery #406, Managed Browser #344, Windows Interactive Desktop #363, Memory & Learned Behavior #41, E2E28-34 #120 and E2E25 #55.
 
 Explicit remaining boundary: no arbitrary-internet Deep Research, authenticated-browser research, arbitrary PDF/Office/multimedia research, general citation engine, knowledge graph/vector DB, recursive research swarm or cross-device research sync is claimed.
+
+<!-- e2e11-browser-spreadsheet-closure -->
+## E2E-11 Browser data into spreadsheet — representative capability closure (2026-09-11)
+
+Status: **VERIFIED NARROW / CLOSED representative path on PR #251 exact-head `f2d408a3980ce2f862503aa77faf021c4c5b1050`; not yet merged to canonical `main`**.
+
+The verified slice keeps one Product Resident / Root Work / Body and combines bounded current-page Browser table sensing with a conservative XLSX append-copy path. It requires one exact managed Browser session/page, one unique main-frame simple table, one exact attached workspace and one explicit source `.xlsx`. Browser export is structured and bounded (64 rows total including header, 32 cells per row, 512 characters per cell), with no page-wide text or HTML. Multiple tables, spans, partial/virtualized evidence, malformed rows or stale Browser identity fail closed.
+
+Before mutation the Browser source is freshly re-observed and fingerprint-matched. The XLSX path supports only one-sheet rectangular scalar data with exact ordered unique string headers; browser values are appended as strings without type inference. The source workbook stays byte-identical, the output is a new `<stem>-webdata.xlsx`, existing destinations are never overwritten, and fresh reopen verification covers source + destination + Browser evidence before completion. Formula/complex workbook structures fail closed. The representative path is deterministic with `model_invocations == 0` and durable `browser_spreadsheet_import:v1` evidence.
+
+Exact-head acceptance was green across ZN Managed Browser E2E #359 (including the explicit `Run E2E-11 real Browser data to spreadsheet` step), Local Documents and Spreadsheet Work E2E #27, ZN CI #1814, Research and Information Work #44, E2E05 #65, E2E06 #8, Document Research #15, Memory #71 and Windows Interactive Desktop #388.
+
+This note supersedes older statements in this document that treat E2E-11 itself as an open representative task. It does not claim arbitrary website tables, virtual grids, multi-table selection, complex Excel workbooks, Excel complete, Office Suite complete or general Browser→Office automation.
