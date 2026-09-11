@@ -272,3 +272,44 @@ representative E2E closure != entire capability class product-closed
 - 未经真实 E2E 驱动的 OS substrate 扩建。
 
 下一阶段仍应是：**选择真实用户任务，找到 current main 真正缺的最小能力，把完整任务闭环做实。**
+
+<!-- memory-learned-behavior-1.0-closure -->
+## Memory & Learned Behavior 1.0 — representative capability closure (2026-09-10)
+
+Status: **VERIFIED NARROW / representative path closed**.
+
+The active product Resident now has one bounded resident-owned procedural fast path on top of the existing `VerifiedExperience -> CandidateProceduralTendency -> reality-gated influence` chain. The representative family is single-path Git staging because the repository already provides deterministic current Sense, replay-sensitive Body execution and independent Git postcondition verification for it.
+
+What is product-real now:
+
+- project/workspace-local procedural candidates use the existing privacy-safe workdir fingerprint in their compatibility identity, so equally-shaped history from another repository cannot mature or select the current project's competence;
+- natural prior-style requests can surface bounded currently-applicable verified context with event/experience provenance rather than dumping memory/transcripts;
+- only `practiced` competence (four or more distinct verified events and reliability at least 0.80 under the existing deterministic maturity rules) may remove one redundant native deliberation pulse;
+- current event authority and fresh Investigation still supply the real target, workdir and action arguments; history supplies no credentials, private contents, raw command payloads or stale target identity;
+- SideEffect/anti-replay, Body execution and fresh independent postcondition verification are unchanged;
+- current mismatch blocks the fast path; prediction error records contradiction, returns to Investigation and repeated recent contradictions can persistently inhibit the competence;
+- durable verified evidence survives Resident restart, and the already-learned bounded mechanical path remains usable with external models unavailable.
+
+This closes E2E-37/38/39 only as a representative product slice. It is not a claim that arbitrary workflows are learnable or that Memory as a whole is complete.
+
+<!-- research-information-work-1.0-closure -->
+## Research & Information Work 1.0 — representative capability closure (2026-09-10)
+
+Status: **VERIFIED NARROW / E2E-01/02/03 representative paths closed**.
+
+Current `main` now has a bounded Resident-owned public-web Research path that reuses the existing `WebResource`, `ModelRouter`, durable Work, Body and file-identity owners instead of introducing a second Research agent/orchestrator/router/store.
+
+Product-real scope:
+
+- normal user research language can enter the active Resident and perform bounded multi-source search→extract;
+- search candidates are not treated as evidence; only successfully extracted source-document content enters the bounded Evidence Pack;
+- canonical source identity, requested/final URL provenance, provider provenance, capture/published freshness metadata, partial extraction failures and cross-source conflicts are preserved;
+- promoted findings/recommendations require exact source IDs and exact observed evidence excerpts; numeric/date/price anchors are locally checked and unsupported claims are rejected;
+- all providers unavailable or fewer than two independent readable sources blocks rather than falling back to model memory;
+- ambiguous same-Work references auto-resolve only when unique; zero/multiple candidates ask the user before any search;
+- durable research bundles survive Resident restart and still-fresh evidence can continue synthesis without reacquisition;
+- optional E2E-02 delivery writes only to the uniquely attached Work workspace, then performs fresh file identity observation, reread and content/source-ID verification.
+
+Implementation was merged through PR #246 to canonical `main` as `f77e5f5d6b93af04f0bbb974dedea6529dbc9934`. Exact-head acceptance before merge was green across ZN CI #1784, Research E2E #14, Work Recovery #406, Managed Browser #344, Windows Interactive Desktop #363, Memory & Learned Behavior #41, E2E28-34 #120 and E2E25 #55.
+
+Explicit remaining boundary: no arbitrary-internet Deep Research, authenticated-browser research, arbitrary PDF/Office/multimedia research, general citation engine, knowledge graph/vector DB, recursive research swarm or cross-device research sync is claimed.
