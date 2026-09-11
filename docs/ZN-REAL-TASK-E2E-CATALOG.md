@@ -273,7 +273,7 @@ Expected:
 
 ### E2E-20 — Multi-model coding route policy
 
-Environment: multiple user-approved routes.
+Environment: GPT + coding specialist + another general model.
 
 User:
 
