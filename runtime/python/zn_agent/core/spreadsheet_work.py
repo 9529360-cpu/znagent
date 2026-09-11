@@ -16,6 +16,7 @@ from xml.etree import ElementTree as ET
 
 from openpyxl import load_workbook
 from openpyxl.cell.cell import Cell
+from openpyxl.cell.rich_text import CellRichText
 
 from .file_identity import compare_file_identities, observe_file_identity
 
@@ -166,8 +167,14 @@ def _resolve_amount_header(headers: list[str]) -> tuple[int | None, str | None]:
     return None, "no unique explicit 金额/Amount column exists"
 
 
-def _load_supported(path: Path):
-    return load_workbook(path, read_only=False, data_only=False, keep_links=False)
+def _load_supported(path: Path, *, rich_text: bool = False):
+    return load_workbook(
+        path,
+        read_only=False,
+        data_only=False,
+        keep_links=False,
+        rich_text=rich_text,
+    )
 
 
 def _snapshot(path: Path) -> dict[str, Any]:
@@ -340,6 +347,8 @@ def inspect_xlsx(path: str | Path) -> dict[str, Any]:
 
 
 def _append_cell_evidence(cell: Cell) -> list[Any]:
+    if isinstance(cell.value, CellRichText):
+        raise ValueError("rich text cells are outside XLSX append-copy scope")
     if cell.data_type == "f":
         raise ValueError("formula cells are outside XLSX append-copy scope")
     return [
@@ -374,7 +383,7 @@ def _append_region_fingerprint(sheet: Any, *, max_row: int, max_column: int) -> 
 
 def _append_snapshot(path: Path) -> dict[str, Any]:
     """Snapshot the conservative one-sheet append target without E2E-10 semantics."""
-    workbook = _load_supported(path)
+    workbook = _load_supported(path, rich_text=True)
     if len(workbook.worksheets) != 1:
         raise ValueError("XLSX append-copy requires exactly one worksheet")
     sheet = workbook.worksheets[0]
@@ -393,6 +402,8 @@ def _append_snapshot(path: Path) -> dict[str, Any]:
     for column in range(1, sheet.max_column + 1):
         cell = sheet.cell(row=1, column=column)
         value = cell.value
+        if isinstance(value, CellRichText):
+            raise ValueError("rich text cells are outside XLSX append-copy scope")
         if cell.data_type == "f" or not isinstance(value, str) or not value.strip():
             raise ValueError(
                 "header row must contain non-empty stable strings in every used column"
