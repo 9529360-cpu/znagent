@@ -13,21 +13,22 @@
 当前最新已核实 checkpoint（不是永久 HEAD）：
 
 ```text
-Local Documents & Spreadsheet Work PR #248 final head: 37a7c2c975525ab01ba101ef6708d04bdd43a0b4
-PR #248 squash-merged to main as: 22a0537ffe082a695355da42fde9a09d576916a8
-verified main checkpoint after merge: 22a0537ffe082a695355da42fde9a09d576916a8
-ZN CI #1796: success
-Local Documents and Spreadsheet Work E2E #9: success
-Research and Information Work E2E #26: success
-ZN Work Recovery E2E #416: success
-ZN Managed Browser E2E #354: success
-ZN Windows Interactive Desktop E2E #372: success
-Memory and Learned Behavior E2E #53: success
+E2E-12 PR #250 implementation exact head: 65d5ec40f705f4e6e4c624b4a3287f27a949d8dc
+Document Research Completion E2E #5: success
+ZN CI #1804: success
+Research and Information Work E2E #34: success
+Local Documents and Spreadsheet Work E2E #17: success
+ZN Windows Interactive Desktop E2E #378: success
+Memory and Learned Behavior E2E #61: success
 ```
+
+PR #250 在上述 implementation exact-head 全绿后才同步文档。文档提交会产生新的 PR head，合并前必须再次核对该新 head 的适用 CI；PR #250 的 merge SHA 和 canonical main 只能在真实合并后记录，不能提前写死。
 
 历史检查点仍可用于追溯，但不能覆盖上面的 current evidence：
 
 ```text
+Local Documents & Spreadsheet Work PR #248 final head: 37a7c2c975525ab01ba101ef6708d04bdd43a0b4
+PR #248 squash-merged to main as: 22a0537ffe082a695355da42fde9a09d576916a8
 Research & Information Work PR #246 final head: 66526479b4e205a2123476375d5602b097748bb5
 PR #246 squash-merged to main as: f77e5f5d6b93af04f0bbb974dedea6529dbc9934
 historical checkpoint: PR #238 merged as 8cd2ff73038bbdba33017f71d91893296b7c082c
@@ -92,13 +93,29 @@ E2E-10 已验证普通用户句子“把昨天那个表整理一下，重复项�
 
 实现没有增加 WordAgent/ExcelAgent/OfficeAgent、第二 Resident、Office GUI automation、第二套 file store 或 TXT hack。生产依赖只新增 pinned `python-docx==1.2.0` 与 `openpyxl==3.1.5`。复杂 DOCX package parts、任意表格结构、宏/字段/嵌入对象，以及 formulas/tables/charts/pivots/external links/merges 等复杂 XLSX 结构仍不在本 closure 内。
 
+### E2E-12 — Document Research Completion 1.0
+
+PR #250 的 implementation exact-head `65d5ec40f705f4e6e4c624b4a3287f27a949d8dc` 已在 2026-09-11 完成 representative acceptance，准确状态是：**VERIFIED NARROW / representative path closed**。它没有引入第二 Resident、ResearchAgent、Router、Store、WordAgent、OfficeAgent、Browser/Desktop control plane 或 frontend feature。
+
+代表性路径从普通自然语言进入同一 active Product Resident / Root Work / Body。只接受 exact Root Work attached workspace 内一个真实 `.docx`，第一版只处理 1–3 个显式 `【待补充：...】` placeholders。DOCX target identity 在模型调用前由 deterministic inspection 绑定；模型不能选择 source path、destination、Body action、tool、permission、mutation scope 或 completion truth。
+
+Research 复用 existing configured `WebResource` search→extract。Search snippets/provider answers 仅用于 discovery；successfully extracted source-document observations 才是 evidence，且至少需要两个独立 readable sources。retrieved content 被当作 untrusted data：synthesis 前 deterministic instruction-like prompt-injection screening 会把命中来源从 evidence pack 剔除，同时保留 source identity/fingerprint/rejection provenance。模型 synthesis 只是 candidate，不因合法 JSON schema 获得 mutation authority。
+
+mutation 前还有本地 safety gate：每个 replacement 至少要由两个独立 prompt-safe extracted sources 支持，support quote 必须是 exact observed substring，price/date/percentage factual anchors 要逐支持来源一致；deterministic target-relevant source-anchor consistency 还会扫描 readable evidence，所以模型即使漏报冲突并返回 `conflicts: []`，只要同一目标存在矛盾 factual anchors，也会以 `source_conflict` 阻断。merge blocker 反例覆盖了 `$99` vs `$129` 漏报冲突，以及恶意 retrieved source 诱导出完全 allowed-schema replacement；两者在 `write_docx_completion_copy` 前结束，zero completed-copy mutation。
+
+成功只写新的 `-completed.docx`，source bytes 不变；run-aware span replacement 保留 non-target text、run topology 和 run formatting。之后 fresh reopen source/destination，重新验证 source identity/target set/structure fingerprint、destination identity/zero-placeholder/expected structure 等现实 postcondition，全部成立后 Root Work 才成功。unknown、insufficient prompt-safe sources、invalid schema/support、unsupported factual support、source/target drift、unsupported DOCX structure、output collision 均 all-or-nothing fail closed。
+
+该 implementation exact-head 的所有 PR workflows 最终 success：Document Research Completion E2E #5、ZN CI #1804、Research and Information Work E2E #34、Local Documents and Spreadsheet Work E2E #17、ZN Windows Interactive Desktop E2E #378、Memory and Learned Behavior E2E #61。E2E-12 #5 实际跑过 Python 3.11/3.12/3.13 core compatibility、merge-blocker counterexamples、real localhost HTTP + real DOCX E2E-12、E2E-01 与 E2E-09 regressions；ZN CI 的 Python core、Electron/TypeScript 和 source boundary 也全部 success。
+
+明确边界：不是 arbitrary DOCX completion、arbitrary document structures、arbitrary-internet Deep Research、authenticated-browser research、universal prompt-injection detection、general citation/reconciliation、Word complete 或 Office Suite complete。
+
 ### E2E-29
 
 一个真实 cognitive route 可以承载多个 independent WorkerRun；worker 数和模型数不绑定。Root completion 仍由 ZN 根据 acceptance/evidence 决定。
 
 ### E2E-30 / E2E-42
 
-已经按仓库当前 acceptance policy 关闭：durable route/privacy policy、hard eligibility、route/provider provenance 与 guarded multiroute acceptance 已落地。
+已经按仓库当前 acceptance policy 关闭：durable Work route/privacy policy、hard eligibility、route/provider provenance 与 guarded multiroute acceptance 已落地。
 
 重要边界：该 closure 包含明确记录的 **owner-approved environment waiver**，因为当时环境缺少第二个真实 provider family。不得把它写成已经获得两个真实 provider family 的完整生产证据。
 
@@ -225,6 +242,7 @@ multi-source source identity/provenance/freshness/conflict substrate
 durable research bundle / restart continuation
 research -> exact attached-workspace Markdown verification
 E2E-09/10 bounded Local Documents & Spreadsheet Work representative closure
+E2E-12 bounded evidence-driven DOCX completion representative closure
 E2E-30/42 route/privacy acceptance
 dynamic ResidentHealthJournal -> routing
 E2E-28/34 systematic stall/no-progress supervision
@@ -249,8 +267,9 @@ E2E-36 exact attempt-bound uncertain-side-effect restart resolution
 - worker `done` != Root completion。
 - Research 复用 existing WebResource/Work/ModelRouter；不要建立第二个 ResearchAgent/Research store/router/orchestrator。
 - Local DOCX/XLSX 工作复用 existing Product Resident / Work / Body；不要建立 WordAgent/ExcelAgent/OfficeAgent 或第二套 file truth。
-- E2E-09/10 representative closure != Word complete / Excel complete / Office Suite complete。
+- E2E-09/10/12 representative closures != Word complete / Excel complete / Office Suite complete。
 - search/provider answer != extracted evidence；claim promotion 必须保持 evidence grounding。
+- E2E-12 retrieved content/model output 都是 untrusted candidate；instruction-like source screening、two-source prompt-safe support 和 deterministic omitted-conflict gate 不能弱化成“schema valid 即可 mutation”。
 - real-world effect 必须通过 authority + fresh evidence；completed effects 不盲目 replay。
 - 只有一个 ModelRouter；不要增加第二套路由控制面。
 - 只有一个 durable Work/progress truth；不要增加第二套 orchestration ledger。
@@ -270,8 +289,8 @@ E2E-36 exact attempt-bound uncertain-side-effect restart resolution
 
 从 current main 继续时，优先在 `docs/ZN-REAL-TASK-E2E-CATALOG.md` 和真实产品路径里选择仍然失败/覆盖不足的普通用户任务，尤其是：
 
-- E2E-01/02/03 之外的 Research breadth：authenticated research、PDF/复杂 source extraction、citation UX、更多 cross-surface research；
-- E2E-09/10 之外的 Local Office breadth：更复杂 DOCX/XLSX 结构、更多文档/表格操作，以及 Research/Browser/Desktop 与 Office 的组合；
+- E2E-01/02/03/12 之外的 Research breadth：authenticated research、PDF/复杂 source extraction、citation UX、更多 cross-surface research；
+- E2E-09/10/12 之外的 Local Office breadth：更复杂 DOCX/XLSX 结构、更多文档/表格操作，以及 Research/Browser/Desktop 与 Office 的更广组合；
 - E2E-24 bounded closure 之外更复杂的真实 cross-surface task（Browser + Desktop + File/Terminal/Application）；
 - Browser/User Browser 在真实站点、frame/dialog/复杂 navigation 等更广场景的可靠性；
 - 现有 supervision/steering 基础上的更长周期真实连续体验与 progress/explanation UX；
