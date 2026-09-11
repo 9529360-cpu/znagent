@@ -2,6 +2,9 @@ from __future__ import annotations
 
 """Narrow product ingress for Research and Local Office representative Work."""
 
+from .document_research_completion_behavior import (
+    install_document_research_completion_behavior,
+)
 from .local_office_behavior import install_local_office_behavior
 from .research_information_resident import ResearchInformationResidentRuntime
 
@@ -52,6 +55,7 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         install_local_office_behavior(self)
+        install_document_research_completion_behavior(self)
 
     def _is_research_event(self, event) -> bool:
         # Research Work is a product Work path, not a catch-all replacement for
