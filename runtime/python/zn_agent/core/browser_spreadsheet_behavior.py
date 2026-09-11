@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
+from .browser import BrowserPlane
 from .file_identity import compare_file_identities
 from .models import ExecutionPath, ResidentRunResult, utc_now
 from .spreadsheet_work import append_xlsx_rows_copy, inspect_xlsx_append_target
@@ -164,6 +165,23 @@ def _authorized_context(resident, event, root):
 
 def _fresh_table(resident, session_id: str, page_id: str) -> dict[str, Any]:
     browser = resident.managed_browser
+    if getattr(browser, "plane", None) is not BrowserPlane.MANAGED:
+        raise _Blocked(
+            "unsupported_browser_plane",
+            "E2E-11 Browser table import is supported only on the managed browser plane",
+        )
+    try:
+        session = browser._session(session_id)
+    except Exception as exc:
+        raise _Blocked(
+            "browser_context_invalid",
+            f"exact managed browser session is unavailable: {type(exc).__name__}: {exc}",
+        ) from exc
+    if getattr(getattr(session, "identity", None), "plane", None) is not BrowserPlane.MANAGED:
+        raise _Blocked(
+            "unsupported_browser_plane",
+            "E2E-11 Browser table import requires a managed-plane session identity",
+        )
     try:
         scene = browser.observe_scene(session_id, page_id=page_id)
     except Exception as exc:
@@ -201,10 +219,7 @@ def _fresh_table(resident, session_id: str, page_id: str) -> dict[str, Any]:
         rows.append([cell.text for cell in cells])
     if not rows:
         raise _Blocked("browser_table_invalid", "table has no data rows")
-    try:
-        provider = str(browser._session(session_id).identity.provider or "")
-    except Exception:
-        provider = ""
+    provider = str(session.identity.provider or "")
     return {
         "provider": provider,
         "url": str(scene.url or ""),
