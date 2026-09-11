@@ -600,3 +600,18 @@ independent verification retained
 The dedicated CI gate is `.github/workflows/memory-learned-behavior-e2e.yml`; canonical `ZN CI` continues to gate the full core suite and existing source/desktop boundaries.
 
 Explicit non-claims: this does not close general memory, arbitrary multi-step workflow learning, cross-device memory, automatic executable skill generation, or universal provider-free operation.
+
+<!-- e2e11-browser-spreadsheet-closure -->
+## 2026-09-11 — E2E-11 Browser data into spreadsheet acceptance overlay
+
+Status: **CLOSED representative path / VERIFIED NARROW on PR #251 implementation exact-head `f2d408a3980ce2f862503aa77faf021c4c5b1050`; PR remains open and unmerged**.
+
+This overlay is authoritative for E2E-11 and supersedes the earlier status table omission and the older implementation-selection text that still listed E2E-11 as future Local Office breadth. The original scenario definition above remains unchanged.
+
+Representative acceptance: the ordinary user sentence `把这个网站里的数据整理进我现在这个表里。` enters the existing active Product Resident / Root Work / Body. It requires the exact current managed Browser session/page, exact attached workspace and explicit source `.xlsx`; no source-file scanning or guessing is allowed. The current page must expose exactly one main-frame simple native/ARIA table. Structured extraction is bounded to 64 total rows including header, 32 cells per row and 512 characters per cell and does not export HTML or page-wide text. Multiple tables, spans, malformed/partial materialization, stale/detached targets and ARIA count mismatches fail closed.
+
+The first row is treated as the exact ordered unique string header; subsequent rows must be rectangular cell rows with at least one data row. A deterministic Browser fingerprint is persisted at capture and must match a fresh re-observation before mutation. Spreadsheet mutation is a conservative copy-only append path, separate from E2E-10 cleanup semantics: one worksheet, header-only or rectangular scalar data, exact ordered headers, no formulas/macros/merges/tables/charts/drawings/pivots/external links or other complex structures. Browser values are appended as strings without type inference. The source workbook identity and bytes remain unchanged; output is exactly `<source-stem>-webdata.xlsx`, never overwrites an existing destination, and is temp-saved, reopened, verified, exclusively published, then freshly reopened again.
+
+Completion requires fresh Browser + source XLSX + destination XLSX evidence, durable `browser_spreadsheet_import:v1`, and `model_invocations == 0`. Real acceptance passed ZN Managed Browser E2E #359 with the explicit E2E-11 Chromium→XLSX step, plus Local Documents and Spreadsheet Work #27, ZN CI #1814, Research #44, E2E05 #65, E2E06 #8, Document Research #15, Memory #71 and Windows Interactive Desktop #388 on that exact implementation head.
+
+Explicit non-claims: arbitrary website tables, multi-table choice, virtualized grids, complex ARIA grids, arbitrary XLSX structures, formulas/charts/tables/pivots/merges, Excel complete, Office Suite complete and general Browser/Research/Desktop→Office automation remain outside this closure. No canonical merge SHA is recorded until PR #251 is actually merged.
