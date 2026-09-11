@@ -331,3 +331,20 @@ Research before implementation: HumanCompatibleAI/imitation DAgger (aggregate le
 Acceptance files: `tests/zn_agent/core/test_learned_behavior_resident.py`, `tests/zn_agent/core/test_project_scoped_procedural_learning.py`, `tests/zn_agent/e2e/test_e2e37_preferred_working_style.py`, `tests/zn_agent/e2e/test_e2e38_learned_verified_workflow.py`, `tests/zn_agent/e2e/test_e2e39_learned_path_drift.py`, plus `.github/workflows/memory-learned-behavior-e2e.yml`.
 
 Do not broaden this handoff into a claim that arbitrary workflows, human-like memory, code-generating learned skills or cross-device memory are closed.
+
+<!-- e2e11-browser-spreadsheet-closure -->
+## 2026-09-11 handoff — E2E-11 Browser data into spreadsheet / PR #251
+
+This is the newest E2E-11 handoff and supersedes older parts of this file that still treat E2E-11 as future Office/Browser breadth.
+
+Status: **VERIFIED NARROW / CLOSED representative path on implementation exact-head `f2d408a3980ce2f862503aa77faf021c4c5b1050`; PR #251 remains open and unmerged**.
+
+The representative task is the normal user sentence `把这个网站里的数据整理进我现在这个表里。`. It stays inside the existing Product Resident / Root Work / Body / BrowserScene / file identity / spreadsheet owners; no second Agent/Resident/Router/Store or Office GUI automation was added.
+
+The admitted path requires exact current `browser_session_id`, `page_id`, attached `workspace_path`, and explicit source `spreadsheet_path`. The source workbook must be the exact `.xlsx` inside the attached workspace; there is no directory scanning or guessing. The current Browser page must contain exactly one observable main-frame simple table. Table evidence is structured only and bounded to 64 total rows including header, 32 cells per row and 512 characters per cell; HTML/page-wide text are not exported. Multiple tables, stale/detached target identity, spans, malformed rows, partial/virtualized materialization and ARIA count mismatch fail closed.
+
+The first row becomes the exact ordered unique string header and remaining rows are rectangular string cells. A deterministic Browser source fingerprint is captured and must match a fresh re-observation before any spreadsheet mutation. XLSX append-copy is deliberately conservative and independent from E2E-10 cleanup semantics: one worksheet, header-only or rectangular scalar data, exact ordered headers, no formulas/macros/merges/tables/charts/drawings/pivots/external links or other complex OOXML. Browser values are written as strings without type inference. The original XLSX identity remains exact and unchanged; output is `<source-stem>-webdata.xlsx`, no overwrite, temp save/reopen validation, exclusive publish, then fresh source/destination reopen plus fresh Browser verification before Root completion.
+
+Durable child Work evidence is `browser_spreadsheet_import:v1`; the happy path is zero-model. Exact-head verification passed ZN Managed Browser E2E #359 with the explicit `Run E2E-11 real Browser data to spreadsheet` step, plus Local Documents and Spreadsheet Work #27, ZN CI #1814, Research #44, E2E05 #65, E2E06 #8, Document Research #15, Memory #71 and Windows Interactive Desktop #388.
+
+Do not broaden this into arbitrary website tables, virtual grids, multi-table choice, arbitrary XLSX mutation, Excel complete, Office Suite complete or general Browser→Office automation. Do not record a canonical merge SHA until PR #251 is actually merged.
