@@ -9,6 +9,7 @@ on:
       - apps/desktop/browser-extension/background.js
       - apps/desktop/browser-extension/manifest.json
       - tests/zn_agent/e2e/_run_owned_unittest_module.py
+      - tests/zn_agent/e2e/_current_app_content_cleanup_fixture.py
       - tests/zn_agent/e2e/test_windows_interactive_pointer_uia.py
       - tests/zn_agent/e2e/test_windows_interactive_text_entry.py
       - tests/zn_agent/e2e/test_windows_interactive_uia_text_capability.py
@@ -18,6 +19,7 @@ on:
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_semantic_grounding.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_task_context.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_managed_research_return_work.py
+      - tests/zn_agent/e2e/test_windows_interactive_user_browser_causal_popup.py
       - tests/zn_agent/e2e/test_windows_interactive_browser_result_file_work.py
       - tests/zn_agent/e2e/test_windows_interactive_current_app_content_cleanup.py
       - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_grounding.py
@@ -30,6 +32,7 @@ on:
       - runtime/python/zn_agent/core/body.py
       - runtime/python/zn_agent/core/current_app_text_body.py
       - runtime/python/zn_agent/core/current_app_text_cleanup_behavior.py
+      - runtime/python/zn_agent/core/current_app_text_cleanup_completion.py
       - runtime/python/zn_agent/core/current_app_text_cleanup_goal.py
       - runtime/python/zn_agent/core/automation_text_content.py
       - runtime/python/zn_agent/core/local_office_behavior.py
@@ -64,6 +67,7 @@ on:
       - runtime/python/zn_agent/core/desktop_modal_recovery_behavior.py
       - tests/zn_agent/core/test_current_app_text_cleanup.py
       - tests/zn_agent/core/test_current_app_text_cleanup_resident.py
+      - tests/zn_agent/core/test_current_app_text_cleanup_security.py
       - tests/zn_agent/core/test_desktop_goal_understanding_resident.py
       - tests/zn_agent/core/test_natural_named_desktop_input_work.py
       - tests/zn_agent/core/test_desktop_modal_recovery.py
@@ -90,6 +94,7 @@ on:
       - apps/desktop/browser-extension/background.js
       - apps/desktop/browser-extension/manifest.json
       - tests/zn_agent/e2e/_run_owned_unittest_module.py
+      - tests/zn_agent/e2e/_current_app_content_cleanup_fixture.py
       - tests/zn_agent/e2e/test_windows_interactive_pointer_uia.py
       - tests/zn_agent/e2e/test_windows_interactive_text_entry.py
       - tests/zn_agent/e2e/test_windows_interactive_uia_text_capability.py
@@ -99,6 +104,7 @@ on:
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_semantic_grounding.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_task_context.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_managed_research_return_work.py
+      - tests/zn_agent/e2e/test_windows_interactive_user_browser_causal_popup.py
       - tests/zn_agent/e2e/test_windows_interactive_browser_result_file_work.py
       - tests/zn_agent/e2e/test_windows_interactive_current_app_content_cleanup.py
       - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_grounding.py
@@ -111,6 +117,7 @@ on:
       - runtime/python/zn_agent/core/body.py
       - runtime/python/zn_agent/core/current_app_text_body.py
       - runtime/python/zn_agent/core/current_app_text_cleanup_behavior.py
+      - runtime/python/zn_agent/core/current_app_text_cleanup_completion.py
       - runtime/python/zn_agent/core/current_app_text_cleanup_goal.py
       - runtime/python/zn_agent/core/automation_text_content.py
       - runtime/python/zn_agent/core/local_office_behavior.py
@@ -145,6 +152,7 @@ on:
       - runtime/python/zn_agent/core/desktop_modal_recovery_behavior.py
       - tests/zn_agent/core/test_current_app_text_cleanup.py
       - tests/zn_agent/core/test_current_app_text_cleanup_resident.py
+      - tests/zn_agent/core/test_current_app_text_cleanup_security.py
       - tests/zn_agent/core/test_desktop_goal_understanding_resident.py
       - tests/zn_agent/core/test_natural_named_desktop_input_work.py
       - tests/zn_agent/core/test_desktop_modal_recovery.py
