@@ -11,8 +11,10 @@ from ctypes import wintypes
 from pathlib import Path
 
 from zn_agent.core.current_app_text_cleanup_behavior import _STATE_KEY
+from zn_agent.core.daemon import ResidentRpcServer
 from zn_agent.core.provider_bridge import build_resident_runtime
 from zn_agent.core.recovery_bounded_work import RecoveryBoundedWorkLedger
+from zn_agent.core.resident_server import ResidentSocketService
 from test_windows_interactive_text_entry import WindowsInteractiveTextEntryE2ETests
 
 
@@ -317,6 +319,8 @@ $sourceForm.Add_Shown({{ $cancel.Focus() }})
 class WindowsInteractiveCurrentAppContentCleanupE2ETests(unittest.TestCase):
     def _drive(self, root: Path, app: _WorkRecordApp, *, intervene=None):
         resident = build_resident_runtime(config={"model": {}}, store_path=root / "kernel.db")
+        service = ResidentSocketService(ResidentRpcServer(resident=resident))
+        self.assertIs(resident.visual_region, service.visual_region)
         ledger = RecoveryBoundedWorkLedger(resident)
         thread = "e2e13-" + uuid.uuid4().hex[:8]
         ledger.create_thread(thread_id=thread)
@@ -375,7 +379,7 @@ class WindowsInteractiveCurrentAppContentCleanupE2ETests(unittest.TestCase):
                 actions = [a for a in resident.body.recent_actions(1024) if a.event_id == event.event_id]
                 self.assertEqual(sum(a.kind == "automation_value_replace" for a in actions), 1)
                 self.assertEqual(sum(a.kind == "pointer_click" for a in actions), 1)
-                history = json.dumps([asdict(a) if False else a.args for a in actions], ensure_ascii=False, default=str)
+                history = json.dumps([a.args for a in actions], ensure_ascii=False, default=str)
                 self.assertNotIn(app.source, history)
                 self.assertNotIn(app.expected, history)
                 final = resident.store.get_working_state().data[_STATE_KEY]["final_verification"]
@@ -391,6 +395,7 @@ class WindowsInteractiveCurrentAppContentCleanupE2ETests(unittest.TestCase):
             app = _WorkRecordApp(root)
             app.start()
             old_runtime = []
+
             def intervene(resident, _state, meta):
                 old_runtime[:] = list(meta["source_target"]["runtime_id"])
                 app.trigger_recreate()
@@ -407,6 +412,7 @@ class WindowsInteractiveCurrentAppContentCleanupE2ETests(unittest.TestCase):
                         return
                     time.sleep(0.03)
                 raise RuntimeError("recreated Edit did not acquire a fresh RuntimeId")
+
             try:
                 resident, event, result, trace, intervened = self._drive(root, app, intervene=intervene)
                 self.assertTrue(intervened)
@@ -425,9 +431,11 @@ class WindowsInteractiveCurrentAppContentCleanupE2ETests(unittest.TestCase):
             root = Path(tmp)
             app = _WorkRecordApp(root)
             app.start()
+
             def intervene(_resident, _state, _meta):
                 app.trigger_drift()
                 app.wait_flag_consumed(app.drift_flag)
+
             try:
                 resident, event, result, trace, intervened = self._drive(root, app, intervene=intervene)
                 self.assertTrue(intervened)
