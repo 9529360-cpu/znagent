@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from zn_agent.core.automation_text_content import (
@@ -128,9 +130,10 @@ class _SuccessfulReplacement:
 class DurableBodyRedactionTests(unittest.TestCase):
     def test_product_body_history_never_persists_raw_replacement_text(self):
         with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "kernel.db"
             resident = build_resident_runtime(
                 config={"model": {}},
-                store_path=Path(tmp) / "kernel.db",
+                store_path=store_path,
             )
             try:
                 resident.body._automation_value_replacement = _SuccessfulReplacement()
@@ -149,18 +152,19 @@ class DurableBodyRedactionTests(unittest.TestCase):
                     result_sha256=text_sha256(RESULT),
                 )
                 self.assertTrue(response.success, response.error)
-                actions = [
-                    action
-                    for action in resident.body.recent_actions(32)
-                    if action.event_id == "evt-e2e13-redaction"
-                ]
-                self.assertEqual(len(actions), 1)
-                args = actions[0].args
+                with closing(sqlite3.connect(store_path)) as conn:
+                    row = conn.execute(
+                        "SELECT action_json FROM native_body_actions WHERE action_id = ?",
+                        (response.action_id,),
+                    ).fetchone()
+                self.assertIsNotNone(row)
+                persisted = json.loads(str(row[0]))
+                args = persisted["args"]
                 self.assertNotIn("replacement_text", args)
                 self.assertTrue(args.get("replacement_text_redacted"))
                 self.assertEqual(args.get("replacement_chars"), len(RESULT))
                 self.assertEqual(args.get("replacement_sha256"), text_sha256(RESULT))
-                serialized = json.dumps(args, ensure_ascii=False, sort_keys=True)
+                serialized = json.dumps(persisted, ensure_ascii=False, sort_keys=True)
                 self.assertNotIn(SOURCE, serialized)
                 self.assertNotIn(RESULT, serialized)
             finally:
