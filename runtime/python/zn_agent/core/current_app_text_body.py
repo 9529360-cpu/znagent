@@ -6,11 +6,11 @@ from typing import Any
 
 from .automation_text_content import NativeAutomationValueReplacementBody, text_sha256
 from .body import BodyAction, BodyActionResult
-from .browser_work_body import BrowserSideEffectAwareBody
+from .machine_capability_body import MachineCapabilityBody
 from .models import utc_now
 
 
-class CurrentAppTextAwareBody(BrowserSideEffectAwareBody):
+class CurrentAppTextAwareBody(MachineCapabilityBody):
     """Add one bounded UIA replacement movement without adding a second Body.
 
     The raw replacement exists only in the live call. Durable action history is
@@ -18,6 +18,11 @@ class CurrentAppTextAwareBody(BrowserSideEffectAwareBody):
     while the inherited generic side-effect attempt journal stores only a
     signature hash. A replay-blocking started/observed attempt therefore never
     needs the application text to survive a restart.
+
+    Inherit the current final product Body rather than an older browser-only
+    layer so application launch/activation, browser form submit, named text,
+    pointer/keyboard, file, and existing side-effect recovery remain one
+    compatible Body surface.
     """
 
     _AUTOMATION_VALUE_REPLACE = "automation_value_replace"
