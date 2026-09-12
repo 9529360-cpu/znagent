@@ -114,7 +114,7 @@ class WindowsInteractiveCurrentAppContentCleanupE2ETests(unittest.TestCase):
                 ]
                 self.assertEqual(sum(action.kind == "automation_value_replace" for action in actions), 1)
                 self.assertEqual(sum(action.kind == "pointer_click" for action in actions), 1)
-                history = json.dumps([action.args for action in actions], ensure_ascii=False, default=str)
+                history = json.dumps([action.data for action in actions], ensure_ascii=False, default=str)
                 self.assertNotIn(app.source, history)
                 self.assertNotIn(app.expected, history)
                 root_work = resident.work_ledger.work_item_for_event(event.event_id)
