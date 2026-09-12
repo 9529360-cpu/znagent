@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Narrow product ingress for Research and Local Office representative Work."""
 
+from .action_authority import install_worker_authority_gate
 from .browser_spreadsheet_behavior import install_browser_spreadsheet_behavior
 from .current_app_text_body import CurrentAppTextAwareBody
 from .current_app_text_cleanup_behavior import install_current_app_text_cleanup_behavior
@@ -61,9 +62,15 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Keep one product Body. E2E-13 extends the same mature browser/file/
-        # pointer/keyboard side-effect stack with one exact UIA Value movement.
+        # Keep one product Body. E2E-13 extends the current final application +
+        # browser/file/pointer/keyboard side-effect stack with one exact UIA Value
+        # movement. Reinstall the observers/gates that are attached to the
+        # concrete Body instance, exactly as existing Body-replacement layers do.
         self.body = CurrentAppTextAwareBody(resident=self)
+        installer = getattr(self, "_install_body_dispatch_health_observer", None)
+        if callable(installer):
+            installer()
+        install_worker_authority_gate(self.body, resident=self)
         install_current_app_text_cleanup_behavior(self)
         install_current_app_text_cleanup_completion(self)
         install_local_office_behavior(self)
