@@ -94,7 +94,7 @@ class TextContentSenseContractTests(unittest.TestCase):
             (AutomationTextRead("secret", _target(password=True), _target(password=True)), "safe exact-Edit"),
             (AutomationTextRead("x" * 4097, _target(), _target()), "oversized"),
             (AutomationTextRead("a", _target(), _target(runtime_id=(8, 8))), "RuntimeId"),
-            (AutomationTextRead("a", _target(), _target(process_id=333)), "process identity"),
+            (AutomationTextRead("a", _target(), _target(process_id=333)), "safe exact-Edit"),
             (AutomationTextRead("a", _target(value=False), _target(value=False)), "safe exact-Edit"),
         ]
         for read, pattern in cases:
