@@ -14,21 +14,29 @@ from .current_app_text_cleanup_behavior import _STATE_KEY
 from .models import ExecutionPath, ResidentRunResult, utc_now
 
 _INSTALL_MARKER = "_e2e13_current_app_text_cleanup_completion_installed"
+_EXECUTION_TITLE = "E2E-13 bounded desktop execution"
+_EXECUTION_OBJECTIVE = (
+    "Perform the bounded current-app deterministic cleanup and one Save using fresh desktop authority"
+)
+_EXECUTION_CRITERION = (
+    "bounded current-app cleanup mutation and single Save reached fresh final application verification"
+)
 _VERIFIER_TITLE = "E2E-13 saved result verifier"
 _VERIFIER_OBJECTIVE = (
-    "Verify the fresh same-process result window independently matches the "
-    "Resident-owned deterministic cleanup result"
+    "Independently verify the fresh same-process result window matches the Resident-owned "
+    "deterministic cleanup result"
 )
 _VERIFIER_CRITERION = (
-    "fresh same-process new-window UIA readback hash equals deterministic cleanup result"
+    "independent_python_verification:e2e13 fresh same-process new-window UIA readback hash "
+    "equals deterministic cleanup result"
 )
 
 
-def _safe_summary(meta: dict) -> str:
+def _safe_summary(meta: dict, *, evidence_kind: str) -> str:
     transform = dict(meta.get("transform") or {})
     final = dict(meta.get("final_verification") or {})
     payload = {
-        "e2e13_verifier": True,
+        "e2e13_evidence": evidence_kind,
         "version": 1,
         "source_sha256": str(transform.get("source_sha256") or ""),
         "source_chars": int(transform.get("source_chars") or 0),
@@ -38,6 +46,7 @@ def _safe_summary(meta: dict) -> str:
         "result_line_count": int(transform.get("result_line_count") or 0),
         "removed_blank_line_count": int(transform.get("removed_blank_line_count") or 0),
         "removed_duplicate_line_count": int(transform.get("removed_duplicate_line_count") or 0),
+        "save_dispatch_count": int(meta.get("save_dispatch_count") or 0),
         "new_window_handle": int(final.get("new_window_handle") or 0),
         "same_process": bool(final.get("same_process")),
         "title_postcondition": bool(final.get("title_postcondition")),
@@ -50,11 +59,20 @@ def _safe_summary(meta: dict) -> str:
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def _find_or_create_verifier(resident, root, meta: dict):
-    verifier_id = str(meta.get("verifier_work_item_id") or "").strip()
+def _find_or_create_child(
+    resident,
+    root,
+    meta: dict,
+    *,
+    meta_key: str,
+    title: str,
+    objective: str,
+    criterion: str,
+):
+    child_id = str(meta.get(meta_key) or "").strip()
     items = resident.work_ledger.list_work_items(root.work_thread_id, limit=256)
-    if verifier_id:
-        found = next((item for item in items if item.work_item_id == verifier_id), None)
+    if child_id:
+        found = next((item for item in items if item.work_item_id == child_id), None)
         if found is not None:
             return found
 
@@ -63,24 +81,24 @@ def _find_or_create_verifier(resident, root, meta: dict):
         for item in items
         if item.parent_work_item_id == root.work_item_id
         and item.plan_version == root.plan_version
-        and item.title == _VERIFIER_TITLE
-        and item.objective == _VERIFIER_OBJECTIVE
-        and list(item.acceptance_criteria) == [_VERIFIER_CRITERION]
+        and item.title == title
+        and item.objective == objective
+        and list(item.acceptance_criteria) == [criterion]
     ]
     if len(current) > 1:
-        raise RuntimeError("E2E-13 independent acceptance found ambiguous verifier WorkItems")
+        raise RuntimeError(f"E2E-13 found ambiguous current-plan WorkItems for {title!r}")
     if current:
-        verifier = current[0]
+        child = current[0]
     else:
-        verifier = resident.work_ledger.create_child_item(
+        child = resident.work_ledger.create_child_item(
             root_work_item_id=root.work_item_id,
-            objective=_VERIFIER_OBJECTIVE,
-            acceptance_criteria=[_VERIFIER_CRITERION],
-            title=_VERIFIER_TITLE,
+            objective=objective,
+            acceptance_criteria=[criterion],
+            title=title,
         )
-    meta["verifier_work_item_id"] = verifier.work_item_id
-    meta["verifier_bound_at"] = utc_now()
-    return verifier
+    meta[meta_key] = child.work_item_id
+    meta[f"{meta_key}_bound_at"] = utc_now()
+    return child
 
 
 def install_current_app_text_cleanup_completion(resident) -> None:
@@ -113,13 +131,38 @@ def install_current_app_text_cleanup_completion(resident) -> None:
             root = resident.work_ledger.work_item_for_event(event.event_id)
             if root is None or root.parent_work_item_id is not None or not root.acceptance_criteria:
                 raise RuntimeError("E2E-13 final verification lost its criterion-bound Root Work")
-            verifier = _find_or_create_verifier(resident, root, meta)
-            summary = _safe_summary(meta)
+
+            execution = _find_or_create_child(
+                resident,
+                root,
+                meta,
+                meta_key="execution_work_item_id",
+                title=_EXECUTION_TITLE,
+                objective=_EXECUTION_OBJECTIVE,
+                criterion=_EXECUTION_CRITERION,
+            )
+            if execution.status != "completed":
+                execution = resident.work_ledger.complete_child_item(
+                    execution.work_item_id,
+                    result=_safe_summary(meta, evidence_kind="bounded_execution"),
+                )
+
+            verifier = _find_or_create_child(
+                resident,
+                root,
+                meta,
+                meta_key="verifier_work_item_id",
+                title=_VERIFIER_TITLE,
+                objective=_VERIFIER_OBJECTIVE,
+                criterion=_VERIFIER_CRITERION,
+            )
+            summary = _safe_summary(meta, evidence_kind="independent_final_readback")
             if verifier.status != "completed":
                 verifier = resident.work_ledger.complete_child_item(
                     verifier.work_item_id,
                     result=summary,
                 )
+
             accepted = resident.work_ledger.accept_root_with_current_evidence(
                 event.event_id,
                 verifier_work_item_id=verifier.work_item_id,
