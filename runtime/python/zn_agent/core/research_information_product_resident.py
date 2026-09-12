@@ -5,6 +5,7 @@ from __future__ import annotations
 from .browser_spreadsheet_behavior import install_browser_spreadsheet_behavior
 from .current_app_text_body import CurrentAppTextAwareBody
 from .current_app_text_cleanup_behavior import install_current_app_text_cleanup_behavior
+from .current_app_text_cleanup_completion import install_current_app_text_cleanup_completion
 from .document_research_completion_behavior import (
     install_document_research_completion_behavior,
 )
@@ -64,6 +65,7 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
         # pointer/keyboard side-effect stack with one exact UIA Value movement.
         self.body = CurrentAppTextAwareBody(resident=self)
         install_current_app_text_cleanup_behavior(self)
+        install_current_app_text_cleanup_completion(self)
         install_local_office_behavior(self)
         install_browser_spreadsheet_behavior(self)
         install_document_research_completion_behavior(self)
