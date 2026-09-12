@@ -5,9 +5,17 @@ import unittest
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.cell.rich_text import CellRichText, TextBlock
+from openpyxl.cell.text import InlineFont
 from openpyxl.chart import BarChart, Reference
 
-from zn_agent.core.spreadsheet_work import AMOUNT_NUMBER_FORMAT, inspect_xlsx, write_xlsx_copy
+from zn_agent.core.spreadsheet_work import (
+    AMOUNT_NUMBER_FORMAT,
+    append_xlsx_rows_copy,
+    inspect_xlsx,
+    inspect_xlsx_append_target,
+    write_xlsx_copy,
+)
 
 
 class SpreadsheetWorkTests(unittest.TestCase):
@@ -22,6 +30,18 @@ class SpreadsheetWorkTests(unittest.TestCase):
         for index, row in enumerate(rows, start=2):
             sheet.append(row)
             sheet.cell(index, 3).number_format = formats[index - 2]
+        workbook.save(path)
+
+    @staticmethod
+    def _append_target(path: Path, *, with_data: bool = True) -> None:
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "销售"
+        sheet.append(["订单号", "客户", "金额"])
+        if with_data:
+            sheet.append([1001, "A", 1200])
+            sheet.cell(2, 1).number_format = "0"
+            sheet.cell(2, 3).number_format = "#,##0.00"
         workbook.save(path)
 
     def test_exact_dedupe_stable_retention_numeric_semantics_and_reopen(self) -> None:
@@ -107,6 +127,173 @@ class SpreadsheetWorkTests(unittest.TestCase):
             with self.assertRaisesRegex(FileExistsError, "output_collision"):
                 write_xlsx_copy(source, destination, precondition_identity=baseline["identity"])
             self.assertEqual(destination.read_bytes(), b"sentinel")
+
+    def test_append_target_accepts_header_only_and_existing_rectangular_data(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            header_only = root / "header-only.xlsx"
+            existing = root / "existing.xlsx"
+            self._append_target(header_only, with_data=False)
+            self._append_target(existing, with_data=True)
+            first = inspect_xlsx_append_target(header_only)
+            second = inspect_xlsx_append_target(existing)
+            self.assertTrue(first["ready"], first)
+            self.assertEqual(first["existing_row_count"], 0)
+            self.assertTrue(second["ready"], second)
+            self.assertEqual(second["existing_row_count"], 1)
+            self.assertEqual(second["headers"], ["订单号", "客户", "金额"])
+            self.assertTrue(second["semantic_fingerprint"])
+
+    def test_append_copy_preserves_existing_cells_and_source_and_reopens_exact_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "sales.xlsx"
+            destination = root / "sales-webdata.xlsx"
+            self._append_target(source)
+            source_bytes = source.read_bytes()
+            before = inspect_xlsx_append_target(source)
+            rows = [["1002", "B", "99.50"], ["=1+1", "C", "8.00"]]
+            result = append_xlsx_rows_copy(
+                source,
+                destination,
+                precondition_identity=before["identity"],
+                headers=["订单号", "客户", "金额"],
+                rows=rows,
+            )
+            self.assertEqual(source.read_bytes(), source_bytes)
+            self.assertTrue(result["source_unchanged"])
+            self.assertTrue(result["destination_reopened"])
+            self.assertTrue(result["existing_content_unchanged"])
+            self.assertTrue(result["appended_rows_exact"])
+            self.assertEqual(result["existing_semantic_fingerprint_before"], result["existing_semantic_fingerprint_after"])
+            reopened = load_workbook(destination)
+            sheet = reopened.active
+            self.assertEqual(sheet.title, "销售")
+            self.assertEqual(
+                [tuple(cell.value for cell in row) for row in sheet.iter_rows()],
+                [
+                    ("订单号", "客户", "金额"),
+                    (1001, "A", 1200),
+                    ("1002", "B", "99.50"),
+                    ("=1+1", "C", "8.00"),
+                ],
+            )
+            self.assertEqual(sheet.cell(2, 1).data_type, "n")
+            self.assertEqual(sheet.cell(2, 1).number_format, "0")
+            self.assertEqual(sheet.cell(2, 3).number_format, "#,##0.00")
+            self.assertEqual(sheet.cell(3, 1).data_type, "s")
+            self.assertEqual(sheet.cell(4, 1).data_type, "s")
+            final = inspect_xlsx_append_target(destination)
+            self.assertEqual(final["semantic_fingerprint"], result["destination_semantic_fingerprint"])
+            self.assertEqual(final["existing_row_count"], 3)
+
+    def test_rich_text_append_target_fails_closed_without_round_trip_loss(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "rich-text.xlsx"
+            destination = root / "rich-text-webdata.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["订单号", "客户", "金额"])
+            sheet.append([1001, "placeholder", 1200])
+            sheet["B2"] = CellRichText(
+                ["Hello ", TextBlock(InlineFont(b=True), "World")]
+            )
+            workbook.save(source)
+            source_bytes = source.read_bytes()
+
+            inspection = inspect_xlsx_append_target(source)
+            self.assertFalse(inspection["ready"])
+            self.assertEqual(inspection["blocker"], "unsupported_workbook_structure")
+            self.assertIn("rich text", inspection["detail"])
+            with self.assertRaisesRegex(RuntimeError, "unsupported_workbook_structure"):
+                append_xlsx_rows_copy(
+                    source,
+                    destination,
+                    precondition_identity=inspection["identity"],
+                    headers=["订单号", "客户", "金额"],
+                    rows=[["1002", "B", "99.50"]],
+                )
+            self.assertFalse(destination.exists())
+            self.assertEqual(source.read_bytes(), source_bytes)
+            reopened = load_workbook(source, rich_text=True)
+            self.assertIsInstance(reopened.active["B2"].value, CellRichText)
+
+    def test_append_header_malformed_row_source_drift_collision_and_complex_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "sales.xlsx"
+            self._append_target(source)
+            before = inspect_xlsx_append_target(source)
+
+            with self.assertRaisesRegex(ValueError, "spreadsheet_header_mismatch"):
+                append_xlsx_rows_copy(
+                    source,
+                    root / "header-mismatch.xlsx",
+                    precondition_identity=before["identity"],
+                    headers=["客户", "订单号", "金额"],
+                    rows=[["B", "1002", "99.50"]],
+                )
+            self.assertFalse((root / "header-mismatch.xlsx").exists())
+
+            with self.assertRaisesRegex(ValueError, "rectangular"):
+                append_xlsx_rows_copy(
+                    source,
+                    root / "malformed.xlsx",
+                    precondition_identity=before["identity"],
+                    headers=["订单号", "客户", "金额"],
+                    rows=[["1002", "B"]],
+                )
+            self.assertFalse((root / "malformed.xlsx").exists())
+
+            workbook = load_workbook(source)
+            workbook.active.append([1009, "drift", 1])
+            workbook.save(source)
+            with self.assertRaisesRegex(RuntimeError, "stale_source_evidence"):
+                append_xlsx_rows_copy(
+                    source,
+                    root / "drift-webdata.xlsx",
+                    precondition_identity=before["identity"],
+                    headers=["订单号", "客户", "金额"],
+                    rows=[["1002", "B", "99.50"]],
+                )
+            self.assertFalse((root / "drift-webdata.xlsx").exists())
+
+            current = inspect_xlsx_append_target(source)
+            collision = root / "sales-webdata.xlsx"
+            collision.write_bytes(b"sentinel")
+            with self.assertRaisesRegex(FileExistsError, "output_collision"):
+                append_xlsx_rows_copy(
+                    source,
+                    collision,
+                    precondition_identity=current["identity"],
+                    headers=["订单号", "客户", "金额"],
+                    rows=[["1002", "B", "99.50"]],
+                )
+            self.assertEqual(collision.read_bytes(), b"sentinel")
+
+            formula = root / "formula-append.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["订单号", "客户", "金额"])
+            sheet.append([1, "A", "=1+1"])
+            workbook.save(formula)
+            info = inspect_xlsx_append_target(formula)
+            self.assertFalse(info["ready"])
+            self.assertEqual(info["blocker"], "unsupported_workbook_structure")
+
+            charted = root / "chart-append.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["订单号", "客户", "金额"])
+            sheet.append([1, "A", 10])
+            chart = BarChart()
+            chart.add_data(Reference(sheet, min_col=3, min_row=1, max_row=2))
+            sheet.add_chart(chart, "E2")
+            workbook.save(charted)
+            info = inspect_xlsx_append_target(charted)
+            self.assertFalse(info["ready"])
+            self.assertEqual(info["blocker"], "unsupported_workbook_structure")
 
 
 if __name__ == "__main__":

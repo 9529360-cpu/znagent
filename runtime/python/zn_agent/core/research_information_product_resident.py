@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Narrow product ingress for Research and Local Office representative Work."""
 
+from .browser_spreadsheet_behavior import install_browser_spreadsheet_behavior
 from .document_research_completion_behavior import (
     install_document_research_completion_behavior,
 )
@@ -58,6 +59,7 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         install_local_office_behavior(self)
+        install_browser_spreadsheet_behavior(self)
         install_document_research_completion_behavior(self)
         install_document_research_completion_safety(self)
 

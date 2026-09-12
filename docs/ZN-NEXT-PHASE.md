@@ -12,6 +12,7 @@ Updated: 2026-09-11
 
 - **E2E-01 / E2E-02 / E2E-03 Research & Information Work**：普通自然语言 public-web research 已有 bounded representative closure：existing `WebResource` search→extract、多源 source identity/provenance/freshness、冲突保留、claim-to-evidence grounding、同 Work durable continuation/restart，以及唯一 attached workspace 下的可编辑 Markdown fresh reread/identity verification。该 closure 是 `VERIFIED NARROW`，不等于 arbitrary-internet Deep Research、authenticated-browser research、任意 PDF/Office authoring、general citation engine、knowledge graph/vector DB 或 recursive research swarm。
 - **E2E-09 / E2E-10 Local Documents & Spreadsheet Work**：真实 DOCX payment-date edit 与 zero-model XLSX exact-dedup/amount-format cleanup 已有 bounded representative closure；source authority/identity、ambiguity fail-closed、新输出文件和 reopen verification 已验证。实现 PR #248 squash merge 为 `22a0537ffe082a695355da42fde9a09d576916a8`。这不是 Word complete、Excel complete 或 Office Suite complete。
+- **E2E-11 Browser data into spreadsheet**：PR #251 implementation exact-head `f2d408a3980ce2f862503aa77faf021c4c5b1050` 已完成 `VERIFIED NARROW / CLOSED representative path` 验收。普通自然语言“把这个网站里的数据整理进我现在这个表里。”进入同一 Product Resident / Work / Body；只接受当前 exact Browser session/page 上唯一 main-frame simple table，以及 exact attached workspace 内一个明确 source XLSX。Browser 只导出 bounded structured rows/cells（总行数上限 64、每行 32 cells、每 cell 512 chars），不导出 page HTML/page-wide text；span/partial materialization/多表/复杂 table fail closed。mutation 前重新观察 Browser table fingerprint，写入后再次 fresh Browser + source XLSX + destination XLSX 验证；source identity 必须不变，destination 只以 `<stem>-webdata.xlsx` 新 copy 发布且不覆盖。append 只支持 one-sheet rectangular scalar workbook 与 exact ordered headers，新增 browser cells 保持 string，不做类型猜测；公式/表/图表/pivot/merge/external-link 等复杂 workbook fail closed。`model_invocations == 0`，durable evidence 为 `browser_spreadsheet_import:v1`。exact-head 的 ZN Managed Browser E2E #359（含显式 E2E-11 step）、Local Documents and Spreadsheet Work #27、ZN CI #1814、Research #44、E2E05 #65、E2E06 #8、Document Research #15、Memory #71、Windows Interactive #388 均 success。PR #251 仍 open / unmerged；canonical `main` 只有真实合并后才能记 merge SHA。
 - **E2E-12 Document Research Completion**：普通自然语言“把这个方案补完整，不确定的地方你自己查资料，但别乱编。”已有 bounded representative closure：只处理 exact attached workspace 内一个真实 DOCX 的 1–3 个显式 `【待补充：...】`，复用 existing `WebResource` search→extract 与同一 Product Resident / Work / Body；search snippet 仅作 discovery，成功 extracted source-document 才能进入 evidence。retrieved content 先经过 deterministic instruction-like prompt-injection source screening；每个 replacement 在 mutation 前要求至少两个独立 prompt-safe extracted sources 的一致 exact-quote/anchor 支持，并由本地 target-relevant price/date/percentage consistency gate 检测模型漏报的 source conflict。unknown、conflict、unsafe source、unsupported support、source drift、output collision 均 all-or-nothing fail closed；成功只写新 DOCX copy，源文件不变，并 fresh reopen 验证 target、identity、非目标文本与 run formatting。PR #250 implementation exact-head `65d5ec40f705f4e6e4c624b4a3287f27a949d8dc` 的 Document Research Completion E2E #5、ZN CI #1804、Research #34、Local Documents #17、Windows Interactive #378、Memory #61 全部 success。准确状态是 `VERIFIED NARROW / CLOSED representative path`，不是 arbitrary DOCX completion、arbitrary Deep Research、general prompt-injection solution 或完整 Word/Office 自动化。
 - **E2E-29**：一个实际 model route 服务多个隔离 WorkerRun；worker 数与模型数不绑定，Root completion 仍由 ZN 独立验收。
 - **E2E-30 / E2E-42**：durable route/privacy policy、ModelRouter hard eligibility、route/provider provenance 与 guarded multiroute acceptance 已按当前 acceptance policy 关闭。closure 包含明确的 owner-approved environment waiver，因为当时缺少第二个真实 provider family；不能宣称已有双真实 provider family 完整生产证据。
@@ -25,11 +26,12 @@ Updated: 2026-09-11
 
 ## Browser / Windows 已有的代表性 baseline
 
-Current `main` 还已经拥有一批近期真实 Body 能力：
+Current `main` 还已经拥有一批近期真实 Body 能力；其中 E2E-11 是 PR #251 exact-head 已验证、待真实合并后进入 canonical `main` 的新增 representative slice：
 
 - E2E-05 USER Browser authenticated research -> persisted mutation；
 - E2E-07 causal USER Browser child-tab attribution / popup / return path；
 - E2E-08 standard HTML `autocomplete="one-time-code"` same-authorized-tab user-presence handoff；
+- E2E-11 bounded current-page structured table sensing -> exact XLSX append-copy + fresh source/destination verification（PR #251 exact-head verified, unmerged）；
 - **E2E-15 bounded Windows unexpected-modal recovery**：同一 Resident / 同一 Work 内，fresh exact parent/modal/button authority、唯一安全 defer/continue action、单次 side effect、modal disappearance、parent readiness、旧 UIA RuntimeId 失效与 fresh re-ground 已在真实 WinForms `ShowDialog()` 路径验证；
 - bounded BrowserScene sensing；
 - tab lifecycle/history；
@@ -40,7 +42,7 @@ Current `main` 还已经拥有一批近期真实 Body 能力：
 - Windows Machine Capability / Application Awareness V1；
 - exact Resident-admitted existing application window activation。
 
-这些都只代表 bounded verified paths。特别是：E2E-08 不是“所有 MFA”；E2E-15 不是“任意 Windows dialog 自动处理”；Browser Body V2 不是“任意网页”；Windows application awareness 不是“所有 Windows 操作”。
+这些都只代表 bounded verified paths。特别是：E2E-08 不是“所有 MFA”；E2E-11 不是“任意网页表格或任意 Excel”；E2E-15 不是“任意 Windows dialog 自动处理”；Browser Body V2 不是“任意网页”；Windows application awareness 不是“所有 Windows 操作”。
 
 ## 下一阶段产品目标
 
@@ -89,17 +91,18 @@ USER Browser existing session
 -> fresh result verification
 ```
 
-当前已有若干两-surface、一个 bounded Research→editable-file、E2E-09/10 Local Office 和 E2E-12 Research→DOCX completion 代表性闭环，但复杂三-surface任务、目标漂移、应用/网页/文档状态变化和跨 surface recovery 仍是主要产品广度问题。
+当前已有若干两-surface、一个 bounded Research→editable-file、E2E-09/10 Local Office、E2E-11 Browser→Spreadsheet 和 E2E-12 Research→DOCX completion 代表性闭环，但复杂三-surface任务、目标漂移、应用/网页/文档状态变化和跨 surface recovery 仍是主要产品广度问题。E2E-11 只关闭了 current-page simple table -> exact attached-workspace XLSX copy 这一窄路径，不代表更广 Browser/Research/Desktop + Office 组合已经完成。
 
 开发规则：只补当前任务实际缺的 Body/Sense/Research/Office/verification 能力，不建立新的“cross-surface framework”、第二套 Research orchestration 或 OfficeAgent。
 
 ### 2. Browser / User Browser breadth beyond representative slices
 
-现有 BrowserScene、tab/history、popup、file transfer、control click 与 E2E-05/07/08 已消除很多旧缺口，但下面更广问题仍可能阻塞真实站点：
+现有 BrowserScene、tab/history、popup、file transfer、control click 与 E2E-05/07/08 已消除很多旧缺口；PR #251 的 E2E-11 又验证了 bounded current-page simple-table structured sensing，但下面更广问题仍可能阻塞真实站点：
 
 - 更复杂 same-origin/cross-origin frame 情况；
 - 浏览器/网页 dialogs 与复杂 navigation；
 - 动态页面结构和更广 semantic controls；
+- 多表、span、virtualized/partial table、grid-like data UI 等超出 E2E-11 的结构；
 - 真实站点的 popup/new-tab 变体；
 - 复杂授权/用户在场流程；
 - current exact semantic path 不足时的后续视觉/辅助感知需求；
@@ -136,17 +139,17 @@ E2E-01/02/03 已关闭 bounded public-web Research representative path；E2E-12 
 
 不要因此建立第二个 ResearchAgent、第二套 Work/store/router、general citation engine、knowledge graph/vector DB 或 recursive research swarm。
 
-### 5. Local Office breadth beyond E2E-09/10/12
+### 5. Local Office breadth beyond E2E-09/10/11/12
 
-E2E-09/10 已关闭两个 bounded Local Office representative paths，E2E-12 已关闭一个 bounded Research→DOCX completion representative path，因此不要再把“真实 DOCX 修改”“真实 XLSX 清理”或“外部研究证据进入一个窄 DOCX 补全路径”整体描述成完全没有实现。
+E2E-09/10 已关闭两个 bounded Local Office representative paths，E2E-11 已在 PR #251 exact-head 关闭一个 bounded Browser→XLSX append-copy representative path，E2E-12 已关闭一个 bounded Research→DOCX completion representative path。因此不要再把“真实 DOCX 修改”“真实 XLSX 清理”“当前网页简单表格整理进当前 XLSX copy”或“外部研究证据进入一个窄 DOCX 补全路径”整体描述成完全没有实现。
 
 仍然开放的是：
 
 - 更复杂 DOCX package、headers/footers、fields/content controls、tracked changes、drawings/embedded objects、复杂表格等；
 - XLSX formulas、tables、charts/drawings、pivots、external links/Power Query、merges、多 sheet 等；
-- 更广文档/表格变换，而不是只有付款日期替换、exact-row dedupe/amount format 和 1–3 个显式 placeholder 补全；
-- Browser/Research/Desktop 与 Office 的更广真实组合任务，例如 E2E-11 和超出 E2E-12 bounded scope 的路径；
-- PDF/PPT 等未由 E2E-09/10/12 覆盖的 Office/document 类任务。
+- 更广文档/表格变换，而不是只有付款日期替换、exact-row dedupe/amount format、bounded simple-table append 和 1–3 个显式 placeholder 补全；
+- 超出 E2E-11 bounded simple-table→XLSX copy、以及超出 E2E-12 bounded scope 的 Browser/Research/Desktop 与 Office 更广真实组合任务；
+- PDF/PPT 等未由 E2E-09/10/11/12 覆盖的 Office/document 类任务。
 
 继续复用 existing Product Resident / Work / Body / file identity；不要建立 WordAgent、ExcelAgent、OfficeAgent、第二套 file store 或默认 Office GUI automation。准确状态是 `VERIFIED NARROW`，不是 Word complete、Excel complete 或 Office Suite complete。
 
@@ -186,6 +189,7 @@ Installed N -> N+1 的 identity/data/Work/uncertain-side-effect continuity 仍�
 ```text
 E2E-01/02/03 bounded Research & Information Work representative closure
 E2E-09/10 bounded Local Documents & Spreadsheet Work representative closure
+E2E-11 bounded Browser data -> Spreadsheet representative closure (PR #251 exact-head verified; merge pending)
 E2E-12 bounded evidence-driven DOCX completion representative closure
 E2E-30/42 closure 本身
 ResidentHealthJournal dynamic health -> routing 接线
@@ -268,3 +272,57 @@ representative E2E closure != entire capability class product-closed
 - 未经真实 E2E 驱动的 OS substrate 扩建。
 
 下一阶段仍应是：**选择真实用户任务，找到 current main 真正缺的最小能力，把完整任务闭环做实。**
+
+<!-- memory-learned-behavior-1.0-closure -->
+## Memory & Learned Behavior 1.0 — representative capability closure (2026-09-10)
+
+Status: **VERIFIED NARROW / representative path closed**.
+
+The active product Resident now has one bounded resident-owned procedural fast path on top of the existing `VerifiedExperience -> CandidateProceduralTendency -> reality-gated influence` chain. The representative family is single-path Git staging because the repository already provides deterministic current Sense, replay-sensitive Body execution and independent Git postcondition verification for it.
+
+What is product-real now:
+
+- project/workspace-local procedural candidates use the existing privacy-safe workdir fingerprint in their compatibility identity, so equally-shaped history from another repository cannot mature or select the current project's competence;
+- natural prior-style requests can surface bounded currently-applicable verified context with event/experience provenance rather than dumping memory/transcripts;
+- only `practiced` competence (four or more distinct verified events and reliability at least 0.80 under the existing deterministic maturity rules) may remove one redundant native deliberation pulse;
+- current event authority and fresh Investigation still supply the real target, workdir and action arguments; history supplies no credentials, private contents, raw command payloads or stale target identity;
+- SideEffect/anti-replay, Body execution and fresh independent postcondition verification are unchanged;
+- current mismatch blocks the fast path; prediction error records contradiction, returns to Investigation and repeated recent contradictions can persistently inhibit the competence;
+- durable verified evidence survives Resident restart, and the already-learned bounded mechanical path remains usable with external models unavailable.
+
+This closes E2E-37/38/39 only as a representative product slice. It is not a claim that arbitrary workflows are learnable or that Memory as a whole is complete.
+
+<!-- research-information-work-1.0-closure -->
+## Research & Information Work 1.0 — representative capability closure (2026-09-10)
+
+Status: **VERIFIED NARROW / E2E-01/02/03 representative paths closed**.
+
+Current `main` now has a bounded Resident-owned public-web Research path that reuses the existing `WebResource`, `ModelRouter`, durable Work, Body and file-identity owners instead of introducing a second Research agent/orchestrator/router/store.
+
+Product-real scope:
+
+- normal user research language can enter the active Resident and perform bounded multi-source search→extract;
+- search candidates are not treated as evidence; only successfully extracted source-document content enters the bounded Evidence Pack;
+- canonical source identity, requested/final URL provenance, provider provenance, capture/published freshness metadata, partial extraction failures and cross-source conflicts are preserved;
+- promoted findings/recommendations require exact source IDs and exact observed evidence excerpts; numeric/date/price anchors are locally checked and unsupported claims are rejected;
+- all providers unavailable or fewer than two independent readable sources blocks rather than falling back to model memory;
+- ambiguous same-Work references auto-resolve only when unique; zero/multiple candidates ask the user before any search;
+- durable research bundles survive Resident restart and still-fresh evidence can continue synthesis without reacquisition;
+- optional E2E-02 delivery writes only to the uniquely attached Work workspace, then performs fresh file identity observation, reread and content/source-ID verification.
+
+Implementation was merged through PR #246 to canonical `main` as `f77e5f5d6b93af04f0bbb974dedea6529dbc9934`. Exact-head acceptance before merge was green across ZN CI #1784, Research E2E #14, Work Recovery #406, Managed Browser #344, Windows Interactive Desktop #363, Memory & Learned Behavior #41, E2E28-34 #120 and E2E25 #55.
+
+Explicit remaining boundary: no arbitrary-internet Deep Research, authenticated-browser research, arbitrary PDF/Office/multimedia research, general citation engine, knowledge graph/vector DB, recursive research swarm or cross-device research sync is claimed.
+
+<!-- e2e11-browser-spreadsheet-repair-closure -->
+## E2E-11 merge-blocker repair acceptance (2026-09-12)
+
+This repair note supersedes every earlier E2E-11 “current exact-head” reference in this file. In particular, `f2d408a3980ce2f862503aa77faf021c4c5b1050` is historical pre-review evidence, not the current acceptance checkpoint.
+
+Status: **VERIFIED NARROW / CLOSED representative path on repair implementation checkpoint `9ac5f403f17d85834e3a300e1065fc85f5747cb2`; PR #251 remains open and unmerged**.
+
+The repaired representative slice is MANAGED Browser only. USER-plane adapters/sessions are rejected before Browser table sensing or spreadsheet mutation. Current-page simple-table evidence must prove layout visibility for the table and every materialized row/cell; hidden ancestors and ancestor `aria-hidden=true` cause fail-closed rejection rather than silent filtering. Existing XLSX rich-text cells are inspected with openpyxl rich-text preservation enabled and rejected as unsupported instead of being flattened on round trip; E2E-10 keeps its prior behavior. Browser values remain literal strings, source XLSX identity/bytes remain unchanged, output remains exclusive/no-overwrite, and fresh Browser/source/destination verification plus zero-model completion are unchanged.
+
+Repair-checkpoint workflows are all success: ZN Managed Browser E2E #373 (explicit non-skipped E2E-11 Chromium→XLSX step), Local Documents and Spreadsheet Work #41, ZN CI #1828, Research #58, E2E05 #79, E2E06 #22, Document Research #29, Memory #85 and Windows Interactive #402. The Chromium regressions cover hidden-layout and ancestor-`aria-hidden` rows; spreadsheet core coverage exercises the rich-text rejection on Python 3.11/3.12/3.13 with openpyxl 3.1.5.
+
+The documentation synchronization after this checkpoint creates a later PR head; merge readiness must therefore use the live PR head and its applicable CI, not treat `9ac5f403...` as a self-referential permanent HEAD. No canonical merge SHA is claimed. USER Browser table import, arbitrary tables, grids/treegrids, pagination/virtualization, complex Excel, rich-text support and general Office automation remain outside the closure.
