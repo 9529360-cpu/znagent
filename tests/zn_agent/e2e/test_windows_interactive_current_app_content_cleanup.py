@@ -24,11 +24,19 @@ TASK = "把我现在这个软件里的这份工作记录整理一下：去掉空
 _ACCEPTANCE = "fresh saved result in the same process equals the deterministic cleaned work record"
 
 
+def _saved_count(app: WorkRecordApp) -> int:
+    if not app.save_count.exists():
+        return 0
+    return int(app.save_count.read_text(encoding="utf-8-sig").strip() or "0")
+
+
+def _max_reground(trace: list[dict]) -> int:
+    return max((int(row.get("reground_count") or 0) for row in trace), default=0)
+
+
 class WindowsInteractiveCurrentAppContentCleanupE2ETests(unittest.TestCase):
     def _drive(self, root: Path, app: WorkRecordApp, *, intervene=None):
         resident = build_resident_runtime(config={"model": {}}, store_path=root / "kernel.db")
-        # Match the actual desktop service composition so the mature pointer
-        # lifecycle has the same visual sensing authority used in production.
         service = ResidentSocketService(ResidentRpcServer(resident=resident))
         self.assertIs(resident.visual_region, service.visual_region)
         control = RestoreAwareWorkControl(RecoveryBoundedWorkLedger(resident))
@@ -66,6 +74,7 @@ class WindowsInteractiveCurrentAppContentCleanupE2ETests(unittest.TestCase):
                     "phase": meta.get("phase"),
                     "reground_count": meta.get("reground_count"),
                     "save_dispatch_count": meta.get("save_dispatch_count"),
+                    "root_work_status": meta.get("root_work_status"),
                     "actions": [action.kind for action in actions[-8:]],
                 }
             )
@@ -97,7 +106,7 @@ class WindowsInteractiveCurrentAppContentCleanupE2ETests(unittest.TestCase):
                 self.assertEqual(result.model_invocations, 0)
                 self.assertTrue(app.result_hwnd)
                 self.assertNotEqual(app.result_hwnd, app.hwnd)
-                self.assertEqual(app.saved_count(), 1)
+                self.assertEqual(_saved_count(app), 1)
                 actions = [
                     action
                     for action in resident.body.recent_actions(1024)
@@ -108,9 +117,10 @@ class WindowsInteractiveCurrentAppContentCleanupE2ETests(unittest.TestCase):
                 history = json.dumps([action.args for action in actions], ensure_ascii=False, default=str)
                 self.assertNotIn(app.source, history)
                 self.assertNotIn(app.expected, history)
-                final = resident.store.get_working_state().data[_STATE_KEY]["final_verification"]
-                self.assertEqual(final["new_window_handle"], app.result_hwnd)
-                self.assertTrue(final["title_postcondition"])
+                root_work = resident.work_ledger.work_item_for_event(event.event_id)
+                self.assertIsNotNone(root_work)
+                self.assertEqual(root_work.status, "completed")
+                self.assertIn("zn_independent_acceptance", root_work.result or "")
             finally:
                 app.close()
                 if resident is not None:
@@ -147,17 +157,16 @@ class WindowsInteractiveCurrentAppContentCleanupE2ETests(unittest.TestCase):
                 self.assertTrue(intervened)
                 self.assertIsNotNone(result, json.dumps(trace[-20:], ensure_ascii=False))
                 self.assertTrue(result.success, result.reason)
-                self.assertGreaterEqual(
-                    resident.store.get_working_state().data[_STATE_KEY]["reground_count"],
-                    1,
-                )
-                self.assertEqual(app.saved_count(), 1)
+                self.assertGreaterEqual(_max_reground(trace), 1)
+                self.assertEqual(_saved_count(app), 1)
                 actions = [
                     action
                     for action in resident.body.recent_actions(1024)
                     if action.event_id == event.event_id
                 ]
                 self.assertEqual(sum(action.kind == "automation_value_replace" for action in actions), 1)
+                root_work = resident.work_ledger.work_item_for_event(event.event_id)
+                self.assertEqual(root_work.status, "completed")
             finally:
                 app.close()
                 if resident is not None:
@@ -176,13 +185,14 @@ class WindowsInteractiveCurrentAppContentCleanupE2ETests(unittest.TestCase):
                 app.wait_flag_consumed(app.drift_flag)
 
             try:
-                resident, _event, result, trace, intervened = self._drive(root, app, intervene=intervene)
+                resident, event, result, trace, intervened = self._drive(root, app, intervene=intervene)
                 self.assertTrue(intervened)
                 self.assertIsNotNone(result, json.dumps(trace[-20:], ensure_ascii=False))
                 self.assertTrue(result.success, result.reason)
-                meta = resident.store.get_working_state().data[_STATE_KEY]
-                self.assertGreaterEqual(meta["reground_count"], 1)
-                self.assertEqual(app.saved_count(), 1)
+                self.assertGreaterEqual(_max_reground(trace), 1)
+                self.assertEqual(_saved_count(app), 1)
+                root_work = resident.work_ledger.work_item_for_event(event.event_id)
+                self.assertEqual(root_work.status, "completed")
             finally:
                 app.close()
                 if resident is not None:
@@ -199,7 +209,7 @@ class WindowsInteractiveCurrentAppContentCleanupE2ETests(unittest.TestCase):
                 resident, event, result, trace, _ = self._drive(root, app)
                 self.assertIsNotNone(result, json.dumps(trace[-20:], ensure_ascii=False))
                 self.assertFalse(result.success)
-                self.assertEqual(app.saved_count(), 0)
+                self.assertEqual(_saved_count(app), 0)
                 actions = [
                     action
                     for action in resident.body.recent_actions(1024)
@@ -208,6 +218,8 @@ class WindowsInteractiveCurrentAppContentCleanupE2ETests(unittest.TestCase):
                 self.assertFalse(
                     any(action.kind in {"automation_value_replace", "pointer_click"} for action in actions)
                 )
+                root_work = resident.work_ledger.work_item_for_event(event.event_id)
+                self.assertNotEqual(root_work.status, "completed")
             finally:
                 app.close()
                 if resident is not None:
@@ -224,14 +236,15 @@ class WindowsInteractiveCurrentAppContentCleanupE2ETests(unittest.TestCase):
                 resident, event, result, trace, _ = self._drive(root, app)
                 self.assertIsNotNone(result, json.dumps(trace[-20:], ensure_ascii=False))
                 self.assertFalse(result.success)
-                self.assertEqual(app.saved_count(), 1)
+                self.assertEqual(_saved_count(app), 1)
                 actions = [
                     action
                     for action in resident.body.recent_actions(1024)
                     if action.event_id == event.event_id
                 ]
                 self.assertEqual(sum(action.kind == "pointer_click" for action in actions), 1)
-                self.assertNotEqual(resident.store.get_working_state().stage, "complete")
+                root_work = resident.work_ledger.work_item_for_event(event.event_id)
+                self.assertNotEqual(root_work.status, "completed")
             finally:
                 app.close()
                 if resident is not None:
