@@ -198,6 +198,32 @@ class E2E07UserBrowserCausalPopupTests(unittest.TestCase):
             resource_status={"available": True, "error": None},
         )
 
+    @staticmethod
+    def _authorize_current_tab(resident, fixture) -> dict:
+        # Windows can still be settling browser focus after fixture startup.
+        # Retry only while fresh evidence says no explicit extension-tab
+        # authorization exists; each attempt remains a real user shortcut.
+        for _ in range(3):
+            current = resident.user_browser_authorization()
+            if (
+                current.get("authorized")
+                and current.get("provider") == "zn-extension-user-browser"
+            ):
+                return current
+            fixture.activate()
+            time.sleep(0.12)
+            _press_extension_action_shortcut()
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                candidate = resident.user_browser_authorization()
+                if (
+                    candidate.get("authorized")
+                    and candidate.get("provider") == "zn-extension-user-browser"
+                ):
+                    return candidate
+                time.sleep(0.05)
+        return resident.user_browser_authorization()
+
     def _start_server(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
         server.login_requests = 0  # type: ignore[attr-defined]
@@ -257,15 +283,10 @@ class E2E07UserBrowserCausalPopupTests(unittest.TestCase):
             env["rpc"] = rpc
             rpc.service.acquire()
             self._enable_cognition(resident, cognition)
-            fixture.activate()
-            _press_extension_action_shortcut()
-            deadline = time.monotonic() + 8
-            while time.monotonic() < deadline:
-                if resident.user_browser_authorization().get("provider") == "zn-extension-user-browser":
-                    break
-                time.sleep(0.05)
+            authorization = self._authorize_current_tab(resident, fixture)
+            self.assertTrue(authorization.get("authorized"), authorization)
             self.assertEqual(
-                resident.user_browser_authorization().get("provider"),
+                authorization.get("provider"),
                 "zn-extension-user-browser",
             )
             return env
