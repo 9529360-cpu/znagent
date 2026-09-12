@@ -11,6 +11,8 @@ from zn_agent.core.automation_text_content import (
     _WindowsAutomationTextWorker,
     text_sha256,
 )
+from zn_agent.core.current_app_text_body import CurrentAppTextAwareBody
+from zn_agent.core.machine_capability_body import MachineCapabilityBody
 from zn_agent.core.provider_bridge import build_resident_runtime
 
 
@@ -80,6 +82,31 @@ class NativeReplacementTargetPolicyTests(unittest.TestCase):
         self._require(_target(value_is_read_only=True), allow_read_only=True)
 
 
+class ProductBodyCompositionTests(unittest.TestCase):
+    def test_e2e13_extends_final_machine_capability_body_instead_of_downgrading_it(self):
+        self.assertTrue(issubclass(CurrentAppTextAwareBody, MachineCapabilityBody))
+        self.assertTrue(
+            CurrentAppTextAwareBody._requires_guard(
+                "browser_fill_named_text_and_click_named_button_to_url", {}
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            try:
+                self.assertIsInstance(resident.body, CurrentAppTextAwareBody)
+                self.assertIsInstance(resident.body, MachineCapabilityBody)
+                self.assertTrue(hasattr(resident.body, "device_capabilities"))
+                self.assertTrue(
+                    callable(getattr(resident.body, "activate_admitted_application_window", None))
+                )
+            finally:
+                resident.store.close()
+
+
 class _SuccessfulReplacement:
     def replace_exact(self, **kwargs):
         return AutomationValueReplacementResult(
@@ -105,36 +132,39 @@ class DurableBodyRedactionTests(unittest.TestCase):
                 config={"model": {}},
                 store_path=Path(tmp) / "kernel.db",
             )
-            resident.body._automation_value_replacement = _SuccessfulReplacement()
-            response = resident.body.act(
-                "automation_value_replace",
-                event_id="evt-e2e13-redaction",
-                process_id=222,
-                process_name="fixture.exe",
-                window_handle=8181,
-                name="工作记录",
-                runtime_id=list(RID),
-                source_chars=len(SOURCE),
-                source_sha256=text_sha256(SOURCE),
-                replacement_text=RESULT,
-                result_chars=len(RESULT),
-                result_sha256=text_sha256(RESULT),
-            )
-            self.assertTrue(response.success, response.error)
-            actions = [
-                action
-                for action in resident.body.recent_actions(32)
-                if action.event_id == "evt-e2e13-redaction"
-            ]
-            self.assertEqual(len(actions), 1)
-            args = actions[0].args
-            self.assertNotIn("replacement_text", args)
-            self.assertTrue(args.get("replacement_text_redacted"))
-            self.assertEqual(args.get("replacement_chars"), len(RESULT))
-            self.assertEqual(args.get("replacement_sha256"), text_sha256(RESULT))
-            serialized = json.dumps(args, ensure_ascii=False, sort_keys=True)
-            self.assertNotIn(SOURCE, serialized)
-            self.assertNotIn(RESULT, serialized)
+            try:
+                resident.body._automation_value_replacement = _SuccessfulReplacement()
+                response = resident.body.act(
+                    "automation_value_replace",
+                    event_id="evt-e2e13-redaction",
+                    process_id=222,
+                    process_name="fixture.exe",
+                    window_handle=8181,
+                    name="工作记录",
+                    runtime_id=list(RID),
+                    source_chars=len(SOURCE),
+                    source_sha256=text_sha256(SOURCE),
+                    replacement_text=RESULT,
+                    result_chars=len(RESULT),
+                    result_sha256=text_sha256(RESULT),
+                )
+                self.assertTrue(response.success, response.error)
+                actions = [
+                    action
+                    for action in resident.body.recent_actions(32)
+                    if action.event_id == "evt-e2e13-redaction"
+                ]
+                self.assertEqual(len(actions), 1)
+                args = actions[0].args
+                self.assertNotIn("replacement_text", args)
+                self.assertTrue(args.get("replacement_text_redacted"))
+                self.assertEqual(args.get("replacement_chars"), len(RESULT))
+                self.assertEqual(args.get("replacement_sha256"), text_sha256(RESULT))
+                serialized = json.dumps(args, ensure_ascii=False, sort_keys=True)
+                self.assertNotIn(SOURCE, serialized)
+                self.assertNotIn(RESULT, serialized)
+            finally:
+                resident.store.close()
 
 
 if __name__ == "__main__":
