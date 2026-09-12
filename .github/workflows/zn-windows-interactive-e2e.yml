@@ -19,6 +19,7 @@ on:
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_task_context.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_managed_research_return_work.py
       - tests/zn_agent/e2e/test_windows_interactive_browser_result_file_work.py
+      - tests/zn_agent/e2e/test_windows_interactive_current_app_content_cleanup.py
       - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_grounding.py
       - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_reground.py
       - tests/zn_agent/e2e/test_windows_interactive_desktop_modal_recovery.py
@@ -27,6 +28,10 @@ on:
       - tests/zn_agent/e2e/test_windows_interactive_application_activation.py
       - runtime/python/pyproject.toml
       - runtime/python/zn_agent/core/body.py
+      - runtime/python/zn_agent/core/current_app_text_body.py
+      - runtime/python/zn_agent/core/current_app_text_cleanup_behavior.py
+      - runtime/python/zn_agent/core/current_app_text_cleanup_goal.py
+      - runtime/python/zn_agent/core/automation_text_content.py
       - runtime/python/zn_agent/core/local_office_behavior.py
       - runtime/python/zn_agent/core/office_document.py
       - runtime/python/zn_agent/core/spreadsheet_work.py
@@ -57,6 +62,8 @@ on:
       - runtime/python/zn_agent/core/automation_named_control_sense.py
       - runtime/python/zn_agent/core/modal_window_sense.py
       - runtime/python/zn_agent/core/desktop_modal_recovery_behavior.py
+      - tests/zn_agent/core/test_current_app_text_cleanup.py
+      - tests/zn_agent/core/test_current_app_text_cleanup_resident.py
       - tests/zn_agent/core/test_desktop_goal_understanding_resident.py
       - tests/zn_agent/core/test_natural_named_desktop_input_work.py
       - tests/zn_agent/core/test_desktop_modal_recovery.py
@@ -93,6 +100,7 @@ on:
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_task_context.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_managed_research_return_work.py
       - tests/zn_agent/e2e/test_windows_interactive_browser_result_file_work.py
+      - tests/zn_agent/e2e/test_windows_interactive_current_app_content_cleanup.py
       - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_grounding.py
       - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_reground.py
       - tests/zn_agent/e2e/test_windows_interactive_desktop_modal_recovery.py
@@ -101,6 +109,10 @@ on:
       - tests/zn_agent/e2e/test_windows_interactive_application_activation.py
       - runtime/python/pyproject.toml
       - runtime/python/zn_agent/core/body.py
+      - runtime/python/zn_agent/core/current_app_text_body.py
+      - runtime/python/zn_agent/core/current_app_text_cleanup_behavior.py
+      - runtime/python/zn_agent/core/current_app_text_cleanup_goal.py
+      - runtime/python/zn_agent/core/automation_text_content.py
       - runtime/python/zn_agent/core/local_office_behavior.py
       - runtime/python/zn_agent/core/office_document.py
       - runtime/python/zn_agent/core/spreadsheet_work.py
@@ -131,6 +143,8 @@ on:
       - runtime/python/zn_agent/core/automation_named_control_sense.py
       - runtime/python/zn_agent/core/modal_window_sense.py
       - runtime/python/zn_agent/core/desktop_modal_recovery_behavior.py
+      - tests/zn_agent/core/test_current_app_text_cleanup.py
+      - tests/zn_agent/core/test_current_app_text_cleanup_resident.py
       - tests/zn_agent/core/test_desktop_goal_understanding_resident.py
       - tests/zn_agent/core/test_natural_named_desktop_input_work.py
       - tests/zn_agent/core/test_desktop_modal_recovery.py
@@ -197,6 +211,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw 'Playwright Chromium runtime installation failed for interactive E2E'
           }
+      - name: Run E2E-13 current-app content cleanup
+        shell: powershell
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-e2e-venv\Scripts\python.exe'
+          & $python tests/zn_agent/e2e/test_windows_interactive_current_app_content_cleanup.py -v
+          if ($LASTEXITCODE -ne 0) {
+            throw 'E2E-13 current-app content cleanup failed'
+          }
       - name: Run E2E-15 modal recovery acceptance in isolation
         shell: powershell
         run: |
@@ -215,7 +238,8 @@ jobs:
           $excluded = @(
             'test_windows_interactive_authorized_user_browser_cdp.py',
             'test_windows_interactive_user_browser_named_goal.py',
-            'test_windows_interactive_desktop_modal_recovery.py'
+            'test_windows_interactive_desktop_modal_recovery.py',
+            'test_windows_interactive_current_app_content_cleanup.py'
           )
           $tests = Get-ChildItem tests/zn_agent/e2e/test_windows_interactive_*.py |
             Where-Object { $_.Name -notin $excluded } |
