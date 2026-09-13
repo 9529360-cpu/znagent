@@ -105,16 +105,34 @@ class LongRunningTerminalProductTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             resident, ledger, workspace = self._runtime(Path(tmp))
             executable = str(Path(sys.executable).resolve()).replace("\\", "/")
+            release = workspace / "e2e22-release.flag"
             command = (
-                f'"{executable}" -c "import time; time.sleep(1.0); '
+                f'"{executable}" -c "import time,pathlib; '
+                "p=pathlib.Path('e2e22-release.flag'); "
+                "exec('while not p.exists():\\n    time.sleep(0.05)'); "
                 "print('e2e22-real-done')\""
             )
             task = f"请在这个项目里运行 `{command}`，等它跑完后把结果告诉我。"
+            original_act = resident.body.act
+            running_polls = 0
+
+            def observed_act(kind, *, event_id=None, **kwargs):
+                nonlocal running_polls
+                result = original_act(kind, event_id=event_id, **kwargs)
+                data = result.data if isinstance(result.data, dict) else {}
+                if kind == "terminal_poll" and str(data.get("status") or "").lower() == "running":
+                    running_polls += 1
+                    if not release.exists():
+                        release.write_text("release", encoding="utf-8")
+                return result
+
             try:
-                _, run = ledger.submit("e2e22", task)
+                with patch.object(resident.body, "act", side_effect=observed_act):
+                    _, run = ledger.submit("e2e22", task)
 
                 self.assertTrue(run.success, run.reason)
                 self.assertEqual(run.model_invocations, 0)
+                self.assertGreaterEqual(running_polls, 1)
                 self.assertIn("e2e22-real-done", run.response)
                 child = self._child(ledger, "e2e22")
                 self.assertEqual(child.status, "completed")
