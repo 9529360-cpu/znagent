@@ -2,11 +2,11 @@
 
 这份文件只描述 current `main` 之后的产品选择原则和剩余产品缺口。它不给 updater、rollback、signing、release trust、credential、identity、installer 或 long-term memory 的高风险改动自动授权。
 
-Updated: 2026-09-11
+Updated: 2026-09-13
 
 ## 当前已关闭的 delegated baseline
 
-2026-09-06～2026-09-11 已经形成一组代表性 closure；下一阶段不得重复把它们当“尚未开发”的默认主线。
+2026-09-06～2026-09-13 已经形成一组代表性 closure；下一阶段不得重复把它们当“尚未开发”的默认主线。
 
 已关闭的代表性 baseline：
 
@@ -14,6 +14,7 @@ Updated: 2026-09-11
 - **E2E-09 / E2E-10 Local Documents & Spreadsheet Work**：真实 DOCX payment-date edit 与 zero-model XLSX exact-dedup/amount-format cleanup 已有 bounded representative closure；source authority/identity、ambiguity fail-closed、新输出文件和 reopen verification 已验证。实现 PR #248 squash merge 为 `22a0537ffe082a695355da42fde9a09d576916a8`。这不是 Word complete、Excel complete 或 Office Suite complete。
 - **E2E-11 Browser data into spreadsheet**：PR #251 implementation exact-head `f2d408a3980ce2f862503aa77faf021c4c5b1050` 已完成 `VERIFIED NARROW / CLOSED representative path` 验收。普通自然语言“把这个网站里的数据整理进我现在这个表里。”进入同一 Product Resident / Work / Body；只接受当前 exact Browser session/page 上唯一 main-frame simple table，以及 exact attached workspace 内一个明确 source XLSX。Browser 只导出 bounded structured rows/cells（总行数上限 64、每行 32 cells、每 cell 512 chars），不导出 page HTML/page-wide text；span/partial materialization/多表/复杂 table fail closed。mutation 前重新观察 Browser table fingerprint，写入后再次 fresh Browser + source XLSX + destination XLSX 验证；source identity 必须不变，destination 只以 `<stem>-webdata.xlsx` 新 copy 发布且不覆盖。append 只支持 one-sheet rectangular scalar workbook 与 exact ordered headers，新增 browser cells 保持 string，不做类型猜测；公式/表/图表/pivot/merge/external-link 等复杂 workbook fail closed。`model_invocations == 0`，durable evidence 为 `browser_spreadsheet_import:v1`。exact-head 的 ZN Managed Browser E2E #359（含显式 E2E-11 step）、Local Documents and Spreadsheet Work #27、ZN CI #1814、Research #44、E2E05 #65、E2E06 #8、Document Research #15、Memory #71、Windows Interactive #388 均 success。PR #251 仍 open / unmerged；canonical `main` 只有真实合并后才能记 merge SHA。
 - **E2E-12 Document Research Completion**：普通自然语言“把这个方案补完整，不确定的地方你自己查资料，但别乱编。”已有 bounded representative closure：只处理 exact attached workspace 内一个真实 DOCX 的 1–3 个显式 `【待补充：...】`，复用 existing `WebResource` search→extract 与同一 Product Resident / Work / Body；search snippet 仅作 discovery，成功 extracted source-document 才能进入 evidence。retrieved content 先经过 deterministic instruction-like prompt-injection source screening；每个 replacement 在 mutation 前要求至少两个独立 prompt-safe extracted sources 的一致 exact-quote/anchor 支持，并由本地 target-relevant price/date/percentage consistency gate 检测模型漏报的 source conflict。unknown、conflict、unsafe source、unsupported support、source drift、output collision 均 all-or-nothing fail closed；成功只写新 DOCX copy，源文件不变，并 fresh reopen 验证 target、identity、非目标文本与 run formatting。PR #250 implementation exact-head `65d5ec40f705f4e6e4c624b4a3287f27a949d8dc` 的 Document Research Completion E2E #5、ZN CI #1804、Research #34、Local Documents #17、Windows Interactive #378、Memory #61 全部 success。准确状态是 `VERIFIED NARROW / CLOSED representative path`，不是 arbitrary DOCX completion、arbitrary Deep Research、general prompt-injection solution 或完整 Word/Office 自动化。
+- **E2E-13 current-app content cleanup**：PR #252 已关闭一个 bounded Windows representative path。普通自然语言进入同一 Product Resident / Work / Body，只对当前前台非浏览器进程中唯一 exact multiline ValuePattern Edit 做 trim / drop blank / stable exact dedupe，fresh revalidate 后 exact replacement，随后只 dispatch 一次 Save，并在 fresh same-process replacement window 的 read-only result Edit 中按 chars/SHA-256 独立验收。`automation_value_replace` 的 durable started/observed/verified_effect attempt 在 restart 时先于普通 content drift 恢复；恢复只能 fresh reread / reconcile，不能因参数变化制造新 signature 重放 `SetValue`。这是 `VERIFIED NARROW / representative path closed`，不是 Desktop complete、arbitrary app automation、Office automation 或 general RPA。PR #252 当前仍 open / unmerged，最终 merge readiness 只认 live final head 的 applicable exact-head CI。
 - **E2E-29**：一个实际 model route 服务多个隔离 WorkerRun；worker 数与模型数不绑定，Root completion 仍由 ZN 独立验收。
 - **E2E-30 / E2E-42**：durable route/privacy policy、ModelRouter hard eligibility、route/provider provenance 与 guarded multiroute acceptance 已按当前 acceptance policy 关闭。closure 包含明确的 owner-approved environment waiver，因为当时缺少第二个真实 provider family；不能宣称已有双真实 provider family 完整生产证据。
 - **E2E-28 / E2E-34**：durable worker progress supervision、heartbeat/no-progress/stall detection、dynamic health-aware routing、bounded retry、policy-safe fallback/reassignment、restart reconciliation、no-replay recovery 已有 guarded real-model representative closure。
@@ -22,16 +23,17 @@ Updated: 2026-09-11
 - **Delegated progress**：durable delegated facts 已 privacy-safe bounded projection 到既有 `work_progress` 和 Resident UI，没有第二套 progress truth。
 - **Dependency/readiness**：durable bounded flat current-plan sibling dependency/readiness 已实现并验证，包括 fan-in、restart durability 与 corrupt/cyclic/dangling fail closed。
 
-这些 closure 证明当前 bounded substrate 已经存在，但不把 ZN 升格为通用 multi-agent platform、general DAG scheduler、无限期后台任务系统、通用 Deep Research 平台或完整 Office 自动化套件。
+这些 closure 证明当前 bounded substrate 已经存在，但不把 ZN 升格为通用 multi-agent platform、general DAG scheduler、无限期后台任务系统、通用 Deep Research 平台、完整 Office 自动化套件、Desktop complete 或 general RPA。
 
 ## Browser / Windows 已有的代表性 baseline
 
-Current `main` 还已经拥有一批近期真实 Body 能力；其中 E2E-11 是 PR #251 exact-head 已验证、待真实合并后进入 canonical `main` 的新增 representative slice：
+Current `main` 还已经拥有一批近期真实 Body 能力；E2E-11 与 E2E-13 是各自 open PR 上 exact-head 验证中的新增 representative slices，只有真实合并后才进入 canonical `main`：
 
 - E2E-05 USER Browser authenticated research -> persisted mutation；
 - E2E-07 causal USER Browser child-tab attribution / popup / return path；
 - E2E-08 standard HTML `autocomplete="one-time-code"` same-authorized-tab user-presence handoff；
-- E2E-11 bounded current-page structured table sensing -> exact XLSX append-copy + fresh source/destination verification（PR #251 exact-head verified, unmerged）；
+- E2E-11 bounded current-page structured table sensing -> exact XLSX append-copy + fresh source/destination verification（PR #251 verified narrow, unmerged）；
+- **E2E-13 bounded current-app content cleanup**：当前前台非浏览器 Windows app + unique multiline UIA ValuePattern Edit + deterministic trim/drop-blank/stable-dedupe + guarded exact replacement + durable uncertain-effect restart reconciliation + one Save + fresh same-process read-only result verification（PR #252 `VERIFIED NARROW / representative path closed`, unmerged）；
 - **E2E-15 bounded Windows unexpected-modal recovery**：同一 Resident / 同一 Work 内，fresh exact parent/modal/button authority、唯一安全 defer/continue action、单次 side effect、modal disappearance、parent readiness、旧 UIA RuntimeId 失效与 fresh re-ground 已在真实 WinForms `ShowDialog()` 路径验证；
 - bounded BrowserScene sensing；
 - tab lifecycle/history；
@@ -42,7 +44,7 @@ Current `main` 还已经拥有一批近期真实 Body 能力；其中 E2E-11 是
 - Windows Machine Capability / Application Awareness V1；
 - exact Resident-admitted existing application window activation。
 
-这些都只代表 bounded verified paths。特别是：E2E-08 不是“所有 MFA”；E2E-11 不是“任意网页表格或任意 Excel”；E2E-15 不是“任意 Windows dialog 自动处理”；Browser Body V2 不是“任意网页”；Windows application awareness 不是“所有 Windows 操作”。
+这些都只代表 bounded verified paths。特别是：E2E-08 不是“所有 MFA”；E2E-11 不是“任意网页表格或任意 Excel”；E2E-13 不是 Desktop complete / arbitrary app automation / general RPA；E2E-15 不是“任意 Windows dialog 自动处理”；Browser Body V2 不是“任意网页”；Windows application awareness 不是“所有 Windows 操作”。
 
 ## 下一阶段产品目标
 
@@ -91,9 +93,9 @@ USER Browser existing session
 -> fresh result verification
 ```
 
-当前已有若干两-surface、一个 bounded Research→editable-file、E2E-09/10 Local Office、E2E-11 Browser→Spreadsheet 和 E2E-12 Research→DOCX completion 代表性闭环，但复杂三-surface任务、目标漂移、应用/网页/文档状态变化和跨 surface recovery 仍是主要产品广度问题。E2E-11 只关闭了 current-page simple table -> exact attached-workspace XLSX copy 这一窄路径，不代表更广 Browser/Research/Desktop + Office 组合已经完成。
+当前已有若干两-surface、一个 bounded Research→editable-file、E2E-09/10 Local Office、E2E-11 Browser→Spreadsheet、E2E-12 Research→DOCX completion、E2E-13 current-app cleanup 和 E2E-24 Browser→File→Desktop 代表性闭环，但复杂三-surface任务、目标漂移、应用/网页/文档状态变化和跨 surface recovery 仍是主要产品广度问题。E2E-13 只关闭一个 exact foreground Windows app / exact multiline Edit / one Save / fresh result readback 的窄路径，不代表更广 Desktop 自动化已经完成。
 
-开发规则：只补当前任务实际缺的 Body/Sense/Research/Office/verification 能力，不建立新的“cross-surface framework”、第二套 Research orchestration 或 OfficeAgent。
+开发规则：只补当前任务实际缺的 Body/Sense/Research/Office/verification 能力，不建立新的“cross-surface framework”、第二套 Research orchestration、OfficeAgent 或 DesktopAgent。
 
 ### 2. Browser / User Browser breadth beyond representative slices
 
@@ -155,13 +157,15 @@ E2E-09/10 已关闭两个 bounded Local Office representative paths，E2E-11 已
 
 ### 6. Windows / application capability breadth
 
-Windows Machine Capability / Application Awareness、exact existing-window activation，以及 E2E-15 bounded unexpected-modal recovery 已经存在。后续不应再把“machine/application awareness 尚缺”或“Windows dialog recovery 完全没有”作为空泛基础设施任务。
+Windows Machine Capability / Application Awareness、exact existing-window activation、E2E-13 bounded current-app cleanup，以及 E2E-15 bounded unexpected-modal recovery 已经存在。后续不应再把“machine/application awareness 尚缺”“当前 app 内容处理完全没有”或“Windows dialog recovery 完全没有”作为空泛基础设施任务。
+
+E2E-13 的准确边界是：current foreground non-browser Windows app、exact process/HWND、唯一 exact multiline ValuePattern Edit、deterministic trim/drop-blank/stable-dedupe、fresh source identity/content revalidation、durable `automation_value_replace` attempt recovery before normal content drift、one Save dispatch、fresh same-process result HWND/read-only Edit verification。restart 后如果旧 SetValue 的 outside-world effect 可能已经发生，只能 fresh reread 与 prior expected hash reconciliation；不得靠新参数生成新 signature blind replay。它不是 arbitrary app/rich text/Office/clipboard/OCR/keyboard-shortcut automation，也不是 general RPA。
 
 E2E-15 的准确边界是：exact same-process directly owned UIA modal、parent `BlockedByModalWindow`、唯一 deterministic safe defer/continue/close-notice action、input 前 fresh revalidation、单次 side effect、modal absence + exact parent UIA/Win32 readiness 后 fresh desktop re-ground。`WaitForInputIdle` 只作为 telemetry，不是硬 gate；credentials/UAC/security/save-discard/delete/overwrite/file-picker/payment/installer/restart/update decision、跨进程或歧义 dialog 仍 fail closed。
 
 只有当真实 E2E 暴露具体应用/OS 缺口时，才增加最小语义能力，例如某个真实应用所需的 current-state sensing、safe activation/selection、structured application action 或独立 postcondition。
 
-不要把这条扩张成“先做完整 OS intelligence layer”。
+不要把这条扩张成“先做完整 OS intelligence layer”或 general RPA。
 
 ### 7. Installed-version continuity remains separate
 
@@ -191,6 +195,7 @@ E2E-01/02/03 bounded Research & Information Work representative closure
 E2E-09/10 bounded Local Documents & Spreadsheet Work representative closure
 E2E-11 bounded Browser data -> Spreadsheet representative closure (PR #251 exact-head verified; merge pending)
 E2E-12 bounded evidence-driven DOCX completion representative closure
+E2E-13 bounded current-app content cleanup representative closure (PR #252 open/unmerged)
 E2E-30/42 closure 本身
 ResidentHealthJournal dynamic health -> routing 接线
 E2E-28/34 systematic no-progress/stall supervision
@@ -326,3 +331,16 @@ The repaired representative slice is MANAGED Browser only. USER-plane adapters/s
 Repair-checkpoint workflows are all success: ZN Managed Browser E2E #373 (explicit non-skipped E2E-11 Chromium→XLSX step), Local Documents and Spreadsheet Work #41, ZN CI #1828, Research #58, E2E05 #79, E2E06 #22, Document Research #29, Memory #85 and Windows Interactive #402. The Chromium regressions cover hidden-layout and ancestor-`aria-hidden` rows; spreadsheet core coverage exercises the rich-text rejection on Python 3.11/3.12/3.13 with openpyxl 3.1.5.
 
 The documentation synchronization after this checkpoint creates a later PR head; merge readiness must therefore use the live PR head and its applicable CI, not treat `9ac5f403...` as a self-referential permanent HEAD. No canonical merge SHA is claimed. USER Browser table import, arbitrary tables, grids/treegrids, pagination/virtualization, complex Excel, rich-text support and general Office automation remain outside the closure.
+
+<!-- e2e13-current-app-content-closure -->
+## E2E-13 current-app content cleanup — representative closure (2026-09-13)
+
+Status: **VERIFIED NARROW / representative path closed on open PR #252; unmerged**.
+
+The representative slice keeps one Product Resident / Root Work / Body. It admits only one current foreground non-browser Windows process/window with a unique exact multiline UIA Edit and exact Save Button. Raw text remains transient; durable state/history stores bounded semantic identity, counts and hashes. The deterministic transform trims lines, drops blanks and stable-dedupes exact lines, then uses fresh ValuePattern authority/content checks before exact replacement. Save is dispatched at most once, and completion requires a fresh same-process replacement window plus exact read-only result hash/length verification.
+
+Restart recovery explicitly closes the `SetValue` crash window. Existing durable `automation_value_replace` attempts in `started`, `observed`, or `verified_effect` state are reconciled by event + action kind before ordinary content-drift logic. Recovery is read-only: fresh bind/read, compare the prior expected-result chars/SHA-256, resolve/retain the old attempt only when reality proves that result, otherwise fail closed. A restart cannot turn changed current text into a new replacement signature and blindly replay `SetValue`. Persistent-SQLite Resident-rebuild regressions cover started crash, observed-before-checkpoint, a second crash after machine resolution before WorkingState advances, and mismatch/no-new-signature behavior.
+
+The E2E-07 regression exposed while closing this PR is not being used to broaden browser production code: two unsuccessful production stabilizations were reverted, leaving the extension implementation identical to `main`. The E2E-07 fixture now explicitly requests opener semantics for the exact opener-bound representative contract; causal child/root proof, fresh opener reread, exact root authorization generation and no blind replay remain unchanged.
+
+This closure does not claim Desktop complete, arbitrary Windows application automation, arbitrary rich-text/document editing, Office automation, clipboard/OCR authority, universal UIA, Save As, general keyboard shortcuts or general RPA. Final merge readiness is the live final PR #252 head with all applicable exact-head CI green; this file intentionally does not hard-code a self-referential final SHA.
