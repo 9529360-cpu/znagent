@@ -262,14 +262,21 @@ class LongRunningTerminalProductTests(unittest.TestCase):
             resident, ledger, _ = self._runtime(Path(tmp))
             original_act = resident.body.act
             command_calls = 0
+            poll_calls = 0
 
             def fake_act(kind, *, event_id=None, **kwargs):
-                nonlocal command_calls
+                nonlocal command_calls, poll_calls
                 if kind == "command":
                     command_calls += 1
                     return self._result(status="running", dispatch_observed=True)
                 if kind == "terminal_poll":
-                    raise KeyError("unknown ZN terminal session")
+                    poll_calls += 1
+                    return SimpleNamespace(
+                        success=False,
+                        output="",
+                        data={},
+                        error="KeyError: unknown ZN terminal session",
+                    )
                 return original_act(kind, event_id=event_id, **kwargs)
 
             try:
@@ -283,6 +290,7 @@ class LongRunningTerminalProductTests(unittest.TestCase):
                 self.assertIn("terminal_session_lost", run.reason)
                 self.assertEqual(run.model_invocations, 0)
                 self.assertEqual(command_calls, 1)
+                self.assertEqual(poll_calls, 1)
             finally:
                 resident.store.close()
 
