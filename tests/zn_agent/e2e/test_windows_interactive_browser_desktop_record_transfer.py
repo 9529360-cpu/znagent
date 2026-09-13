@@ -23,7 +23,7 @@ import test_windows_interactive_user_browser_bridge as browser_bridge_e2e
 import test_windows_interactive_user_browser_extension as extension_e2e
 
 
-TASK = "把当前浏览器里这个客户的跟进状态填到我现在开的客户管理软件对应记录里，然后保存并确认填对了。"
+TASK = "把当前浏览器里唯一需跟进客户的跟进状态填到我现在开的客户管理软件对应记录里，然后保存并确认填对了。"
 _ACCEPTANCE = "fresh USER Browser source identity/value equals the exact saved current desktop customer record"
 _APP_START_TITLE = "ZN E2E-14 Customer Manager"
 _APP_RESULT_TITLE = "ZN E2E-14 客户记录已保存"
@@ -490,6 +490,7 @@ class WindowsInteractiveBrowserDesktopRecordTransferE2ETests(unittest.TestCase):
                         "normal_language_task": TASK,
                         "user_supplied_internal_identifiers": False,
                         "explicit_current_tab_authority_preserved": True,
+                        "browser_source_first": True,
                         "business_identity_preserved": True,
                         "destination_runtime_regrounded": old_runtime != fresh_runtime,
                         "value_replacement_exactly_once": True,
