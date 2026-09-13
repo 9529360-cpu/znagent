@@ -29,7 +29,7 @@ The 50 scenario IDs and product intents remain stable. The status overlay record
 | E2E-02 | CLOSED representative path | Bounded Research -> exact attached-workspace editable Markdown with fresh file verification. Not arbitrary Office/PDF authoring. |
 | E2E-03 | CLOSED representative path | Unique same-Work referent may continue; ambiguity asks first. Durable research evidence survives restart while fresh. |
 | E2E-05 | CLOSED representative path | Real USER Browser authenticated research -> persisted mutation. Not arbitrary authenticated sites/mutation. |
-| E2E-07 | CLOSED representative path | Exact causal USER Browser opener-bound child attribution, fresh opener reread, child -> exact root return, authorization-generation binding and unverified-click no-replay. Not arbitrary popup/frame support. |
+| E2E-07 | CLOSED representative path | Exact-root causal USER Browser child attribution via root `Page.windowOpen` + unique fresh target binding, fresh identity reread, child -> exact root return, authorization-generation binding and unverified-click no-replay. Not arbitrary popup/frame support. |
 | E2E-08 | CLOSED representative path | Same authorized USER tab/generation/origin standard `one-time-code` user-presence handoff. ZN does not read/type/store OTP. |
 | E2E-09 | CLOSED representative path | Bounded yesterday DOCX payment-date edit to a new verified copy. Not general Word support. |
 | E2E-10 | CLOSED representative path | Zero-model bounded XLSX exact-row dedupe + amount format normalization to a new verified copy. Not general Excel support. |
@@ -105,7 +105,11 @@ Same task as E2E-05, but page layout/control identity changes after research. Mu
 
 Task produces a popup/new tab midway. Must prove the child belongs causally to the exact root action, derive bounded child authority, verify result, return to the exact original authorization generation, fresh re-ground the root and never replay a possibly executed click merely because child proof is missing.
 
-Current representative fixture explicitly requests opener semantics (`target="_blank" rel="opener"`) because the acceptance contract requires fresh `openerTabId == root_tab_id` proof. A PR #252 regression showed that plain `target="_blank"` is noopener by default in modern HTML and therefore did not instantiate the relationship the E2E claimed to verify. Two attempted Browser production stabilizations were reverted; production causal proof/fresh reread/no-replay requirements remain unchanged.
+The representative fixture keeps `target="_blank" rel="opener"` so the web-level opener intent is explicit, but PR #252 proved Chromium's extension Tabs metadata does not reliably surface `openerTabId` for this popup/new-window shape. A same-head rerun reproduced the regression, so it was not treated as timing. Two speculative production stabilizations—longer waiting and broader tab enumeration—were ineffective and reverted.
+
+A first narrow repair attempted CDP `Target.getTargets` / `TargetInfo.openerId` through the already attached root debugger session. Bounded diagnostic evidence exposed the real first failure before any click: Edge returned `-32000 Not allowed` and action evidence recorded `click_sent=false`. The later no-blind-replay refusal was the existing safety guard, not the root cause.
+
+The final representative proof does not add extension permission or relax the contract. It captures the exact root target and a pre-click target-ID baseline with extension-level `chrome.debugger.getTargets()`, requires exactly one expected-URL `Page.windowOpen` from that exact root, admits exactly one tab created inside the action window, binds it by fresh debugger-target reread to exactly one new `page` target absent from the baseline with the exact expected URL, then fresh-rereads the exact root and child target ID/tab/URL before deriving task-scoped child authority. More than one new tab, ambiguity, identity/URL drift, authorization drift or post-click uncertainty fails closed. Exact child verification, exact-root return/re-ground, authorization-generation preservation and no blind click replay remain mandatory.
 
 ### E2E-08 — Manual blocker
 

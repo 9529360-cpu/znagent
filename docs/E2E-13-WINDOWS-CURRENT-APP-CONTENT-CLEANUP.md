@@ -75,25 +75,29 @@ The exact final merge-readiness evidence is intentionally not hard-coded here be
 
 ## E2E-07 regression handling during E2E-13 closure
 
-The E2E-13 PR exposed a stable Windows regression in the pre-existing E2E-07 causal USER Browser path. A same-head rerun reproduced the same failure: root `Page.windowOpen` matched the expected URL, but `chrome.tabs.Tab.openerTabId` did not provide the fresh opener relationship required by the acceptance contract. This was not classified as a one-off runner timing flake.
+The E2E-13 PR exposed a stable Windows regression in the pre-existing E2E-07 causal USER Browser path. A zero-code same-head rerun reproduced the failure, so it was not classified as a one-off runner timing flake.
 
-Two speculative production stabilizations were tried first—longer post-click observation and broader fresh tab enumeration. Neither established the missing opener proof, so both were reverted rather than kept as unrelated browser churn.
+Two speculative production stabilizations were tried first—longer post-click observation and broader fresh tab enumeration. Neither established the missing causal proof, so both were reverted rather than kept as unrelated browser churn.
 
-The fixture was also corrected to make its web-level contract explicit with `target="_blank" rel="opener"`; however that still did not make Chromium's extension Tabs metadata reliably expose `openerTabId` for this popup/new-window shape. The final narrow production repair therefore changes only the **proof source** for the already-required causal relationship: it uses the extension's existing `chrome.debugger` authority and fresh CDP `Target.getTargets` / `TargetInfo.openerId` evidence.
+The fixture keeps `target="_blank" rel="opener"` to make the web-level intent explicit, but Chromium's extension Tabs metadata still did not reliably expose `chrome.tabs.Tab.openerTabId` for this popup/new-window shape.
+
+A first narrow production repair tried to use the already attached root debugger session to call CDP `Target.getTargets` and prove `TargetInfo.openerId`. Bounded diagnostic evidence showed the actual first failure happened **before dispatch**: Edge returned `-32000 Not allowed` for `Target.getTargets`, and the action evidence recorded `click_sent=false`. The subsequent refusal to issue another click was the existing no-blind-replay guard, not the root cause.
+
+The final narrow production repair therefore keeps the same causal safety contract without adding any extension permission and without using a CDP Target-domain discovery command. It uses the extension-level debugger target inventory that is actually allowed.
 
 The final E2E-07 proof chain is:
 
-- capture the exact authorized root CDP target ID and a fresh pre-click target baseline;
+- capture a fresh pre-click `chrome.debugger.getTargets()` snapshot, identify the exact authorized root debugger target and retain its target ID plus the full target-ID baseline;
 - dispatch the exact button click once;
-- require exactly one matching root `Page.windowOpen` event;
-- freshly enumerate CDP page targets and admit only a new target whose `openerId` equals the exact root target ID;
-- map that exact child target to its tab identity using existing debugger target metadata;
-- fresh re-read the same child target/opener relation again before deriving child authority;
-- retain the existing exact child URL/title proof, task-scoped debugger authority, exact root authorization-generation preservation, return to the exact root, fresh root re-ground and child debugger detach requirements;
-- fail closed on ambiguity, missing/mismatched opener evidence, target replacement, authorization drift or any post-click uncertainty;
-- never blindly replay the possibly executed click.
+- require exactly one `Page.windowOpen` event from the exact root debugger session with the exact expected child URL;
+- record tabs created only inside the bounded action window and fail closed if more than one new tab appears;
+- freshly call `chrome.debugger.getTargets()` and require that the single created tab maps to exactly one new `page` target whose target ID was not present in the pre-click baseline and whose URL is the exact expected child URL;
+- fresh re-read the exact root target ID/tab/URL and exact child target ID/tab/URL immediately before deriving task-scoped child authority;
+- retain the existing exact child URL/title proof, root authorization-generation preservation, exact-root return, fresh root re-ground and child debugger detach requirements;
+- fail closed on ambiguity, missing/mismatched target evidence, target replacement, authorization drift or any post-click uncertainty;
+- never blindly replay a possibly executed click.
 
-No new extension permission was added and no causal safety condition was relaxed. This is a bounded repair to the pre-existing E2E-07 evidence source, not a new general popup framework and not an expansion of E2E-13's Desktop scope.
+No `webNavigation` permission or other new extension permission was added. No causal/fresh-read/no-replay safety condition was relaxed. This is a bounded repair to the pre-existing E2E-07 evidence source, not a new general popup framework and not an expansion of E2E-13's Desktop scope.
 
 The separate bounded authorization helper remains test-only: at most three real extension shortcuts, each attempted only while fresh evidence says explicit tab authorization is absent. It does not bypass browser authorization.
 

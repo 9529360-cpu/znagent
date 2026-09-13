@@ -133,18 +133,29 @@ Final success discards old HWND/RuntimeIds and requires:
 
 ## E2E-07 Windows regression handling
 
-The PR #252 Windows suite exposed an E2E-07 failure. The same head was rerun with zero code changes and reproduced the same failure: `Page.windowOpen` was observed, but no fresh root-opener child could be proven. It was therefore treated as a stable regression, not a one-off runner/browser timing flake.
+The PR #252 Windows suite exposed an E2E-07 failure. A zero-code same-head rerun reproduced the same failure, so it was treated as a stable regression rather than runner/browser timing variance.
 
-Two attempted production extension stabilizations were reviewed and reverted because neither established the missing proof:
+Two speculative production stabilizations were reviewed and reverted because neither established the missing causal proof:
 
-- extending the post-click read-only observation window；
-- fresh enumerating candidate tabs in production extension code。
+- extending the post-click observation window；
+- broadly re-enumerating candidate tabs after the action。
 
-`apps/desktop/browser-extension/research-background.js` is restored to canonical `main` behavior.
+The representative fixture keeps `target="_blank" rel="opener"` so the web-level intent is explicit, but Chromium's extension Tabs metadata still did not reliably expose `chrome.tabs.Tab.openerTabId` for this popup/new-window shape.
 
-The real mismatch was the test fixture contract: the fixture used `<form target="_blank">`, whose current HTML behavior is noopener by default, while E2E-07 intentionally requires an opener-bound auxiliary child so it can prove `openerTabId == root_tab_id`. The fixture now explicitly opts into the representative contract with `rel="opener"`.
+A first narrow repair tried to read CDP `Target.getTargets` / `TargetInfo.openerId` through the already attached root debugger session. Bounded diagnostic evidence then exposed the real first failure: **before any click was sent**, Edge returned CDP `-32000 Not allowed` for `Target.getTargets`, with action evidence `click_sent=false`. The later refusal to issue another click was the existing no-blind-replay guard doing its job; it was not the root cause.
 
-No production safety condition was reduced. E2E-07 still requires exact causal child/root proof, fresh opener reread, task-scoped child authority, exact root authorization generation preservation, return to the exact root and no blind replay after a potentially executed click.
+The final narrow repair therefore does not add permissions and does not use a Target-domain discovery command. Its causal proof path is:
+
+- fresh extension-level `chrome.debugger.getTargets()` snapshot identifies the exact authorized root debugger target and records a pre-click target-ID baseline；
+- one exact button click is dispatched；
+- the exact root debugger session must emit exactly one `Page.windowOpen` event with the expected child URL；
+- the bounded action window records created tabs and rejects more than one new tab as ambiguous；
+- a fresh `chrome.debugger.getTargets()` reread must map that single created tab to exactly one new `page` target whose target ID was absent from the pre-click baseline and whose URL equals the exact expected child URL；
+- immediately before deriving child authority, another fresh debugger-target reread must prove the exact root target ID/tab/URL and exact child target ID/tab/URL are unchanged；
+- existing task-scoped child debugger authority, exact child URL/title verification, root authorization-generation preservation, return to the exact root, fresh root re-ground and child detach requirements remain mandatory；
+- ambiguity, missing/mismatched evidence, target replacement, authorization drift or any post-click uncertainty fails closed and never causes a blind click replay。
+
+No `webNavigation` permission or other new extension permission was added. The causal child/root contract, fresh reread requirement and no-blind-replay policy were not weakened.
 
 The separate authorization setup helper remains test-only and bounded: at most three real extension shortcuts, each only while fresh evidence proves explicit authorization is absent.
 

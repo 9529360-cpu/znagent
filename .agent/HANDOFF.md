@@ -92,33 +92,33 @@ E2E-15 remains the previously closed bounded same-process `ShowDialog()` recover
 
 ## E2E-07 regression found during PR #252
 
-The Windows suite exposed a stable E2E-07 regression. A zero-code same-head rerun reproduced the identical failure: root `Page.windowOpen` matched the expected URL, but the extension Tabs API did not expose the fresh root-opener child required by the acceptance contract. This was not a one-off runner timing flake.
+The Windows suite exposed a stable E2E-07 regression. A zero-code same-head rerun reproduced the same failure, so it was not treated as a one-off runner/browser timing flake.
 
 Two speculative production stabilizations were deliberately reverted:
 
 - longer post-click observation window;
 - broader fresh enumeration of candidate tabs.
 
-Neither established the missing opener proof, so neither is part of the final repair.
+Neither established the missing causal proof, so neither is part of the final repair.
 
-The fixture was corrected to make the web-level relationship explicit with `target="_blank" rel="opener"`, but Chromium still did not reliably surface `chrome.tabs.Tab.openerTabId` for this popup/new-window shape. The final narrow production repair changes the evidence source, not the safety requirement: existing `chrome.debugger` / CDP target identity is used to prove the exact opener relationship.
+The fixture keeps `target="_blank" rel="opener"` to make the representative web-level intent explicit, but Chromium still did not reliably expose `chrome.tabs.Tab.openerTabId` for this popup/new-window shape.
+
+A first narrow production repair then tried CDP `Target.getTargets` / `TargetInfo.openerId` over the already attached root debugger session. A bounded diagnostic test exposed the real first failure: **before any click was sent**, Edge returned `-32000 Not allowed` for `Target.getTargets`, with `click_sent=false`. The following no-blind-replay refusal was the existing safety guard preventing a second dispatch; it was not the root cause.
+
+The final repair changes only the evidence source and keeps authority narrow. No new extension permission was added and no CDP Target-domain discovery command is used.
 
 Final proof path:
 
-- fresh exact root debugger target ID + pre-click CDP target baseline;
-- one exact click dispatch;
-- one exact expected-URL `Page.windowOpen` event;
-- fresh `Target.getTargets` enumeration;
-- exactly one new page `TargetInfo` whose `openerId` equals the exact root target ID;
-- map that exact target to child tab identity using existing debugger target metadata;
-- fresh re-read the same child target/opener relation before deriving child authority;
-- exact child URL/title verification;
-- exact root authorization generation preserved;
-- return to exact root + fresh root re-ground;
-- child debugger detached;
-- any ambiguity/mismatch/post-click uncertainty fails closed and never blindly replays the click.
+- use extension-level `chrome.debugger.getTargets()` to identify the exact authorized root debugger target and capture a fresh pre-click target-ID baseline;
+- dispatch the exact button click once;
+- require exactly one expected-URL `Page.windowOpen` event from the exact root debugger session;
+- record new tabs only inside the bounded action window and fail closed if more than one tab is created;
+- fresh `chrome.debugger.getTargets()` must bind that single created tab to exactly one new `page` target absent from the pre-click baseline, with the exact expected child URL;
+- immediately before deriving child authority, fresh reread must still prove the exact root target ID/tab/URL and exact child target ID/tab/URL;
+- retain exact child URL/title verification, task-scoped child debugger authority, exact root authorization generation preservation, exact-root return, fresh root re-ground and child debugger detach;
+- ambiguity, missing/mismatched target evidence, target replacement, authorization drift or any post-click uncertainty fails closed and never blindly replays the click.
 
-No new extension permission was added. The existing debugger authority was already used by the causal path. Do not replace this with loose URL matching, tab-order heuristics, longer blind waits or click retry.
+Do not replace this with loose URL matching, tab-order heuristics, longer blind waits, broader permissions or click retry. The causal child/root contract, fresh reread and no-blind-replay requirements remain strict.
 
 The existing test-only `_authorize_current_tab` helper may retry a real extension shortcut at most three times, and only while fresh evidence says authorization is absent. It is setup stabilization, not an authorization bypass.
 
