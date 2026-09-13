@@ -249,9 +249,22 @@ def _begin(resident, event, state, request: Mapping[str, str]):
         )
 
     data = started.data if isinstance(started.data, dict) else {}
+    side_effect_attempt_id = str(data.get("side_effect_attempt_id") or "").strip()
+    if side_effect_attempt_id:
+        meta["side_effect_attempt_id"] = side_effect_attempt_id
+    if bool(data.get("side_effect_uncertain")) or bool(data.get("replay_blocked")):
+        return _blocked(
+            resident,
+            event,
+            state,
+            meta,
+            "command_dispatch_uncertain",
+            started.error or "durable side-effect guard blocked replay after an uncertain command dispatch",
+            "命令可能已经开始过，但当前没有足够证据确认可继续监控。ZN 已保留 side-effect attempt 身份，并拒绝重新执行命令。",
+        )
+
     session_id = str(data.get("session_id") or "").strip()
     status = str(data.get("status") or "").strip().lower()
-    side_effect_attempt_id = str(data.get("side_effect_attempt_id") or "").strip()
     dispatch_observed = data.get("side_effect_dispatch_observed") is True
     try:
         pid = int(data.get("pid") or 0)
@@ -287,7 +300,6 @@ def _begin(resident, event, state, request: Mapping[str, str]):
     now = utc_now()
     meta.update(
         {
-            "side_effect_attempt_id": side_effect_attempt_id,
             "session_id": session_id,
             "pid": pid,
             "status": "running",
