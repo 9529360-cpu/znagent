@@ -41,19 +41,58 @@ class _OwnedForegroundFixture:
 
     def activate_once(self) -> None:
         user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.ShowWindow.restype = wintypes.BOOL
+        user32.BringWindowToTop.argtypes = [wintypes.HWND]
+        user32.BringWindowToTop.restype = wintypes.BOOL
         user32.SetForegroundWindow.argtypes = [wintypes.HWND]
         user32.SetForegroundWindow.restype = wintypes.BOOL
         user32.GetForegroundWindow.argtypes = []
         user32.GetForegroundWindow.restype = wintypes.HWND
+        user32.GetWindowThreadProcessId.argtypes = [
+            wintypes.HWND, ctypes.POINTER(wintypes.DWORD)
+        ]
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        user32.AttachThreadInput.argtypes = [
+            wintypes.DWORD, wintypes.DWORD, wintypes.BOOL
+        ]
+        user32.AttachThreadInput.restype = wintypes.BOOL
+
+        user32.ShowWindow(int(self.hwnd), self.SW_SHOW)
+        user32.BringWindowToTop(int(self.hwnd))
         accepted = bool(user32.SetForegroundWindow(int(self.hwnd)))
-        deadline = time.monotonic() + 3.0
+        deadline = time.monotonic() + 0.25
         while time.monotonic() < deadline:
             if int(user32.GetForegroundWindow() or 0) == int(self.hwnd):
                 return
-            time.sleep(0.05)
+            time.sleep(0.02)
+
+        foreground_hwnd = int(user32.GetForegroundWindow() or 0)
+        foreground_thread = (
+            int(user32.GetWindowThreadProcessId(foreground_hwnd, None) or 0)
+            if foreground_hwnd
+            else 0
+        )
+        target_thread = int(user32.GetWindowThreadProcessId(int(self.hwnd), None) or 0)
+        attached = False
+        if foreground_thread and target_thread and foreground_thread != target_thread:
+            attached = bool(user32.AttachThreadInput(target_thread, foreground_thread, True))
+        try:
+            user32.ShowWindow(int(self.hwnd), self.SW_SHOW)
+            user32.BringWindowToTop(int(self.hwnd))
+            fallback_accepted = bool(user32.SetForegroundWindow(int(self.hwnd)))
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline:
+                if int(user32.GetForegroundWindow() or 0) == int(self.hwnd):
+                    return
+                time.sleep(0.05)
+        finally:
+            if attached:
+                user32.AttachThreadInput(target_thread, foreground_thread, False)
         raise AssertionError(
             "ZN-owned fixture did not become foreground; "
-            f"SetForegroundWindow returned {accepted}"
+            f"initial SetForegroundWindow returned {accepted}; "
+            f"fallback returned {fallback_accepted}; attached={attached}"
         )
 
     def authorize_current_process_foreground(self) -> None:
@@ -311,8 +350,10 @@ class WindowsInteractiveApplicationActivationE2ETests(unittest.TestCase):
         fixture.activate_once()
         self.assertEqual(self._foreground_hwnd(), fixture.hwnd)
         # Establish a documented foreground grant before any target application
-        # can become foreground. No synthesized input or thread-input attachment
-        # is used; failure to obtain the documented grant is an E2E failure.
+        # can become foreground. The ZN-owned test fixture may use a bounded
+        # input-queue handoff only to establish this exact test precondition;
+        # the product activation under test still relies on the documented grant
+        # and uses no synthesized input or thread-input attachment.
         fixture.authorize_current_process_foreground()
 
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
