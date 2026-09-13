@@ -86,7 +86,7 @@ E2E-08 明确不支持 CAPTCHA solving、WebAuthn/passkey automation、cross-ori
 | Foreground / focused-control sensing | VERIFIED | 更复杂窗口切换和应用生命周期 |
 | Pointer / keyboard / text entry | VERIFIED NARROW | 完整真实任务继续验证 |
 | Semantic desktop target re-ground | VERIFIED NARROW | 控件变化、窗口漂移、替代入口 |
-| E2E-13 current-app content cleanup | **VERIFIED NARROW / representative path closed on open PR #252** | exact foreground non-browser HWND/PID + unique multiline ValuePattern Edit + deterministic trim/drop-blank/stable-dedupe + guarded replacement + durable restart/no-replay reconciliation + one Save + fresh same-process read-only result verification；不是 Desktop complete / arbitrary app automation / Office / general RPA |
+| E2E-13 current-app content cleanup | **VERIFIED NARROW / representative path closed; PR #252 merged as `cc3fd3edc25b436a5c42ec1e2d13d4b786fb18b3`** | exact foreground non-browser HWND/PID + unique multiline ValuePattern Edit + deterministic trim/drop-blank/stable-dedupe + guarded replacement + durable restart/no-replay reconciliation + one Save + fresh same-process read-only result verification；不是 Desktop complete / arbitrary app automation / Office / general RPA |
 | E2E-15 unexpected modal recovery | VERIFIED NARROW / representative path closed | exact same-process directly owned UIA modal + one safe defer/continue action + fresh parent readiness/re-ground；任意 dialog/UAC/credentials/business decisions 不在 closure 内 |
 | Cross-app task execution | VERIFIED NARROW; E2E-24 representative path closed | bounded USER Browser -> exact File -> exact Desktop customer record 已有；更复杂联合任务仍开放 |
 
@@ -96,7 +96,7 @@ Representative user request:
 
 > 把我现在开的工作记录整理一下：去掉每行前后空格，删掉空行，重复内容只保留第一次，然后保存。
 
-Product-real scope on PR #252:
+Product-real scope merged via PR #252; final PR head `fd6a7a576d8e0dbc466f36e2633298de638d2eca`, squash merge SHA `cc3fd3edc25b436a5c42ec1e2d13d4b786fb18b3`, post-merge ZN CI #1875 / run `34756719969` completed successfully:
 
 - same Product Resident / Root Work / Body；
 - fresh current foreground non-browser process/HWND；
@@ -123,7 +123,7 @@ Explicit non-claims: no Desktop complete, arbitrary Windows app automation, arbi
 | Workspace evidence / exact source identity | PARTIAL | 歧义来源先解决身份再允许外部副作用 |
 | Local DOCX edit | VERIFIED NARROW; E2E-09 representative path closed | 更复杂 DOCX/package/任意 Word 编辑仍开放 |
 | Local XLSX cleanup | VERIFIED NARROW; E2E-10 representative path closed | 公式/表/图表/pivot/复杂 Excel 仍开放 |
-| Browser -> XLSX | VERIFIED NARROW; E2E-11 representative path on PR #251 | bounded MANAGED Browser simple table -> exact append-copy；不是 arbitrary website/Excel |
+| Browser -> XLSX | VERIFIED NARROW; E2E-11 representative path closed; PR #251 merged as `5dbc663c7035dc523e34477501fee59914a8cff4` | bounded MANAGED Browser simple table -> exact append-copy；不是 arbitrary website/Excel |
 | Evidence -> DOCX completion | VERIFIED NARROW; E2E-12 representative path closed | bounded 1–3 placeholder path；不是 arbitrary DOCX/Word/Deep Research |
 | Terminal/process | VERIFIED | 继续作为真实任务执行资源 |
 | Git / repo task support | PARTIAL | 普通项目能力发展；不给 ZN 自身仓库特殊权限 |
@@ -156,7 +156,7 @@ E2E-24 已关闭一个 bounded 三-surface representative path。E2E-13 又关�
 | Resident restart recovery | CONNECTED + VERIFIED NARROW | 更多跨天/复杂真实 Work breadth |
 | Delegated restart reconciliation | VERIFIED NARROW; E2E-28/34 | 更广任务继续覆盖 |
 | Unknown external-effect handling | VERIFIED NARROW; E2E-36 representative path closed | exact replay-sensitive attempt 跨 restart 保持 fail closed；不是通用 exactly-once |
-| E2E-13 ValuePattern replacement recovery | VERIFIED NARROW on PR #252 | old replacement dispatch ownership survives restart/signature drift; fresh readback can prove old expected effect, otherwise fail closed; no blind SetValue replay |
+| E2E-13 ValuePattern replacement recovery | VERIFIED NARROW; merged via PR #252 | old replacement dispatch ownership survives restart/signature drift; fresh readback can prove old expected effect, otherwise fail closed; no blind SetValue replay |
 | Fresh evidence before mutation | CORE RULE | 扩展到所有新任务和 delegated result acceptance |
 | Independent completion verification | VERIFIED NARROW | 复杂 Work 继续覆盖 |
 | Stale delegated result protection | VERIFIED NARROW | steering/restart/reassign breadth |
@@ -185,9 +185,9 @@ Recovery 是为了让真实任务继续，不是独立产品路线。
 - E2E-07 causal USER child-tab；
 - E2E-08 OTP user presence；
 - E2E-09/10 Local Documents & Spreadsheet；
-- E2E-11 Browser -> Spreadsheet（PR #251，unmerged）；
+- E2E-11 Browser -> Spreadsheet（PR #251 merged as `5dbc663c7035dc523e34477501fee59914a8cff4`）；
 - E2E-12 evidence-driven DOCX completion；
-- **E2E-13 current-app content cleanup（PR #252，`VERIFIED NARROW / representative path closed`, unmerged）**；
+- **E2E-13 current-app content cleanup（PR #252 merged as `cc3fd3edc25b436a5c42ec1e2d13d4b786fb18b3`，`VERIFIED NARROW / representative path closed`）**；
 - E2E-15 bounded unexpected-modal recovery；
 - E2E-24 Browser + File + Desktop；
 - E2E-27/33 steering/continuation；
@@ -232,6 +232,6 @@ Installed N -> N+1 的 identity/data/Work/uncertain-effect continuity 仍是独�
 
 ## E2E-13 closure note
 
-Status: **VERIFIED NARROW / representative path closed on open PR #252; not merged to canonical `main`.**
+Status: **VERIFIED NARROW / representative path closed.**
 
-PR #252 contains one narrow E2E-07 production repair required by the stable regression. The failed intermediate `Target.getTargets` approach is not the final implementation: bounded diagnostics proved Edge rejected that command before any click with `-32000 Not allowed` and `click_sent=false`. The final repair uses exact-root `Page.windowOpen` plus extension-level `chrome.debugger.getTargets()` pre-click target baselining, one action-window-created tab, unique fresh new page-target binding, and a fresh root/child identity+URL reread before child authority. More than one created tab or any ambiguity fails closed. The speculative wait/enumeration stabilizations were removed, no new permission was added, and the causal/fresh-read/no-replay acceptance contract remains strict. The final merge-readiness authority is the live final PR head and its applicable exact-head CI; documentation deliberately does not hard-code a self-referential final SHA before those checks finish.
+Implementation PR #252 final head `fd6a7a576d8e0dbc466f36e2633298de638d2eca` was squash-merged to canonical `main` as `cc3fd3edc25b436a5c42ec1e2d13d4b786fb18b3`; post-merge ZN CI #1875 / run `34756719969` completed successfully. PR #252 contains one narrow E2E-07 production repair required by the stable regression. The failed intermediate `Target.getTargets` approach is not the final implementation: bounded diagnostics proved Edge rejected that command before any click with `-32000 Not allowed` and `click_sent=false`. The final repair uses exact-root `Page.windowOpen` plus extension-level `chrome.debugger.getTargets()` pre-click target baselining, one action-window-created tab, unique fresh new page-target binding, and a fresh root/child identity+URL reread before child authority. More than one created tab or any ambiguity fails closed. The speculative wait/enumeration stabilizations were removed, no new permission was added, and the causal/fresh-read/no-replay acceptance contract remains strict. This is still a representative narrow closure, not `PRODUCT-CLOSED`; any docs-only synchronization PR must use its own exact-head applicable CI.

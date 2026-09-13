@@ -33,9 +33,9 @@ The 50 scenario IDs and product intents remain stable. The status overlay record
 | E2E-08 | CLOSED representative path | Same authorized USER tab/generation/origin standard `one-time-code` user-presence handoff. ZN does not read/type/store OTP. |
 | E2E-09 | CLOSED representative path | Bounded yesterday DOCX payment-date edit to a new verified copy. Not general Word support. |
 | E2E-10 | CLOSED representative path | Zero-model bounded XLSX exact-row dedupe + amount format normalization to a new verified copy. Not general Excel support. |
-| E2E-11 | CLOSED representative path on PR #251; unmerged | MANAGED Browser unique simple table -> exact attached-workspace XLSX append-copy with source/destination/browser verification. Not arbitrary website tables/Excel. |
+| E2E-11 | CLOSED representative path; PR #251 merged as `5dbc663c7035dc523e34477501fee59914a8cff4` | MANAGED Browser unique simple table -> exact attached-workspace XLSX append-copy with source/destination/browser verification. Not arbitrary website tables/Excel. |
 | E2E-12 | CLOSED representative path | Bounded public-Web evidence -> 1–3 explicit DOCX placeholders with prompt-safe two-source support and fresh reopen verification. Not arbitrary DOCX/Deep Research/Word. |
-| **E2E-13** | **VERIFIED NARROW / CLOSED representative path on PR #252; unmerged** | Current foreground non-browser Windows app; exact process/HWND + unique multiline ValuePattern Edit; deterministic trim/drop-blank/stable-dedupe; guarded replacement; durable restart/no-replay reconciliation before ordinary content drift; at most one Save; fresh same-process read-only result verification. **Not Desktop complete, arbitrary app automation, Office automation or general RPA.** |
+| **E2E-13** | **VERIFIED NARROW / CLOSED representative path; PR #252 merged as `cc3fd3edc25b436a5c42ec1e2d13d4b786fb18b3`** | Current foreground non-browser Windows app; exact process/HWND + unique multiline ValuePattern Edit; deterministic trim/drop-blank/stable-dedupe; guarded replacement; durable restart/no-replay reconciliation before ordinary content drift; at most one Save; fresh same-process read-only result verification. **Not Desktop complete, arbitrary app automation, Office automation or general RPA.** |
 | E2E-15 | CLOSED representative path | Exact same-process owned UIA modal with one deterministic safe defer/continue action; fresh parent readiness/re-ground. Not arbitrary dialogs/UAC/credentials/business decisions. |
 | E2E-24 | CLOSED representative path | Same Root USER Browser -> exact File -> exact Desktop customer record with fresh verification and stale UIA rejection. Not general RPA. |
 | E2E-27 | CLOSED representative path | Same-Work steering/replan/stale-old-worker gating/non-replay. |
@@ -141,7 +141,7 @@ User:
 
 > “把这个网站里的数据整理进我现在这个表里。”
 
-Must combine exact Browser structured source evidence with exact attached-workspace spreadsheet mutation and verify Browser/source/destination. Current representative closure is MANAGED Browser unique simple table -> conservative XLSX append-copy on PR #251; it does not claim arbitrary tables/grids or Excel complete.
+Must combine exact Browser structured source evidence with exact attached-workspace spreadsheet mutation and verify Browser/source/destination. Current representative closure is MANAGED Browser unique simple table -> conservative XLSX append-copy, implemented by PR #251 and squash-merged to canonical `main` as `5dbc663c7035dc523e34477501fee59914a8cff4`; it does not claim arbitrary tables/grids or Excel complete.
 
 ### E2E-12 — Document with missing information
 
@@ -167,7 +167,7 @@ Must identify the current app/content authority, perform the supported multi-ste
 
 #### E2E-13 representative closure — 2026-09-13
 
-Status: **VERIFIED NARROW / representative path closed on open PR #252; not merged to `main`.**
+Status: **VERIFIED NARROW / representative path closed.** Implementation PR #252 final head `fd6a7a576d8e0dbc466f36e2633298de638d2eca` was squash-merged to canonical `main` as `cc3fd3edc25b436a5c42ec1e2d13d4b786fb18b3`. Post-merge ZN CI #1875 / run `34756719969` completed successfully.
 
 The representative path keeps the existing Product Resident / Root Work / Body and admits only:
 
@@ -430,9 +430,9 @@ If a worker/model claims success while the real world remains unchanged, Root ac
 
 ## 15. Current implementation selection
 
-Do not rerun old priority lists as if closed representative substrate were missing. In particular, E2E-13 itself is no longer an open “build current-app text cleanup from scratch” item on PR #252.
+Do not rerun old priority lists as if closed representative substrate were missing. E2E-13 is merged into canonical `main` and is no longer an open “build current-app text cleanup from scratch” item.
 
-Select future work by asking which ordinary task is still blocked on current canonical `main`, while remembering that open/unmerged PR closures enter `main` only after actual merge.
+Select future work by asking which ordinary task is still blocked on current canonical `main`, without reopening already merged representative closures as if their substrate were absent.
 
 High-value remaining breadth includes:
 
@@ -467,6 +467,6 @@ For long/delegated work also ask whether those tasks continue to succeed when th
 
 Worker count, model count and tool-call count are implementation details, not product success metrics.
 
-## 17. E2E-13 merge-readiness note
+## 17. E2E-13 post-merge canonical note
 
-E2E-13 is **VERIFIED NARROW / representative path closed on open PR #252; unmerged**. Final merge readiness is not an earlier implementation checkpoint: it is the **last live PR head** after every applicable exact-head workflow finishes successfully. The final Windows evidence must include the explicit E2E-13 cleanup step, isolated E2E-15 modal step and full current product-route interactive suite including E2E-07. ZN CI and every other applicable PR workflow must also be final success. Any later code/docs commit invalidates earlier final-head claims.
+E2E-13 remains **VERIFIED NARROW / representative path closed**. Implementation PR #252 final head `fd6a7a576d8e0dbc466f36e2633298de638d2eca` was squash-merged to canonical `main` as `cc3fd3edc25b436a5c42ec1e2d13d4b786fb18b3`. Post-merge ZN CI #1875 / run `34756719969` completed successfully. The final Windows implementation evidence included the explicit E2E-13 cleanup step, isolated E2E-15 modal step and full current product-route interactive suite including E2E-07. This does not promote E2E-13 to `PRODUCT-CLOSED`, and any later docs-only synchronization PR must use its own exact-head applicable CI.

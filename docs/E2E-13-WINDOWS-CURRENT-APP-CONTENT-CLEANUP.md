@@ -1,8 +1,16 @@
 # E2E-13 — Windows current-app bounded content cleanup
 
-Status: **VERIFIED NARROW / representative path closed on open PR #252; not merged to `main`.**
+Status: **VERIFIED NARROW / representative path closed.**
 
 Updated: 2026-09-13
+
+Implementation PR: #252
+
+Final PR head: `fd6a7a576d8e0dbc466f36e2633298de638d2eca`
+
+Squash merge to canonical `main`: `cc3fd3edc25b436a5c42ec1e2d13d4b786fb18b3`
+
+Post-merge canonical verification: ZN CI #1875 / run `34756719969` — completed / success.
 
 ## User-facing scenario
 
@@ -71,7 +79,7 @@ The Windows Interactive workflow has an explicit `Run E2E-13 current-app content
 - ambiguous same-name Edit: zero mutation and zero Save;
 - final application mismatch: Save may occur once, but final verification fails and Root Work does not complete.
 
-The exact final merge-readiness evidence is intentionally not hard-coded here because synchronizing documentation itself creates a new PR head. PR #252 and its live checks are the authority for the eventual final head and run IDs.
+Implementation PR #252 final head `fd6a7a576d8e0dbc466f36e2633298de638d2eca` passed all applicable exact-head workflows before merge. PR #252 was squash-merged to canonical `main` as `cc3fd3edc25b436a5c42ec1e2d13d4b786fb18b3`. The post-merge `main` push ZN CI #1875 / run `34756719969` completed successfully. This docs-only synchronization must use its own exact-head CI and does not reuse PR #252's checks.
 
 ## E2E-07 regression handling during E2E-13 closure
 
@@ -123,4 +131,4 @@ Browser processes, password fields, disabled/offscreen controls, missing ValuePa
 
 ## Closure condition
 
-The E2E-13 representative implementation is **VERIFIED NARROW / representative path closed** on open PR #252. The PR remains unmerged. Merge readiness is established only by the final live PR head after all applicable exact-head workflows—including E2E-13, E2E-15, the full Windows product-route suite including E2E-07, ZN CI and all other applicable PR workflows—finish successfully with no outstanding merge blocker.
+The E2E-13 representative implementation remains **VERIFIED NARROW / representative path closed**. Implementation PR #252 final head `fd6a7a576d8e0dbc466f36e2633298de638d2eca` was squash-merged to canonical `main` as `cc3fd3edc25b436a5c42ec1e2d13d4b786fb18b3`, and post-merge ZN CI #1875 / run `34756719969` is completed / success. This representative closure is not `PRODUCT-CLOSED` and does not broaden any of the explicit non-claims above.

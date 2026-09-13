@@ -10,14 +10,15 @@
 
 接手时必须重新查询 current `main`、open PR、live head、review threads 和 exact-head CI。不要把本文件里的 SHA/CI 当永久事实。
 
-当前工作现场：
+当前已核实 post-merge 工作现场：
 
-- canonical `main` 在 E2E-13 工作期间仍为 `5dbc663c7035dc523e34477501fee59914a8cff4`；如果接手时已变化，以远端为准；
-- E2E-13 在 PR #252 / `work/e2e13-current-app-content`；
-- PR #252 状态是 **VERIFIED NARROW / representative path closed**，保持 open / unmerged；
-- final merge-readiness 只认 PR #252 的最后 live head；任何后续 code/docs commit 都会使旧 exact-head CI 失效；
-- 合并前必须重新确认 E2E-13、E2E-15、完整 Windows product-route suite（含 E2E-07）、ZN CI 和所有其他 applicable PR workflows 都是该 final head 的 final success；
-- 不要自动 Merge。
+- canonical `main` observed HEAD: `cc3fd3edc25b436a5c42ec1e2d13d4b786fb18b3`；接手时如果已变化，以远端为准；
+- E2E-13 implementation PR #252 已 squash merge；final PR head `fd6a7a576d8e0dbc466f36e2633298de638d2eca`；canonical merge SHA `cc3fd3edc25b436a5c42ec1e2d13d4b786fb18b3`；
+- E2E-13 准确状态仍是 **VERIFIED NARROW / representative path closed**，不是 Desktop complete / arbitrary Windows automation / Office complete / general RPA；
+- post-merge canonical verification: ZN CI #1875 / run `34756719969` — completed / success；
+- E2E-11 implementation PR #251 也已 squash merge，canonical merge SHA `5dbc663c7035dc523e34477501fee59914a8cff4`；只把此前 stale open/unmerged wording 视为历史，不扩大 E2E-11 scope；
+- 新 docs-only synchronization PR 必须使用自己的 exact-head applicable CI；不得拿 PR #252 或 PR #251 的旧 CI 充当新 PR 的验证；
+- 不要自动 Merge docs synchronization PR。
 
 ## E2E-13 当前真实 closure
 
@@ -90,6 +91,8 @@ E2E-13 real WinForms coverage includes:
 
 E2E-15 remains the previously closed bounded same-process `ShowDialog()` recovery path. E2E-13 does not replace or broaden it.
 
+PR #252 final implementation head `fd6a7a576d8e0dbc466f36e2633298de638d2eca` passed its applicable exact-head CI before merge. It was squash-merged to canonical `main` as `cc3fd3edc25b436a5c42ec1e2d13d4b786fb18b3`, and the post-merge `main` push ZN CI #1875 / run `34756719969` completed successfully.
+
 ## E2E-07 regression found during PR #252
 
 The Windows suite exposed a stable E2E-07 regression. A zero-code same-head rerun reproduced the same failure, so it was not treated as a one-off runner/browser timing flake.
@@ -158,8 +161,8 @@ Read the canonical status docs before proposing new substrate. A new real failur
 - completed/uncertain outside-world effects are not blindly replayed;
 - representative closure is not whole-class product closure.
 
-## Next action after PR #252
+## Next action after PR #252 merge
 
-Do not start a new E2E-13 implementation after PR #252 is verified. Choose future work from `docs/ZN-REAL-TASK-E2E-CATALOG.md` and `docs/ZN-NEXT-PHASE.md` based on the highest-value ordinary user task still blocked by current `main`.
+Do not start a new E2E-13 implementation. PR #252 is merged; future work should be selected from `docs/ZN-REAL-TASK-E2E-CATALOG.md` and `docs/ZN-NEXT-PHASE.md` based on the highest-value ordinary user task still blocked by current canonical `main`.
 
-PR #252 itself must remain unmerged until its **last** head has all applicable exact-head CI final success and GitHub has no remaining merge/review blocker. PR body is the place to record the final immutable head and final workflow run IDs after that final CI completes.
+The post-merge documentation synchronization is docs-only. Its own PR must remain separate from PR #252, use its own exact-head applicable CI, and stop at merge-ready / **NOT MERGED**.
