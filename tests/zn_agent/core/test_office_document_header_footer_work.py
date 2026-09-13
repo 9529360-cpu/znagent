@@ -3,8 +3,11 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from zipfile import ZipFile
 
 from docx import Document
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx.shared import Pt
 
 from zn_agent.core.office_document import inspect_docx, write_docx_copy
@@ -19,6 +22,33 @@ class OfficeDocumentHeaderFooterWorkTests(unittest.TestCase):
         year.font.size = Pt(11)
         month_day = paragraph.add_run("9月15日")
         month_day.italic = True
+
+    @staticmethod
+    def _add_page_field(paragraph) -> None:
+        paragraph.add_run("Page ")
+        run = paragraph.add_run()
+        begin = OxmlElement("w:fldChar")
+        begin.set(qn("w:fldCharType"), "begin")
+        instruction = OxmlElement("w:instrText")
+        instruction.set(qn("xml:space"), "preserve")
+        instruction.text = " PAGE "
+        end = OxmlElement("w:fldChar")
+        end.set(qn("w:fldCharType"), "end")
+        run._r.append(begin)
+        run._r.append(instruction)
+        run._r.append(end)
+
+    @staticmethod
+    def _footer_xml(path: Path) -> bytes:
+        with ZipFile(path, "r") as package:
+            footer_names = sorted(
+                name
+                for name in package.namelist()
+                if name.startswith("word/footer") and name.endswith(".xml")
+            )
+            if len(footer_names) != 1:
+                raise AssertionError(f"expected one footer part, got {footer_names}")
+            return package.read(footer_names[0])
 
     @classmethod
     def _header_contract(cls, path: Path) -> None:
@@ -106,6 +136,52 @@ class OfficeDocumentHeaderFooterWorkTests(unittest.TestCase):
                 reopened.sections[0].footer.paragraphs[0].text,
                 "付款日期：2026年9月20日",
             )
+
+    def test_target_story_with_page_field_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "header-field-contract.docx"
+            doc = Document()
+            doc.add_paragraph("正文")
+            header = doc.sections[0].header
+            header.is_linked_to_previous = False
+            paragraph = header.paragraphs[0]
+            self._add_payment_date(paragraph)
+            paragraph.add_run(" / ")
+            self._add_page_field(paragraph)
+            doc.save(source)
+
+            inspected = inspect_docx(source)
+            self.assertFalse(inspected["ready"])
+            self.assertEqual(inspected["blocker"], "unsupported_document_structure")
+            self.assertIn("fldChar", inspected["detail"])
+
+    def test_unrelated_footer_page_field_survives_header_mutation_byte_exact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "header-with-footer-field.docx"
+            destination = root / "header-with-footer-field-updated.docx"
+            doc = Document()
+            doc.add_paragraph("正文")
+            header = doc.sections[0].header
+            header.is_linked_to_previous = False
+            self._add_payment_date(header.paragraphs[0])
+            footer = doc.sections[0].footer
+            footer.is_linked_to_previous = False
+            self._add_page_field(footer.paragraphs[0])
+            doc.save(source)
+            footer_xml_before = self._footer_xml(source)
+
+            inspected = inspect_docx(source)
+            self.assertTrue(inspected["ready"], inspected)
+            result = write_docx_copy(
+                source,
+                destination,
+                replacement_date="2026年9月20日",
+                precondition_identity=inspected["identity"],
+            )
+
+            self.assertTrue(result["destination_reopened"])
+            self.assertEqual(self._footer_xml(destination), footer_xml_before)
 
     def test_inactive_first_page_header_target_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
