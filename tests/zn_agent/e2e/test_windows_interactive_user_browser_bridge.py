@@ -162,14 +162,49 @@ class _IsolatedUserBrowserFixture:
         user32.SetForegroundWindow.restype = wintypes.BOOL
         user32.GetForegroundWindow.argtypes = []
         user32.GetForegroundWindow.restype = wintypes.HWND
+        user32.GetWindowThreadProcessId.argtypes = [
+            wintypes.HWND,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        user32.AttachThreadInput.argtypes = [
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.BOOL,
+        ]
+        user32.AttachThreadInput.restype = wintypes.BOOL
+
         user32.ShowWindow(self.hwnd, 5)
         user32.BringWindowToTop(self.hwnd)
         user32.SetForegroundWindow(self.hwnd)
-        deadline = time.monotonic() + 2.0
+        deadline = time.monotonic() + 0.25
         while time.monotonic() < deadline:
             if int(user32.GetForegroundWindow() or 0) == int(self.hwnd):
                 return
             time.sleep(0.02)
+
+        foreground_hwnd = int(user32.GetForegroundWindow() or 0)
+        foreground_thread = (
+            int(user32.GetWindowThreadProcessId(foreground_hwnd, None) or 0)
+            if foreground_hwnd
+            else 0
+        )
+        target_thread = int(user32.GetWindowThreadProcessId(self.hwnd, None) or 0)
+        attached = False
+        if foreground_thread and target_thread and foreground_thread != target_thread:
+            attached = bool(user32.AttachThreadInput(target_thread, foreground_thread, True))
+        try:
+            user32.ShowWindow(self.hwnd, 5)
+            user32.BringWindowToTop(self.hwnd)
+            user32.SetForegroundWindow(self.hwnd)
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                if int(user32.GetForegroundWindow() or 0) == int(self.hwnd):
+                    return
+                time.sleep(0.02)
+        finally:
+            if attached:
+                user32.AttachThreadInput(target_thread, foreground_thread, False)
         raise RuntimeError(
             f"{self.provider} fixture could not become the exact foreground window"
         )
