@@ -2,8 +2,10 @@ from __future__ import annotations
 
 """E2E-13 exact ValuePattern replacement on the existing product Body."""
 
+from contextlib import closing
 from typing import Any
 
+from . import side_effect_attempts
 from .automation_text_content import NativeAutomationValueReplacementBody, text_sha256
 from .body import BodyAction, BodyActionResult
 from .machine_capability_body import MachineCapabilityBody
@@ -36,6 +38,34 @@ class CurrentAppTextAwareBody(MachineCapabilityBody):
         if kind == cls._AUTOMATION_VALUE_REPLACE:
             return True
         return super()._requires_guard(kind, args)
+
+    def unresolved_value_replacement_attempts(
+        self,
+        event_id: str,
+    ) -> list[dict[str, Any]]:
+        """Return argument-free durable dispatch ownership for this E2E-13 mutation.
+
+        Recovery deliberately queries by event + action kind rather than by the
+        current action signature. Once one replacement has crossed the durable
+        side-effect boundary, changed source evidence must not manufacture a new
+        signature that can bypass that ownership after restart.
+        """
+
+        normalized_event = str(event_id or "").strip()
+        if not normalized_event:
+            return []
+        with closing(self._connect()) as conn:
+            rows = side_effect_attempts.event_attempts(
+                conn,
+                event_id=normalized_event,
+                statuses=("started", "observed"),
+                limit=32,
+            )
+        return [
+            dict(row)
+            for row in rows
+            if str(row["kind"] or "").strip().lower() == self._AUTOMATION_VALUE_REPLACE
+        ]
 
     def _record(self, action: BodyAction, result: BodyActionResult) -> None:
         if action.kind == self._AUTOMATION_VALUE_REPLACE:
