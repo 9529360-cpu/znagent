@@ -235,6 +235,7 @@ def _completion_story_blocker(path: Path) -> str | None:
 def _iter_container_paragraphs(container: Any, prefix: str) -> Iterator[tuple[str, Paragraph]]:
     for index, paragraph in enumerate(container.paragraphs):
         yield f"{prefix}/p:{index}", paragraph
+    table_prefix = "" if prefix == "body" else f"{prefix}/"
     for table_index, table in enumerate(container.tables):
         for row_index, row in enumerate(table.rows):
             for col_index, cell in enumerate(row.cells):
@@ -242,7 +243,7 @@ def _iter_container_paragraphs(container: Any, prefix: str) -> Iterator[tuple[st
                     raise ValueError("nested tables are outside DOCX v1 scope")
                 for paragraph_index, paragraph in enumerate(cell.paragraphs):
                     yield (
-                        f"{prefix}/table:{table_index}/cell:{row_index},{col_index}/p:{paragraph_index}",
+                        f"{table_prefix}table:{table_index}/cell:{row_index},{col_index}/p:{paragraph_index}",
                         paragraph,
                     )
 
