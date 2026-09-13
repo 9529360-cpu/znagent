@@ -175,8 +175,14 @@ def _source_observation(
             "fresh USER Browser source could not prove exactly one structured source record: "
             f"{type(exc).__name__}: {exc}"
         ) from exc
-    if int(observed.get("tab_id") or 0) != tab_id:
-        raise _Blocked("USER Browser observation changed tab identity")
+    current = resident.user_browser_extension.authorized_tab()
+    if (
+        current is None
+        or int(current.tab_id) != tab_id
+        or str(current.attached_at or "") != attached_at
+        or int(observed.get("tab_id") or 0) != tab_id
+    ):
+        raise _Blocked("USER Browser authorization generation changed during source observation")
     context = " ".join(str(observed.get("context") or "").split())
     business_key, scalar = _parse_source_context(context)
     url = str(observed.get("url") or "")
@@ -231,6 +237,8 @@ def _fresh_binding(
 
     foreground = _foreground(resident, meta, require_hwnd=require_hwnd)
     key_target, key_read = _read_field(resident, foreground, _KEY_NAME, allow_read_only=True)
+    if key_target.value_is_read_only is not True:
+        raise _Blocked("fresh destination business-key field is no longer read-only")
     key_value = str(key_read.text)
     if not _same_text(key_value, dict(meta.get("business_key") or {})) or key_value != source_key:
         raise _Blocked("desktop destination business record no longer matches Browser source identity")
@@ -240,6 +248,8 @@ def _fresh_binding(
         _FIELD_NAME,
         allow_read_only=not require_hwnd,
     )
+    if require_hwnd and field_target.value_is_read_only is not False:
+        raise _Blocked("fresh destination transfer field is no longer writable")
     field_text = str(field_read.text)
     if require_initial_value and not _same_text(
         field_text, dict(meta.get("destination_initial_value") or {})
@@ -745,6 +755,8 @@ def _final_verify(resident, event, state):
     try:
         foreground = _foreground(resident, meta, require_hwnd=False)
         key_target, key_read = _read_field(resident, foreground, _KEY_NAME, allow_read_only=True)
+        if key_target.value_is_read_only is not True:
+            raise _Blocked("final destination business-key field is no longer read-only")
         field_target, field_read = _read_field(resident, foreground, _FIELD_NAME, allow_read_only=True)
     except Exception as exc:
         if observations < _MAX_FINAL_OBSERVATIONS:
