@@ -46,7 +46,7 @@ class VerifiedEffectRestartTests(unittest.TestCase):
         with patch.object(
             transfer,
             "_fresh_binding",
-            return_value=(foreground, None, None, None, field_read, "需跟进"),
+            return_value=(foreground, None, None, None, field_read, "CUST-TEST", "需跟进"),
         ) as fresh_binding:
             handled, result = transfer._resolve_uncertain_replacement(resident, event, state)
 
