@@ -4,7 +4,7 @@
 >
 > 真实代码、真实 Git、真实测试和真实 E2E 高于本文件。
 
-Updated: 2026-09-11
+Updated: 2026-09-13
 
 ## 1. 产品判断标准
 
@@ -29,8 +29,8 @@ Exists
 | Resident long-lived process | VERIFIED | 更长时间真实运行场景 |
 | Situation / Thought / Will loop | CONNECTED + VERIFIED | 更通用 investigation / cross-surface replanning |
 | Durable Work | CONNECTED + VERIFIED | 更长周期、更多真实任务的 continuation breadth |
-| Natural continuation / active steering | VERIFIED NARROW; E2E-27/33 closed representative path | 跨天、更复杂长期任务与多 workstream 用户体验 |
-| Memory / learned context | PARTIAL | “上次怎么做”等更成熟真实长期体验 |
+| Natural continuation / active steering | VERIFIED NARROW; E2E-27/33/35 representative paths closed | 跨天、更复杂长期任务与多 workstream 用户体验 |
+| Memory / learned context | VERIFIED NARROW / PARTIAL product closure | representative learned-behavior slice 已有；更广长期体验仍开放 |
 | Local Resident control plane | GUARDED / TRANSITIONAL | loopback TCP + per-process secret + endpoint ACL；长期 Windows transport 可继续收敛，但不是默认主线 |
 
 ## 3. Task ownership / delegation / routing
@@ -46,47 +46,16 @@ Exists
 | One-model multi-worker | VERIFIED / E2E-29 CLOSED | 不再是设计缺口 |
 | Multiple ModelRoute support | CONNECTED + VERIFIED NARROW | E2E-30/42 已按 current acceptance policy 关闭；双真实 provider family evidence 仍受 environment waiver 限定 |
 | Kernel-owned ModelRouter | CONNECTED + VERIFIED NARROW | hard eligibility + dynamic health-aware routing 已接通；扩大 provider/task coverage |
-| Dynamic provider health routing | VERIFIED NARROW; E2E-28/34 closed representative path | 更多 provider failure/长时运行 coverage |
-| Route learning in SelfModel | EXISTS + VERIFIED NARROW | 更多真实 delegated outcomes 上继续校准 |
+| Dynamic provider health routing | VERIFIED NARROW; E2E-28/34 representative paths closed | 更多 provider failure/长时运行 coverage |
 | Strict WorkerContextPack | CONNECTED + VERIFIED NARROW | 未来 worker 类型继续审计；不是完整 DLP |
 | Worker action authority | CONNECTED + VERIFIED NARROW | Body action admission，不是 OS process sandbox |
-| Worker completion verification | VERIFIED NARROW | 更复杂 Work 继续覆盖 |
-| Stale delegated result protection | VERIFIED NARROW | E2E-27/33 已验证 old-worker protection；更多任务继续覆盖 |
-| Stall/no-progress supervision | VERIFIED NARROW; E2E-28/34 closed representative path | heartbeat/no-progress/stall、bounded retry/reassign、restart reconcile 已有；更广长任务继续扩大 |
+| Worker completion verification | VERIFIED NARROW | worker `done` 仍只是 candidate；Root completion 由 ZN 独立验收 |
+| Stale delegated result protection | VERIFIED NARROW | 更多任务继续覆盖 |
+| Stall/no-progress supervision | VERIFIED NARROW; E2E-28/34 representative paths closed | 更广长任务继续扩大 |
 | Flat dependency/readiness | CONNECTED + VERIFIED NARROW | bounded same-Root/thread/current-plan sibling dependency、fan-in、restart durability、invalid graph fail closed；不是 general DAG |
 | Delegated user progress | CONNECTED + VERIFIED NARROW / PARTIAL UX | privacy-safe projection 到既有 `work_progress` + Resident UI；复杂 multi-workstream UX 继续扩大 |
 
 核心规则：**不要新建第二套 ModelRouter、第二套 Work/progress truth，也不要新建 Orchestrator Agent。**
-
-### Routing boundary
-
-现有 `ModelRouter` 采用：
-
-```text
-hard eligibility
--> legal candidates only
--> dynamic health / SelfModel / reliability / cost / latency scoring
-```
-
-hard eligibility 可拒绝 capability mismatch、retry excluded route、pin mismatch、explicit deny、declared unavailable/unhealthy、locality/privacy violation、missing policy tags、missing authority scopes 和 malformed policy。
-
-E2E-30/42 已按仓库当前 acceptance policy 关闭，但 closure 含 owner-approved environment waiver：当时没有第二个真实 provider family。因此不能写成“两个真实 provider family 完整生产验证已完成”。Guarded two-provider acceptance 仍保留，并在真实双-provider配置时要求 no-skip / fail closed。
-
-### Dependency/readiness boundary
-
-当前实现是：
-
-```text
-bounded flat current-plan sibling dependency/readiness
-same Root / thread / current plan
-immutable dependency edges
-derived readiness from durable Work truth
-WorkerRun / cognition / completion gates
-fan-in + restart durability
-corrupt/cyclic/dangling/cross-plan fail closed
-```
-
-它不是 general-purpose DAG scheduler、recursive delegation、critical-path/resource-pool scheduler 或 generic dependency UX。Dependency 不继承 authority/tool scope。
 
 ## 4. Browser / User Browser
 
@@ -96,12 +65,14 @@ corrupt/cyclic/dangling/cross-plan fail closed
 | Tab lifecycle/history | VERIFIED NARROW | 更复杂 real-site topology/navigation |
 | Exact BrowserScene actions | VERIFIED NARROW | 当前 focus/type/check/uncheck/navigation + bounded command/control clicks；更多 semantic controls 继续扩大 |
 | Managed causal popup | VERIFIED NARROW | bounded exact causal popup path 已有；任意 popup/site complexity 仍开放 |
-| Browser file transfer | VERIFIED NARROW | exact authority-safe managed upload/download 已有；USER-plane file transfer 仍按当前安全边界 fail closed |
+| Browser file transfer | VERIFIED NARROW | exact authority-safe managed upload/download 已有；USER-plane file transfer 仍 fail closed |
 | User Browser Bridge | CONNECTED + VERIFIED NARROW | 真实已登录网站覆盖、授权 UX、漂移后的 stable re-ground |
 | E2E-05 authenticated research mutation | CLOSED representative path | 不等于任意 authenticated site |
-| E2E-07 causal USER child-tab | CLOSED representative path | general arbitrary popup/frame complexity 仍开放 |
+| E2E-07 causal USER child-tab | CLOSED representative path | exact opener-bound representative path；general arbitrary popup/frame complexity 仍开放 |
 | E2E-08 OTP user presence | CLOSED representative path | 仅 standard HTML `one-time-code` same tab/generation/origin；不是所有 MFA |
 | Sensitive-field protection | GUARDED | 继续 fail closed；不复制 user profile/cookie/password/OTP secret |
+
+E2E-07 的 PR #252 回归最终被定位为测试 fixture 契约问题，不是 E2E-13 需要的新 Browser production 能力：`target="_blank"` 在现代 HTML 中默认 noopener，而代表性 E2E 明确要求 opener-bound child。fixture 改为显式 `rel="opener"`；两笔未能建立 opener proof 的 production stabilization 已撤回，生产 causal child/root proof、fresh opener reread、root authorization generation binding 与 no-blind-replay 均未放宽。
 
 E2E-08 明确不支持 CAPTCHA solving、WebAuthn/passkey automation、cross-origin IdP handoff、password automation、payment-field automation。
 
@@ -109,13 +80,40 @@ E2E-08 明确不支持 CAPTCHA solving、WebAuthn/passkey automation、cross-ori
 
 | Product need | Current status | Remaining gap |
 | --- | --- | --- |
-| Machine/application awareness | CONNECTED + VERIFIED NARROW | 多源 inventory、deterministic identity、Installed/Running/Window/Foreground、bounded machine facts 已有；更多应用/系统语义继续扩大 |
+| Machine/application awareness | CONNECTED + VERIFIED NARROW | 更多应用/系统语义继续扩大 |
 | Identity-bound application launch | VERIFIED NARROW | 更多 app families/edge cases |
 | Existing application activation | VERIFIED NARROW | Resident-admitted exact app/HWND/PID、fresh foreground proof 已有；任意多窗口拓扑/生命周期未闭环 |
 | Foreground / focused-control sensing | VERIFIED | 更复杂窗口切换和应用生命周期 |
 | Pointer / keyboard / text entry | VERIFIED NARROW | 完整真实任务继续验证 |
 | Semantic desktop target re-ground | VERIFIED NARROW | 控件变化、窗口漂移、替代入口 |
-| Cross-app task execution | VERIFIED NARROW; E2E-24 closed representative path | same-Root USER Browser -> exact File -> exact Desktop customer record 已有 bounded real closure；更复杂 Browser/Desktop/File/Terminal/Application 联合任务仍开放 |
+| E2E-13 current-app content cleanup | **VERIFIED NARROW / representative path closed on open PR #252** | exact foreground non-browser HWND/PID + unique multiline ValuePattern Edit + deterministic trim/drop-blank/stable-dedupe + guarded replacement + durable restart/no-replay reconciliation + one Save + fresh same-process read-only result verification；不是 Desktop complete / arbitrary app automation / Office / general RPA |
+| E2E-15 unexpected modal recovery | VERIFIED NARROW / representative path closed | exact same-process directly owned UIA modal + one safe defer/continue action + fresh parent readiness/re-ground；任意 dialog/UAC/credentials/business decisions 不在 closure 内 |
+| Cross-app task execution | VERIFIED NARROW; E2E-24 representative path closed | bounded USER Browser -> exact File -> exact Desktop customer record 已有；更复杂联合任务仍开放 |
+
+### E2E-13 exact boundary
+
+Representative user request:
+
+> 把我现在开的工作记录整理一下：去掉每行前后空格，删掉空行，重复内容只保留第一次，然后保存。
+
+Product-real scope on PR #252:
+
+- same Product Resident / Root Work / Body；
+- fresh current foreground non-browser process/HWND；
+- unique exact multiline UIA Edit with ValuePattern；
+- bounded raw read, raw text transient only；
+- deterministic trim -> drop blank -> stable exact dedupe -> CRLF；
+- fresh RuntimeId/process/HWND/source hash validation immediately before replacement；
+- existing durable side-effect journal around `automation_value_replace`；
+- after restart, prior `started` / `observed` / `verified_effect` replacement attempt is reconciled by event + kind **before** ordinary content drift；
+- recovery is read-only: fresh exact readback must prove the prior expected-result chars/SHA-256; otherwise fail closed；
+- changed current text cannot create a new action signature that bypasses old dispatch ownership；
+- Save uses existing pointer lifecycle and is dispatched at most once；
+- completion requires fresh same-process replacement HWND and exact read-only `保存内容` chars/SHA-256 verification。
+
+Persistent SQLite + Resident rebuild tests cover started crash, observed-before-WorkingState checkpoint, a second crash after `verified_effect` reconciliation before WorkingState advances, and mismatch/no-new-signature behavior.
+
+Explicit non-claims: no Desktop complete, arbitrary Windows app automation, arbitrary rich text, Office automation, universal UIA, clipboard/OCR authority, Save As, arbitrary keyboard shortcut automation or general RPA.
 
 ## 6. Files / workspace / terminal / Git
 
@@ -123,13 +121,13 @@ E2E-08 明确不支持 CAPTCHA solving、WebAuthn/passkey automation、cross-ori
 | --- | --- | --- |
 | File read/write/search | CONNECTED + VERIFIED NARROW | 模糊来源、复杂整理、多文件任务 |
 | Workspace evidence / exact source identity | PARTIAL | 歧义来源先解决身份再允许外部副作用 |
-| Local DOCX edit | VERIFIED NARROW; E2E-09 CLOSED representative path | bounded yesterday-contract payment-date replacement、source preservation、new-output reopen verification 已验证；复杂 DOCX/package/任意 Word 编辑仍开放 |
-| Local XLSX cleanup | VERIFIED NARROW; E2E-10 CLOSED representative path | zero-model exact-row dedupe + numeric amount-format normalization、source preservation、reopen verification 已验证；公式/表/图表/pivot/复杂 Excel 仍开放 |
+| Local DOCX edit | VERIFIED NARROW; E2E-09 representative path closed | 更复杂 DOCX/package/任意 Word 编辑仍开放 |
+| Local XLSX cleanup | VERIFIED NARROW; E2E-10 representative path closed | 公式/表/图表/pivot/复杂 Excel 仍开放 |
+| Browser -> XLSX | VERIFIED NARROW; E2E-11 representative path on PR #251 | bounded MANAGED Browser simple table -> exact append-copy；不是 arbitrary website/Excel |
+| Evidence -> DOCX completion | VERIFIED NARROW; E2E-12 representative path closed | bounded 1–3 placeholder path；不是 arbitrary DOCX/Word/Deep Research |
 | Terminal/process | VERIFIED | 继续作为真实任务执行资源 |
 | Git / repo task support | PARTIAL | 普通项目能力发展；不给 ZN 自身仓库特殊权限 |
 | Coding specialist + real tools | VERIFIED NARROW | 扩大真实 repo 场景 |
-
-E2E-09/10 复用 existing Product Resident / Work / Body，不增加 WordAgent、ExcelAgent、OfficeAgent、第二 Resident、Office GUI automation 或第二套 file truth。实现通过 PR #248 squash merge 到 canonical `main` 为 `22a0537ffe082a695355da42fde9a09d576916a8`；最终 head `37a7c2c975525ab01ba101ef6708d04bdd43a0b4` 的 Local Office #9、ZN CI #1796、Research #26、Work Recovery #416、Managed Browser #354、Windows Interactive #372、Memory #53 均成功。准确边界是 **VERIFIED NARROW / representative paths closed**，不是 Word complete、Excel complete 或 Office Suite complete。
 
 ## 7. Multi-surface and long-task real work
 
@@ -149,20 +147,19 @@ normal human goal
 -> durable continuation
 ```
 
-E2E-24 已关闭一个 bounded 三-surface representative path：同一 Root Work 从显式授权的已登录 USER Browser 保持 exact business identity，经唯一 exact workspace target 的一次写入 + fresh reread，再重新建立当前 Desktop HWND/PID/UIA semantic authority并完成一次 exact record mutation；stale UIA RuntimeId 需要 fresh re-ground，ambiguous file target 必须 fail closed。它不等于 arbitrary cross-surface automation 或 general RPA。
+E2E-24 已关闭一个 bounded 三-surface representative path。E2E-13 又关闭了一个 bounded “继续处理当前 Windows app 内容”的代表性路径，但它不等于 arbitrary cross-surface automation 或 general RPA。
 
 ## 8. Recovery / non-replay
 
 | Product need | Current status | Remaining gap |
 | --- | --- | --- |
 | Resident restart recovery | CONNECTED + VERIFIED NARROW | 更多跨天/复杂真实 Work breadth |
-| Delegated restart reconciliation | VERIFIED NARROW; E2E-28/34 | bounded restart-safe reconcile/no-replay 已有；更广任务继续覆盖 |
-| Unknown external-effect handling | VERIFIED NARROW; E2E-36 closed representative path | exact replay-sensitive attempt 跨 restart 保持 fail closed；machine evidence 与显式 user resolution 分离，retry authority 只对应一个旧 attempt；不是通用 exactly-once 或任意第三方 recovery |
+| Delegated restart reconciliation | VERIFIED NARROW; E2E-28/34 | 更广任务继续覆盖 |
+| Unknown external-effect handling | VERIFIED NARROW; E2E-36 representative path closed | exact replay-sensitive attempt 跨 restart 保持 fail closed；不是通用 exactly-once |
+| E2E-13 ValuePattern replacement recovery | VERIFIED NARROW on PR #252 | old replacement dispatch ownership survives restart/signature drift; fresh readback can prove old expected effect, otherwise fail closed; no blind SetValue replay |
 | Fresh evidence before mutation | CORE RULE | 扩展到所有新任务和 delegated result acceptance |
 | Independent completion verification | VERIFIED NARROW | 复杂 Work 继续覆盖 |
 | Stale delegated result protection | VERIFIED NARROW | steering/restart/reassign breadth |
-
-2026-09-10 E2E-36 representative closure：exact attempt-bound 显式 resolution 持久化在既有 Store 中。`effect_happened` 不会再次 dispatch mutation；`retry_authorized` 只终结旧 attempt，并重新经过普通 Body guard，由下一次 dispatch 创建 fresh attempt。人工判断与 machine `verified_effect` / `verified_absent` 保持审计可区分。
 
 Recovery 是为了让真实任务继续，不是独立产品路线。
 
@@ -171,9 +168,9 @@ Recovery 是为了让真实任务继续，不是独立产品路线。
 | Product need | Current status | Remaining gap |
 | --- | --- | --- |
 | User-visible root task progress | PARTIAL | 更清晰的已完成/进行中/等待/阻塞/依据 |
-| Delegated progress | CONNECTED + VERIFIED NARROW / PARTIAL UX | durable delegated facts 已投影到既有 progress truth；复杂 multi-workstream UX/解释质量继续扩大 |
+| Delegated progress | CONNECTED + VERIFIED NARROW / PARTIAL UX | 复杂 multi-workstream UX/解释质量继续扩大 |
 | Permission / revoke UX | PARTIAL / OPEN | Browser、敏感操作、外部副作用授权范围 |
-| Model/privacy policy UX | PARTIAL | hard policy 已落地；用户配置、解释与更广多-provider体验继续扩大 |
+| Model/privacy policy UX | PARTIAL | 用户配置、解释与更广多-provider体验继续扩大 |
 | Failure explanation | PARTIAL | 说明遇到什么、是否还能继续、需要用户做什么 |
 | Completion result | PARTIAL | 明确完成了什么、没完成什么、依据是什么 |
 
@@ -181,25 +178,31 @@ Recovery 是为了让真实任务继续，不是独立产品路线。
 
 ## 10. Real E2E acceptance set
 
-`docs/ZN-REAL-TASK-E2E-CATALOG.md` 保持 50 个原始真实任务定义。当前需要记住的代表性 closure：
+`docs/ZN-REAL-TASK-E2E-CATALOG.md` 保持 50 个原始真实任务定义。当前代表性 closure 包括：
 
-- E2E-01/02/03 closed representative bounded Research & Information Work path；
-- E2E-05 closed representative authenticated research/mutation；
-- E2E-07 closed bounded causal USER child-tab path；
-- E2E-08 closed representative OTP user-presence path；
-- E2E-09/10 closed representative bounded Local Documents & Spreadsheet Work paths；
-- E2E-24 closed representative same-Root USER Browser -> exact File -> exact Desktop customer-record path；
-- E2E-27/33 closed representative steering/continuation；
-- E2E-28/34 closed representative supervision/dynamic-health/restart；
-- E2E-29 closed one-route multi-worker；
-- E2E-30/42 closed under documented current acceptance + environment-waiver semantics；
-- E2E-36 closed representative uncertain-side-effect restart resolution：exact attempt-bound `effect_happened` / `retry_authorized`，user evidence 与 machine `verified_effect` / `verified_absent` 审计分离，retry 必须形成 fresh guarded attempt。
+- E2E-01/02/03 Research & Information Work；
+- E2E-05 authenticated research/mutation；
+- E2E-07 causal USER child-tab；
+- E2E-08 OTP user presence；
+- E2E-09/10 Local Documents & Spreadsheet；
+- E2E-11 Browser -> Spreadsheet（PR #251，unmerged）；
+- E2E-12 evidence-driven DOCX completion；
+- **E2E-13 current-app content cleanup（PR #252，`VERIFIED NARROW / representative path closed`, unmerged）**；
+- E2E-15 bounded unexpected-modal recovery；
+- E2E-24 Browser + File + Desktop；
+- E2E-27/33 steering/continuation；
+- E2E-28/34 supervision/restart；
+- E2E-29 one-route multi-worker；
+- E2E-30/42 current-policy closure with environment waiver；
+- E2E-35 next-day status-first continuation；
+- E2E-36 uncertain-side-effect restart resolution；
+- E2E-37/38/39 Memory & Learned Behavior representative slice。
 
-这些 closure 不等于 50 个 E2E 全部完成，也不等于上述 capability classes 全部 product-closed。特别是 E2E-09/10 不等于 Word complete、Excel complete 或 Office Suite complete。
+这些 closure 不等于 50 个 E2E 全部完成，也不等于上述 capability classes 全部 product-closed。
 
 ## 11. Release / update continuity
 
-Installer、CI、Release、签名本身不是当前产品主线。Installed N -> N+1 的 identity/data/Work/uncertain-effect continuity 仍是独立未闭环问题；涉及 updater/rollback/signing/release trust 时必须保留高风险授权边界。
+Installed N -> N+1 的 identity/data/Work/uncertain-effect continuity 仍是独立未闭环问题；涉及 updater/rollback/signing/release trust 时必须保留高风险授权边界。
 
 ## 12. 已废弃：专用自我维护系统
 
@@ -207,14 +210,14 @@ Installer、CI、Release、签名本身不是当前产品主线。Installed N ->
 
 ## 13. 当前产品选择原则
 
-不再按旧顺序重复开发 E2E-01/02/03、E2E-09/10、E2E-30/42、28/34、27/33 的 bounded substrate。下一项应从真实剩余产品缺口中选择：
+不要重复开发已经关闭的 bounded substrate。下一项应从真实剩余产品缺口中选择：
 
-1. E2E-24 bounded closure 之外更复杂的 cross-surface real tasks；
+1. E2E-24 / E2E-13 bounded closure 之外更复杂的 cross-surface / desktop real tasks；
 2. Browser/User Browser 在真实站点和复杂 frame/dialog/navigation/用户在场边界的广度；
-3. E2E-01/02/03 bounded closure 之外的 Research breadth，例如 authenticated research、PDF/复杂 source、更多 surface 组合和 citation UX；
-4. E2E-09/10 bounded closure 之外的 Local Office breadth，例如复杂 DOCX/XLSX、更多文档/表格变换，以及 Research/Browser/Desktop 与 Office 的组合；
+3. E2E-01/02/03/12 之外的 Research breadth；
+4. E2E-09/10/11/12 之外的 Local Office breadth；
 5. 现有 supervision/steering/restart 基础上的跨天/长期 continuity + progress/explanation UX；
-6. 由真实 E2E 暴露的 Windows/application semantic gap；
+6. E2E-13/E2E-15 之外由真实 E2E 暴露的 Windows/application semantic gap；
 7. 只有 owner 明确选择并授权时才进入高风险 installed-version continuity / release-trust work。
 
 如果 current evidence 不能确定唯一下一任务，就保留选择标准，不凭空发明 roadmap。
@@ -227,69 +230,8 @@ Installer、CI、Release、签名本身不是当前产品主线。Installed N ->
 
 如果答案没有明显改善，就不能把“更多模型、更多 worker、更多调度代码”当成产品主线已经推进。
 
-<!-- memory-learned-behavior-1.0-closure -->
-## Memory & Learned Behavior 1.0 — representative capability closure (2026-09-10)
+## E2E-13 closure note
 
-Status: **VERIFIED NARROW / representative path closed**.
+Status: **VERIFIED NARROW / representative path closed on open PR #252; not merged to canonical `main`.**
 
-The active product Resident now has one bounded resident-owned procedural fast path on top of the existing `VerifiedExperience -> CandidateProceduralTendency -> reality-gated influence` chain. The representative family is single-path Git staging because the repository already provides deterministic current Sense, replay-sensitive Body execution and independent Git postcondition verification for it.
-
-What is product-real now:
-
-- project/workspace-local procedural candidates use the existing privacy-safe workdir fingerprint in their compatibility identity, so equally-shaped history from another repository cannot mature or select the current project's competence;
-- natural prior-style requests can surface bounded currently-applicable verified context with event/experience provenance rather than dumping memory/transcripts;
-- only `practiced` competence (four or more distinct verified events and reliability at least 0.80 under the existing deterministic maturity rules) may remove one redundant native deliberation pulse;
-- current event authority and fresh Investigation still supply the real target, workdir and action arguments; history supplies no credentials, private contents, raw command payloads or stale target identity;
-- SideEffect/anti-replay, Body execution and fresh independent postcondition verification are unchanged;
-- current mismatch blocks the fast path; prediction error records contradiction, returns to Investigation and repeated recent contradictions can persistently inhibit the competence;
-- durable verified evidence survives Resident restart, and the already-learned bounded mechanical path remains usable with external models unavailable.
-
-This closes E2E-37/38/39 only as a representative product slice. It is not a claim that arbitrary workflows are learnable or that Memory as a whole is complete.
-
-<!-- research-information-work-1.0-closure -->
-## Research & Information Work 1.0 — representative capability closure (2026-09-10)
-
-Status: **VERIFIED NARROW / E2E-01/02/03 representative paths closed**.
-
-Current `main` now has a bounded Resident-owned public-web Research path that reuses the existing `WebResource`, `ModelRouter`, durable Work, Body and file-identity owners instead of introducing a second Research agent/orchestrator/router/store.
-
-Product-real scope:
-
-- normal user research language can enter the active Resident and perform bounded multi-source search→extract;
-- search candidates are not treated as evidence; only successfully extracted source-document content enters the bounded Evidence Pack;
-- canonical source identity, requested/final URL provenance, provider provenance, capture/published freshness metadata, partial extraction failures and cross-source conflicts are preserved;
-- promoted findings/recommendations require exact source IDs and exact observed evidence excerpts; numeric/date/price anchors are locally checked and unsupported claims are rejected;
-- all providers unavailable or fewer than two independent readable sources blocks rather than falling back to model memory;
-- ambiguous same-Work references auto-resolve only when unique; zero/multiple candidates ask the user before any search;
-- durable research bundles survive Resident restart and still-fresh evidence can continue synthesis without reacquisition;
-- optional E2E-02 delivery writes only to the uniquely attached Work workspace, then performs fresh file identity observation, reread and content/source-ID verification.
-
-Implementation was merged through PR #246 to canonical `main` as `f77e5f5d6b93af04f0bbb974dedea6529dbc9934`. Exact-head acceptance before merge was green across ZN CI #1784, Research E2E #14, Work Recovery #406, Managed Browser #344, Windows Interactive Desktop #363, Memory & Learned Behavior #41, E2E28-34 #120 and E2E25 #55.
-
-Explicit remaining boundary: no arbitrary-internet Deep Research, authenticated-browser research, arbitrary PDF/Office/multimedia research, general citation engine, knowledge graph/vector DB, recursive research swarm or cross-device research sync is claimed.
-
-<!-- e2e11-browser-spreadsheet-closure -->
-## E2E-11 Browser data into spreadsheet — representative capability closure (2026-09-11)
-
-Status: **VERIFIED NARROW / CLOSED representative path on PR #251 exact-head `f2d408a3980ce2f862503aa77faf021c4c5b1050`; not yet merged to canonical `main`**.
-
-The verified slice keeps one Product Resident / Root Work / Body and combines bounded current-page Browser table sensing with a conservative XLSX append-copy path. It requires one exact managed Browser session/page, one unique main-frame simple table, one exact attached workspace and one explicit source `.xlsx`. Browser export is structured and bounded (64 rows total including header, 32 cells per row, 512 characters per cell), with no page-wide text or HTML. Multiple tables, spans, partial/virtualized evidence, malformed rows or stale Browser identity fail closed.
-
-Before mutation the Browser source is freshly re-observed and fingerprint-matched. The XLSX path supports only one-sheet rectangular scalar data with exact ordered unique string headers; browser values are appended as strings without type inference. The source workbook stays byte-identical, the output is a new `<stem>-webdata.xlsx`, existing destinations are never overwritten, and fresh reopen verification covers source + destination + Browser evidence before completion. Formula/complex workbook structures fail closed. The representative path is deterministic with `model_invocations == 0` and durable `browser_spreadsheet_import:v1` evidence.
-
-Exact-head acceptance was green across ZN Managed Browser E2E #359 (including the explicit `Run E2E-11 real Browser data to spreadsheet` step), Local Documents and Spreadsheet Work E2E #27, ZN CI #1814, Research and Information Work #44, E2E05 #65, E2E06 #8, Document Research #15, Memory #71 and Windows Interactive Desktop #388.
-
-This note supersedes older statements in this document that treat E2E-11 itself as an open representative task. It does not claim arbitrary website tables, virtual grids, multi-table selection, complex Excel workbooks, Excel complete, Office Suite complete or general Browser→Office automation.
-
-<!-- e2e11-browser-spreadsheet-repair-closure -->
-## E2E-11 merge-blocker repair acceptance (2026-09-12)
-
-This repair note supersedes every earlier E2E-11 “current exact-head” reference in this file. The earlier `f2d408a3980ce2f862503aa77faf021c4c5b1050` checkpoint remains historical pre-review evidence only.
-
-Status: **VERIFIED NARROW / CLOSED representative path on repair implementation checkpoint `9ac5f403f17d85834e3a300e1065fc85f5747cb2`; PR #251 remains open and unmerged**.
-
-The repaired admission is explicitly **MANAGED Browser only** at both the provider capability boundary and the Product behavior boundary; USER-plane sessions fail closed before structured table payload reading or XLSX mutation. Simple-table completeness now also requires layout-aware visibility for the table and every materialized row/cell, with ancestor `aria-hidden=true` treated as hidden; hidden or unprovably visible table regions fail closed instead of being filtered and imported. XLSX append-copy inspection now loads rich text with preservation enabled and rejects `CellRichText` as `unsupported_workbook_structure`; this is rejection, not rich-text support, and E2E-10 keeps its previous loader semantics.
-
-Repair-checkpoint acceptance is green across ZN Managed Browser E2E #373 (including the explicit, non-skipped `Run E2E-11 real Browser data to spreadsheet` step), Local Documents and Spreadsheet Work E2E #41, ZN CI #1828, Research and Information Work E2E #58, E2E05 #79, E2E06 #22, Document Research #29, Memory #85 and Windows Interactive Desktop #402. Real Chromium regressions cover hidden-layout and ancestor-`aria-hidden` rows; real openpyxl 3.1.5 regressions cover rich-text fail-closed behavior on Python 3.11/3.12/3.13.
-
-A later documentation-only commit changes the live PR head, so merge readiness must still be judged from that live head and its applicable CI; this implementation checkpoint is evidence, not a self-referential permanent HEAD. No canonical merge SHA is claimed. User Browser table import, arbitrary website tables, grid/treegrid, pagination/virtualization, complex Excel, rich-text support and general Office automation remain outside this closure.
+PR #252 keeps browser production behavior unchanged relative to `main` after investigation of the E2E-07 regression. The final merge-readiness authority is the live final PR head and its applicable exact-head CI; documentation deliberately does not hard-code a self-referential final SHA before those checks finish.
