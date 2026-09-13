@@ -2,15 +2,18 @@ from __future__ import annotations
 
 """Bind E2E-13 fresh application evidence into existing Root Work truth.
 
-The cleanup behavior owns task execution. This tiny composition layer runs only
-when that behavior has already produced its fresh final UIA evidence, then uses
-the existing EvidenceBoundSteerableWorkLedger independent-acceptance gate so a
-successful Save dispatch alone can never complete the Root Work.
+The cleanup behavior owns task execution. This composition layer also owns the
+restart seam for E2E-13's replay-sensitive ValuePattern mutation: if the shared
+side-effect journal says a replacement already crossed durable dispatch ownership,
+current reality must reconcile that old attempt before the behavior may consider
+ordinary source drift or form a new replacement action.
 """
 
 import json
 
-from .current_app_text_cleanup_behavior import _STATE_KEY
+from .automation_text_content import text_sha256
+from .current_app_text_cleanup_behavior import _STATE_KEY, _terminal
+from .current_app_text_cleanup_goal import CurrentAppTextCleanupGoal
 from .models import ExecutionPath, ResidentRunResult, utc_now
 
 _INSTALL_MARKER = "_e2e13_current_app_text_cleanup_completion_installed"
@@ -101,6 +104,150 @@ def _find_or_create_child(
     return child
 
 
+def _recover_replacement_dispatch_ownership(resident, event, state):
+    """Reconcile an interrupted E2E-13 SetValue from fresh reality only.
+
+    Returns ``(handled, result)``. When ``handled`` is true the normal cleanup
+    behavior must not execute in this pulse. This is intentionally asymmetric:
+    exact expected-result reality may prove the old effect, while every mismatch
+    holds/fails closed and never grants authority for a new replacement signature.
+    """
+
+    if str(getattr(state, "stage", "") or "") != "e2e13_replace":
+        return False, None
+    raw_meta = state.data.get(_STATE_KEY)
+    if not isinstance(raw_meta, dict) or str(raw_meta.get("phase") or "") != "replace":
+        return False, None
+
+    attempts_reader = getattr(resident.body, "value_replacement_attempts", None)
+    if not callable(attempts_reader):
+        return False, None
+    try:
+        attempts = list(attempts_reader(event.event_id))
+    except Exception as exc:
+        return True, _terminal(
+            resident,
+            event,
+            state,
+            "could not inspect durable E2E-13 replacement ownership after restart: "
+            f"{type(exc).__name__}: {exc}",
+        )
+    if not attempts:
+        return False, None
+    if len(attempts) != 1:
+        return True, _terminal(
+            resident,
+            event,
+            state,
+            "multiple durable E2E-13 replacement attempts exist for one event; refusing any replay",
+        )
+
+    attempt = dict(attempts[0])
+    attempt_id = str(attempt.get("attempt_id") or "").strip()
+    status_before = str(attempt.get("status") or "").strip().lower()
+    meta = dict(raw_meta)
+    expected = dict(meta.get("transform") or {})
+    result_chars = int(expected.get("result_chars") or 0)
+    result_sha = str(expected.get("result_sha256") or "").strip().lower()
+    if not attempt_id or status_before not in {"started", "observed", "verified_effect"}:
+        return True, _terminal(
+            resident,
+            event,
+            state,
+            "durable E2E-13 replacement ownership is malformed; refusing any replay",
+        )
+    if result_chars <= 0 or len(result_sha) != 64:
+        return True, _terminal(
+            resident,
+            event,
+            state,
+            "stale E2E-13 state lacks bounded expected-result evidence for crash recovery",
+        )
+
+    try:
+        goal = CurrentAppTextCleanupGoal(**dict(meta.get("goal") or {}))
+        foreground = resident.foreground_window.probe()
+        if (
+            int(foreground.process_id) != int(meta.get("process_id") or 0)
+            or str(foreground.process_name or "").strip().lower()
+            != str(meta.get("process_name") or "").strip().lower()
+            or int(foreground.window_handle or 0)
+            != int(meta.get("source_window_handle") or 0)
+        ):
+            raise RuntimeError(
+                "foreground process/window no longer matches the interrupted replacement authority"
+            )
+        edit = resident.named_automation_control.find_unique_edit(
+            process_id=int(foreground.process_id),
+            process_name=str(foreground.process_name),
+            name=goal.field_name,
+        )
+        fresh = resident.current_app_text_content.read_exact(
+            process_id=int(foreground.process_id),
+            process_name=str(foreground.process_name),
+            window_handle=int(foreground.window_handle),
+            name=goal.field_name,
+            runtime_id=tuple(edit.runtime_id),
+            allow_read_only=False,
+        )
+    except Exception as exc:
+        return True, _terminal(
+            resident,
+            event,
+            state,
+            "unresolved E2E-13 replacement can only be reconciled from fresh exact app reality; "
+            f"{type(exc).__name__}: {exc}",
+        )
+
+    fresh_hash = text_sha256(fresh.text)
+    if len(fresh.text) != result_chars or fresh_hash != result_sha:
+        return True, _terminal(
+            resident,
+            event,
+            state,
+            "unresolved E2E-13 replacement does not match the old expected result in fresh reality; "
+            "holding uncertainty and refusing a new SetValue signature",
+        )
+
+    if status_before in {"started", "observed"}:
+        if not resident.body.resolve_uncertain_attempt(
+            attempt_id,
+            event_id=event.event_id,
+            status="verified_effect",
+        ):
+            return True, _terminal(
+                resident,
+                event,
+                state,
+                "durable E2E-13 replacement attempt could not be resolved from verified effect",
+            )
+
+    meta["replacement_uncertainty_resolved"] = "verified_effect"
+    meta["replacement_recovery"] = {
+        "attempt_id": attempt_id,
+        "status_before": status_before,
+        "status_after": "verified_effect",
+        "semantic_target_name": goal.field_name,
+        "process_id": int(foreground.process_id),
+        "process_name": str(foreground.process_name or "").strip().lower(),
+        "window_handle": int(foreground.window_handle),
+        "runtime_id": list(edit.runtime_id),
+        "chars": len(fresh.text),
+        "sha256": fresh_hash,
+        "read_identity_stable": bool(fresh.audit.get("read_identity_stable")),
+        "additional_replacement_dispatches": 0,
+        "recovered_at": utc_now(),
+    }
+    meta["phase"] = "verify_replacement"
+    meta["replacement_verified_at"] = utc_now()
+    state.data[_STATE_KEY] = meta
+    state.stage = "e2e13_verify_replacement"
+    state.next_action = "freshly reread the exact edit after crash recovery before save"
+    state.blocked_by = None
+    resident.store.save_working_state(state)
+    return True, None
+
+
 def install_current_app_text_cleanup_completion(resident) -> None:
     if getattr(resident, _INSTALL_MARKER, False):
         return
@@ -108,6 +255,14 @@ def install_current_app_text_cleanup_completion(resident) -> None:
     original_advance = resident._advance_event_step
 
     def advance_event_step(event, state, *, readiness, learning_evidence, thought=None):
+        handled, recovery_result = _recover_replacement_dispatch_ownership(
+            resident,
+            event,
+            state,
+        )
+        if handled:
+            return recovery_result
+
         result = original_advance(
             event,
             state,
