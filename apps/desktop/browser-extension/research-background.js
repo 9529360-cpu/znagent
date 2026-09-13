@@ -118,7 +118,11 @@ async function classifyFreshActionWindowTabs(state, rootTabId) {
 }
 
 async function waitForCausalChildOrSameTab(watcher, rootTabId, expectedUrl) {
-  const deadline = Date.now() + 3000
+  // Page.windowOpen means the browser is going to open a new window; tab/target
+  // identity and opener metadata can publish later on a busy interactive runner.
+  // Keep this post-dispatch window read-only and bounded: wait longer for fresh
+  // identity proof, but never click again or relax the exact causal checks.
+  const deadline = Date.now() + 8000
   let stableSince = 0
   let lastClassification = { causalTabs: [], unrelatedTabs: [], unresolvedTabs: [] }
   while (Date.now() < deadline) {
