@@ -373,6 +373,16 @@ def _poll(resident, event, state):
         observed_pid = int(data.get("pid") or 0)
     except (TypeError, ValueError):
         observed_pid = 0
+    if not observed.success and not observed_session and observed_pid <= 0:
+        return _blocked(
+            resident,
+            event,
+            state,
+            meta,
+            "terminal_session_lost",
+            observed.error or "terminal poll failed without the admitted session identity",
+            "原来的 terminal session 已无法继续观测。为避免重复副作用，ZN 不会重新执行命令。",
+        )
     if observed_session != session_id or observed_pid != expected_pid:
         return _blocked(
             resident,
