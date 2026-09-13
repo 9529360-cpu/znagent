@@ -1,8 +1,8 @@
 # E2E-13 — Windows current-app bounded content cleanup
 
-Status: VERIFIED NARROW representative path on draft PR #252; not yet merged to `main`.
+Status: **VERIFIED NARROW / representative path closed on open PR #252; not merged to `main`.**
 
-Updated: 2026-09-12
+Updated: 2026-09-13
 
 ## User-facing scenario
 
@@ -34,11 +34,26 @@ Source and result are bounded to 4096 characters. An empty transformed result fa
 
 Every mutation depends on fresh exact authority for the current foreground window/process and exact UIA target. Before `SetValue`, the implementation re-finds the exact Edit, verifies RuntimeId/process/HWND/name/control type/ValuePattern/writable state, checks the current source length and SHA-256, then re-acquires again immediately before dispatch.
 
-If the Edit RuntimeId changes, old evidence is discarded and the source is freshly reread/retransformed before any mutation. If source content drifts, the stale transform is rejected and recomputed from fresh content. Ambiguous same-name Edits fail before mutation.
+If the Edit RuntimeId changes before mutation, old evidence is discarded and the source is freshly reread/retransformed. If source content drifts before any replacement attempt crosses the durable side-effect boundary, the stale transform is rejected and recomputed from fresh content. Ambiguous same-name Edits fail before mutation.
 
-After `SetValue`, the target is freshly reacquired and reread. If dispatch outcome is uncertain, the implementation resolves only through a fresh exact readback; it never blindly replays the replacement.
+After `SetValue`, the target is freshly reacquired and reread. Save uses the existing pointer-click durable lifecycle. The exact Save Button is freshly reacquired immediately before input, and after one pointer dispatch the implementation never clicks Save again. Final verification is observation-only.
 
-Save uses the existing pointer-click durable lifecycle. The exact Save Button is freshly reacquired immediately before input, and after a pointer dispatch the implementation never clicks Save again. Final verification is observation-only.
+## Restart and no-replay reconciliation
+
+`automation_value_replace` uses the existing durable side-effect attempt journal. E2E-13 does not treat `ValuePattern.SetValue` as an idempotent operation.
+
+Recovery checks durable dispatch ownership by the same event plus action kind **before** ordinary content-drift logic. A previous `started`, `observed`, or already machine-resolved `verified_effect` replacement attempt therefore continues to own the mutation boundary even if a restart sees different current text and a newly computed replacement would otherwise have a different action signature.
+
+For an unresolved prior replacement attempt, restart recovery is read-only:
+
+- fresh-bind the same bounded foreground process/window and exact named Edit;
+- fresh-read the current value without dispatching a new replacement;
+- compare only bounded expected-result length/SHA-256 against the prior durable attempt evidence;
+- exact expected result -> resolve/retain the old attempt as `verified_effect` and continue with fresh post-replacement verification;
+- any mismatch, lost process/window authority, ambiguity, or inability to prove the expected result -> fail closed;
+- no mismatch path is allowed to manufacture a new replacement signature or blindly call `SetValue` again.
+
+Persistent-SQLite Resident rebuild regressions cover a crash after durable `started`, a crash after Body observation but before WorkingState checkpoint, a second crash after `verified_effect` reconciliation but before WorkingState advances, and a mismatch after restart. The recovery cases assert zero additional `automation_value_replace` dispatches.
 
 ## Privacy boundary
 
@@ -48,17 +63,25 @@ Durable WorkingState, audit data and Body history retain only bounded semantic/p
 
 ## Real Windows acceptance
 
-On head `2968c203566d92601ab66f44ae985cefc3383f33`, the dedicated E2E-13 step in Windows Interactive CI passed all five scenarios:
+The Windows Interactive workflow has an explicit `Run E2E-13 current-app content cleanup` step before E2E-15 and the broader product-route sweep. The real WinForms acceptance covers:
 
-- happy path: real WinForms ValuePattern cleanup, exactly one Save, fresh result-window readback, Root Work completion;
+- happy path: deterministic cleanup, exactly one Save, fresh result-window readback and Root Work completion;
 - stale Edit RuntimeId: stale authority rejected and freshly regrounded before mutation;
-- source content drift: stale transform rejected and recomputed before mutation;
+- source content drift before dispatch ownership: stale transform rejected and recomputed;
 - ambiguous same-name Edit: zero mutation and zero Save;
-- final application mismatch: Save occurs once, but final verification fails and Root Work does not complete.
+- final application mismatch: Save may occur once, but final verification fails and Root Work does not complete.
 
-The same head also passed ZN CI, Managed Browser E2E, Memory/Learned Behavior E2E, Research and Information Work E2E, Local Documents/Spreadsheet Work E2E, and Document Research Completion E2E. The Windows workflow later failed only in an existing E2E-07 browser-extension authorization setup race after E2E-13 and E2E-15 had already passed. That test now uses the repository's existing bounded explicit-shortcut retry pattern: at most three real shortcuts, each attempted only while fresh evidence proves authorization is still absent; no authorization bypass is introduced.
+The exact final merge-readiness evidence is intentionally not hard-coded here because synchronizing documentation itself creates a new PR head. PR #252 and its live checks are the authority for the eventual final head and run IDs.
 
-The current draft head also includes workflow path coverage for the E2E-13 completion owner, security tests, real WinForms fixture, and the E2E-07 test touched by that stabilization. Final merge-readiness evidence must be bound to the eventual final PR head, not to an earlier green SHA.
+## E2E-07 regression handling during E2E-13 closure
+
+The E2E-13 PR exposed a Windows product-route regression in the pre-existing E2E-07 causal USER Browser fixture. A same-head rerun reproduced the same failure: `Page.windowOpen` was observed, but no fresh root-opener child could be proven. This was therefore not classified as a one-off runner timing flake.
+
+Two attempted production browser-extension stabilizations—longer post-click observation and fresh tab enumeration—did not establish the missing opener proof and were reverted. `apps/desktop/browser-extension/research-background.js` remains identical to canonical `main`; E2E-13 does not broaden browser production behavior.
+
+The test fixture used a form with `target="_blank"`, whose modern HTML semantics are noopener by default. Because E2E-07 explicitly tests the stronger opener-bound causal-child contract, the fixture now opts into that contract with `rel="opener"`. Production still requires exact causal child/root proof, fresh opener reread, task-scoped child authority, return to the exact authorized root generation and no blind replay after a possibly executed click.
+
+The separate bounded authorization helper remains test-only: at most three real extension shortcuts, each attempted only while fresh evidence says explicit tab authorization is absent. It does not bypass browser authorization.
 
 ## Safety boundary and non-claims
 
@@ -66,11 +89,12 @@ This is a narrow representative closure, not general Desktop automation complete
 
 It does not claim:
 
+- Desktop complete;
 - arbitrary Windows application automation;
+- general RPA;
 - arbitrary rich-text/contenteditable/document editing;
 - Microsoft Office automation;
 - universal UIA support;
-- generic RPA macros;
 - Save As flows;
 - clipboard or OCR authority;
 - credential/password-field handling;
@@ -81,4 +105,4 @@ Browser processes, password fields, disabled/offscreen controls, missing ValuePa
 
 ## Closure condition
 
-The representative implementation is complete on draft PR #252. The PR must remain unmerged until the eventual final head has passed all applicable exact-head CI and GitHub still reports no merge blocker.
+The E2E-13 representative implementation is **VERIFIED NARROW / representative path closed** on open PR #252. The PR remains unmerged. Merge readiness is established only by the final live PR head after all applicable exact-head workflows—including E2E-13, E2E-15, the full Windows product-route suite including E2E-07, ZN CI and all other applicable PR workflows—finish successfully with no outstanding merge blocker.
