@@ -63,6 +63,7 @@ class LongRunningTerminalProductTests(unittest.TestCase):
         if exit_code is not None:
             data["exit_code"] = exit_code
         if dispatch_observed:
+            data["side_effect_attempt_id"] = "sidefx-e2e22"
             data["side_effect_dispatch_observed"] = True
         return SimpleNamespace(
             success=success,
@@ -148,10 +149,42 @@ class LongRunningTerminalProductTests(unittest.TestCase):
                 self.assertEqual(evidence["exit_code"], 0)
                 self.assertEqual(evidence["poll_count"], 2)
                 self.assertEqual(evidence["pid"], 4242)
+                self.assertEqual(evidence["side_effect_attempt_id"], "sidefx-e2e22")
                 self.assertNotIn("python -c", child.result)
                 self.assertNotIn("done", child.result)
                 self.assertEqual(len(evidence["command_sha256"]), 64)
                 self.assertEqual(len(evidence["output_sha256"]), 64)
+            finally:
+                resident.store.close()
+
+    def test_running_session_without_durable_dispatch_receipt_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, ledger, _ = self._runtime(Path(tmp))
+            original_act = resident.body.act
+            command_calls = 0
+            poll_calls = 0
+
+            def fake_act(kind, *, event_id=None, **kwargs):
+                nonlocal command_calls, poll_calls
+                if kind == "command":
+                    command_calls += 1
+                    return self._result(status="running", dispatch_observed=False)
+                if kind == "terminal_poll":
+                    poll_calls += 1
+                    raise AssertionError("unconfirmed side effect must never enter polling")
+                return original_act(kind, event_id=event_id, **kwargs)
+
+            try:
+                with patch.object(resident.body, "act", side_effect=fake_act):
+                    _, run = ledger.submit("e2e22", TASK)
+
+                self.assertFalse(run.success)
+                self.assertIn("side_effect_guard_unconfirmed", run.reason)
+                self.assertEqual(run.model_invocations, 0)
+                self.assertEqual(command_calls, 1)
+                self.assertEqual(poll_calls, 0)
+                child = self._child(ledger, "e2e22")
+                self.assertEqual(child.status, "blocked")
             finally:
                 resident.store.close()
 
