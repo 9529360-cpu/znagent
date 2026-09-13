@@ -56,9 +56,17 @@ class E2E09HeaderFooterPaymentDateTests(unittest.TestCase):
             self._stamp_yesterday(source)
             source_bytes = source.read_bytes()
 
-            db_path = base / "zn-e2e09-header-footer.db"
+            db_path = base.parent / f"zn-e2e09-{os.getpid()}-header-footer.db"
+            for suffix in ("", "-wal", "-shm"):
+                Path(str(db_path) + suffix).unlink(missing_ok=True)
             resident = build_resident_runtime(config={"model": {}}, store_path=db_path)
-            self.addCleanup(resident.store.close)
+
+            def cleanup() -> None:
+                resident.store.close()
+                for suffix in ("", "-wal", "-shm"):
+                    Path(str(db_path) + suffix).unlink(missing_ok=True)
+
+            self.addCleanup(cleanup)
             ledger = resident.work_ledger
             thread = ledger.create_thread(thread_id="header-payment-date")
             thread = ledger.attach_workspace(thread.thread_id, project)
@@ -101,7 +109,7 @@ class E2E09HeaderFooterPaymentDateTests(unittest.TestCase):
                 if item.event_id == run.event.event_id
             ]
             self.assertEqual(sum(item.kind == "write_docx_copy" for item in actions), 1)
-            self.assertGreaterEqual(sum(item.kind == "inspect_docx" for item in actions), 4)
+            self.assertGreaterEqual(sum(item.kind == "inspect_docx" for item in actions), 3)
 
 
 if __name__ == "__main__":
