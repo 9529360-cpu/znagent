@@ -20,15 +20,10 @@ function boundedControlFree(value, limit) {
   return text
 }
 
-function causalPopupWatcher(rootTabId, expectedUrl, baselineTabIds) {
+function causalPopupWatcher(rootTabId, expectedUrl) {
   let actionWindowOpen = false
   let rootRemoved = false
   let rootReplaced = false
-  const baselineIds = new Set(
-    (baselineTabIds || [])
-      .map(value => Number(value || 0))
-      .filter(value => Number.isInteger(value) && value > 0)
-  )
   const createdTabIds = []
   const removedTabs = new Set()
   const replacedTabs = new Set()
@@ -75,7 +70,6 @@ function causalPopupWatcher(rootTabId, expectedUrl, baselineTabIds) {
     closeActionWindow() { actionWindowOpen = false },
     snapshot() {
       return {
-        baselineTabIds: Array.from(baselineIds),
         createdTabIds: createdTabIds.slice(),
         rootRemoved,
         rootReplaced,
@@ -97,33 +91,9 @@ async function classifyFreshActionWindowTabs(state, rootTabId) {
   const causalTabs = []
   const unrelatedTabs = []
   const unresolvedTabs = []
-  const baselineIds = new Set(
-    (state.baselineTabIds || [])
-      .map(value => Number(value || 0))
-      .filter(value => Number.isInteger(value) && value > 0)
-  )
-  const candidateTabIds = new Set(state.createdTabIds || [])
-  try {
-    const currentTabs = await chrome.tabs.query({})
-    for (const tab of currentTabs || []) {
-      const tabId = Number(tab?.id || 0)
-      if (
-        Number.isInteger(tabId) &&
-        tabId > 0 &&
-        tabId !== rootTabId &&
-        !baselineIds.has(tabId)
-      ) {
-        candidateTabIds.add(tabId)
-      }
-    }
-  } catch {
-    // Event-derived candidates remain usable. No candidate is never success.
-  }
-
-  for (const rawId of candidateTabIds) {
+  for (const rawId of state.createdTabIds || []) {
     const tabId = Number(rawId || 0)
     if (!Number.isInteger(tabId) || tabId <= 0 || tabId === rootTabId) continue
-    if (baselineIds.has(tabId)) continue
     if (state.removedTabs.has(tabId) || state.replacedTabs.has(tabId)) {
       unresolvedTabs.push(tabId)
       continue
@@ -144,18 +114,13 @@ async function classifyFreshActionWindowTabs(state, rootTabId) {
       unresolvedTabs.push(tabId)
     }
   }
-  return {
-    causalTabs,
-    unrelatedTabs,
-    unresolvedTabs,
-    freshCandidateCount: candidateTabIds.size
-  }
+  return { causalTabs, unrelatedTabs, unresolvedTabs }
 }
 
 async function waitForCausalChildOrSameTab(watcher, rootTabId, expectedUrl) {
-  const deadline = Date.now() + 8000
+  const deadline = Date.now() + 3000
   let stableSince = 0
-  let lastClassification = { causalTabs: [], unrelatedTabs: [], unresolvedTabs: [], freshCandidateCount: 0 }
+  let lastClassification = { causalTabs: [], unrelatedTabs: [], unresolvedTabs: [] }
   while (Date.now() < deadline) {
     const state = watcher.snapshot()
     if (state.rootRemoved || state.rootReplaced) {
@@ -190,8 +155,7 @@ async function waitForCausalChildOrSameTab(watcher, rootTabId, expectedUrl) {
           state: {
             ...state,
             causalTabs: lastClassification.causalTabs.slice(),
-            unrelatedCreatedCount: lastClassification.unrelatedTabs.length,
-            freshCandidateCount: lastClassification.freshCandidateCount
+            unrelatedCreatedCount: lastClassification.unrelatedTabs.length
           }
         }
       }
@@ -213,8 +177,7 @@ async function waitForCausalChildOrSameTab(watcher, rootTabId, expectedUrl) {
             state: {
               ...state,
               causalTabs: [],
-              unrelatedCreatedCount: lastClassification.unrelatedTabs.length,
-              freshCandidateCount: lastClassification.freshCandidateCount
+              unrelatedCreatedCount: lastClassification.unrelatedTabs.length
             }
           }
         }
@@ -232,7 +195,7 @@ async function waitForCausalChildOrSameTab(watcher, rootTabId, expectedUrl) {
   }
   if (lastClassification.unresolvedTabs.length > 0) {
     throw new Error(
-      `action-window tab creation remained unresolved after fresh opener re-read; event_created=${state.createdTabIds.length} fresh_candidates=${lastClassification.freshCandidateCount} unresolved=${lastClassification.unresolvedTabs.length} window_open=${state.windowOpenEvents.length}`
+      `action-window tab creation remained unresolved after fresh opener re-read; created=${state.createdTabIds.length} unresolved=${lastClassification.unresolvedTabs.length} window_open=${state.windowOpenEvents.length}`
     )
   }
   if (lastClassification.causalTabs.length === 1 && state.windowOpenEvents.length === 0) {
@@ -242,7 +205,7 @@ async function waitForCausalChildOrSameTab(watcher, rootTabId, expectedUrl) {
     throw new Error('root Page.windowOpen was observed but no freshly re-read root-opener child was proven')
   }
   throw new Error(
-    `neither exact same-tab navigation nor one exact root-opener child was proven inside the action window; event_created=${state.createdTabIds.length} fresh_candidates=${lastClassification.freshCandidateCount} causal=${lastClassification.causalTabs.length} unrelated=${lastClassification.unrelatedTabs.length} window_open=${state.windowOpenEvents.length}`
+    `neither exact same-tab navigation nor one exact root-opener child was proven inside the action window; created=${state.createdTabIds.length} causal=${lastClassification.causalTabs.length} unrelated=${lastClassification.unrelatedTabs.length} window_open=${state.windowOpenEvents.length}`
   )
 }
 
@@ -325,16 +288,8 @@ async function clickNamedButtonWithCausalChild(tabId, command) {
     throw new Error('authorized button identity changed before causal click; fresh sensing is required')
   }
 
-  const baselineTabs = await chrome.tabs.query({})
-  const baselineTabIds = (baselineTabs || [])
-    .map(tab => Number(tab?.id || 0))
-    .filter(value => Number.isInteger(value) && value > 0)
-  if (!baselineTabIds.includes(tabId)) {
-    throw new Error('authorized root was absent from the fresh pre-click tab baseline')
-  }
-
   await debuggerCommand(tabId, 'Page.enable')
-  const watcher = causalPopupWatcher(tabId, expectedUrlAfter, baselineTabIds)
+  const watcher = causalPopupWatcher(tabId, expectedUrlAfter)
   let clickSent = false
   let childTabId = 0
   let childDebuggerAttached = false
