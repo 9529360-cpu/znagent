@@ -72,7 +72,7 @@ Exists
 | E2E-08 OTP user presence | CLOSED representative path | 仅 standard HTML `one-time-code` same tab/generation/origin；不是所有 MFA |
 | Sensitive-field protection | GUARDED | 继续 fail closed；不复制 user profile/cookie/password/OTP secret |
 
-E2E-07 的 PR #252 回归最终被定位为测试 fixture 契约问题，不是 E2E-13 需要的新 Browser production 能力：`target="_blank"` 在现代 HTML 中默认 noopener，而代表性 E2E 明确要求 opener-bound child。fixture 改为显式 `rel="opener"`；两笔未能建立 opener proof 的 production stabilization 已撤回，生产 causal child/root proof、fresh opener reread、root authorization generation binding 与 no-blind-replay 均未放宽。
+PR #252 暴露的 E2E-07 回归是稳定可复现的 opener-proof 缺失，不是一次性 runner timing。两笔“加长等待 / 扩大 tab 枚举”的 speculative production stabilization 都未建立证明，已撤回。fixture 也显式改为 `target="_blank" rel="opener"`，但 Chromium 的扩展 Tabs 元数据在该 popup/new-window 形态仍不稳定暴露 `openerTabId`。最终窄修复复用现有 `chrome.debugger` 权限和 CDP target identity：点击前绑定 exact root target + target baseline，点击后 fresh `Target.getTargets`，只接受一个新 page target 且 `TargetInfo.openerId` 精确等于 root target ID，并在派生 child authority 前再次 fresh re-read。`Page.windowOpen` exact URL、root authorization generation、child URL/title、exact-root return、fresh re-ground 与 no-blind-replay 均保持不变；没有新增 extension permission，也没有放宽 causal proof。
 
 E2E-08 明确不支持 CAPTCHA solving、WebAuthn/passkey automation、cross-origin IdP handoff、password automation、payment-field automation。
 
@@ -234,4 +234,4 @@ Installed N -> N+1 的 identity/data/Work/uncertain-effect continuity 仍是独�
 
 Status: **VERIFIED NARROW / representative path closed on open PR #252; not merged to canonical `main`.**
 
-PR #252 keeps browser production behavior unchanged relative to `main` after investigation of the E2E-07 regression. The final merge-readiness authority is the live final PR head and its applicable exact-head CI; documentation deliberately does not hard-code a self-referential final SHA before those checks finish.
+PR #252 contains one narrow E2E-07 production repair required by the stable regression: causal opener proof now uses fresh CDP `TargetInfo.openerId` under the extension's existing debugger authority instead of relying on optional/unreliable `tabs.Tab.openerTabId`. The speculative wait/enumeration stabilizations were removed, no new permission was added, and the causal/fresh-read/no-replay acceptance contract remains strict. The final merge-readiness authority is the live final PR head and its applicable exact-head CI; documentation deliberately does not hard-code a self-referential final SHA before those checks finish.
