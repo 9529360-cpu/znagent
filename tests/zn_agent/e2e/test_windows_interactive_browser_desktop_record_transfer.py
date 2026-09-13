@@ -424,16 +424,19 @@ class WindowsInteractiveBrowserDesktopRecordTransferE2ETests(unittest.TestCase):
                     for action in resident.body.recent_actions(1024)
                     if action.event_id == event.event_id
                 ]
-                trace.append(
-                    {
-                        "stage": state.stage,
-                        "phase": meta.get("phase"),
-                        "replacement_dispatch_count": meta.get("replacement_dispatch_count"),
-                        "save_dispatch_count": meta.get("save_dispatch_count"),
-                        "root_work_status": meta.get("root_work_status"),
-                        "actions": [action.kind for action in actions[-8:]],
-                    }
-                )
+                trace_entry = {
+                    "stage": state.stage,
+                    "phase": meta.get("phase"),
+                    "replacement_dispatch_count": meta.get("replacement_dispatch_count"),
+                    "save_dispatch_count": meta.get("save_dispatch_count"),
+                    "root_work_status": meta.get("root_work_status"),
+                    "actions": [action.kind for action in actions[-8:]],
+                }
+                if current is not None and current.event.event_id == event.event_id:
+                    trace_entry["terminal_success"] = bool(current.success)
+                    trace_entry["terminal_reason"] = str(current.reason or "")
+                    result = current
+                trace.append(trace_entry)
                 if not recreated and state.stage == "e2e14_replace":
                     initial = meta.get("destination_field_target")
                     initial = initial if isinstance(initial, dict) else {}
@@ -457,11 +460,16 @@ class WindowsInteractiveBrowserDesktopRecordTransferE2ETests(unittest.TestCase):
                         time.sleep(0.03)
                     self.assertTrue(recreated, "recreated destination field kept the stale RuntimeId")
                     continue
-                if current is not None and current.event.event_id == event.event_id:
-                    result = current
                 if result is None:
                     time.sleep(0.03)
 
+            if result is not None and not result.success:
+                self.fail(
+                    "E2E-14 terminated before verified transfer completion: "
+                    + str(result.reason)
+                    + "; trace="
+                    + json.dumps(trace[-20:], ensure_ascii=False, default=str)
+                )
             self.assertTrue(recreated, json.dumps(trace[-20:], ensure_ascii=False))
             self.assertNotEqual(old_runtime, fresh_runtime)
             self.assertIsNotNone(result, json.dumps(trace[-30:], ensure_ascii=False))
