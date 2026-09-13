@@ -21,6 +21,7 @@ on:
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_managed_research_return_work.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_causal_popup.py
       - tests/zn_agent/e2e/test_windows_interactive_browser_result_file_work.py
+      - tests/zn_agent/e2e/test_windows_interactive_browser_desktop_record_transfer.py
       - tests/zn_agent/e2e/test_windows_interactive_current_app_content_cleanup.py
       - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_grounding.py
       - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_reground.py
@@ -51,6 +52,7 @@ on:
       - runtime/python/zn_agent/core/browser_work_body.py
       - runtime/python/zn_agent/core/browser_text_work_body.py
       - runtime/python/zn_agent/core/browser_form_submit_body.py
+      - runtime/python/zn_agent/core/browser_desktop_record_transfer_behavior.py
       - runtime/python/zn_agent/core/user_browser.py
       - runtime/python/zn_agent/core/user_browser_extension_adapter.py
       - runtime/python/zn_agent/core/user_browser_extension_relay.py
@@ -106,6 +108,7 @@ on:
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_managed_research_return_work.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_causal_popup.py
       - tests/zn_agent/e2e/test_windows_interactive_browser_result_file_work.py
+      - tests/zn_agent/e2e/test_windows_interactive_browser_desktop_record_transfer.py
       - tests/zn_agent/e2e/test_windows_interactive_current_app_content_cleanup.py
       - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_grounding.py
       - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_reground.py
@@ -136,6 +139,7 @@ on:
       - runtime/python/zn_agent/core/browser_work_body.py
       - runtime/python/zn_agent/core/browser_text_work_body.py
       - runtime/python/zn_agent/core/browser_form_submit_body.py
+      - runtime/python/zn_agent/core/browser_desktop_record_transfer_behavior.py
       - runtime/python/zn_agent/core/user_browser.py
       - runtime/python/zn_agent/core/user_browser_extension_adapter.py
       - runtime/python/zn_agent/core/user_browser_extension_relay.py
@@ -237,6 +241,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw 'E2E-15 isolated modal recovery acceptance failed'
           }
+      - name: Run E2E-14 browser-to-desktop record transfer in isolation
+        shell: powershell
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-e2e-venv\Scripts\python.exe'
+          & $python tests/zn_agent/e2e/test_windows_interactive_browser_desktop_record_transfer.py -v
+          if ($LASTEXITCODE -ne 0) {
+            throw 'E2E-14 isolated browser-to-desktop record transfer acceptance failed'
+          }
       - name: Run current product-route interactive E2Es in isolated modules
         shell: powershell
         run: |
@@ -247,7 +260,8 @@ jobs:
             'test_windows_interactive_authorized_user_browser_cdp.py',
             'test_windows_interactive_user_browser_named_goal.py',
             'test_windows_interactive_desktop_modal_recovery.py',
-            'test_windows_interactive_current_app_content_cleanup.py'
+            'test_windows_interactive_current_app_content_cleanup.py',
+            'test_windows_interactive_browser_desktop_record_transfer.py'
           )
           $tests = Get-ChildItem tests/zn_agent/e2e/test_windows_interactive_*.py |
             Where-Object { $_.Name -notin $excluded } |
