@@ -35,10 +35,10 @@ Product-closed
 | Managed Browser / BrowserScene | CONNECTED + VERIFIED NARROW | complex frames/dialogs/general keyboard/OCR/任意网页仍未覆盖 |
 | User Browser Bridge | CONNECTED + VERIFIED NARROW | E2E-05/07/08 representative paths 已关闭；真实网站和更复杂认证/导航仍需扩大 |
 | Local Documents & Spreadsheet Work | VERIFIED NARROW; E2E-09/10 representative paths closed | 复杂 Office structures 仍开放；不是 Word/Excel/Office complete |
-| Browser -> Spreadsheet | VERIFIED NARROW; E2E-11 representative path on PR #251 | MANAGED Browser simple-table -> exact XLSX append-copy；不是 arbitrary website/Excel |
+| Browser -> Spreadsheet | VERIFIED NARROW; E2E-11 representative path closed; PR #251 merged as `5dbc663c7035dc523e34477501fee59914a8cff4` | MANAGED Browser simple-table -> exact XLSX append-copy；不是 arbitrary website/Excel |
 | Document Research Completion | VERIFIED NARROW; E2E-12 representative path closed | bounded public-Web evidence -> 1–3 DOCX placeholders；不是 arbitrary DOCX/Deep Research/Word complete |
 | Windows machine/application awareness | CONNECTED + VERIFIED NARROW | 更多应用/系统语义继续扩大 |
-| **Windows current-app content cleanup** | **VERIFIED NARROW; E2E-13 representative path closed on open PR #252** | current foreground non-browser process/HWND + unique multiline ValuePattern Edit + deterministic cleanup + guarded replacement + restart/no-replay reconciliation + one Save + fresh same-process read-only result verification；不是 Desktop complete / arbitrary app automation / Office / general RPA |
+| **Windows current-app content cleanup** | **VERIFIED NARROW; E2E-13 representative path closed; PR #252 merged as `cc3fd3edc25b436a5c42ec1e2d13d4b786fb18b3`** | current foreground non-browser process/HWND + unique multiline ValuePattern Edit + deterministic cleanup + guarded replacement + restart/no-replay reconciliation + one Save + fresh same-process read-only result verification；不是 Desktop complete / arbitrary app automation / Office / general RPA |
 | Windows unexpected-modal recovery | VERIFIED NARROW; E2E-15 representative path closed | exact same-process safe-modal slice；任意 dialog/UAC/credentials/business decisions 不在 closure 内 |
 | Browser + File + Desktop | VERIFIED NARROW; E2E-24 representative path closed | bounded three-surface path；更复杂任务仍需扩大 |
 | Cognitive resources / routing | CONNECTED + VERIFIED | one ModelRouter, hard eligibility, route provenance, health-aware scoring；多-provider breadth继续扩大 |
@@ -56,7 +56,9 @@ Representative natural-language task:
 
 > 把我现在开的工作记录整理一下：去掉每行前后空格，删掉空行，重复内容只保留第一次，然后保存。
 
-The current implementation on PR #252 reuses the existing Product Resident / Root Work / Body. No DesktopAgent, AppAgent, DialogAgent, second Router/Store or RPA engine was introduced.
+Implementation PR #252 final head was `fd6a7a576d8e0dbc466f36e2633298de638d2eca`. It was squash-merged to canonical `main` as `cc3fd3edc25b436a5c42ec1e2d13d4b786fb18b3`. Post-merge canonical ZN CI #1875 / run `34756719969` completed successfully.
+
+The merged implementation reuses the existing Product Resident / Root Work / Body. No DesktopAgent, AppAgent, DialogAgent, second Router/Store or RPA engine was introduced.
 
 ### Goal / transform
 
@@ -133,7 +135,7 @@ Final success discards old HWND/RuntimeIds and requires:
 
 ## E2E-07 Windows regression handling
 
-The PR #252 Windows suite exposed an E2E-07 failure. A zero-code same-head rerun reproduced the same failure, so it was treated as a stable regression rather than runner/browser timing variance.
+PR #252's Windows suite exposed an E2E-07 failure. A zero-code same-head rerun reproduced the same failure, so it was treated as a stable regression rather than runner/browser timing variance.
 
 Two speculative production stabilizations were reviewed and reverted because neither established the missing causal proof:
 
@@ -196,6 +198,6 @@ Current implementation does **not** mean:
 
 ## Closure truth
 
-E2E-13 status is **VERIFIED NARROW / representative path closed on open PR #252; unmerged**.
+E2E-13 status is **VERIFIED NARROW / representative path closed**. Implementation PR #252 final head `fd6a7a576d8e0dbc466f36e2633298de638d2eca` was squash-merged to canonical `main` as `cc3fd3edc25b436a5c42ec1e2d13d4b786fb18b3`. The post-merge `main` push ZN CI #1875 / run `34756719969` is completed / success.
 
-Any code or documentation commit creates a new PR head. Final merge readiness must be judged only from the last live head after all applicable exact-head workflows finish successfully. The final required Windows evidence includes the explicit E2E-13 step, the isolated E2E-15 step, and the full product-route interactive suite including E2E-07. ZN CI and every other applicable PR workflow must also be final success. Until then, do not Merge.
+This status remains a narrow representative closure, not `PRODUCT-CLOSED`. Any later docs-only synchronization PR must be judged from its own live head and applicable exact-head CI; PR #252's old checks are historical implementation evidence only.
