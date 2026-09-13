@@ -98,6 +98,7 @@ def _safe_process_evidence(meta: Mapping[str, Any]) -> dict[str, Any]:
         "command_sha256": meta.get("command_sha256"),
         "command_chars": meta.get("command_chars"),
         "workspace": meta.get("workspace"),
+        "side_effect_attempt_id": meta.get("side_effect_attempt_id"),
         "session_id": meta.get("session_id"),
         "pid": meta.get("pid"),
         "status": meta.get("status"),
@@ -250,10 +251,28 @@ def _begin(resident, event, state, request: Mapping[str, str]):
     data = started.data if isinstance(started.data, dict) else {}
     session_id = str(data.get("session_id") or "").strip()
     status = str(data.get("status") or "").strip().lower()
+    side_effect_attempt_id = str(data.get("side_effect_attempt_id") or "").strip()
+    dispatch_observed = data.get("side_effect_dispatch_observed") is True
     try:
         pid = int(data.get("pid") or 0)
     except (TypeError, ValueError):
         pid = 0
+    if (
+        started.success
+        and status == "running"
+        and session_id
+        and pid > 0
+        and (not dispatch_observed or not side_effect_attempt_id)
+    ):
+        return _blocked(
+            resident,
+            event,
+            state,
+            meta,
+            "side_effect_guard_unconfirmed",
+            "background command returned running without a durable observed side-effect attempt receipt",
+            "命令启动没有返回 durable side-effect checkpoint 证据；为避免无法判定的重复执行，ZN 不会进入等待态或重跑命令。",
+        )
     if not started.success or status != "running" or not session_id or pid <= 0:
         return _blocked(
             resident,
@@ -268,6 +287,7 @@ def _begin(resident, event, state, request: Mapping[str, str]):
     now = utc_now()
     meta.update(
         {
+            "side_effect_attempt_id": side_effect_attempt_id,
             "session_id": session_id,
             "pid": pid,
             "status": "running",
