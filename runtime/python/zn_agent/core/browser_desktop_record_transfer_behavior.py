@@ -2,15 +2,15 @@ from __future__ import annotations
 
 """E2E-14: one bounded USER Browser record -> current desktop record transfer.
 
-The representative slice deliberately moves exactly one scalar field. Existing
-USER Browser authorization, UIA ValuePattern replacement, durable side-effect
-attempts, pointer-click Save lifecycle and Root Work acceptance remain the only
-authorities; this module only composes them around one cross-app business key.
+The representative slice moves exactly one scalar field. The USER Browser is
+source authority: it first identifies one unique visible source row, then the
+current desktop app must expose the same read-only business key before any
+mutation. Existing UIA replacement, durable side-effect attempts, pointer Save
+lifecycle and Root Work acceptance remain the only effect/completion truths.
 """
 
 import hashlib
 import json
-import re
 import time
 import uuid
 from typing import Any
@@ -25,6 +25,7 @@ _ACCEPTANCE = "cross_app_record_transfer:v1"
 _KEY_NAME = "客户编号"
 _FIELD_NAME = "跟进状态"
 _SAVE_NAME = "保存"
+_SOURCE_ANCHOR = "需跟进"
 _MAX_SCALAR_CHARS = 160
 _MAX_FINAL_OBSERVATIONS = 40
 _BROWSER_PROCESSES = frozenset(
@@ -64,6 +65,7 @@ def _is_request(event) -> bool:
     return bool(
         any(cue.casefold() in lowered for cue in _TASK_CUES)
         and any(cue.casefold() in lowered for cue in _DESTINATION_CUES)
+        and _SOURCE_ANCHOR in task
         and (_FIELD_NAME in task or "跟进信息" in task)
         and (_SAVE_NAME in task or "save" in lowered)
         and ("填" in task or "transfer" in lowered or "copy" in lowered)
@@ -95,7 +97,7 @@ def _terminal(resident, event, state, reason: str):
     return resident._checkpoint_terminal_failure(event, state, reason=str(reason))
 
 
-def _foreground(resident, meta: dict[str, Any] | None = None, *, require_hwnd: bool) -> Any:
+def _foreground(resident, meta: dict[str, Any] | None = None, *, require_hwnd: bool):
     foreground = resident.foreground_window.probe()
     process_name = str(foreground.process_name or "").strip().lower()
     if int(foreground.window_handle or 0) <= 0 or process_name in _BROWSER_PROCESSES:
@@ -106,7 +108,9 @@ def _foreground(resident, meta: dict[str, Any] | None = None, *, require_hwnd: b
             or process_name != str(meta.get("process_name") or "").strip().lower()
         ):
             raise _Blocked("destination application process identity drifted")
-        if require_hwnd and int(foreground.window_handle) != int(meta.get("source_window_handle") or 0):
+        if require_hwnd and int(foreground.window_handle) != int(
+            meta.get("source_window_handle") or 0
+        ):
             raise _Blocked("destination application HWND drifted before commit")
     return foreground
 
@@ -128,31 +132,33 @@ def _read_field(resident, foreground, name: str, *, allow_read_only: bool):
     return target, read
 
 
-def _parse_source_context(context: str, business_key: str) -> str:
+def _parse_source_context(context: str) -> tuple[str, str]:
+    """Parse one narrow structured row: ``<business key> 需跟进``.
+
+    The status token is user-visible source semantics, not a selector. The
+    extension must already have proven there is exactly one structured visible
+    result containing that token.
+    """
+
     normalized = " ".join(str(context or "").split())
-    key = " ".join(str(business_key or "").split())
-    if not key or len(key) > _MAX_SCALAR_CHARS:
-        raise _Blocked("destination business key is outside the bounded E2E-14 representation")
-    if normalized.count(key) != 1:
-        raise _Blocked("source row did not preserve exactly one destination business key")
-    before, after = normalized.split(key, 1)
-    if before.strip(" :-—|\t"):
-        raise _Blocked("source row contains unsupported fields before the business key")
-    scalar = re.sub(r"^(?:跟进状态|状态)\s*[:：=-]?\s*", "", after.strip(" :-—|\t"))
-    if not scalar or len(scalar) > _MAX_SCALAR_CHARS:
-        raise _Blocked("source follow-up status is empty or outside the bounded scalar limit")
-    if key in scalar or any(ord(char) < 0x20 and char not in "\t\r\n" for char in scalar):
-        raise _Blocked("source follow-up status is not one safe bounded scalar")
-    return scalar
+    if normalized.count(_SOURCE_ANCHOR) != 1 or not normalized.endswith(_SOURCE_ANCHOR):
+        raise _Blocked("source row did not expose exactly one supported follow-up status")
+    business_key = normalized[: -len(_SOURCE_ANCHOR)].strip(" :-—|\t")
+    if not business_key or len(business_key) > _MAX_SCALAR_CHARS:
+        raise _Blocked("source business key is empty or outside the bounded limit")
+    if _SOURCE_ANCHOR in business_key or any(
+        ord(char) < 0x20 and char not in "\t\r\n" for char in business_key
+    ):
+        raise _Blocked("source business key is not one safe bounded scalar")
+    return business_key, _SOURCE_ANCHOR
 
 
 def _source_observation(
     resident,
-    business_key: str,
     *,
     expected_tab_id: int | None = None,
     expected_attached_at: str | None = None,
-) -> tuple[dict[str, Any], str]:
+) -> tuple[dict[str, Any], str, str]:
     authorization = resident.user_browser_extension.authorized_tab()
     if authorization is None:
         raise _Blocked("no exact USER Browser tab is currently authorized")
@@ -163,16 +169,16 @@ def _source_observation(
     if expected_attached_at is not None and attached_at != str(expected_attached_at):
         raise _Blocked("USER Browser authorization generation changed")
     try:
-        observed = resident._observe_authorized_anchor(business_key)
+        observed = resident._observe_authorized_anchor(_SOURCE_ANCHOR)
     except Exception as exc:
         raise _Blocked(
-            "fresh USER Browser source could not prove exactly one structured business record: "
+            "fresh USER Browser source could not prove exactly one structured source record: "
             f"{type(exc).__name__}: {exc}"
         ) from exc
     if int(observed.get("tab_id") or 0) != tab_id:
         raise _Blocked("USER Browser observation changed tab identity")
-    context = str(observed.get("context") or "")
-    scalar = _parse_source_context(context, business_key)
+    context = " ".join(str(observed.get("context") or "").split())
+    business_key, scalar = _parse_source_context(context)
     url = str(observed.get("url") or "")
     title = str(observed.get("title") or "")
     if not url:
@@ -183,12 +189,13 @@ def _source_observation(
             "authorization_attached_at": attached_at,
             "url": _bounded_audit(url),
             "title": _bounded_audit(title),
-            "row": _bounded_audit(" ".join(context.split())),
+            "row": _bounded_audit(context),
             "business_key": _bounded_audit(business_key),
             "value": _bounded_audit(scalar),
             "observed_at": str(observed.get("observed_at") or ""),
             "source": str(observed.get("source") or ""),
         },
+        business_key,
         scalar,
     )
 
@@ -211,20 +218,22 @@ def _fresh_binding(
     *,
     require_hwnd: bool,
     require_initial_value: bool,
-) -> tuple[Any, Any, Any, Any, Any, str]:
-    foreground = _foreground(resident, meta, require_hwnd=require_hwnd)
-    key_target, key_read = _read_field(resident, foreground, _KEY_NAME, allow_read_only=True)
-    key_value = str(key_read.text)
-    if not _same_text(key_value, dict(meta.get("business_key") or {})):
-        raise _Blocked("desktop destination business record identity drifted")
-    source, source_value = _source_observation(
+):
+    source, source_key, source_value = _source_observation(
         resident,
-        key_value,
         expected_tab_id=int(meta.get("source", {}).get("tab_id") or 0),
         expected_attached_at=str(meta.get("source", {}).get("authorization_attached_at") or ""),
     )
     if not _source_exact(source, dict(meta.get("source") or {})):
         raise _Blocked("USER Browser source record/value drifted from the captured transfer source")
+    if not _same_text(source_key, dict(meta.get("business_key") or {})):
+        raise _Blocked("USER Browser business record identity drifted")
+
+    foreground = _foreground(resident, meta, require_hwnd=require_hwnd)
+    key_target, key_read = _read_field(resident, foreground, _KEY_NAME, allow_read_only=True)
+    key_value = str(key_read.text)
+    if not _same_text(key_value, dict(meta.get("business_key") or {})) or key_value != source_key:
+        raise _Blocked("desktop destination business record no longer matches Browser source identity")
     field_target, field_read = _read_field(
         resident,
         foreground,
@@ -232,9 +241,11 @@ def _fresh_binding(
         allow_read_only=not require_hwnd,
     )
     field_text = str(field_read.text)
-    if require_initial_value and not _same_text(field_text, dict(meta.get("destination_initial_value") or {})):
+    if require_initial_value and not _same_text(
+        field_text, dict(meta.get("destination_initial_value") or {})
+    ):
         raise _Blocked("desktop destination field changed before transfer mutation")
-    return foreground, key_target, key_read, field_target, field_read, source_value
+    return foreground, key_target, key_read, field_target, field_read, source_key, source_value
 
 
 def _begin(resident, event, state):
@@ -247,6 +258,7 @@ def _begin(resident, event, state):
             "E2E-14 requires one criterion-bound Root Work owned by the Product Resident",
         )
     try:
+        source, source_key, _source_value = _source_observation(resident)
         foreground = _foreground(resident, require_hwnd=True)
         key_target, key_read = _read_field(resident, foreground, _KEY_NAME, allow_read_only=True)
         if key_target.value_is_read_only is not True:
@@ -254,6 +266,8 @@ def _begin(resident, event, state):
         business_key = str(key_read.text)
         if not business_key or len(business_key) > _MAX_SCALAR_CHARS:
             raise _Blocked("destination business-key value is empty or outside the bounded limit")
+        if business_key != source_key:
+            raise _Blocked("current desktop record does not match the Browser source business key")
         field_target, field_read = _read_field(resident, foreground, _FIELD_NAME, allow_read_only=False)
         if field_target.value_is_read_only is not False:
             raise _Blocked("destination transfer field must expose one writable UIA ValuePattern")
@@ -262,13 +276,13 @@ def _begin(resident, event, state):
             process_name=str(foreground.process_name),
             name=_SAVE_NAME,
         )
-        source, _source_value = _source_observation(resident, business_key)
     except Exception as exc:
         return _terminal(
             resident,
             event,
             state,
-            f"E2E-14 preflight could not prove one exact source/record/field/Save target: {type(exc).__name__}: {exc}",
+            "E2E-14 preflight could not prove one source-first Browser record and matching "
+            f"desktop record/field/Save target: {type(exc).__name__}: {exc}",
         )
 
     meta = {
@@ -279,7 +293,7 @@ def _begin(resident, event, state):
         "process_name": str(foreground.process_name or "").strip().lower(),
         "source_window_handle": int(foreground.window_handle),
         "source_window_title": _bounded_audit(str(foreground.title or "")),
-        "business_key": _bounded_audit(business_key),
+        "business_key": _bounded_audit(source_key),
         "business_key_target": _target_audit(key_target),
         "destination_field_target": _target_audit(field_target),
         "destination_initial_value": _bounded_audit(str(field_read.text)),
@@ -296,7 +310,9 @@ def _begin(resident, event, state):
     }
     state.data[_STATE_KEY] = meta
     state.stage = "e2e14_replace"
-    state.next_action = "freshly re-prove Browser source and desktop record before one bounded field replacement"
+    state.next_action = (
+        "freshly re-prove Browser source first, then matching desktop business key before one replacement"
+    )
     state.blocked_by = None
     resident.store.save_working_state(state)
     return None
@@ -341,11 +357,13 @@ def _resolve_uncertain_replacement(resident, event, state) -> tuple[bool, Reside
         )
     meta = dict(raw_meta)
     try:
-        foreground, _key_target, _key_read, _field_target, field_read, _source_value = _fresh_binding(
-            resident,
-            meta,
-            require_hwnd=True,
-            require_initial_value=False,
+        foreground, _key_target, _key_read, _field_target, field_read, _source_key, _source_value = (
+            _fresh_binding(
+                resident,
+                meta,
+                require_hwnd=True,
+                require_initial_value=False,
+            )
         )
     except Exception as exc:
         return True, _terminal(
@@ -387,7 +405,7 @@ def _resolve_uncertain_replacement(resident, event, state) -> tuple[bool, Reside
     meta["phase"] = "verify_replacement"
     state.data[_STATE_KEY] = meta
     state.stage = "e2e14_verify_replacement"
-    state.next_action = "freshly verify transferred field and Browser source before Save"
+    state.next_action = "freshly verify Browser source and transferred desktop field before Save"
     state.blocked_by = None
     resident.store.save_working_state(state)
     return True, None
@@ -396,11 +414,13 @@ def _resolve_uncertain_replacement(resident, event, state) -> tuple[bool, Reside
 def _replace(resident, event, state):
     meta = dict(state.data.get(_STATE_KEY) or {})
     try:
-        foreground, _key_target, _key_read, field_target, field_read, source_value = _fresh_binding(
-            resident,
-            meta,
-            require_hwnd=True,
-            require_initial_value=True,
+        foreground, _key_target, _key_read, field_target, field_read, _source_key, source_value = (
+            _fresh_binding(
+                resident,
+                meta,
+                require_hwnd=True,
+                require_initial_value=True,
+            )
         )
     except Exception as exc:
         return _terminal(
@@ -477,7 +497,8 @@ def _replace(resident, event, state):
                     resident,
                     event,
                     state,
-                    result.error or "E2E-14 replacement dispatched without exact postcondition; refusing replay",
+                    result.error
+                    or "E2E-14 replacement dispatched without exact postcondition; refusing replay",
                 )
             else:
                 return _terminal(
@@ -491,7 +512,7 @@ def _replace(resident, event, state):
     meta["replacement_verified_at"] = utc_now()
     state.data[_STATE_KEY] = meta
     state.stage = "e2e14_verify_replacement"
-    state.next_action = "freshly reread transferred field and Browser source before Save"
+    state.next_action = "freshly reread Browser source and transferred desktop field before Save"
     resident.store.save_working_state(state)
     return None
 
@@ -499,11 +520,13 @@ def _replace(resident, event, state):
 def _verify_replacement(resident, event, state):
     meta = dict(state.data.get(_STATE_KEY) or {})
     try:
-        _foreground_now, _key_target, _key_read, field_target, field_read, _source_value = _fresh_binding(
-            resident,
-            meta,
-            require_hwnd=True,
-            require_initial_value=False,
+        _foreground_now, _key_target, _key_read, field_target, field_read, _source_key, _source_value = (
+            _fresh_binding(
+                resident,
+                meta,
+                require_hwnd=True,
+                require_initial_value=False,
+            )
         )
     except Exception as exc:
         return _terminal(
@@ -528,7 +551,7 @@ def _verify_replacement(resident, event, state):
     meta["phase"] = "save_prepare"
     state.data[_STATE_KEY] = meta
     state.stage = "e2e14_save_prepare"
-    state.next_action = "freshly prove source/record/value again, then acquire one exact Save button"
+    state.next_action = "freshly prove Browser source and matching desktop record again, then Save once"
     resident.store.save_working_state(state)
     return None
 
@@ -536,11 +559,13 @@ def _verify_replacement(resident, event, state):
 def _save_prepare(resident, event, state):
     meta = dict(state.data.get(_STATE_KEY) or {})
     try:
-        foreground, _key_target, _key_read, _field_target, field_read, _source_value = _fresh_binding(
-            resident,
-            meta,
-            require_hwnd=True,
-            require_initial_value=False,
+        foreground, _key_target, _key_read, _field_target, field_read, _source_key, _source_value = (
+            _fresh_binding(
+                resident,
+                meta,
+                require_hwnd=True,
+                require_initial_value=False,
+            )
         )
         expected = dict(meta.get("source", {}).get("value") or {})
         if not _same_text(str(field_read.text), expected):
@@ -582,8 +607,8 @@ def _save_prepare(resident, event, state):
             "window_handle": int(foreground.window_handle),
         },
         reason=(
-            "E2E-14 commits only after fresh USER Browser source, desktop record, "
-            "destination field and exact Save grounding"
+            "E2E-14 commits only after fresh source-first USER Browser evidence, matching desktop "
+            "business key, destination field readback and exact Save grounding"
         ),
         source="e2e14_browser_desktop_record_transfer",
     )
@@ -652,7 +677,7 @@ def _accept_root(resident, event, meta: dict[str, Any]) -> None:
     execution = child(
         "E2E-14 bounded cross-app execution",
         "Transfer one bounded Browser scalar into the exact matching current desktop business record and Save once",
-        "cross-app exact source/destination identity and one bounded mutation reached fresh saved-state verification",
+        "Browser-source-first identity plus one bounded mutation reached fresh saved-state verification",
     )
     if execution.status != "completed":
         resident.work_ledger.complete_child_item(execution.work_item_id, result=summary)
@@ -698,6 +723,25 @@ def _final_verify(resident, event, state):
     observations = int(meta.get("final_observation_count") or 0) + 1
     meta["final_observation_count"] = observations
     state.data[_STATE_KEY] = meta
+
+    try:
+        source, source_key, _source_value = _source_observation(
+            resident,
+            expected_tab_id=int(meta.get("source", {}).get("tab_id") or 0),
+            expected_attached_at=str(meta.get("source", {}).get("authorization_attached_at") or ""),
+        )
+    except Exception as exc:
+        return _terminal(
+            resident,
+            event,
+            state,
+            f"E2E-14 final Browser source could not be freshly re-proven: {type(exc).__name__}: {exc}",
+        )
+    if not _source_exact(source, dict(meta.get("source") or {})):
+        return _terminal(resident, event, state, "E2E-14 final Browser source drifted after transfer")
+    if not _same_text(source_key, dict(meta.get("business_key") or {})):
+        return _terminal(resident, event, state, "E2E-14 final Browser business identity drifted")
+
     try:
         foreground = _foreground(resident, meta, require_hwnd=False)
         key_target, key_read = _read_field(resident, foreground, _KEY_NAME, allow_read_only=True)
@@ -713,29 +757,24 @@ def _final_verify(resident, event, state):
             state,
             f"E2E-14 saved application state could not be freshly reacquired: {type(exc).__name__}: {exc}",
         )
+
     key_value = str(key_read.text)
     value = str(field_read.text)
-    if not _same_text(key_value, dict(meta.get("business_key") or {})):
-        return _terminal(resident, event, state, "E2E-14 final desktop business record is not the Browser source record")
-    expected = dict(meta.get("source", {}).get("value") or {})
-    if not _same_text(value, expected):
-        return _terminal(resident, event, state, "E2E-14 final saved desktop field does not match Browser source value")
-    try:
-        source, _source_value = _source_observation(
-            resident,
-            key_value,
-            expected_tab_id=int(meta.get("source", {}).get("tab_id") or 0),
-            expected_attached_at=str(meta.get("source", {}).get("authorization_attached_at") or ""),
-        )
-    except Exception as exc:
+    if not _same_text(key_value, dict(meta.get("business_key") or {})) or key_value != source_key:
         return _terminal(
             resident,
             event,
             state,
-            f"E2E-14 final Browser source could not be freshly re-proven: {type(exc).__name__}: {exc}",
+            "E2E-14 final desktop business record is not the Browser source record",
         )
-    if not _source_exact(source, dict(meta.get("source") or {})):
-        return _terminal(resident, event, state, "E2E-14 final Browser source drifted after transfer")
+    expected = dict(meta.get("source", {}).get("value") or {})
+    if not _same_text(value, expected):
+        return _terminal(
+            resident,
+            event,
+            state,
+            "E2E-14 final saved desktop field does not match Browser source value",
+        )
     title = str(foreground.title or "")
     title_saved = "已保存" in title or "saved" in title.casefold()
     if not title_saved:
@@ -743,11 +782,17 @@ def _final_verify(resident, event, state):
             time.sleep(0.03)
             resident.store.save_working_state(state)
             return None
-        return _terminal(resident, event, state, "E2E-14 final application did not prove one saved-state postcondition")
+        return _terminal(
+            resident,
+            event,
+            state,
+            "E2E-14 final application did not prove one saved-state postcondition",
+        )
 
     meta["final_verification"] = {
         "window_handle": int(foreground.window_handle),
-        "hwnd_changed": int(foreground.window_handle) != int(meta.get("source_window_handle") or 0),
+        "hwnd_changed": int(foreground.window_handle)
+        != int(meta.get("source_window_handle") or 0),
         "business_key": _bounded_audit(key_value),
         "value": _bounded_audit(value),
         "business_key_target": _target_audit(key_target),
@@ -777,11 +822,15 @@ def _final_verify(resident, event, state):
         event=event,
         execution_path=ExecutionPath.BODY,
         success=True,
-        response="当前浏览器中这个客户的跟进状态已写入当前客户管理记录，保存后已重新核对来源、客户编号和跟进状态。",
+        response=(
+            "当前浏览器中唯一需跟进客户的跟进状态已写入当前匹配的客户管理记录，"
+            "保存后已重新核对来源、客户编号和跟进状态。"
+        ),
         model_invocations=0,
         reason=(
-            "E2E-14 VERIFIED NARROW only after exact USER Browser record evidence, fresh matching desktop business-key authority, "
-            "shared durable UIA replacement ownership, one Save pointer lifecycle, fresh cross-app readback and Root acceptance"
+            "E2E-14 VERIFIED NARROW only after source-first exact USER Browser record evidence, "
+            "fresh matching desktop business-key authority, shared durable UIA replacement ownership, "
+            "one Save pointer lifecycle, fresh cross-app readback and Root acceptance"
         ),
     )
 
@@ -819,7 +868,15 @@ def install_browser_desktop_record_transfer_behavior(resident) -> None:
         if intent.kind == "pointer_click" and str(expected_outcome.get("kind") or "") == "e2e14_save_click":
             meta = dict(state.data.get(_STATE_KEY) or {})
             try:
-                foreground, _key_target, _key_read, _field_target, field_read, _source_value = _fresh_binding(
+                (
+                    foreground,
+                    _key_target,
+                    _key_read,
+                    _field_target,
+                    field_read,
+                    _source_key,
+                    _source_value,
+                ) = _fresh_binding(
                     resident,
                     meta,
                     require_hwnd=True,
@@ -836,7 +893,10 @@ def install_browser_desktop_record_transfer_behavior(resident) -> None:
                     name=_SAVE_NAME,
                 )
             except Exception as exc:
-                return f"E2E-14 final Save authority could not be freshly proven: {type(exc).__name__}: {exc}"
+                return (
+                    "E2E-14 final Save authority could not be freshly proven: "
+                    f"{type(exc).__name__}: {exc}"
+                )
             expected_runtime = tuple(int(v) for v in expected_outcome.get("runtime_id") or ())
             if tuple(button.runtime_id) != expected_runtime:
                 return "E2E-14 Save Button RuntimeId became stale at final input boundary"
