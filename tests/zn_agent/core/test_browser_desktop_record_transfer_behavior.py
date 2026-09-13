@@ -5,6 +5,7 @@ import unittest
 from types import SimpleNamespace
 
 from zn_agent.core.browser_desktop_record_transfer_behavior import (
+    _SOURCE_ANCHOR,
     _STATE_KEY,
     _begin,
     _bounded_audit,
@@ -150,6 +151,7 @@ class _Resident:
         self.body = _Body(self.current_app_text_content)
         self.store = _Store()
         self.work_ledger = _Ledger()
+        self.browser_customer = CUSTOMER_A
         self.browser_status = SOURCE_VALUE
         self.browser_ambiguous = False
         self.authorization = SimpleNamespace(tab_id=91, attached_at="auth-generation-1")
@@ -163,15 +165,17 @@ class _Resident:
         self.foreground_window = SimpleNamespace(probe=lambda: self.foreground)
         self.native_intents = []
         self.failures = []
+        self.browser_observations: list[str] = []
 
     def _observe_authorized_anchor(self, anchor):
+        self.browser_observations.append(anchor)
         if self.browser_ambiguous:
             raise RuntimeError("multiple visible structured results contain the requested subject")
         return {
             "tab_id": 91,
             "url": "https://example.test/customers",
             "title": "客户跟进列表",
-            "context": f"{anchor} {self.browser_status}",
+            "context": f"{self.browser_customer} {self.browser_status}",
             "observed_at": "2026-09-13T12:00:00Z",
             "source": "zn-extension-user-browser",
         }
@@ -209,14 +213,28 @@ class BrowserDesktopRecordTransferTests(unittest.TestCase):
         state = _State()
         self.assertIsNone(_begin(resident, EVENT, state))
         self.assertEqual(state.stage, "e2e14_replace")
+        self.assertEqual(resident.browser_observations, [_SOURCE_ANCHOR])
         return resident, state
 
-    def test_parser_accepts_one_bounded_scalar_for_exact_business_key(self):
-        self.assertEqual(_parse_source_context(f"{CUSTOMER_A} 需跟进", CUSTOMER_A), SOURCE_VALUE)
+    def test_parser_accepts_one_source_first_business_key_and_supported_scalar(self):
+        self.assertEqual(
+            _parse_source_context(f"{CUSTOMER_A} {SOURCE_VALUE}"),
+            (CUSTOMER_A, SOURCE_VALUE),
+        )
         with self.assertRaises(RuntimeError):
-            _parse_source_context(f"prefix {CUSTOMER_A} 需跟进", CUSTOMER_A)
+            _parse_source_context(f"{CUSTOMER_A} 已联系")
         with self.assertRaises(RuntimeError):
-            _parse_source_context(f"{CUSTOMER_A} {CUSTOMER_A} 需跟进", CUSTOMER_A)
+            _parse_source_context(f"{CUSTOMER_A} {SOURCE_VALUE} {SOURCE_VALUE}")
+
+    def test_begin_is_browser_source_first_then_requires_matching_desktop_key(self):
+        resident = _Resident()
+        resident.values["客户编号"] = CUSTOMER_B
+        state = _State()
+        result = _begin(resident, EVENT, state)
+        self.assertFalse(result.success)
+        self.assertEqual(resident.browser_observations, [_SOURCE_ANCHOR])
+        self.assertEqual(resident.body.calls, [])
+        self.assertEqual(resident.native_intents, [])
 
     def test_happy_path_reacquires_stale_destination_runtime_and_keeps_raw_data_transient(self):
         resident, state = self._begin()
@@ -236,9 +254,17 @@ class BrowserDesktopRecordTransferTests(unittest.TestCase):
         self.assertIsNone(_verify_replacement(resident, EVENT, state))
         self.assertEqual(state.stage, "e2e14_save_prepare")
 
-    def test_source_drift_fails_closed_before_any_desktop_mutation(self):
+    def test_source_value_drift_fails_closed_before_any_desktop_mutation(self):
         resident, state = self._begin()
         resident.browser_status = "已联系"
+        result = _replace(resident, EVENT, state)
+        self.assertFalse(result.success)
+        self.assertEqual(resident.body.calls, [])
+        self.assertEqual(resident.values["跟进状态"], INITIAL_VALUE)
+
+    def test_source_business_identity_drift_fails_closed_before_any_desktop_mutation(self):
+        resident, state = self._begin()
+        resident.browser_customer = CUSTOMER_B
         result = _replace(resident, EVENT, state)
         self.assertFalse(result.success)
         self.assertEqual(resident.body.calls, [])
