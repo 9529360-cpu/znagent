@@ -186,6 +186,41 @@ class LongRunningTerminalProductTests(unittest.TestCase):
             finally:
                 resident.store.close()
 
+    def test_wait_has_no_hidden_wall_clock_expiry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, ledger, _ = self._runtime(Path(tmp))
+            original_act = resident.body.act
+            command_calls = 0
+            poll_calls = 0
+
+            def fake_act(kind, *, event_id=None, **kwargs):
+                nonlocal command_calls, poll_calls
+                if kind == "command":
+                    command_calls += 1
+                    return self._result(status="running", dispatch_observed=True)
+                if kind == "terminal_poll":
+                    poll_calls += 1
+                    return self._result(status="completed", output="done\n", exit_code=0)
+                return original_act(kind, event_id=event_id, **kwargs)
+
+            try:
+                with (
+                    patch.object(resident.body, "act", side_effect=fake_act),
+                    patch("zn_agent.core.long_running_terminal_behavior.time.sleep", return_value=None),
+                    patch(
+                        "zn_agent.core.long_running_terminal_behavior.utc_now",
+                        return_value="2000-01-01T00:00:00+00:00",
+                    ),
+                ):
+                    _, run = ledger.submit("e2e22", TASK)
+
+                self.assertTrue(run.success, run.reason)
+                self.assertEqual(run.model_invocations, 0)
+                self.assertEqual(command_calls, 1)
+                self.assertEqual(poll_calls, 1)
+            finally:
+                resident.store.close()
+
     def test_running_session_without_durable_dispatch_receipt_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             resident, ledger, _ = self._runtime(Path(tmp))
