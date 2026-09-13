@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -97,6 +98,34 @@ class LongRunningTerminalProductTests(unittest.TestCase):
             resident, _, _ = self._runtime(Path(tmp))
             try:
                 self.assertTrue(getattr(resident, _INSTALL_MARKER, False))
+            finally:
+                resident.store.close()
+
+    def test_real_background_process_is_polled_to_exit_zero_without_model_wait(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, ledger, workspace = self._runtime(Path(tmp))
+            executable = str(Path(sys.executable).resolve()).replace("\\", "/")
+            command = (
+                f'"{executable}" -c "import time; time.sleep(1.0); '
+                "print('e2e22-real-done')\""
+            )
+            task = f"请在这个项目里运行 `{command}`，等它跑完后把结果告诉我。"
+            try:
+                _, run = ledger.submit("e2e22", task)
+
+                self.assertTrue(run.success, run.reason)
+                self.assertEqual(run.model_invocations, 0)
+                self.assertIn("e2e22-real-done", run.response)
+                child = self._child(ledger, "e2e22")
+                self.assertEqual(child.status, "completed")
+                evidence = json.loads(child.result)
+                self.assertEqual(evidence["status"], "completed")
+                self.assertEqual(evidence["exit_code"], 0)
+                self.assertGreaterEqual(evidence["poll_count"], 2)
+                self.assertEqual(Path(evidence["workspace"]), workspace.resolve())
+                self.assertTrue(str(evidence["side_effect_attempt_id"]).startswith("sidefx-"))
+                self.assertNotIn("e2e22-real-done", child.result)
+                self.assertNotIn(executable, child.result)
             finally:
                 resident.store.close()
 
