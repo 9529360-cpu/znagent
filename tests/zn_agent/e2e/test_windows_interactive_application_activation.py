@@ -98,18 +98,66 @@ class _OwnedForegroundFixture:
     def authorize_current_process_foreground(self) -> None:
         """Use the documented Windows privilege handoff while this process is foreground.
 
-        This is test setup, not production activation. It deliberately fails if the
-        runner is not currently entitled to grant foreground permission.
+        The fixture window lives on a dedicated GUI thread. CI calls this method
+        from the Python test thread, so bind that caller to the exact foreground
+        input queue only while requesting the documented process-level grant.
+        Product activation remains unchanged and must still pass Windows policy.
         """
 
         user32 = ctypes.WinDLL("user32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         user32.AllowSetForegroundWindow.argtypes = [wintypes.DWORD]
         user32.AllowSetForegroundWindow.restype = wintypes.BOOL
-        if not user32.AllowSetForegroundWindow(os.getpid()):
+        user32.GetForegroundWindow.argtypes = []
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        user32.GetWindowThreadProcessId.argtypes = [
+            wintypes.HWND, ctypes.POINTER(wintypes.DWORD)
+        ]
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        user32.AttachThreadInput.argtypes = [
+            wintypes.DWORD, wintypes.DWORD, wintypes.BOOL
+        ]
+        user32.AttachThreadInput.restype = wintypes.BOOL
+        user32.PeekMessageW.argtypes = [
+            ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT, wintypes.UINT
+        ]
+        user32.PeekMessageW.restype = wintypes.BOOL
+        kernel32.GetCurrentThreadId.argtypes = []
+        kernel32.GetCurrentThreadId.restype = wintypes.DWORD
+
+        foreground_hwnd = int(user32.GetForegroundWindow() or 0)
+        if foreground_hwnd != int(self.hwnd):
             raise AssertionError(
-                "ZN fixture could not establish documented foreground authorization: "
-                f"WinError {ctypes.get_last_error()}"
+                "ZN fixture lost exact foreground before authorization: "
+                f"expected {self.hwnd}, observed {foreground_hwnd}"
             )
+        foreground_thread = int(user32.GetWindowThreadProcessId(foreground_hwnd, None) or 0)
+        caller_thread = int(kernel32.GetCurrentThreadId() or 0)
+        if not foreground_thread or not caller_thread:
+            raise AssertionError("ZN fixture could not resolve foreground/caller thread identity")
+
+        # Ensure the caller owns a USER32 message queue before AttachThreadInput.
+        message = wintypes.MSG()
+        user32.PeekMessageW(ctypes.byref(message), None, 0, 0, 0)
+        attached = False
+        if caller_thread != foreground_thread:
+            attached = bool(user32.AttachThreadInput(caller_thread, foreground_thread, True))
+            if not attached:
+                raise AssertionError(
+                    "ZN fixture could not bind the test caller to the foreground input queue: "
+                    f"WinError {ctypes.get_last_error()}"
+                )
+        try:
+            ctypes.set_last_error(0)
+            granted = bool(user32.AllowSetForegroundWindow(os.getpid()))
+            if not granted:
+                raise AssertionError(
+                    "ZN fixture could not establish documented foreground authorization: "
+                    f"WinError {ctypes.get_last_error()}; attached={attached}"
+                )
+        finally:
+            if attached:
+                user32.AttachThreadInput(caller_thread, foreground_thread, False)
 
     def close(self) -> None:
         if self.hwnd:
