@@ -87,37 +87,119 @@ function causalPopupWatcher(rootTabId, expectedUrl) {
   }
 }
 
-async function classifyFreshActionWindowTabs(state, rootTabId) {
+async function exactRootDebuggerTarget(rootTabId) {
+  const targets = await chrome.debugger.getTargets()
+  const matches = targets.filter(target =>
+    String(target?.type || '') === 'page' && Number(target?.tabId || 0) === rootTabId
+  )
+  if (matches.length !== 1) {
+    throw new Error('exact authorized root debugger target identity is unavailable or ambiguous')
+  }
+  const targetId = String(matches[0]?.id || '')
+  if (!targetId) throw new Error('exact authorized root debugger target has no target id')
+  return targetId
+}
+
+async function freshProtocolTargets(rootTabId) {
+  const result = await debuggerCommand(rootTabId, 'Target.getTargets')
+  return Array.isArray(result?.targetInfos) ? result.targetInfos : []
+}
+
+async function debuggerTargetTabsById() {
+  const targets = await chrome.debugger.getTargets()
+  const byId = new Map()
+  for (const target of targets) {
+    const id = String(target?.id || '')
+    if (!id) continue
+    byId.set(id, target)
+  }
+  return byId
+}
+
+async function classifyFreshActionWindowTargets(
+  state,
+  rootTabId,
+  rootTargetId,
+  baselineTargetIds
+) {
   const causalTabs = []
   const unrelatedTabs = []
   const unresolvedTabs = []
-  for (const rawId of state.createdTabIds || []) {
-    const tabId = Number(rawId || 0)
-    if (!Number.isInteger(tabId) || tabId <= 0 || tabId === rootTabId) continue
+  const protocolTargets = await freshProtocolTargets(rootTabId)
+  const debuggerTargets = await debuggerTargetTabsById()
+
+  for (const info of protocolTargets) {
+    const targetId = String(info?.targetId || '')
+    if (
+      !targetId ||
+      targetId === rootTargetId ||
+      baselineTargetIds.has(targetId) ||
+      String(info?.type || '') !== 'page'
+    ) continue
+
+    const debugTarget = debuggerTargets.get(targetId)
+    const tabId = Number(debugTarget?.tabId || 0)
+    if (!Number.isInteger(tabId) || tabId <= 0 || tabId === rootTabId) {
+      unresolvedTabs.push({ targetId, tabId: 0 })
+      continue
+    }
     if (state.removedTabs.has(tabId) || state.replacedTabs.has(tabId)) {
-      unresolvedTabs.push(tabId)
+      unresolvedTabs.push({ targetId, tabId })
       continue
     }
-    let tab
-    try {
-      tab = await chrome.tabs.get(tabId)
-    } catch {
-      unresolvedTabs.push(tabId)
-      continue
-    }
-    const openerTabId = Number(tab?.openerTabId || 0)
-    if (openerTabId === rootTabId) {
-      causalTabs.push({ tabId, openerTabId: rootTabId })
-    } else if (openerTabId > 0) {
-      unrelatedTabs.push({ tabId, openerTabId })
+
+    const openerTargetId = String(info?.openerId || '')
+    if (openerTargetId === rootTargetId) {
+      causalTabs.push({
+        tabId,
+        openerTabId: rootTabId,
+        targetId,
+        openerTargetId: rootTargetId
+      })
+    } else if (openerTargetId) {
+      unrelatedTabs.push({ tabId, targetId, openerTargetId })
     } else {
-      unresolvedTabs.push(tabId)
+      unresolvedTabs.push({ targetId, tabId })
     }
   }
   return { causalTabs, unrelatedTabs, unresolvedTabs }
 }
 
-async function waitForCausalChildOrSameTab(watcher, rootTabId, expectedUrl) {
+async function freshExactCausalTarget(
+  rootTabId,
+  rootTargetId,
+  childTargetId,
+  childTabId
+) {
+  const protocolTargets = await freshProtocolTargets(rootTabId)
+  const matches = protocolTargets.filter(info => String(info?.targetId || '') === childTargetId)
+  if (matches.length !== 1) {
+    throw new Error('fresh causal child debugger target identity is unavailable or ambiguous')
+  }
+  const info = matches[0]
+  if (
+    String(info?.type || '') !== 'page' ||
+    String(info?.openerId || '') !== rootTargetId ||
+    childTargetId === rootTargetId
+  ) {
+    throw new Error('fresh causal child target no longer proves the exact root opener relationship')
+  }
+
+  const debuggerTargets = await debuggerTargetTabsById()
+  const debugTarget = debuggerTargets.get(childTargetId)
+  if (Number(debugTarget?.tabId || 0) !== childTabId) {
+    throw new Error('fresh causal child target-to-tab identity changed before child authority derivation')
+  }
+  return info
+}
+
+async function waitForCausalChildOrSameTab(
+  watcher,
+  rootTabId,
+  expectedUrl,
+  rootTargetId,
+  baselineTargetIds
+) {
   const deadline = Date.now() + 3000
   let stableSince = 0
   let lastClassification = { causalTabs: [], unrelatedTabs: [], unresolvedTabs: [] }
@@ -133,9 +215,14 @@ async function waitForCausalChildOrSameTab(watcher, rootTabId, expectedUrl) {
       throw new Error('root Page.windowOpen URL did not match the expected child contract')
     }
 
-    lastClassification = await classifyFreshActionWindowTabs(state, rootTabId)
+    lastClassification = await classifyFreshActionWindowTargets(
+      state,
+      rootTabId,
+      rootTargetId,
+      baselineTargetIds
+    )
     if (lastClassification.causalTabs.length > 1) {
-      throw new Error('multiple freshly proven root-opener child tabs were created by one action; refusing ambiguity')
+      throw new Error('multiple freshly proven root-opener child targets were created by one action; refusing ambiguity')
     }
     if (
       lastClassification.causalTabs.length === 1 &&
@@ -189,23 +276,28 @@ async function waitForCausalChildOrSameTab(watcher, rootTabId, expectedUrl) {
   }
 
   const state = watcher.snapshot()
-  lastClassification = await classifyFreshActionWindowTabs(state, rootTabId)
+  lastClassification = await classifyFreshActionWindowTargets(
+    state,
+    rootTabId,
+    rootTargetId,
+    baselineTargetIds
+  )
   if (state.windowOpenEvents.length === 1 && state.windowOpenEvents[0].matchesExpected !== true) {
     throw new Error('root Page.windowOpen URL did not match the expected child contract')
   }
   if (lastClassification.unresolvedTabs.length > 0) {
     throw new Error(
-      `action-window tab creation remained unresolved after fresh opener re-read; created=${state.createdTabIds.length} unresolved=${lastClassification.unresolvedTabs.length} window_open=${state.windowOpenEvents.length}`
+      `action-window target creation remained unresolved after fresh CDP opener re-read; created=${state.createdTabIds.length} unresolved=${lastClassification.unresolvedTabs.length} window_open=${state.windowOpenEvents.length}`
     )
   }
   if (lastClassification.causalTabs.length === 1 && state.windowOpenEvents.length === 0) {
-    throw new Error('one fresh root-opener child was proven but root Page.windowOpen corroboration was not observed')
+    throw new Error('one fresh root-opener child target was proven but root Page.windowOpen corroboration was not observed')
   }
   if (lastClassification.causalTabs.length === 0 && state.windowOpenEvents.length === 1) {
-    throw new Error('root Page.windowOpen was observed but no freshly re-read root-opener child was proven')
+    throw new Error('root Page.windowOpen was observed but no fresh CDP root-opener child target was proven')
   }
   throw new Error(
-    `neither exact same-tab navigation nor one exact root-opener child was proven inside the action window; created=${state.createdTabIds.length} causal=${lastClassification.causalTabs.length} unrelated=${lastClassification.unrelatedTabs.length} window_open=${state.windowOpenEvents.length}`
+    `neither exact same-tab navigation nor one exact root-opener child target was proven inside the action window; created=${state.createdTabIds.length} causal=${lastClassification.causalTabs.length} unrelated=${lastClassification.unrelatedTabs.length} window_open=${state.windowOpenEvents.length}`
   )
 }
 
@@ -289,6 +381,15 @@ async function clickNamedButtonWithCausalChild(tabId, command) {
   }
 
   await debuggerCommand(tabId, 'Page.enable')
+  const rootTargetId = await exactRootDebuggerTarget(tabId)
+  const baselineProtocolTargets = await freshProtocolTargets(tabId)
+  const baselineTargetIds = new Set(
+    baselineProtocolTargets.map(info => String(info?.targetId || '')).filter(Boolean)
+  )
+  if (!baselineTargetIds.has(rootTargetId)) {
+    throw new Error('authorized root target was not present in the fresh pre-click CDP target baseline')
+  }
+
   const watcher = causalPopupWatcher(tabId, expectedUrlAfter)
   let clickSent = false
   let childTabId = 0
@@ -314,7 +415,13 @@ async function clickNamedButtonWithCausalChild(tabId, command) {
       throw new Error('exact accessible button causal click returned JavaScript exception details')
     }
 
-    const outcome = await waitForCausalChildOrSameTab(watcher, tabId, expectedUrlAfter)
+    const outcome = await waitForCausalChildOrSameTab(
+      watcher,
+      tabId,
+      expectedUrlAfter,
+      rootTargetId,
+      baselineTargetIds
+    )
     finalState = outcome.state
     watcher.closeActionWindow()
     if (outcome.kind === 'same_tab') {
@@ -333,17 +440,14 @@ async function clickNamedButtonWithCausalChild(tabId, command) {
     }
 
     childTabId = Number(outcome.child.tabId)
+    const childTargetId = String(outcome.child.targetId || '')
     if ((await ownedTabId()) !== tabId) {
       throw new Error('root browser authorization was revoked before child authority could be derived')
     }
-    const childTab = await chrome.tabs.get(childTabId)
-    if (
-      Number(childTab?.id || 0) !== childTabId ||
-      Number(childTab?.openerTabId || 0) !== tabId ||
-      childTabId === tabId
-    ) {
-      throw new Error('fresh child opener identity does not match the exact authorized root')
+    if (!childTargetId || childTabId === tabId) {
+      throw new Error('fresh causal child identity is invalid')
     }
+    await freshExactCausalTarget(tabId, rootTargetId, childTargetId, childTabId)
     if (finalState.removedTabs.has(childTabId) || finalState.replacedTabs.has(childTabId)) {
       throw new Error('causal child identity was removed or replaced before debugger attach')
     }
@@ -400,6 +504,7 @@ async function clickNamedButtonWithCausalChild(tabId, command) {
       child_tab_id: childTabId,
       opener_tab_id: tabId,
       opener_matches_root: true,
+      opener_proof: 'fresh_cdp_target_opener_id',
       fresh_child_identity: childTabId !== tabId,
       page_window_open_matches_expected: true,
       causal_candidate_count: finalState.causalTabs.length,
