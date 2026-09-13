@@ -4,8 +4,9 @@ from __future__ import annotations
 
 The model is intentionally absent from this module. It accepts already-bound
 source identity and explicit deterministic replacement authority, mutates only
-ordinary WordprocessingML body/table-cell run spans, reopens the package, and
-proves source/destination invariants before reporting success.
+ordinary WordprocessingML body/table-cell run spans plus explicitly active
+header/footer stories, reopens the package, and proves source/destination
+invariants before reporting success.
 """
 
 import hashlib
@@ -119,6 +120,26 @@ def _xml_visible_text(payload: bytes) -> str:
     return "".join(chunks)
 
 
+def _xml_payment_occurrence_count(payload: bytes) -> int:
+    """Count payment targets per WordprocessingML paragraph without story joins."""
+    root = _xml_root(payload)
+    count = 0
+    for paragraph in root.iter():
+        if _localname(paragraph.tag) != "p":
+            continue
+        chunks: list[str] = []
+        for element in paragraph.iter():
+            local = _localname(element.tag)
+            if local == "t":
+                chunks.append(element.text or "")
+            elif local == "tab":
+                chunks.append("\t")
+            elif local in {"br", "cr"}:
+                chunks.append("\n")
+        count += len(list(PAYMENT_DATE_RE.finditer("".join(chunks))))
+    return count
+
+
 def _preflight(path: Path, identity: dict[str, Any]) -> tuple[bool, str | None]:
     if path.suffix.casefold() != ".docx":
         return False, "only standard .docx is supported"
@@ -151,16 +172,48 @@ def _preflight(path: Path, identity: dict[str, Any]) -> tuple[bool, str | None]:
             )
             if bad:
                 return False, "unsupported WordprocessingML structures: " + ", ".join(bad)
-            for name in sorted(names):
+    except (OSError, KeyError, zipfile.BadZipFile, ET.ParseError) as exc:
+        return False, f"DOCX package preflight failed: {type(exc).__name__}: {exc}"
+    return True, None
+
+
+def _header_footer_payment_story_info(path: Path) -> tuple[int, str | None]:
+    """Return bounded header/footer target count and reject complex target stories.
+
+    Existing body-only documents keep their prior behavior. Header/footer XML is
+    admitted only when the target-bearing story itself contains ordinary text
+    structures that python-docx can round-trip without us claiming authority over
+    fields, drawings, content controls, tracked changes, or text boxes.
+    """
+    count = 0
+    try:
+        with zipfile.ZipFile(path, "r") as package:
+            for name in sorted(package.namelist()):
                 if not (
                     name.startswith("word/header") or name.startswith("word/footer")
                 ) or not name.endswith(".xml"):
                     continue
-                if PAYMENT_DATE_RE.search(_xml_visible_text(package.read(name))):
-                    return False, "payment-date target occurs in a header/footer story"
+                payload = package.read(name)
+                story_count = _xml_payment_occurrence_count(payload)
+                if not story_count:
+                    continue
+                root = _xml_root(payload)
+                bad = sorted(
+                    {_localname(el.tag) for el in root.iter()}
+                    & _UNSUPPORTED_XML_LOCALNAMES
+                )
+                if bad:
+                    return count, (
+                        f"payment-date header/footer story {name} contains unsupported "
+                        "WordprocessingML structures: " + ", ".join(bad)
+                    )
+                count += story_count
     except (OSError, KeyError, zipfile.BadZipFile, ET.ParseError) as exc:
-        return False, f"DOCX package preflight failed: {type(exc).__name__}: {exc}"
-    return True, None
+        return count, (
+            "DOCX header/footer payment-story inspection failed: "
+            f"{type(exc).__name__}: {exc}"
+        )
+    return count, None
 
 
 def _completion_story_blocker(path: Path) -> str | None:
@@ -179,19 +232,61 @@ def _completion_story_blocker(path: Path) -> str | None:
     return None
 
 
-def _iter_paragraphs(document: _Document) -> Iterator[tuple[str, Paragraph]]:
-    for index, paragraph in enumerate(document.paragraphs):
-        yield f"body/p:{index}", paragraph
-    for table_index, table in enumerate(document.tables):
+def _iter_container_paragraphs(container: Any, prefix: str) -> Iterator[tuple[str, Paragraph]]:
+    for index, paragraph in enumerate(container.paragraphs):
+        yield f"{prefix}/p:{index}", paragraph
+    for table_index, table in enumerate(container.tables):
         for row_index, row in enumerate(table.rows):
             for col_index, cell in enumerate(row.cells):
                 if cell.tables:
                     raise ValueError("nested tables are outside DOCX v1 scope")
                 for paragraph_index, paragraph in enumerate(cell.paragraphs):
                     yield (
-                        f"table:{table_index}/cell:{row_index},{col_index}/p:{paragraph_index}",
+                        f"{prefix}/table:{table_index}/cell:{row_index},{col_index}/p:{paragraph_index}",
                         paragraph,
                     )
+
+
+def _iter_active_header_footer_paragraphs(
+    document: _Document,
+) -> Iterator[tuple[str, Paragraph]]:
+    odd_even = bool(document.settings.odd_and_even_pages_header_footer)
+    for section_index, section in enumerate(document.sections):
+        stories = (
+            ("header", "default", section.header, True),
+            ("footer", "default", section.footer, True),
+            (
+                "header",
+                "first",
+                section.first_page_header,
+                bool(section.different_first_page_header_footer),
+            ),
+            (
+                "footer",
+                "first",
+                section.first_page_footer,
+                bool(section.different_first_page_header_footer),
+            ),
+            ("header", "even", section.even_page_header, odd_even),
+            ("footer", "even", section.even_page_footer, odd_even),
+        )
+        for kind, variant, story, active in stories:
+            # Accessing paragraphs on a linked story can create a definition. Check
+            # linkage first and only touch stories with an explicit active owner.
+            if not active or story.is_linked_to_previous:
+                continue
+            prefix = f"{kind}:section:{section_index}/{variant}"
+            yield from _iter_container_paragraphs(story, prefix)
+
+
+def _iter_paragraphs(
+    document: _Document,
+    *,
+    include_header_footer: bool = False,
+) -> Iterator[tuple[str, Paragraph]]:
+    yield from _iter_container_paragraphs(document, "body")
+    if include_header_footer:
+        yield from _iter_active_header_footer_paragraphs(document)
 
 
 def _run_format(run) -> dict[str, Any]:
@@ -206,10 +301,17 @@ def _run_format(run) -> dict[str, Any]:
     }
 
 
-def _records(document: _Document) -> list[dict[str, Any]]:
+def _records(
+    document: _Document,
+    *,
+    include_header_footer: bool = False,
+) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     total_chars = 0
-    for location, paragraph in _iter_paragraphs(document):
+    for location, paragraph in _iter_paragraphs(
+        document,
+        include_header_footer=include_header_footer,
+    ):
         if len(records) >= MAX_PARAGRAPHS:
             raise ValueError("document exceeds bounded paragraph count")
         text = paragraph.text
@@ -369,14 +471,29 @@ def inspect_docx(path: str | Path) -> dict[str, Any]:
     ok, detail = _preflight(source, identity)
     if not ok:
         return _block(identity, detail or "unsupported DOCX")
+    header_footer_target_count, story_detail = _header_footer_payment_story_info(source)
+    if story_detail:
+        return _block(identity, story_detail)
     try:
         document = Document(source)
-        records = _records(document)
+        records = _records(
+            document,
+            include_header_footer=header_footer_target_count > 0,
+        )
         occurrences = _target_occurrences(records)
     except Exception as exc:
         return _block(
             identity,
             f"DOCX parse/structure inspection failed: {type(exc).__name__}: {exc}",
+        )
+    supported_story_count = sum(
+        str(item["location"]).startswith(("header:", "footer:"))
+        for item in occurrences
+    )
+    if supported_story_count != header_footer_target_count:
+        return _block(
+            identity,
+            "payment-date target occurs in an inactive, unowned, or unsupported header/footer story",
         )
     if any(not item["run_mappable"] for item in occurrences):
         return _block(
@@ -500,7 +617,11 @@ def replace_visible_span_across_runs(
 
 
 def _find_paragraph(document: _Document, location: str) -> Paragraph:
-    for current, paragraph in _iter_paragraphs(document):
+    include_header_footer = str(location).startswith(("header:", "footer:"))
+    for current, paragraph in _iter_paragraphs(
+        document,
+        include_header_footer=include_header_footer,
+    ):
         if current == location:
             return paragraph
     raise ValueError("bound DOCX target location no longer exists")
@@ -590,8 +711,12 @@ def write_docx_copy(
     if old_date == replacement_date:
         raise ValueError("replacement date already equals the current payment date")
 
+    include_header_footer = str(target["location"]).startswith(("header:", "footer:"))
     document = Document(source)
-    before_records = _records(document)
+    before_records = _records(
+        document,
+        include_header_footer=include_header_footer,
+    )
     paragraph = _find_paragraph(document, str(target["location"]))
     before_target_text = paragraph.text
     if (
@@ -623,7 +748,10 @@ def write_docx_copy(
     try:
         document.save(temp_path)
         temp_document = Document(temp_path)
-        after_records = _records(temp_document)
+        after_records = _records(
+            temp_document,
+            include_header_footer=include_header_footer,
+        )
         if len(after_records) != len(before_records):
             raise RuntimeError(
                 "DOCX verification failed: paragraph topology changed"
