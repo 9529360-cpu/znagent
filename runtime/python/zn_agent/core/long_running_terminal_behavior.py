@@ -16,7 +16,6 @@ import hashlib
 import json
 import re
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -28,7 +27,6 @@ _INSTALL_MARKER = "_e2e22_long_running_terminal_installed"
 _ACCEPTANCE = "long_running_terminal:v1"
 _MAX_COMMAND_CHARS = 2_000
 _MAX_OUTPUT_CHARS = 8_000
-_MONITOR_SECONDS = 120.0
 _POLL_INTERVAL_SECONDS = 0.2
 _INLINE_COMMAND = re.compile(r"(?<!`)`([^`\r\n]{1,2000})`(?!`)")
 _WAIT_MARKERS = (
@@ -316,16 +314,6 @@ def _begin(resident, event, state, request: Mapping[str, str]):
     return None
 
 
-def _elapsed_seconds(started_at: str) -> float:
-    try:
-        started = datetime.fromisoformat(str(started_at))
-        if started.tzinfo is None:
-            started = started.replace(tzinfo=timezone.utc)
-        return max(0.0, (datetime.now(timezone.utc) - started.astimezone(timezone.utc)).total_seconds())
-    except (TypeError, ValueError):
-        return _MONITOR_SECONDS + 1.0
-
-
 def _record_output_evidence(meta: dict[str, Any], output: str, *, truncated: bool) -> None:
     encoded = str(output or "").encode("utf-8")
     meta["output_chars"] = len(str(output or ""))
@@ -348,19 +336,7 @@ def _poll(resident, event, state):
             "等待状态缺少可验证的 terminal session 身份；ZN 不会重跑命令。",
         )
 
-    elapsed = _elapsed_seconds(str(meta.get("started_at") or ""))
-    if elapsed > _MONITOR_SECONDS:
-        return _blocked(
-            resident,
-            event,
-            state,
-            meta,
-            "monitor_window_exceeded",
-            f"process remained unverified after {_MONITOR_SECONDS:g}s bounded monitor window",
-            "命令仍未在第一版 bounded 观察窗口内完成。ZN 没有重跑、停止或替换这个进程。",
-        )
-
-    time.sleep(min(_POLL_INTERVAL_SECONDS, max(0.0, _MONITOR_SECONDS - elapsed)))
+    time.sleep(_POLL_INTERVAL_SECONDS)
     try:
         observed = resident.body.act(
             "terminal_poll",
