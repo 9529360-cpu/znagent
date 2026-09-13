@@ -28,6 +28,7 @@ class CurrentAppTextAwareBody(MachineCapabilityBody):
     """
 
     _AUTOMATION_VALUE_REPLACE = "automation_value_replace"
+    _RECOVERY_VISIBLE_STATUSES = ("started", "observed", "verified_effect")
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -39,7 +40,7 @@ class CurrentAppTextAwareBody(MachineCapabilityBody):
             return True
         return super()._requires_guard(kind, args)
 
-    def unresolved_value_replacement_attempts(
+    def value_replacement_attempts(
         self,
         event_id: str,
     ) -> list[dict[str, Any]]:
@@ -49,6 +50,11 @@ class CurrentAppTextAwareBody(MachineCapabilityBody):
         current action signature. Once one replacement has crossed the durable
         side-effect boundary, changed source evidence must not manufacture a new
         signature that can bypass that ownership after restart.
+
+        ``verified_effect`` remains visible here because recovery may itself
+        crash after resolving the attempt but before advancing WorkingState. On
+        the next restart that durable machine evidence still forbids a new
+        replacement dispatch.
         """
 
         normalized_event = str(event_id or "").strip()
@@ -58,7 +64,7 @@ class CurrentAppTextAwareBody(MachineCapabilityBody):
             rows = side_effect_attempts.event_attempts(
                 conn,
                 event_id=normalized_event,
-                statuses=("started", "observed"),
+                statuses=self._RECOVERY_VISIBLE_STATUSES,
                 limit=32,
             )
         return [
