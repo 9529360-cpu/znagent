@@ -44,6 +44,33 @@ class WindowsInteractiveBrowserResultFileWorkE2ETests(unittest.TestCase):
         ).timestamp()
         os.utime(path, (stamp, stamp))
 
+    @staticmethod
+    def _authorize_current_tab(resident, fixture) -> dict:
+        # Keep the same bounded explicit-user-gesture policy used by E2E-24.
+        # Windows may still be settling focus when the first real shortcut is
+        # injected, so retry only after fresh evidence proves no authorization
+        # exists. This never bypasses the extension's explicit-current-tab gate.
+        for _ in range(3):
+            current = resident.user_browser_authorization()
+            if (
+                current.get("authorized")
+                and current.get("provider") == "zn-extension-user-browser"
+            ):
+                return current
+            fixture.activate()
+            time.sleep(0.12)
+            _press_extension_action_shortcut()
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                candidate = resident.user_browser_authorization()
+                if (
+                    candidate.get("authorized")
+                    and candidate.get("provider") == "zn-extension-user-browser"
+                ):
+                    return candidate
+                time.sleep(0.05)
+        return resident.user_browser_authorization()
+
     def test_desktop_work_carries_managed_research_result_into_exact_workspace_file(self) -> None:
         self._require_input_desktop()
         browsers = _find_installed_browsers()
@@ -104,15 +131,10 @@ class WindowsInteractiveBrowserResultFileWorkE2ETests(unittest.TestCase):
             rpc = ResidentRpcServer(resident=resident)
             rpc.service.acquire()
 
-            fixture.activate()
-            _press_extension_action_shortcut()
-            deadline = time.monotonic() + 8.0
-            while time.monotonic() < deadline:
-                if resident.user_browser_authorization().get("provider") == "zn-extension-user-browser":
-                    break
-                time.sleep(0.05)
+            authorization = self._authorize_current_tab(resident, fixture)
+            self.assertTrue(authorization.get("authorized"), authorization)
             self.assertEqual(
-                resident.user_browser_authorization().get("provider"),
+                authorization.get("provider"),
                 "zn-extension-user-browser",
             )
 
