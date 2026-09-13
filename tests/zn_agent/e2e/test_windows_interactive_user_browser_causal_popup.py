@@ -104,7 +104,7 @@ class _Handler(BaseHTTPRequestHandler):
 <style>body{{font-family:sans-serif}} form{{display:grid;gap:12px;width:640px}} input,button{{padding:14px;font-size:20px}}</style>
 </head><body>
 <h1>Orders</h1>
-<form id="orders" action="/orders/detail" method="get" target="_blank">
+<form id="orders" action="/orders/detail" method="get" target="_blank" rel="opener">
 <label>订单编号<input aria-label="订单编号" name="order" type="text" autocomplete="off"></label>
 <button id="open-detail" type="submit" aria-label="打开订单详情">打开订单详情</button>
 </form>
