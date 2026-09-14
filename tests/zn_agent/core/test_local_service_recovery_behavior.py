@@ -13,9 +13,11 @@ from zn_agent.core.current_app_text_body import CurrentAppTextAwareBody
 from zn_agent.core.local_service_recovery_behavior import (
     _INSTALL_MARKER,
     _Blocked,
+    _observe_repair_script_identity,
     _relative_file,
     _request,
     _same_identity,
+    _same_repair_script_identity,
     _service_context,
 )
 from zn_agent.core.path_context import canonical_host_path
@@ -131,6 +133,21 @@ class LocalServiceRecoveryAdmissionTests(unittest.TestCase):
         self.assertTrue(_same_identity(baseline, {"pid": 42, "created_at_epoch": 1000.25}))
         self.assertFalse(_same_identity(baseline, {"pid": 42, "created_at_epoch": 1001.25}))
         self.assertFalse(_same_identity(baseline, {"pid": 43, "created_at_epoch": 1000.25}))
+
+    def test_repair_script_identity_detects_content_drift_without_persisting_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "repair_service.py"
+            script.write_text("print('first')\n", encoding="utf-8")
+            baseline = _observe_repair_script_identity(script)
+            unchanged = _observe_repair_script_identity(script)
+            self.assertTrue(_same_repair_script_identity(baseline, unchanged))
+            self.assertEqual(len(str(baseline["content_sha256"])), 64)
+            self.assertNotIn(str(script), json.dumps(baseline, ensure_ascii=False))
+
+            script.write_text("print('changed before dispatch')\n", encoding="utf-8")
+            drifted = _observe_repair_script_identity(script)
+            self.assertFalse(_same_repair_script_identity(baseline, drifted))
+            self.assertNotEqual(baseline["content_sha256"], drifted["content_sha256"])
 
 
 class LocalServiceRecoveryProductTests(unittest.TestCase):
