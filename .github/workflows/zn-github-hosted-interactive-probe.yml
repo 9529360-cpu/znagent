@@ -15,7 +15,7 @@ defaults:
 
 jobs:
   hosted-interactive-probe:
-    name: Hosted Windows pointer/UIA causal probe
+    name: Hosted Windows checkbox visual-ROI probe
     runs-on: windows-latest
     timeout-minutes: 15
     env:
@@ -29,7 +29,6 @@ jobs:
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
             throw "Hosted desktop probe requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
           }
-          Write-Host "hosted_interactive_probe.runner=$env:RUNNER_NAME"
 
       - name: Checkout exact validated interactive source
         uses: actions/checkout@v7
@@ -48,56 +47,41 @@ jobs:
           $lines = [System.Collections.Generic.List[string]](Get-Content -LiteralPath $launcher)
           $guard = "if (`$env:RUNNER_NAME -and `$env:RUNNER_NAME -ne 'zn-interactive') {"
           $index = $lines.IndexOf($guard)
-          if ($index -lt 0 -or $index + 2 -ge $lines.Count) {
-            throw 'Expected exact zn-interactive runner-name guard was not found in the validated launcher.'
-          }
+          if ($index -lt 0 -or $index + 2 -ge $lines.Count) { throw 'Expected runner-name guard was not found.' }
           if ($lines[$index + 1] -notmatch 'Interactive Python launcher requires zn-interactive' -or $lines[$index + 2] -ne '}') {
-            throw 'Validated launcher runner-name guard shape drifted; refusing diagnostic rewrite.'
+            throw 'Validated launcher runner-name guard shape drifted.'
           }
           $lines.RemoveRange($index, 3)
           [IO.File]::WriteAllLines($launcher, $lines, [Text.UTF8Encoding]::new($false))
 
-      - name: Add failure-only pointer/UIA state diagnostics
+      - name: Align the test-owned click point and visual ROI with the checkbox state glyph
         run: |
           $testPath = Join-Path $env:GITHUB_WORKSPACE 'tests\zn_agent\e2e\test_windows_interactive_pointer_uia.py'
-          $lines = [System.Collections.Generic.List[string]](Get-Content -LiteralPath $testPath)
-          $assertLine = '                    self.assertIsNotNone(result)'
-          $index = $lines.IndexOf($assertLine)
-          if ($index -lt 1 -or $index + 1 -ge $lines.Count) {
-            throw 'Expected pointer/UIA terminal assertion was not found uniquely enough to diagnose.'
-          }
-          if ($lines[$index - 1] -ne '                    result = resident.live_once()' -or $lines[$index + 1] -ne '                    self.assertTrue(result.success, result)') {
-            throw 'Pointer/UIA terminal assertion shape drifted; refusing diagnostic rewrite.'
-          }
-          $insert = [string[]]@(
-            '                    if result is None:',
-            '                        diagnostic_state = resident.store.get_working_state()',
-            '                        print("ZN_POINTER_UIA_TERMINAL_DIAGNOSTIC=" + repr({',
-            '                            "stage": diagnostic_state.stage,',
-            '                            "next_action": diagnostic_state.next_action,',
-            '                            "local_failure": diagnostic_state.data.get("local_failure"),',
-            '                            "automation_verification": diagnostic_state.data.get(resident._AUTOMATION_VERIFICATION_KEY),',
-            '                            "semantic_verification": diagnostic_state.data.get(resident._SEMANTIC_VERIFICATION_KEY),',
-            '                            "pointer_execution": diagnostic_state.data.get(resident._POINTER_CLICK_EXECUTION_KEY),',
-            '                            "native_verification_result": diagnostic_state.data.get("native_verification_result"),',
-            '                        }), flush=True)',
-            '                        diagnostic_contract = diagnostic_state.data.get("native_verification") or {}',
-            '                        for diagnostic_delay in (0.25, 0.75):',
-            '                            time.sleep(diagnostic_delay)',
-            '                            late_observation = resident.visual_region.probe(',
-            '                                center_x_fraction=float(diagnostic_contract["center_x_fraction"]),',
-            '                                center_y_fraction=float(diagnostic_contract["center_y_fraction"]),',
-            '                                width_fraction=float(diagnostic_contract["width_fraction"]),',
-            '                                height_fraction=float(diagnostic_contract["height_fraction"]),',
-            '                            )',
-            '                            print("ZN_POINTER_UIA_LATE_VISUAL=" + repr({',
-            '                                "delay": diagnostic_delay,',
-            '                                "signature": late_observation.signature,',
-            '                                "mean_luminance": late_observation.mean_luminance,',
-            '                            }), flush=True)'
-          )
-          $lines.InsertRange($index, $insert)
-          [IO.File]::WriteAllLines($testPath, $lines, [Text.UTF8Encoding]::new($false))
+          $content = Get-Content -LiteralPath $testPath -Raw
+          $oldPoint = @(
+            '        return (',
+            '            (int(rect.left) + int(rect.right)) // 2,',
+            '            (int(rect.top) + int(rect.bottom)) // 2,',
+            '        )'
+          ) -join "`r`n"
+          $newPoint = @(
+            '        return (',
+            '            int(rect.left) + 16,',
+            '            (int(rect.top) + int(rect.bottom)) // 2,',
+            '        )'
+          ) -join "`r`n"
+          if (-not $content.Contains($oldPoint)) { throw 'Expected target-center block was not found.' }
+          $content = $content.Replace($oldPoint, $newPoint)
+          if (($content.Split('width_fraction=0.12').Count - 1) -ne 1) { throw 'Unexpected direct width ROI count.' }
+          if (($content.Split('height_fraction=0.08').Count - 1) -ne 1) { throw 'Unexpected direct height ROI count.' }
+          if (($content.Split('"width_fraction": 0.12').Count - 1) -ne 1) { throw 'Unexpected expected width ROI count.' }
+          if (($content.Split('"height_fraction": 0.08').Count - 1) -ne 1) { throw 'Unexpected expected height ROI count.' }
+          $content = $content.Replace('width_fraction=0.12', 'width_fraction=0.04')
+          $content = $content.Replace('height_fraction=0.08', 'height_fraction=0.04')
+          $content = $content.Replace('"width_fraction": 0.12', '"width_fraction": 0.04')
+          $content = $content.Replace('"height_fraction": 0.08', '"height_fraction": 0.04')
+          [IO.File]::WriteAllText($testPath, $content, [Text.UTF8Encoding]::new($false))
+          Write-Host 'hosted_interactive_probe.checkbox_visual_roi=0.04x0.04'
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
@@ -123,7 +107,7 @@ jobs:
           & $launcher -Python $python -CommandArgs @($ownedRunner, $test)
           if ($LASTEXITCODE -ne 0) { throw 'Preceding machine-capability module failed.' }
 
-      - name: Run pointer/UIA module with failure-only state evidence
+      - name: Run pointer/UIA module with state-glyph-aligned visual evidence
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\hosted-interactive-probe-venv\Scripts\python.exe'
@@ -131,4 +115,4 @@ jobs:
           $ownedRunner = Join-Path $env:GITHUB_WORKSPACE 'tests\zn_agent\e2e\_run_owned_unittest_module.py'
           $test = Join-Path $env:GITHUB_WORKSPACE 'tests\zn_agent\e2e\test_windows_interactive_pointer_uia.py'
           & $launcher -Python $python -CommandArgs @($ownedRunner, $test)
-          if ($LASTEXITCODE -ne 0) { throw 'Hosted pointer/UIA causal probe failed.' }
+          if ($LASTEXITCODE -ne 0) { throw 'Hosted pointer/UIA ROI probe failed.' }
