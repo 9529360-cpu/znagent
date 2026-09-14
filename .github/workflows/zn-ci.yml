@@ -31,7 +31,7 @@ concurrency:
 jobs:
   source-boundary:
     name: ZN Source Boundary / Windows
-    runs-on: [self-hosted, Windows, X64, zn-ci]
+    runs-on: windows-latest
     timeout-minutes: 10
     env:
       UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
@@ -55,10 +55,10 @@ jobs:
                 target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
               })
             }
-      - name: Require Windows x64 headless CI runner
+      - name: Verify GitHub-hosted Windows x64 runner
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
-            throw "ZN steady-state CI requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+            throw "ZN online CI requires a GitHub-hosted Windows X64 runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
           }
           Write-Host "ZN CI runner: $env:RUNNER_NAME"
       - name: Checkout
@@ -78,7 +78,7 @@ jobs:
 
   kernel:
     name: ZN Kernel / Python / Windows
-    runs-on: [self-hosted, Windows, X64, zn-ci]
+    runs-on: windows-latest
     timeout-minutes: 35
     env:
       UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
@@ -102,10 +102,10 @@ jobs:
                 target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
               })
             }
-      - name: Require Windows x64 headless CI runner
+      - name: Verify GitHub-hosted Windows x64 runner
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
-            throw "ZN steady-state CI requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+            throw "ZN online CI requires a GitHub-hosted Windows X64 runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
           }
           Write-Host "ZN CI runner: $env:RUNNER_NAME"
       - name: Checkout
@@ -150,7 +150,7 @@ jobs:
 
   desktop:
     name: Electron / TypeScript / Windows
-    runs-on: [self-hosted, Windows, X64, zn-ci]
+    runs-on: windows-latest
     timeout-minutes: 30
     env:
       NODE_OPTIONS: --max-old-space-size=4096
@@ -174,10 +174,10 @@ jobs:
                 target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
               })
             }
-      - name: Require Windows x64 headless CI runner
+      - name: Verify GitHub-hosted Windows x64 runner
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
-            throw "ZN steady-state CI requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+            throw "ZN online CI requires a GitHub-hosted Windows X64 runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
           }
           Write-Host "ZN CI runner: $env:RUNNER_NAME"
       - name: Checkout
