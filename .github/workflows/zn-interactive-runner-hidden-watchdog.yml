@@ -31,6 +31,7 @@ concurrency:
 jobs:
   recover:
     name: Wake existing interactive runner task
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: [self-hosted, Windows, X64, zn-ci]
     timeout-minutes: 5
     steps:
