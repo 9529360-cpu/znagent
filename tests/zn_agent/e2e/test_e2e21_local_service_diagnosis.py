@@ -59,6 +59,7 @@ class LocalServiceDiagnosisE2E(unittest.TestCase):
                     "expected_process_name": Path(sys.executable).name,
                     "health_url": f"http://127.0.0.1:{port}/health",
                     "log_path": str(log_path),
+                    "log_root": str(root),
                     "health_timeout": 1.0,
                 }
                 repair_command = " ".join(
