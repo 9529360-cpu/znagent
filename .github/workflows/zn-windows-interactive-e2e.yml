@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/zn-windows-interactive-e2e.yml
       - .github/scripts/test-zn-interactive-desktop-readiness.ps1
+      - .github/scripts/run-zn-interactive-python.ps1
       - apps/desktop/browser-extension/background.js
       - apps/desktop/browser-extension/manifest.json
       - tests/zn_agent/e2e/_run_owned_unittest_module.py
@@ -93,6 +94,7 @@ on:
     paths:
       - .github/workflows/zn-windows-interactive-e2e.yml
       - .github/scripts/test-zn-interactive-desktop-readiness.ps1
+      - .github/scripts/run-zn-interactive-python.ps1
       - apps/desktop/browser-extension/background.js
       - apps/desktop/browser-extension/manifest.json
       - tests/zn_agent/e2e/_run_owned_unittest_module.py
@@ -233,7 +235,8 @@ jobs:
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-e2e-venv\Scripts\python.exe'
-          & $python tests/zn_agent/e2e/test_windows_interactive_current_app_content_cleanup.py -v
+          $launcher = Join-Path $env:GITHUB_WORKSPACE '.github\scripts\run-zn-interactive-python.ps1'
+          & $launcher -Python $python -CommandArgs @('tests/zn_agent/e2e/test_windows_interactive_current_app_content_cleanup.py', '-v')
           if ($LASTEXITCODE -ne 0) {
             throw 'E2E-13 current-app content cleanup failed'
           }
@@ -242,7 +245,12 @@ jobs:
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-e2e-venv\Scripts\python.exe'
-          & $python tests/zn_agent/e2e/test_windows_interactive_desktop_modal_recovery.py WindowsInteractiveDesktopModalRecoveryE2ETests.test_unexpected_same_process_modal_is_safely_dismissed_then_original_work_regrounds -v
+          $launcher = Join-Path $env:GITHUB_WORKSPACE '.github\scripts\run-zn-interactive-python.ps1'
+          & $launcher -Python $python -CommandArgs @(
+            'tests/zn_agent/e2e/test_windows_interactive_desktop_modal_recovery.py',
+            'WindowsInteractiveDesktopModalRecoveryE2ETests.test_unexpected_same_process_modal_is_safely_dismissed_then_original_work_regrounds',
+            '-v'
+          )
           if ($LASTEXITCODE -ne 0) {
             throw 'E2E-15 isolated modal recovery acceptance failed'
           }
@@ -251,6 +259,7 @@ jobs:
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-e2e-venv\Scripts\python.exe'
+          $launcher = Join-Path $env:GITHUB_WORKSPACE '.github\scripts\run-zn-interactive-python.ps1'
           $ownedRunner = Join-Path $env:GITHUB_WORKSPACE 'tests\zn_agent\e2e\_run_owned_unittest_module.py'
           $excluded = @(
             'test_windows_interactive_authorized_user_browser_cdp.py',
@@ -266,7 +275,7 @@ jobs:
           }
           foreach ($test in $tests) {
             Write-Host "=== interactive module: $($test.Name) ==="
-            & $python $ownedRunner $test.FullName
+            & $launcher -Python $python -CommandArgs @($ownedRunner, $test.FullName)
             if ($LASTEXITCODE -ne 0) {
               throw "Interactive E2E module failed: $($test.Name)"
             }
@@ -323,4 +332,9 @@ jobs:
         shell: powershell
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
-          & .\.ci\interactive-diagnostics-venv\Scripts\python.exe -m unittest discover -s tests/zn_agent/e2e -p 'test_windows_interactive_*.py' -v
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-diagnostics-venv\Scripts\python.exe'
+          $launcher = Join-Path $env:GITHUB_WORKSPACE '.github\scripts\run-zn-interactive-python.ps1'
+          & $launcher -Python $python -CommandArgs @('-m', 'unittest', 'discover', '-s', 'tests/zn_agent/e2e', '-p', 'test_windows_interactive_*.py', '-v')
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Full interactive diagnostic suite failed'
+          }
