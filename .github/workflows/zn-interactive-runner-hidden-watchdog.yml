@@ -50,8 +50,7 @@ jobs:
           $taskName = 'ZN GitHub Actions Interactive Runner Watchdog'
           $task = Get-ScheduledTask -TaskPath '\' -TaskName $taskName -ErrorAction SilentlyContinue
           if ($null -eq $task) {
-            Write-Host 'No interactive runner task exists on this host. Repository recovery cannot create an interactive desktop principal from Session 0; configure it from the logged-on zn-interactive session.'
-            exit 0
+            throw 'The repository-owned zn-interactive scheduled task is missing on the shared Windows runner host. Automated Session 0 recovery cannot safely recreate an interactive principal; restore it from a logged-on zn-interactive bootstrap session.'
           }
           if ($task.Principal.LogonType -notin @('Interactive','InteractiveToken')) {
             throw "Refusing to start interactive runner task outside interactive logon boundary: $($task.Principal.LogonType)"
