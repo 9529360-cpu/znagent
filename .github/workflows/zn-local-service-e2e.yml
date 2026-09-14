@@ -8,8 +8,11 @@ on:
       - .github/workflows/zn-local-service-e2e.yml
       - runtime/python/zn_agent/core/current_app_text_body.py
       - runtime/python/zn_agent/core/local_service_diagnosis.py
+      - runtime/python/zn_agent/core/local_service_recovery_behavior.py
+      - runtime/python/zn_agent/core/research_information_product_resident.py
       - runtime/python/zn_agent/core/terminal.py
       - tests/zn_agent/core/test_local_service_diagnosis.py
+      - tests/zn_agent/core/test_local_service_recovery_behavior.py
       - tests/zn_agent/e2e/test_e2e21_local_service_diagnosis.py
   push:
     branches:
@@ -18,8 +21,11 @@ on:
       - .github/workflows/zn-local-service-e2e.yml
       - runtime/python/zn_agent/core/current_app_text_body.py
       - runtime/python/zn_agent/core/local_service_diagnosis.py
+      - runtime/python/zn_agent/core/local_service_recovery_behavior.py
+      - runtime/python/zn_agent/core/research_information_product_resident.py
       - runtime/python/zn_agent/core/terminal.py
       - tests/zn_agent/core/test_local_service_diagnosis.py
+      - tests/zn_agent/core/test_local_service_recovery_behavior.py
       - tests/zn_agent/e2e/test_e2e21_local_service_diagnosis.py
   workflow_dispatch:
 
@@ -70,7 +76,9 @@ jobs:
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e21-venv\Scripts\python.exe'
           & $python tests/zn_agent/core/test_local_service_diagnosis.py -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Run E2E-21 real local service diagnosis
+          & $python tests/zn_agent/core/test_local_service_recovery_behavior.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run E2E-21 natural-language product recovery
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e21-venv\Scripts\python.exe'
