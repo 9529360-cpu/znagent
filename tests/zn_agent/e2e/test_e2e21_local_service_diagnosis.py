@@ -1,31 +1,41 @@
 from __future__ import annotations
 
+import json
 import os
-import shlex
+import sqlite3
 import sys
 import tempfile
 import threading
 import time
 import unittest
+from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from zn_agent.core.current_app_text_body import CurrentAppTextAwareBody
-from zn_agent.core.store import KernelStore
+from zn_agent.core.local_service_recovery_behavior import _ACCEPTANCE
+from zn_agent.core.provider_bridge import build_resident_runtime
+
+
+TASK = (
+    "看看这个服务为什么挂了，项目里的 `repair_service.py` 是它的安全修复脚本；"
+    "能安全修就修，修好以后确认它真的恢复。"
+)
 
 
 class LocalServiceDiagnosisE2E(unittest.TestCase):
-    def test_real_listener_log_guarded_repair_and_fresh_verification(self) -> None:
+    def test_natural_language_root_work_repairs_once_and_freshly_verifies_service(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            state_path = root / "service.state"
-            log_path = root / "service.log"
-            repair_path = root / "repair.py"
+            workspace = root / "workspace"
+            workspace.mkdir()
+            state_path = workspace / "service.state"
+            log_path = workspace / "service.log"
+            repair_path = workspace / "repair_service.py"
             state_path.write_text("broken", encoding="utf-8")
+            log_path.write_text("service booted\n", encoding="utf-8")
             repair_path.write_text(
                 "from pathlib import Path\n"
-                "import sys\n"
-                "Path(sys.argv[1]).write_text('ready', encoding='utf-8')\n"
+                "Path('service.state').write_text('ready', encoding='utf-8')\n"
                 "print('repair applied')\n",
                 encoding="utf-8",
             )
@@ -48,63 +58,110 @@ class LocalServiceDiagnosisE2E(unittest.TestCase):
             server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
-            store = KernelStore(root / "kernel.db")
+            resident = build_resident_runtime(
+                config={"model": {}},
+                store_path=root / "kernel.db",
+            )
             try:
                 port = int(server.server_address[1])
                 self._wait_for_listener(port)
-                body = CurrentAppTextAwareBody(store=store)
-                service_args = {
-                    "port": port,
-                    "host": "127.0.0.1",
-                    "expected_process_name": Path(sys.executable).name,
-                    "health_url": f"http://127.0.0.1:{port}/health",
-                    "log_path": str(log_path),
-                    "log_root": str(root),
-                    "health_timeout": 1.0,
-                }
-                repair_command = " ".join(
-                    shlex.quote(value)
-                    for value in (sys.executable, str(repair_path), str(state_path))
+                ledger = resident.work_ledger
+                work_thread = "e2e21-product"
+                ledger.create_thread(thread_id=work_thread, title="Local service recovery")
+                ledger.attach_workspace(work_thread, workspace)
+
+                _, run = ledger.submit(
+                    work_thread,
+                    TASK,
+                    payload={
+                        "local_service_context": {
+                            "host": "127.0.0.1",
+                            "port": port,
+                            "expected_process_name": Path(sys.executable).name,
+                            "health_path": "/health",
+                            "log_relative_path": "service.log",
+                        }
+                    },
                 )
 
-                before = body.act("local_service_state", event_id="e2e21", **service_args)
-                self.assertTrue(before.success)
-                self.assertFalse(before.data["healthy"])
-                self.assertEqual(before.data["health"]["status_code"], 503)
-                self.assertTrue(before.data["listeners"])
-                self.assertEqual(before.data["listeners"][0]["pid"], os.getpid())
-                self.assertIn("ready=false", before.data["log"]["tail"])
-                self.assertIsNone(before.data["repair_blocked_reason"])
+                self.assertTrue(run.success, run.reason)
+                self.assertEqual(run.model_invocations, 0)
+                self.assertIn("fresh", run.reason)
+                self.assertEqual(state_path.read_text(encoding="utf-8"), "ready")
 
-                repair = body.act(
-                    "command",
-                    event_id="e2e21",
-                    command=repair_command,
-                    workdir=str(root),
-                    timeout=10.0,
+                actions = [
+                    item
+                    for item in resident.body.recent_actions(256)
+                    if item.event_id == run.event.event_id
+                ]
+                service_actions = [item for item in actions if item.kind == "local_service_state"]
+                command_actions = [item for item in actions if item.kind == "command"]
+                self.assertGreaterEqual(len(service_actions), 3)
+                self.assertEqual(len(command_actions), 1)
+                self.assertTrue(command_actions[0].success)
+                self.assertEqual(command_actions[0].output, "")
+                self.assertTrue(command_actions[0].data.get("output_redacted"))
+
+                root_item = resident.work_ledger.work_item_for_event(run.event.event_id)
+                self.assertIsNotNone(root_item)
+                children = [
+                    item
+                    for item in resident.work_ledger.list_work_items(work_thread, limit=64)
+                    if root_item is not None
+                    and item.parent_work_item_id == root_item.work_item_id
+                    and _ACCEPTANCE in item.acceptance_criteria
+                ]
+                self.assertEqual(len(children), 1)
+                child = children[0]
+                self.assertEqual(child.status, "completed")
+                evidence = json.loads(child.result)
+                self.assertEqual(evidence["final_health_status"], 200)
+                self.assertTrue(str(evidence["side_effect_attempt_id"]).startswith("sidefx-"))
+                self.assertTrue(evidence["command_dispatch_observed"])
+                self.assertNotIn(str(workspace), child.result)
+                self.assertNotIn("repair_service.py", child.result)
+                self.assertNotIn("service.log", child.result)
+
+                with closing(sqlite3.connect(root / "kernel.db")) as conn:
+                    row = conn.execute(
+                        "SELECT action_json,result_json FROM native_body_actions "
+                        "WHERE event_id=? AND kind='command' ORDER BY completed_at DESC LIMIT 1",
+                        (run.event.event_id,),
+                    ).fetchone()
+                self.assertIsNotNone(row)
+                durable = " ".join(str(value) for value in row or ())
+                self.assertNotIn(str(workspace), durable)
+                self.assertNotIn("repair_service.py", durable)
+                self.assertNotIn("repair applied", durable)
+                self.assertIn("command_redacted", durable)
+                self.assertIn("workdir_redacted", durable)
+                self.assertIn("output_redacted", durable)
+
+                self.assertIn("ready=false", log_path.read_text(encoding="utf-8"))
+                self.assertIn("ready=true", log_path.read_text(encoding="utf-8"))
+                print(
+                    "ZN_E2E21_PRODUCT_EVIDENCE="
+                    + json.dumps(
+                        {
+                            "natural_language_root_work": True,
+                            "model_invocations": run.model_invocations,
+                            "service_observations": len(service_actions),
+                            "repair_dispatches": len(command_actions),
+                            "initial_health": 503,
+                            "final_health": evidence["final_health_status"],
+                            "side_effect_attempt": bool(evidence["side_effect_attempt_id"]),
+                            "durable_command_redacted": True,
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    flush=True,
                 )
-                self.assertTrue(repair.success)
-                self.assertIn("repair applied", repair.output)
-                self.assertTrue(repair.data["side_effect_dispatch_observed"])
-
-                after = self._wait_for_body_health(body, service_args)
-                self.assertTrue(after.success)
-                self.assertTrue(after.data["healthy"])
-                self.assertEqual(after.data["health"]["status_code"], 200)
             finally:
-                store.close()
+                resident.store.close()
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=3.0)
-
-    @staticmethod
-    def _wait_for_body_health(body, service_args: dict) -> object:
-        deadline = time.monotonic() + 5.0
-        last = body.act("local_service_state", event_id="e2e21", **service_args)
-        while not bool(last.data.get("healthy")) and time.monotonic() < deadline:
-            time.sleep(0.05)
-            last = body.act("local_service_state", event_id="e2e21", **service_args)
-        return last
 
     @staticmethod
     def _wait_for_listener(port: int) -> None:
@@ -121,4 +178,4 @@ class LocalServiceDiagnosisE2E(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    unittest.main(verbosity=2)
