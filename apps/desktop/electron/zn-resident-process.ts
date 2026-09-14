@@ -296,15 +296,16 @@ export class ZnResidentProcess extends EventEmitter {
     this.disconnect()
     this.socket = socket
     this.endpoint = endpoint
-    this.lines = readline.createInterface({ input: socket })
-    this.lines.on('line', line => this.onLine(line))
-    socket.on('error', error => { if (this.socket === socket) this.emit('process-error', error) })
+    const lines = readline.createInterface({ input: socket })
+    this.lines = lines
+    lines.on('line', line => this.onLine(line))
+    lines.on('error', error => { if (this.lines === lines) this.emit('process-error', error) })
     socket.on('close', () => {
       if (this.socket !== socket) return
       this.socket = null
       this.endpoint = null
-      this.lines?.close()
-      this.lines = null
+      lines.close()
+      if (this.lines === lines) this.lines = null
       this.rejectPending(new Error('ZN Resident service connection closed'))
       this.emit('disconnect')
     })
