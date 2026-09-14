@@ -176,11 +176,26 @@ class E2E23CommandPathReplanTests(unittest.TestCase):
 
                 terminal = None
                 completed_command = None
+                replan_evidence = None
+                observed_attempt_id = None
                 for _ in range(120):
                     result = resident.live_once()
                     if result is not None and result.event.event_id == event.event_id:
                         terminal = result
                         break
+
+                    state = resident.store.get_working_state()
+                    rolling = state.data.get(resident._ROLLING_STEP_KEY)
+                    if isinstance(rolling, dict) and rolling.get("path_replanned") is True:
+                        replan_evidence = dict(rolling)
+                    raw_action = state.data.get("native_action_result")
+                    if isinstance(raw_action, dict):
+                        data = raw_action.get("data")
+                        if isinstance(data, dict):
+                            attempt_id = str(data.get("side_effect_attempt_id") or "").strip()
+                            if attempt_id:
+                                observed_attempt_id = attempt_id
+
                     children = [
                         item
                         for item in ledger.list_work_items(thread)
@@ -208,14 +223,14 @@ class E2E23CommandPathReplanTests(unittest.TestCase):
                 self.assertIsNotNone(completed_command)
                 self.assertGreaterEqual(cognition.step_calls, 1)
                 self.assertIn("E2E23_READY", completed_command.result or "")
-
-                state = resident.store.get_working_state()
-                rolling = state.data.get(resident._ROLLING_STEP_KEY)
-                self.assertIsInstance(rolling, dict)
-                assert isinstance(rolling, dict)
-                self.assertTrue(rolling.get("path_replanned"))
-                self.assertEqual(rolling.get("requested_relative_path"), "expected/probe.py")
-                self.assertEqual(rolling.get("relative_path"), "scripts/probe.py")
+                self.assertIsNotNone(replan_evidence)
+                assert isinstance(replan_evidence, dict)
+                self.assertEqual(
+                    replan_evidence.get("requested_relative_path"),
+                    "expected/probe.py",
+                )
+                self.assertEqual(replan_evidence.get("relative_path"), "scripts/probe.py")
+                self.assertTrue(str(observed_attempt_id or "").startswith("sidefx-"))
 
                 actions = [
                     item
@@ -226,7 +241,6 @@ class E2E23CommandPathReplanTests(unittest.TestCase):
                 command = str(actions[0].data.get("command") or "").replace("\\", "/")
                 self.assertIn("scripts/probe.py", command)
                 self.assertNotIn("expected/probe.py", command)
-                self.assertTrue(actions[0].data.get("side_effect_dispatch_observed"))
 
                 root_after = ledger.work_item_for_event(event.event_id)
                 self.assertIsNotNone(root_after)
