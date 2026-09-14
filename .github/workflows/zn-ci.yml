@@ -203,7 +203,7 @@ jobs:
     name: Publish Windows CI statuses
     if: ${{ always() }}
     needs: [source-boundary, kernel, desktop]
-    runs-on: [self-hosted, Windows, X64, zn-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Publish readable CI statuses
