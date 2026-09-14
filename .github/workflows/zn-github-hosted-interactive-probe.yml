@@ -80,7 +80,21 @@ jobs:
             '                            "semantic_verification": diagnostic_state.data.get(resident._SEMANTIC_VERIFICATION_KEY),',
             '                            "pointer_execution": diagnostic_state.data.get(resident._POINTER_CLICK_EXECUTION_KEY),',
             '                            "native_verification_result": diagnostic_state.data.get("native_verification_result"),',
-            '                        }), flush=True)'
+            '                        }), flush=True)',
+            '                        diagnostic_contract = diagnostic_state.data.get("native_verification") or {}',
+            '                        for diagnostic_delay in (0.25, 0.75):',
+            '                            time.sleep(diagnostic_delay)',
+            '                            late_observation = resident.visual_region.probe(',
+            '                                center_x_fraction=float(diagnostic_contract["center_x_fraction"]),',
+            '                                center_y_fraction=float(diagnostic_contract["center_y_fraction"]),',
+            '                                width_fraction=float(diagnostic_contract["width_fraction"]),',
+            '                                height_fraction=float(diagnostic_contract["height_fraction"]),',
+            '                            )',
+            '                            print("ZN_POINTER_UIA_LATE_VISUAL=" + repr({',
+            '                                "delay": diagnostic_delay,',
+            '                                "signature": late_observation.signature,',
+            '                                "mean_luminance": late_observation.mean_luminance,',
+            '                            }), flush=True)'
           )
           $lines.InsertRange($index, $insert)
           [IO.File]::WriteAllLines($testPath, $lines, [Text.UTF8Encoding]::new($false))
