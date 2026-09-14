@@ -6,11 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from zn_agent.core.local_service_diagnosis import (
-    LocalServiceDiagnoser,
-    LocalServiceTarget,
-)
-from zn_agent.core.terminal import TerminalResult
+from zn_agent.core.current_app_text_body import CurrentAppTextAwareBody
+from zn_agent.core.local_service_diagnosis import LocalServiceDiagnoser, LocalServiceTarget
 
 
 class _Oneshot:
@@ -54,26 +51,6 @@ class _Response:
         self.closed = True
 
 
-class _Terminal:
-    def __init__(self, callback=None, *, success: bool = True) -> None:
-        self.callback = callback
-        self.success = success
-        self.requests = []
-
-    def execute(self, request):
-        self.requests.append(request)
-        if self.callback is not None:
-            self.callback()
-        return TerminalResult(
-            status="completed",
-            command=request.command,
-            success=self.success,
-            output="repair dispatched",
-            exit_code=0 if self.success else 1,
-            cwd=request.workdir,
-        )
-
-
 def _connection(port: int, pid: int, *, host: str = "127.0.0.1"):
     return SimpleNamespace(
         status="LISTEN",
@@ -111,89 +88,55 @@ class LocalServiceDiagnosisTests(unittest.TestCase):
             self.assertEqual(snapshot.health.status_code, 503)
             self.assertEqual(snapshot.log.tail, "old\nready=false")
             self.assertIn("health", snapshot.reason)
+            self.assertIsNone(snapshot.repair_blocked_reason)
             self.assertTrue(response.closed)
 
-    def test_explicit_repair_is_verified_by_real_postcondition(self) -> None:
-        state = {"healthy": False}
-        terminal = _Terminal(callback=lambda: state.__setitem__("healthy", True))
+    def test_wait_until_healthy_requires_fresh_observed_postcondition(self) -> None:
+        state = {"probes": 0}
+
+        def open_health(url, timeout):
+            state["probes"] += 1
+            return _Response(200 if state["probes"] >= 2 else 503)
+
         diagnoser = LocalServiceDiagnoser(
-            terminal=terminal,
             connection_provider=lambda: [_connection(8124, 4243)],
-            urlopen=lambda url, timeout: _Response(200 if state["healthy"] else 503),
+            urlopen=open_health,
             sleep=lambda seconds: None,
         )
         with patch(
             "zn_agent.core.local_service_diagnosis.psutil.Process",
             side_effect=lambda pid: _Process(pid),
         ):
-            result = diagnoser.diagnose_and_repair(
+            snapshot = diagnoser.wait_until_healthy(
                 LocalServiceTarget(
                     port=8124,
                     expected_process_name="service.exe",
                     health_url="http://127.0.0.1:8124/health",
                 ),
-                repair_command="service-repair --safe",
-                workdir="C:/work",
-                verification_timeout=0.1,
+                timeout=0.1,
+                interval=0.01,
             )
 
-        self.assertFalse(result.before.healthy)
-        self.assertTrue(result.after.healthy)
-        self.assertTrue(result.repair_attempted)
-        self.assertTrue(result.restored)
-        self.assertTrue(result.success)
-        self.assertEqual(len(terminal.requests), 1)
-        self.assertEqual(terminal.requests[0].command, "service-repair --safe")
+        self.assertTrue(snapshot.healthy)
+        self.assertGreaterEqual(state["probes"], 2)
 
-    def test_command_success_is_not_treated_as_service_recovery(self) -> None:
-        terminal = _Terminal(success=True)
+    def test_unexpected_port_owner_is_visible_as_repair_blocker(self) -> None:
         diagnoser = LocalServiceDiagnoser(
-            terminal=terminal,
-            connection_provider=lambda: [_connection(8125, 4244)],
-            urlopen=lambda url, timeout: _Response(503),
-            sleep=lambda seconds: None,
-        )
-        with patch(
-            "zn_agent.core.local_service_diagnosis.psutil.Process",
-            side_effect=lambda pid: _Process(pid),
-        ):
-            result = diagnoser.diagnose_and_repair(
-                LocalServiceTarget(
-                    port=8125,
-                    health_url="http://127.0.0.1:8125/health",
-                ),
-                repair_command="repair-command",
-                verification_timeout=0.0,
-            )
-
-        self.assertTrue(result.repair_result.success)
-        self.assertFalse(result.after.healthy)
-        self.assertFalse(result.success)
-        self.assertFalse(result.restored)
-
-    def test_unexpected_port_owner_blocks_repair(self) -> None:
-        terminal = _Terminal()
-        diagnoser = LocalServiceDiagnoser(
-            terminal=terminal,
             connection_provider=lambda: [_connection(8126, 4245)],
         )
         with patch(
             "zn_agent.core.local_service_diagnosis.psutil.Process",
             side_effect=lambda pid: _Process(pid, name="other.exe"),
         ):
-            result = diagnoser.diagnose_and_repair(
-                LocalServiceTarget(port=8126, expected_process_name="service.exe"),
-                repair_command="restart-service",
+            snapshot = diagnoser.inspect(
+                LocalServiceTarget(port=8126, expected_process_name="service.exe")
             )
 
-        self.assertFalse(result.repair_attempted)
-        self.assertIn("unexpected", result.repair_blocked_reason)
-        self.assertEqual(terminal.requests, [])
+        self.assertFalse(snapshot.healthy)
+        self.assertIn("unexpected", snapshot.repair_blocked_reason)
 
-    def test_multiple_port_owners_block_repair(self) -> None:
-        terminal = _Terminal()
+    def test_multiple_port_owners_are_visible_as_repair_blocker(self) -> None:
         diagnoser = LocalServiceDiagnoser(
-            terminal=terminal,
             connection_provider=lambda: [
                 _connection(8127, 4246, host="0.0.0.0"),
                 _connection(8127, 4247, host="::"),
@@ -203,14 +146,9 @@ class LocalServiceDiagnosisTests(unittest.TestCase):
             "zn_agent.core.local_service_diagnosis.psutil.Process",
             side_effect=lambda pid: _Process(pid),
         ):
-            result = diagnoser.diagnose_and_repair(
-                LocalServiceTarget(port=8127),
-                repair_command="restart-service",
-            )
+            snapshot = diagnoser.inspect(LocalServiceTarget(port=8127))
 
-        self.assertFalse(result.repair_attempted)
-        self.assertIn("multiple", result.repair_blocked_reason)
-        self.assertEqual(terminal.requests, [])
+        self.assertIn("multiple", snapshot.repair_blocked_reason)
 
     def test_log_tail_is_bounded_to_recent_lines(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -223,6 +161,29 @@ class LocalServiceDiagnosisTests(unittest.TestCase):
             snapshot = diagnoser.inspect(LocalServiceTarget(port=8128, log_path=str(log)))
             self.assertEqual(snapshot.log.tail, "line-7\nline-8\nline-9")
             self.assertTrue(snapshot.log.truncated)
+
+    def test_final_product_body_exposes_read_only_local_service_state(self) -> None:
+        body = CurrentAppTextAwareBody()
+        body._local_service_diagnoser = LocalServiceDiagnoser(
+            connection_provider=lambda: [_connection(8129, 4248)],
+            urlopen=lambda url, timeout: _Response(200),
+        )
+        with patch(
+            "zn_agent.core.local_service_diagnosis.psutil.Process",
+            side_effect=lambda pid: _Process(pid),
+        ):
+            result = body.act(
+                "local_service_state",
+                port=8129,
+                expected_process_name="service.exe",
+                health_url="http://127.0.0.1:8129/health",
+            )
+
+        self.assertTrue(result.success)
+        self.assertTrue(result.data["healthy"])
+        self.assertEqual(result.data["listeners"][0]["pid"], 4248)
+        self.assertTrue(body._requires_guard("command", {"command": "repair"}))
+        self.assertFalse(body._requires_guard("local_service_state", {"port": 8129}))
 
 
 if __name__ == "__main__":
