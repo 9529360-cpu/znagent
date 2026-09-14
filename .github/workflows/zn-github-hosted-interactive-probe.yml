@@ -60,33 +60,30 @@ jobs:
       - name: Add failure-only pointer/UIA state diagnostics
         run: |
           $testPath = Join-Path $env:GITHUB_WORKSPACE 'tests\zn_agent\e2e\test_windows_interactive_pointer_uia.py'
-          $content = Get-Content -LiteralPath $testPath -Raw
-          $needle = @'
-                    result = resident.live_once()
-                    self.assertIsNotNone(result)
-                    self.assertTrue(result.success, result)
-'@
-          $replacement = @'
-                    result = resident.live_once()
-                    if result is None:
-                        diagnostic_state = resident.store.get_working_state()
-                        print("ZN_POINTER_UIA_TERMINAL_DIAGNOSTIC=" + repr({
-                            "stage": diagnostic_state.stage,
-                            "next_action": diagnostic_state.next_action,
-                            "local_failure": diagnostic_state.data.get("local_failure"),
-                            "automation_verification": diagnostic_state.data.get(resident._AUTOMATION_VERIFICATION_KEY),
-                            "semantic_verification": diagnostic_state.data.get(resident._SEMANTIC_VERIFICATION_KEY),
-                            "pointer_execution": diagnostic_state.data.get(resident._POINTER_CLICK_EXECUTION_KEY),
-                            "native_verification_result": diagnostic_state.data.get("native_verification_result"),
-                        }), flush=True)
-                    self.assertIsNotNone(result)
-                    self.assertTrue(result.success, result)
-'@
-          if (-not $content.Contains($needle)) {
-            throw 'Expected exact pointer/UIA terminal assertion shape was not found.'
+          $lines = [System.Collections.Generic.List[string]](Get-Content -LiteralPath $testPath)
+          $assertLine = '                    self.assertIsNotNone(result)'
+          $index = $lines.IndexOf($assertLine)
+          if ($index -lt 1 -or $index + 1 -ge $lines.Count) {
+            throw 'Expected pointer/UIA terminal assertion was not found uniquely enough to diagnose.'
           }
-          $patched = $content.Replace($needle, $replacement)
-          [IO.File]::WriteAllText($testPath, $patched, [Text.UTF8Encoding]::new($false))
+          if ($lines[$index - 1] -ne '                    result = resident.live_once()' -or $lines[$index + 1] -ne '                    self.assertTrue(result.success, result)') {
+            throw 'Pointer/UIA terminal assertion shape drifted; refusing diagnostic rewrite.'
+          }
+          $insert = [string[]]@(
+            '                    if result is None:',
+            '                        diagnostic_state = resident.store.get_working_state()',
+            '                        print("ZN_POINTER_UIA_TERMINAL_DIAGNOSTIC=" + repr({',
+            '                            "stage": diagnostic_state.stage,',
+            '                            "next_action": diagnostic_state.next_action,',
+            '                            "local_failure": diagnostic_state.data.get("local_failure"),',
+            '                            "automation_verification": diagnostic_state.data.get(resident._AUTOMATION_VERIFICATION_KEY),',
+            '                            "semantic_verification": diagnostic_state.data.get(resident._SEMANTIC_VERIFICATION_KEY),',
+            '                            "pointer_execution": diagnostic_state.data.get(resident._POINTER_CLICK_EXECUTION_KEY),',
+            '                            "native_verification_result": diagnostic_state.data.get("native_verification_result"),',
+            '                        }), flush=True)'
+          )
+          $lines.InsertRange($index, $insert)
+          [IO.File]::WriteAllLines($testPath, $lines, [Text.UTF8Encoding]::new($false))
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
