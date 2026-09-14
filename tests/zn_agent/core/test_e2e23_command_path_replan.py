@@ -164,14 +164,10 @@ class E2E23CommandPathReplanTests(unittest.TestCase):
                 ledger.attach_workspace(thread, workspace, name="E2E-23 Workspace")
                 _, event = control.start(
                     thread,
-                    (
-                        "Build a reliable local verification workflow around the existing project "
-                        "readiness probe, execute it, and recover from any stale expected path by "
-                        "inspecting the attached workspace until the real probe prints E2E23_READY."
-                    ),
+                    "Create a tiny local Python artifact, execute it, and recover from real failures until its contract passes.",
                     payload={"model_policy": "on_demand"},
                     acceptance_criteria=[
-                        "a later product-level verifier still owns Root completion",
+                        "a later product-level verifier still has to accept the Root Work",
                     ],
                 )
                 root_item = ledger.work_item_for_event(event.event_id)
