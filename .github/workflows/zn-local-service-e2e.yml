@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - .github/workflows/zn-local-service-e2e.yml
+      - runtime/python/zn_agent/core/current_app_text_body.py
       - runtime/python/zn_agent/core/local_service_diagnosis.py
       - runtime/python/zn_agent/core/terminal.py
       - tests/zn_agent/core/test_local_service_diagnosis.py
@@ -15,6 +16,7 @@ on:
       - main
     paths:
       - .github/workflows/zn-local-service-e2e.yml
+      - runtime/python/zn_agent/core/current_app_text_body.py
       - runtime/python/zn_agent/core/local_service_diagnosis.py
       - runtime/python/zn_agent/core/terminal.py
       - tests/zn_agent/core/test_local_service_diagnosis.py
