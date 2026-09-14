@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - .github/workflows/zn-windows-interactive-e2e.yml
+      - .github/scripts/test-zn-interactive-desktop-readiness.ps1
       - apps/desktop/browser-extension/background.js
       - apps/desktop/browser-extension/manifest.json
       - tests/zn_agent/e2e/_run_owned_unittest_module.py
@@ -91,6 +92,7 @@ on:
       - main
     paths:
       - .github/workflows/zn-windows-interactive-e2e.yml
+      - .github/scripts/test-zn-interactive-desktop-readiness.ps1
       - apps/desktop/browser-extension/background.js
       - apps/desktop/browser-extension/manifest.json
       - tests/zn_agent/e2e/_run_owned_unittest_module.py
@@ -202,6 +204,13 @@ jobs:
           }
       - name: Checkout
         uses: actions/checkout@v7
+      - name: Prove interactive desktop readiness
+        shell: powershell
+        run: |
+          & "$env:GITHUB_WORKSPACE\.github\scripts\test-zn-interactive-desktop-readiness.ps1"
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
@@ -286,6 +295,13 @@ jobs:
           }
       - name: Checkout
         uses: actions/checkout@v7
+      - name: Prove interactive desktop readiness
+        shell: powershell
+        run: |
+          & "$env:GITHUB_WORKSPACE\.github\scripts\test-zn-interactive-desktop-readiness.ps1"
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
