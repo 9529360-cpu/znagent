@@ -140,6 +140,13 @@ class _ForegroundAnchor:
             self._user32.AttachThreadInput(current_thread, foreground_thread, False)
 
 
+def _replace_sys_path0(value: str) -> None:
+    if sys.path:
+        sys.path[0] = value
+    else:
+        sys.path.insert(0, value)
+
+
 def _run_original(args: list[str]) -> None:
     if not args:
         raise RuntimeError("interactive Python entry requires an original Python command")
@@ -148,6 +155,9 @@ def _run_original(args: list[str]) -> None:
         if len(args) < 2 or not args[1]:
             raise RuntimeError("interactive Python entry received -m without a module")
         module = args[1]
+        # Match `python -m ...`: the current working directory, rather than this
+        # repository-owned entry helper directory, is the first import location.
+        _replace_sys_path0(os.path.abspath(os.getcwd()))
         sys.argv = [module, *args[2:]]
         runpy.run_module(module, run_name="__main__", alter_sys=True)
         return
@@ -156,6 +166,10 @@ def _run_original(args: list[str]) -> None:
         raise RuntimeError(f"unsupported interactive Python invocation mode: {args[0]}")
 
     script = args[0]
+    # `runpy.run_path()` intentionally does not prepend a plain script file's
+    # directory to sys.path. Direct CPython script execution does, and several
+    # existing E2Es import sibling fixture modules through that standard rule.
+    _replace_sys_path0(os.path.dirname(os.path.abspath(script)))
     sys.argv = [script, *args[1:]]
     runpy.run_path(script, run_name="__main__")
 
