@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -280,7 +281,7 @@ class LocalServiceDiagnosisTests(unittest.TestCase):
                 self.assertEqual(live.data["health"]["url"], secret_url)
                 self.assertEqual(live.data["log"]["tail"], secret_log)
                 self.assertEqual(live.data["log"]["path"], str(log.resolve()))
-                with body._connect() as conn:
+                with closing(body._connect()) as conn:
                     row = conn.execute(
                         "SELECT action_json, result_json FROM native_body_actions "
                         "WHERE action_id = ?",
