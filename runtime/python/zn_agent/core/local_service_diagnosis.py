@@ -32,7 +32,10 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 
 def _open_without_redirects(url: str, *, timeout: float):
-    opener = urllib.request.build_opener(_NoRedirectHandler())
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _NoRedirectHandler(),
+    )
     return opener.open(url, timeout=timeout)
 
 
