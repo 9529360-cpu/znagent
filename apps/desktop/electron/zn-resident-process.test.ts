@@ -28,12 +28,12 @@ const server = net.createServer(socket => {
   let buffer = ''
   let authenticated = false
 
-  const send = payload => socket.write(JSON.stringify(payload) + '\\n')
+  const send = payload => socket.write(JSON.stringify(payload) + '\n')
 
   socket.on('data', chunk => {
     buffer += chunk
     while (true) {
-      const newline = buffer.indexOf('\\n')
+      const newline = buffer.indexOf('\n')
       if (newline < 0) return
       const raw = buffer.slice(0, newline)
       buffer = buffer.slice(newline + 1)
@@ -58,7 +58,7 @@ const server = net.createServer(socket => {
       }
 
       if (request.method === 'shutdown') {
-        socket.end(JSON.stringify({ id, ok: true, result: { shutdown: true } }) + '\\n', () => {
+        socket.end(JSON.stringify({ id, ok: true, result: { shutdown: true } }) + '\n', () => {
           server.close(() => {
             try {
               const current = JSON.parse(fs.readFileSync(endpointPath, 'utf8'))
