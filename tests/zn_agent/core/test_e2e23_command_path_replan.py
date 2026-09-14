@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from zn_agent.core.broad_goal_coding_resident import BroadGoalCodingResidentRuntime
 from zn_agent.core.cognitive_resource import CognitiveIncrement, CognitiveResourceWorkerFactory
@@ -120,6 +124,39 @@ class CommandPathRealityResolutionTests(unittest.TestCase):
                     Path("expected/probe.py"),
                 )
             )
+
+    def test_windows_reparse_directory_is_pruned_before_discovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            junction = root / "junction"
+            target = junction / "probe.py"
+            junction.mkdir()
+            target.write_text("print('must not discover')\n", encoding="utf-8")
+
+            real_lstat = os.lstat
+            reparse_attribute = int(
+                getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x00000400)
+            )
+
+            def lstat_with_reparse(path):
+                metadata = real_lstat(path)
+                if Path(path) == junction:
+                    return SimpleNamespace(
+                        st_mode=metadata.st_mode,
+                        st_file_attributes=reparse_attribute,
+                    )
+                return metadata
+
+            with patch(
+                "zn_agent.core.broad_goal_coding_resident.os.lstat",
+                side_effect=lstat_with_reparse,
+            ):
+                self.assertIsNone(
+                    BroadGoalCodingResidentRuntime._resolve_workspace_python_script(
+                        root,
+                        Path("expected/probe.py"),
+                    )
+                )
 
 
 class E2E23CommandPathReplanTests(unittest.TestCase):
