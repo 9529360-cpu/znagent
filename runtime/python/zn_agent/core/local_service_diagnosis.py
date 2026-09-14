@@ -3,10 +3,10 @@ from __future__ import annotations
 """Bounded read-only local-service diagnosis and verification.
 
 This module observes one local listener, correlates it with its owning process,
-reads a bounded log tail and probes an optional health URL. It deliberately does
-not execute repair commands or kill processes. Repairs stay on ZN's existing
-``command`` Body action so the established authority, replay and durable
-side-effect journal remain the only mutation boundary.
+reads a bounded log tail and probes an optional same-service HTTP health URL. It
+deliberately does not execute repair commands or kill processes. Repairs stay on
+ZN's existing ``command`` Body action so the established authority, replay and
+durable side-effect journal remain the only mutation boundary.
 """
 
 import os
@@ -16,8 +16,24 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
+from urllib.parse import urlsplit
 
 import psutil
+
+
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+_WILDCARD_HOSTS = frozenset({"0.0.0.0", "::", "*"})
+_MAX_HEALTH_URL_CHARS = 2048
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _open_without_redirects(url: str, *, timeout: float):
+    opener = urllib.request.build_opener(_NoRedirectHandler())
+    return opener.open(url, timeout=timeout)
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,8 +48,13 @@ class LocalServiceTarget:
         port = int(self.port)
         if not 1 <= port <= 65535:
             raise ValueError("local service port must be between 1 and 65535")
-        if not str(self.host or "").strip():
+        host = str(self.host or "").strip()
+        if not host:
             raise ValueError("local service host must not be empty")
+        if len(host) > 255:
+            raise ValueError("local service host is too long")
+        if self.health_url:
+            _validate_health_url(str(self.health_url), host=host, port=port)
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +64,6 @@ class LocalListenerObservation:
     pid: int | None
     process_name: str | None
     executable_path: str | None
-    command_line: tuple[str, ...]
     created_at_epoch: float | None
     status: str
 
@@ -97,7 +117,7 @@ class LocalServiceDiagnoser:
         self._connection_provider = connection_provider or (
             lambda: psutil.net_connections(kind="inet")
         )
-        self._urlopen = urlopen or urllib.request.urlopen
+        self._urlopen = urlopen or _open_without_redirects
         self._sleep = sleep
         self.max_log_bytes = max(1024, int(max_log_bytes))
         self.max_log_lines = max(1, int(max_log_lines))
@@ -160,7 +180,6 @@ class LocalServiceDiagnoser:
             pid = _positive_int(getattr(connection, "pid", None))
             process_name: str | None = None
             executable: str | None = None
-            command_line: tuple[str, ...] = ()
             created_at: float | None = None
             if pid is not None:
                 try:
@@ -168,9 +187,6 @@ class LocalServiceDiagnoser:
                     with process.oneshot():
                         process_name = _best_effort(process.name)
                         executable = _best_effort(process.exe)
-                        raw_cmdline = _best_effort(process.cmdline)
-                        if isinstance(raw_cmdline, (list, tuple)):
-                            command_line = tuple(str(item) for item in raw_cmdline)
                         raw_created = _best_effort(process.create_time)
                         if raw_created is not None:
                             created_at = float(raw_created)
@@ -188,7 +204,6 @@ class LocalServiceDiagnoser:
                     pid=pid,
                     process_name=process_name,
                     executable_path=executable,
-                    command_line=command_line,
                     created_at_epoch=created_at,
                     status=status,
                 )
@@ -216,7 +231,7 @@ class LocalServiceDiagnoser:
                 close = getattr(response, "close", None)
                 if callable(close):
                     close()
-            return LocalHealthObservation(url=url, ok=200 <= code < 400, status_code=code)
+            return LocalHealthObservation(url=url, ok=200 <= code < 300, status_code=code)
         except urllib.error.HTTPError as exc:
             return LocalHealthObservation(
                 url=url,
@@ -292,6 +307,41 @@ class LocalServiceDiagnoser:
         return None
 
 
+def _validate_health_url(value: str, *, host: str, port: int) -> None:
+    url = str(value or "").strip()
+    if not url or len(url) > _MAX_HEALTH_URL_CHARS:
+        raise ValueError("local service health URL is empty or too long")
+    try:
+        parsed = urlsplit(url)
+        parsed_port = parsed.port
+    except ValueError as exc:
+        raise ValueError("local service health URL is invalid") from exc
+    scheme = parsed.scheme.casefold()
+    if scheme not in {"http", "https"}:
+        raise ValueError("local service health URL must use http or https")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("local service health URL must not contain credentials")
+    if not parsed.hostname:
+        raise ValueError("local service health URL requires a hostname")
+    if parsed.fragment:
+        raise ValueError("local service health URL must not contain a fragment")
+    effective_port = parsed_port or (443 if scheme == "https" else 80)
+    if int(effective_port) != int(port):
+        raise ValueError("local service health URL must use the target listener port")
+    if not _health_host_matches_target(host, parsed.hostname):
+        raise ValueError("local service health URL must address the target local host")
+
+
+def _health_host_matches_target(target: str, url_host: str) -> bool:
+    wanted = str(target or "").strip().casefold().strip("[]")
+    actual = str(url_host or "").strip().casefold().strip("[]")
+    if wanted in _LOOPBACK_HOSTS:
+        return actual in _LOOPBACK_HOSTS
+    if wanted in _WILDCARD_HOSTS:
+        return actual in _LOOPBACK_HOSTS
+    return wanted == actual
+
+
 def _address_parts(address: object) -> tuple[str, int]:
     host = str(getattr(address, "ip", "") or "")
     port = _positive_int(getattr(address, "port", None))
@@ -302,11 +352,11 @@ def _address_parts(address: object) -> tuple[str, int]:
 
 
 def _host_matches(target: str, observed: str) -> bool:
-    wanted = str(target).strip().casefold()
-    actual = str(observed).strip().casefold()
-    if wanted in {"localhost", "127.0.0.1", "::1"}:
-        return actual in {"localhost", "127.0.0.1", "::1", "0.0.0.0", "::"}
-    if wanted in {"0.0.0.0", "::", "*"}:
+    wanted = str(target).strip().casefold().strip("[]")
+    actual = str(observed).strip().casefold().strip("[]")
+    if wanted in _LOOPBACK_HOSTS:
+        return actual in _LOOPBACK_HOSTS | frozenset({"0.0.0.0", "::"})
+    if wanted in _WILDCARD_HOSTS:
         return True
     return wanted == actual
 
