@@ -61,7 +61,8 @@ def _connection(port: int, pid: int, *, host: str = "127.0.0.1"):
 class LocalServiceDiagnosisTests(unittest.TestCase):
     def test_inspect_correlates_listener_process_health_and_bounded_log(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            log = Path(tmp) / "service.log"
+            root = Path(tmp)
+            log = root / "service.log"
             log.write_text("old\nready=false\n", encoding="utf-8")
             response = _Response(503)
             diagnoser = LocalServiceDiagnoser(
@@ -78,6 +79,7 @@ class LocalServiceDiagnosisTests(unittest.TestCase):
                         expected_process_name="service",
                         health_url="http://127.0.0.1:8123/health",
                         log_path=str(log),
+                        log_root=str(root),
                     )
                 )
 
@@ -180,15 +182,50 @@ class LocalServiceDiagnosisTests(unittest.TestCase):
 
     def test_log_tail_is_bounded_to_recent_lines(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            log = Path(tmp) / "service.log"
+            root = Path(tmp)
+            log = root / "service.log"
             log.write_text("\n".join(f"line-{index}" for index in range(10)), encoding="utf-8")
             diagnoser = LocalServiceDiagnoser(
                 connection_provider=lambda: [],
                 max_log_lines=3,
             )
-            snapshot = diagnoser.inspect(LocalServiceTarget(port=8128, log_path=str(log)))
+            snapshot = diagnoser.inspect(
+                LocalServiceTarget(
+                    port=8128,
+                    log_path=str(log),
+                    log_root=str(root),
+                )
+            )
             self.assertEqual(snapshot.log.tail, "line-7\nline-8\nline-9")
             self.assertTrue(snapshot.log.truncated)
+
+    def test_log_path_requires_explicit_root_and_rejects_escape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            allowed = root / "allowed"
+            allowed.mkdir()
+            inside = allowed / "service.log"
+            outside = root / "outside.log"
+            inside.write_text("inside", encoding="utf-8")
+            outside.write_text("outside", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "explicit log_root"):
+                LocalServiceTarget(port=8131, log_path=str(inside))
+            with self.assertRaisesRegex(ValueError, "outside explicit log_root"):
+                LocalServiceTarget(
+                    port=8131,
+                    log_path=str(outside),
+                    log_root=str(allowed),
+                )
+
+            snapshot = LocalServiceDiagnoser(connection_provider=lambda: []).inspect(
+                LocalServiceTarget(
+                    port=8131,
+                    log_path=str(inside),
+                    log_root=str(allowed),
+                )
+            )
+            self.assertEqual(snapshot.log.tail, "inside")
 
     def test_final_product_body_exposes_read_only_local_service_state(self) -> None:
         body = CurrentAppTextAwareBody()
@@ -213,10 +250,10 @@ class LocalServiceDiagnosisTests(unittest.TestCase):
         self.assertTrue(body._requires_guard("command", {"command": "repair"}))
         self.assertFalse(body._requires_guard("local_service_state", {"port": 8129}))
 
-    def test_durable_body_history_redacts_health_url_and_log_tail(self) -> None:
+    def test_durable_body_history_redacts_health_url_log_path_root_and_tail(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            log = root / "service.log"
+            log = root / "super-secret-service-path.log"
             secret_log = "token=super-secret-log-value"
             secret_url = "http://127.0.0.1:8130/health?token=super-secret-url-value"
             log.write_text(secret_log, encoding="utf-8")
@@ -237,10 +274,12 @@ class LocalServiceDiagnosisTests(unittest.TestCase):
                         port=8130,
                         health_url=secret_url,
                         log_path=str(log),
+                        log_root=str(root),
                     )
 
                 self.assertEqual(live.data["health"]["url"], secret_url)
                 self.assertEqual(live.data["log"]["tail"], secret_log)
+                self.assertEqual(live.data["log"]["path"], str(log.resolve()))
                 with body._connect() as conn:
                     row = conn.execute(
                         "SELECT action_json, result_json FROM native_body_actions "
@@ -256,8 +295,14 @@ class LocalServiceDiagnosisTests(unittest.TestCase):
                 )
                 self.assertNotIn("super-secret-url-value", serialized)
                 self.assertNotIn("super-secret-log-value", serialized)
+                self.assertNotIn("super-secret-service-path.log", serialized)
                 self.assertTrue(action["args"]["health_url_redacted"])
+                self.assertTrue(action["args"]["log_path_redacted"])
+                self.assertTrue(action["args"]["log_root_redacted"])
                 self.assertTrue(persisted["data"]["health"]["url_redacted"])
+                self.assertTrue(persisted["data"]["target"]["log_path_redacted"])
+                self.assertTrue(persisted["data"]["target"]["log_root_redacted"])
+                self.assertTrue(persisted["data"]["log"]["path_redacted"])
                 self.assertTrue(persisted["data"]["log"]["tail_redacted"])
                 self.assertGreater(persisted["data"]["log"]["tail_chars"], 0)
             finally:
