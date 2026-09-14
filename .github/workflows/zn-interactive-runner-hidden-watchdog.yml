@@ -43,7 +43,7 @@ jobs:
           if ($env:RUNNER_NAME -notmatch '^zn-ci-') {
             throw "ZN interactive recovery requires a zn-ci service runner; got $env:RUNNER_NAME"
           }
-      - name: Start existing interactive runner task when stopped
+      - name: Start exact existing interactive runner task when stopped
         shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         run: |
           $taskName = 'ZN GitHub Actions Interactive Runner Watchdog'
@@ -55,6 +55,33 @@ jobs:
           if ($task.Principal.LogonType -notin @('Interactive','InteractiveToken')) {
             throw "Refusing to start interactive runner task outside interactive logon boundary: $($task.Principal.LogonType)"
           }
+
+          $actions = @($task.Actions)
+          if ($actions.Count -ne 1) {
+            throw "Refusing ambiguous interactive runner task with action count $($actions.Count)."
+          }
+          $action = $actions[0]
+          $runnerRoot = [string]$action.WorkingDirectory
+          if ([string]::IsNullOrWhiteSpace($runnerRoot) -or -not (Test-Path -LiteralPath $runnerRoot -PathType Container)) {
+            throw 'Interactive runner task has no valid runner working directory.'
+          }
+          $runnerConfigPath = Join-Path $runnerRoot '.runner'
+          if (-not (Test-Path -LiteralPath $runnerConfigPath -PathType Leaf)) {
+            throw "Interactive runner config is missing: $runnerConfigPath"
+          }
+          $runnerConfig = Get-Content -LiteralPath $runnerConfigPath -Raw -ErrorAction Stop | ConvertFrom-Json
+          if ([string]$runnerConfig.agentName -ne 'zn-interactive') {
+            throw "Refusing scheduled task for runner '$($runnerConfig.agentName)'; expected 'zn-interactive'."
+          }
+          if ([string]$action.Execute -notmatch '(?i)\\cmd\.exe$') {
+            throw 'Interactive runner task does not execute the expected visible cmd.exe action.'
+          }
+          $arguments = [string]$action.Arguments
+          if ($arguments -notmatch '(?i)/d\s+/c' -or $arguments -notmatch '(?i)run\.cmd') {
+            throw 'Interactive runner task does not launch the expected run.cmd action.'
+          }
+
+          Write-Host 'task.runner=zn-interactive'
           Write-Host "task.state.before=$($task.State)"
           if ([string]$task.State -ne 'Running') {
             Start-ScheduledTask -TaskPath '\' -TaskName $taskName -ErrorAction Stop
@@ -64,7 +91,7 @@ jobs:
             Write-Host 'Interactive runner task is already Running; recovery does not kill or replace a live listener.'
           }
           Write-Host "task.state.after=$($task.State)"
-          Write-Host 'Recovery only wakes the existing interactive task. It does not unlock Windows, change the interactive principal, or restart a task that is already running.'
+          Write-Host 'Recovery only wakes the exact existing zn-interactive task. It does not unlock Windows, change the interactive principal, or restart a task that is already running.'
 
   configure:
     name: Configure visible interactive runner task
