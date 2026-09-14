@@ -8,7 +8,7 @@
 
 ## Purpose
 
-Steady-state ZN development CI is repository-owned automation executed by a replaceable Windows x64 self-hosted GitHub Actions runner.
+Steady-state ZN product verification is repository-owned automation executed by a replaceable Windows x64 self-hosted GitHub Actions runner.
 
 The runner is infrastructure, not ZN identity and not a specific maintainer machine contract. A computer may be replaced without changing the workflow as long as a suitable Windows x64 runner is registered and online.
 
@@ -35,7 +35,7 @@ Linux Container and Linux AppImage checks are optional manual workflows and do n
 
 ## Runner selection
 
-The workflow dispatches to the generic GitHub Actions `self-hosted` label plus the repository's Windows/x64 project labels, then immediately verifies the actual runner OS/architecture where appropriate.
+The product-verification jobs dispatch to the generic GitHub Actions `self-hosted` label plus the repository's Windows/x64 project labels, then immediately verify the actual runner OS/architecture where appropriate.
 
 ```text
 RUNNER_OS   = Windows
@@ -43,6 +43,8 @@ RUNNER_ARCH = X64
 ```
 
 This deliberately avoids making a maintainer's personal computer identity part of the product contract. The dedicated interactive runner remains a special resource only for tests that genuinely require a logged-on desktop session.
+
+The final `publish-status` job is deliberately different: it does not check out or execute repository code and only projects completed job results back to GitHub commit-status APIs. It runs on a disposable GitHub-hosted runner so terminal status publication cannot sit behind scarce Windows product-verification capacity. The Windows truth still comes exclusively from the three self-hosted required jobs.
 
 If additional non-Windows self-hosted runners are ever added to this repository, runner groups or dedicated project labels should be introduced before enabling them for unrelated workloads.
 
@@ -79,7 +81,7 @@ The steady-state core development workflow currently uses repository contents re
 
 ## Observability
 
-Each main Windows CI job publishes its commit status as `pending` once a runner has actually accepted the job, then the final status publisher records success/failure.
+Each main Windows CI job publishes its commit status as `pending` once a runner has actually accepted the job, then the runner-agnostic final status publisher records success/failure without consuming another Windows slot.
 
 This means:
 
