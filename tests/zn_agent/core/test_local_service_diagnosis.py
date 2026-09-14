@@ -251,6 +251,40 @@ class LocalServiceDiagnosisTests(unittest.TestCase):
         self.assertTrue(body._requires_guard("command", {"command": "repair"}))
         self.assertFalse(body._requires_guard("local_service_state", {"port": 8129}))
 
+    def test_durable_redaction_removes_path_bearing_log_error(self) -> None:
+        secret_path = r"C:\Users\private-user\project\service.log"
+        live = SimpleNamespace(
+            action_id="service-error-redaction",
+            kind="local_service_state",
+            success=True,
+            output="target port is not listening",
+            data={
+                "target": {},
+                "listeners": [],
+                "health": None,
+                "log": {
+                    "path": secret_path,
+                    "exists": True,
+                    "tail": "",
+                    "truncated": False,
+                    "error": f"PermissionError: access denied: '{secret_path}'",
+                },
+            },
+            error=None,
+            event_id="service-error-redaction",
+            started_at="2026-09-14T00:00:00+00:00",
+            completed_at="2026-09-14T00:00:01+00:00",
+        )
+
+        persisted = CurrentAppTextAwareBody._redacted_local_service_result(live)
+        serialized = json.dumps(persisted.data, ensure_ascii=False, sort_keys=True)
+        self.assertNotIn("private-user", serialized)
+        self.assertNotIn("service.log", serialized)
+        self.assertTrue(persisted.data["log"]["path_redacted"])
+        self.assertTrue(persisted.data["log"]["error_redacted"])
+        self.assertNotIn("path", persisted.data["log"])
+        self.assertNotIn("error", persisted.data["log"])
+
     def test_durable_body_history_redacts_sensitive_service_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
