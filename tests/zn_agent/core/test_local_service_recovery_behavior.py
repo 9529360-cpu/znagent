@@ -7,6 +7,7 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from zn_agent.core.body import BodyAction, BodyActionResult
 from zn_agent.core.current_app_text_body import CurrentAppTextAwareBody
@@ -185,6 +186,78 @@ class LocalServiceRecoveryProductTests(unittest.TestCase):
                     if item.event_id == run.event.event_id and item.kind == "command"
                 ]
                 self.assertEqual(command_actions, [])
+            finally:
+                resident.store.close()
+
+    def test_repair_script_drift_blocks_before_command_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            script = workspace / "repair_service.py"
+            script.write_text("print('authorized')\n", encoding="utf-8")
+            (workspace / "service.log").write_text("broken\n", encoding="utf-8")
+            resident = build_resident_runtime(
+                config={"model": {}},
+                store_path=root / "kernel.db",
+            )
+            service_calls = 0
+            command_calls = 0
+            original_act = resident.body.act
+
+            def fake_act(kind, *, event_id=None, **kwargs):
+                nonlocal service_calls, command_calls
+                if kind == "local_service_state":
+                    service_calls += 1
+                    if service_calls == 1:
+                        # _begin captured the authorized script identity before
+                        # asking for this first service observation. Drift it in
+                        # the narrow gap before _repair's fresh pre-dispatch check.
+                        script.write_text("print('drifted')\n", encoding="utf-8")
+                    return SimpleNamespace(
+                        success=True,
+                        data={
+                            "healthy": False,
+                            "repair_blocked_reason": None,
+                            "health": {"status_code": 503},
+                            "listeners": [
+                                {
+                                    "pid": 4242,
+                                    "created_at_epoch": 1000.25,
+                                    "process_name": "python.exe",
+                                }
+                            ],
+                        },
+                        error=None,
+                    )
+                if kind == "command":
+                    command_calls += 1
+                    raise AssertionError("drifted repair script must never dispatch")
+                return original_act(kind, event_id=event_id, **kwargs)
+
+            try:
+                ledger = resident.work_ledger
+                thread = "e2e21-script-drift"
+                ledger.create_thread(thread_id=thread)
+                ledger.attach_workspace(thread, workspace)
+                with patch.object(resident.body, "act", side_effect=fake_act):
+                    _, run = ledger.submit(
+                        thread,
+                        TASK,
+                        payload={
+                            "local_service_context": {
+                                "host": "127.0.0.1",
+                                "port": 8129,
+                                "expected_process_name": "python.exe",
+                                "health_path": "/health",
+                                "log_relative_path": "service.log",
+                            }
+                        },
+                    )
+                self.assertFalse(run.success)
+                self.assertIn("repair_script_identity_drift", run.reason)
+                self.assertEqual(service_calls, 2)
+                self.assertEqual(command_calls, 0)
             finally:
                 resident.store.close()
 
