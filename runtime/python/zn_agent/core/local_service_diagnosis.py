@@ -129,7 +129,14 @@ class LocalServiceDiagnoser:
         health_timeout: float = 2.0,
     ) -> LocalServiceSnapshot:
         listeners, listener_errors = self._listeners(target)
-        health = self._health(target, timeout=health_timeout)
+        # Never issue an HTTP request until the target address/port has been proven
+        # to be a current local LISTEN endpoint. This keeps the diagnostic surface
+        # from becoming an arbitrary network fetch primitive.
+        health = (
+            self._health(target, timeout=health_timeout)
+            if listeners and target.health_url
+            else None
+        )
         log = self._log_tail(target.log_path) if target.log_path else None
         healthy, reason = self._evaluate(target, listeners, health)
         return LocalServiceSnapshot(
@@ -240,10 +247,12 @@ class LocalServiceDiagnoser:
                 error=f"HTTP {exc.code}",
             )
         except Exception as exc:
+            # Keep live and durable errors bounded to the exception class. Network
+            # libraries can otherwise echo a credential-bearing URL in messages.
             return LocalHealthObservation(
                 url=url,
                 ok=False,
-                error=f"{type(exc).__name__}: {exc}",
+                error=type(exc).__name__,
             )
 
     def _log_tail(self, value: str) -> LocalLogObservation:
