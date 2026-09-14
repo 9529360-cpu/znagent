@@ -29,8 +29,10 @@ class CurrentAppTextAwareBody(MachineCapabilityBody):
     recovery true by itself; callers must observe ``local_service_state`` again.
 
     Local diagnostic details are richer in the live result than in durable Body
-    history. Health URLs and log text can contain credentials or user data, so the
-    persisted row retains only bounded metadata and hashes for those fields.
+    history. Health URLs, log paths/roots and log text can contain user data, so
+    the persisted row retains only bounded length/hash metadata for those fields.
+    Log reads themselves require an explicit ``log_root`` and are revalidated
+    inside that authority immediately before every read.
     """
 
     _AUTOMATION_VALUE_REPLACE = "automation_value_replace"
@@ -100,12 +102,8 @@ class CurrentAppTextAwareBody(MachineCapabilityBody):
             )
         elif action.kind == self._LOCAL_SERVICE_STATE:
             safe_args = dict(action.args)
-            raw_url = safe_args.pop("health_url", None)
-            if raw_url:
-                url = str(raw_url)
-                safe_args["health_url_redacted"] = True
-                safe_args["health_url_chars"] = len(url)
-                safe_args["health_url_sha256"] = text_sha256(url)
+            for key in ("health_url", "log_path", "log_root"):
+                self._redact_mapping_value(safe_args, key)
             action = BodyAction(
                 action_id=action.action_id,
                 kind=action.kind,
@@ -117,36 +115,35 @@ class CurrentAppTextAwareBody(MachineCapabilityBody):
         super()._record(action, persisted_result)
 
     @staticmethod
-    def _redacted_local_service_result(result: BodyActionResult) -> BodyActionResult:
+    def _redact_mapping_value(data: dict[str, Any], key: str) -> None:
+        raw = data.pop(key, None)
+        if raw in (None, ""):
+            return
+        value = str(raw)
+        data[f"{key}_redacted"] = True
+        data[f"{key}_chars"] = len(value)
+        data[f"{key}_sha256"] = text_sha256(value)
+
+    @classmethod
+    def _redacted_local_service_result(cls, result: BodyActionResult) -> BodyActionResult:
         data = dict(result.data or {})
 
         target = dict(data.get("target") or {})
-        raw_target_url = target.pop("health_url", None)
-        if raw_target_url:
-            value = str(raw_target_url)
-            target["health_url_redacted"] = True
-            target["health_url_chars"] = len(value)
-            target["health_url_sha256"] = text_sha256(value)
+        for key in ("health_url", "log_path", "log_root"):
+            cls._redact_mapping_value(target, key)
         data["target"] = target
 
         health = data.get("health")
         if isinstance(health, dict):
             safe_health = dict(health)
-            raw_health_url = safe_health.pop("url", None)
-            if raw_health_url:
-                value = str(raw_health_url)
-                safe_health["url_redacted"] = True
-                safe_health["url_chars"] = len(value)
-                safe_health["url_sha256"] = text_sha256(value)
+            cls._redact_mapping_value(safe_health, "url")
             data["health"] = safe_health
 
         log = data.get("log")
         if isinstance(log, dict):
             safe_log = dict(log)
-            raw_tail = str(safe_log.pop("tail", "") or "")
-            safe_log["tail_redacted"] = True
-            safe_log["tail_chars"] = len(raw_tail)
-            safe_log["tail_sha256"] = text_sha256(raw_tail)
+            cls._redact_mapping_value(safe_log, "path")
+            cls._redact_mapping_value(safe_log, "tail")
             data["log"] = safe_log
 
         return BodyActionResult(
@@ -171,6 +168,7 @@ class CurrentAppTextAwareBody(MachineCapabilityBody):
                 ),
                 health_url=str(action.args.get("health_url") or "").strip() or None,
                 log_path=str(action.args.get("log_path") or "").strip() or None,
+                log_root=str(action.args.get("log_root") or "").strip() or None,
             )
             snapshot = self._local_service_diagnoser.inspect(
                 target,
