@@ -33,7 +33,7 @@ defaults:
 jobs:
   atomic-overwrite:
     name: Windows atomic overwrite lifecycle
-    runs-on: [self-hosted, Windows, X64, zn-ci]
+    runs-on: windows-latest
     timeout-minutes: 15
     env:
       CI: 'true'
@@ -41,6 +41,11 @@ jobs:
       PYTHONUNBUFFERED: '1'
       ZN_AGENT_HOME: ${{ github.workspace }}/.ci/atomic-overwrite-home
     steps:
+      - name: Verify GitHub-hosted Windows x64 runner
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "ZN atomic overwrite E2E requires a GitHub-hosted Windows X64 runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v6
         with:
