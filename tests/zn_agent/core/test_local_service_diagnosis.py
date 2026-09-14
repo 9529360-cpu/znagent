@@ -251,7 +251,7 @@ class LocalServiceDiagnosisTests(unittest.TestCase):
         self.assertTrue(body._requires_guard("command", {"command": "repair"}))
         self.assertFalse(body._requires_guard("local_service_state", {"port": 8129}))
 
-    def test_durable_body_history_redacts_health_url_log_path_root_and_tail(self) -> None:
+    def test_durable_body_history_redacts_sensitive_service_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             log = root / "super-secret-service-path.log"
@@ -281,6 +281,10 @@ class LocalServiceDiagnosisTests(unittest.TestCase):
                 self.assertEqual(live.data["health"]["url"], secret_url)
                 self.assertEqual(live.data["log"]["tail"], secret_log)
                 self.assertEqual(live.data["log"]["path"], str(log.resolve()))
+                self.assertEqual(
+                    live.data["listeners"][0]["executable_path"],
+                    r"C:\apps\service.exe",
+                )
                 with closing(body._connect()) as conn:
                     row = conn.execute(
                         "SELECT action_json, result_json FROM native_body_actions "
@@ -297,6 +301,7 @@ class LocalServiceDiagnosisTests(unittest.TestCase):
                 self.assertNotIn("super-secret-url-value", serialized)
                 self.assertNotIn("super-secret-log-value", serialized)
                 self.assertNotIn("super-secret-service-path.log", serialized)
+                self.assertNotIn(r"C:\\apps\\service.exe", serialized)
                 self.assertTrue(action["args"]["health_url_redacted"])
                 self.assertTrue(action["args"]["log_path_redacted"])
                 self.assertTrue(action["args"]["log_root_redacted"])
@@ -305,6 +310,10 @@ class LocalServiceDiagnosisTests(unittest.TestCase):
                 self.assertTrue(persisted["data"]["target"]["log_root_redacted"])
                 self.assertTrue(persisted["data"]["log"]["path_redacted"])
                 self.assertTrue(persisted["data"]["log"]["tail_redacted"])
+                listener = persisted["data"]["listeners"][0]
+                self.assertNotIn("executable_path", listener)
+                self.assertTrue(listener["executable_path_redacted"])
+                self.assertGreater(listener["executable_path_chars"], 0)
                 self.assertGreater(persisted["data"]["log"]["tail_chars"], 0)
             finally:
                 store.close()
