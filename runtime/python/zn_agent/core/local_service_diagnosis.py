@@ -3,10 +3,11 @@ from __future__ import annotations
 """Bounded read-only local-service diagnosis and verification.
 
 This module observes one local listener, correlates it with its owning process,
-reads a bounded log tail and probes an optional same-service HTTP health URL. It
-deliberately does not execute repair commands or kill processes. Repairs stay on
-ZN's existing ``command`` Body action so the established authority, replay and
-durable side-effect journal remain the only mutation boundary.
+reads a bounded authority-rooted log tail and probes an optional same-service
+HTTP health URL. It deliberately does not execute repair commands or kill
+processes. Repairs stay on ZN's existing ``command`` Body action so the
+established authority, replay and durable side-effect journal remain the only
+mutation boundary.
 """
 
 import os
@@ -46,6 +47,7 @@ class LocalServiceTarget:
     expected_process_name: str | None = None
     health_url: str | None = None
     log_path: str | None = None
+    log_root: str | None = None
 
     def __post_init__(self) -> None:
         port = int(self.port)
@@ -58,6 +60,14 @@ class LocalServiceTarget:
             raise ValueError("local service host is too long")
         if self.health_url:
             _validate_health_url(str(self.health_url), host=host, port=port)
+        log_path = str(self.log_path or "").strip()
+        log_root = str(self.log_root or "").strip()
+        if log_path and not log_root:
+            raise ValueError("local service log_path requires an explicit log_root authority")
+        if log_root and not log_path:
+            raise ValueError("local service log_root is only valid with log_path")
+        if log_path:
+            _resolve_authorized_log_path(log_path, log_root)
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,7 +150,11 @@ class LocalServiceDiagnoser:
             if listeners and target.health_url
             else None
         )
-        log = self._log_tail(target.log_path) if target.log_path else None
+        log = (
+            self._log_tail(str(target.log_path), root=str(target.log_root))
+            if target.log_path and target.log_root
+            else None
+        )
         healthy, reason = self._evaluate(target, listeners, health)
         return LocalServiceSnapshot(
             target=target,
@@ -258,8 +272,12 @@ class LocalServiceDiagnoser:
                 error=type(exc).__name__,
             )
 
-    def _log_tail(self, value: str) -> LocalLogObservation:
-        path = Path(os.path.expanduser(os.path.expandvars(str(value)))).resolve(strict=False)
+    def _log_tail(self, value: str, *, root: str) -> LocalLogObservation:
+        # Resolve and re-check authority immediately before every read. Existing
+        # symlinks are resolved to their real target before containment is tested,
+        # and the resolved path itself is opened so swapping the original symlink
+        # after validation cannot redirect this read outside the admitted root.
+        path = _resolve_authorized_log_path(value, root)
         if not path.is_file():
             return LocalLogObservation(path=str(path), exists=False)
         try:
@@ -342,6 +360,32 @@ def _validate_health_url(value: str, *, host: str, port: int) -> None:
         raise ValueError("local service health URL must use the target listener port")
     if not _health_host_matches_target(host, parsed.hostname):
         raise ValueError("local service health URL must address the target local host")
+
+
+def _resolve_authorized_log_path(value: str, root: str) -> Path:
+    raw_root = str(root or "").strip()
+    raw_value = str(value or "").strip()
+    if not raw_root or not raw_value:
+        raise ValueError("local service log read requires log_path and log_root")
+    try:
+        root_path = Path(
+            os.path.expanduser(os.path.expandvars(raw_root))
+        ).resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("local service log_root is not an existing directory") from exc
+    if not root_path.is_dir():
+        raise ValueError("local service log_root is not an existing directory")
+
+    unresolved = Path(os.path.expanduser(os.path.expandvars(raw_value)))
+    try:
+        path = unresolved.resolve(strict=unresolved.exists())
+    except OSError as exc:
+        raise ValueError("local service log_path cannot be resolved") from exc
+    try:
+        path.relative_to(root_path)
+    except ValueError as exc:
+        raise ValueError("local service log_path is outside explicit log_root authority") from exc
+    return path
 
 
 def _health_host_matches_target(target: str, url_host: str) -> bool:
