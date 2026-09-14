@@ -257,9 +257,6 @@ try {
 } finally {
     $form.Close()
     $form.Dispose()
-    if ($originalForeground -ne [IntPtr]::Zero) {
-        [void](Invoke-BoundedForegroundAcquire -TargetHwnd $originalForeground)
-    }
 }
 
 Write-Host "interactive_readiness.probe_became_foreground=$probeForeground"
