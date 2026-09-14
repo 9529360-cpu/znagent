@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import socket
 import sqlite3
 import subprocess
@@ -61,7 +62,10 @@ class ResidentHardCrashRecoveryTests(unittest.TestCase):
                     cls._auth_secret(endpoint)
                     pid = int(endpoint.get("pid") or -1)
                     instance_id = str(endpoint.get("instance_id") or "")
-                    if pid == child.pid and (
+                    # On Windows, venv python.exe is a redirector process. Its
+                    # Popen PID is therefore not resident identity; the endpoint
+                    # and durable lease intentionally own the real resident PID.
+                    if pid > 0 and instance_id and (
                         previous_instance_id is None or instance_id != previous_instance_id
                     ):
                         return endpoint
@@ -74,6 +78,13 @@ class ResidentHardCrashRecoveryTests(unittest.TestCase):
                 )
             time.sleep(0.05)
         raise AssertionError("resident replacement endpoint was not published")
+
+    @staticmethod
+    def _hard_kill_resident(pid: int) -> None:
+        # Windows os.kill(SIGTERM) is implemented with TerminateProcess, so it
+        # bypasses Python signal/finally cleanup just like SIGKILL does on POSIX.
+        hard_signal = signal.SIGTERM if os.name == "nt" else signal.SIGKILL
+        os.kill(pid, hard_signal)
 
     @classmethod
     def _request(
@@ -121,11 +132,13 @@ class ResidentHardCrashRecoveryTests(unittest.TestCase):
             store_path = home / "kernel" / "kernel.db"
             first = self._spawn_resident(home, "runtime-crash-proof")
             second: subprocess.Popen | None = None
+            first_resident_pid: int | None = None
+            second_resident_pid: int | None = None
             try:
                 first_endpoint = self._wait_for_endpoint(endpoint_path, first)
                 first_secret = self._auth_secret(first_endpoint)
                 first_instance_id = str(first_endpoint["instance_id"])
-                self.assertEqual(int(first_endpoint["pid"]), first.pid)
+                first_resident_pid = int(first_endpoint["pid"])
 
                 first_self = self._request(first_endpoint, "self")
                 self.assertTrue(first_self["ok"])
@@ -146,22 +159,22 @@ class ResidentHardCrashRecoveryTests(unittest.TestCase):
                     ).fetchone()
                 self.assertIsNotNone(lease_before)
                 self.assertEqual(str(lease_before[0]), first_instance_id)
-                self.assertEqual(int(lease_before[1]), first.pid)
+                self.assertEqual(int(lease_before[1]), first_resident_pid)
 
-                first.kill()
+                self._hard_kill_resident(first_resident_pid)
                 first.wait(timeout=5.0)
 
                 self.assertTrue(endpoint_path.is_file())
                 stale_endpoint = json.loads(endpoint_path.read_text(encoding="utf-8"))
                 self.assertEqual(str(stale_endpoint["instance_id"]), first_instance_id)
-                self.assertEqual(int(stale_endpoint["pid"]), first.pid)
+                self.assertEqual(int(stale_endpoint["pid"]), first_resident_pid)
                 with closing(sqlite3.connect(store_path)) as connection:
                     stale_lease = connection.execute(
                         "SELECT instance_id, pid FROM resident_lease WHERE id=1"
                     ).fetchone()
                 self.assertIsNotNone(stale_lease)
                 self.assertEqual(str(stale_lease[0]), first_instance_id)
-                self.assertEqual(int(stale_lease[1]), first.pid)
+                self.assertEqual(int(stale_lease[1]), first_resident_pid)
 
                 second = self._spawn_resident(home, "runtime-crash-proof")
                 second_endpoint = self._wait_for_endpoint(
@@ -170,7 +183,8 @@ class ResidentHardCrashRecoveryTests(unittest.TestCase):
                     previous_instance_id=first_instance_id,
                 )
                 second_secret = self._auth_secret(second_endpoint)
-                self.assertEqual(int(second_endpoint["pid"]), second.pid)
+                second_resident_pid = int(second_endpoint["pid"])
+                self.assertNotEqual(second_resident_pid, first_resident_pid)
                 self.assertNotEqual(str(second_endpoint["instance_id"]), first_instance_id)
                 self.assertNotEqual(second_secret, first_secret)
 
@@ -180,7 +194,7 @@ class ResidentHardCrashRecoveryTests(unittest.TestCase):
                     ).fetchone()
                 self.assertIsNotNone(replacement_lease)
                 self.assertEqual(str(replacement_lease[0]), str(second_endpoint["instance_id"]))
-                self.assertEqual(int(replacement_lease[1]), second.pid)
+                self.assertEqual(int(replacement_lease[1]), second_resident_pid)
 
                 stale_auth = self._request(second_endpoint, "ping", secret=first_secret)
                 self.assertFalse(stale_auth["ok"])
@@ -210,12 +224,23 @@ class ResidentHardCrashRecoveryTests(unittest.TestCase):
                 self.assertEqual(second.wait(timeout=8.0), 0)
                 self.assertFalse(endpoint_path.exists())
             finally:
-                for child in (first, second):
+                for child, resident_pid in (
+                    (first, first_resident_pid),
+                    (second, second_resident_pid),
+                ):
                     if child is None:
                         continue
                     if child.poll() is None:
-                        child.kill()
-                        child.wait(timeout=5.0)
+                        if resident_pid is not None:
+                            try:
+                                self._hard_kill_resident(resident_pid)
+                            except OSError:
+                                pass
+                        try:
+                            child.wait(timeout=5.0)
+                        except subprocess.TimeoutExpired:
+                            child.kill()
+                            child.wait(timeout=5.0)
                     if child.stderr is not None:
                         child.stderr.close()
 
