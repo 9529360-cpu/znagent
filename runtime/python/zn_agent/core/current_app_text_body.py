@@ -27,6 +27,10 @@ class CurrentAppTextAwareBody(MachineCapabilityBody):
     side-effect journal, replay rules, terminal isolation and audit path stay the
     single mutation boundary. A successful command therefore never makes service
     recovery true by itself; callers must observe ``local_service_state`` again.
+
+    Local diagnostic details are richer in the live result than in durable Body
+    history. Health URLs and log text can contain credentials or user data, so the
+    persisted row retains only bounded metadata and hashes for those fields.
     """
 
     _AUTOMATION_VALUE_REPLACE = "automation_value_replace"
@@ -78,6 +82,7 @@ class CurrentAppTextAwareBody(MachineCapabilityBody):
         ]
 
     def _record(self, action: BodyAction, result: BodyActionResult) -> None:
+        persisted_result = result
         if action.kind == self._AUTOMATION_VALUE_REPLACE:
             safe_args = dict(action.args)
             raw = safe_args.pop("replacement_text", None)
@@ -93,7 +98,68 @@ class CurrentAppTextAwareBody(MachineCapabilityBody):
                 event_id=action.event_id,
                 created_at=action.created_at,
             )
-        super()._record(action, result)
+        elif action.kind == self._LOCAL_SERVICE_STATE:
+            safe_args = dict(action.args)
+            raw_url = safe_args.pop("health_url", None)
+            if raw_url:
+                url = str(raw_url)
+                safe_args["health_url_redacted"] = True
+                safe_args["health_url_chars"] = len(url)
+                safe_args["health_url_sha256"] = text_sha256(url)
+            action = BodyAction(
+                action_id=action.action_id,
+                kind=action.kind,
+                args=safe_args,
+                event_id=action.event_id,
+                created_at=action.created_at,
+            )
+            persisted_result = self._redacted_local_service_result(result)
+        super()._record(action, persisted_result)
+
+    @staticmethod
+    def _redacted_local_service_result(result: BodyActionResult) -> BodyActionResult:
+        data = dict(result.data or {})
+
+        target = dict(data.get("target") or {})
+        raw_target_url = target.pop("health_url", None)
+        if raw_target_url:
+            value = str(raw_target_url)
+            target["health_url_redacted"] = True
+            target["health_url_chars"] = len(value)
+            target["health_url_sha256"] = text_sha256(value)
+        data["target"] = target
+
+        health = data.get("health")
+        if isinstance(health, dict):
+            safe_health = dict(health)
+            raw_health_url = safe_health.pop("url", None)
+            if raw_health_url:
+                value = str(raw_health_url)
+                safe_health["url_redacted"] = True
+                safe_health["url_chars"] = len(value)
+                safe_health["url_sha256"] = text_sha256(value)
+            data["health"] = safe_health
+
+        log = data.get("log")
+        if isinstance(log, dict):
+            safe_log = dict(log)
+            raw_tail = str(safe_log.pop("tail", "") or "")
+            safe_log["tail_redacted"] = True
+            safe_log["tail_chars"] = len(raw_tail)
+            safe_log["tail_sha256"] = text_sha256(raw_tail)
+            data["log"] = safe_log
+
+        return BodyActionResult(
+            action_id=result.action_id,
+            kind=result.kind,
+            success=result.success,
+            output=result.output,
+            data=data,
+            error=result.error,
+            event_id=result.event_id,
+            started_at=result.started_at,
+            completed_at=result.completed_at,
+        )
 
     def _dispatch(self, action: BodyAction, started: str) -> BodyActionResult:
         if action.kind == self._LOCAL_SERVICE_STATE:
