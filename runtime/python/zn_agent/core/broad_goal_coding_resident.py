@@ -12,16 +12,17 @@ the same Root Work.
 E2E-23 adds one equally narrow reality-replanning rule: if cognition proposes a
 valid relative ``.py`` path that does not exist, ZN may search the attached
 workspace for one unique existing file with the same basename. The scan is
-bounded, does not follow directory symlinks, rejects generated/vendor trees, and
-requires the resolved file to remain inside the exact workspace. Zero or
-multiple matches fail closed; a model-proposed replacement path is never trusted
-without resident-owned filesystem evidence.
+bounded, does not follow directory symlinks or Windows reparse points, rejects
+generated/vendor trees, and requires the resolved file to remain inside the
+exact workspace. Zero or multiple matches fail closed; a model-proposed
+replacement path is never trusted without resident-owned filesystem evidence.
 """
 
 import hashlib
 import json
 import os
 import shlex
+import stat
 import sys
 from pathlib import Path
 from typing import Any
@@ -499,6 +500,35 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
             "timeout": timeout,
         }
 
+    @staticmethod
+    def _plain_discovery_entry(path: Path, *, directory: bool) -> bool:
+        """Accept only ordinary entries while widening a stale-path search.
+
+        ``followlinks=False`` is not a complete Windows junction boundary. Inspect
+        the directory entry itself with ``lstat`` and reject both symlinks and any
+        Windows reparse point before ``os.walk`` may descend through it. The same
+        rule rejects discovered file-level reparse points; exact requested paths
+        keep their existing resolved-containment behavior.
+        """
+
+        try:
+            metadata = os.lstat(path)
+        except OSError:
+            return False
+        if stat.S_ISLNK(metadata.st_mode):
+            return False
+        attributes = int(getattr(metadata, "st_file_attributes", 0) or 0)
+        reparse_attribute = int(
+            getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x00000400)
+        )
+        if attributes & reparse_attribute:
+            return False
+        return (
+            stat.S_ISDIR(metadata.st_mode)
+            if directory
+            else stat.S_ISREG(metadata.st_mode)
+        )
+
     @classmethod
     def _resolve_workspace_python_script(
         cls,
@@ -544,6 +574,10 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
                         name
                         for name in directory_names
                         if name.casefold() not in cls._PATH_DISCOVERY_PRUNE
+                        and cls._plain_discovery_entry(
+                            current_path / name,
+                            directory=True,
+                        )
                     ]
 
                 observed_entries += len(directory_names) + len(file_names)
@@ -554,6 +588,8 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
                     if file_name.casefold() != requested_name:
                         continue
                     candidate = current_path / file_name
+                    if not cls._plain_discovery_entry(candidate, directory=False):
+                        continue
                     try:
                         resolved = candidate.resolve(strict=True)
                         resolved.relative_to(root_path)
