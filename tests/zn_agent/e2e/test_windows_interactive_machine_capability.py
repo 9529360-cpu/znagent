@@ -120,12 +120,16 @@ class WindowsInteractiveMachineCapabilityE2ETests(unittest.TestCase):
 
                 after_processes, launched_windows = graph.application_runtime(selected)
                 self.assertTrue(after_processes, "launch completion lacked a fresh matching process")
-                self.assertTrue(
-                    [window for window in launched_windows if window.visible],
-                    "launch completion lacked a fresh matching visible top-level window",
+                visible_after_launch = [window for window in launched_windows if window.visible]
+                self.assertEqual(
+                    len(visible_after_launch),
+                    1,
+                    "the no-duplicate follow-up requires one exact visible launched window",
                 )
+                target_window = visible_after_launch[0]
                 first_pids = {row.process_id for row in after_processes}
                 self.assertTrue(first_pids - preexisting_pids)
+                self.assertIn(int(target_window.process_id), first_pids)
 
                 launch_actions_before = [
                     action for action in resident.body.recent_actions(30)
@@ -136,19 +140,34 @@ class WindowsInteractiveMachineCapabilityE2ETests(unittest.TestCase):
                 ]
                 self.assertEqual(len(dispatched_before), 1)
 
-                # A second ordinary “open” request is allowed to complete directly
-                # from fresh existing process/window facts. It must not need to
-                # enter Body at all, and it must never dispatch a second launch.
+                # A second ordinary “open” request must never manufacture another
+                # process. If the just-launched window is still foreground, fresh
+                # machine facts may complete the request without Body movement. If
+                # Windows has moved foreground elsewhere, Resident may request one
+                # exact HWND/PID activation. Win32 explicitly permits foreground
+                # policy to reject SetForegroundWindow, so that bounded fail-closed
+                # outcome is valid here; the dedicated application-activation E2E
+                # separately proves the success path under controlled entitlement.
                 resident.enqueue(
                     f"打开 {selected.canonical_name}",
                     kind="desktop_user_event",
                     payload={"model_policy": "never"},
                 )
                 second = self._run_to_terminal(resident)
-                self.assertTrue(second.success, second)
                 self.assertEqual(second.model_invocations, 0)
-                second_processes, _ = graph.application_runtime(selected)
+
+                second_processes, second_windows = graph.application_runtime(selected)
                 self.assertEqual({row.process_id for row in second_processes}, first_pids)
+                exact_second_window = next(
+                    (window for window in second_windows if window.hwnd == target_window.hwnd),
+                    None,
+                )
+                self.assertIsNotNone(
+                    exact_second_window,
+                    "the exact launched window disappeared during the no-duplicate follow-up",
+                )
+                assert exact_second_window is not None
+                self.assertEqual(exact_second_window.process_id, target_window.process_id)
 
                 launch_actions_after = [
                     action for action in resident.body.recent_actions(30)
@@ -159,6 +178,61 @@ class WindowsInteractiveMachineCapabilityE2ETests(unittest.TestCase):
                 ]
                 self.assertEqual(len(dispatched_after), 1)
                 self.assertEqual(len(launch_actions_after), len(launch_actions_before))
+
+                activation_actions = [
+                    action
+                    for action in resident.body.recent_actions(30)
+                    if action.kind == "activate_application_window"
+                    and action.data.get("application_id") == selected.app_id
+                ]
+                self.assertLessEqual(
+                    len(activation_actions),
+                    1,
+                    "the existing-window path must never replay foreground activation",
+                )
+
+                if second.success:
+                    fresh_foreground = graph.foreground_application()
+                    self.assertIsNotNone(
+                        fresh_foreground,
+                        "successful second open lacked a fresh foreground observation",
+                    )
+                    assert fresh_foreground is not None
+                    self.assertEqual(fresh_foreground.window.hwnd, target_window.hwnd)
+                    self.assertEqual(fresh_foreground.window.process_id, target_window.process_id)
+                    self.assertIsNotNone(fresh_foreground.application)
+                    self.assertEqual(fresh_foreground.application.app_id, selected.app_id)
+                    if activation_actions:
+                        activation = activation_actions[0]
+                        self.assertTrue(activation.data.get("dispatch_sent"))
+                        self.assertEqual(activation.data.get("window_handle"), target_window.hwnd)
+                        self.assertEqual(activation.data.get("process_id"), target_window.process_id)
+                else:
+                    self.assertEqual(
+                        len(activation_actions),
+                        1,
+                        "a failed second open is admissible here only as exact foreground-policy failure",
+                    )
+                    activation = activation_actions[0]
+                    self.assertTrue(activation.data.get("dispatch_sent"))
+                    self.assertEqual(activation.data.get("window_handle"), target_window.hwnd)
+                    self.assertEqual(activation.data.get("process_id"), target_window.process_id)
+                    self.assertIn(
+                        activation.data.get("disposition"),
+                        {"foreground_policy_rejected", "activation_requested"},
+                    )
+                    reason = str(second.reason or "")
+                    self.assertIn("foreground", reason.lower())
+                    self.assertIn("no duplicate launch", reason.lower())
+
+                print(
+                    "ZN_MACHINE_CAPABILITY_EXISTING_APP_EVIDENCE="
+                    f"{{\"second_success\":{str(bool(second.success)).lower()},"
+                    f"\"activation_count\":{len(activation_actions)},"
+                    f"\"launch_dispatch_count\":{len(dispatched_after)},"
+                    f"\"same_process_ids\":true}}",
+                    flush=True,
+                )
             finally:
                 if launched_windows:
                     self._close_new_windows(launched_windows, preexisting_pids)
