@@ -20,7 +20,7 @@ permissions:
 
 concurrency:
   group: zn-interactive-runner-readiness
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   interactive-readiness:
