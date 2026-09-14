@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import closing
@@ -13,6 +16,32 @@ from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_s
 from zn_agent.core.recovery_control import ResidentRecoveryRequired
 from zn_agent.core.work import ResidentWorkLedger
 from zn_agent.core.work_control import ResidentWorkControl
+
+
+_PROCESS_CRASH_EXIT_CODE = 86
+_PROCESS_CRASH_WORKER = "--crash-after-mutation-worker"
+
+
+def _run_process_crash_worker(database: Path, event_id: str) -> int:
+    resident = build_resident_runtime_from_existing_stack(
+        config={"model": {}},
+        store_path=database,
+    )
+    event = resident.store.get_event(event_id)
+    state = resident.store.get_working_state()
+    if event is None or state.current_event_id != event_id:
+        return 70
+
+    def hard_crash_after_mutation(*args, **kwargs):
+        os._exit(_PROCESS_CRASH_EXIT_CODE)
+
+    with patch.object(
+        resident.body,
+        "_finish_attempt",
+        side_effect=hard_crash_after_mutation,
+    ):
+        resident._native_action_step(event, state, readiness=None)
+    return 71
 
 
 class E2E36UncertainSideEffectRestartTests(unittest.TestCase):
@@ -67,6 +96,106 @@ class E2E36UncertainSideEffectRestartTests(unittest.TestCase):
         )
         resident.store.save_working_state(state)
         return ledger, event, state, intent
+
+    def test_real_process_crash_after_effect_requires_resolution_without_replay(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            database = root / "kernel.db"
+            target = root / "process-crash-effect.txt"
+            target.write_text("", encoding="utf-8")
+            marker = "process-crash-effect-happened\n"
+
+            first = self._new_runtime(database)
+            _, event, _, _ = self._start_work_at_native_action(
+                first,
+                thread_id="e2e36-process-crash",
+                target=target,
+                marker=marker,
+            )
+            first.store.close()
+
+            repo_root = Path(__file__).resolve().parents[3]
+            env = os.environ.copy()
+            runtime_python = repo_root / "runtime" / "python"
+            existing_pythonpath = str(env.get("PYTHONPATH") or "").strip()
+            env["PYTHONPATH"] = str(runtime_python)
+            if existing_pythonpath:
+                env["PYTHONPATH"] += os.pathsep + existing_pythonpath
+            worker = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve()),
+                    _PROCESS_CRASH_WORKER,
+                    str(database),
+                    event.event_id,
+                ],
+                cwd=repo_root,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertEqual(
+                worker.returncode,
+                _PROCESS_CRASH_EXIT_CODE,
+                msg=(
+                    "crash worker did not reach the post-mutation hard-exit boundary; "
+                    f"stdout={worker.stdout!r} stderr={worker.stderr!r}"
+                ),
+            )
+            self.assertEqual(target.read_text(encoding="utf-8"), marker)
+            attempts_after_crash = self._attempt_rows(database, event.event_id)
+            self.assertEqual(len(attempts_after_crash), 1)
+            first_attempt = attempts_after_crash[0][0]
+            self.assertEqual(attempts_after_crash[0][1], "started")
+
+            restored = self._new_runtime(database)
+            control = ResidentWorkControl(ResidentWorkLedger(restored))
+            try:
+                with self.assertRaises(ResidentRecoveryRequired):
+                    restored.run_once(target_event_id=event.event_id)
+                self.assertEqual(target.read_text(encoding="utf-8"), marker)
+                progress = control.progress("e2e36-process-crash", event.event_id)
+                self.assertEqual(progress["stage"], "side_effect_recovery")
+                self.assertEqual(progress["blocked_by"], "outside_world_effect_uncertain")
+                self.assertEqual(progress["recovery"]["attempt_id"], first_attempt)
+                self.assertEqual(progress["recovery"]["decision"], "user_decision_required")
+                self.assertTrue(progress["recovery"]["replay_blocked"])
+                self.assertNotIn(marker.strip(), str(progress))
+
+                control.resolve_uncertain(
+                    "e2e36-process-crash",
+                    event.event_id,
+                    attempt_id=first_attempt,
+                    decision="effect_happened",
+                )
+                self.assertEqual(target.read_text(encoding="utf-8"), marker)
+                self.assertEqual(
+                    self._attempt_rows(database, event.event_id),
+                    [(first_attempt, "user_confirmed_effect")],
+                )
+
+                terminal = restored.run_once(target_event_id=event.event_id)
+                self.assertIsNotNone(terminal)
+                self.assertTrue(terminal.success)
+                self.assertEqual(target.read_text(encoding="utf-8"), marker)
+            finally:
+                restored.store.close()
+
+            again = self._new_runtime(database)
+            try:
+                self.assertEqual(target.read_text(encoding="utf-8"), marker)
+                self.assertEqual(
+                    self._attempt_rows(database, event.event_id),
+                    [(first_attempt, "user_confirmed_effect")],
+                )
+                outcome = again.store.get_event_outcome(event.event_id)
+                self.assertIsNotNone(outcome)
+                self.assertTrue(outcome.success)
+            finally:
+                again.store.close()
 
     def test_effect_happened_survives_restart_without_replay(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -289,4 +418,6 @@ class E2E36UncertainSideEffectRestartTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 4 and sys.argv[1] == _PROCESS_CRASH_WORKER:
+        raise SystemExit(_run_process_crash_worker(Path(sys.argv[2]), sys.argv[3]))
     unittest.main()
