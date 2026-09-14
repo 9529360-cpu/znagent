@@ -21,6 +21,9 @@ public static class ZNInteractiveDesktopNative {
     [DllImport("kernel32.dll")]
     public static extern uint WTSGetActiveConsoleSessionId();
 
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
+
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool ProcessIdToSessionId(uint processId, out uint sessionId);
@@ -54,6 +57,14 @@ public static class ZNInteractiveDesktopNative {
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool BringWindowToTop(IntPtr hwnd);
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -116,6 +127,46 @@ function Get-WtsConnectStateName {
         return $names[$State]
     }
     return "Unknown($State)"
+}
+
+function Invoke-BoundedForegroundAcquire {
+    param([Parameter(Mandatory = $true)][IntPtr]$TargetHwnd)
+
+    if ([ZNInteractiveDesktopNative]::GetForegroundWindow() -eq $TargetHwnd) {
+        return $true
+    }
+
+    [void][ZNInteractiveDesktopNative]::BringWindowToTop($TargetHwnd)
+    [void][ZNInteractiveDesktopNative]::SetForegroundWindow($TargetHwnd)
+    [System.Windows.Forms.Application]::DoEvents()
+    if ([ZNInteractiveDesktopNative]::GetForegroundWindow() -eq $TargetHwnd) {
+        return $true
+    }
+
+    $foreground = [ZNInteractiveDesktopNative]::GetForegroundWindow()
+    if ($foreground -eq [IntPtr]::Zero) {
+        return $false
+    }
+    [uint32]$foregroundPid = 0
+    [uint32]$foregroundThreadId = [ZNInteractiveDesktopNative]::GetWindowThreadProcessId($foreground, [ref]$foregroundPid)
+    [uint32]$currentThreadId = [ZNInteractiveDesktopNative]::GetCurrentThreadId()
+    if ($foregroundThreadId -eq 0 -or $foregroundThreadId -eq $currentThreadId) {
+        return $false
+    }
+
+    $attached = [ZNInteractiveDesktopNative]::AttachThreadInput($currentThreadId, $foregroundThreadId, $true)
+    if (-not $attached) {
+        Write-Host "interactive_readiness.attach_thread_input_error=$([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+        return $false
+    }
+    try {
+        [void][ZNInteractiveDesktopNative]::BringWindowToTop($TargetHwnd)
+        [void][ZNInteractiveDesktopNative]::SetForegroundWindow($TargetHwnd)
+        [System.Windows.Forms.Application]::DoEvents()
+        return [ZNInteractiveDesktopNative]::GetForegroundWindow() -eq $TargetHwnd
+    } finally {
+        [void][ZNInteractiveDesktopNative]::AttachThreadInput($currentThreadId, $foregroundThreadId, $false)
+    }
 }
 
 $currentProcess = Get-Process -Id $PID -ErrorAction Stop
@@ -188,32 +239,32 @@ $form.Left = 32
 $form.Top = 32
 $form.ShowInTaskbar = $true
 $probeForeground = $false
-$setForegroundAccepted = $false
 try {
     $form.Show()
     $form.Activate()
-    $setForegroundAccepted = [ZNInteractiveDesktopNative]::SetForegroundWindow($form.Handle)
-    $deadline = [DateTime]::UtcNow.AddSeconds(3)
-    do {
-        [System.Windows.Forms.Application]::DoEvents()
-        if ([ZNInteractiveDesktopNative]::GetForegroundWindow() -eq $form.Handle) {
-            $probeForeground = $true
-            break
-        }
-        Start-Sleep -Milliseconds 50
-    } while ([DateTime]::UtcNow -lt $deadline)
+    $probeForeground = Invoke-BoundedForegroundAcquire -TargetHwnd $form.Handle
+    if (-not $probeForeground) {
+        $deadline = [DateTime]::UtcNow.AddSeconds(3)
+        do {
+            [System.Windows.Forms.Application]::DoEvents()
+            if ([ZNInteractiveDesktopNative]::GetForegroundWindow() -eq $form.Handle) {
+                $probeForeground = $true
+                break
+            }
+            Start-Sleep -Milliseconds 50
+        } while ([DateTime]::UtcNow -lt $deadline)
+    }
 } finally {
     $form.Close()
     $form.Dispose()
     if ($originalForeground -ne [IntPtr]::Zero) {
-        [void][ZNInteractiveDesktopNative]::SetForegroundWindow($originalForeground)
+        [void](Invoke-BoundedForegroundAcquire -TargetHwnd $originalForeground)
     }
 }
 
-Write-Host "interactive_readiness.probe_set_foreground_returned=$setForegroundAccepted"
 Write-Host "interactive_readiness.probe_became_foreground=$probeForeground"
 if (-not $probeForeground) {
-    throw "Runner session is WTSActive and can access the input desktop, but it cannot make an owned desktop window foreground (SetForegroundWindow returned $setForegroundAccepted). Windows foreground entitlement is not currently usable for real GUI acceptance."
+    throw 'Runner session is WTSActive and can access the input desktop, but bounded foreground acquisition failed. Real GUI acceptance is not currently safe on this host.'
 }
 
 Write-Host 'interactive_readiness.ready=true'
