@@ -49,8 +49,6 @@ def _user32():
     api.SetForegroundWindow.restype = wintypes.BOOL
     api.GetForegroundWindow.argtypes = []
     api.GetForegroundWindow.restype = wintypes.HWND
-    api.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
-    api.AttachThreadInput.restype = wintypes.BOOL
     api.GetWindowTextLengthW.argtypes = [wintypes.HWND]
     api.GetWindowTextLengthW.restype = ctypes.c_int
     api.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
@@ -62,62 +60,6 @@ def _user32():
     api.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
     api.PostMessageW.restype = wintypes.BOOL
     return api
-
-
-def _current_thread_id() -> int:
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.GetCurrentThreadId.argtypes = []
-    kernel32.GetCurrentThreadId.restype = wintypes.DWORD
-    return int(kernel32.GetCurrentThreadId())
-
-
-def _wait_foreground(api, hwnd: int, timeout: float) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if int(api.GetForegroundWindow() or 0) == hwnd:
-            return True
-        time.sleep(0.02)
-    return int(api.GetForegroundWindow() or 0) == hwnd
-
-
-def _bring_owned_window_to_foreground(hwnd: int, *, expected_pid: int, timeout: float = 2.0) -> bool:
-    """Acquire foreground only for an exact test-owned window in the active desktop.
-
-    Windows may deny a normal SetForegroundWindow call even in a healthy interactive
-    session. After the direct path, use the documented shared-input mechanism only
-    between this runner thread and the current foreground thread, detach immediately,
-    and still require GetForegroundWindow() to prove the exact target actually won.
-    """
-    api = _user32()
-    target_pid = wintypes.DWORD()
-    target_thread = int(api.GetWindowThreadProcessId(hwnd, ctypes.byref(target_pid)) or 0)
-    if not target_thread or int(target_pid.value) != expected_pid:
-        raise RuntimeError("E2E-13 foreground target no longer belongs to the owned fixture process")
-
-    api.ShowWindow(hwnd, 5)
-    api.BringWindowToTop(hwnd)
-    api.SetForegroundWindow(hwnd)
-    if _wait_foreground(api, hwnd, min(timeout, 0.35)):
-        return True
-
-    foreground = int(api.GetForegroundWindow() or 0)
-    if not foreground:
-        return False
-    foreground_pid = wintypes.DWORD()
-    foreground_thread = int(api.GetWindowThreadProcessId(foreground, ctypes.byref(foreground_pid)) or 0)
-    current_thread = _current_thread_id()
-    if not foreground_thread or foreground_thread == current_thread:
-        return False
-
-    attached = bool(api.AttachThreadInput(current_thread, foreground_thread, True))
-    if not attached:
-        return False
-    try:
-        api.BringWindowToTop(hwnd)
-        api.SetForegroundWindow(hwnd)
-        return _wait_foreground(api, hwnd, timeout)
-    finally:
-        api.AttachThreadInput(current_thread, foreground_thread, False)
 
 
 class WorkRecordApp:
@@ -180,10 +122,15 @@ class WorkRecordApp:
 
     def activate(self, hwnd: int | None = None) -> None:
         hwnd = int(hwnd or self.hwnd)
-        if self.process is None or self.process.poll() is not None:
-            raise RuntimeError("E2E-13 fixture process is not running")
-        if _bring_owned_window_to_foreground(hwnd, expected_pid=self.process.pid):
-            return
+        api = _user32()
+        api.ShowWindow(hwnd, 5)
+        api.BringWindowToTop(hwnd)
+        api.SetForegroundWindow(hwnd)
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if int(api.GetForegroundWindow() or 0) == hwnd:
+                return
+            time.sleep(0.02)
         raise RuntimeError("E2E-13 fixture could not become foreground")
 
     def trigger_recreate(self) -> None:
