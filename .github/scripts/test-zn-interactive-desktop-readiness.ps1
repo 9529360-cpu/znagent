@@ -25,6 +25,19 @@ public static class ZNInteractiveDesktopNative {
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool ProcessIdToSessionId(uint processId, out uint sessionId);
 
+    [DllImport("wtsapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool WTSQuerySessionInformationW(
+        IntPtr server,
+        uint sessionId,
+        int infoClass,
+        out IntPtr buffer,
+        out uint bytesReturned
+    );
+
+    [DllImport("wtsapi32.dll")]
+    public static extern void WTSFreeMemory(IntPtr memory);
+
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint desiredAccess);
 
@@ -57,25 +70,78 @@ function Get-ProcessSessionId {
     return [int]$sessionId
 }
 
+function Get-WtsConnectState {
+    param([Parameter(Mandatory = $true)][uint32]$SessionId)
+
+    # WTS_INFO_CLASS.WTSConnectState == 8. WTS_CONNECTSTATE_CLASS.WTSActive == 0.
+    $WTS_CONNECT_STATE = 8
+    [IntPtr]$buffer = [IntPtr]::Zero
+    [uint32]$bytesReturned = 0
+    if (-not [ZNInteractiveDesktopNative]::WTSQuerySessionInformationW(
+        [IntPtr]::Zero,
+        $SessionId,
+        $WTS_CONNECT_STATE,
+        [ref]$buffer,
+        [ref]$bytesReturned
+    )) {
+        throw "WTSQuerySessionInformation(WTSConnectState) for session $SessionId failed with Win32 error $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+    }
+    try {
+        if ($buffer -eq [IntPtr]::Zero -or $bytesReturned -lt 4) {
+            throw "WTSConnectState returned an invalid buffer for session $SessionId"
+        }
+        return [Runtime.InteropServices.Marshal]::ReadInt32($buffer)
+    } finally {
+        if ($buffer -ne [IntPtr]::Zero) {
+            [ZNInteractiveDesktopNative]::WTSFreeMemory($buffer)
+        }
+    }
+}
+
+function Get-WtsConnectStateName {
+    param([Parameter(Mandatory = $true)][int]$State)
+    $names = @(
+        'WTSActive',
+        'WTSConnected',
+        'WTSConnectQuery',
+        'WTSShadow',
+        'WTSDisconnected',
+        'WTSIdle',
+        'WTSListen',
+        'WTSReset',
+        'WTSDown',
+        'WTSInit'
+    )
+    if ($State -ge 0 -and $State -lt $names.Count) {
+        return $names[$State]
+    }
+    return "Unknown($State)"
+}
+
 $currentProcess = Get-Process -Id $PID -ErrorAction Stop
 $currentSessionId = [int]$currentProcess.SessionId
-$activeConsoleSessionId = [int][ZNInteractiveDesktopNative]::WTSGetActiveConsoleSessionId()
+[uint32]$activeConsoleSessionId = [ZNInteractiveDesktopNative]::WTSGetActiveConsoleSessionId()
 $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 
 Write-Host "interactive_readiness.runner=$($env:RUNNER_NAME)"
 Write-Host "interactive_readiness.identity=$currentIdentity"
 Write-Host "interactive_readiness.process_id=$PID"
 Write-Host "interactive_readiness.process_session_id=$currentSessionId"
-Write-Host "interactive_readiness.active_console_session_id=$activeConsoleSessionId"
+if ($activeConsoleSessionId -eq [uint32]::MaxValue) {
+    Write-Host 'interactive_readiness.active_console_session_id=none'
+} else {
+    Write-Host "interactive_readiness.active_console_session_id=$activeConsoleSessionId"
+}
 
 if ($currentSessionId -eq 0) {
     throw 'Interactive runner is executing in Session 0; real desktop E2E requires a logged-on user session.'
 }
-if ($activeConsoleSessionId -eq [uint32]::MaxValue) {
-    throw 'Windows reports no active console session.'
-}
-if ($currentSessionId -ne $activeConsoleSessionId) {
-    throw "Interactive runner session $currentSessionId is not the active console session $activeConsoleSessionId. The host is likely disconnected, switched to another session, or otherwise not attached to the current input desktop."
+
+$currentWtsState = Get-WtsConnectState -SessionId ([uint32]$currentSessionId)
+$currentWtsStateName = Get-WtsConnectStateName -State $currentWtsState
+Write-Host "interactive_readiness.wts_connect_state=$currentWtsStateName"
+if ($currentWtsState -ne 0) {
+    throw "Interactive runner session $currentSessionId is not WTSActive; current state is $currentWtsStateName. Real GUI acceptance requires a user who is logged on and actively connected to the device."
 }
 
 $DESKTOP_READOBJECTS = 0x0001
@@ -87,7 +153,7 @@ $desktop = [ZNInteractiveDesktopNative]::OpenInputDesktop(
     $DESKTOP_READOBJECTS -bor $DESKTOP_WRITEOBJECTS -bor $DESKTOP_SWITCHDESKTOP
 )
 if ($desktop -eq [IntPtr]::Zero) {
-    throw "Interactive runner cannot open the Windows input desktop; Win32 error $([Runtime.InteropServices.Marshal]::GetLastWin32Error()). The user session may be locked or disconnected."
+    throw "Interactive runner cannot open the Windows input desktop; Win32 error $([Runtime.InteropServices.Marshal]::GetLastWin32Error()). The user session may be locked, disconnected, or on a non-input desktop."
 }
 try {
     if (-not [ZNInteractiveDesktopNative]::SwitchDesktop($desktop)) {
@@ -103,6 +169,9 @@ if ($originalForeground -eq [IntPtr]::Zero) {
 }
 [uint32]$foregroundPid = 0
 [void][ZNInteractiveDesktopNative]::GetWindowThreadProcessId($originalForeground, [ref]$foregroundPid)
+if ($foregroundPid -eq 0) {
+    throw 'GetForegroundWindow returned a window without an owning process id.'
+}
 $foregroundSessionId = Get-ProcessSessionId -ProcessId ([int]$foregroundPid)
 $foregroundName = '<unavailable>'
 try {
@@ -151,7 +220,7 @@ try {
 Write-Host "interactive_readiness.probe_set_foreground_returned=$setForegroundAccepted"
 Write-Host "interactive_readiness.probe_became_foreground=$probeForeground"
 if (-not $probeForeground) {
-    throw "Runner session can access the input desktop but cannot make an owned desktop window foreground (SetForegroundWindow returned $setForegroundAccepted). Windows foreground entitlement is not currently usable for real GUI acceptance."
+    throw "Runner session is WTSActive and can access the input desktop, but it cannot make an owned desktop window foreground (SetForegroundWindow returned $setForegroundAccepted). Windows foreground entitlement is not currently usable for real GUI acceptance."
 }
 
 Write-Host 'interactive_readiness.ready=true'
