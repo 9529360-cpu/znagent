@@ -121,10 +121,8 @@ function Get-WtsConnectStateName {
 $currentProcess = Get-Process -Id $PID -ErrorAction Stop
 $currentSessionId = [int]$currentProcess.SessionId
 [uint32]$activeConsoleSessionId = [ZNInteractiveDesktopNative]::WTSGetActiveConsoleSessionId()
-$currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 
 Write-Host "interactive_readiness.runner=$($env:RUNNER_NAME)"
-Write-Host "interactive_readiness.identity=$currentIdentity"
 Write-Host "interactive_readiness.process_id=$PID"
 Write-Host "interactive_readiness.process_session_id=$currentSessionId"
 if ($activeConsoleSessionId -eq [uint32]::MaxValue) {
@@ -173,13 +171,8 @@ if ($foregroundPid -eq 0) {
     throw 'GetForegroundWindow returned a window without an owning process id.'
 }
 $foregroundSessionId = Get-ProcessSessionId -ProcessId ([int]$foregroundPid)
-$foregroundName = '<unavailable>'
-try {
-    $foregroundName = (Get-Process -Id ([int]$foregroundPid) -ErrorAction Stop).ProcessName
-} catch {}
 Write-Host "interactive_readiness.foreground_hwnd=$([int64]$originalForeground)"
 Write-Host "interactive_readiness.foreground_pid=$foregroundPid"
-Write-Host "interactive_readiness.foreground_process=$foregroundName"
 Write-Host "interactive_readiness.foreground_session_id=$foregroundSessionId"
 
 if ($foregroundSessionId -ne $currentSessionId) {
