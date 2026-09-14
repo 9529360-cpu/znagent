@@ -1,0 +1,137 @@
+name: ZN GitHub-hosted Clean Install Probe
+
+on:
+  push:
+    branches:
+      - ci/github-hosted-clean-install-probe
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+jobs:
+  hosted-clean-install-probe:
+    name: Hosted Windows NSIS clean-install probe
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      CI: 'true'
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - name: Verify disposable GitHub-hosted Windows x64 runner
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "Hosted clean-install probe requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+          Write-Host "clean_install_probe.runner=$env:RUNNER_NAME"
+          Write-Host "clean_install_probe.temp=$env:RUNNER_TEMP"
+
+      - name: Checkout canonical source
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22.22.0'
+          cache: npm
+
+      - name: Install locked workspace dependencies
+        run: npm ci
+
+      - name: Reject high-severity npm advisories
+        run: npm audit --audit-level=high
+
+      - name: Resolve candidate version
+        id: version
+        run: |
+          $version = (node -p "require('./apps/desktop/package.json').version").Trim()
+          if (-not $version) { throw 'desktop package version is empty' }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Stage ZN-owned packaged runtime
+        env:
+          ZN_RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          ZN_RELEASE_COMMIT: ${{ github.sha }}
+        run: node apps/desktop/scripts/stage-zn-runtime.mjs
+
+      - name: Build renderer and Electron runtime
+        run: npm run build --workspace apps/desktop
+
+      - name: Build unsigned NSIS candidate
+        run: |
+          $drive = 'Z:'
+          if (Test-Path "$drive\") { throw "$drive is already in use" }
+          & subst.exe $drive $env:GITHUB_WORKSPACE
+          if ($LASTEXITCODE -ne 0) { throw "subst failed with exit code $LASTEXITCODE" }
+          try {
+            Push-Location "$drive\apps\desktop"
+            try {
+              Remove-Item -Recurse -Force release -ErrorAction SilentlyContinue
+              node scripts/run-electron-builder.mjs --config electron-builder.zn.yml --win nsis --publish never
+              if ($LASTEXITCODE -ne 0) { throw "electron-builder failed with exit code $LASTEXITCODE" }
+            } finally {
+              Pop-Location
+            }
+          } finally {
+            & subst.exe $drive /D
+          }
+
+      - name: Install real NSIS candidate into disposable state
+        run: |
+          $releaseDir = Join-Path $env:GITHUB_WORKSPACE 'apps\desktop\release'
+          $installers = @(Get-ChildItem -LiteralPath $releaseDir -File -Filter '*.exe')
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one NSIS EXE candidate, got $($installers.Count)"
+          }
+          $installer = $installers[0].FullName
+          $installDir = Join-Path $env:RUNNER_TEMP 'zn-clean-install-app'
+          Remove-Item -Recurse -Force $installDir -ErrorAction SilentlyContinue
+
+          $process = Start-Process -FilePath $installer -ArgumentList '/S', "/D=$installDir" -PassThru
+          $started = Get-Date
+          $createTime = $process.StartTime.ToUniversalTime().ToString('o')
+          Write-Host "clean_install_probe.installer_pid=$($process.Id)"
+          Write-Host "clean_install_probe.installer_created=$createTime"
+
+          $deadline = (Get-Date).AddMinutes(3)
+          while (-not $process.HasExited -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 1
+            $process.Refresh()
+          }
+
+          if (-not $process.HasExited) {
+            Write-Host '--- installer process-tree evidence ---'
+            $all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+            $frontier = @($process.Id)
+            $seen = [Collections.Generic.HashSet[int]]::new()
+            while ($frontier.Count -gt 0) {
+              $parent = [int]$frontier[0]
+              if ($frontier.Count -eq 1) { $frontier = @() } else { $frontier = @($frontier[1..($frontier.Count - 1)]) }
+              if (-not $seen.Add($parent)) { continue }
+              $record = $all | Where-Object { [int]$_.ProcessId -eq $parent } | Select-Object -First 1
+              if ($null -ne $record) {
+                Write-Host ("pid={0} ppid={1} name={2}" -f $record.ProcessId, $record.ParentProcessId, $record.Name)
+              }
+              $children = @($all | Where-Object { [int]$_.ParentProcessId -eq $parent })
+              foreach ($child in $children) { $frontier += [int]$child.ProcessId }
+            }
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            throw 'ZN NSIS installer did not exit within 3 minutes on disposable hosted Windows'
+          }
+
+          $elapsed = [int]((Get-Date) - $started).TotalSeconds
+          Write-Host "clean_install_probe.install_seconds=$elapsed"
+          Write-Host "clean_install_probe.exit_code=$($process.ExitCode)"
+          if ($process.ExitCode -ne 0) { throw "ZN NSIS installer failed with exit code $($process.ExitCode)" }
+
+          $installedExe = Join-Path $installDir 'ZN.exe'
+          if (-not (Test-Path -LiteralPath $installedExe -PathType Leaf)) {
+            throw "Installed ZN executable missing: $installedExe"
+          }
+          $item = Get-Item -LiteralPath $installedExe
+          Write-Host "clean_install_probe.installed_exe_bytes=$($item.Length)"
+          Write-Host 'clean_install_probe.success=true'
