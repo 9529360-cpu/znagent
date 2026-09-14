@@ -64,6 +64,12 @@ jobs:
           uv venv .ci/e2e21-venv --python 3.12
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e21-venv\Scripts\python.exe'
           uv pip install --python $python runtime/python
+      - name: Run focused E2E-21 unit tests
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e21-venv\Scripts\python.exe'
+          & $python tests/zn_agent/core/test_local_service_diagnosis.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run E2E-21 real local service diagnosis
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
