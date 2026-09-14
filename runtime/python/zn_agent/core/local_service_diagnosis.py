@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-"""Bounded local-service diagnosis and repair verification.
+"""Bounded read-only local-service diagnosis and verification.
 
-This module composes existing terminal/process capabilities into one ordinary
-user task: inspect a local listener, correlate it with the owning process, read a
-bounded log tail, probe an optional health URL, run an explicitly supplied repair
-command when it is safe to do so, and then verify the real service condition.
-
-It is deliberately not a service manager. Unknown processes are never killed,
-restart commands are never invented, and command success is not treated as
-service recovery.
+This module observes one local listener, correlates it with its owning process,
+reads a bounded log tail and probes an optional health URL. It deliberately does
+not execute repair commands or kill processes. Repairs stay on ZN's existing
+``command`` Body action so the established authority, replay and durable
+side-effect journal remain the only mutation boundary.
 """
 
 import os
@@ -21,8 +18,6 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 import psutil
-
-from .terminal import TerminalRequest, TerminalResult, ZNLocalTerminal
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,24 +73,8 @@ class LocalServiceSnapshot:
     log: LocalLogObservation | None
     healthy: bool
     reason: str
+    repair_blocked_reason: str | None = None
     inspection_errors: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class LocalServiceDiagnosisResult:
-    before: LocalServiceSnapshot
-    after: LocalServiceSnapshot
-    repair_attempted: bool
-    repair_result: TerminalResult | None
-    repair_blocked_reason: str | None
-
-    @property
-    def restored(self) -> bool:
-        return not self.before.healthy and self.after.healthy
-
-    @property
-    def success(self) -> bool:
-        return self.after.healthy
 
 
 ConnectionProvider = Callable[[], Iterable[object]]
@@ -104,24 +83,17 @@ Sleep = Callable[[float], None]
 
 
 class LocalServiceDiagnoser:
-    """Inspect one local service and optionally execute one explicit repair.
-
-    A repair is blocked when the target port is owned by an unexpected process or
-    by multiple distinct PIDs. This prevents a generic "restart" request from
-    trampling an unrelated service that happens to occupy the same port.
-    """
+    """Observe and re-observe one local service without mutation authority."""
 
     def __init__(
         self,
         *,
-        terminal: ZNLocalTerminal | None = None,
         connection_provider: ConnectionProvider | None = None,
         urlopen: UrlOpen | None = None,
         sleep: Sleep = time.sleep,
         max_log_bytes: int = 24_000,
         max_log_lines: int = 160,
     ) -> None:
-        self.terminal = terminal or ZNLocalTerminal()
         self._connection_provider = connection_provider or (
             lambda: psutil.net_connections(kind="inet")
         )
@@ -147,75 +119,22 @@ class LocalServiceDiagnoser:
             log=log,
             healthy=healthy,
             reason=reason,
+            repair_blocked_reason=self.repair_block_reason(target, tuple(listeners)),
             inspection_errors=tuple(listener_errors),
         )
 
-    def diagnose_and_repair(
+    def wait_until_healthy(
         self,
         target: LocalServiceTarget,
         *,
-        repair_command: str | None = None,
-        workdir: str | None = None,
-        repair_timeout: float = 30.0,
-        verification_timeout: float = 8.0,
-        verification_interval: float = 0.2,
+        timeout: float = 8.0,
+        interval: float = 0.2,
         health_timeout: float = 2.0,
-    ) -> LocalServiceDiagnosisResult:
-        before = self.inspect(target, health_timeout=health_timeout)
-        if before.healthy or not str(repair_command or "").strip():
-            return LocalServiceDiagnosisResult(
-                before=before,
-                after=before,
-                repair_attempted=False,
-                repair_result=None,
-                repair_blocked_reason=None,
-            )
-
-        blocked = self._repair_block_reason(target, before.listeners)
-        if blocked is not None:
-            return LocalServiceDiagnosisResult(
-                before=before,
-                after=before,
-                repair_attempted=False,
-                repair_result=None,
-                repair_blocked_reason=blocked,
-            )
-
-        repair = self.terminal.execute(
-            TerminalRequest(
-                command=str(repair_command).strip(),
-                context_id="local-service-diagnosis",
-                workdir=workdir,
-                timeout=max(0.05, float(repair_timeout)),
-                max_output_chars=20_000,
-            )
-        )
-        after = self._verify(
-            target,
-            timeout=max(0.0, float(verification_timeout)),
-            interval=max(0.01, float(verification_interval)),
-            health_timeout=health_timeout,
-        )
-        return LocalServiceDiagnosisResult(
-            before=before,
-            after=after,
-            repair_attempted=True,
-            repair_result=repair,
-            repair_blocked_reason=None,
-        )
-
-    def _verify(
-        self,
-        target: LocalServiceTarget,
-        *,
-        timeout: float,
-        interval: float,
-        health_timeout: float,
     ) -> LocalServiceSnapshot:
-        deadline = time.monotonic() + timeout
+        deadline = time.monotonic() + max(0.0, float(timeout))
         last = self.inspect(target, health_timeout=health_timeout)
         while not last.healthy and time.monotonic() < deadline:
-            self._sleep(min(interval, max(0.0, deadline - time.monotonic())))
+            self._sleep(min(max(0.01, float(interval)), max(0.0, deadline - time.monotonic())))
             last = self.inspect(target, health_timeout=health_timeout)
         return last
 
@@ -289,7 +208,10 @@ class LocalServiceDiagnoser:
         try:
             response = self._urlopen(url, timeout=max(0.05, float(timeout)))
             try:
-                code = int(getattr(response, "status", response.getcode()))
+                raw_status = getattr(response, "status", None)
+                if raw_status is None:
+                    raw_status = response.getcode()
+                code = int(raw_status)
             finally:
                 close = getattr(response, "close", None)
                 if callable(close):
@@ -355,7 +277,7 @@ class LocalServiceDiagnoser:
         return True, "listener and health checks are satisfied"
 
     @staticmethod
-    def _repair_block_reason(
+    def repair_block_reason(
         target: LocalServiceTarget,
         listeners: tuple[LocalListenerObservation, ...],
     ) -> str | None:
