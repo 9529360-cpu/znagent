@@ -95,7 +95,7 @@ jobs:
 
   configure:
     name: Configure visible interactive runner task
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ always() && github.event_name == 'workflow_dispatch' }}
     needs: [recover]
     runs-on: [self-hosted, Windows, X64, zn-interactive]
     timeout-minutes: 10
