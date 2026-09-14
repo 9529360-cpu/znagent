@@ -1,0 +1,73 @@
+name: ZN GitHub-hosted Interactive Readiness Probe
+
+on:
+  push:
+    branches:
+      - ci/github-hosted-interactive-probe
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+jobs:
+  hosted-interactive-probe:
+    name: Hosted Windows desktop input probe
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      CI: 'true'
+      TZ: UTC
+      PYTHONUTF8: '1'
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - name: Verify GitHub-hosted Windows x64 runner
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "Hosted desktop probe requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+          Write-Host "hosted_interactive_probe.runner=$env:RUNNER_NAME"
+
+      - name: Checkout exact validated interactive source
+        uses: actions/checkout@v7
+        with:
+          ref: 38a8d768c9a0b0c49a088c2c466a9956229d16dc
+          fetch-depth: 1
+
+      - name: Prove interactive desktop readiness
+        run: |
+          & "$env:GITHUB_WORKSPACE\.github\scripts\test-zn-interactive-desktop-readiness.ps1" -ExpectedRunnerName $env:RUNNER_NAME
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+
+      - name: Prepare isolated runtime
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/hosted-interactive-probe-venv -ErrorAction SilentlyContinue
+          uv venv .ci/hosted-interactive-probe-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\hosted-interactive-probe-venv\Scripts\python.exe'
+          uv pip install --python $python runtime/python
+
+      - name: Prove real keyboard input path
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\hosted-interactive-probe-venv\Scripts\python.exe'
+          $launcher = Join-Path $env:GITHUB_WORKSPACE '.github\scripts\run-zn-interactive-python.ps1'
+          & $launcher -Python $python -CommandArgs @('tests/zn_agent/e2e/test_windows_interactive_text_entry.py', '-v')
+          if ($LASTEXITCODE -ne 0) { throw 'Hosted Windows failed the exact real keyboard-input acceptance module.' }
+
+      - name: Prove real pointer and UIA path
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\hosted-interactive-probe-venv\Scripts\python.exe'
+          $launcher = Join-Path $env:GITHUB_WORKSPACE '.github\scripts\run-zn-interactive-python.ps1'
+          & $launcher -Python $python -CommandArgs @('tests/zn_agent/e2e/test_windows_interactive_pointer_uia.py', '-v')
+          if ($LASTEXITCODE -ne 0) { throw 'Hosted Windows failed the exact real pointer/UIA acceptance module.' }
