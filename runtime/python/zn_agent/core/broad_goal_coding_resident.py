@@ -8,10 +8,19 @@ workspace. The model never supplies shell text or the Python executable; ZN
 binds the script to the workspace, chooses its own interpreter, quotes argv,
 executes through the existing Terminal Body, and feeds real failures back into
 the same Root Work.
+
+E2E-23 adds one equally narrow reality-replanning rule: if cognition proposes a
+valid relative ``.py`` path that does not exist, ZN may search the attached
+workspace for one unique existing file with the same basename. The scan is
+bounded, does not follow directory symlinks, rejects generated/vendor trees, and
+requires the resolved file to remain inside the exact workspace. Zero or
+multiple matches fail closed; a model-proposed replacement path is never trusted
+without resident-owned filesystem evidence.
 """
 
 import hashlib
 import json
+import os
 import shlex
 import sys
 from pathlib import Path
@@ -31,6 +40,23 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
 
     _MAX_PYTHON_ARGS = 24
     _MAX_ARG_CHARS = 2048
+    _MAX_PATH_DISCOVERY_ENTRIES = 4096
+    _MAX_PATH_DISCOVERY_DEPTH = 8
+    _PATH_DISCOVERY_PRUNE = frozenset(
+        {
+            ".git",
+            ".hg",
+            ".svn",
+            ".tox",
+            ".nox",
+            ".venv",
+            "venv",
+            "node_modules",
+            "__pycache__",
+            "build",
+            "dist",
+        }
+    )
 
     def _build_cognition_request(self, event, impasse, required, deliberation=None):
         request = super()._build_cognition_request(
@@ -159,6 +185,12 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
         command = shlex.join(
             [sys.executable, proposal["absolute_path"], *proposal["args"]]
         )
+        path_reason = (
+            " ZN rejected the missing proposed path and selected one unique same-basename "
+            "script from a bounded resident-owned workspace scan."
+            if proposal["path_replanned"]
+            else ""
+        )
         intent = NativeActionIntent(
             intent_id=f"broad-python-{identity[:12]}",
             event_id=event.event_id,
@@ -180,7 +212,8 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
             },
             reason=(
                 "ZN bound one cognition-proposed Python script to the attached workspace, "
-                "selected its own interpreter, and chose the Terminal movement itself"
+                "selected its own interpreter, and chose the Terminal movement itself."
+                + path_reason
             ),
             source="resident_broad_goal_choice",
         )
@@ -189,7 +222,9 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
             "root_work_item_id": root.work_item_id,
             "work_thread_id": root.work_thread_id,
             "plan_version": root.plan_version,
+            "requested_relative_path": proposal["requested_relative_path"],
             "relative_path": proposal["relative_path"],
+            "path_replanned": proposal["path_replanned"],
             "objective": proposal["objective"],
             "increment_id": increment.increment_id,
             "action_kind": "run_python",
@@ -416,12 +451,15 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
         workspace = Path(str(event.payload.get("workspace_path") or "")).expanduser()
         try:
             root_path = workspace.resolve(strict=True)
-            script = root_path.joinpath(*rel.parts).resolve(strict=True)
-            script.relative_to(root_path)
-            if not script.is_file():
-                return None
-        except (OSError, RuntimeError, ValueError):
+        except (OSError, RuntimeError):
             return None
+        if not root_path.is_dir():
+            return None
+
+        resolved = self._resolve_workspace_python_script(root_path, rel)
+        if resolved is None:
+            return None
+        script, resolved_relative_path, path_replanned = resolved
 
         raw_exit = acceptance.get("expected_exit_code", 0)
         if isinstance(raw_exit, bool):
@@ -450,7 +488,9 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
             return None
         return {
             "objective": objective,
-            "relative_path": rel.as_posix(),
+            "requested_relative_path": rel.as_posix(),
+            "relative_path": resolved_relative_path,
+            "path_replanned": path_replanned,
             "absolute_path": str(script),
             "workspace": str(root_path),
             "args": args,
@@ -458,3 +498,78 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
             "output_contains": output_contains,
             "timeout": timeout,
         }
+
+    @classmethod
+    def _resolve_workspace_python_script(
+        cls,
+        root_path: Path,
+        requested: Path,
+    ) -> tuple[Path, str, bool] | None:
+        """Resolve one exact or uniquely discovered workspace Python file.
+
+        Missing expected paths are evidence, not permission for the model to pick
+        another path. ZN itself performs a bounded same-basename scan and accepts
+        a replacement only when current workspace reality proves exactly one
+        existing in-scope candidate.
+        """
+
+        expected = root_path.joinpath(*requested.parts)
+        try:
+            exact = expected.resolve(strict=True)
+            exact.relative_to(root_path)
+            if not exact.is_file() or exact.suffix.casefold() != ".py":
+                return None
+            return exact, exact.relative_to(root_path).as_posix(), False
+        except FileNotFoundError:
+            pass
+        except (OSError, RuntimeError, ValueError):
+            return None
+
+        candidates: dict[str, Path] = {}
+        observed_entries = 0
+        requested_name = requested.name.casefold()
+        try:
+            for current, directory_names, file_names in os.walk(
+                root_path,
+                topdown=True,
+                followlinks=False,
+            ):
+                current_path = Path(current)
+                relative_current = current_path.relative_to(root_path)
+                depth = len(relative_current.parts)
+                if depth >= cls._MAX_PATH_DISCOVERY_DEPTH:
+                    directory_names[:] = []
+                else:
+                    directory_names[:] = [
+                        name
+                        for name in directory_names
+                        if name.casefold() not in cls._PATH_DISCOVERY_PRUNE
+                    ]
+
+                observed_entries += len(directory_names) + len(file_names)
+                if observed_entries > cls._MAX_PATH_DISCOVERY_ENTRIES:
+                    return None
+
+                for file_name in file_names:
+                    if file_name.casefold() != requested_name:
+                        continue
+                    candidate = current_path / file_name
+                    try:
+                        resolved = candidate.resolve(strict=True)
+                        resolved.relative_to(root_path)
+                    except (OSError, RuntimeError, ValueError):
+                        continue
+                    if not resolved.is_file() or resolved.suffix.casefold() != ".py":
+                        continue
+                    relative_candidate = resolved.relative_to(root_path).as_posix()
+                    candidates[relative_candidate.casefold()] = resolved
+                    if len(candidates) > 1:
+                        return None
+        except (OSError, RuntimeError, ValueError):
+            return None
+
+        if len(candidates) != 1:
+            return None
+        relative_path, script = next(iter(candidates.items()))
+        actual_relative = script.relative_to(root_path).as_posix()
+        return script, actual_relative, True
