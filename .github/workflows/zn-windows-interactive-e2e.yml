@@ -8,6 +8,7 @@ on:
       - .github/workflows/zn-windows-interactive-e2e.yml
       - .github/scripts/test-zn-interactive-desktop-readiness.ps1
       - .github/scripts/run-zn-interactive-python.ps1
+      - .github/scripts/zn-interactive-python-entry.py
       - apps/desktop/browser-extension/background.js
       - apps/desktop/browser-extension/manifest.json
       - tests/zn_agent/e2e/_run_owned_unittest_module.py
@@ -95,6 +96,7 @@ on:
       - .github/workflows/zn-windows-interactive-e2e.yml
       - .github/scripts/test-zn-interactive-desktop-readiness.ps1
       - .github/scripts/run-zn-interactive-python.ps1
+      - .github/scripts/zn-interactive-python-entry.py
       - apps/desktop/browser-extension/background.js
       - apps/desktop/browser-extension/manifest.json
       - tests/zn_agent/e2e/_run_owned_unittest_module.py
