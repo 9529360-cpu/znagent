@@ -1,38 +1,42 @@
 from __future__ import annotations
 
-"""E2E-13 exact ValuePattern replacement on the existing product Body."""
+"""Current final product Body extensions for exact UI text and local service state."""
 
 from contextlib import closing
+from dataclasses import asdict
 from typing import Any
 
 from . import side_effect_attempts
 from .automation_text_content import NativeAutomationValueReplacementBody, text_sha256
 from .body import BodyAction, BodyActionResult
+from .local_service_diagnosis import LocalServiceDiagnoser, LocalServiceTarget
 from .machine_capability_body import MachineCapabilityBody
 from .models import utc_now
 
 
 class CurrentAppTextAwareBody(MachineCapabilityBody):
-    """Add one bounded UIA replacement movement without adding a second Body.
+    """Extend the one product Body without creating a second execution surface.
 
-    The raw replacement exists only in the live call. Durable action history is
-    rewritten to length/hash metadata before it reaches the inherited recorder,
-    while the inherited generic side-effect attempt journal stores only a
-    signature hash. A replay-blocking started/observed attempt therefore never
-    needs the application text to survive a restart.
+    The raw E2E-13 replacement exists only in the live call. Durable action
+    history is rewritten to length/hash metadata before it reaches the inherited
+    recorder, while the inherited generic side-effect attempt journal stores only
+    a signature hash.
 
-    Inherit the current final product Body rather than an older browser-only
-    layer so application launch/activation, browser form submit, named text,
-    pointer/keyboard, file, and existing side-effect recovery remain one
-    compatible Body surface.
+    E2E-21 adds only a read-only ``local_service_state`` movement here. Any repair
+    remains an ordinary ``command`` movement, so the existing command authority,
+    side-effect journal, replay rules, terminal isolation and audit path stay the
+    single mutation boundary. A successful command therefore never makes service
+    recovery true by itself; callers must observe ``local_service_state`` again.
     """
 
     _AUTOMATION_VALUE_REPLACE = "automation_value_replace"
+    _LOCAL_SERVICE_STATE = "local_service_state"
     _RECOVERY_VISIBLE_STATUSES = ("started", "observed", "verified_effect")
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._automation_value_replacement = NativeAutomationValueReplacementBody()
+        self._local_service_diagnoser = LocalServiceDiagnoser()
 
     @classmethod
     def _requires_guard(cls, kind: str, args: dict[str, Any]) -> bool:
@@ -92,6 +96,35 @@ class CurrentAppTextAwareBody(MachineCapabilityBody):
         super()._record(action, result)
 
     def _dispatch(self, action: BodyAction, started: str) -> BodyActionResult:
+        if action.kind == self._LOCAL_SERVICE_STATE:
+            target = LocalServiceTarget(
+                port=int(action.args.get("port") or 0),
+                host=str(action.args.get("host") or "127.0.0.1"),
+                expected_process_name=(
+                    str(action.args.get("expected_process_name") or "").strip() or None
+                ),
+                health_url=str(action.args.get("health_url") or "").strip() or None,
+                log_path=str(action.args.get("log_path") or "").strip() or None,
+            )
+            snapshot = self._local_service_diagnoser.inspect(
+                target,
+                health_timeout=max(
+                    0.05,
+                    min(10.0, float(action.args.get("health_timeout") or 2.0)),
+                ),
+            )
+            data = asdict(snapshot)
+            return BodyActionResult(
+                action_id=action.action_id,
+                kind=action.kind,
+                success=True,
+                output=snapshot.reason,
+                data=data,
+                event_id=action.event_id,
+                started_at=started,
+                completed_at=utc_now(),
+            )
+
         if action.kind != self._AUTOMATION_VALUE_REPLACE:
             return super()._dispatch(action, started)
 
