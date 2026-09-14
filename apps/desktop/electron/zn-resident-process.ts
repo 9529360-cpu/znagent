@@ -296,15 +296,20 @@ export class ZnResidentProcess extends EventEmitter {
     this.disconnect()
     this.socket = socket
     this.endpoint = endpoint
-    this.lines = readline.createInterface({ input: socket })
-    this.lines.on('line', line => this.onLine(line))
+    const lines = readline.createInterface({ input: socket })
+    this.lines = lines
+    lines.on('line', line => this.onLine(line))
+    // readline mirrors errors from its input stream. The socket remains the
+    // single transport-error authority; consume the mirrored Interface error
+    // so a hard peer reset cannot become a second uncaught exception.
+    lines.on('error', () => void 0)
     socket.on('error', error => { if (this.socket === socket) this.emit('process-error', error) })
     socket.on('close', () => {
       if (this.socket !== socket) return
       this.socket = null
       this.endpoint = null
-      this.lines?.close()
-      this.lines = null
+      lines.close()
+      if (this.lines === lines) this.lines = null
       this.rejectPending(new Error('ZN Resident service connection closed'))
       this.emit('disconnect')
     })
