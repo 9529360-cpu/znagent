@@ -18,6 +18,7 @@ from zn_agent.core.local_service_recovery_behavior import (
     _same_identity,
     _service_context,
 )
+from zn_agent.core.path_context import canonical_host_path
 from zn_agent.core.provider_bridge import build_resident_runtime
 from zn_agent.core.store import KernelStore
 
@@ -62,19 +63,27 @@ class LocalServiceRecoveryAdmissionTests(unittest.TestCase):
     def test_relative_repair_file_cannot_escape_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            workspace = root / "workspace"
-            workspace.mkdir()
-            (workspace / "repair_service.py").write_text("print('ok')\n", encoding="utf-8")
+            raw_workspace = root / "workspace"
+            raw_workspace.mkdir()
+            (raw_workspace / "repair_service.py").write_text("print('ok')\n", encoding="utf-8")
             outside = root / "outside.py"
             outside.write_text("print('no')\n", encoding="utf-8")
 
+            # Real Work attachment canonicalizes host paths before they become
+            # durable authority. Mirror that product contract here so Windows
+            # NetworkService 8.3 TEMP aliases do not create an artificial
+            # short-path-vs-long-path containment mismatch in this helper test.
+            workspace = canonical_host_path(raw_workspace).resolve(strict=True)
             resolved = _relative_file(
                 workspace,
                 "repair_service.py",
                 code="repair_authority_missing",
                 suffix=".py",
             )
-            self.assertEqual(resolved, (workspace / "repair_service.py").resolve())
+            self.assertEqual(
+                resolved,
+                canonical_host_path(raw_workspace / "repair_service.py").resolve(strict=True),
+            )
 
             with self.assertRaises(_Blocked):
                 _relative_file(
@@ -86,7 +95,7 @@ class LocalServiceRecoveryAdmissionTests(unittest.TestCase):
 
     def test_service_context_is_loopback_and_log_scope_is_attached_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp).resolve()
+            workspace = canonical_host_path(tmp).resolve(strict=True)
             (workspace / "service.log").write_text("boot\n", encoding="utf-8")
             event = self._event(
                 TASK,
