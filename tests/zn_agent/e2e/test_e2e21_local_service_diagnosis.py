@@ -10,11 +10,12 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from zn_agent.core.local_service_diagnosis import LocalServiceDiagnoser, LocalServiceTarget
+from zn_agent.core.current_app_text_body import CurrentAppTextAwareBody
+from zn_agent.core.store import KernelStore
 
 
 class LocalServiceDiagnosisE2E(unittest.TestCase):
-    def test_real_listener_log_health_repair_and_verification(self) -> None:
+    def test_real_listener_log_guarded_repair_and_fresh_verification(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             state_path = root / "service.state"
@@ -47,46 +48,62 @@ class LocalServiceDiagnosisE2E(unittest.TestCase):
             server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
+            store = KernelStore(root / "kernel.db")
             try:
                 port = int(server.server_address[1])
                 self._wait_for_listener(port)
-                target = LocalServiceTarget(
-                    port=port,
-                    host="127.0.0.1",
-                    expected_process_name=Path(sys.executable).name,
-                    health_url=f"http://127.0.0.1:{port}/health",
-                    log_path=str(log_path),
-                )
+                body = CurrentAppTextAwareBody(store=store)
+                service_args = {
+                    "port": port,
+                    "host": "127.0.0.1",
+                    "expected_process_name": Path(sys.executable).name,
+                    "health_url": f"http://127.0.0.1:{port}/health",
+                    "log_path": str(log_path),
+                    "health_timeout": 1.0,
+                }
                 repair_command = " ".join(
                     shlex.quote(value)
                     for value in (sys.executable, str(repair_path), str(state_path))
                 )
 
-                result = LocalServiceDiagnoser().diagnose_and_repair(
-                    target,
-                    repair_command=repair_command,
-                    workdir=str(root),
-                    verification_timeout=5.0,
-                    verification_interval=0.05,
-                    health_timeout=1.0,
-                )
+                before = body.act("local_service_state", event_id="e2e21", **service_args)
+                self.assertTrue(before.success)
+                self.assertFalse(before.data["healthy"])
+                self.assertEqual(before.data["health"]["status_code"], 503)
+                self.assertTrue(before.data["listeners"])
+                self.assertEqual(before.data["listeners"][0]["pid"], os.getpid())
+                self.assertIn("ready=false", before.data["log"]["tail"])
+                self.assertIsNone(before.data["repair_blocked_reason"])
 
-                self.assertFalse(result.before.healthy)
-                self.assertEqual(result.before.health.status_code, 503)
-                self.assertTrue(result.before.listeners)
-                self.assertEqual(result.before.listeners[0].pid, os.getpid())
-                self.assertIn("ready=false", result.before.log.tail)
-                self.assertTrue(result.repair_attempted)
-                self.assertTrue(result.repair_result.success)
-                self.assertIn("repair applied", result.repair_result.output)
-                self.assertTrue(result.after.healthy)
-                self.assertEqual(result.after.health.status_code, 200)
-                self.assertTrue(result.restored)
-                self.assertTrue(result.success)
+                repair = body.act(
+                    "command",
+                    event_id="e2e21",
+                    command=repair_command,
+                    workdir=str(root),
+                    timeout=10.0,
+                )
+                self.assertTrue(repair.success)
+                self.assertIn("repair applied", repair.output)
+                self.assertTrue(repair.data["side_effect_dispatch_observed"])
+
+                after = self._wait_for_body_health(body, service_args)
+                self.assertTrue(after.success)
+                self.assertTrue(after.data["healthy"])
+                self.assertEqual(after.data["health"]["status_code"], 200)
             finally:
+                store.close()
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=3.0)
+
+    @staticmethod
+    def _wait_for_body_health(body, service_args: dict) -> object:
+        deadline = time.monotonic() + 5.0
+        last = body.act("local_service_state", event_id="e2e21", **service_args)
+        while not bool(last.data.get("healthy")) and time.monotonic() < deadline:
+            time.sleep(0.05)
+            last = body.act("local_service_state", event_id="e2e21", **service_args)
+        return last
 
     @staticmethod
     def _wait_for_listener(port: int) -> None:
