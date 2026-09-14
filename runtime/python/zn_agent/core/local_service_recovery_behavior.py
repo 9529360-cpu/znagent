@@ -28,6 +28,7 @@ import time
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
+from .file_identity import observe_file_identity
 from .models import ExecutionPath, ResidentRunResult, utc_now
 
 
@@ -37,6 +38,7 @@ _ACCEPTANCE = "local_service_recovery:v1"
 _VERIFY_ATTEMPTS = 40
 _VERIFY_INTERVAL_SECONDS = 0.1
 _MAX_SCRIPT_CHARS = 260
+_MAX_REPAIR_SCRIPT_BYTES = 2 * 1024 * 1024
 _INLINE_CODE = re.compile(r"(?<!`)`([^`\r\n]{1,260})`(?!`)")
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
@@ -138,6 +140,49 @@ def _relative_file(workspace: Path, raw: str, *, code: str, suffix: str | None =
     if not resolved.is_file():
         raise _Blocked(code, "project-local file is not a regular file")
     return resolved
+
+
+def _observe_repair_script_identity(path: Path) -> dict[str, Any]:
+    """Capture privacy-bounded exact repair-script identity for pre-mutation reuse."""
+
+    observed = observe_file_identity(path, max_hash_bytes=_MAX_REPAIR_SCRIPT_BYTES)
+    if not (
+        observed.get("observable") is True
+        and observed.get("stable") is True
+        and observed.get("exists") is True
+        and str(observed.get("type") or "") == "file"
+        and observed.get("digest_complete") is True
+        and str(observed.get("content_sha256") or "")
+    ):
+        raise _Blocked(
+            "repair_script_identity_unavailable",
+            "repair script does not have one stable complete file identity within the bounded hash limit",
+        )
+    resolved_path = str(observed.get("path") or "")
+    return {
+        "version": observed.get("version"),
+        "resolved_path_sha256": hashlib.sha256(resolved_path.encode("utf-8")).hexdigest(),
+        "size_bytes": observed.get("size_bytes"),
+        "mtime_ns": observed.get("mtime_ns"),
+        "ctime_ns": observed.get("ctime_ns"),
+        "device": observed.get("device"),
+        "inode": observed.get("inode"),
+        "content_sha256": observed.get("content_sha256"),
+    }
+
+
+def _same_repair_script_identity(expected: Mapping[str, Any], current: Mapping[str, Any]) -> bool:
+    keys = (
+        "version",
+        "resolved_path_sha256",
+        "size_bytes",
+        "mtime_ns",
+        "ctime_ns",
+        "device",
+        "inode",
+        "content_sha256",
+    )
+    return all(expected.get(key) == current.get(key) for key in keys)
 
 
 def _service_context(event, workspace: Path) -> tuple[dict[str, Any], Path]:
@@ -384,6 +429,7 @@ def _begin(resident, event, state, request: Mapping[str, str]):
             code="repair_authority_missing",
             suffix=".py",
         )
+        repair_script_identity = _observe_repair_script_identity(repair_script)
         service_args, _ = _service_context(event, workspace)
     except _Blocked as exc:
         return _blocked(
@@ -408,6 +454,7 @@ def _begin(resident, event, state, request: Mapping[str, str]):
         "expected_process_name": service_args["expected_process_name"],
         "repair_script_chars": len(script_identity),
         "repair_script_sha256": hashlib.sha256(script_identity.encode("utf-8")).hexdigest(),
+        "repair_script_identity": repair_script_identity,
         "verification_attempts": 0,
     }
 
@@ -464,7 +511,7 @@ def _begin(resident, event, state, request: Mapping[str, str]):
     )
     state.data[_STATE_KEY] = meta
     state.stage = "e2e21_pre_repair"
-    state.next_action = "freshly revalidate the exact listener identity before one guarded repair"
+    state.next_action = "freshly revalidate the exact listener and repair-script identities before one guarded repair"
     state.blocked_by = None
     resident.store.save_working_state(state)
     _persist(resident, event, meta, status="running")
@@ -549,6 +596,33 @@ def _repair(resident, event, state):
             "service_identity_drift",
             "listener PID/creation-time identity changed before mutation",
             "服务进程身份在修复前发生变化；ZN 没有执行修复命令。",
+        )
+
+    try:
+        fresh_script_identity = _observe_repair_script_identity(repair_script)
+    except _Blocked as exc:
+        return _blocked(
+            resident,
+            event,
+            state,
+            meta,
+            exc.code,
+            exc.detail,
+            "修复脚本在执行前已无法证明为同一个稳定文件；ZN 没有执行修复命令。",
+        )
+    expected_script_identity = meta.get("repair_script_identity")
+    if not isinstance(expected_script_identity, Mapping) or not _same_repair_script_identity(
+        expected_script_identity,
+        fresh_script_identity,
+    ):
+        return _blocked(
+            resident,
+            event,
+            state,
+            meta,
+            "repair_script_identity_drift",
+            "repair script path/content identity changed between authorization and mutation",
+            "修复脚本在诊断后发生变化；ZN 没有执行修复命令。",
         )
 
     executable = str(Path(sys.executable).resolve()).replace("\\", "/")
