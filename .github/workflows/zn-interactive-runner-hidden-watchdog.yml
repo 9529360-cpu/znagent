@@ -1,25 +1,36 @@
-name: ZN Interactive Runner Visible Watchdog
+name: ZN Interactive Runner Recovery
 
 on:
-  push:
+  pull_request:
     branches:
-      - dev/zn-agent
+      - main
     paths:
       - .github/workflows/zn-interactive-runner-hidden-watchdog.yml
       - .github/scripts/watch-zn-interactive-runner.ps1
       - .github/scripts/install-zn-interactive-runner-watchdog.ps1
+      - .github/scripts/test-zn-interactive-desktop-readiness.ps1
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/zn-interactive-runner-hidden-watchdog.yml
+      - .github/scripts/watch-zn-interactive-runner.ps1
+      - .github/scripts/install-zn-interactive-runner-watchdog.ps1
+      - .github/scripts/test-zn-interactive-desktop-readiness.ps1
+  schedule:
+    - cron: '7 * * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: zn-interactive-runner-hidden-watchdog
+  group: zn-interactive-runner-recovery
   cancel-in-progress: true
 
 jobs:
   recover:
-    name: Wake existing interactive watchdog
+    name: Wake existing interactive runner task
     runs-on: [self-hosted, Windows, X64, zn-ci]
     timeout-minutes: 5
     steps:
@@ -32,28 +43,33 @@ jobs:
           if ($env:RUNNER_NAME -notmatch '^zn-ci-') {
             throw "ZN interactive recovery requires a zn-ci service runner; got $env:RUNNER_NAME"
           }
-      - name: Start existing interactive watchdog task when present
+      - name: Start existing interactive runner task when stopped
         shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         run: |
           $taskName = 'ZN GitHub Actions Interactive Runner Watchdog'
           $task = Get-ScheduledTask -TaskPath '\' -TaskName $taskName -ErrorAction SilentlyContinue
           if ($null -eq $task) {
-            Write-Host 'No interactive watchdog task exists yet. Repository recovery cannot create an interactive desktop principal from Session 0; configure will create it once zn-interactive is manually started in the logged-on desktop session.'
+            Write-Host 'No interactive runner task exists on this host. Repository recovery cannot create an interactive desktop principal from Session 0; configure it from the logged-on zn-interactive session.'
             exit 0
           }
           if ($task.Principal.LogonType -notin @('Interactive','InteractiveToken')) {
-            throw "Refusing to start watchdog outside interactive logon boundary: $($task.Principal.LogonType)"
+            throw "Refusing to start interactive runner task outside interactive logon boundary: $($task.Principal.LogonType)"
           }
           Write-Host "task.state.before=$($task.State)"
-          Start-ScheduledTask -TaskPath '\' -TaskName $taskName -ErrorAction Stop
-          Start-Sleep -Seconds 15
-          $task = Get-ScheduledTask -TaskPath '\' -TaskName $taskName -ErrorAction Stop
+          if ([string]$task.State -ne 'Running') {
+            Start-ScheduledTask -TaskPath '\' -TaskName $taskName -ErrorAction Stop
+            Start-Sleep -Seconds 15
+            $task = Get-ScheduledTask -TaskPath '\' -TaskName $taskName -ErrorAction Stop
+          } else {
+            Write-Host 'Interactive runner task is already Running; recovery does not kill or replace a live listener.'
+          }
           Write-Host "task.state.after=$($task.State)"
-          Write-Host 'Existing interactive watchdog task was triggered. It can only create zn-interactive inside an already logged-on desktop session.'
+          Write-Host 'Recovery only wakes the existing interactive task. It does not unlock Windows, change the interactive principal, or restart a task that is already running.'
 
   configure:
-    name: Configure visible interactive watchdog
-    needs: recover
+    name: Configure visible interactive runner task
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: [recover]
     runs-on: [self-hosted, Windows, X64, zn-interactive]
     timeout-minutes: 10
     steps:
@@ -99,4 +115,4 @@ jobs:
           Write-Host "watchdog.task=$taskName"
           Write-Host "watchdog.visible=$(-not $task.Settings.Hidden)"
           Write-Host "watchdog.trigger=$($triggers[0].CimClass.CimClassName)"
-          Write-Host 'Visible interactive watchdog configuration verified.'
+          Write-Host 'Visible interactive runner task configuration verified.'
