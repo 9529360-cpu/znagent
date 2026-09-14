@@ -164,7 +164,11 @@ class E2E23CommandPathReplanTests(unittest.TestCase):
                 ledger.attach_workspace(thread, workspace, name="E2E-23 Workspace")
                 _, event = control.start(
                     thread,
-                    "Run the existing project readiness probe; if the expected path is stale, inspect the workspace and use the actual equivalent rather than inventing one.",
+                    (
+                        "Build a reliable local verification workflow around the existing project "
+                        "readiness probe, execute it, and recover from any stale expected path by "
+                        "inspecting the attached workspace until the real probe prints E2E23_READY."
+                    ),
                     payload={"model_policy": "on_demand"},
                     acceptance_criteria=[
                         "a later product-level verifier still owns Root completion",
