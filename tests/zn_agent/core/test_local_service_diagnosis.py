@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +9,7 @@ from unittest.mock import patch
 
 from zn_agent.core.current_app_text_body import CurrentAppTextAwareBody
 from zn_agent.core.local_service_diagnosis import LocalServiceDiagnoser, LocalServiceTarget
+from zn_agent.core.store import KernelStore
 
 
 class _Oneshot:
@@ -31,9 +33,6 @@ class _Process:
 
     def exe(self):
         return rf"C:\apps\{self._name}"
-
-    def cmdline(self):
-        return [self._name, "--serve"]
 
     def create_time(self):
         return 1234.5
@@ -120,6 +119,35 @@ class LocalServiceDiagnosisTests(unittest.TestCase):
         self.assertTrue(snapshot.healthy)
         self.assertGreaterEqual(state["probes"], 2)
 
+    def test_health_probe_rejects_remote_mismatched_or_credentialed_urls(self) -> None:
+        invalid = (
+            "http://example.com:8125/health",
+            "http://127.0.0.1:9999/health",
+            "http://user:secret@127.0.0.1:8125/health",
+            "file:///tmp/health",
+        )
+        for url in invalid:
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                LocalServiceTarget(port=8125, host="127.0.0.1", health_url=url)
+
+    def test_redirect_status_is_not_a_healthy_postcondition(self) -> None:
+        diagnoser = LocalServiceDiagnoser(
+            connection_provider=lambda: [_connection(8125, 4244)],
+            urlopen=lambda url, timeout: _Response(302),
+        )
+        with patch(
+            "zn_agent.core.local_service_diagnosis.psutil.Process",
+            side_effect=lambda pid: _Process(pid),
+        ):
+            snapshot = diagnoser.inspect(
+                LocalServiceTarget(
+                    port=8125,
+                    health_url="http://127.0.0.1:8125/health",
+                )
+            )
+        self.assertFalse(snapshot.healthy)
+        self.assertEqual(snapshot.health.status_code, 302)
+
     def test_unexpected_port_owner_is_visible_as_repair_blocker(self) -> None:
         diagnoser = LocalServiceDiagnoser(
             connection_provider=lambda: [_connection(8126, 4245)],
@@ -184,6 +212,56 @@ class LocalServiceDiagnosisTests(unittest.TestCase):
         self.assertEqual(result.data["listeners"][0]["pid"], 4248)
         self.assertTrue(body._requires_guard("command", {"command": "repair"}))
         self.assertFalse(body._requires_guard("local_service_state", {"port": 8129}))
+
+    def test_durable_body_history_redacts_health_url_and_log_tail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            log = root / "service.log"
+            secret_log = "token=super-secret-log-value"
+            secret_url = "http://127.0.0.1:8130/health?token=super-secret-url-value"
+            log.write_text(secret_log, encoding="utf-8")
+            store = KernelStore(root / "kernel.db")
+            try:
+                body = CurrentAppTextAwareBody(store=store)
+                body._local_service_diagnoser = LocalServiceDiagnoser(
+                    connection_provider=lambda: [_connection(8130, 4249)],
+                    urlopen=lambda url, timeout: _Response(200),
+                )
+                with patch(
+                    "zn_agent.core.local_service_diagnosis.psutil.Process",
+                    side_effect=lambda pid: _Process(pid),
+                ):
+                    live = body.act(
+                        "local_service_state",
+                        event_id="diagnostic-redaction",
+                        port=8130,
+                        health_url=secret_url,
+                        log_path=str(log),
+                    )
+
+                self.assertEqual(live.data["health"]["url"], secret_url)
+                self.assertEqual(live.data["log"]["tail"], secret_log)
+                with body._connect() as conn:
+                    row = conn.execute(
+                        "SELECT action_json, result_json FROM native_body_actions "
+                        "WHERE action_id = ?",
+                        (live.action_id,),
+                    ).fetchone()
+                action = json.loads(row["action_json"])
+                persisted = json.loads(row["result_json"])
+                serialized = json.dumps(
+                    {"action": action, "result": persisted},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                self.assertNotIn("super-secret-url-value", serialized)
+                self.assertNotIn("super-secret-log-value", serialized)
+                self.assertTrue(action["args"]["health_url_redacted"])
+                self.assertTrue(persisted["data"]["health"]["url_redacted"])
+                self.assertTrue(persisted["data"]["log"]["tail_redacted"])
+                self.assertGreater(persisted["data"]["log"]["tail_chars"], 0)
+            finally:
+                store.close()
 
 
 if __name__ == "__main__":
