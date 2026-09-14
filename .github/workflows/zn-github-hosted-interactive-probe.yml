@@ -57,30 +57,30 @@ jobs:
       - name: Align the test-owned click point and visual ROI with the checkbox state glyph
         run: |
           $testPath = Join-Path $env:GITHUB_WORKSPACE 'tests\zn_agent\e2e\test_windows_interactive_pointer_uia.py'
-          $content = Get-Content -LiteralPath $testPath -Raw
-          $oldPoint = @(
-            '        return (',
-            '            (int(rect.left) + int(rect.right)) // 2,',
-            '            (int(rect.top) + int(rect.bottom)) // 2,',
-            '        )'
-          ) -join "`r`n"
-          $newPoint = @(
-            '        return (',
-            '            int(rect.left) + 16,',
-            '            (int(rect.top) + int(rect.bottom)) // 2,',
-            '        )'
-          ) -join "`r`n"
-          if (-not $content.Contains($oldPoint)) { throw 'Expected target-center block was not found.' }
-          $content = $content.Replace($oldPoint, $newPoint)
-          if (($content.Split('width_fraction=0.12').Count - 1) -ne 1) { throw 'Unexpected direct width ROI count.' }
-          if (($content.Split('height_fraction=0.08').Count - 1) -ne 1) { throw 'Unexpected direct height ROI count.' }
-          if (($content.Split('"width_fraction": 0.12').Count - 1) -ne 1) { throw 'Unexpected expected width ROI count.' }
-          if (($content.Split('"height_fraction": 0.08').Count - 1) -ne 1) { throw 'Unexpected expected height ROI count.' }
-          $content = $content.Replace('width_fraction=0.12', 'width_fraction=0.04')
-          $content = $content.Replace('height_fraction=0.08', 'height_fraction=0.04')
-          $content = $content.Replace('"width_fraction": 0.12', '"width_fraction": 0.04')
-          $content = $content.Replace('"height_fraction": 0.08', '"height_fraction": 0.04')
-          [IO.File]::WriteAllText($testPath, $content, [Text.UTF8Encoding]::new($false))
+          $lines = [System.Collections.Generic.List[string]](Get-Content -LiteralPath $testPath)
+
+          $pointLine = '            (int(rect.left) + int(rect.right)) // 2,'
+          $pointIndex = $lines.IndexOf($pointLine)
+          if ($pointIndex -lt 0) { throw 'Expected test-owned target center line was not found.' }
+          $lines[$pointIndex] = '            int(rect.left) + 16,'
+
+          $visualAnchor = $lines.IndexOf('                    visual = resident.visual_region.probe(')
+          if ($visualAnchor -lt 0 -or $visualAnchor + 4 -ge $lines.Count) { throw 'Visual probe anchor missing.' }
+          if ($lines[$visualAnchor + 3] -ne '                        width_fraction=0.12,' -or $lines[$visualAnchor + 4] -ne '                        height_fraction=0.08,') {
+            throw 'Visual probe ROI shape drifted.'
+          }
+          $lines[$visualAnchor + 3] = '                        width_fraction=0.04,'
+          $lines[$visualAnchor + 4] = '                        height_fraction=0.04,'
+
+          $expectedAnchor = $lines.IndexOf('                                "kind": "visual_region_changed",')
+          if ($expectedAnchor -lt 0 -or $expectedAnchor + 2 -ge $lines.Count) { throw 'Expected-outcome anchor missing.' }
+          if ($lines[$expectedAnchor + 1] -ne '                                "width_fraction": 0.12,' -or $lines[$expectedAnchor + 2] -ne '                                "height_fraction": 0.08,') {
+            throw 'Expected-outcome ROI shape drifted.'
+          }
+          $lines[$expectedAnchor + 1] = '                                "width_fraction": 0.04,'
+          $lines[$expectedAnchor + 2] = '                                "height_fraction": 0.04,'
+
+          [IO.File]::WriteAllLines($testPath, $lines, [Text.UTF8Encoding]::new($false))
           Write-Host 'hosted_interactive_probe.checkbox_visual_roi=0.04x0.04'
 
       - name: Set up uv
