@@ -33,7 +33,9 @@ class CurrentAppTextAwareBody(MachineCapabilityBody):
     contain user data, so the persisted row retains only bounded length/hash
     metadata for those fields. Log reads themselves require an explicit
     ``log_root`` and are revalidated inside that authority immediately before
-    every read.
+    every read. Product E2E-21 repair commands opt into the same durable-history
+    minimization for command/workdir/output while the generic side-effect journal
+    still computes replay identity from the real pre-dispatch arguments.
     """
 
     _AUTOMATION_VALUE_REPLACE = "automation_value_replace"
@@ -100,6 +102,35 @@ class CurrentAppTextAwareBody(MachineCapabilityBody):
                 args=safe_args,
                 event_id=action.event_id,
                 created_at=action.created_at,
+            )
+        elif action.kind == "command" and bool(action.args.get("local_service_repair")):
+            safe_args = dict(action.args)
+            for key in ("command", "workdir"):
+                self._redact_mapping_value(safe_args, key)
+            action = BodyAction(
+                action_id=action.action_id,
+                kind=action.kind,
+                args=safe_args,
+                event_id=action.event_id,
+                created_at=action.created_at,
+            )
+            safe_data = dict(result.data or {})
+            for key in ("command", "cwd"):
+                self._redact_mapping_value(safe_data, key)
+            raw_output = str(safe_data.pop("output", result.output or "") or "")
+            safe_data["output_redacted"] = True
+            safe_data["output_chars"] = len(raw_output)
+            safe_data["output_sha256"] = text_sha256(raw_output)
+            persisted_result = BodyActionResult(
+                action_id=result.action_id,
+                kind=result.kind,
+                success=result.success,
+                output="",
+                data=safe_data,
+                error=result.error,
+                event_id=result.event_id,
+                started_at=result.started_at,
+                completed_at=result.completed_at,
             )
         elif action.kind == self._LOCAL_SERVICE_STATE:
             safe_args = dict(action.args)
