@@ -47,10 +47,26 @@ jobs:
       - name: Start exact existing interactive runner task when stopped
         shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         run: |
+          $expectedRunnerRoot = 'C:\actions-runner-znagent'
+          $expectedRunnerConfigPath = Join-Path $expectedRunnerRoot '.runner'
+          $expectedRunCommand = Join-Path $expectedRunnerRoot 'run.cmd'
+          if (-not (Test-Path -LiteralPath $expectedRunnerConfigPath -PathType Leaf)) {
+            throw "The known zn-interactive runner config is missing: $expectedRunnerConfigPath"
+          }
+          if (-not (Test-Path -LiteralPath $expectedRunCommand -PathType Leaf)) {
+            throw "The known zn-interactive runner command is missing: $expectedRunCommand"
+          }
+          $expectedRunnerConfig = Get-Content -LiteralPath $expectedRunnerConfigPath -Raw -ErrorAction Stop | ConvertFrom-Json
+          if ([string]$expectedRunnerConfig.agentName -ne 'zn-interactive') {
+            throw "Known interactive runner root belongs to '$($expectedRunnerConfig.agentName)', not 'zn-interactive'."
+          }
+          Write-Host 'runner.install.present=true'
+          Write-Host 'runner.install.identity=zn-interactive'
+
           $taskName = 'ZN GitHub Actions Interactive Runner Watchdog'
           $task = Get-ScheduledTask -TaskPath '\' -TaskName $taskName -ErrorAction SilentlyContinue
           if ($null -eq $task) {
-            throw 'The repository-owned zn-interactive scheduled task is missing on the shared Windows runner host. Automated Session 0 recovery cannot safely recreate an interactive principal; restore it from a logged-on zn-interactive bootstrap session.'
+            throw 'The zn-interactive runner installation is present, but its repository-owned scheduled task is missing. Automated Session 0 recovery cannot safely recreate an interactive user principal; restore the task from a logged-on zn-interactive bootstrap session.'
           }
           if ($task.Principal.LogonType -notin @('Interactive','InteractiveToken')) {
             throw "Refusing to start interactive runner task outside interactive logon boundary: $($task.Principal.LogonType)"
@@ -65,10 +81,14 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($runnerRoot) -or -not (Test-Path -LiteralPath $runnerRoot -PathType Container)) {
             throw 'Interactive runner task has no valid runner working directory.'
           }
-          $runnerConfigPath = Join-Path $runnerRoot '.runner'
-          if (-not (Test-Path -LiteralPath $runnerConfigPath -PathType Leaf)) {
-            throw "Interactive runner config is missing: $runnerConfigPath"
+          if (-not [string]::Equals(
+              [IO.Path]::GetFullPath($runnerRoot).TrimEnd('\'),
+              [IO.Path]::GetFullPath($expectedRunnerRoot).TrimEnd('\'),
+              [StringComparison]::OrdinalIgnoreCase
+          )) {
+            throw "Interactive runner task points at unexpected root '$runnerRoot'; expected '$expectedRunnerRoot'."
           }
+          $runnerConfigPath = Join-Path $runnerRoot '.runner'
           $runnerConfig = Get-Content -LiteralPath $runnerConfigPath -Raw -ErrorAction Stop | ConvertFrom-Json
           if ([string]$runnerConfig.agentName -ne 'zn-interactive') {
             throw "Refusing scheduled task for runner '$($runnerConfig.agentName)'; expected 'zn-interactive'."
