@@ -29,10 +29,10 @@ class CurrentAppTextAwareBody(MachineCapabilityBody):
     recovery true by itself; callers must observe ``local_service_state`` again.
 
     Local diagnostic details are richer in the live result than in durable Body
-    history. Health URLs, log paths/roots and log text can contain user data, so
-    the persisted row retains only bounded length/hash metadata for those fields.
-    Log reads themselves require an explicit ``log_root`` and are revalidated
-    inside that authority immediately before every read.
+    history. Health URLs, log paths/roots/text and executable paths can contain
+    user data, so the persisted row retains only bounded length/hash metadata for
+    those fields. Log reads themselves require an explicit ``log_root`` and are
+    revalidated inside that authority immediately before every read.
     """
 
     _AUTOMATION_VALUE_REPLACE = "automation_value_replace"
@@ -132,6 +132,17 @@ class CurrentAppTextAwareBody(MachineCapabilityBody):
         for key in ("health_url", "log_path", "log_root"):
             cls._redact_mapping_value(target, key)
         data["target"] = target
+
+        listeners = data.get("listeners")
+        if isinstance(listeners, (list, tuple)):
+            safe_listeners: list[dict[str, Any]] = []
+            for row in listeners:
+                if not isinstance(row, dict):
+                    continue
+                safe_row = dict(row)
+                cls._redact_mapping_value(safe_row, "executable_path")
+                safe_listeners.append(safe_row)
+            data["listeners"] = safe_listeners
 
         health = data.get("health")
         if isinstance(health, dict):
