@@ -1,0 +1,57 @@
+name: Temporary E2E-14 durable evidence test fix
+
+on:
+  push:
+    branches:
+      - work/e2e14-durable-evidence-test-fix
+    paths:
+      - .github/workflows/zz-e2e14-durable-evidence-test-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout patch branch
+        uses: actions/checkout@v7
+        with:
+          ref: work/e2e14-durable-evidence-test-fix
+          fetch-depth: 0
+      - name: Replace transient checkpoint assertion with durable Work evidence
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('tests/zn_agent/e2e/test_windows_interactive_browser_desktop_record_transfer.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''            state = resident.store.get_working_state()\n            meta = state.data.get(_STATE_KEY)\n            self.assertIsInstance(meta, dict)\n            self.assertEqual(meta.get("save_dispatch_count"), 1)\n            final = meta.get("final_verification")\n            self.assertIsInstance(final, dict)\n            self.assertTrue(final.get("source_exact"))\n            self.assertTrue(final.get("readback_verified"))\n            self.assertTrue(final.get("title_saved_postcondition"))\n            self.assertTrue(final.get("title_saved_transition"))\n            self.assertTrue(final.get("hwnd_changed"))\n            persisted = json.dumps(meta, ensure_ascii=False, sort_keys=True, default=str)\n            self.assertNotIn(customer, persisted)\n            self.assertNotIn("需跟进", persisted)\n\n            root_work = resident.work_ledger.work_item_for_event(event.event_id)\n            self.assertIsNotNone(root_work)\n            self.assertEqual(root_work.status, "completed")\n            self.assertIn("zn_independent_acceptance", root_work.result or "")\n'''
+          new = '''            terminal_state = resident.store.get_working_state()\n            self.assertEqual(terminal_state.stage, "idle")\n\n            root_work = resident.work_ledger.work_item_for_event(event.event_id)\n            self.assertIsNotNone(root_work)\n            assert root_work is not None\n            self.assertEqual(root_work.status, "completed")\n            self.assertIn("zn_independent_acceptance", root_work.result or "")\n\n            items = resident.work_ledger.list_work_items(root_work.work_thread_id, limit=256)\n            verifiers = [\n                item\n                for item in items\n                if item.parent_work_item_id == root_work.work_item_id\n                and item.plan_version == root_work.plan_version\n                and item.title == "E2E-14 cross-app saved-state verifier"\n            ]\n            self.assertEqual(len(verifiers), 1)\n            verifier = verifiers[0]\n            self.assertEqual(verifier.status, "completed")\n            evidence = json.loads(verifier.result or "{}")\n            self.assertEqual(evidence.get("e2e14_evidence"), "independent_cross_app_readback")\n            self.assertEqual(evidence.get("replacement_dispatch_count"), 1)\n            self.assertEqual(evidence.get("save_dispatch_count"), 1)\n            self.assertTrue(evidence.get("source_exact"))\n            self.assertTrue(evidence.get("root_readback_verified"))\n            self.assertTrue(evidence.get("title_saved_postcondition"))\n            self.assertTrue(evidence.get("title_saved_transition"))\n            self.assertEqual(evidence.get("browser_tab_id"), authorized_tab.tab_id)\n            self.assertEqual(\n                evidence.get("browser_authorization_attached_at"),\n                authorized_tab.attached_at,\n            )\n            self.assertNotEqual(\n                int(evidence.get("source_window_handle") or 0),\n                int(evidence.get("final_window_handle") or 0),\n            )\n            persisted = json.dumps(evidence, ensure_ascii=False, sort_keys=True, default=str)\n            self.assertNotIn(customer, persisted)\n            self.assertNotIn("需跟进", persisted)\n'''
+          if text.count(old) != 1:
+              raise SystemExit('expected exactly one transient terminal checkpoint assertion block')
+          path.write_text(text.replace(old, new), encoding='utf-8')
+          PY
+      - name: Validate patch shape
+        shell: bash
+        run: |
+          git diff --check
+          python -m py_compile tests/zn_agent/e2e/test_windows_interactive_browser_desktop_record_transfer.py
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('tests/zn_agent/e2e/test_windows_interactive_browser_desktop_record_transfer.py').read_text(encoding='utf-8')
+          assert 'item.title == "E2E-14 cross-app saved-state verifier"' in text
+          assert 'evidence.get("root_readback_verified")' in text
+          assert 'self.assertEqual(terminal_state.stage, "idle")' in text
+          PY
+      - name: Commit checked patch
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tests/zn_agent/e2e/test_windows_interactive_browser_desktop_record_transfer.py
+          git diff --cached --quiet && exit 0
+          git commit -m 'test: assert durable E2E-14 completion evidence'
+          git push origin HEAD:work/e2e14-durable-evidence-test-fix
