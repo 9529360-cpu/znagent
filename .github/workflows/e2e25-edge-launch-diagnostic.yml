@@ -10,6 +10,12 @@ on:
       - 'tests/zn_agent/e2e/test_windows_interactive_user_browser_bridge.py'
       - 'apps/desktop/browser-extension/**'
   workflow_dispatch:
+    inputs:
+      launch_browsers:
+        description: 'Also launch the visible Edge/Chrome fixture diagnostics'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -77,6 +83,34 @@ jobs:
             Write-Host ('ZN_E2E25_WATCHDOG=' + ($watchdogEvidence | ConvertTo-Json -Compress))
           }
 
+          $policySpecs = @(
+            [ordered]@{ provider = 'edge'; scope = 'HKCU'; path = 'HKCU:\Software\Policies\Microsoft\Edge' },
+            [ordered]@{ provider = 'edge'; scope = 'HKLM'; path = 'HKLM:\Software\Policies\Microsoft\Edge' },
+            [ordered]@{ provider = 'chrome'; scope = 'HKCU'; path = 'HKCU:\Software\Policies\Google\Chrome' },
+            [ordered]@{ provider = 'chrome'; scope = 'HKLM'; path = 'HKLM:\Software\Policies\Google\Chrome' }
+          )
+          foreach ($spec in $policySpecs) {
+            $props = Get-ItemProperty -LiteralPath $spec.path -ErrorAction SilentlyContinue
+            $hasUserDataDir = $false
+            $valueType = $null
+            if ($null -ne $props -and $props.PSObject.Properties.Name -contains 'UserDataDir') {
+              $hasUserDataDir = $true
+              try {
+                $key = Get-Item -LiteralPath $spec.path -ErrorAction Stop
+                $valueType = [string]$key.GetValueKind('UserDataDir')
+              } catch {
+                $valueType = 'unknown'
+              }
+            }
+            $evidence = [ordered]@{
+              provider = $spec.provider
+              scope = $spec.scope
+              user_data_dir_policy_present = $hasUserDataDir
+              value_type = $valueType
+            }
+            Write-Host ('ZN_E2E25_BROWSER_POLICY=' + ($evidence | ConvertTo-Json -Compress))
+          }
+
           $browserPaths = @(
             'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
             'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
@@ -84,38 +118,47 @@ jobs:
             'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe'
           )
           $layerRoots = @(
-            'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers',
-            'HKLM:\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers'
+            [ordered]@{ scope = 'HKCU'; path = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers' },
+            [ordered]@{ scope = 'HKLM'; path = 'HKLM:\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers' }
           )
           foreach ($browserPath in $browserPaths) {
             if (-not (Test-Path -LiteralPath $browserPath -PathType Leaf)) { continue }
             $scopes = @()
             foreach ($root in $layerRoots) {
-              $properties = Get-ItemProperty -LiteralPath $root -ErrorAction SilentlyContinue
+              $properties = Get-ItemProperty -LiteralPath $root.path -ErrorAction SilentlyContinue
               if ($null -eq $properties) { continue }
               $property = $properties.PSObject.Properties[$browserPath]
               if ($null -eq $property) { continue }
               $raw = [string]$property.Value
               $scopes += [ordered]@{
-                scope = if ($root.StartsWith('HKCU:')) { 'HKCU' } else { 'HKLM' }
+                scope = $root.scope
                 run_as_admin = ($raw -match 'RUNASADMIN')
               }
             }
             $browserEvidence = [ordered]@{
-              executable = $browserPath
+              executable_name = [IO.Path]::GetFileName($browserPath)
               compatibility_layers = $scopes
             }
             Write-Host ('ZN_E2E25_BROWSER_COMPAT=' + ($browserEvidence | ConvertTo-Json -Compress -Depth 4))
           }
 
+          if ($isAdmin -and $enableLua -eq 1) {
+            Write-Host 'ZN_E2E25_BROWSER_ISOLATION_PREFLIGHT=runner-elevated-with-uac'
+          } else {
+            Write-Host 'ZN_E2E25_BROWSER_ISOLATION_PREFLIGHT=runner-token-compatible'
+          }
+
       - uses: actions/checkout@v7
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.launch_browsers }}
 
       - uses: astral-sh/setup-uv@v6
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.launch_browsers }}
         with:
           version: '0.11.6'
           enable-cache: false
 
       - name: Prepare isolated browser diagnostic runtime
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.launch_browsers }}
         run: |
           uv python install 3.12
           Remove-Item -Recurse -Force .ci/e2e25-edge-diagnostic-venv -ErrorAction SilentlyContinue
@@ -129,6 +172,7 @@ jobs:
           }
 
       - name: Reproduce current Edge extension fixture launch with bounded diagnostics
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.launch_browsers }}
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e25-edge-diagnostic-venv\Scripts\python.exe'
