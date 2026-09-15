@@ -23,169 +23,28 @@ jobs:
           fetch-depth: 0
 
       - name: Apply exact bounded-scandir product patch
+        env:
+          OLD_BLOCK_B64: "ICAgICAgICBjYW5kaWRhdGVzOiBkaWN0W3N0ciwgUGF0aF0gPSB7fQogICAgICAgIG9ic2VydmVkX2VudHJpZXMgPSAwCiAgICAgICAgcmVxdWVzdGVkX25hbWUgPSByZXF1ZXN0ZWQubmFtZS5jYXNlZm9sZCgpCiAgICAgICAgdHJ5OgogICAgICAgICAgICBmb3IgY3VycmVudCwgZGlyZWN0b3J5X25hbWVzLCBmaWxlX25hbWVzIGluIG9zLndhbGsoCiAgICAgICAgICAgICAgICByb290X3BhdGgsCiAgICAgICAgICAgICAgICB0b3Bkb3duPVRydWUsCiAgICAgICAgICAgICAgICBmb2xsb3dsaW5rcz1GYWxzZSwKICAgICAgICAgICAgKToKICAgICAgICAgICAgICAgIGN1cnJlbnRfcGF0aCA9IFBhdGgoY3VycmVudCkKICAgICAgICAgICAgICAgIHJlbGF0aXZlX2N1cnJlbnQgPSBjdXJyZW50X3BhdGgucmVsYXRpdmVfdG8ocm9vdF9wYXRoKQogICAgICAgICAgICAgICAgZGVwdGggPSBsZW4ocmVsYXRpdmVfY3VycmVudC5wYXJ0cykKICAgICAgICAgICAgICAgIGlmIGRlcHRoID49IGNscy5fTUFYX1BBVEhfRElTQ09WRVJZX0RFUFRIOgogICAgICAgICAgICAgICAgICAgIGRpcmVjdG9yeV9uYW1lc1s6XSA9IFtdCiAgICAgICAgICAgICAgICBlbHNlOgogICAgICAgICAgICAgICAgICAgIGRpcmVjdG9yeV9uYW1lc1s6XSA9IFsKICAgICAgICAgICAgICAgICAgICAgICAgbmFtZQogICAgICAgICAgICAgICAgICAgICAgICBmb3IgbmFtZSBpbiBkaXJlY3RvcnlfbmFtZXMKICAgICAgICAgICAgICAgICAgICAgICAgaWYgbmFtZS5jYXNlZm9sZCgpIG5vdCBpbiBjbHMuX1BBVEhfRElTQ09WRVJZX1BSVU5FCiAgICAgICAgICAgICAgICAgICAgICAgIGFuZCBjbHMuX3BsYWluX2Rpc2NvdmVyeV9lbnRyeSgKICAgICAgICAgICAgICAgICAgICAgICAgICAgIGN1cnJlbnRfcGF0aCAvIG5hbWUsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBkaXJlY3Rvcnk9VHJ1ZSwKICAgICAgICAgICAgICAgICAgICAgICAgKQogICAgICAgICAgICAgICAgICAgIF0KCiAgICAgICAgICAgICAgICBvYnNlcnZlZF9lbnRyaWVzICs9IGxlbihkaXJlY3RvcnlfbmFtZXMpICsgbGVuKGZpbGVfbmFtZXMpCiAgICAgICAgICAgICAgICBpZiBvYnNlcnZlZF9lbnRyaWVzID4gY2xzLl9NQVhfUEFUSF9ESVNDT1ZFUllfRU5UUklFUzoKICAgICAgICAgICAgICAgICAgICByZXR1cm4gTm9uZQoKICAgICAgICAgICAgICAgIGZvciBmaWxlX25hbWUgaW4gZmlsZV9uYW1lczoKICAgICAgICAgICAgICAgICAgICBpZiBmaWxlX25hbWUuY2FzZWZvbGQoKSAhPSByZXF1ZXN0ZWRfbmFtZToKICAgICAgICAgICAgICAgICAgICAgICAgY29udGludWUKICAgICAgICAgICAgICAgICAgICBjYW5kaWRhdGUgPSBjdXJyZW50X3BhdGggLyBmaWxlX25hbWUKICAgICAgICAgICAgICAgICAgICBpZiBub3QgY2xzLl9wbGFpbl9kaXNjb3ZlcnlfZW50cnkoY2FuZGlkYXRlLCBkaXJlY3Rvcnk9RmFsc2UpOgogICAgICAgICAgICAgICAgICAgICAgICBjb250aW51ZQogICAgICAgICAgICAgICAgICAgIHRyeToKICAgICAgICAgICAgICAgICAgICAgICAgcmVzb2x2ZWQgPSBjYW5kaWRhdGUucmVzb2x2ZShzdHJpY3Q9VHJ1ZSkKICAgICAgICAgICAgICAgICAgICAgICAgcmVzb2x2ZWQucmVsYXRpdmVfdG8ocm9vdF9wYXRoKQogICAgICAgICAgICAgICAgICAgIGV4Y2VwdCAoT1NFcnJvciwgUnVudGltZUVycm9yLCBWYWx1ZUVycm9yKToKICAgICAgICAgICAgICAgICAgICAgICAgY29udGludWUKICAgICAgICAgICAgICAgICAgICBpZiBub3QgcmVzb2x2ZWQuaXNfZmlsZSgpIG9yIHJlc29sdmVkLnN1ZmZpeC5jYXNlZm9sZCgpICE9ICIucHkiOgogICAgICAgICAgICAgICAgICAgICAgICBjb250aW51ZQogICAgICAgICAgICAgICAgICAgIHJlbGF0aXZlX2NhbmRpZGF0ZSA9IHJlc29sdmVkLnJlbGF0aXZlX3RvKHJvb3RfcGF0aCkuYXNfcG9zaXgoKQogICAgICAgICAgICAgICAgICAgIGNhbmRpZGF0ZXNbcmVsYXRpdmVfY2FuZGlkYXRlLmNhc2Vmb2xkKCldID0gcmVzb2x2ZWQKICAgICAgICAgICAgICAgICAgICBpZiBsZW4oY2FuZGlkYXRlcykgPiAxOgogICAgICAgICAgICAgICAgICAgICAgICByZXR1cm4gTm9uZQogICAgICAgIGV4Y2VwdCAoT1NFcnJvciwgUnVudGltZUVycm9yLCBWYWx1ZUVycm9yKToKICAgICAgICAgICAgcmV0dXJuIE5vbmUK"
+          NEW_BLOCK_B64: "ICAgICAgICBjYW5kaWRhdGVzOiBkaWN0W3N0ciwgUGF0aF0gPSB7fQogICAgICAgIG9ic2VydmVkX2VudHJpZXMgPSAwCiAgICAgICAgcmVxdWVzdGVkX25hbWUgPSByZXF1ZXN0ZWQubmFtZS5jYXNlZm9sZCgpCiAgICAgICAgcGVuZGluZzogbGlzdFt0dXBsZVtQYXRoLCBpbnRdXSA9IFsocm9vdF9wYXRoLCAwKV0KICAgICAgICB0cnk6CiAgICAgICAgICAgIHdoaWxlIHBlbmRpbmc6CiAgICAgICAgICAgICAgICBjdXJyZW50X3BhdGgsIGRlcHRoID0gcGVuZGluZy5wb3AoKQogICAgICAgICAgICAgICAgd2l0aCBvcy5zY2FuZGlyKGN1cnJlbnRfcGF0aCkgYXMgZW50cmllczoKICAgICAgICAgICAgICAgICAgICBmb3IgZW50cnkgaW4gZW50cmllczoKICAgICAgICAgICAgICAgICAgICAgICAgb2JzZXJ2ZWRfZW50cmllcyArPSAxCiAgICAgICAgICAgICAgICAgICAgICAgIGlmIG9ic2VydmVkX2VudHJpZXMgPiBjbHMuX01BWF9QQVRIX0RJU0NPVkVSWV9FTlRSSUVTOgogICAgICAgICAgICAgICAgICAgICAgICAgICAgcmV0dXJuIE5vbmUKCiAgICAgICAgICAgICAgICAgICAgICAgIGNhbmRpZGF0ZSA9IGN1cnJlbnRfcGF0aCAvIGVudHJ5Lm5hbWUKICAgICAgICAgICAgICAgICAgICAgICAgaWYgY2xzLl9wbGFpbl9kaXNjb3ZlcnlfZW50cnkoY2FuZGlkYXRlLCBkaXJlY3Rvcnk9VHJ1ZSk6CiAgICAgICAgICAgICAgICAgICAgICAgICAgICBpZiAoCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgZGVwdGggPCBjbHMuX01BWF9QQVRIX0RJU0NPVkVSWV9ERVBUSAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIGFuZCBlbnRyeS5uYW1lLmNhc2Vmb2xkKCkKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBub3QgaW4gY2xzLl9QQVRIX0RJU0NPVkVSWV9QUlVORQogICAgICAgICAgICAgICAgICAgICAgICAgICAgKToKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBwZW5kaW5nLmFwcGVuZCgoY2FuZGlkYXRlLCBkZXB0aCArIDEpKQogICAgICAgICAgICAgICAgICAgICAgICAgICAgY29udGludWUKCiAgICAgICAgICAgICAgICAgICAgICAgIGlmIGVudHJ5Lm5hbWUuY2FzZWZvbGQoKSAhPSByZXF1ZXN0ZWRfbmFtZToKICAgICAgICAgICAgICAgICAgICAgICAgICAgIGNvbnRpbnVlCiAgICAgICAgICAgICAgICAgICAgICAgIGlmIG5vdCBjbHMuX3BsYWluX2Rpc2NvdmVyeV9lbnRyeShjYW5kaWRhdGUsIGRpcmVjdG9yeT1GYWxzZSk6CiAgICAgICAgICAgICAgICAgICAgICAgICAgICBjb250aW51ZQogICAgICAgICAgICAgICAgICAgICAgICB0cnk6CiAgICAgICAgICAgICAgICAgICAgICAgICAgICByZXNvbHZlZCA9IGNhbmRpZGF0ZS5yZXNvbHZlKHN0cmljdD1UcnVlKQogICAgICAgICAgICAgICAgICAgICAgICAgICAgcmVzb2x2ZWQucmVsYXRpdmVfdG8ocm9vdF9wYXRoKQogICAgICAgICAgICAgICAgICAgICAgICBleGNlcHQgKE9TRXJyb3IsIFJ1bnRpbWVFcnJvciwgVmFsdWVFcnJvcik6CiAgICAgICAgICAgICAgICAgICAgICAgICAgICBjb250aW51ZQogICAgICAgICAgICAgICAgICAgICAgICBpZiBub3QgcmVzb2x2ZWQuaXNfZmlsZSgpIG9yIHJlc29sdmVkLnN1ZmZpeC5jYXNlZm9sZCgpICE9ICIucHkiOgogICAgICAgICAgICAgICAgICAgICAgICAgICAgY29udGludWUKICAgICAgICAgICAgICAgICAgICAgICAgcmVsYXRpdmVfY2FuZGlkYXRlID0gcmVzb2x2ZWQucmVsYXRpdmVfdG8ocm9vdF9wYXRoKS5hc19wb3NpeCgpCiAgICAgICAgICAgICAgICAgICAgICAgIGNhbmRpZGF0ZXNbcmVsYXRpdmVfY2FuZGlkYXRlLmNhc2Vmb2xkKCldID0gcmVzb2x2ZWQKICAgICAgICAgICAgICAgICAgICAgICAgaWYgbGVuKGNhbmRpZGF0ZXMpID4gMToKICAgICAgICAgICAgICAgICAgICAgICAgICAgIHJldHVybiBOb25lCiAgICAgICAgZXhjZXB0IChPU0Vycm9yLCBSdW50aW1lRXJyb3IsIFZhbHVlRXJyb3IpOgogICAgICAgICAgICByZXR1cm4gTm9uZQo="
         run: |
           $product = 'runtime/python/zn_agent/core/broad_goal_coding_resident.py'
           $content = [IO.File]::ReadAllText($product).Replace("`r`n", "`n")
-          $old = @'
-        candidates: dict[str, Path] = {}
-        observed_entries = 0
-        requested_name = requested.name.casefold()
-        try:
-            for current, directory_names, file_names in os.walk(
-                root_path,
-                topdown=True,
-                followlinks=False,
-            ):
-                current_path = Path(current)
-                relative_current = current_path.relative_to(root_path)
-                depth = len(relative_current.parts)
-                if depth >= cls._MAX_PATH_DISCOVERY_DEPTH:
-                    directory_names[:] = []
-                else:
-                    directory_names[:] = [
-                        name
-                        for name in directory_names
-                        if name.casefold() not in cls._PATH_DISCOVERY_PRUNE
-                        and cls._plain_discovery_entry(
-                            current_path / name,
-                            directory=True,
-                        )
-                    ]
-
-                observed_entries += len(directory_names) + len(file_names)
-                if observed_entries > cls._MAX_PATH_DISCOVERY_ENTRIES:
-                    return None
-
-                for file_name in file_names:
-                    if file_name.casefold() != requested_name:
-                        continue
-                    candidate = current_path / file_name
-                    if not cls._plain_discovery_entry(candidate, directory=False):
-                        continue
-                    try:
-                        resolved = candidate.resolve(strict=True)
-                        resolved.relative_to(root_path)
-                    except (OSError, RuntimeError, ValueError):
-                        continue
-                    if not resolved.is_file() or resolved.suffix.casefold() != ".py":
-                        continue
-                    relative_candidate = resolved.relative_to(root_path).as_posix()
-                    candidates[relative_candidate.casefold()] = resolved
-                    if len(candidates) > 1:
-                        return None
-        except (OSError, RuntimeError, ValueError):
-            return None
-'@
-          $new = @'
-        candidates: dict[str, Path] = {}
-        observed_entries = 0
-        requested_name = requested.name.casefold()
-        pending: list[tuple[Path, int]] = [(root_path, 0)]
-        try:
-            while pending:
-                current_path, depth = pending.pop()
-                with os.scandir(current_path) as entries:
-                    for entry in entries:
-                        observed_entries += 1
-                        if observed_entries > cls._MAX_PATH_DISCOVERY_ENTRIES:
-                            return None
-
-                        candidate = current_path / entry.name
-                        if cls._plain_discovery_entry(candidate, directory=True):
-                            if (
-                                depth < cls._MAX_PATH_DISCOVERY_DEPTH
-                                and entry.name.casefold()
-                                not in cls._PATH_DISCOVERY_PRUNE
-                            ):
-                                pending.append((candidate, depth + 1))
-                            continue
-
-                        if entry.name.casefold() != requested_name:
-                            continue
-                        if not cls._plain_discovery_entry(candidate, directory=False):
-                            continue
-                        try:
-                            resolved = candidate.resolve(strict=True)
-                            resolved.relative_to(root_path)
-                        except (OSError, RuntimeError, ValueError):
-                            continue
-                        if not resolved.is_file() or resolved.suffix.casefold() != ".py":
-                            continue
-                        relative_candidate = resolved.relative_to(root_path).as_posix()
-                        candidates[relative_candidate.casefold()] = resolved
-                        if len(candidates) > 1:
-                            return None
-        except (OSError, RuntimeError, ValueError):
-            return None
-'@
-          $old = $old.Replace("`r`n", "`n")
-          $new = $new.Replace("`r`n", "`n")
+          $old = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:OLD_BLOCK_B64))
+          $new = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:NEW_BLOCK_B64))
           $count = ([regex]::Matches($content, [regex]::Escape($old))).Count
           if ($count -ne 1) { throw "Expected one resolver block, found $count" }
           $content = $content.Replace($old, $new)
           [IO.File]::WriteAllText($product, $content, [Text.UTF8Encoding]::new($false))
 
       - name: Add strict entry-budget regression
+        env:
+          TEST_METHOD_B64: "CiAgICBkZWYgdGVzdF9kaXNjb3ZlcnlfYnVkZ2V0X3N0b3BzX3NjYW5kaXJfYmVmb3JlX3VuYm91bmRlZF9kaXJlY3RvcnlfZW51bWVyYXRpb24oc2VsZikgLT4gTm9uZToKICAgICAgICB3aXRoIHRlbXBmaWxlLlRlbXBvcmFyeURpcmVjdG9yeSgpIGFzIHRtcDoKICAgICAgICAgICAgcm9vdCA9IFBhdGgodG1wKS5yZXNvbHZlKCkKICAgICAgICAgICAgZm9yIG5hbWUgaW4gKCJmaXJzdC50eHQiLCAic2Vjb25kLnR4dCIsICJwcm9iZS5weSIpOgogICAgICAgICAgICAgICAgKHJvb3QgLyBuYW1lKS53cml0ZV90ZXh0KG5hbWUsIGVuY29kaW5nPSJ1dGYtOCIpCgogICAgICAgICAgICByZWFsX3NjYW5kaXIgPSBvcy5zY2FuZGlyCiAgICAgICAgICAgIGNvbnN1bWVkID0gMAoKICAgICAgICAgICAgY2xhc3MgX0d1YXJkZWRTY2FuZGlyOgogICAgICAgICAgICAgICAgZGVmIF9faW5pdF9fKHNlbGYsIHBhdGgpOgogICAgICAgICAgICAgICAgICAgIHNlbGYuX2lubmVyID0gcmVhbF9zY2FuZGlyKHBhdGgpCiAgICAgICAgICAgICAgICAgICAgc2VsZi5faXRlcmF0b3IgPSBpdGVyKHNlbGYuX2lubmVyKQoKICAgICAgICAgICAgICAgIGRlZiBfX2VudGVyX18oc2VsZik6CiAgICAgICAgICAgICAgICAgICAgcmV0dXJuIHNlbGYKCiAgICAgICAgICAgICAgICBkZWYgX19leGl0X18oc2VsZiwgZXhjX3R5cGUsIGV4YywgdGIpOgogICAgICAgICAgICAgICAgICAgIHNlbGYuX2lubmVyLmNsb3NlKCkKICAgICAgICAgICAgICAgICAgICByZXR1cm4gRmFsc2UKCiAgICAgICAgICAgICAgICBkZWYgX19pdGVyX18oc2VsZik6CiAgICAgICAgICAgICAgICAgICAgcmV0dXJuIHNlbGYKCiAgICAgICAgICAgICAgICBkZWYgX19uZXh0X18oc2VsZik6CiAgICAgICAgICAgICAgICAgICAgbm9ubG9jYWwgY29uc3VtZWQKICAgICAgICAgICAgICAgICAgICBjb25zdW1lZCArPSAxCiAgICAgICAgICAgICAgICAgICAgaWYgY29uc3VtZWQgPiAyOgogICAgICAgICAgICAgICAgICAgICAgICByYWlzZSBBc3NlcnRpb25FcnJvcigKICAgICAgICAgICAgICAgICAgICAgICAgICAgICJib3VuZGVkIGRpc2NvdmVyeSBjb25zdW1lZCBhIHRoaXJkIGVudHJ5IGFmdGVyIGJ1ZGdldCBleGhhdXN0aW9uIgogICAgICAgICAgICAgICAgICAgICAgICApCiAgICAgICAgICAgICAgICAgICAgcmV0dXJuIG5leHQoc2VsZi5faXRlcmF0b3IpCgogICAgICAgICAgICB3aXRoICgKICAgICAgICAgICAgICAgIHBhdGNoLm9iamVjdCgKICAgICAgICAgICAgICAgICAgICBCcm9hZEdvYWxDb2RpbmdSZXNpZGVudFJ1bnRpbWUsCiAgICAgICAgICAgICAgICAgICAgIl9NQVhfUEFUSF9ESVNDT1ZFUllfRU5UUklFUyIsCiAgICAgICAgICAgICAgICAgICAgMSwKICAgICAgICAgICAgICAgICksCiAgICAgICAgICAgICAgICBwYXRjaCgKICAgICAgICAgICAgICAgICAgICAiem5fYWdlbnQuY29yZS5icm9hZF9nb2FsX2NvZGluZ19yZXNpZGVudC5vcy5zY2FuZGlyIiwKICAgICAgICAgICAgICAgICAgICBzaWRlX2VmZmVjdD1fR3VhcmRlZFNjYW5kaXIsCiAgICAgICAgICAgICAgICApLAogICAgICAgICAgICApOgogICAgICAgICAgICAgICAgc2VsZi5hc3NlcnRJc05vbmUoCiAgICAgICAgICAgICAgICAgICAgQnJvYWRHb2FsQ29kaW5nUmVzaWRlbnRSdW50aW1lLl9yZXNvbHZlX3dvcmtzcGFjZV9weXRob25fc2NyaXB0KAogICAgICAgICAgICAgICAgICAgICAgICByb290LAogICAgICAgICAgICAgICAgICAgICAgICBQYXRoKCJleHBlY3RlZC9wcm9iZS5weSIpLAogICAgICAgICAgICAgICAgICAgICkKICAgICAgICAgICAgICAgICkKICAgICAgICAgICAgc2VsZi5hc3NlcnRFcXVhbChjb25zdW1lZCwgMikK"
         run: |
           $test = 'tests/zn_agent/core/test_e2e23_command_path_replan.py'
           $content = [IO.File]::ReadAllText($test).Replace("`r`n", "`n")
           $anchor = "`n`nclass E2E23CommandPathReplanTests(unittest.TestCase):"
           if (($content.Split($anchor).Count - 1) -ne 1) { throw 'Expected one E2E23 class anchor.' }
-          $method = @'
-
-    def test_discovery_budget_stops_scandir_before_unbounded_directory_enumeration(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp).resolve()
-            for name in ("first.txt", "second.txt", "probe.py"):
-                (root / name).write_text(name, encoding="utf-8")
-
-            real_scandir = os.scandir
-            consumed = 0
-
-            class _GuardedScandir:
-                def __init__(self, path):
-                    self._inner = real_scandir(path)
-                    self._iterator = iter(self._inner)
-
-                def __enter__(self):
-                    return self
-
-                def __exit__(self, exc_type, exc, tb):
-                    self._inner.close()
-                    return False
-
-                def __iter__(self):
-                    return self
-
-                def __next__(self):
-                    nonlocal consumed
-                    consumed += 1
-                    if consumed > 2:
-                        raise AssertionError(
-                            "bounded discovery consumed a third entry after budget exhaustion"
-                        )
-                    return next(self._iterator)
-
-            with (
-                patch.object(
-                    BroadGoalCodingResidentRuntime,
-                    "_MAX_PATH_DISCOVERY_ENTRIES",
-                    1,
-                ),
-                patch(
-                    "zn_agent.core.broad_goal_coding_resident.os.scandir",
-                    side_effect=_GuardedScandir,
-                ),
-            ):
-                self.assertIsNone(
-                    BroadGoalCodingResidentRuntime._resolve_workspace_python_script(
-                        root,
-                        Path("expected/probe.py"),
-                    )
-                )
-            self.assertEqual(consumed, 2)
-'@
-          $method = $method.Replace("`r`n", "`n")
+          $method = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:TEST_METHOD_B64))
           $content = $content.Replace($anchor, $method + $anchor)
           [IO.File]::WriteAllText($test, $content, [Text.UTF8Encoding]::new($false))
 
