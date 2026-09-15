@@ -494,25 +494,46 @@ class WindowsInteractiveBrowserDesktopRecordTransferE2ETests(unittest.TestCase):
             self.assertNotIn(normal, app.saved_records())
             self.assertNotIn(sibling, app.saved_records())
 
-            state = resident.store.get_working_state()
-            meta = state.data.get(_STATE_KEY)
-            self.assertIsInstance(meta, dict)
-            self.assertEqual(meta.get("save_dispatch_count"), 1)
-            final = meta.get("final_verification")
-            self.assertIsInstance(final, dict)
-            self.assertTrue(final.get("source_exact"))
-            self.assertTrue(final.get("readback_verified"))
-            self.assertTrue(final.get("title_saved_postcondition"))
-            self.assertTrue(final.get("title_saved_transition"))
-            self.assertTrue(final.get("hwnd_changed"))
-            persisted = json.dumps(meta, ensure_ascii=False, sort_keys=True, default=str)
-            self.assertNotIn(customer, persisted)
-            self.assertNotIn("需跟进", persisted)
+            terminal_state = resident.store.get_working_state()
+            self.assertEqual(terminal_state.stage, "idle")
 
             root_work = resident.work_ledger.work_item_for_event(event.event_id)
             self.assertIsNotNone(root_work)
+            assert root_work is not None
             self.assertEqual(root_work.status, "completed")
             self.assertIn("zn_independent_acceptance", root_work.result or "")
+
+            items = resident.work_ledger.list_work_items(root_work.work_thread_id, limit=256)
+            verifiers = [
+                item
+                for item in items
+                if item.parent_work_item_id == root_work.work_item_id
+                and item.plan_version == root_work.plan_version
+                and item.title == "E2E-14 cross-app saved-state verifier"
+            ]
+            self.assertEqual(len(verifiers), 1)
+            verifier = verifiers[0]
+            self.assertEqual(verifier.status, "completed")
+            evidence = json.loads(verifier.result or "{}")
+            self.assertEqual(evidence.get("e2e14_evidence"), "independent_cross_app_readback")
+            self.assertEqual(evidence.get("replacement_dispatch_count"), 1)
+            self.assertEqual(evidence.get("save_dispatch_count"), 1)
+            self.assertTrue(evidence.get("source_exact"))
+            self.assertTrue(evidence.get("root_readback_verified"))
+            self.assertTrue(evidence.get("title_saved_postcondition"))
+            self.assertTrue(evidence.get("title_saved_transition"))
+            self.assertEqual(evidence.get("browser_tab_id"), authorized_tab.tab_id)
+            self.assertEqual(
+                evidence.get("browser_authorization_attached_at"),
+                authorized_tab.attached_at,
+            )
+            self.assertNotEqual(
+                int(evidence.get("source_window_handle") or 0),
+                int(evidence.get("final_window_handle") or 0),
+            )
+            persisted = json.dumps(evidence, ensure_ascii=False, sort_keys=True, default=str)
+            self.assertNotIn(customer, persisted)
+            self.assertNotIn("需跟进", persisted)
             auth_after = resident.user_browser_extension.authorized_tab()
             self.assertIsNotNone(auth_after)
             self.assertEqual(auth_after.tab_id, authorized_tab.tab_id)
