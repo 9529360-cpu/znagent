@@ -48,19 +48,29 @@ class _BindingResident:
         self.foreground_window = SimpleNamespace(probe=lambda: self.foreground)
         self.controls = {
             "客户编号": SimpleNamespace(
+                name="客户编号",
+                control_type=50004,
                 runtime_id=(1, 1),
                 value_is_read_only=key_read_only,
             ),
             "跟进状态": SimpleNamespace(
+                name="跟进状态",
+                control_type=50004,
                 runtime_id=(2, 1),
                 value_is_read_only=value_read_only,
             ),
         }
         self.named_automation_control = SimpleNamespace(find_unique_edit=self._find)
-        self.current_app_text_content = SimpleNamespace(read_exact=self._read)
+        self.current_app_text_content = SimpleNamespace(
+            list_value_edits=self._list_value_edits,
+            read_exact=self._read,
+        )
 
     def _find(self, *, name: str, **_kwargs):
         return self.controls[name]
+
+    def _list_value_edits(self, **_kwargs):
+        return tuple(self.controls.values())
 
     def _read(self, *, name: str, **_kwargs):
         text = CUSTOMER if name == "客户编号" else "未跟进"
