@@ -44,16 +44,19 @@ jobs:
               context.sha,
               context.payload.pull_request?.head?.sha,
             ].filter(Boolean))]
+            const statusContexts = ['ZN Source Boundary', 'ZN Source Boundary / Windows']
             for (const sha of statusShas) {
-              await github.rest.repos.createCommitStatus({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                sha,
-                state: 'pending',
-                context: 'ZN Source Boundary',
-                description: 'ZN Windows CI: running',
-                target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-              })
+              for (const statusContext of statusContexts) {
+                await github.rest.repos.createCommitStatus({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  sha,
+                  state: 'pending',
+                  context: statusContext,
+                  description: 'ZN Windows CI: running',
+                  target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                })
+              }
             }
       - name: Verify GitHub-hosted Windows x64 runner
         run: |
@@ -91,16 +94,19 @@ jobs:
               context.sha,
               context.payload.pull_request?.head?.sha,
             ].filter(Boolean))]
+            const statusContexts = ['ZN Kernel / Python', 'ZN Kernel / Python / Windows']
             for (const sha of statusShas) {
-              await github.rest.repos.createCommitStatus({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                sha,
-                state: 'pending',
-                context: 'ZN Kernel / Python',
-                description: 'ZN Windows CI: running',
-                target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-              })
+              for (const statusContext of statusContexts) {
+                await github.rest.repos.createCommitStatus({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  sha,
+                  state: 'pending',
+                  context: statusContext,
+                  description: 'ZN Windows CI: running',
+                  target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                })
+              }
             }
       - name: Verify GitHub-hosted Windows x64 runner
         run: |
@@ -163,16 +169,19 @@ jobs:
               context.sha,
               context.payload.pull_request?.head?.sha,
             ].filter(Boolean))]
+            const statusContexts = ['Electron / TypeScript', 'Electron / TypeScript / Windows']
             for (const sha of statusShas) {
-              await github.rest.repos.createCommitStatus({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                sha,
-                state: 'pending',
-                context: 'Electron / TypeScript',
-                description: 'ZN Windows CI: running',
-                target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-              })
+              for (const statusContext of statusContexts) {
+                await github.rest.repos.createCommitStatus({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  sha,
+                  state: 'pending',
+                  context: statusContext,
+                  description: 'ZN Windows CI: running',
+                  target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                })
+              }
             }
       - name: Verify GitHub-hosted Windows x64 runner
         run: |
@@ -218,8 +227,11 @@ jobs:
             ].filter(Boolean))]
             const rows = [
               ['ZN Source Boundary', '${{ needs.source-boundary.result }}'],
+              ['ZN Source Boundary / Windows', '${{ needs.source-boundary.result }}'],
               ['ZN Kernel / Python', '${{ needs.kernel.result }}'],
+              ['ZN Kernel / Python / Windows', '${{ needs.kernel.result }}'],
               ['Electron / TypeScript', '${{ needs.desktop.result }}'],
+              ['Electron / TypeScript / Windows', '${{ needs.desktop.result }}'],
             ]
             for (const sha of statusShas) {
               for (const [statusContext, result] of rows) {
