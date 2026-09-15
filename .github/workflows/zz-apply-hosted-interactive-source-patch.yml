@@ -1,4 +1,4 @@
-name: Apply hosted interactive workflow migration
+name: Export hosted interactive workflow sources
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  patch:
+  export:
     runs-on: windows-latest
     timeout-minutes: 10
     defaults:
@@ -24,7 +24,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - name: Apply exact hosted-runner migration
+      - name: Generate exact hosted workflow sources
         run: |
           @'
           from pathlib import Path
@@ -41,103 +41,41 @@ jobs:
           if text.count(legacy_marker) != 1:
               raise SystemExit('interactive workflow: expected one legacy diagnostics boundary')
           primary, legacy = text.split(legacy_marker, 1)
-          primary = replace_once(
-              primary,
-              '    runs-on: [self-hosted, Windows, X64, zn-interactive]\n',
-              '    runs-on: windows-latest\n',
-              'interactive product runs-on',
-          )
-          primary = replace_once(
-              primary,
-              '      - name: Require Windows x64 interactive runner\n',
-              '      - name: Verify GitHub-hosted Windows x64 runner\n',
-              'interactive guard name',
-          )
-          primary = replace_once(
-              primary,
-              '            throw "ZN interactive desktop E2E requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"\n',
-              '            throw "ZN interactive desktop E2E requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"\n',
-              'interactive guard message',
-          )
-          primary = replace_once(
-              primary,
-              "          if ($env:RUNNER_NAME -ne 'zn-interactive') {\n            throw \"ZN interactive desktop E2E requires the dedicated zn-interactive runner; got $env:RUNNER_NAME\"\n          }\n",
-              '',
-              'interactive runner-name gate',
-          )
-          primary = replace_once(
-              primary,
-              '          & "$env:GITHUB_WORKSPACE\\.github\\scripts\\test-zn-interactive-desktop-readiness.ps1"\n',
-              '          & "$env:GITHUB_WORKSPACE\\.github\\scripts\\test-zn-interactive-desktop-readiness.ps1" -ExpectedRunnerName $env:RUNNER_NAME\n',
-              'interactive readiness invocation',
-          )
-          if '[self-hosted, Windows, X64, zn-interactive]' in primary:
-              raise SystemExit('interactive product job still depends on self-hosted zn-interactive')
-          if "RUNNER_NAME -ne 'zn-interactive'" in primary:
-              raise SystemExit('interactive product job still has a static runner-name gate')
-          interactive.write_text(primary + legacy_marker + legacy, encoding='utf-8', newline='\n')
+          primary = replace_once(primary, '    runs-on: [self-hosted, Windows, X64, zn-interactive]\n', '    runs-on: windows-latest\n', 'interactive product runs-on')
+          primary = replace_once(primary, '      - name: Require Windows x64 interactive runner\n', '      - name: Verify GitHub-hosted Windows x64 runner\n', 'interactive guard name')
+          primary = replace_once(primary, '            throw "ZN interactive desktop E2E requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"\n', '            throw "ZN interactive desktop E2E requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"\n', 'interactive guard message')
+          primary = replace_once(primary, "          if ($env:RUNNER_NAME -ne 'zn-interactive') {\n            throw \"ZN interactive desktop E2E requires the dedicated zn-interactive runner; got $env:RUNNER_NAME\"\n          }\n", '', 'interactive runner-name gate')
+          primary = replace_once(primary, '          & "$env:GITHUB_WORKSPACE\\.github\\scripts\\test-zn-interactive-desktop-readiness.ps1"\n', '          & "$env:GITHUB_WORKSPACE\\.github\\scripts\\test-zn-interactive-desktop-readiness.ps1" -ExpectedRunnerName $env:RUNNER_NAME\n', 'interactive readiness invocation')
+          if '[self-hosted, Windows, X64, zn-interactive]' in primary or "RUNNER_NAME -ne 'zn-interactive'" in primary:
+              raise SystemExit('interactive product job retained local-runner authority')
+          interactive_target = primary + legacy_marker + legacy
 
           readiness = Path('.github/workflows/zn-interactive-runner-readiness.yml')
           text = readiness.read_text(encoding='utf-8').replace('\r\n', '\n')
-          text = replace_once(
-              text,
-              "  schedule:\n    - cron: '17 * * * *'\n",
-              '',
-              'hosted readiness schedule',
-          )
-          text = replace_once(
-              text,
-              '    runs-on: [self-hosted, Windows, X64, zn-interactive]\n',
-              '    runs-on: windows-latest\n',
-              'readiness runs-on',
-          )
-          text = replace_once(
-              text,
-              '      - name: Require dedicated Windows x64 runner\n',
-              '      - name: Verify GitHub-hosted Windows x64 runner\n',
-              'readiness guard name',
-          )
-          text = replace_once(
-              text,
-              "          if ($env:RUNNER_NAME -ne 'zn-interactive') {\n            throw \"Interactive readiness requires zn-interactive; got $env:RUNNER_NAME\"\n          }\n",
-              '',
-              'readiness runner-name gate',
-          )
-          text = replace_once(
-              text,
-              '          & "$env:GITHUB_WORKSPACE\\.github\\scripts\\test-zn-interactive-desktop-readiness.ps1"\n',
-              '          & "$env:GITHUB_WORKSPACE\\.github\\scripts\\test-zn-interactive-desktop-readiness.ps1" -ExpectedRunnerName $env:RUNNER_NAME\n',
-              'readiness invocation',
-          )
-          if '[self-hosted, Windows, X64, zn-interactive]' in text:
-              raise SystemExit('readiness workflow still depends on self-hosted zn-interactive')
-          if "RUNNER_NAME -ne 'zn-interactive'" in text:
-              raise SystemExit('readiness workflow still has a static runner-name gate')
-          readiness.write_text(text, encoding='utf-8', newline='\n')
-          '@ | Set-Content -LiteralPath .ci-hosted-interactive-workflow-patch.py -Encoding utf8
-          python .ci-hosted-interactive-workflow-patch.py
+          text = replace_once(text, "  schedule:\n    - cron: '17 * * * *'\n", '', 'hosted readiness schedule')
+          text = replace_once(text, '    runs-on: [self-hosted, Windows, X64, zn-interactive]\n', '    runs-on: windows-latest\n', 'readiness runs-on')
+          text = replace_once(text, '      - name: Require dedicated Windows x64 runner\n', '      - name: Verify GitHub-hosted Windows x64 runner\n', 'readiness guard name')
+          text = replace_once(text, "          if ($env:RUNNER_NAME -ne 'zn-interactive') {\n            throw \"Interactive readiness requires zn-interactive; got $env:RUNNER_NAME\"\n          }\n", '', 'readiness runner-name gate')
+          text = replace_once(text, '          & "$env:GITHUB_WORKSPACE\\.github\\scripts\\test-zn-interactive-desktop-readiness.ps1"\n', '          & "$env:GITHUB_WORKSPACE\\.github\\scripts\\test-zn-interactive-desktop-readiness.ps1" -ExpectedRunnerName $env:RUNNER_NAME\n', 'readiness invocation')
+          if '[self-hosted, Windows, X64, zn-interactive]' in text or "RUNNER_NAME -ne 'zn-interactive'" in text:
+              raise SystemExit('readiness workflow retained local-runner authority')
+
+          out = Path('.ci-generated')
+          out.mkdir(exist_ok=True)
+          (out / 'zn-windows-interactive-e2e.yml.txt').write_text(interactive_target, encoding='utf-8', newline='\n')
+          (out / 'zn-interactive-runner-readiness.yml.txt').write_text(text, encoding='utf-8', newline='\n')
+          '@ | Set-Content -LiteralPath .ci-export-hosted-interactive.py -Encoding utf8
+          python .ci-export-hosted-interactive.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Verify exact write set and syntax
+      - name: Verify and publish ordinary text outputs
         run: |
-          git diff --check
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $changed = @(git diff --name-only)
-          $expected = @(
-            '.github/workflows/zn-interactive-runner-readiness.yml',
-            '.github/workflows/zn-windows-interactive-e2e.yml'
-          )
-          if ($changed.Count -ne $expected.Count) { throw "Unexpected write set: $($changed -join ', ')" }
-          foreach ($path in $expected) {
-            if ($path -notin $changed) { throw "Missing expected change: $path" }
-          }
-
-      - name: Commit and push hosted workflow changes only
-        run: |
+          git diff --no-index --check NUL .ci-generated/zn-windows-interactive-e2e.yml.txt 2>$null
+          if ($LASTEXITCODE -gt 1) { exit $LASTEXITCODE }
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- .github/workflows/zn-interactive-runner-readiness.yml .github/workflows/zn-windows-interactive-e2e.yml
-          git commit -m 'ci: run interactive product acceptance on hosted Windows'
+          git add -- .ci-generated/zn-windows-interactive-e2e.yml.txt .ci-generated/zn-interactive-runner-readiness.yml.txt
+          git commit -m 'ci: export hosted interactive workflow sources'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git push origin HEAD:work/interactive-runner-readiness
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
