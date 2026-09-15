@@ -16,9 +16,7 @@ from tests.zn_agent.core.test_desktop_goal_understanding_resident import (
     _SEMANTIC_PROPOSAL,
     _candidate,
 )
-from tests.zn_agent.core.test_natural_named_desktop_input_work import (
-    NaturalNamedDesktopInputWorkTests,
-)
+from tests.zn_agent.core import test_natural_named_desktop_input_work as _natural_named_desktop_input_work
 
 
 class _RegroundResource:
@@ -52,8 +50,8 @@ class DesktopSemanticRegroundTests(unittest.TestCase):
             workspace.mkdir()
             source = workspace / "订单资料.txt"
             source.write_text("ORDER-REGROUND-1", encoding="utf-8")
-            NaturalNamedDesktopInputWorkTests._stamp_yesterday(source)
-            resident, _, body, controls, ledger = NaturalNamedDesktopInputWorkTests._setup(
+            _natural_named_desktop_input_work.NaturalNamedDesktopInputWorkTests._stamp_yesterday(source)
+            resident, _, body, controls, ledger = _natural_named_desktop_input_work.NaturalNamedDesktopInputWorkTests._setup(
                 base,
                 workspace,
                 "desktop-semantic-reground",

@@ -4,9 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests.zn_agent.core import test_natural_named_desktop_input_work as _natural_named_desktop_input_work
 from tests.zn_agent.core.test_natural_named_desktop_input_work import (
     TASK,
-    NaturalNamedDesktopInputWorkTests,
 )
 
 
@@ -18,9 +18,9 @@ class NaturalNamedDesktopExistingTextWorkTests(unittest.TestCase):
             workspace.mkdir()
             target = workspace / "客户账号-华东.txt"
             target.write_text("ACCT-48291", encoding="utf-8")
-            NaturalNamedDesktopInputWorkTests._stamp_yesterday(target)
+            _natural_named_desktop_input_work.NaturalNamedDesktopInputWorkTests._stamp_yesterday(target)
 
-            resident, world, body, controls, ledger = NaturalNamedDesktopInputWorkTests._setup(
+            resident, world, body, controls, ledger = _natural_named_desktop_input_work.NaturalNamedDesktopInputWorkTests._setup(
                 base,
                 workspace,
                 "named-input-existing-text",
