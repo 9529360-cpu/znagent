@@ -1,0 +1,87 @@
+name: E2E25 Runner Privilege Handoff
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/e2e25-runner-privilege-handoff.yml'
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+jobs:
+  handoff:
+    name: Schedule limited-token zn-interactive handoff
+    runs-on: [self-hosted, Windows, X64, zn-interactive]
+    timeout-minutes: 5
+    steps:
+      - name: Schedule repository-owned limited-token handoff
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $watchdogName = 'ZN GitHub Actions Interactive Runner Watchdog'
+          $handoffName = 'ZN GitHub Actions Runner Privilege Handoff'
+
+          $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+          $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+          if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+            Write-Host 'ZN_RUNNER_HANDOFF=current-runner-already-limited'
+            exit 0
+          }
+
+          $watchdog = Get-ScheduledTask -TaskPath '\' -TaskName $watchdogName -ErrorAction Stop
+          if ([string]$watchdog.Principal.LogonType -notin @('Interactive','InteractiveToken')) {
+            throw "Watchdog is not interactive: $($watchdog.Principal.LogonType)"
+          }
+          if ([string]$watchdog.Principal.RunLevel -ne 'Limited') {
+            throw "Watchdog is not limited-token: $($watchdog.Principal.RunLevel)"
+          }
+          $watchdogActions = @($watchdog.Actions)
+          if ($watchdogActions.Count -ne 1 -or [string]$watchdogActions[0].Arguments -notmatch '(?i)run\.cmd') {
+            throw 'Watchdog action is not the repository-owned run.cmd launcher.'
+          }
+
+          $cursor = Get-CimInstance Win32_Process -Filter "ProcessId = $PID" -ErrorAction Stop
+          $listenerPid = $null
+          for ($depth = 0; $depth -lt 16 -and $null -ne $cursor; $depth++) {
+            if ([string]$cursor.Name -eq 'Runner.Listener.exe') {
+              $listenerPid = [int]$cursor.ProcessId
+              break
+            }
+            if (-not $cursor.ParentProcessId) { break }
+            $cursor = Get-CimInstance Win32_Process -Filter "ProcessId = $($cursor.ParentProcessId)" -ErrorAction SilentlyContinue
+          }
+          if (-not $listenerPid) {
+            throw 'Could not resolve current Runner.Listener.exe ancestry.'
+          }
+
+          $runnerRoot = 'C:\actions-runner-znagent'
+          $handoffScript = Join-Path $runnerRoot 'switch-zn-interactive-to-limited.ps1'
+          $script = @"
+          `$ErrorActionPreference = 'SilentlyContinue'
+          `$old = Get-Process -Id $listenerPid -ErrorAction SilentlyContinue
+          if (`$null -ne `$old) {
+            Stop-Process -Id $listenerPid -Force -ErrorAction SilentlyContinue
+          }
+          Start-Sleep -Seconds 2
+          Start-ScheduledTask -TaskPath '\' -TaskName '$watchdogName' -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 3
+          Unregister-ScheduledTask -TaskPath '\' -TaskName '$handoffName' -Confirm:`$false -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath '$handoffScript' -Force -ErrorAction SilentlyContinue
+          "@
+          Set-Content -LiteralPath $handoffScript -Value $script -Encoding UTF8 -Force
+
+          Unregister-ScheduledTask -TaskPath '\' -TaskName $handoffName -Confirm:$false -ErrorAction SilentlyContinue
+          $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$handoffScript`""
+          $triggerAt = (Get-Date).AddSeconds(30)
+          $trigger = New-ScheduledTaskTrigger -Once -At $triggerAt
+          $handoffPrincipal = New-ScheduledTaskPrincipal -UserId $identity.Name -LogonType Interactive -RunLevel Highest
+          $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -MultipleInstances IgnoreNew
+          Register-ScheduledTask -TaskPath '\' -TaskName $handoffName -Action $action -Trigger $trigger -Principal $handoffPrincipal -Settings $settings | Out-Null
+
+          Write-Host "ZN_RUNNER_HANDOFF=scheduled"
+          Write-Host "ZN_RUNNER_HANDOFF_OLD_LISTENER_PID=$listenerPid"
+          Write-Host "ZN_RUNNER_HANDOFF_TRIGGER_UTC=$($triggerAt.ToUniversalTime().ToString('o'))"
