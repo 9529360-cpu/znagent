@@ -5,7 +5,8 @@ from __future__ import annotations
 The Product Resident already owns pointer/keyboard movements through one Body.
 This layer does not add another execution surface. It adds a fresh Windows
 session/input-desktop preflight immediately before movements that synthesize or
-redirect OS-wide interactive input.
+redirect OS-wide interactive input, plus one read-only context movement through
+the same Body for deliberate inspection.
 
 UI Automation pattern operations such as ValuePattern.SetValue are deliberately
 not covered by this gate: they are semantic UIA actions rather than SendInput-
@@ -15,6 +16,7 @@ style input injection and retain their existing exact-target/recovery contracts.
 import ctypes
 import os
 import uuid
+from dataclasses import asdict
 from typing import Any
 
 from .body import BodyAction, BodyActionResult
@@ -25,6 +27,7 @@ from .models import utc_now
 class WindowsCompanionAwareBody(CurrentAppTextAwareBody):
     """Keep one final Body while failing closed on non-interactive input sessions."""
 
+    _WINDOWS_CONTEXT_KIND = "windows_companion_context"
     _INTERACTIVE_INPUT_KINDS = frozenset({
         "pointer_move",
         "pointer_click",
@@ -47,6 +50,34 @@ class WindowsCompanionAwareBody(CurrentAppTextAwareBody):
             if failure is not None:
                 return failure
         return super().act(normalized, event_id=event_id, **args)
+
+    def _dispatch(self, action: BodyAction, started: str) -> BodyActionResult:
+        if action.kind == self._WINDOWS_CONTEXT_KIND:
+            if action.args:
+                return BodyActionResult(
+                    action_id=action.action_id,
+                    kind=action.kind,
+                    success=False,
+                    data={"dispatch_sent": False, "disposition": "unexpected_arguments"},
+                    error="windows_companion_context is read-only and accepts no action arguments",
+                    event_id=action.event_id,
+                    started_at=started,
+                    completed_at=utc_now(),
+                )
+            snapshot = self.device_capabilities.companion_context()
+            return self._ok(
+                action,
+                started,
+                data={
+                    "session": asdict(snapshot.session),
+                    "power": asdict(snapshot.power),
+                    "network": asdict(snapshot.network),
+                    "observed_at": snapshot.observed_at,
+                    "read_only": True,
+                    "dispatch_sent": False,
+                },
+            )
+        return super()._dispatch(action, started)
 
     def activate_admitted_application_window(
         self,
