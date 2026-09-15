@@ -278,7 +278,7 @@ def _begin(resident, event, state):
             "E2E-14 requires one criterion-bound Root Work owned by the Product Resident",
         )
     try:
-        source, source_key, _source_value = _source_observation(resident)
+        source, source_key, source_value = _source_observation(resident)
         foreground = _foreground(resident, require_hwnd=True)
         key_target, key_read = _read_field(resident, foreground, _KEY_NAME, allow_read_only=True)
         if key_target.value_is_read_only is not True:
@@ -291,6 +291,11 @@ def _begin(resident, event, state):
         field_target, field_read = _read_field(resident, foreground, _FIELD_NAME, allow_read_only=False)
         if field_target.value_is_read_only is not False:
             raise _Blocked("destination transfer field must expose one writable UIA ValuePattern")
+        if str(field_read.text) == source_value:
+            raise _Blocked(
+                "destination transfer field already equals Browser source before this event; "
+                "refusing Save without an owned mutation"
+            )
         save_button = resident.named_automation_control.find_unique_button(
             process_id=int(foreground.process_id),
             process_name=str(foreground.process_name),
@@ -453,7 +458,12 @@ def _replace(resident, event, state):
     expected = dict(meta.get("source", {}).get("value") or {})
     current_value = str(field_read.text)
     if _same_text(current_value, expected):
-        meta["replacement_skipped_already_equal"] = True
+        return _terminal(
+            resident,
+            event,
+            state,
+            "E2E-14 destination already equals Browser source without an owned replacement effect; refusing Save",
+        )
     else:
         result = resident.body.act(
             "automation_value_replace",

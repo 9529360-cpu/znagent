@@ -238,6 +238,18 @@ class BrowserDesktopRecordTransferTests(unittest.TestCase):
         self.assertEqual(resident.body.calls, [])
         self.assertEqual(resident.native_intents, [])
 
+    def test_initial_destination_equal_source_fails_before_replacement_or_save(self):
+        resident = _Resident()
+        resident.values["跟进状态"] = SOURCE_VALUE
+        state = _State()
+
+        result = _begin(resident, EVENT, state)
+
+        self.assertFalse(result.success)
+        self.assertIn("already equals Browser source before this event", result.reason)
+        self.assertEqual(resident.body.calls, [])
+        self.assertEqual(resident.native_intents, [])
+
     def test_happy_path_reacquires_stale_destination_runtime_and_keeps_raw_data_transient(self):
         resident, state = self._begin()
         persisted = json.dumps(state.data[_STATE_KEY], ensure_ascii=False, sort_keys=True)
