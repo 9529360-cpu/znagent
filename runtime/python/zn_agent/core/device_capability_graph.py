@@ -8,12 +8,12 @@ accepted merely because it starts with a shorter installed alias.  Exact aliases
 are resolved before bounded prefix/substring matching; fuzzy candidates can never
 make an otherwise unique exact application ambiguous.
 
-The public graph also owns read-only Windows companion, display, foreground and
-clipboard-metadata senses. This keeps session/power/network/multi-monitor/current-
-window/clipboard-presence facts in the existing Resident device graph instead of
-creating a parallel OS agent or context store. A companion frame is only a
-privacy-bounded fingerprint over its supported fresh facts; it is not a second
-source of truth.
+The public graph also owns read-only Windows companion, display, foreground,
+clipboard-metadata and UI-security senses. This keeps session/power/network/multi-
+monitor/current-window/clipboard-presence/integrity facts in the existing Resident
+device graph instead of creating a parallel OS agent or context store. A companion
+frame is only a privacy-bounded fingerprint over its supported fresh facts; it is
+not a second source of truth.
 """
 
 from dataclasses import dataclass
@@ -48,6 +48,10 @@ from .windows_foreground_companion import (
     NativeWindowsForegroundCompanionSense,
     WindowsForegroundCompanionObservation,
 )
+from .windows_ui_security_context import (
+    NativeWindowsUiSecurityContextSense,
+    WindowsUiSecurityContext,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +61,7 @@ class ResidentDeviceContextSnapshot:
     display: WindowsDisplayObservation
     foreground: WindowsForegroundCompanionObservation
     clipboard: WindowsClipboardObservation
+    ui_security: WindowsUiSecurityContext
     observed_at: str
 
 
@@ -70,6 +75,7 @@ class DeviceCapabilityGraph(_MachineFactGraph):
         display_context_sense: NativeWindowsDisplayContextSense | None = None,
         foreground_companion_sense: NativeWindowsForegroundCompanionSense | None = None,
         clipboard_context_sense: NativeWindowsClipboardContextSense | None = None,
+        ui_security_context_sense: NativeWindowsUiSecurityContextSense | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -84,6 +90,9 @@ class DeviceCapabilityGraph(_MachineFactGraph):
         )
         self._clipboard_context_sense = (
             clipboard_context_sense or NativeWindowsClipboardContextSense()
+        )
+        self._ui_security_context_sense = (
+            ui_security_context_sense or NativeWindowsUiSecurityContextSense()
         )
 
     def companion_context(self) -> WindowsCompanionContextSnapshot:
@@ -106,6 +115,16 @@ class DeviceCapabilityGraph(_MachineFactGraph):
 
         return self._clipboard_context_sense.probe()
 
+    def ui_security_context(self) -> WindowsUiSecurityContext:
+        """Fresh Resident/foreground token-integrity comparison for UIPI reasoning."""
+
+        foreground = self.foreground_companion_context()
+        return self._ui_security_context_sense.probe(
+            foreground_process_id=(
+                foreground.process_id if foreground.available else None
+            )
+        )
+
     def companion_frame(self) -> WindowsCompanionFrame:
         """Fingerprint the current bounded Windows context for drift-safe binding."""
 
@@ -124,6 +143,7 @@ class DeviceCapabilityGraph(_MachineFactGraph):
             display=self.display_context(),
             foreground=self.foreground_companion_context(),
             clipboard=self.clipboard_context(),
+            ui_security=self.ui_security_context(),
             observed_at=utc_now(),
         )
 
