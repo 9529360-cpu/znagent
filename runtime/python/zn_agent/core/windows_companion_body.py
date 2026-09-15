@@ -74,6 +74,7 @@ class WindowsCompanionAwareBody(CurrentAppTextAwareBody):
                     "power": asdict(snapshot.power),
                     "network": asdict(snapshot.network),
                     "display": asdict(display),
+                    "interactive_input": self._interactive_input_status(snapshot.session),
                     "observed_at": snapshot.observed_at,
                     "read_only": True,
                     "dispatch_sent": False,
@@ -158,71 +159,75 @@ class WindowsCompanionAwareBody(CurrentAppTextAwareBody):
                 ),
             )
 
-        session = context.session
-        # Non-Windows test/development hosts retain the historical downstream
-        # platform error rather than pretending that Windows session facts exist.
-        if not session.platform_supported:
+        status = self._interactive_input_status(context.session)
+        if status["platform_supported"] is False:
+            # Non-Windows test/development hosts retain the historical downstream
+            # platform error rather than pretending that Windows evidence exists.
+            return None
+        if status["ready"] is True:
             return None
 
-        evidence = {
+        disposition = str(status.get("disposition") or "interactive_input_unavailable")
+        errors = {
+            "session_identity_unknown": (
+                "Windows interactive input refused because current process session identity is unknown"
+            ),
+            "session_zero_noninteractive": "Windows interactive input refused from Session 0",
+            "input_desktop_unavailable": (
+                "Windows interactive input refused because the current input desktop is not "
+                "freshly openable by the Resident session"
+            ),
+            "session_connection_state_unknown": (
+                "Windows interactive input requires an actively connected user session; "
+                "current WTS state is unknown"
+            ),
+            "session_not_actively_connected": (
+                "Windows interactive input requires an actively connected user session; "
+                f"current WTS state is {status.get('session_connection_state') or 'unknown'}"
+            ),
+        }
+        return self._blocked_input_result(
+            kind,
+            event_id=event_id,
+            disposition=disposition,
+            evidence={key: value for key, value in status.items() if key not in {"ready", "disposition"}},
+            error=errors.get(disposition, "Windows interactive input is not currently admitted"),
+        )
+
+    def _interactive_input_status(self, session: Any) -> dict[str, Any]:
+        status: dict[str, Any] = {
+            "platform_supported": bool(session.platform_supported),
             "process_session_id": session.process_session_id,
             "active_console_session_id": session.active_console_session_id,
             "attached_to_active_console": session.attached_to_active_console,
             "remote_session": session.remote_session,
             "input_desktop_openable": session.input_desktop_openable,
             "session_connection_state": None,
-            "dispatch_sent": False,
+            "ready": None,
+            "disposition": "unsupported_platform",
         }
-
+        if not session.platform_supported:
+            return status
         if session.process_session_id is None:
-            return self._blocked_input_result(
-                kind,
-                event_id=event_id,
-                disposition="session_identity_unknown",
-                evidence=evidence,
-                error="Windows interactive input refused because current process session identity is unknown",
-            )
+            status.update(ready=False, disposition="session_identity_unknown")
+            return status
         if int(session.process_session_id) == 0:
-            return self._blocked_input_result(
-                kind,
-                event_id=event_id,
-                disposition="session_zero_noninteractive",
-                evidence=evidence,
-                error="Windows interactive input refused from Session 0",
-            )
+            status.update(ready=False, disposition="session_zero_noninteractive")
+            return status
         if session.input_desktop_openable is not True:
-            return self._blocked_input_result(
-                kind,
-                event_id=event_id,
-                disposition="input_desktop_unavailable",
-                evidence=evidence,
-                error=(
-                    "Windows interactive input refused because the current input desktop is not "
-                    "freshly openable by the Resident session"
-                ),
-            )
+            status.update(ready=False, disposition="input_desktop_unavailable")
+            return status
 
-        connection_state = self._current_session_connection_state(
-            int(session.process_session_id)
-        )
-        evidence["session_connection_state"] = connection_state
+        connection_state = self._current_session_connection_state(int(session.process_session_id))
+        status["session_connection_state"] = connection_state
+        if connection_state is None:
+            status.update(ready=False, disposition="session_connection_state_unknown")
+            return status
         if connection_state != "active":
-            disposition = (
-                "session_connection_state_unknown"
-                if connection_state is None
-                else "session_not_actively_connected"
-            )
-            return self._blocked_input_result(
-                kind,
-                event_id=event_id,
-                disposition=disposition,
-                evidence=evidence,
-                error=(
-                    "Windows interactive input requires an actively connected user session; "
-                    f"current WTS state is {connection_state or 'unknown'}"
-                ),
-            )
-        return None
+            status.update(ready=False, disposition="session_not_actively_connected")
+            return status
+        status.update(ready=True, disposition="ready")
+        return status
 
     def _blocked_input_result(
         self,
