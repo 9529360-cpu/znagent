@@ -37,6 +37,7 @@ jobs:
       UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
     steps:
       - name: Publish source-boundary pending status
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
@@ -80,6 +81,7 @@ jobs:
         run: .\.ci\source-venv\Scripts\python.exe .agent/verify_zn_source_boundary.py
       - name: Publish source-boundary terminal status
         if: ${{ always() }}
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
@@ -112,6 +114,7 @@ jobs:
       UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
     steps:
       - name: Publish kernel pending status
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
@@ -180,6 +183,7 @@ jobs:
           & .\.ci\runtime-venv\Scripts\python.exe -m unittest discover -s tests/zn_agent/core -p 'test_*.py' -v
       - name: Publish kernel terminal status
         if: ${{ always() }}
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
@@ -212,6 +216,7 @@ jobs:
       NODE_OPTIONS: --max-old-space-size=4096
     steps:
       - name: Publish desktop pending status
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
@@ -259,6 +264,7 @@ jobs:
         run: node --test apps/desktop/scripts/prepare-zn-public-channel.test.mjs apps/desktop/scripts/stage-zn-runtime.test.mjs apps/desktop/scripts/verify-zn-packaged-runtime.test.mjs apps/desktop/scripts/verify-zn-windows-clean-install.test.mjs
       - name: Publish desktop terminal status
         if: ${{ always() }}
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
