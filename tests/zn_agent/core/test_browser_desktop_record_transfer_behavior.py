@@ -13,6 +13,7 @@ from zn_agent.core.browser_desktop_record_transfer_behavior import (
     _parse_source_context,
     _replace,
     _resolve_uncertain_replacement,
+    _save_prepare,
     _verify_replacement,
 )
 
@@ -305,6 +306,22 @@ class BrowserDesktopRecordTransferTests(unittest.TestCase):
         self.assertEqual(resident.native_intents, [])
         self.assertEqual(len(resident.body.calls), 1)
 
+    def test_preexisting_saved_title_fails_before_save_dispatch(self):
+        resident, state = self._begin()
+        self.assertIsNone(_replace(resident, EVENT, state))
+        self.assertIsNone(_verify_replacement(resident, EVENT, state))
+        resident.foreground = SimpleNamespace(
+            process_id=4242,
+            process_name="fixture.exe",
+            window_handle=5151,
+            title="客户记录已保存",
+        )
+        result = _save_prepare(resident, EVENT, state)
+        self.assertFalse(result.success)
+        self.assertIn("already reports saved state before Save", result.reason)
+        self.assertEqual(resident.native_intents, [])
+        self.assertEqual(state.data[_STATE_KEY].get("save_dispatch_count"), 0)
+
     def test_restart_after_mutation_attempt_reconciles_verified_effect_without_replay(self):
         resident, state = self._begin()
         resident.values["跟进状态"] = SOURCE_VALUE
@@ -327,10 +344,31 @@ class BrowserDesktopRecordTransferTests(unittest.TestCase):
         self.assertEqual(resident.body.calls, [])
         self.assertEqual(resident.body.resolved, [])
 
+    def test_saved_marker_without_pre_save_unsaved_evidence_is_rejected(self):
+        resident, state = self._begin()
+        resident.values["跟进状态"] = SOURCE_VALUE
+        state.data[_STATE_KEY]["phase"] = "save_dispatch"
+        state.data[resident._POINTER_CLICK_EXECUTION_KEY] = {
+            "status": "completed",
+            "success": True,
+            "action_id": "save-1",
+        }
+        resident.foreground = SimpleNamespace(
+            process_id=4242,
+            process_name="fixture.exe",
+            window_handle=6161,
+            title="客户记录已保存",
+        )
+        result = _final_verify(resident, EVENT, state)
+        self.assertFalse(result.success)
+        self.assertIn("lost the bounded unsaved pre-Save title evidence", result.reason)
+        self.assertEqual(resident.native_intents, [])
+
     def test_final_saved_value_mismatch_fails_without_second_save(self):
         resident, state = self._begin()
         resident.values["跟进状态"] = SOURCE_VALUE
         state.data[_STATE_KEY]["phase"] = "save_dispatch"
+        state.data[_STATE_KEY]["pre_save_title"] = _bounded_audit("客户记录编辑")
         state.data[resident._POINTER_CLICK_EXECUTION_KEY] = {
             "status": "completed",
             "success": True,
