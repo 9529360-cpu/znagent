@@ -50,8 +50,6 @@ def _user32():
         ctypes.POINTER(wintypes.DWORD),
     ]
     api.GetWindowThreadProcessId.restype = wintypes.DWORD
-    api.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
-    api.AttachThreadInput.restype = wintypes.BOOL
     api.PostMessageW.argtypes = [
         wintypes.HWND,
         wintypes.UINT,
@@ -131,42 +129,16 @@ class _GroundingOrderApp:
             time.sleep(0.05)
         raise RuntimeError("semantic grounding desktop fixture window was not found")
 
-    @staticmethod
-    def _wait_foreground(user32, hwnd: int, timeout: float) -> bool:
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if int(user32.GetForegroundWindow() or 0) == hwnd:
-                return True
-            time.sleep(0.02)
-        return False
-
     def activate(self) -> None:
         user32 = _user32()
         user32.ShowWindow(self.hwnd, 5)
         user32.BringWindowToTop(self.hwnd)
         user32.SetForegroundWindow(self.hwnd)
-        if self._wait_foreground(user32, self.hwnd, 0.25):
-            return
-
-        foreground_hwnd = int(user32.GetForegroundWindow() or 0)
-        foreground_thread = (
-            int(user32.GetWindowThreadProcessId(foreground_hwnd, None) or 0)
-            if foreground_hwnd
-            else 0
-        )
-        target_thread = int(user32.GetWindowThreadProcessId(self.hwnd, None) or 0)
-        attached = False
-        if foreground_thread and target_thread and foreground_thread != target_thread:
-            attached = bool(user32.AttachThreadInput(target_thread, foreground_thread, True))
-        try:
-            user32.ShowWindow(self.hwnd, 5)
-            user32.BringWindowToTop(self.hwnd)
-            user32.SetForegroundWindow(self.hwnd)
-            if self._wait_foreground(user32, self.hwnd, 2):
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if int(user32.GetForegroundWindow() or 0) == self.hwnd:
                 return
-        finally:
-            if attached:
-                user32.AttachThreadInput(target_thread, foreground_thread, False)
+            time.sleep(0.02)
         raise RuntimeError("semantic grounding fixture could not become foreground")
 
     def trigger_recreation(self) -> None:

@@ -57,8 +57,6 @@ def _user32():
     api.IsWindowVisible.restype = wintypes.BOOL
     api.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
     api.GetWindowThreadProcessId.restype = wintypes.DWORD
-    api.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
-    api.AttachThreadInput.restype = wintypes.BOOL
     api.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
     api.PostMessageW.restype = wintypes.BOOL
     return api
@@ -122,39 +120,17 @@ class WorkRecordApp:
             time.sleep(0.05)
         raise RuntimeError("E2E-13 source window was not found")
 
-    @staticmethod
-    def _wait_foreground(api, hwnd: int, timeout: float) -> bool:
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if int(api.GetForegroundWindow() or 0) == hwnd:
-                return True
-            time.sleep(0.02)
-        return False
-
     def activate(self, hwnd: int | None = None) -> None:
         hwnd = int(hwnd or self.hwnd)
         api = _user32()
         api.ShowWindow(hwnd, 5)
         api.BringWindowToTop(hwnd)
         api.SetForegroundWindow(hwnd)
-        if self._wait_foreground(api, hwnd, 0.25):
-            return
-
-        foreground_hwnd = int(api.GetForegroundWindow() or 0)
-        foreground_thread = int(api.GetWindowThreadProcessId(foreground_hwnd, None) or 0) if foreground_hwnd else 0
-        target_thread = int(api.GetWindowThreadProcessId(hwnd, None) or 0)
-        attached = False
-        if foreground_thread and target_thread and foreground_thread != target_thread:
-            attached = bool(api.AttachThreadInput(target_thread, foreground_thread, True))
-        try:
-            api.ShowWindow(hwnd, 5)
-            api.BringWindowToTop(hwnd)
-            api.SetForegroundWindow(hwnd)
-            if self._wait_foreground(api, hwnd, 2):
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if int(api.GetForegroundWindow() or 0) == hwnd:
                 return
-        finally:
-            if attached:
-                api.AttachThreadInput(target_thread, foreground_thread, False)
+            time.sleep(0.02)
         raise RuntimeError("E2E-13 fixture could not become foreground")
 
     def trigger_recreate(self) -> None:
