@@ -181,7 +181,7 @@ class _Win32FocusFixture:
         if not user32.GetWindowRect(self.target_hwnd, ctypes.byref(rect)):
             raise OSError("GetWindowRect failed for the E2E target")
         return (
-            (int(rect.left) + int(rect.right)) // 2,
+            int(rect.left) + 16,
             (int(rect.top) + int(rect.bottom)) // 2,
         )
 
@@ -490,8 +490,8 @@ class WindowsInteractivePointerUiAE2ETests(unittest.TestCase):
                     visual = resident.visual_region.probe(
                         center_x_fraction=x_fraction,
                         center_y_fraction=y_fraction,
-                        width_fraction=0.12,
-                        height_fraction=0.08,
+                        width_fraction=0.04,
+                        height_fraction=0.04,
                     )
                     self.assertTrue(visual.signature)
                     self.assertFalse(visual.raw_frame_persisted)
@@ -510,8 +510,8 @@ class WindowsInteractivePointerUiAE2ETests(unittest.TestCase):
                             },
                             "expected_outcome": {
                                 "kind": "visual_region_changed",
-                                "width_fraction": 0.12,
-                                "height_fraction": 0.08,
+                                "width_fraction": 0.04,
+                                "height_fraction": 0.04,
                             },
                             "completion_scope": {
                                 "kind": "focused_automation_element_at_pointer",

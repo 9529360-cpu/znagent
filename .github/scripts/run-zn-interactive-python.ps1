@@ -11,9 +11,6 @@ $ErrorActionPreference = 'Stop'
 if ($env:RUNNER_OS -and $env:RUNNER_OS -ne 'Windows') {
     throw "Interactive Python launcher requires Windows; got $env:RUNNER_OS"
 }
-if ($env:RUNNER_NAME -and $env:RUNNER_NAME -ne 'zn-interactive') {
-    throw "Interactive Python launcher requires zn-interactive; got $env:RUNNER_NAME"
-}
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
     throw "Interactive Python executable does not exist: $Python"
 }
