@@ -61,8 +61,8 @@ $window.Add_ContentRendered({{
   if ($hwnd -eq 0) {{
     throw 'WPF fixture rendered without a native window handle'
   }}
-  $pid = [System.Diagnostics.Process]::GetCurrentProcess().Id
-  Set-Content -LiteralPath $ReadyPath -Value "$pid|$hwnd" -Encoding ASCII -NoNewline
+  $processId = [System.Diagnostics.Process]::GetCurrentProcess().Id
+  Set-Content -LiteralPath $ReadyPath -Value "$processId|$hwnd" -Encoding ASCII -NoNewline
   $window.Topmost = $false
 }})
 [void]$window.ShowDialog()
