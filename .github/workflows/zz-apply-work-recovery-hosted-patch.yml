@@ -33,7 +33,7 @@ jobs:
             $new = $pair[1]
             $count = ([regex]::Matches($content, [regex]::Escape($old))).Count
             if ($count -ne 1) {
-              throw "Expected exactly one reviewed occurrence, found $count: $old"
+              throw "Expected exactly one reviewed occurrence, found ${count}: $old"
             }
             $content = $content.Replace($old, $new)
           }
