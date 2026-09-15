@@ -1,0 +1,119 @@
+name: Temporary Windows Companion Stack Validation
+
+on:
+  push:
+    branches:
+      - work/windows-companion-layer-wave4
+    paths:
+      - '.github/workflows/zz-windows-companion-stack-validation.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      CI: 'true'
+      TZ: UTC
+      PYTHONUTF8: '1'
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - name: Checkout exact stack head
+        uses: actions/checkout@v7
+        with:
+          ref: work/windows-companion-layer-wave4
+          fetch-depth: 0
+      - name: Prove interactive desktop readiness
+        shell: powershell
+        run: |
+          & "$env:GITHUB_WORKSPACE\.github\scripts\test-zn-interactive-desktop-readiness.ps1" -ExpectedRunnerName $env:RUNNER_NAME
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare isolated runtime
+        shell: powershell
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/companion-e2e-venv -ErrorAction SilentlyContinue
+          uv venv .ci/companion-e2e-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\companion-e2e-venv\Scripts\python.exe'
+          uv pip install --python $python "runtime/python"
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Companion runtime dependency installation failed'
+          }
+      - name: Compile companion runtime
+        shell: powershell
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\companion-e2e-venv\Scripts\python.exe'
+          & $python -m compileall -q `
+            runtime/python/zn_agent/core/windows_companion_context.py `
+            runtime/python/zn_agent/core/windows_display_context.py `
+            runtime/python/zn_agent/core/windows_companion_body.py `
+            runtime/python/zn_agent/core/windows_foreground_companion.py `
+            runtime/python/zn_agent/core/windows_companion_frame.py `
+            runtime/python/zn_agent/core/windows_clipboard_context.py `
+            runtime/python/zn_agent/core/device_capability_graph.py `
+            runtime/python/zn_agent/core/research_information_product_resident.py
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Companion runtime compile failed'
+          }
+      - name: Run focused deterministic companion regressions
+        shell: powershell
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\companion-e2e-venv\Scripts\python.exe'
+          $tests = @(
+            'tests/zn_agent/core/test_windows_companion_context.py',
+            'tests/zn_agent/core/test_windows_display_context.py',
+            'tests/zn_agent/core/test_windows_companion_body.py',
+            'tests/zn_agent/core/test_windows_foreground_companion.py',
+            'tests/zn_agent/core/test_windows_companion_frame.py',
+            'tests/zn_agent/core/test_windows_clipboard_context.py'
+          )
+          foreach ($test in $tests) {
+            Write-Host "=== companion core: $test ==="
+            & $python $test -v
+            if ($LASTEXITCODE -ne 0) {
+              throw "Companion core regression failed: $test"
+            }
+          }
+      - name: Run real Windows companion E2Es in isolated interactive processes
+        shell: powershell
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\companion-e2e-venv\Scripts\python.exe'
+          $launcher = Join-Path $env:GITHUB_WORKSPACE '.github\scripts\run-zn-interactive-python.ps1'
+          $tests = @(
+            'tests/zn_agent/e2e/test_windows_interactive_companion_context.py',
+            'tests/zn_agent/e2e/test_windows_interactive_companion_foreground_context.py',
+            'tests/zn_agent/e2e/test_windows_interactive_companion_frame.py',
+            'tests/zn_agent/e2e/test_windows_interactive_clipboard_context.py'
+          )
+          foreach ($test in $tests) {
+            Write-Host "=== companion E2E: $test ==="
+            & $launcher -Python $python -CommandArgs @($test, '-v')
+            if ($LASTEXITCODE -ne 0) {
+              throw "Companion real Windows E2E failed: $test"
+            }
+          }
+      - name: Remove temporary validation workflow
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          rm -f .github/workflows/zz-windows-companion-stack-validation.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/zz-windows-companion-stack-validation.yml
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'ci: remove temporary companion stack validation'
+          git push origin HEAD:work/windows-companion-layer-wave4
