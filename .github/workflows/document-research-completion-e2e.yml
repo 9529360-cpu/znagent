@@ -31,9 +31,14 @@ concurrency:
 jobs:
   document-research-completion:
     name: E2E-12 / Windows
-    runs-on: [self-hosted, Windows, X64, zn-ci]
+    runs-on: windows-latest
     timeout-minutes: 30
     steps:
+      - name: Verify GitHub-hosted Windows x64 runner
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "E2E-12 requires a GitHub-hosted Windows X64 runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
       - name: Checkout
         uses: actions/checkout@v7
       - name: Set up uv
