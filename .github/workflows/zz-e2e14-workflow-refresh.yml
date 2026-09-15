@@ -1,0 +1,111 @@
+name: Temporary E2E-14 workflow refresh
+
+on:
+  push:
+    branches:
+      - work/e2e14-cross-app-transfer
+    paths:
+      - '.github/workflows/zz-e2e14-workflow-refresh.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact feature branch
+        uses: actions/checkout@v7
+        with:
+          ref: work/e2e14-cross-app-transfer
+          fetch-depth: 0
+      - name: Rebuild interactive workflow from hosted baseline
+        shell: bash
+        run: |
+          git show e25b5bce93460c23163fa0fb76281a043dc30bf2:.github/workflows/zn-windows-interactive-e2e.yml > .github/workflows/zn-windows-interactive-e2e.yml
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/zn-windows-interactive-e2e.yml')
+          text = path.read_text(encoding='utf-8')
+
+          def replace_exact(text: str, old: str, new: str, expected: int, label: str) -> str:
+              count = text.count(old)
+              if count != expected:
+                  raise SystemExit(f'{label}: expected {expected} exact matches, got {count}')
+              return text.replace(old, new)
+
+          text = replace_exact(
+              text,
+              "      - tests/zn_agent/e2e/test_windows_interactive_browser_result_file_work.py\n"
+              "      - tests/zn_agent/e2e/test_windows_interactive_current_app_content_cleanup.py\n",
+              "      - tests/zn_agent/e2e/test_windows_interactive_browser_result_file_work.py\n"
+              "      - tests/zn_agent/e2e/test_windows_interactive_browser_desktop_record_transfer.py\n"
+              "      - tests/zn_agent/e2e/test_windows_interactive_current_app_content_cleanup.py\n",
+              2,
+              'E2E-14 test path filters',
+          )
+          text = replace_exact(
+              text,
+              "      - runtime/python/zn_agent/core/browser_form_submit_body.py\n"
+              "      - runtime/python/zn_agent/core/user_browser.py\n",
+              "      - runtime/python/zn_agent/core/browser_form_submit_body.py\n"
+              "      - runtime/python/zn_agent/core/browser_desktop_record_transfer_behavior.py\n"
+              "      - runtime/python/zn_agent/core/user_browser.py\n",
+              2,
+              'E2E-14 product path filters',
+          )
+          text = replace_exact(
+              text,
+              "          if ($LASTEXITCODE -ne 0) {\n"
+              "            throw 'E2E-15 isolated modal recovery acceptance failed'\n"
+              "          }\n"
+              "      - name: Run current product-route interactive E2Es in isolated modules\n",
+              "          if ($LASTEXITCODE -ne 0) {\n"
+              "            throw 'E2E-15 isolated modal recovery acceptance failed'\n"
+              "          }\n"
+              "      - name: Run E2E-14 browser-to-desktop record transfer in isolation\n"
+              "        shell: powershell\n"
+              "        run: |\n"
+              "          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\\python'\n"
+              "          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\\interactive-e2e-venv\\Scripts\\python.exe'\n"
+              "          $launcher = Join-Path $env:GITHUB_WORKSPACE '.github\\scripts\\run-zn-interactive-python.ps1'\n"
+              "          & $launcher -Python $python -CommandArgs @(\n"
+              "            'tests/zn_agent/e2e/test_windows_interactive_browser_desktop_record_transfer.py',\n"
+              "            '-v'\n"
+              "          )\n"
+              "          if ($LASTEXITCODE -ne 0) {\n"
+              "            throw 'E2E-14 isolated browser-to-desktop record transfer acceptance failed'\n"
+              "          }\n"
+              "      - name: Run current product-route interactive E2Es in isolated modules\n",
+              1,
+              'isolated E2E-14 step',
+          )
+          text = replace_exact(
+              text,
+              "            'test_windows_interactive_desktop_modal_recovery.py',\n"
+              "            'test_windows_interactive_current_app_content_cleanup.py'\n",
+              "            'test_windows_interactive_desktop_modal_recovery.py',\n"
+              "            'test_windows_interactive_current_app_content_cleanup.py',\n"
+              "            'test_windows_interactive_browser_desktop_record_transfer.py'\n",
+              1,
+              'broad sweep exclusion',
+          )
+          path.write_text(text, encoding='utf-8')
+          PY
+      - name: Verify bounded workflow diff
+        shell: bash
+        run: |
+          git diff --check
+          git diff -- .github/workflows/zn-windows-interactive-e2e.yml
+      - name: Remove temporary workflow and commit refresh
+        shell: bash
+        run: |
+          rm .github/workflows/zz-e2e14-workflow-refresh.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/zn-windows-interactive-e2e.yml .github/workflows/zz-e2e14-workflow-refresh.yml
+          git diff --cached --quiet && exit 0
+          git commit -m 'ci: isolate E2E-14 on hosted interactive launcher'
+          git push origin HEAD:work/e2e14-cross-app-transfer
