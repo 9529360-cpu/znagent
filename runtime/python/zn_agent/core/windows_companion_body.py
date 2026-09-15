@@ -250,18 +250,20 @@ class WindowsCompanionAwareBody(CurrentAppTextAwareBody):
             9: "init",
         }
         wtsapi32 = ctypes.WinDLL("wtsapi32", use_last_error=True)
-        buffer = wintypes.LPWSTR()
+        buffer = ctypes.c_void_p()
         bytes_returned = wintypes.DWORD(0)
-        # WTS_CURRENT_SERVER_HANDLE = NULL, WTSConnectState = 8.
+        # WTS_CURRENT_SERVER_HANDLE = NULL, WTSConnectState = 8. Use a void
+        # pointer because this information class returns a binary enum value,
+        # despite the generic API spelling the output as LPWSTR*.
         wtsapi32.WTSQuerySessionInformationW.argtypes = [
             wintypes.HANDLE,
             wintypes.DWORD,
             ctypes.c_int,
-            ctypes.POINTER(wintypes.LPWSTR),
+            ctypes.POINTER(ctypes.c_void_p),
             ctypes.POINTER(wintypes.DWORD),
         ]
         wtsapi32.WTSQuerySessionInformationW.restype = wintypes.BOOL
-        wtsapi32.WTSFreeMemory.argtypes = [wintypes.LPVOID]
+        wtsapi32.WTSFreeMemory.argtypes = [ctypes.c_void_p]
         wtsapi32.WTSFreeMemory.restype = None
         ok = bool(
             wtsapi32.WTSQuerySessionInformationW(
@@ -272,8 +274,8 @@ class WindowsCompanionAwareBody(CurrentAppTextAwareBody):
                 ctypes.byref(bytes_returned),
             )
         )
-        if not ok or not buffer or int(bytes_returned.value) < ctypes.sizeof(ctypes.c_int):
-            if buffer:
+        if not ok or not buffer.value or int(bytes_returned.value) < ctypes.sizeof(ctypes.c_int):
+            if buffer.value:
                 wtsapi32.WTSFreeMemory(buffer)
             return None
         try:
