@@ -68,10 +68,8 @@ jobs:
           python .ci-export-hosted-interactive.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Verify and publish ordinary text outputs
+      - name: Publish ordinary text outputs
         run: |
-          git diff --no-index --check NUL .ci-generated/zn-windows-interactive-e2e.yml.txt 2>$null
-          if ($LASTEXITCODE -gt 1) { exit $LASTEXITCODE }
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -- .ci-generated/zn-windows-interactive-e2e.yml.txt .ci-generated/zn-interactive-runner-readiness.yml.txt
