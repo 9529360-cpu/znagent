@@ -8,9 +8,10 @@ accepted merely because it starts with a shorter installed alias.  Exact aliases
 are resolved before bounded prefix/substring matching; fuzzy candidates can never
 make an otherwise unique exact application ambiguous.
 
-The public graph also owns read-only Windows companion and display senses.  This
-keeps session/power/network/multi-monitor facts in the existing Resident device
-graph instead of creating a parallel OS agent or context store.
+The public graph also owns read-only Windows companion, display and foreground
+senses. This keeps session/power/network/multi-monitor/current-window facts in the
+existing Resident device graph instead of creating a parallel OS agent or context
+store.
 """
 
 from dataclasses import dataclass
@@ -33,6 +34,10 @@ from .windows_display_context import (
     NativeWindowsDisplayContextSense,
     WindowsDisplayObservation,
 )
+from .windows_foreground_companion import (
+    NativeWindowsForegroundCompanionSense,
+    WindowsForegroundCompanionObservation,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +45,7 @@ class ResidentDeviceContextSnapshot:
     machine: DeviceCapabilitySnapshot
     companion: WindowsCompanionContextSnapshot
     display: WindowsDisplayObservation
+    foreground: WindowsForegroundCompanionObservation
     observed_at: str
 
 
@@ -51,6 +57,7 @@ class DeviceCapabilityGraph(_MachineFactGraph):
         *args: Any,
         companion_context_sense: NativeWindowsCompanionContextSense | None = None,
         display_context_sense: NativeWindowsDisplayContextSense | None = None,
+        foreground_companion_sense: NativeWindowsForegroundCompanionSense | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -59,6 +66,9 @@ class DeviceCapabilityGraph(_MachineFactGraph):
         )
         self._display_context_sense = (
             display_context_sense or NativeWindowsDisplayContextSense()
+        )
+        self._foreground_companion_sense = (
+            foreground_companion_sense or NativeWindowsForegroundCompanionSense()
         )
 
     def companion_context(self) -> WindowsCompanionContextSnapshot:
@@ -71,6 +81,11 @@ class DeviceCapabilityGraph(_MachineFactGraph):
 
         return self._display_context_sense.probe()
 
+    def foreground_companion_context(self) -> WindowsForegroundCompanionObservation:
+        """Fresh current-window identity with raw title/class content redacted."""
+
+        return self._foreground_companion_sense.probe()
+
     def resident_context_snapshot(
         self,
         *,
@@ -82,6 +97,7 @@ class DeviceCapabilityGraph(_MachineFactGraph):
             machine=self.snapshot(force_inventory_refresh=force_inventory_refresh),
             companion=self.companion_context(),
             display=self.display_context(),
+            foreground=self.foreground_companion_context(),
             observed_at=utc_now(),
         )
 
