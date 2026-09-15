@@ -20,6 +20,9 @@ from .windows_companion_body import WindowsCompanionAwareBody
 from .windows_companion_current_app_guard import (
     install_windows_companion_current_app_guard,
 )
+from .windows_companion_foreground_desktop_guard import (
+    install_windows_companion_foreground_desktop_guard,
+)
 from .windows_companion_work_context import bind_windows_companion_work_context
 
 
@@ -84,6 +87,13 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
         # orientation gate: stale start-context is rejected before _begin() can
         # ground whatever application happens to be foreground later.
         install_windows_companion_current_app_guard(self)
+        # Natural/model-understood foreground-desktop goals may not become typed
+        # until after orientation. Guard their shared investigation and native-
+        # action seams until submit is durably dispatched, so recovery cannot
+        # silently transfer the user's "current app" reference to a later window.
+        # The existing desktop-goal runtime still owns every fresh movement and
+        # post-effect verification; historical context never grants authority.
+        install_windows_companion_foreground_desktop_guard(self)
         install_current_app_text_cleanup_completion(self)
         install_local_office_behavior(self)
         install_long_running_terminal_behavior(self)
