@@ -13,7 +13,8 @@ import test_windows_interactive_user_browser_extension as extension_fixture_modu
 
 
 _TITLE = "ZN E2E25 Browser Launch Diagnostic"
-_MAX_CAPTURE_CHARS = 2000
+_MAX_CAPTURE_CHARS = 4000
+_MAX_PROFILE_ENTRIES = 40
 
 
 def _bounded_sanitized_text(value: str, *, fixture_root: Path, repo_root: Path) -> str:
@@ -52,7 +53,7 @@ def _profile_processes(profile: Path) -> list[dict[str, object]]:
     return sorted(matches, key=lambda item: int(item["pid"]))
 
 
-def _preexisting_provider_pids(executable: Path) -> list[int]:
+def _provider_pids(executable: Path) -> list[int]:
     expected_name = executable.name.casefold()
     found: list[int] = []
     for process in psutil.process_iter(["pid", "name"]):
@@ -64,14 +65,86 @@ def _preexisting_provider_pids(executable: Path) -> list[int]:
     return sorted(pid for pid in found if pid > 0)
 
 
+def _policy_snapshot(provider: str) -> list[dict[str, object]]:
+    if os.name != "nt":
+        return []
+    import winreg
+
+    relative = {
+        "edge": r"Software\Policies\Microsoft\Edge",
+        "chrome": r"Software\Policies\Google\Chrome",
+    }.get(provider)
+    if not relative:
+        return []
+
+    snapshots: list[dict[str, object]] = []
+    roots = (("HKCU", winreg.HKEY_CURRENT_USER), ("HKLM", winreg.HKEY_LOCAL_MACHINE))
+    for root_name, root in roots:
+        try:
+            with winreg.OpenKey(root, relative) as key:
+                try:
+                    value, value_type = winreg.QueryValueEx(key, "UserDataDir")
+                except FileNotFoundError:
+                    value, value_type = None, None
+        except FileNotFoundError:
+            value, value_type = None, None
+        snapshots.append(
+            {
+                "scope": root_name,
+                "user_data_dir_present": value is not None,
+                "user_data_dir": str(value) if value is not None else None,
+                "value_type": int(value_type) if value_type is not None else None,
+            }
+        )
+    return snapshots
+
+
+def _profile_materialization(profile: Path) -> dict[str, object]:
+    entries: list[str] = []
+    try:
+        for path in sorted(profile.rglob("*"), key=lambda item: str(item).casefold()):
+            if len(entries) >= _MAX_PROFILE_ENTRIES:
+                break
+            try:
+                entries.append(path.relative_to(profile).as_posix() + ("/" if path.is_dir() else ""))
+            except OSError:
+                continue
+    except OSError:
+        pass
+    markers = {
+        "local_state": (profile / "Local State").is_file(),
+        "singleton_lock": (profile / "SingletonLock").exists(),
+        "singleton_cookie": (profile / "SingletonCookie").exists(),
+        "singleton_socket": (profile / "SingletonSocket").exists(),
+        "default_preferences": (profile / "Default" / "Preferences").is_file(),
+        "first_run": (profile / "First Run").exists(),
+    }
+    return {"markers": markers, "entries": entries, "entry_count_capped": len(entries)}
+
+
 def _capture_fixture_launch(*, provider: str, executable: Path, fixture, fixture_kind: str) -> dict[str, object]:
     repo_root = Path(__file__).resolve().parents[3]
-    preexisting_pids = _preexisting_provider_pids(executable)
+    preexisting_pids = _provider_pids(executable)
     captured_process: subprocess.Popen[str] | None = None
+    captured_args: list[str] = []
     real_popen = subprocess.Popen
 
     def diagnostic_popen(*args, **kwargs):
-        nonlocal captured_process
+        nonlocal captured_process, captured_args
+        raw_args = args[0] if args else kwargs.get("args")
+        if isinstance(raw_args, (list, tuple)):
+            instrumented = [str(item) for item in raw_args]
+            if "--enable-logging=stderr" not in instrumented:
+                instrumented.insert(1, "--enable-logging=stderr")
+            if "--v=1" not in instrumented:
+                instrumented.insert(2, "--v=1")
+            captured_args = instrumented
+            if args:
+                args = (instrumented, *args[1:])
+            else:
+                kwargs["args"] = instrumented
+        else:
+            captured_args = [str(raw_args)]
         kwargs["stdout"] = subprocess.PIPE
         kwargs["stderr"] = subprocess.PIPE
         kwargs["text"] = True
@@ -100,17 +173,37 @@ def _capture_fixture_launch(*, provider: str, executable: Path, fixture, fixture
             if root_exit_code is not None:
                 stdout, stderr = captured_process.communicate(timeout=2.0)
 
+        post_pids = _provider_pids(executable)
+        new_provider_pids = sorted(set(post_pids) - set(preexisting_pids))
+        policy = _policy_snapshot(provider)
+        for snapshot in policy:
+            value = snapshot.get("user_data_dir")
+            if value:
+                snapshot["user_data_dir"] = _bounded_sanitized_text(
+                    str(value), fixture_root=fixture.root, repo_root=repo_root
+                )
         evidence: dict[str, object] = {
             "provider": provider,
             "fixture_kind": fixture_kind,
+            "executable": _bounded_sanitized_text(
+                str(executable), fixture_root=fixture.root, repo_root=repo_root
+            ),
+            "policy": policy,
             "preexisting_provider_pids": preexisting_pids,
+            "post_provider_pids": post_pids,
+            "new_provider_pids": new_provider_pids,
             "root_pid": root_pid,
             "root_exit_code": root_exit_code,
             "fixture_hwnd": int(fixture.hwnd or 0),
             "fixture_window_pid": int(fixture.window_pid or 0),
             "profile_processes": _profile_processes(fixture.profile),
+            "profile_materialization": _profile_materialization(fixture.profile),
             "launch_error": type(launch_error).__name__ if launch_error else None,
             "launch_error_message": str(launch_error or ""),
+            "argv": [
+                _bounded_sanitized_text(item, fixture_root=fixture.root, repo_root=repo_root)
+                for item in captured_args
+            ],
             "stdout_tail": _bounded_sanitized_text(
                 stdout,
                 fixture_root=fixture.root,
