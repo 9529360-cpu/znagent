@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from zn_agent.core.provider_bridge import build_resident_runtime
+from zn_agent.core.windows_companion_body import WindowsCompanionAwareBody
 
 
 class WindowsInteractiveCompanionContextE2ETests(unittest.TestCase):
@@ -19,6 +20,9 @@ class WindowsInteractiveCompanionContextE2ETests(unittest.TestCase):
                 store_path=Path(tmp) / "kernel.db",
             )
             try:
+                self.assertIsInstance(resident.body, WindowsCompanionAwareBody)
+                self.assertIs(resident.body.device_capabilities, resident.device_capabilities)
+
                 context = resident.device_capabilities.companion_context()
 
                 self.assertTrue(context.session.platform_supported)
@@ -33,6 +37,15 @@ class WindowsInteractiveCompanionContextE2ETests(unittest.TestCase):
                 )
                 self.assertIsNotNone(context.session.idle_seconds)
                 self.assertGreaterEqual(float(context.session.idle_seconds or 0.0), 0.0)
+
+                connection_state = resident.body._current_session_connection_state(
+                    int(context.session.process_session_id or 0)
+                )
+                self.assertEqual(
+                    connection_state,
+                    "active",
+                    "real OS-wide input must only be admitted from a WTSActive user session",
+                )
 
                 self.assertTrue(context.power.platform_supported)
                 self.assertIn(context.power.ac_status, {"online", "offline", "unknown"})
@@ -56,10 +69,20 @@ class WindowsInteractiveCompanionContextE2ETests(unittest.TestCase):
                 self.assertFalse(hasattr(context.network, "interfaces"))
                 self.assertFalse(hasattr(context.network, "addresses"))
 
+                body_context = resident.body.act("windows_companion_context")
+                self.assertTrue(body_context.success)
+                self.assertTrue(body_context.data.get("read_only"))
+                self.assertFalse(body_context.data.get("dispatch_sent"))
+                self.assertEqual(
+                    body_context.data["session"]["process_session_id"],
+                    context.session.process_session_id,
+                )
+
                 print(
                     "ZN_WINDOWS_COMPANION_CONTEXT_EVIDENCE="
                     f"{{\"session_id\":{int(context.session.process_session_id or 0)},"
                     f"\"active_console_session_id\":{int(context.session.active_console_session_id or 0)},"
+                    f"\"wts_state\":\"{connection_state}\","
                     f"\"input_desktop_openable\":{str(bool(context.session.input_desktop_openable)).lower()},"
                     f"\"remote_session\":{str(bool(context.session.remote_session)).lower()},"
                     f"\"ac_status\":\"{context.power.ac_status}\","
