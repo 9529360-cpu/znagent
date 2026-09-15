@@ -16,9 +16,7 @@ from zn_agent.core.desktop_task_goal import (
     explicit_desktop_task_goal_hint,
 )
 from zn_agent.core.models import AgentEvent, ModelRoute, utc_now
-from tests.zn_agent.core.test_natural_named_desktop_input_work import (
-    NaturalNamedDesktopInputWorkTests,
-)
+from tests.zn_agent.core import test_natural_named_desktop_input_work as _natural_named_desktop_input_work
 
 
 _PROPOSAL = {
@@ -231,7 +229,7 @@ class DesktopGoalUnderstandingTests(unittest.TestCase):
             workspace.mkdir()
             source = workspace / "订单资料.txt"
             source.write_text("ORDER-7788", encoding="utf-8")
-            NaturalNamedDesktopInputWorkTests._stamp_yesterday(source)
+            _natural_named_desktop_input_work.NaturalNamedDesktopInputWorkTests._stamp_yesterday(source)
 
             hint_event = AgentEvent(
                 event_id="evt-semantic-grounding",
@@ -241,7 +239,7 @@ class DesktopGoalUnderstandingTests(unittest.TestCase):
             )
             self.assertIsNone(explicit_desktop_task_goal_hint(hint_event))
 
-            resident, world, body, controls, ledger = NaturalNamedDesktopInputWorkTests._setup(
+            resident, world, body, controls, ledger = _natural_named_desktop_input_work.NaturalNamedDesktopInputWorkTests._setup(
                 base,
                 workspace,
                 "semantic-grounding",
@@ -287,9 +285,9 @@ class DesktopGoalUnderstandingTests(unittest.TestCase):
             workspace.mkdir()
             source = workspace / "订单资料.txt"
             source.write_text("ORDER-8899", encoding="utf-8")
-            NaturalNamedDesktopInputWorkTests._stamp_yesterday(source)
+            _natural_named_desktop_input_work.NaturalNamedDesktopInputWorkTests._stamp_yesterday(source)
 
-            resident, _, body, controls, ledger = NaturalNamedDesktopInputWorkTests._setup(
+            resident, _, body, controls, ledger = _natural_named_desktop_input_work.NaturalNamedDesktopInputWorkTests._setup(
                 base,
                 workspace,
                 "semantic-grounding-ambiguous",
@@ -317,7 +315,7 @@ class DesktopGoalUnderstandingTests(unittest.TestCase):
                 workspace.mkdir()
                 source = workspace / "订单资料.txt"
                 source.write_text(f"ORDER-{4100 + index}", encoding="utf-8")
-                NaturalNamedDesktopInputWorkTests._stamp_yesterday(source)
+                _natural_named_desktop_input_work.NaturalNamedDesktopInputWorkTests._stamp_yesterday(source)
 
                 hint_event = AgentEvent(
                     event_id=f"evt-paraphrase-{index}",
@@ -330,7 +328,7 @@ class DesktopGoalUnderstandingTests(unittest.TestCase):
                     "acceptance paraphrase must not be rescued by the deterministic regex fast path",
                 )
 
-                resident, world, body, controls, ledger = NaturalNamedDesktopInputWorkTests._setup(
+                resident, world, body, controls, ledger = _natural_named_desktop_input_work.NaturalNamedDesktopInputWorkTests._setup(
                     base,
                     workspace,
                     f"desktop-language-{index}",
@@ -372,10 +370,10 @@ class DesktopGoalUnderstandingTests(unittest.TestCase):
             second = workspace / "订单-B.txt"
             first.write_text("ORDER-A", encoding="utf-8")
             second.write_text("ORDER-B", encoding="utf-8")
-            NaturalNamedDesktopInputWorkTests._stamp_yesterday(first)
-            NaturalNamedDesktopInputWorkTests._stamp_yesterday(second)
+            _natural_named_desktop_input_work.NaturalNamedDesktopInputWorkTests._stamp_yesterday(first)
+            _natural_named_desktop_input_work.NaturalNamedDesktopInputWorkTests._stamp_yesterday(second)
 
-            resident, _, body, controls, ledger = NaturalNamedDesktopInputWorkTests._setup(
+            resident, _, body, controls, ledger = _natural_named_desktop_input_work.NaturalNamedDesktopInputWorkTests._setup(
                 base,
                 workspace,
                 "desktop-language-ambiguous",
