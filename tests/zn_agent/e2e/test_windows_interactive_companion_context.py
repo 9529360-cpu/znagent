@@ -102,12 +102,22 @@ class WindowsInteractiveCompanionContextE2ETests(unittest.TestCase):
                     body_context.data["display"]["monitor_count"],
                     display.monitor_count,
                 )
+                self.assertTrue(body_context.data["interactive_input"]["ready"])
+                self.assertEqual(
+                    body_context.data["interactive_input"]["session_connection_state"],
+                    "active",
+                )
+                self.assertEqual(
+                    body_context.data["interactive_input"]["disposition"],
+                    "ready",
+                )
 
                 print(
                     "ZN_WINDOWS_COMPANION_CONTEXT_EVIDENCE="
                     f"{{\"session_id\":{int(context.session.process_session_id or 0)},"
                     f"\"active_console_session_id\":{int(context.session.active_console_session_id or 0)},"
                     f"\"wts_state\":\"{connection_state}\","
+                    f"\"input_ready\":{str(bool(body_context.data['interactive_input']['ready'])).lower()},"
                     f"\"input_desktop_openable\":{str(bool(context.session.input_desktop_openable)).lower()},"
                     f"\"remote_session\":{str(bool(context.session.remote_session)).lower()},"
                     f"\"ac_status\":\"{context.power.ac_status}\","
