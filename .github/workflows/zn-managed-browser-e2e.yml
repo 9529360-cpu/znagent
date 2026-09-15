@@ -181,7 +181,7 @@ concurrency:
 jobs:
   managed-browser-e2e:
     name: Windows local managed Chromium E2E
-    runs-on: [self-hosted, Windows, X64, zn-ci]
+    runs-on: windows-latest
     timeout-minutes: 20
     env:
       CI: 'true'
@@ -189,10 +189,10 @@ jobs:
       PYTHONUTF8: '1'
       PYTHONUNBUFFERED: '1'
     steps:
-      - name: Require Windows x64 headless CI runner
+      - name: Verify GitHub-hosted Windows x64 runner
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
-            throw "ZN managed browser E2E requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+            throw "ZN managed browser E2E requires a GitHub-hosted Windows X64 runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
           }
           Write-Host "ZN managed-browser runner: $env:RUNNER_NAME"
       - name: Checkout
