@@ -15,6 +15,8 @@ on:
       - 'runtime/python/zn_agent/core/worker_context_boundary.py'
       - 'tests/zn_agent/core/test_e2e25_current_reference_and_workspace_read_baseline.py'
       - 'tests/zn_agent/e2e/test_e2e25_api_docs_code_adaptation.py'
+      - 'tests/zn_agent/e2e/test_windows_interactive_user_browser_bridge.py'
+      - 'tests/zn_agent/e2e/test_windows_interactive_user_browser_extension.py'
       - 'apps/desktop/browser-extension/**'
 
 permissions:
@@ -87,6 +89,26 @@ jobs:
           print("ZN_E2E25_CONFIGURED_ROUTES=" + json.dumps(safe, ensure_ascii=False), flush=True)
           if not plan.available or not safe:
               raise SystemExit("E2E-25 requires a configured real cognitive resource: " + str(plan.error))
+          '@ | & $python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify disposable USER Browser provider isolation
+        run: |
+          $env:PYTHONPATH = (Join-Path $env:GITHUB_WORKSPACE 'runtime\python') + ';' + (Join-Path $env:GITHUB_WORKSPACE 'tests\zn_agent\e2e')
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e25-real-venv\Scripts\python.exe'
+          @'
+          import json
+          from test_windows_interactive_user_browser_bridge import _find_installed_browsers
+          browsers = _find_installed_browsers()
+          print(
+              "ZN_E2E25_ISOLATED_BROWSER_PROVIDERS="
+              + json.dumps([provider for provider, _ in browsers], ensure_ascii=False),
+              flush=True,
+          )
+          if not browsers:
+              raise SystemExit(
+                  "E2E-25 requires stable Edge/Chrome that can honor a disposable user-data "
+                  "directory; mandatory UserDataDir policy providers are intentionally excluded"
+              )
           '@ | & $python -
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run exactly one guarded real E2E-25 and fail on skip

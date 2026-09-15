@@ -11,6 +11,11 @@ import unittest
 from ctypes import wintypes
 from pathlib import Path
 
+try:
+    import winreg
+except ImportError:  # pragma: no cover - Windows-only acceptance helper
+    winreg = None
+
 from zn_agent.core.automation_text_state_sense import NativeFocusedAutomationTextSense
 from zn_agent.core.provider_bridge import build_resident_runtime
 
@@ -18,16 +23,86 @@ from zn_agent.core.provider_bridge import build_resident_runtime
 _TITLE = "ZN User Browser Bridge E2E"
 _TEXT = "ZN isolated user browser bridge marker"
 _TARGET_ID = "zn-user-browser-text-target"
+_BROWSER_POLICY_KEYS = {
+    "edge": r"SOFTWARE\Policies\Microsoft\Edge",
+    "chrome": r"SOFTWARE\Policies\Google\Chrome",
+}
+
+
+def _mandatory_user_data_dir_policy_scope(provider: str) -> str | None:
+    """Return the mandatory Windows policy scope that defeats profile isolation.
+
+    Edge and Chrome both document ``UserDataDir`` as an enterprise policy that
+    overrides the browser's command-line user-data directory. These acceptance
+    fixtures must never fall through to a policy-owned real user profile, so a
+    provider with this mandatory policy is ineligible for disposable-profile E2E.
+    Only the policy scope is reported; the configured path is intentionally not
+    read into logs or evidence.
+    """
+
+    if os.name != "nt" or winreg is None:
+        return None
+    key_path = _BROWSER_POLICY_KEYS.get(str(provider or "").strip().casefold())
+    if not key_path:
+        return None
+
+    scopes = (
+        ("current_user", winreg.HKEY_CURRENT_USER),
+        ("local_machine", winreg.HKEY_LOCAL_MACHINE),
+    )
+    views = []
+    for view in (
+        0,
+        getattr(winreg, "KEY_WOW64_64KEY", 0),
+        getattr(winreg, "KEY_WOW64_32KEY", 0),
+    ):
+        if view not in views:
+            views.append(view)
+
+    for scope_name, hive in scopes:
+        for view in views:
+            try:
+                with winreg.OpenKey(
+                    hive,
+                    key_path,
+                    0,
+                    winreg.KEY_READ | view,
+                ) as policy_key:
+                    value, _value_type = winreg.QueryValueEx(policy_key, "UserDataDir")
+            except OSError:
+                continue
+            if str(value or "").strip():
+                return scope_name
+    return None
 
 
 def _find_installed_browsers() -> list[tuple[str, Path]]:
-    """Discover stable Edge/Chrome without consulting or copying any user profile."""
+    """Discover stable browsers that can honor one disposable user-data dir."""
+
+    blocked = {
+        provider: scope
+        for provider in ("edge", "chrome")
+        if (scope := _mandatory_user_data_dir_policy_scope(provider)) is not None
+    }
+    for provider, scope in blocked.items():
+        print(
+            "ZN_USER_BROWSER_ISOLATION_BLOCKED="
+            + json.dumps(
+                {
+                    "provider": provider,
+                    "reason": "mandatory_user_data_dir_policy",
+                    "policy_scope": scope,
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
 
     found: list[tuple[str, Path]] = []
     seen: set[str] = set()
 
     def add(provider: str, candidate: str | os.PathLike[str] | None) -> None:
-        if not candidate:
+        if provider in blocked or not candidate:
             return
         path = Path(candidate)
         try:
@@ -326,8 +401,8 @@ class WindowsInteractiveUserBrowserBridgeProviderE2ETests(unittest.TestCase):
         browsers = _find_installed_browsers()
         if not browsers:
             self.fail(
-                "interactive Windows runner has neither stable Microsoft Edge nor Google Chrome; "
-                "User Browser Bridge provider proof cannot proceed"
+                "interactive Windows runner has no stable Edge/Chrome provider that can prove "
+                "a disposable user-data directory; User Browser Bridge proof cannot proceed"
             )
 
         print(
