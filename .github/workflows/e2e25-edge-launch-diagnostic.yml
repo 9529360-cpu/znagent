@@ -42,6 +42,49 @@ jobs:
             throw "E2E25 Edge launch diagnostic requires zn-interactive; got $env:RUNNER_NAME"
           }
 
+      - name: Report runner token and browser elevation compatibility
+        run: |
+          $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+          $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+          $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+          $sessionId = (Get-Process -Id $PID -ErrorAction Stop).SessionId
+          $enableLua = (Get-ItemProperty -LiteralPath 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Policies\System' -Name EnableLUA -ErrorAction SilentlyContinue).EnableLUA
+          $tokenEvidence = [ordered]@{
+            session_id = $sessionId
+            administrator_token = [bool]$isAdmin
+            enable_lua = $enableLua
+            compat_layer = [string]$env:__COMPAT_LAYER
+          }
+          Write-Host ('ZN_E2E25_RUNNER_TOKEN=' + ($tokenEvidence | ConvertTo-Json -Compress))
+
+          $browserPaths = @(
+            'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
+            'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
+            'C:\Program Files\Google\Chrome\Application\chrome.exe',
+            'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe'
+          )
+          $layerRoots = @(
+            'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers',
+            'HKLM:\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers'
+          )
+          foreach ($browserPath in $browserPaths) {
+            if (-not (Test-Path -LiteralPath $browserPath -PathType Leaf)) { continue }
+            $scopes = @()
+            foreach ($root in $layerRoots) {
+              $raw = Get-ItemPropertyValue -LiteralPath $root -Name $browserPath -ErrorAction SilentlyContinue
+              if ($null -eq $raw) { continue }
+              $scopes += [ordered]@{
+                scope = if ($root.StartsWith('HKCU:')) { 'HKCU' } else { 'HKLM' }
+                run_as_admin = ([string]$raw -match 'RUNASADMIN')
+              }
+            }
+            $browserEvidence = [ordered]@{
+              executable = $browserPath
+              compatibility_layers = $scopes
+            }
+            Write-Host ('ZN_E2E25_BROWSER_COMPAT=' + ($browserEvidence | ConvertTo-Json -Compress -Depth 4))
+          }
+
       - uses: actions/checkout@v7
 
       - uses: astral-sh/setup-uv@v6
