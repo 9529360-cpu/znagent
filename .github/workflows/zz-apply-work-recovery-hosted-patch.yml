@@ -1,0 +1,66 @@
+name: Apply hosted Work Recovery patch
+
+on:
+  push:
+    branches:
+      - ci/github-hosted-work-recovery
+    paths:
+      - .github/workflows/zz-apply-work-recovery-hosted-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Apply exact reviewed replacements
+        shell: powershell
+        run: |
+          $target = '.github/workflows/zn-work-recovery-e2e.yml'
+          $content = Get-Content -LiteralPath $target -Raw
+          $replacements = @(
+            @('    runs-on: [self-hosted, Windows, X64, zn-ci]', '    runs-on: windows-latest'),
+            @('      - name: Require Windows x64 headless CI runner', '      - name: Verify GitHub-hosted Windows x64 runner'),
+            @('            throw "ZN Work recovery E2E requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"', '            throw "ZN Work recovery E2E requires a GitHub-hosted Windows X64 runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"')
+          )
+          foreach ($pair in $replacements) {
+            $old = $pair[0]
+            $new = $pair[1]
+            $count = ([regex]::Matches($content, [regex]::Escape($old))).Count
+            if ($count -ne 1) {
+              throw "Expected exactly one reviewed occurrence, found $count: $old"
+            }
+            $content = $content.Replace($old, $new)
+          }
+          [IO.File]::WriteAllText((Resolve-Path $target), $content, [Text.UTF8Encoding]::new($false))
+
+          git diff --check -- $target
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $changed = @(git diff --name-only)
+          if ($changed.Count -ne 1 -or $changed[0] -ne $target) {
+            throw "Unexpected patch write set: $($changed -join ', ')"
+          }
+          git diff -- $target
+
+      - name: Commit exact patch and remove patch helper
+        shell: powershell
+        run: |
+          $target = '.github/workflows/zn-work-recovery-e2e.yml'
+          $helper = '.github/workflows/zz-apply-work-recovery-hosted-patch.yml'
+          Remove-Item -LiteralPath $helper -Force
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- $target $helper
+          git diff --cached --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $changed = @(git diff --cached --name-only)
+          if ($changed.Count -ne 2 -or $target -notin $changed -or $helper -notin $changed) {
+            throw "Unexpected staged write set: $($changed -join ', ')"
+          }
+          git commit -m 'ci: run Work recovery E2E on hosted Windows'
+          git push origin HEAD:ci/github-hosted-work-recovery
