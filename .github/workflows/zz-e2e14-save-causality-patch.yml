@@ -1,0 +1,303 @@
+name: Apply E2E-14 Save causality fix
+
+on:
+  push:
+    branches:
+      - work/e2e14-cross-app-transfer
+    paths:
+      - .github/workflows/zz-e2e14-save-causality-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Apply exact Save causality patch
+        run: |
+          @'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected exactly one match, found {count}")
+              return text.replace(old, new, 1)
+
+          owner = Path("runtime/python/zn_agent/core/browser_desktop_record_transfer_behavior.py")
+          text = owner.read_text(encoding="utf-8").replace("\r\n", "\n")
+
+          text = replace_once(
+              text,
+              "\n\ndef _is_request(event) -> bool:\n",
+              "\n\ndef _title_has_saved_marker(value: str) -> bool:\n    text = str(value or \"\")\n    return \"已保存\" in text or \"saved\" in text.casefold()\n\n\ndef _is_request(event) -> bool:\n",
+              "saved-title helper",
+          )
+
+          text = replace_once(
+              text,
+              '''        expected = dict(meta.get("source", {}).get("value") or {})
+          if not _same_text(str(field_read.text), expected):
+              raise _Blocked("destination field no longer matches Browser source before Save")
+          button = resident.named_automation_control.find_unique_button(
+          ''',
+              '''        expected = dict(meta.get("source", {}).get("value") or {})
+          if not _same_text(str(field_read.text), expected):
+              raise _Blocked("destination field no longer matches Browser source before Save")
+          pre_save_title = str(foreground.title or "")
+          if _title_has_saved_marker(pre_save_title):
+              raise _Blocked("destination application already reports saved state before Save")
+          button = resident.named_automation_control.find_unique_button(
+          ''',
+              "Save preflight unsaved-title proof",
+          )
+          text = replace_once(
+              text,
+              '    meta["save_target"] = {\n',
+              '    meta["pre_save_title"] = _bounded_audit(pre_save_title)\n    meta["save_target"] = {\n',
+              "persist bounded pre-Save title audit",
+          )
+
+          text = replace_once(
+              text,
+              '''    if int(meta.get("save_dispatch_count") or 0) == 0:
+              meta["save_dispatch_count"] = 1
+              meta["save_action_id"] = str(execution.get("action_id") or "")
+
+          observations = int(meta.get("final_observation_count") or 0) + 1
+          ''',
+              '''    if int(meta.get("save_dispatch_count") or 0) == 0:
+              meta["save_dispatch_count"] = 1
+              meta["save_action_id"] = str(execution.get("action_id") or "")
+
+          pre_save_title = dict(meta.get("pre_save_title") or {})
+          try:
+              pre_save_title_chars = int(pre_save_title["chars"])
+          except (KeyError, TypeError, ValueError):
+              pre_save_title_chars = -1
+          if pre_save_title_chars < 0 or len(str(pre_save_title.get("sha256") or "")) != 64:
+              return _terminal(
+                  resident,
+                  event,
+                  state,
+                  "E2E-14 Save completion lost the bounded unsaved pre-Save title evidence",
+              )
+
+          observations = int(meta.get("final_observation_count") or 0) + 1
+          ''',
+              "final verification requires pre-Save evidence",
+          )
+          text = replace_once(
+              text,
+              '    title_saved = "已保存" in title or "saved" in title.casefold()\n',
+              '    title_saved = _title_has_saved_marker(title)\n',
+              "shared saved-title marker",
+          )
+          text = replace_once(
+              text,
+              '''        "source_exact": True,
+              "title_saved_postcondition": True,
+              "readback_verified": True,
+          ''',
+              '''        "source_exact": True,
+              "pre_save_title": pre_save_title,
+              "post_save_title": _bounded_audit(title),
+              "title_saved_postcondition": True,
+              "title_saved_transition": True,
+              "readback_verified": True,
+          ''',
+              "final title transition evidence",
+          )
+          text = replace_once(
+              text,
+              '''        "source_exact": bool(final.get("source_exact")),
+              "title_saved_postcondition": bool(final.get("title_saved_postcondition")),
+              "root_readback_verified": bool(final.get("readback_verified")),
+          ''',
+              '''        "source_exact": bool(final.get("source_exact")),
+              "pre_save_title": dict(meta.get("pre_save_title") or {}),
+              "post_save_title": dict(final.get("post_save_title") or {}),
+              "title_saved_postcondition": bool(final.get("title_saved_postcondition")),
+              "title_saved_transition": bool(final.get("title_saved_transition")),
+              "root_readback_verified": bool(final.get("readback_verified")),
+          ''',
+              "safe summary title transition",
+          )
+          text = replace_once(
+              text,
+              '''                if not _same_text(
+                      str(field_read.text),
+                      dict(meta.get("source", {}).get("value") or {}),
+                  ):
+                      return "E2E-14 destination value drifted before final Save input boundary"
+                  button = resident.named_automation_control.find_unique_button(
+          ''',
+              '''                if not _same_text(
+                      str(field_read.text),
+                      dict(meta.get("source", {}).get("value") or {}),
+                  ):
+                      return "E2E-14 destination value drifted before final Save input boundary"
+                  current_title = str(foreground.title or "")
+                  pre_save_title = dict(meta.get("pre_save_title") or {})
+                  if not pre_save_title or not _same_text(current_title, pre_save_title):
+                      return "E2E-14 application title drifted after Save preparation"
+                  if _title_has_saved_marker(current_title):
+                      return "E2E-14 application already reports saved state before final Save input boundary"
+                  button = resident.named_automation_control.find_unique_button(
+          ''',
+              "final input unsaved-title recheck",
+          )
+          owner.write_text(text, encoding="utf-8", newline="\n")
+
+          tests = Path("tests/zn_agent/core/test_browser_desktop_record_transfer_behavior.py")
+          text = tests.read_text(encoding="utf-8").replace("\r\n", "\n")
+          text = replace_once(
+              text,
+              '    _resolve_uncertain_replacement,\n    _verify_replacement,\n',
+              '    _resolve_uncertain_replacement,\n    _save_prepare,\n    _verify_replacement,\n    install_browser_desktop_record_transfer_behavior,\n',
+              "test imports",
+          )
+          text = replace_once(
+              text,
+              '''    def _begin_native_action_cycle(self, event, state, intent):
+              self.native_intents.append(intent)
+              state.stage = "native_dispatch"
+              state.data[self._POINTER_CLICK_EXECUTION_KEY] = {
+                  "status": "pending",
+                  "success": None,
+                  "action_id": intent.intent_id,
+              }
+
+
+          class _State:
+          ''',
+              '''    def _begin_native_action_cycle(self, event, state, intent):
+              self.native_intents.append(intent)
+              state.stage = "native_dispatch"
+              state.data[self._POINTER_CLICK_EXECUTION_KEY] = {
+                  "status": "pending",
+                  "success": None,
+                  "action_id": intent.intent_id,
+              }
+
+              def _pointer_click_contract(self, _event, _intent):
+                  return None, "fallback"
+
+              def _pointer_click_final_input_precondition(self, _event, _state, _intent, _contract, _prepared):
+                  return None
+
+              def _advance_event_step(self, _event, _state, **_kwargs):
+                  return None
+
+
+          class _State:
+          ''',
+              "resident hook stubs",
+          )
+          marker = '''    def test_restart_after_mutation_attempt_reconciles_verified_effect_without_replay(self):
+          '''
+          added = '''    def test_preexisting_saved_title_fails_before_save_dispatch(self):
+              resident, state = self._begin()
+              self.assertIsNone(_replace(resident, EVENT, state))
+              self.assertIsNone(_verify_replacement(resident, EVENT, state))
+              resident.foreground = SimpleNamespace(
+                  process_id=4242,
+                  process_name="fixture.exe",
+                  window_handle=5151,
+                  title="客户记录已保存",
+              )
+              result = _save_prepare(resident, EVENT, state)
+              self.assertFalse(result.success)
+              self.assertIn("already reports saved state before Save", result.reason)
+              self.assertEqual(resident.native_intents, [])
+              self.assertEqual(state.data[_STATE_KEY].get("save_dispatch_count"), 0)
+
+              def test_final_pointer_precondition_rechecks_same_unsaved_title(self):
+                  resident, state = self._begin()
+                  self.assertIsNone(_replace(resident, EVENT, state))
+                  self.assertIsNone(_verify_replacement(resident, EVENT, state))
+                  self.assertIsNone(_save_prepare(resident, EVENT, state))
+                  self.assertEqual(len(resident.native_intents), 1)
+                  intent = resident.native_intents[0]
+                  install_browser_desktop_record_transfer_behavior(resident)
+                  resident.foreground = SimpleNamespace(
+                      process_id=4242,
+                      process_name="fixture.exe",
+                      window_handle=5151,
+                      title="客户记录编辑*",
+                  )
+                  contract = {
+                      "center_x_fraction": float(intent.args["x_fraction"]),
+                      "center_y_fraction": float(intent.args["y_fraction"]),
+                  }
+                  error = resident._pointer_click_final_input_precondition(
+                      EVENT, state, intent, contract, {}
+                  )
+                  self.assertEqual(error, "E2E-14 application title drifted after Save preparation")
+
+              def test_saved_marker_without_pre_save_unsaved_evidence_is_rejected(self):
+                  resident, state = self._begin()
+                  resident.values["跟进状态"] = SOURCE_VALUE
+                  state.data[_STATE_KEY]["phase"] = "save_dispatch"
+                  state.data[resident._POINTER_CLICK_EXECUTION_KEY] = {
+                      "status": "completed",
+                      "success": True,
+                      "action_id": "save-1",
+                  }
+                  resident.foreground = SimpleNamespace(
+                      process_id=4242,
+                      process_name="fixture.exe",
+                      window_handle=6161,
+                      title="客户记录已保存",
+                  )
+                  result = _final_verify(resident, EVENT, state)
+                  self.assertFalse(result.success)
+                  self.assertIn("lost the bounded unsaved pre-Save title evidence", result.reason)
+
+          '''
+          text = replace_once(text, marker, added + marker, "Save causality regressions")
+          tests.write_text(text, encoding="utf-8", newline="\n")
+          '@ | Set-Content -LiteralPath .ci-e2e14-save-causality.py -Encoding utf8
+          python .ci-e2e14-save-causality.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run focused E2E-14 regression suite
+        run: |
+          uv python install 3.12
+          uv venv .ci/e2e14-save-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e14-save-venv\Scripts\python.exe'
+          uv pip install --python $python runtime/python
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          & $python tests/zn_agent/core/test_browser_desktop_record_transfer_behavior.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $python tests/zn_agent/core/test_browser_desktop_record_transfer_fresh_authority.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $python tests/zn_agent/core/test_browser_desktop_record_transfer_verified_effect_recovery.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Commit tested product and regression changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- runtime/python/zn_agent/core/browser_desktop_record_transfer_behavior.py tests/zn_agent/core/test_browser_desktop_record_transfer_behavior.py
+          git diff --cached --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (git diff --cached --quiet)) {
+            git commit -m 'fix: require causal E2E-14 Save transition'
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            git push origin HEAD:work/e2e14-cross-app-transfer
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
