@@ -122,9 +122,17 @@ class _ExtensionBrowserFixture(_IsolatedUserBrowserFixture):
         self.url = str(url)
         self.extension = Path(extension).resolve()
 
-    def _prepare_edge_extension_profile(self) -> None:
-        if self.provider != "edge":
-            return
+    def _prepare_extension_profile(self) -> None:
+        """Provision the disposable profile like an explicit user shortcut assignment.
+
+        Chromium treats manifest ``suggested_key`` as optional and may leave an
+        unpacked development extension unbound.  These hosted tests own a fresh
+        isolated profile, so establish the one intended user binding directly in
+        Chromium's profile-level command preference before launch.  The later
+        real SendInput gesture plus Resident authorization transition remains the
+        end-to-end proof that Chromium accepted and dispatched the command.
+        """
+
         default_profile = self.profile / "Default"
         default_profile.mkdir(parents=True, exist_ok=True)
         preferences_path = default_profile / "Preferences"
@@ -134,7 +142,7 @@ class _ExtensionBrowserFixture(_IsolatedUserBrowserFixture):
                 loaded = json.loads(preferences_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
                 raise RuntimeError(
-                    "isolated Edge extension profile has unreadable Preferences"
+                    "isolated Chromium extension profile has unreadable Preferences"
                 ) from exc
             if isinstance(loaded, dict):
                 preferences = loaded
@@ -143,24 +151,42 @@ class _ExtensionBrowserFixture(_IsolatedUserBrowserFixture):
         if not isinstance(extensions, dict):
             extensions = {}
             preferences["extensions"] = extensions
-        ui = extensions.get("ui")
-        if not isinstance(ui, dict):
-            ui = {}
-            extensions["ui"] = ui
-        ui["dev_mode_warning_snooze_end_time"] = _EDGE_DEV_MODE_WARNING_SNOOZE_END_TIME
+
+        commands = extensions.get("commands")
+        if not isinstance(commands, dict):
+            commands = {}
+            extensions["commands"] = commands
+        binding_key = f"Windows:{_EXTENSION_ACTION_SHORTCUT}"
+        expected_binding = {
+            "command_name": _EXTENSION_ACTION_COMMAND,
+            "extension": _EXTENSION_ID,
+            "global": False,
+        }
+        existing_binding = commands.get(binding_key)
+        if existing_binding not in (None, expected_binding):
+            raise RuntimeError(
+                "isolated Chromium extension profile has a conflicting action shortcut binding"
+            )
+        commands[binding_key] = expected_binding
+
+        if self.provider == "edge":
+            ui = extensions.get("ui")
+            if not isinstance(ui, dict):
+                ui = {}
+                extensions["ui"] = ui
+            ui["dev_mode_warning_snooze_end_time"] = _EDGE_DEV_MODE_WARNING_SNOOZE_END_TIME
+
         preferences_path.write_text(
             json.dumps(preferences, ensure_ascii=False, separators=(",", ":")),
             encoding="utf-8",
         )
 
     def _wait_for_extension_action_shortcut(self, deadline: float) -> None:
-        """Wait for Chromium's active command binding, not just manifest intent.
+        """Require the isolated profile to retain the explicit command binding.
 
-        Chromium persists effective extension keybindings in the profile-level
-        ``extensions.commands`` preference.  A manifest ``suggested_key`` can be
-        unassigned or not yet installed into CommandService when the first browser
-        window is already visible.  The interactive fixture must therefore prove
-        the actual binding before synthesizing the explicit user gesture.
+        This is a pre-gesture fixture invariant, not the completion proof.  The
+        command is proven active only when one real SendInput chord causes the
+        expected Resident authorization transition later in each acceptance test.
         """
 
         preferences_path = self.profile / "Default" / "Preferences"
@@ -201,13 +227,13 @@ class _ExtensionBrowserFixture(_IsolatedUserBrowserFixture):
             and str(value.get("extension") or "") == _EXTENSION_ID
         ]
         raise RuntimeError(
-            "browser window appeared before the ZN extension action shortcut became "
-            "an active Chromium command binding; "
+            "browser window did not retain the explicitly provisioned ZN extension "
+            "action shortcut binding; "
             f"observed={observed!r}, last_error={last_error!r}"
         )
 
     def start(self) -> None:
-        self._prepare_edge_extension_profile()
+        self._prepare_extension_profile()
         args = [
             str(self.executable),
             f"--user-data-dir={self.profile}",
@@ -357,7 +383,7 @@ class WindowsInteractiveUserBrowserExtensionE2ETests(unittest.TestCase):
     def _require_input_desktop() -> None:
         WindowsInteractiveUserBrowserBridgeProviderE2ETests._require_input_desktop()
 
-    def test_edge_fixture_snoozes_developer_mode_warning_in_ephemeral_profile(self) -> None:
+    def test_fixture_provisions_action_shortcut_and_edge_warning_in_ephemeral_profile(self) -> None:
         repo_root = Path(__file__).resolve().parents[3]
         extension = repo_root / "apps" / "desktop" / "browser-extension"
         fixture = _ExtensionBrowserFixture(
@@ -367,11 +393,20 @@ class WindowsInteractiveUserBrowserExtensionE2ETests(unittest.TestCase):
             extension,
         )
         try:
-            fixture._prepare_edge_extension_profile()
+            fixture._prepare_extension_profile()
             preferences_path = fixture.profile / "Default" / "Preferences"
             preferences = json.loads(preferences_path.read_text(encoding="utf-8"))
+            extensions = preferences["extensions"]
             self.assertEqual(
-                preferences["extensions"]["ui"]["dev_mode_warning_snooze_end_time"],
+                extensions["commands"][f"Windows:{_EXTENSION_ACTION_SHORTCUT}"],
+                {
+                    "command_name": _EXTENSION_ACTION_COMMAND,
+                    "extension": _EXTENSION_ID,
+                    "global": False,
+                },
+            )
+            self.assertEqual(
+                extensions["ui"]["dev_mode_warning_snooze_end_time"],
                 _EDGE_DEV_MODE_WARNING_SNOOZE_END_TIME,
             )
             self.assertTrue(str(preferences_path).startswith(str(fixture.root)))
