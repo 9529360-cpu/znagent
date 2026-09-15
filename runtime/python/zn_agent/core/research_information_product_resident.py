@@ -3,6 +3,9 @@ from __future__ import annotations
 """Narrow product ingress for Research and Local Office representative Work."""
 
 from .action_authority import install_worker_authority_gate
+from .browser_desktop_record_transfer_behavior import (
+    install_browser_desktop_record_transfer_behavior,
+)
 from .browser_spreadsheet_behavior import install_browser_spreadsheet_behavior
 from .current_app_text_cleanup_behavior import install_current_app_text_cleanup_behavior
 from .current_app_text_cleanup_completion import install_current_app_text_cleanup_completion
@@ -85,6 +88,10 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
         # ground whatever application happens to be foreground later.
         install_windows_companion_current_app_guard(self)
         install_current_app_text_cleanup_completion(self)
+        # E2E-14 reuses the same exact UIA text Sense and guarded SetValue Body.
+        # It only carries one literal business record identity across the already
+        # authorized Browser -> fresh desktop boundary.
+        install_browser_desktop_record_transfer_behavior(self)
         install_local_office_behavior(self)
         install_long_running_terminal_behavior(self)
         install_local_service_recovery_behavior(self)
