@@ -503,6 +503,7 @@ class WindowsInteractiveBrowserDesktopRecordTransferE2ETests(unittest.TestCase):
             self.assertTrue(final.get("source_exact"))
             self.assertTrue(final.get("readback_verified"))
             self.assertTrue(final.get("title_saved_postcondition"))
+            self.assertTrue(final.get("title_saved_transition"))
             self.assertTrue(final.get("hwnd_changed"))
             persisted = json.dumps(meta, ensure_ascii=False, sort_keys=True, default=str)
             self.assertNotIn(customer, persisted)

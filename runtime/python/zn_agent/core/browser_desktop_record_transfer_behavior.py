@@ -11,6 +11,7 @@ lifecycle and Root Work acceptance remain the only effect/completion truths.
 
 import hashlib
 import json
+import re
 import time
 import uuid
 from typing import Any
@@ -56,7 +57,11 @@ def _same_text(value: str, audit: dict[str, Any]) -> bool:
 
 def _title_has_saved_marker(value: str) -> bool:
     text = str(value or "")
-    return "已保存" in text or "saved" in text.casefold()
+    return "已保存" in text or re.search(
+        r"(?<![A-Za-z0-9_])saved(?![A-Za-z0-9_])",
+        text,
+        flags=re.IGNORECASE,
+    ) is not None
 
 
 def _is_request(event) -> bool:

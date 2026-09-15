@@ -14,6 +14,7 @@ from zn_agent.core.browser_desktop_record_transfer_behavior import (
     _replace,
     _resolve_uncertain_replacement,
     _save_prepare,
+    _title_has_saved_marker,
     _verify_replacement,
 )
 
@@ -384,6 +385,13 @@ class BrowserDesktopRecordTransferTests(unittest.TestCase):
         result = _final_verify(resident, EVENT, state)
         self.assertFalse(result.success)
         self.assertEqual(resident.native_intents, [])
+
+
+    def test_saved_marker_requires_explicit_token_not_unsaved_substring(self):
+        self.assertTrue(_title_has_saved_marker("客户记录已保存"))
+        self.assertTrue(_title_has_saved_marker("Customer record - Saved"))
+        self.assertFalse(_title_has_saved_marker("Customer record Unsaved"))
+        self.assertFalse(_title_has_saved_marker("Customer record Autosaved"))
 
 
 if __name__ == "__main__":
