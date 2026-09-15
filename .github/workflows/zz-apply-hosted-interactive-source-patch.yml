@@ -37,37 +37,45 @@ jobs:
 
           interactive = Path('.github/workflows/zn-windows-interactive-e2e.yml')
           text = interactive.read_text(encoding='utf-8').replace('\r\n', '\n')
-          text = replace_once(
-              text,
+          legacy_marker = '\n  legacy-interactive-diagnostics:\n'
+          if text.count(legacy_marker) != 1:
+              raise SystemExit('interactive workflow: expected one legacy diagnostics boundary')
+          primary, legacy = text.split(legacy_marker, 1)
+          primary = replace_once(
+              primary,
               '    runs-on: [self-hosted, Windows, X64, zn-interactive]\n',
               '    runs-on: windows-latest\n',
-              'interactive runs-on',
+              'interactive product runs-on',
           )
-          text = replace_once(
-              text,
+          primary = replace_once(
+              primary,
               '      - name: Require Windows x64 interactive runner\n',
               '      - name: Verify GitHub-hosted Windows x64 runner\n',
               'interactive guard name',
           )
-          text = replace_once(
-              text,
+          primary = replace_once(
+              primary,
               '            throw "ZN interactive desktop E2E requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"\n',
               '            throw "ZN interactive desktop E2E requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"\n',
               'interactive guard message',
           )
-          text = replace_once(
-              text,
+          primary = replace_once(
+              primary,
               "          if ($env:RUNNER_NAME -ne 'zn-interactive') {\n            throw \"ZN interactive desktop E2E requires the dedicated zn-interactive runner; got $env:RUNNER_NAME\"\n          }\n",
               '',
               'interactive runner-name gate',
           )
-          text = replace_once(
-              text,
+          primary = replace_once(
+              primary,
               '          & "$env:GITHUB_WORKSPACE\\.github\\scripts\\test-zn-interactive-desktop-readiness.ps1"\n',
               '          & "$env:GITHUB_WORKSPACE\\.github\\scripts\\test-zn-interactive-desktop-readiness.ps1" -ExpectedRunnerName $env:RUNNER_NAME\n',
               'interactive readiness invocation',
           )
-          interactive.write_text(text, encoding='utf-8', newline='\n')
+          if '[self-hosted, Windows, X64, zn-interactive]' in primary:
+              raise SystemExit('interactive product job still depends on self-hosted zn-interactive')
+          if "RUNNER_NAME -ne 'zn-interactive'" in primary:
+              raise SystemExit('interactive product job still has a static runner-name gate')
+          interactive.write_text(primary + legacy_marker + legacy, encoding='utf-8', newline='\n')
 
           readiness = Path('.github/workflows/zn-interactive-runner-readiness.yml')
           text = readiness.read_text(encoding='utf-8').replace('\r\n', '\n')
@@ -101,14 +109,11 @@ jobs:
               '          & "$env:GITHUB_WORKSPACE\\.github\\scripts\\test-zn-interactive-desktop-readiness.ps1" -ExpectedRunnerName $env:RUNNER_NAME\n',
               'readiness invocation',
           )
+          if '[self-hosted, Windows, X64, zn-interactive]' in text:
+              raise SystemExit('readiness workflow still depends on self-hosted zn-interactive')
+          if "RUNNER_NAME -ne 'zn-interactive'" in text:
+              raise SystemExit('readiness workflow still has a static runner-name gate')
           readiness.write_text(text, encoding='utf-8', newline='\n')
-
-          for path in (interactive, readiness):
-              current = path.read_text(encoding='utf-8')
-              if '[self-hosted, Windows, X64, zn-interactive]' in current:
-                  raise SystemExit(f'{path}: stale zn-interactive runs-on remains')
-              if "RUNNER_NAME -ne 'zn-interactive'" in current:
-                  raise SystemExit(f'{path}: stale static runner-name gate remains')
           '@ | Set-Content -LiteralPath .ci-hosted-interactive-workflow-patch.py -Encoding utf8
           python .ci-hosted-interactive-workflow-patch.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -132,7 +137,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -- .github/workflows/zn-interactive-runner-readiness.yml .github/workflows/zn-windows-interactive-e2e.yml
-          git commit -m 'ci: run interactive acceptance on GitHub-hosted Windows'
+          git commit -m 'ci: run interactive product acceptance on hosted Windows'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git push origin HEAD:work/interactive-runner-readiness
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
