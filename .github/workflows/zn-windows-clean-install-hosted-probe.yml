@@ -1,0 +1,224 @@
+name: ZN Windows Clean Install Hosted Probe
+
+on:
+  push:
+    branches:
+      - ci/hosted-clean-install-probe-20260915
+    paths:
+      - '.github/workflows/zn-windows-clean-install-hosted-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI: 'true'
+  NODE_OPTIONS: --max-old-space-size=4096
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+jobs:
+  clean-install-probe:
+    name: Hosted Windows x64 clean install and start probe
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - name: Require hosted interactive Windows x64 session
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "Hosted clean-install probe requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+          $sessionId = (Get-Process -Id $PID -ErrorAction Stop).SessionId
+          if ($sessionId -eq 0) {
+            throw 'Hosted clean-install probe requires a logged-on interactive session, not Session 0.'
+          }
+          git config core.longpaths true
+          if ($LASTEXITCODE -ne 0) { throw "failed to enable Git long-path cleanup with exit code $LASTEXITCODE" }
+          Write-Host "Hosted clean-install probe runner: $env:RUNNER_NAME session=$sessionId"
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22.22.0'
+          cache: npm
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: true
+          cache-dependency-glob: runtime/python/pyproject.toml
+
+      - name: Install locked workspace dependencies
+        run: npm ci
+
+      - name: Reject high-severity npm advisories
+        run: npm audit --audit-level=high
+
+      - name: Test clean-install verifier contract
+        run: |
+          node --test apps/desktop/scripts/verify-zn-windows-clean-install.test.mjs
+          node --test apps/desktop/scripts/verify-zn-windows-resident-autostart.test.mjs
+
+      - name: Resolve candidate version
+        id: version
+        run: |
+          $version = (node -p "require('./apps/desktop/package.json').version").Trim()
+          if (-not $version) { throw 'desktop package version is empty' }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Clean-install candidate version: $version"
+
+      - name: Stage ZN-owned packaged runtime
+        env:
+          ZN_RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          ZN_RELEASE_COMMIT: ${{ github.sha }}
+        run: node apps/desktop/scripts/stage-zn-runtime.mjs
+
+      - name: Build renderer and Electron runtime
+        run: npm run build --workspace apps/desktop
+
+      - name: Build unsigned Windows installer candidates from short path
+        run: |
+          $drive = 'Z:'
+          if (Test-Path "$drive\") {
+            throw "$drive is already in use; cannot create short build path"
+          }
+          & subst.exe $drive $env:GITHUB_WORKSPACE
+          if ($LASTEXITCODE -ne 0) { throw "subst failed with exit code $LASTEXITCODE" }
+          try {
+            Push-Location "$drive\apps\desktop"
+            try {
+              Remove-Item -Recurse -Force release -ErrorAction SilentlyContinue
+              node scripts/run-electron-builder.mjs --config electron-builder.zn.yml --win --publish never
+              if ($LASTEXITCODE -ne 0) { throw "electron-builder failed with exit code $LASTEXITCODE" }
+            } finally {
+              Pop-Location
+            }
+          } finally {
+            & subst.exe $drive /D
+          }
+
+      - name: Verify packaged runtime before install
+        env:
+          ZN_CANDIDATE_VERSION: ${{ steps.version.outputs.version }}
+        run: node apps/desktop/scripts/verify-zn-packaged-runtime.mjs apps/desktop/release $env:ZN_CANDIDATE_VERSION $env:GITHUB_SHA
+
+      - name: Write and verify Windows release manifest
+        env:
+          ZN_CANDIDATE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          node apps/desktop/scripts/write-zn-release-manifest.mjs windows $env:ZN_CANDIDATE_VERSION
+          node apps/desktop/scripts/verify-zn-windows-release-candidate.mjs apps/desktop/release $env:ZN_CANDIDATE_VERSION x64
+
+      - name: Install real NSIS candidate into isolated test state
+        id: install
+        run: |
+          $manifest = Get-Content apps/desktop/release/zn-release-windows-x64.json -Raw | ConvertFrom-Json
+          $exeAssets = @($manifest.assets | Where-Object { [IO.Path]::GetExtension($_.name).ToLowerInvariant() -eq '.exe' })
+          if ($exeAssets.Count -ne 1) { throw "Expected exactly one EXE installer, got $($exeAssets.Count)" }
+          $installer = (Resolve-Path (Join-Path 'apps/desktop/release' $exeAssets[0].name)).Path
+          $installDir = Join-Path $env:RUNNER_TEMP 'zn-clean-install-app'
+          $znHome = Join-Path $env:RUNNER_TEMP 'zn-clean-install-home'
+          Remove-Item -Recurse -Force $installDir,$znHome -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $znHome | Out-Null
+          $process = Start-Process -FilePath $installer -ArgumentList '/S', "/D=$installDir" -PassThru
+          $deadline = (Get-Date).AddMinutes(3)
+          while (-not $process.HasExited -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 1
+            $process.Refresh()
+          }
+          if (-not $process.HasExited) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            throw 'ZN NSIS installer did not exit within 3 minutes'
+          }
+          if ($process.ExitCode -ne 0) { throw "ZN NSIS installer failed with exit code $($process.ExitCode)" }
+          $installedExe = Join-Path $installDir 'ZN.exe'
+          if (-not (Test-Path -LiteralPath $installedExe -PathType Leaf)) {
+            throw "ZN executable missing after real installer completed: $installedExe"
+          }
+          "install_dir=$installDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "zn_home=$znHome" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Installed isolated ZN at $installDir"
+
+      - name: Start installed desktop and verify resident life
+        env:
+          ZN_INSTALL_DIR: ${{ steps.install.outputs.install_dir }}
+          ZN_CLEAN_HOME: ${{ steps.install.outputs.zn_home }}
+        run: |
+          $env:ZN_AGENT_HOME = $env:ZN_CLEAN_HOME
+          $env:ZN_HOME = $env:ZN_CLEAN_HOME
+          $env:ELECTRON_ENABLE_LOGGING = '1'
+          $installedExe = Join-Path $env:ZN_INSTALL_DIR 'ZN.exe'
+          $stdout = Join-Path $env:RUNNER_TEMP 'zn-clean-install-desktop.stdout.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'zn-clean-install-desktop.stderr.log'
+          $proof = Join-Path $env:RUNNER_TEMP 'zn-clean-install-proof.log'
+          $autostartProof = Join-Path $env:RUNNER_TEMP 'zn-resident-autostart-proof.log'
+          $continuity = Join-Path $env:RUNNER_TEMP 'zn-installed-continuity-baseline.json'
+          $userDataDir = Join-Path $env:RUNNER_TEMP 'zn-clean-install-user-data'
+          Remove-Item -Recurse -Force $userDataDir -ErrorAction SilentlyContinue
+          Remove-Item -Force $continuity,$autostartProof,$stdout,$stderr,$proof -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $userDataDir | Out-Null
+          $desktop = $null
+          try {
+            $desktop = Start-Process -FilePath $installedExe -ArgumentList '--disable-gpu', "--user-data-dir=$userDataDir" -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+            Start-Sleep -Seconds 2
+            $desktop.Refresh()
+            if ($desktop.HasExited) {
+              if (Test-Path -LiteralPath $stdout) { Write-Host '--- desktop stdout ---'; Get-Content -LiteralPath $stdout -Tail 200 }
+              if (Test-Path -LiteralPath $stderr) { Write-Host '--- desktop stderr ---'; Get-Content -LiteralPath $stderr -Tail 200 }
+              throw "installed ZN exited before resident endpoint was created (exit $($desktop.ExitCode))"
+            }
+
+            $runtimeManifest = Join-Path $env:ZN_CLEAN_HOME "runtime/$env:GITHUB_SHA/runtime.json"
+            $runtimeDeadline = (Get-Date).AddMinutes(5)
+            while ((Get-Date) -lt $runtimeDeadline) {
+              if (Test-Path -LiteralPath $runtimeManifest -PathType Leaf) { break }
+              $desktop.Refresh()
+              if ($desktop.HasExited) {
+                if (Test-Path -LiteralPath $stdout) { Write-Host '--- desktop stdout ---'; Get-Content -LiteralPath $stdout -Tail 200 }
+                if (Test-Path -LiteralPath $stderr) { Write-Host '--- desktop stderr ---'; Get-Content -LiteralPath $stderr -Tail 200 }
+                throw "installed ZN exited before runtime materialization completed (exit $($desktop.ExitCode))"
+              }
+              Start-Sleep -Seconds 2
+            }
+            if (-not (Test-Path -LiteralPath $runtimeManifest -PathType Leaf)) {
+              if (Test-Path -LiteralPath $stdout) { Write-Host '--- desktop stdout ---'; Get-Content -LiteralPath $stdout -Tail 200 }
+              if (Test-Path -LiteralPath $stderr) { Write-Host '--- desktop stderr ---'; Get-Content -LiteralPath $stderr -Tail 200 }
+              throw "installed ZN runtime materialization timed out: $runtimeManifest"
+            }
+
+            $oldErrorActionPreference = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+              & node apps/desktop/scripts/verify-zn-windows-clean-install.mjs $env:ZN_INSTALL_DIR $env:ZN_CLEAN_HOME $env:GITHUB_SHA $continuity 2>&1 | Tee-Object -FilePath $proof
+              $verifyExit = $LASTEXITCODE
+            } finally {
+              $ErrorActionPreference = $oldErrorActionPreference
+            }
+            if ($verifyExit -ne 0) {
+              $desktop.Refresh()
+              if (Test-Path -LiteralPath $stdout) { Write-Host '--- desktop stdout ---'; Get-Content -LiteralPath $stdout -Tail 200 }
+              if (Test-Path -LiteralPath $stderr) { Write-Host '--- desktop stderr ---'; Get-Content -LiteralPath $stderr -Tail 200 }
+              if (Test-Path -LiteralPath $proof) { Write-Host '--- verifier proof ---'; Get-Content -LiteralPath $proof -Tail 200 }
+              throw "clean-install verifier failed with exit code $verifyExit"
+            }
+          } finally {
+            if ($desktop -and -not $desktop.HasExited) {
+              Stop-Process -Id $desktop.Id -Force -ErrorAction SilentlyContinue
+            }
+          }
+
+          if (-not (Test-Path -LiteralPath $continuity -PathType Leaf)) {
+            throw "Installed resident continuity baseline missing after proof: $continuity"
+          }
+          node apps/desktop/scripts/verify-zn-windows-resident-autostart.mjs $env:ZN_CLEAN_HOME $env:GITHUB_SHA $continuity 2>&1 | Tee-Object -FilePath $autostartProof
+          if ($LASTEXITCODE -ne 0) { throw "resident autostart verifier failed with exit code $LASTEXITCODE" }
+          $runtimeManifest = Join-Path $env:ZN_CLEAN_HOME "runtime/$env:GITHUB_SHA/runtime.json"
+          if (-not (Test-Path -LiteralPath $runtimeManifest -PathType Leaf)) {
+            throw "Materialized installed runtime manifest missing after proof: $runtimeManifest"
+          }
