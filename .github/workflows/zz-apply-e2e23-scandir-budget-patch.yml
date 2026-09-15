@@ -1,0 +1,234 @@
+name: Apply E2E-23 bounded scandir patch
+
+on:
+  push:
+    branches:
+      - work/e2e23-command-path-replan
+    paths:
+      - .github/workflows/zz-apply-e2e23-scandir-budget-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Apply exact bounded-scandir product patch
+        run: |
+          $product = 'runtime/python/zn_agent/core/broad_goal_coding_resident.py'
+          $content = [IO.File]::ReadAllText($product).Replace("`r`n", "`n")
+          $old = @'
+        candidates: dict[str, Path] = {}
+        observed_entries = 0
+        requested_name = requested.name.casefold()
+        try:
+            for current, directory_names, file_names in os.walk(
+                root_path,
+                topdown=True,
+                followlinks=False,
+            ):
+                current_path = Path(current)
+                relative_current = current_path.relative_to(root_path)
+                depth = len(relative_current.parts)
+                if depth >= cls._MAX_PATH_DISCOVERY_DEPTH:
+                    directory_names[:] = []
+                else:
+                    directory_names[:] = [
+                        name
+                        for name in directory_names
+                        if name.casefold() not in cls._PATH_DISCOVERY_PRUNE
+                        and cls._plain_discovery_entry(
+                            current_path / name,
+                            directory=True,
+                        )
+                    ]
+
+                observed_entries += len(directory_names) + len(file_names)
+                if observed_entries > cls._MAX_PATH_DISCOVERY_ENTRIES:
+                    return None
+
+                for file_name in file_names:
+                    if file_name.casefold() != requested_name:
+                        continue
+                    candidate = current_path / file_name
+                    if not cls._plain_discovery_entry(candidate, directory=False):
+                        continue
+                    try:
+                        resolved = candidate.resolve(strict=True)
+                        resolved.relative_to(root_path)
+                    except (OSError, RuntimeError, ValueError):
+                        continue
+                    if not resolved.is_file() or resolved.suffix.casefold() != ".py":
+                        continue
+                    relative_candidate = resolved.relative_to(root_path).as_posix()
+                    candidates[relative_candidate.casefold()] = resolved
+                    if len(candidates) > 1:
+                        return None
+        except (OSError, RuntimeError, ValueError):
+            return None
+'@
+          $new = @'
+        candidates: dict[str, Path] = {}
+        observed_entries = 0
+        requested_name = requested.name.casefold()
+        pending: list[tuple[Path, int]] = [(root_path, 0)]
+        try:
+            while pending:
+                current_path, depth = pending.pop()
+                with os.scandir(current_path) as entries:
+                    for entry in entries:
+                        observed_entries += 1
+                        if observed_entries > cls._MAX_PATH_DISCOVERY_ENTRIES:
+                            return None
+
+                        candidate = current_path / entry.name
+                        if cls._plain_discovery_entry(candidate, directory=True):
+                            if (
+                                depth < cls._MAX_PATH_DISCOVERY_DEPTH
+                                and entry.name.casefold()
+                                not in cls._PATH_DISCOVERY_PRUNE
+                            ):
+                                pending.append((candidate, depth + 1))
+                            continue
+
+                        if entry.name.casefold() != requested_name:
+                            continue
+                        if not cls._plain_discovery_entry(candidate, directory=False):
+                            continue
+                        try:
+                            resolved = candidate.resolve(strict=True)
+                            resolved.relative_to(root_path)
+                        except (OSError, RuntimeError, ValueError):
+                            continue
+                        if not resolved.is_file() or resolved.suffix.casefold() != ".py":
+                            continue
+                        relative_candidate = resolved.relative_to(root_path).as_posix()
+                        candidates[relative_candidate.casefold()] = resolved
+                        if len(candidates) > 1:
+                            return None
+        except (OSError, RuntimeError, ValueError):
+            return None
+'@
+          $old = $old.Replace("`r`n", "`n")
+          $new = $new.Replace("`r`n", "`n")
+          $count = ([regex]::Matches($content, [regex]::Escape($old))).Count
+          if ($count -ne 1) { throw "Expected one resolver block, found $count" }
+          $content = $content.Replace($old, $new)
+          [IO.File]::WriteAllText($product, $content, [Text.UTF8Encoding]::new($false))
+
+      - name: Add strict entry-budget regression
+        run: |
+          $test = 'tests/zn_agent/core/test_e2e23_command_path_replan.py'
+          $content = [IO.File]::ReadAllText($test).Replace("`r`n", "`n")
+          $anchor = "`n`nclass E2E23CommandPathReplanTests(unittest.TestCase):"
+          if (($content.Split($anchor).Count - 1) -ne 1) { throw 'Expected one E2E23 class anchor.' }
+          $method = @'
+
+    def test_discovery_budget_stops_scandir_before_unbounded_directory_enumeration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            for name in ("first.txt", "second.txt", "probe.py"):
+                (root / name).write_text(name, encoding="utf-8")
+
+            real_scandir = os.scandir
+            consumed = 0
+
+            class _GuardedScandir:
+                def __init__(self, path):
+                    self._inner = real_scandir(path)
+                    self._iterator = iter(self._inner)
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):
+                    self._inner.close()
+                    return False
+
+                def __iter__(self):
+                    return self
+
+                def __next__(self):
+                    nonlocal consumed
+                    consumed += 1
+                    if consumed > 2:
+                        raise AssertionError(
+                            "bounded discovery consumed a third entry after budget exhaustion"
+                        )
+                    return next(self._iterator)
+
+            with (
+                patch.object(
+                    BroadGoalCodingResidentRuntime,
+                    "_MAX_PATH_DISCOVERY_ENTRIES",
+                    1,
+                ),
+                patch(
+                    "zn_agent.core.broad_goal_coding_resident.os.scandir",
+                    side_effect=_GuardedScandir,
+                ),
+            ):
+                self.assertIsNone(
+                    BroadGoalCodingResidentRuntime._resolve_workspace_python_script(
+                        root,
+                        Path("expected/probe.py"),
+                    )
+                )
+            self.assertEqual(consumed, 2)
+'@
+          $method = $method.Replace("`r`n", "`n")
+          $content = $content.Replace($anchor, $method + $anchor)
+          [IO.File]::WriteAllText($test, $content, [Text.UTF8Encoding]::new($false))
+
+      - name: Verify exact write set and syntax
+        run: |
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $changed = @(git diff --name-only)
+          $expected = @(
+            'runtime/python/zn_agent/core/broad_goal_coding_resident.py',
+            'tests/zn_agent/core/test_e2e23_command_path_replan.py'
+          )
+          if ($changed.Count -ne $expected.Count) { throw "Unexpected write set: $($changed -join ', ')" }
+          foreach ($path in $expected) {
+            if ($path -notin $changed) { throw "Missing expected change: $path" }
+          }
+          git diff -- runtime/python/zn_agent/core/broad_goal_coding_resident.py tests/zn_agent/core/test_e2e23_command_path_replan.py
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+
+      - name: Run focused E2E-23 regression
+        run: |
+          uv python install 3.12
+          uv venv .ci/e2e23-scandir-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e23-scandir-venv\Scripts\python.exe'
+          uv pip install --python $python runtime/python
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          & $python -m py_compile runtime/python/zn_agent/core/broad_goal_coding_resident.py tests/zn_agent/core/test_e2e23_command_path_replan.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $python tests/zn_agent/core/test_e2e23_command_path_replan.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Commit and push product/test patch only
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- runtime/python/zn_agent/core/broad_goal_coding_resident.py tests/zn_agent/core/test_e2e23_command_path_replan.py
+          git diff --cached --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git commit -m 'fix: strictly bound stale-path workspace discovery'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git push origin HEAD:work/e2e23-command-path-replan
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
