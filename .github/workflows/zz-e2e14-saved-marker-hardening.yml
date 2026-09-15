@@ -100,3 +100,5 @@ jobs:
           git add runtime/python/zn_agent/core/browser_desktop_record_transfer_behavior.py tests/zn_agent/core/test_browser_desktop_record_transfer_behavior.py tests/zn_agent/e2e/test_windows_interactive_browser_desktop_record_transfer.py
           git commit -m 'fix: require explicit E2E14 saved-state marker'
           git push origin HEAD:work/e2e14-cross-app-transfer
+
+# Trigger after registration on the feature branch.
