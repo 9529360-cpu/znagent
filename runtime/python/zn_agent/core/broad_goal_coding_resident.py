@@ -506,7 +506,7 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
 
         ``followlinks=False`` is not a complete Windows junction boundary. Inspect
         the directory entry itself with ``lstat`` and reject both symlinks and any
-        Windows reparse point before ``os.walk`` may descend through it. The same
+        Windows reparse point before ``os.scandir`` may descend through it. The same
         rule rejects discovered file-level reparse points; exact requested paths
         keep their existing resolved-containment behavior.
         """
@@ -562,6 +562,13 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
         try:
             while pending:
                 current_path, depth = pending.pop()
+                if not cls._plain_discovery_entry(current_path, directory=True):
+                    return None
+                try:
+                    current_path = current_path.resolve(strict=True)
+                    current_path.relative_to(root_path)
+                except (OSError, RuntimeError, ValueError):
+                    return None
                 with os.scandir(current_path) as entries:
                     for entry in entries:
                         observed_entries += 1
@@ -590,7 +597,7 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
                         if not resolved.is_file() or resolved.suffix.casefold() != ".py":
                             continue
                         relative_candidate = resolved.relative_to(root_path).as_posix()
-                        candidates[relative_candidate.casefold()] = resolved
+                        candidates[relative_candidate] = resolved
                         if len(candidates) > 1:
                             return None
         except (OSError, RuntimeError, ValueError):

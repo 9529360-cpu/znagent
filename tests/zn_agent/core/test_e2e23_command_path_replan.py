@@ -111,6 +111,123 @@ class CommandPathRealityResolutionTests(unittest.TestCase):
                 )
             )
 
+    def test_case_distinct_candidate_paths_remain_ambiguous(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            expected = root / "expected" / "probe.py"
+            upper_dir = root / "A"
+            lower_dir = root / "a"
+            upper_file = upper_dir / "probe.py"
+            lower_file = lower_dir / "probe.py"
+
+            class _Entry:
+                def __init__(self, name: str) -> None:
+                    self.name = name
+
+            class _Scandir:
+                def __init__(self, path) -> None:
+                    current = Path(path)
+                    if current == root:
+                        rows = [_Entry("A"), _Entry("a")]
+                    elif current == upper_dir or current == lower_dir:
+                        rows = [_Entry("probe.py")]
+                    else:
+                        rows = []
+                    self._iterator = iter(rows)
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):
+                    return False
+
+                def __iter__(self):
+                    return self
+
+                def __next__(self):
+                    return next(self._iterator)
+
+            original_resolve = Path.resolve
+            original_is_file = Path.is_file
+
+            def resolve_path(path, strict=False):
+                current = Path(path)
+                if current == expected:
+                    raise FileNotFoundError(str(current))
+                if current in {root, upper_dir, lower_dir, upper_file, lower_file}:
+                    return current
+                return original_resolve(current, strict=strict)
+
+            def is_file(path):
+                current = Path(path)
+                if current in {upper_file, lower_file}:
+                    return True
+                return original_is_file(current)
+
+            def plain_entry(path, *, directory: bool):
+                current = Path(path)
+                if directory:
+                    return current in {root, upper_dir, lower_dir}
+                return current in {upper_file, lower_file}
+
+            with (
+                patch.object(Path, "resolve", new=resolve_path),
+                patch.object(Path, "is_file", new=is_file),
+                patch.object(
+                    BroadGoalCodingResidentRuntime,
+                    "_plain_discovery_entry",
+                    side_effect=plain_entry,
+                ),
+                patch(
+                    "zn_agent.core.broad_goal_coding_resident.os.scandir",
+                    side_effect=_Scandir,
+                ),
+            ):
+                self.assertIsNone(
+                    BroadGoalCodingResidentRuntime._resolve_workspace_python_script(
+                        root,
+                        Path("expected/probe.py"),
+                    )
+                )
+
+    def test_queued_directory_is_revalidated_immediately_before_scanning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            queued = root / "queued"
+            target = queued / "probe.py"
+            queued.mkdir()
+            target.write_text("print('must not discover after replacement')\n", encoding="utf-8")
+
+            real_lstat = os.lstat
+            reparse_attribute = int(
+                getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x00000400)
+            )
+            queued_lstat_calls = 0
+
+            def lstat_with_stale_queue(path):
+                nonlocal queued_lstat_calls
+                metadata = real_lstat(path)
+                if Path(path) == queued:
+                    queued_lstat_calls += 1
+                    if queued_lstat_calls >= 2:
+                        return SimpleNamespace(
+                            st_mode=metadata.st_mode,
+                            st_file_attributes=reparse_attribute,
+                        )
+                return metadata
+
+            with patch(
+                "zn_agent.core.broad_goal_coding_resident.os.lstat",
+                side_effect=lstat_with_stale_queue,
+            ):
+                self.assertIsNone(
+                    BroadGoalCodingResidentRuntime._resolve_workspace_python_script(
+                        root,
+                        Path("expected/probe.py"),
+                    )
+                )
+            self.assertGreaterEqual(queued_lstat_calls, 2)
+
     def test_generated_vendor_tree_is_not_accepted_as_replacement_authority(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
