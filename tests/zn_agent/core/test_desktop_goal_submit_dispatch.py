@@ -7,13 +7,13 @@ from pathlib import Path
 from zn_agent.core.body import BodyAction
 from zn_agent.core.models import utc_now
 from zn_agent.core.visual_region_sense import VisualRegionObservation
+from tests.zn_agent.core import test_natural_named_desktop_input_work as _natural_named_desktop_input_work
 from tests.zn_agent.core.test_natural_named_desktop_input_work import (
     TASK,
     _BUTTON_RUNTIME,
     _DesktopWorld,
     _FocusedTextStateSense,
     _NamedInputDesktopBody,
-    NaturalNamedDesktopInputWorkTests,
 )
 
 
@@ -93,7 +93,7 @@ class _NoResultButtonBody(_NamedInputDesktopBody):
 class DesktopGoalSubmitDispatchTests(unittest.TestCase):
     @staticmethod
     def _setup(base: Path, workspace: Path, thread_id: str, body_type):
-        resident, world, _, controls, ledger = NaturalNamedDesktopInputWorkTests._setup(
+        resident, world, _, controls, ledger = _natural_named_desktop_input_work.NaturalNamedDesktopInputWorkTests._setup(
             base,
             workspace,
             thread_id,
@@ -108,7 +108,7 @@ class DesktopGoalSubmitDispatchTests(unittest.TestCase):
     def _source(workspace: Path) -> Path:
         source = workspace / "客户账号-华东.txt"
         source.write_text("ACCT-48291", encoding="utf-8")
-        NaturalNamedDesktopInputWorkTests._stamp_yesterday(source)
+        _natural_named_desktop_input_work.NaturalNamedDesktopInputWorkTests._stamp_yesterday(source)
         return source
 
     def test_submit_dispatch_uses_fresh_task_result_not_transient_button_pixels(self) -> None:
