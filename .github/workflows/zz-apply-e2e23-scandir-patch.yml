@@ -58,11 +58,15 @@ jobs:
       - name: Commit tested patch and remove temporary helpers
         shell: powershell
         run: |
+          git restore --worktree --staged -- runtime/python/build runtime/python/znagent.egg-info 2>$null
+          git clean -fd -- runtime/python/build runtime/python/znagent.egg-info
+
           Remove-Item -LiteralPath '.github/scripts/zz-patch-e2e23-scandir.py' -Force
           Remove-Item -LiteralPath '.github/workflows/zz-apply-e2e23-scandir-patch.yml' -Force
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
+          git add -- runtime/python/zn_agent/core/broad_goal_coding_resident.py tests/zn_agent/core/test_e2e23_command_path_replan.py
+          git add -u -- .github/scripts/zz-patch-e2e23-scandir.py .github/workflows/zz-apply-e2e23-scandir-patch.yml
           git diff --cached --check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $changed = @(git diff --cached --name-only)
@@ -77,6 +81,10 @@ jobs:
           }
           if ($changed.Count -ne $expected.Count) {
             throw "Unexpected staged write set: $($changed -join ', ')"
+          }
+          $remaining = @(git status --porcelain --untracked-files=all)
+          if ($remaining.Count -ne $expected.Count) {
+            throw "Unexpected worktree residue before commit: $($remaining -join '; ')"
           }
           git commit -m 'fix: strictly bound stale path discovery'
           git push origin HEAD:work/e2e23-command-path-replan
