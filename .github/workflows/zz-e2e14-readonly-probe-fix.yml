@@ -20,6 +20,18 @@ jobs:
         with:
           ref: work/e2e14-readonly-probe-fix
           fetch-depth: 0
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare isolated runtime
+        shell: bash
+        run: |
+          uv python install 3.12
+          rm -rf .ci/e2e14-fix-venv
+          uv venv .ci/e2e14-fix-venv --python 3.12
+          uv pip install --python .ci/e2e14-fix-venv/bin/python runtime/python
       - name: Apply bounded E2E-14 fixes
         shell: bash
         run: |
@@ -71,8 +83,8 @@ jobs:
         shell: bash
         run: |
           git diff --check
-          python -m compileall -q runtime/python/zn_agent/core/browser_desktop_record_transfer_behavior.py tests/zn_agent/core/test_browser_desktop_record_transfer_behavior.py
-          PYTHONPATH=runtime/python python -m unittest -v tests.zn_agent.core.test_browser_desktop_record_transfer_behavior
+          .ci/e2e14-fix-venv/bin/python -m compileall -q runtime/python/zn_agent/core/browser_desktop_record_transfer_behavior.py tests/zn_agent/core/test_browser_desktop_record_transfer_behavior.py
+          PYTHONPATH=runtime/python .ci/e2e14-fix-venv/bin/python -m unittest -v tests.zn_agent.core.test_browser_desktop_record_transfer_behavior
       - name: Commit tested patch
         shell: bash
         run: |
