@@ -1,0 +1,86 @@
+name: ZN Local Service Diagnosis E2E
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/zn-local-service-e2e.yml
+      - runtime/python/zn_agent/core/current_app_text_body.py
+      - runtime/python/zn_agent/core/local_service_diagnosis.py
+      - runtime/python/zn_agent/core/local_service_recovery_behavior.py
+      - runtime/python/zn_agent/core/research_information_product_resident.py
+      - runtime/python/zn_agent/core/terminal.py
+      - tests/zn_agent/core/test_local_service_diagnosis.py
+      - tests/zn_agent/core/test_local_service_recovery_behavior.py
+      - tests/zn_agent/e2e/test_e2e21_local_service_diagnosis.py
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/zn-local-service-e2e.yml
+      - runtime/python/zn_agent/core/current_app_text_body.py
+      - runtime/python/zn_agent/core/local_service_diagnosis.py
+      - runtime/python/zn_agent/core/local_service_recovery_behavior.py
+      - runtime/python/zn_agent/core/research_information_product_resident.py
+      - runtime/python/zn_agent/core/terminal.py
+      - tests/zn_agent/core/test_local_service_diagnosis.py
+      - tests/zn_agent/core/test_local_service_recovery_behavior.py
+      - tests/zn_agent/e2e/test_e2e21_local_service_diagnosis.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zn-local-service-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  local-service-diagnosis:
+    name: E2E-21 local service diagnosis / Windows
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      CI: 'true'
+      TZ: UTC
+      PYTHONUTF8: '1'
+      PYTHONUNBUFFERED: '1'
+      UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
+    defaults:
+      run:
+        shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+    steps:
+      - name: Verify GitHub-hosted Windows x64 runner
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "E2E-21 requires a GitHub-hosted Windows X64 runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare isolated runtime
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/e2e21-venv -ErrorAction SilentlyContinue
+          uv venv .ci/e2e21-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e21-venv\Scripts\python.exe'
+          uv pip install --python $python runtime/python
+      - name: Run focused E2E-21 unit tests
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e21-venv\Scripts\python.exe'
+          & $python tests/zn_agent/core/test_local_service_diagnosis.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $python tests/zn_agent/core/test_local_service_recovery_behavior.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run E2E-21 natural-language product recovery
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e21-venv\Scripts\python.exe'
+          & $python tests/zn_agent/e2e/test_e2e21_local_service_diagnosis.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
