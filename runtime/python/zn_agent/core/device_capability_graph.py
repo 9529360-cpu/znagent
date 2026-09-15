@@ -8,11 +8,12 @@ accepted merely because it starts with a shorter installed alias.  Exact aliases
 are resolved before bounded prefix/substring matching; fuzzy candidates can never
 make an otherwise unique exact application ambiguous.
 
-The public graph also owns read-only Windows companion, display and foreground
-senses. This keeps session/power/network/multi-monitor/current-window facts in the
-existing Resident device graph instead of creating a parallel OS agent or context
-store. A companion frame is only a privacy-bounded fingerprint over those fresh
-facts; it is not a second source of truth.
+The public graph also owns read-only Windows companion, display, foreground and
+clipboard-metadata senses. This keeps session/power/network/multi-monitor/current-
+window/clipboard-presence facts in the existing Resident device graph instead of
+creating a parallel OS agent or context store. A companion frame is only a
+privacy-bounded fingerprint over its supported fresh facts; it is not a second
+source of truth.
 """
 
 from dataclasses import dataclass
@@ -27,6 +28,10 @@ from .machine_capability import (
     _normalize_name,
 )
 from .models import utc_now
+from .windows_clipboard_context import (
+    NativeWindowsClipboardContextSense,
+    WindowsClipboardObservation,
+)
 from .windows_companion_context import (
     NativeWindowsCompanionContextSense,
     WindowsCompanionContextSnapshot,
@@ -51,6 +56,7 @@ class ResidentDeviceContextSnapshot:
     companion: WindowsCompanionContextSnapshot
     display: WindowsDisplayObservation
     foreground: WindowsForegroundCompanionObservation
+    clipboard: WindowsClipboardObservation
     observed_at: str
 
 
@@ -63,6 +69,7 @@ class DeviceCapabilityGraph(_MachineFactGraph):
         companion_context_sense: NativeWindowsCompanionContextSense | None = None,
         display_context_sense: NativeWindowsDisplayContextSense | None = None,
         foreground_companion_sense: NativeWindowsForegroundCompanionSense | None = None,
+        clipboard_context_sense: NativeWindowsClipboardContextSense | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -74,6 +81,9 @@ class DeviceCapabilityGraph(_MachineFactGraph):
         )
         self._foreground_companion_sense = (
             foreground_companion_sense or NativeWindowsForegroundCompanionSense()
+        )
+        self._clipboard_context_sense = (
+            clipboard_context_sense or NativeWindowsClipboardContextSense()
         )
 
     def companion_context(self) -> WindowsCompanionContextSnapshot:
@@ -90,6 +100,11 @@ class DeviceCapabilityGraph(_MachineFactGraph):
         """Fresh current-window identity with raw title/class content redacted."""
 
         return self._foreground_companion_sense.probe()
+
+    def clipboard_context(self) -> WindowsClipboardObservation:
+        """Fresh clipboard metadata without opening or reading clipboard content."""
+
+        return self._clipboard_context_sense.probe()
 
     def companion_frame(self) -> WindowsCompanionFrame:
         """Fingerprint the current bounded Windows context for drift-safe binding."""
@@ -108,6 +123,7 @@ class DeviceCapabilityGraph(_MachineFactGraph):
             companion=self.companion_context(),
             display=self.display_context(),
             foreground=self.foreground_companion_context(),
+            clipboard=self.clipboard_context(),
             observed_at=utc_now(),
         )
 
