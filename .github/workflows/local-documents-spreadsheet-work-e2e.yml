@@ -62,6 +62,8 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             & $python tests/zn_agent/core/test_office_document_work.py -v
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & $python tests/zn_agent/core/test_office_document_header_footer_work.py -v
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             & $python tests/zn_agent/core/test_spreadsheet_work.py -v
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
@@ -70,6 +72,8 @@ jobs:
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\local-office-312\Scripts\python.exe'
           & $python tests/zn_agent/e2e/test_e2e09_find_yesterday_docx_and_edit.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $python tests/zn_agent/e2e/test_e2e09_header_footer_payment_date.py -v
       - name: E2E-10 zero-model real XLSX representative path
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
