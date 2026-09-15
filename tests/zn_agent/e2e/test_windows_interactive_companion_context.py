@@ -10,7 +10,7 @@ from zn_agent.core.windows_companion_body import WindowsCompanionAwareBody
 
 
 class WindowsInteractiveCompanionContextE2ETests(unittest.TestCase):
-    def test_real_resident_observes_session_power_and_network_context(self) -> None:
+    def test_real_resident_observes_session_power_network_and_display_context(self) -> None:
         if os.name != "nt":
             raise unittest.SkipTest("Windows companion context E2E runs only on Windows")
 
@@ -24,6 +24,7 @@ class WindowsInteractiveCompanionContextE2ETests(unittest.TestCase):
                 self.assertIs(resident.body.device_capabilities, resident.device_capabilities)
 
                 context = resident.device_capabilities.companion_context()
+                display = resident.device_capabilities.display_context()
 
                 self.assertTrue(context.session.platform_supported)
                 self.assertIsNotNone(context.session.process_session_id)
@@ -69,6 +70,26 @@ class WindowsInteractiveCompanionContextE2ETests(unittest.TestCase):
                 self.assertFalse(hasattr(context.network, "interfaces"))
                 self.assertFalse(hasattr(context.network, "addresses"))
 
+                self.assertTrue(display.platform_supported)
+                self.assertGreaterEqual(display.monitor_count, 1)
+                self.assertGreaterEqual(display.enumerated_monitor_count, 1)
+                self.assertEqual(display.primary_monitor_count, 1)
+                self.assertIsNotNone(display.primary_width)
+                self.assertIsNotNone(display.primary_height)
+                self.assertIsNotNone(display.virtual_width)
+                self.assertIsNotNone(display.virtual_height)
+                self.assertGreater(int(display.virtual_width or 0), 0)
+                self.assertGreater(int(display.virtual_height or 0), 0)
+                self.assertGreaterEqual(len(display.monitors), 1)
+                self.assertLessEqual(len(display.monitors), 16)
+                for monitor in display.monitors:
+                    self.assertGreater(monitor.width, 0)
+                    self.assertGreater(monitor.height, 0)
+                    self.assertGreater(monitor.work_width, 0)
+                    self.assertGreater(monitor.work_height, 0)
+                    self.assertFalse(hasattr(monitor, "device_name"))
+                    self.assertFalse(hasattr(monitor, "serial_number"))
+
                 body_context = resident.body.act("windows_companion_context")
                 self.assertTrue(body_context.success)
                 self.assertTrue(body_context.data.get("read_only"))
@@ -76,6 +97,10 @@ class WindowsInteractiveCompanionContextE2ETests(unittest.TestCase):
                 self.assertEqual(
                     body_context.data["session"]["process_session_id"],
                     context.session.process_session_id,
+                )
+                self.assertEqual(
+                    body_context.data["display"]["monitor_count"],
+                    display.monitor_count,
                 )
 
                 print(
@@ -87,7 +112,10 @@ class WindowsInteractiveCompanionContextE2ETests(unittest.TestCase):
                     f"\"remote_session\":{str(bool(context.session.remote_session)).lower()},"
                     f"\"ac_status\":\"{context.power.ac_status}\","
                     f"\"up_interfaces\":{context.network.up_interface_count},"
-                    f"\"non_loopback_up_interfaces\":{context.network.non_loopback_up_interface_count}}}",
+                    f"\"non_loopback_up_interfaces\":{context.network.non_loopback_up_interface_count},"
+                    f"\"monitor_count\":{display.monitor_count},"
+                    f"\"virtual_width\":{int(display.virtual_width or 0)},"
+                    f"\"virtual_height\":{int(display.virtual_height or 0)}}}",
                     flush=True,
                 )
             finally:
