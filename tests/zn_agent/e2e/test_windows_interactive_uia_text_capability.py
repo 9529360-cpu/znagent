@@ -29,9 +29,15 @@ class _WpfTextFixture:
         powershell = shutil.which("powershell.exe") or shutil.which("powershell")
         if not powershell:
             raise RuntimeError("Windows PowerShell is required for the WPF UIA fixture")
-        script = Path(self._tmp.name) / "wpf-text-fixture.ps1"
+        root = Path(self._tmp.name)
+        script = root / "wpf-text-fixture.ps1"
+        ready = root / "wpf-text-ready.txt"
         script.write_text(
-            f"""$ErrorActionPreference = 'Stop'
+            f"""param(
+  [Parameter(Mandatory = $true)]
+  [string]$ReadyPath
+)
+$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationFramework
 $window = New-Object System.Windows.Window
 $window.Title = '{self.TITLE}'
@@ -50,6 +56,13 @@ $window.Add_ContentRendered({{
   [void]$window.Activate()
   [void]$text.Focus()
   [void][System.Windows.Input.Keyboard]::Focus($text)
+  $helper = New-Object System.Windows.Interop.WindowInteropHelper($window)
+  $hwnd = [long]$helper.Handle
+  if ($hwnd -eq 0) {{
+    throw 'WPF fixture rendered without a native window handle'
+  }}
+  $pid = [System.Diagnostics.Process]::GetCurrentProcess().Id
+  Set-Content -LiteralPath $ReadyPath -Value "$pid|$hwnd" -Encoding ASCII -NoNewline
   $window.Topmost = $false
 }})
 [void]$window.ShowDialog()
@@ -66,14 +79,21 @@ $window.Add_ContentRendered({{
                 "-Sta",
                 "-File",
                 str(script),
+                "-ReadyPath",
+                str(ready),
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
         )
         user32 = ctypes.WinDLL("user32", use_last_error=True)
-        user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
-        user32.FindWindowW.restype = wintypes.HWND
+        user32.IsWindow.argtypes = [wintypes.HWND]
+        user32.IsWindow.restype = wintypes.BOOL
+        user32.GetWindowThreadProcessId.argtypes = [
+            wintypes.HWND,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
         user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
         user32.ShowWindow.restype = wintypes.BOOL
         user32.BringWindowToTop.argtypes = [wintypes.HWND]
@@ -81,23 +101,46 @@ $window.Add_ContentRendered({{
         user32.SetForegroundWindow.argtypes = [wintypes.HWND]
         user32.SetForegroundWindow.restype = wintypes.BOOL
 
-        deadline = time.monotonic() + 8.0
+        deadline = time.monotonic() + 15.0
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
                 stdout, stderr = self.process.communicate(timeout=1.0)
                 raise RuntimeError(
-                    "WPF text fixture exited before opening its window: "
+                    "WPF text fixture exited before publishing rendered-window evidence: "
                     f"stdout={stdout!r} stderr={stderr!r}"
                 )
-            hwnd = int(user32.FindWindowW(None, self.TITLE) or 0)
-            if hwnd:
+            if ready.is_file():
+                evidence = ready.read_text(encoding="ascii").strip()
+                try:
+                    pid_text, hwnd_text = evidence.split("|", 1)
+                    evidence_pid = int(pid_text)
+                    hwnd = int(hwnd_text)
+                except (TypeError, ValueError) as exc:
+                    raise RuntimeError(
+                        f"WPF text fixture published invalid rendered-window evidence: {evidence!r}"
+                    ) from exc
+                if evidence_pid != self.process.pid or hwnd <= 0 or not user32.IsWindow(hwnd):
+                    raise RuntimeError(
+                        "WPF text fixture rendered-window evidence did not identify its live process/window: "
+                        f"expected_pid={self.process.pid} evidence={evidence!r}"
+                    )
+                owner_pid = wintypes.DWORD()
+                if not user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner_pid)):
+                    raise RuntimeError("WPF text fixture rendered HWND has no owning window thread")
+                if int(owner_pid.value) != self.process.pid:
+                    raise RuntimeError(
+                        "WPF text fixture rendered HWND belongs to another process: "
+                        f"expected_pid={self.process.pid} actual_pid={owner_pid.value}"
+                    )
                 self.hwnd = hwnd
                 user32.ShowWindow(hwnd, 5)
                 user32.BringWindowToTop(hwnd)
                 user32.SetForegroundWindow(hwnd)
                 return
             time.sleep(0.05)
-        raise RuntimeError("WPF text fixture window did not appear in time")
+        raise RuntimeError(
+            "WPF text fixture process stayed alive but did not publish rendered-window evidence in time"
+        )
 
     def close(self) -> None:
         try:
@@ -162,9 +205,9 @@ class WindowsInteractiveUiATextCapabilityE2ETests(unittest.TestCase):
     def test_real_resident_identifies_non_native_wpf_text_capability(self) -> None:
         self._require_input_desktop()
         fixture = _WpfTextFixture()
-        fixture.start()
         resident = None
         try:
+            fixture.start()
             with tempfile.TemporaryDirectory() as tmp:
                 resident = build_resident_runtime(
                     config={"model": {}},
