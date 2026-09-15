@@ -17,6 +17,7 @@ from .local_service_recovery_behavior import install_local_service_recovery_beha
 from .long_running_terminal_behavior import install_long_running_terminal_behavior
 from .research_information_resident import ResearchInformationResidentRuntime
 from .windows_companion_body import WindowsCompanionAwareBody
+from .windows_companion_work_context import bind_windows_companion_work_context
 
 
 _RESEARCH_INTENT_MARKERS = (
@@ -83,6 +84,18 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
         install_browser_spreadsheet_behavior(self)
         install_document_research_completion_behavior(self)
         install_document_research_completion_safety(self)
+
+    def bind_work_event_context(self, event_payload):
+        """Attach fresh bounded device context before Work event durability.
+
+        The returned projection is historical start-context evidence only. Body
+        mutation paths continue to reacquire current authority independently.
+        """
+
+        return bind_windows_companion_work_context(
+            event_payload,
+            device_capabilities=self.device_capabilities,
+        )
 
     def _is_research_event(self, event) -> bool:
         # Research Work is a product Work path, not a catch-all replacement for
