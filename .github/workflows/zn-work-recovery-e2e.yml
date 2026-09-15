@@ -209,7 +209,7 @@ concurrency:
 jobs:
   work-recovery:
     name: Windows resident Work restart recovery
-    runs-on: [self-hosted, Windows, X64, zn-ci]
+    runs-on: windows-latest
     timeout-minutes: 15
     env:
       CI: 'true'
@@ -219,10 +219,10 @@ jobs:
       ZN_AGENT_HOME: ${{ github.workspace }}/.ci/work-recovery-home
       UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
     steps:
-      - name: Require Windows x64 headless CI runner
+      - name: Verify GitHub-hosted Windows x64 runner
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
-            throw "ZN Work recovery E2E requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+            throw "ZN Work recovery E2E requires a GitHub-hosted Windows X64 runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
           }
           Write-Host "ZN Work recovery runner: $env:RUNNER_NAME"
       - name: Checkout
