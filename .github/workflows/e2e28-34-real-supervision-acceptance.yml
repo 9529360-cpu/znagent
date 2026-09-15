@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/e2e28-34-real-supervision-acceptance.yml'
+      - '.github/scripts/test-zn-interactive-user-context.ps1'
       - 'runtime/python/zn_agent/core/delegated_work_coordinator.py'
       - 'runtime/python/zn_agent/core/health_aware_resident.py'
       - 'runtime/python/zn_agent/core/provider_bridge.py'
@@ -46,6 +47,10 @@ jobs:
             throw "E2E-28/34 acceptance requires zn-interactive; got $env:RUNNER_NAME"
           }
       - uses: actions/checkout@v7
+      - name: Require standard-user interactive runner context
+        run: |
+          & "$env:GITHUB_WORKSPACE\.github\scripts\test-zn-interactive-user-context.ps1"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: astral-sh/setup-uv@v6
         with:
           version: '0.11.6'
