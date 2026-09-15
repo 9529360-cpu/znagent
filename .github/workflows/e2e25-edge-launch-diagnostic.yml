@@ -1,0 +1,70 @@
+name: E2E25 Edge Launch Diagnostic
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/e2e25-edge-launch-diagnostic.yml'
+      - 'tests/zn_agent/e2e/test_e2e25_edge_launch_diagnostic.py'
+      - 'tests/zn_agent/e2e/test_windows_interactive_user_browser_extension.py'
+      - 'tests/zn_agent/e2e/test_windows_interactive_user_browser_bridge.py'
+      - 'apps/desktop/browser-extension/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI: 'true'
+  PYTHONUTF8: '1'
+  PYTHONUNBUFFERED: '1'
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+concurrency:
+  group: e2e25-edge-launch-diagnostic-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  edge-launch-diagnostic:
+    name: Edge isolated-profile launch diagnostic
+    runs-on: [self-hosted, Windows, X64, zn-interactive]
+    timeout-minutes: 15
+    steps:
+      - name: Require configured interactive Windows host
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "E2E25 Edge launch diagnostic requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+          if ($env:RUNNER_NAME -ne 'zn-interactive') {
+            throw "E2E25 Edge launch diagnostic requires zn-interactive; got $env:RUNNER_NAME"
+          }
+
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+
+      - name: Prepare isolated browser diagnostic runtime
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/e2e25-edge-diagnostic-venv -ErrorAction SilentlyContinue
+          uv venv .ci/e2e25-edge-diagnostic-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e25-edge-diagnostic-venv\Scripts\python.exe'
+          Push-Location runtime/python
+          try {
+            uv pip install --python $python '.[browser]'
+          } finally {
+            Pop-Location
+          }
+
+      - name: Reproduce current Edge extension fixture launch with bounded diagnostics
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e25-edge-diagnostic-venv\Scripts\python.exe'
+          & $python tests/zn_agent/e2e/test_e2e25_edge_launch_diagnostic.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
