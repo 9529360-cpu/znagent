@@ -158,6 +158,58 @@ class CommandPathRealityResolutionTests(unittest.TestCase):
                     )
                 )
 
+    def test_discovery_budget_stops_scandir_before_unbounded_directory_enumeration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            for name in ("first.txt", "second.txt", "probe.py"):
+                (root / name).write_text(name, encoding="utf-8")
+
+            real_scandir = os.scandir
+            consumed = 0
+
+            class _GuardedScandir:
+                def __init__(self, path):
+                    self._inner = real_scandir(path)
+                    self._iterator = iter(self._inner)
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):
+                    self._inner.close()
+                    return False
+
+                def __iter__(self):
+                    return self
+
+                def __next__(self):
+                    nonlocal consumed
+                    consumed += 1
+                    if consumed > 2:
+                        raise AssertionError(
+                            "bounded discovery consumed a third entry after budget exhaustion"
+                        )
+                    return next(self._iterator)
+
+            with (
+                patch.object(
+                    BroadGoalCodingResidentRuntime,
+                    "_MAX_PATH_DISCOVERY_ENTRIES",
+                    1,
+                ),
+                patch(
+                    "zn_agent.core.broad_goal_coding_resident.os.scandir",
+                    side_effect=_GuardedScandir,
+                ),
+            ):
+                self.assertIsNone(
+                    BroadGoalCodingResidentRuntime._resolve_workspace_python_script(
+                        root,
+                        Path("expected/probe.py"),
+                    )
+                )
+            self.assertEqual(consumed, 2)
+
 
 class E2E23CommandPathReplanTests(unittest.TestCase):
     def test_product_resident_discovers_unique_actual_path_then_executes_once(self) -> None:

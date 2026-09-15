@@ -558,49 +558,41 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
         candidates: dict[str, Path] = {}
         observed_entries = 0
         requested_name = requested.name.casefold()
+        pending: list[tuple[Path, int]] = [(root_path, 0)]
         try:
-            for current, directory_names, file_names in os.walk(
-                root_path,
-                topdown=True,
-                followlinks=False,
-            ):
-                current_path = Path(current)
-                relative_current = current_path.relative_to(root_path)
-                depth = len(relative_current.parts)
-                if depth >= cls._MAX_PATH_DISCOVERY_DEPTH:
-                    directory_names[:] = []
-                else:
-                    directory_names[:] = [
-                        name
-                        for name in directory_names
-                        if name.casefold() not in cls._PATH_DISCOVERY_PRUNE
-                        and cls._plain_discovery_entry(
-                            current_path / name,
-                            directory=True,
-                        )
-                    ]
+            while pending:
+                current_path, depth = pending.pop()
+                with os.scandir(current_path) as entries:
+                    for entry in entries:
+                        observed_entries += 1
+                        if observed_entries > cls._MAX_PATH_DISCOVERY_ENTRIES:
+                            return None
 
-                observed_entries += len(directory_names) + len(file_names)
-                if observed_entries > cls._MAX_PATH_DISCOVERY_ENTRIES:
-                    return None
+                        candidate = current_path / entry.name
+                        if cls._plain_discovery_entry(candidate, directory=True):
+                            if (
+                                depth < cls._MAX_PATH_DISCOVERY_DEPTH
+                                and entry.name.casefold()
+                                not in cls._PATH_DISCOVERY_PRUNE
+                            ):
+                                pending.append((candidate, depth + 1))
+                            continue
 
-                for file_name in file_names:
-                    if file_name.casefold() != requested_name:
-                        continue
-                    candidate = current_path / file_name
-                    if not cls._plain_discovery_entry(candidate, directory=False):
-                        continue
-                    try:
-                        resolved = candidate.resolve(strict=True)
-                        resolved.relative_to(root_path)
-                    except (OSError, RuntimeError, ValueError):
-                        continue
-                    if not resolved.is_file() or resolved.suffix.casefold() != ".py":
-                        continue
-                    relative_candidate = resolved.relative_to(root_path).as_posix()
-                    candidates[relative_candidate.casefold()] = resolved
-                    if len(candidates) > 1:
-                        return None
+                        if entry.name.casefold() != requested_name:
+                            continue
+                        if not cls._plain_discovery_entry(candidate, directory=False):
+                            continue
+                        try:
+                            resolved = candidate.resolve(strict=True)
+                            resolved.relative_to(root_path)
+                        except (OSError, RuntimeError, ValueError):
+                            continue
+                        if not resolved.is_file() or resolved.suffix.casefold() != ".py":
+                            continue
+                        relative_candidate = resolved.relative_to(root_path).as_posix()
+                        candidates[relative_candidate.casefold()] = resolved
+                        if len(candidates) > 1:
+                            return None
         except (OSError, RuntimeError, ValueError):
             return None
 
