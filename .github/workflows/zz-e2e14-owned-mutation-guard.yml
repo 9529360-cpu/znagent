@@ -1,0 +1,101 @@
+name: Temporary E2E-14 owned mutation guard
+
+on:
+  push:
+    branches:
+      - work/e2e14-cross-app-transfer
+    paths:
+      - '.github/workflows/zz-e2e14-owned-mutation-guard.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact feature branch
+        uses: actions/checkout@v7
+        with:
+          ref: work/e2e14-cross-app-transfer
+          fetch-depth: 0
+      - name: Apply bounded owned-mutation guard
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          product_path = Path('runtime/python/zn_agent/core/browser_desktop_record_transfer_behavior.py')
+          test_path = Path('tests/zn_agent/core/test_browser_desktop_record_transfer_behavior.py')
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one exact match, got {count}')
+              return text.replace(old, new, 1)
+
+          product = product_path.read_text(encoding='utf-8')
+          product = replace_once(
+              product,
+              '        source, source_key, _source_value = _source_observation(resident)\n',
+              '        source, source_key, source_value = _source_observation(resident)\n',
+              'begin source scalar binding',
+          )
+          product = replace_once(
+              product,
+              '        if field_target.value_is_read_only is not False:\n'
+              '            raise _Blocked("destination transfer field must expose one writable UIA ValuePattern")\n'
+              '        save_button = resident.named_automation_control.find_unique_button(\n',
+              '        if field_target.value_is_read_only is not False:\n'
+              '            raise _Blocked("destination transfer field must expose one writable UIA ValuePattern")\n'
+              '        if str(field_read.text) == source_value:\n'
+              '            raise _Blocked(\n'
+              '                "destination transfer field already equals Browser source before this event; "\n'
+              '                "refusing Save without an owned mutation"\n'
+              '            )\n'
+              '        save_button = resident.named_automation_control.find_unique_button(\n',
+              'begin already-equal fail-closed guard',
+          )
+          product = replace_once(
+              product,
+              '    if _same_text(current_value, expected):\n'
+              '        meta["replacement_skipped_already_equal"] = True\n'
+              '    else:\n',
+              '    if _same_text(current_value, expected):\n'
+              '        return _terminal(\n'
+              '            resident,\n'
+              '            event,\n'
+              '            state,\n'
+              '            "E2E-14 destination already equals Browser source without an owned replacement effect; refusing Save",\n'
+              '        )\n'
+              '    else:\n',
+              'replace already-equal fail-closed guard',
+          )
+          product_path.write_text(product, encoding='utf-8')
+
+          tests = test_path.read_text(encoding='utf-8')
+          marker = '    def test_happy_path_reacquires_stale_destination_runtime_and_keeps_raw_data_transient(self):\n'
+          new_test = '''    def test_initial_destination_equal_source_fails_before_replacement_or_save(self):\n        resident = _Resident()\n        resident.values["跟进状态"] = SOURCE_VALUE\n        state = _State()\n\n        result = _begin(resident, EVENT, state)\n\n        self.assertFalse(result.success)\n        self.assertIn("already equals Browser source before this event", result.reason)\n        self.assertEqual(resident.body.calls, [])\n        self.assertEqual(resident.native_intents, [])\n\n'''
+          tests = replace_once(tests, marker, new_test + marker, 'owned-mutation regression insertion')
+          test_path.write_text(tests, encoding='utf-8')
+          PY
+      - name: Compile focused Python files
+        shell: bash
+        run: |
+          python -m py_compile \
+            runtime/python/zn_agent/core/browser_desktop_record_transfer_behavior.py \
+            tests/zn_agent/core/test_browser_desktop_record_transfer_behavior.py
+      - name: Remove temporary workflow and commit patch
+        shell: bash
+        run: |
+          rm .github/workflows/zz-e2e14-owned-mutation-guard.yml
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add runtime/python/zn_agent/core/browser_desktop_record_transfer_behavior.py \
+            tests/zn_agent/core/test_browser_desktop_record_transfer_behavior.py \
+            .github/workflows/zz-e2e14-owned-mutation-guard.yml
+          git diff --cached --quiet && exit 0
+          git commit -m 'fix: require owned E2E-14 replacement before save'
+          git push origin HEAD:work/e2e14-cross-app-transfer
