@@ -4,8 +4,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from zn_agent.core.machine_capability import ApplicationInventoryCandidate, DeviceCapabilityGraph
+from zn_agent.core.device_capability_graph import DeviceCapabilityGraph
+from zn_agent.core.machine_capability import ApplicationInventoryCandidate
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
+from zn_agent.core.windows_companion_context import NativeWindowsCompanionContextSense
 
 
 class ApplicationWindowActivationResidentTests(unittest.TestCase):
@@ -23,6 +25,28 @@ class ApplicationWindowActivationResidentTests(unittest.TestCase):
             process_provider=lambda: list(processes),
             window_provider=lambda: list(windows),
             cache_path=Path(tmp) / "apps.json", inventory_ttl_seconds=0,
+            companion_context_sense=NativeWindowsCompanionContextSense(
+                session_probe=lambda: {
+                    "platform_supported": True,
+                    "process_session_id": 3,
+                    "active_console_session_id": 3,
+                    "attached_to_active_console": True,
+                    "remote_session": False,
+                    "input_desktop_openable": True,
+                    "idle_seconds": 0.0,
+                },
+                power_probe=lambda: {
+                    "platform_supported": True,
+                    "ac_status": "online",
+                },
+                network_probe=lambda: {
+                    "platform_supported": True,
+                    "interface_count": 1,
+                    "up_interface_count": 1,
+                    "non_loopback_up_interface_count": 1,
+                    "has_non_loopback_address": True,
+                },
+            ),
         )
         application = graph.installed_applications(force_refresh=True)[0]
         resident = build_resident_runtime_from_existing_stack(
@@ -31,6 +55,7 @@ class ApplicationWindowActivationResidentTests(unittest.TestCase):
         )
         resident.device_capabilities = graph
         resident.body.device_capabilities = graph
+        resident.body._current_session_connection_state = lambda _session_id: "active"
         return resident, application, executable
 
     @staticmethod
