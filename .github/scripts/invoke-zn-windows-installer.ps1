@@ -88,25 +88,19 @@ function Write-ZnBoundedProcessEvidence {
 
 function Stop-ZnInstallerProcessTree {
     param(
-        [Parameter(Mandatory = $true)][Diagnostics.Process]$RootProcess,
-        [Parameter(Mandatory = $true)][int[]]$TreeProcessIds
+        [Parameter(Mandatory = $true)][Diagnostics.Process]$RootProcess
     )
 
-    for ($index = $TreeProcessIds.Count - 1; $index -ge 0; $index--) {
-        $processId = [int]$TreeProcessIds[$index]
-        if ($processId -eq $RootProcess.Id) {
-            continue
-        }
-        Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
-    }
-
+    # The CIM snapshot above is diagnostic evidence only. Do not turn descendant
+    # PIDs from that point-in-time snapshot into later kill authority: a child can
+    # exit and its PID can be reused before cleanup. The root Process object is
+    # still the live timed-out installer we started, so let Windows resolve its
+    # current descendant tree atomically enough for this cleanup boundary.
     try {
-        $RootProcess.Refresh()
-        if (-not $RootProcess.HasExited) {
-            Stop-Process -InputObject $RootProcess -Force -ErrorAction SilentlyContinue
-        }
+        & "$env:SystemRoot\System32\taskkill.exe" /PID $RootProcess.Id /T /F > $null 2>&1
     } catch {
-        # The process may have exited between the timeout decision and cleanup.
+        # Preserve the original installer-hang classification; verification below
+        # still decides whether the captured root actually terminated.
     }
 
     try {
@@ -166,7 +160,7 @@ if (-not $process.HasExited) {
     Write-Host 'clean_install.failure_class=installer-process hang'
     Write-Host "clean_install.installer_has_exited=false"
     Write-ZnBoundedProcessEvidence -TreeProcessIds $treeProcessIds -Snapshot $snapshot -Limit $MaxDiagnosticProcesses
-    $terminated = Stop-ZnInstallerProcessTree -RootProcess $process -TreeProcessIds $treeProcessIds
+    $terminated = Stop-ZnInstallerProcessTree -RootProcess $process
     Write-Host "clean_install.installer_terminated=$terminated"
     throw "installer-process hang: installer did not exit within $TimeoutSeconds seconds"
 }
