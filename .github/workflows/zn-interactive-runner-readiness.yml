@@ -1,0 +1,43 @@
+name: ZN Interactive Runner Readiness
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/scripts/test-zn-interactive-desktop-readiness.ps1'
+      - '.github/workflows/zn-interactive-runner-readiness.yml'
+  push:
+    branches: [main]
+    paths:
+      - '.github/scripts/test-zn-interactive-desktop-readiness.ps1'
+      - '.github/workflows/zn-interactive-runner-readiness.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zn-interactive-runner-readiness
+  cancel-in-progress: true
+
+jobs:
+  interactive-readiness:
+    name: Interactive desktop readiness
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify GitHub-hosted Windows x64 runner
+        shell: powershell
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "Interactive readiness requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Prove real interactive desktop readiness
+        shell: powershell
+        run: |
+          & "$env:GITHUB_WORKSPACE\.github\scripts\test-zn-interactive-desktop-readiness.ps1" -ExpectedRunnerName $env:RUNNER_NAME
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }

@@ -40,6 +40,115 @@ class _Win32EditFixture:
             )
         if not self.hwnd or not self.target_hwnd:
             raise RuntimeError("interactive text fixture did not expose native window handles")
+        self.activate_once()
+
+    def activate_once(self) -> None:
+        """Establish exact foreground/focus only for this same-process test fixture."""
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        user32.BringWindowToTop.argtypes = [wintypes.HWND]
+        user32.BringWindowToTop.restype = wintypes.BOOL
+        user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+        user32.SetForegroundWindow.restype = wintypes.BOOL
+        user32.GetForegroundWindow.argtypes = []
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        user32.GetWindowThreadProcessId.argtypes = [
+            wintypes.HWND,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        user32.AttachThreadInput.argtypes = [
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.BOOL,
+        ]
+        user32.AttachThreadInput.restype = wintypes.BOOL
+        user32.SetFocus.argtypes = [wintypes.HWND]
+        user32.SetFocus.restype = wintypes.HWND
+        user32.GetFocus.argtypes = []
+        user32.GetFocus.restype = wintypes.HWND
+        kernel32.GetCurrentThreadId.argtypes = []
+        kernel32.GetCurrentThreadId.restype = wintypes.DWORD
+
+        def wait_exact(timeout: float) -> bool:
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                if int(user32.GetForegroundWindow() or 0) == int(self.hwnd):
+                    return True
+                time.sleep(0.01)
+            return int(user32.GetForegroundWindow() or 0) == int(self.hwnd)
+
+        user32.BringWindowToTop(int(self.hwnd))
+        direct_accepted = bool(user32.SetForegroundWindow(int(self.hwnd)))
+        if wait_exact(0.35):
+            target_pid = wintypes.DWORD(0)
+            target_thread = int(
+                user32.GetWindowThreadProcessId(int(self.hwnd), ctypes.byref(target_pid)) or 0
+            )
+            current_thread = int(kernel32.GetCurrentThreadId() or 0)
+            if (
+                target_thread
+                and current_thread
+                and current_thread != target_thread
+                and int(target_pid.value) == os.getpid()
+                and user32.AttachThreadInput(current_thread, target_thread, True)
+            ):
+                try:
+                    user32.SetFocus(int(self.target_hwnd))
+                    focused = int(user32.GetFocus() or 0) == int(self.target_hwnd)
+                finally:
+                    user32.AttachThreadInput(current_thread, target_thread, False)
+                if focused:
+                    print("text_entry_fixture.foreground_mode=direct", flush=True)
+                    return
+
+        target_pid = wintypes.DWORD(0)
+        target_thread = int(
+            user32.GetWindowThreadProcessId(int(self.hwnd), ctypes.byref(target_pid)) or 0
+        )
+        current_thread = int(kernel32.GetCurrentThreadId() or 0)
+        if not target_thread or int(target_pid.value) != os.getpid():
+            raise AssertionError(
+                "text-entry fixture lost its exact in-process HWND/thread identity before foreground bootstrap"
+            )
+        if not current_thread or current_thread == target_thread:
+            raise AssertionError(
+                "text-entry fixture direct foreground activation failed without a distinct fixture input queue; "
+                f"SetForegroundWindow returned {direct_accepted}"
+            )
+        if not user32.AttachThreadInput(current_thread, target_thread, True):
+            raise AssertionError(
+                "text-entry fixture could not share its two in-process test input queues: "
+                f"WinError {ctypes.get_last_error()}"
+            )
+
+        fallback_accepted = False
+        reached_exact = False
+        target_focused = False
+        try:
+            user32.BringWindowToTop(int(self.hwnd))
+            fallback_accepted = bool(user32.SetForegroundWindow(int(self.hwnd)))
+            user32.SetFocus(int(self.target_hwnd))
+            reached_exact = wait_exact(2.0)
+            target_focused = int(user32.GetFocus() or 0) == int(self.target_hwnd)
+        finally:
+            detached = bool(user32.AttachThreadInput(current_thread, target_thread, False))
+            detach_error = ctypes.get_last_error() if not detached else 0
+
+        if not detached:
+            raise AssertionError(
+                "text-entry fixture could not detach its temporary in-process input queues: "
+                f"WinError {detach_error}"
+            )
+        if reached_exact and target_focused:
+            print("text_entry_fixture.foreground_mode=shared-input-bootstrap", flush=True)
+            return
+        raise AssertionError(
+            "text-entry fixture did not establish exact foreground/Edit focus after bounded in-process input sharing; "
+            f"direct SetForegroundWindow returned {direct_accepted}; "
+            f"fallback returned {fallback_accepted}; target_focused={target_focused}"
+        )
 
     def close(self) -> None:
         if os.name == "nt" and self.hwnd:

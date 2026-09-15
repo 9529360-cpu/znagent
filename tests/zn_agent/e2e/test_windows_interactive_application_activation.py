@@ -40,20 +40,95 @@ class _OwnedForegroundFixture:
             raise AssertionError("ZN fixture window did not expose an HWND")
 
     def activate_once(self) -> None:
+        """Put only this ZN-owned fixture in foreground with an exact postcondition.
+
+        The fixture window is created by its message-pump thread while the test
+        itself runs on the Python entry thread. Windows gives those threads
+        independent input state by default, so a direct SetForegroundWindow may
+        be rejected even though the process itself owns the current foreground.
+        A bounded AttachThreadInput fallback is therefore confined to those two
+        in-process test threads. Product activation below never uses this seam.
+        """
+
         user32 = ctypes.WinDLL("user32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        user32.BringWindowToTop.argtypes = [wintypes.HWND]
+        user32.BringWindowToTop.restype = wintypes.BOOL
         user32.SetForegroundWindow.argtypes = [wintypes.HWND]
         user32.SetForegroundWindow.restype = wintypes.BOOL
         user32.GetForegroundWindow.argtypes = []
         user32.GetForegroundWindow.restype = wintypes.HWND
-        accepted = bool(user32.SetForegroundWindow(int(self.hwnd)))
-        deadline = time.monotonic() + 3.0
-        while time.monotonic() < deadline:
-            if int(user32.GetForegroundWindow() or 0) == int(self.hwnd):
-                return
-            time.sleep(0.05)
+        user32.GetWindowThreadProcessId.argtypes = [
+            wintypes.HWND, ctypes.POINTER(wintypes.DWORD)
+        ]
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        user32.AttachThreadInput.argtypes = [
+            wintypes.DWORD, wintypes.DWORD, wintypes.BOOL
+        ]
+        user32.AttachThreadInput.restype = wintypes.BOOL
+        kernel32.GetCurrentThreadId.argtypes = []
+        kernel32.GetCurrentThreadId.restype = wintypes.DWORD
+
+        def wait_exact(timeout: float) -> bool:
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                if int(user32.GetForegroundWindow() or 0) == int(self.hwnd):
+                    return True
+                time.sleep(0.01)
+            return int(user32.GetForegroundWindow() or 0) == int(self.hwnd)
+
+        user32.BringWindowToTop(int(self.hwnd))
+        direct_accepted = bool(user32.SetForegroundWindow(int(self.hwnd)))
+        if wait_exact(0.35):
+            print("application_activation_fixture.foreground_mode=direct", flush=True)
+            return
+
+        target_pid = wintypes.DWORD(0)
+        target_thread = int(
+            user32.GetWindowThreadProcessId(int(self.hwnd), ctypes.byref(target_pid)) or 0
+        )
+        current_thread = int(kernel32.GetCurrentThreadId() or 0)
+        if not target_thread or int(target_pid.value) != os.getpid():
+            raise AssertionError(
+                "ZN-owned fixture lost its exact in-process HWND/thread identity before foreground bootstrap"
+            )
+        if not current_thread or current_thread == target_thread:
+            raise AssertionError(
+                "ZN-owned fixture direct foreground activation failed without a distinct fixture input queue; "
+                f"SetForegroundWindow returned {direct_accepted}"
+            )
+
+        if not user32.AttachThreadInput(current_thread, target_thread, True):
+            raise AssertionError(
+                "ZN-owned fixture could not share its two in-process test input queues: "
+                f"WinError {ctypes.get_last_error()}"
+            )
+
+        fallback_accepted = False
+        reached_exact = False
+        try:
+            user32.BringWindowToTop(int(self.hwnd))
+            fallback_accepted = bool(user32.SetForegroundWindow(int(self.hwnd)))
+            reached_exact = wait_exact(2.0)
+        finally:
+            detached = bool(user32.AttachThreadInput(current_thread, target_thread, False))
+            detach_error = ctypes.get_last_error() if not detached else 0
+
+        if not detached:
+            raise AssertionError(
+                "ZN-owned fixture could not detach its temporary in-process input queues: "
+                f"WinError {detach_error}"
+            )
+        if reached_exact:
+            print(
+                "application_activation_fixture.foreground_mode=shared-input-bootstrap",
+                flush=True,
+            )
+            return
         raise AssertionError(
-            "ZN-owned fixture did not become foreground; "
-            f"SetForegroundWindow returned {accepted}"
+            "ZN-owned fixture did not become foreground after bounded in-process input sharing; "
+            f"direct SetForegroundWindow returned {direct_accepted}; "
+            f"fallback returned {fallback_accepted}"
         )
 
     def authorize_current_process_foreground(self) -> None:
@@ -310,9 +385,9 @@ class WindowsInteractiveApplicationActivationE2ETests(unittest.TestCase):
         fixture.start()
         fixture.activate_once()
         self.assertEqual(self._foreground_hwnd(), fixture.hwnd)
-        # Establish a documented foreground grant before any target application
-        # can become foreground. No synthesized input or thread-input attachment
-        # is used; failure to obtain the documented grant is an E2E failure.
+        # The CI-owned fixture may temporarily share input state only between its
+        # two in-process test threads. Product activation below still gets no
+        # synthesized input or thread-input bypass.
         fixture.authorize_current_process_foreground()
 
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
