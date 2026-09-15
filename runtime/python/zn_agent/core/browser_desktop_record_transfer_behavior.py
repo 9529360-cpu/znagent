@@ -50,8 +50,17 @@ def _bounded_audit(value: str) -> dict[str, Any]:
 
 
 def _same_text(value: str, audit: dict[str, Any]) -> bool:
-    return len(value) == int(audit.get("chars") or -1) and _sha(value) == str(
-        audit.get("sha256") or ""
+    chars = audit.get("chars")
+    if isinstance(chars, bool):
+        return False
+    try:
+        expected_chars = int(chars)
+    except (TypeError, ValueError):
+        return False
+    return (
+        expected_chars >= 0
+        and len(value) == expected_chars
+        and _sha(value) == str(audit.get("sha256") or "")
     )
 
 
@@ -126,11 +135,24 @@ def _foreground(resident, meta: dict[str, Any] | None = None, *, require_hwnd: b
 
 
 def _read_field(resident, foreground, name: str, *, allow_read_only: bool):
-    target = resident.named_automation_control.find_unique_edit(
-        process_id=int(foreground.process_id),
-        process_name=str(foreground.process_name),
-        name=name,
-    )
+    if allow_read_only:
+        candidates = resident.current_app_text_content.list_value_edits(
+            process_id=int(foreground.process_id),
+            process_name=str(foreground.process_name),
+            window_handle=int(foreground.window_handle),
+        )
+        matches = [candidate for candidate in candidates if str(candidate.name) == name]
+        if len(matches) != 1:
+            raise _Blocked(
+                f"foreground application did not expose exactly one safe exact named UIA Edit for readback: {name}"
+            )
+        target = matches[0]
+    else:
+        target = resident.named_automation_control.find_unique_edit(
+            process_id=int(foreground.process_id),
+            process_name=str(foreground.process_name),
+            name=name,
+        )
     read = resident.current_app_text_content.read_exact(
         process_id=int(foreground.process_id),
         process_name=str(foreground.process_name),
