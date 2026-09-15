@@ -17,6 +17,9 @@ from .local_service_recovery_behavior import install_local_service_recovery_beha
 from .long_running_terminal_behavior import install_long_running_terminal_behavior
 from .research_information_resident import ResearchInformationResidentRuntime
 from .windows_companion_body import WindowsCompanionAwareBody
+from .windows_companion_current_app_guard import (
+    install_windows_companion_current_app_guard,
+)
 from .windows_companion_work_context import bind_windows_companion_work_context
 
 
@@ -77,6 +80,10 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
             installer()
         install_worker_authority_gate(self.body, resident=self)
         install_current_app_text_cleanup_behavior(self)
+        # Install after the E2E-13 behavior so this wrapper is the outermost
+        # orientation gate: stale start-context is rejected before _begin() can
+        # ground whatever application happens to be foreground later.
+        install_windows_companion_current_app_guard(self)
         install_current_app_text_cleanup_completion(self)
         install_local_office_behavior(self)
         install_long_running_terminal_behavior(self)
