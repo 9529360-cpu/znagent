@@ -8,9 +8,9 @@ accepted merely because it starts with a shorter installed alias.  Exact aliases
 are resolved before bounded prefix/substring matching; fuzzy candidates can never
 make an otherwise unique exact application ambiguous.
 
-The public graph also owns one read-only Windows companion-context sense.  This
-keeps session/power/network facts in the existing Resident device graph instead of
-creating a parallel OS agent or context store.
+The public graph also owns read-only Windows companion and display senses.  This
+keeps session/power/network/multi-monitor facts in the existing Resident device
+graph instead of creating a parallel OS agent or context store.
 """
 
 from dataclasses import dataclass
@@ -29,12 +29,17 @@ from .windows_companion_context import (
     NativeWindowsCompanionContextSense,
     WindowsCompanionContextSnapshot,
 )
+from .windows_display_context import (
+    NativeWindowsDisplayContextSense,
+    WindowsDisplayObservation,
+)
 
 
 @dataclass(frozen=True, slots=True)
 class ResidentDeviceContextSnapshot:
     machine: DeviceCapabilitySnapshot
     companion: WindowsCompanionContextSnapshot
+    display: WindowsDisplayObservation
     observed_at: str
 
 
@@ -45,11 +50,15 @@ class DeviceCapabilityGraph(_MachineFactGraph):
         self,
         *args: Any,
         companion_context_sense: NativeWindowsCompanionContextSense | None = None,
+        display_context_sense: NativeWindowsDisplayContextSense | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
         self._companion_context_sense = (
             companion_context_sense or NativeWindowsCompanionContextSense()
+        )
+        self._display_context_sense = (
+            display_context_sense or NativeWindowsDisplayContextSense()
         )
 
     def companion_context(self) -> WindowsCompanionContextSnapshot:
@@ -57,16 +66,22 @@ class DeviceCapabilityGraph(_MachineFactGraph):
 
         return self._companion_context_sense.probe()
 
+    def display_context(self) -> WindowsDisplayObservation:
+        """Fresh read-only Windows multi-monitor topology without device identifiers."""
+
+        return self._display_context_sense.probe()
+
     def resident_context_snapshot(
         self,
         *,
         force_inventory_refresh: bool = False,
     ) -> ResidentDeviceContextSnapshot:
-        """Compose existing machine facts and companion facts without caching them."""
+        """Compose current machine and companion facts without caching them."""
 
         return ResidentDeviceContextSnapshot(
             machine=self.snapshot(force_inventory_refresh=force_inventory_refresh),
             companion=self.companion_context(),
+            display=self.display_context(),
             observed_at=utc_now(),
         )
 
