@@ -274,6 +274,9 @@ def build_resident_runtime(
 ):
     """Build the normal product Resident around the ZN-owned kernel."""
     from .budget import CognitiveBudgetManager
+    from .browser_desktop_record_transfer_behavior import (
+        install_browser_desktop_record_transfer_behavior,
+    )
     from .browser_file_desktop_handoff_behavior import (
         install_browser_file_desktop_handoff_behavior,
     )
@@ -322,6 +325,7 @@ def build_resident_runtime(
     )
     install_user_browser_causal_popup_behavior(resident)
     install_browser_file_desktop_handoff_behavior(resident)
+    install_browser_desktop_record_transfer_behavior(resident)
     install_desktop_modal_recovery_behavior(resident)
     return resident
 
