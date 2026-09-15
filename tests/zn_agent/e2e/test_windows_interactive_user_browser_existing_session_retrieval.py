@@ -7,7 +7,7 @@ import unittest
 from http.server import ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from zn_agent.core.cognition import CognitiveIncrement
+from zn_agent.core.cognitive_resource import CognitiveIncrement
 
 from test_windows_interactive_user_browser_semantic_grounding import (
     _Handler,
