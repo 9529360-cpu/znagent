@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   patch:
@@ -17,8 +17,6 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
       - name: Apply exact hosted clean-install patch
         run: python .github/scripts/patch-hosted-clean-install.py
@@ -32,13 +30,17 @@ jobs:
             exit 1
           }
           git diff --check
-          git diff -- .github/workflows/zn-windows-clean-install.yml
+          git diff --stat -- .github/workflows/zn-windows-clean-install.yml
 
-      - name: Commit tested workflow patch
+      - name: Emit validated target blob
         shell: bash
         run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add .github/workflows/zn-windows-clean-install.yml
-          git commit -m 'ci: run full clean install on disposable hosted Windows'
-          git push origin HEAD:ci/github-hosted-clean-install-full
+          python - <<'PY'
+          import base64
+          import hashlib
+          from pathlib import Path
+
+          data = Path('.github/workflows/zn-windows-clean-install.yml').read_bytes()
+          print('PATCHED_SHA256=' + hashlib.sha256(data).hexdigest())
+          print('PATCHED_BASE64=' + base64.b64encode(data).decode('ascii'))
+          PY
