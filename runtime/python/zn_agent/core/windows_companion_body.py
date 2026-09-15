@@ -125,38 +125,73 @@ class WindowsCompanionAwareBody(CurrentAppTextAwareBody):
             observed_at=observed_at,
         )
 
+    def _native_activate_exact_application_window(
+        self,
+        hwnd: int,
+        expected_pid: int,
+    ) -> dict[str, Any]:
+        """Re-prove interactive-session authority at the native foreground seam.
+
+        The admitted application path intentionally rechecks app/PID/HWND identity
+        after its first companion gate. Those fresh machine-fact reads can take
+        enough time for the user session to lock or disconnect, so WTS/input-
+        desktop authority is sampled again immediately before SetForegroundWindow.
+        This seam adds no new target authority: it can only veto the already-
+        admitted exact HWND/PID.
+        """
+
+        failure = self._interactive_input_admission()
+        if failure is not None:
+            disposition, _evidence, error = failure
+            return {
+                "success": False,
+                "dispatch_sent": False,
+                "disposition": disposition,
+                "error": error,
+            }
+        return super()._native_activate_exact_application_window(hwnd, expected_pid)
+
     def _interactive_input_admission_failure(
         self,
         kind: str,
         *,
         event_id: str | None,
     ) -> BodyActionResult | None:
+        failure = self._interactive_input_admission()
+        if failure is None:
+            return None
+        disposition, evidence, error = failure
+        return self._blocked_input_result(
+            kind,
+            event_id=event_id,
+            disposition=disposition,
+            evidence=evidence,
+            error=error,
+        )
+
+    def _interactive_input_admission(
+        self,
+    ) -> tuple[str, dict[str, Any], str] | None:
+        """Return bounded blocking evidence, or None when input may proceed."""
+
         graph = getattr(self, "device_capabilities", None)
         context_reader = getattr(graph, "companion_context", None)
         if not callable(context_reader):
-            return self._blocked_input_result(
-                kind,
-                event_id=event_id,
-                disposition="companion_context_unavailable",
-                evidence={},
-                error=(
-                    "Windows interactive input requires fresh companion session evidence; "
-                    "the current Body has no companion-context sense"
-                ),
+            return (
+                "companion_context_unavailable",
+                {},
+                "Windows interactive input requires fresh companion session evidence; "
+                "the current Body has no companion-context sense",
             )
 
         try:
             context = context_reader()
         except Exception as exc:
-            return self._blocked_input_result(
-                kind,
-                event_id=event_id,
-                disposition="companion_context_probe_failed",
-                evidence={},
-                error=(
-                    "Windows interactive input companion preflight failed before dispatch: "
-                    f"{type(exc).__name__}"
-                ),
+            return (
+                "companion_context_probe_failed",
+                {},
+                "Windows interactive input companion preflight failed before dispatch: "
+                f"{type(exc).__name__}",
             )
 
         status = self._interactive_input_status(context.session)
@@ -186,12 +221,15 @@ class WindowsCompanionAwareBody(CurrentAppTextAwareBody):
                 f"current WTS state is {status.get('session_connection_state') or 'unknown'}"
             ),
         }
-        return self._blocked_input_result(
-            kind,
-            event_id=event_id,
-            disposition=disposition,
-            evidence={key: value for key, value in status.items() if key not in {"ready", "disposition"}},
-            error=errors.get(disposition, "Windows interactive input is not currently admitted"),
+        evidence = {
+            key: value
+            for key, value in status.items()
+            if key not in {"ready", "disposition"}
+        }
+        return (
+            disposition,
+            evidence,
+            errors.get(disposition, "Windows interactive input is not currently admitted"),
         )
 
     def _interactive_input_status(self, session: Any) -> dict[str, Any]:
