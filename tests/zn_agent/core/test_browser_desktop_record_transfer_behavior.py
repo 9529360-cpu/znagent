@@ -14,6 +14,7 @@ from zn_agent.core.browser_desktop_record_transfer_behavior import (
     _replace,
     _resolve_uncertain_replacement,
     _save_prepare,
+    _same_text,
     _title_has_saved_marker,
     _verify_replacement,
 )
@@ -66,8 +67,16 @@ class _NamedControls:
 
 
 class _Content:
-    def __init__(self, values: dict[str, str]):
+    def __init__(self, values: dict[str, str], controls: _NamedControls):
         self.values = values
+        self.controls = controls
+
+    def list_value_edits(self, **_kwargs):
+        return tuple(
+            control
+            for control in self.controls.controls.values()
+            if int(control.control_type) == 50004
+        )
 
     def read_exact(self, *, name, runtime_id, **_kwargs):
         return SimpleNamespace(text=self.values[name], audit={"runtime_id": list(runtime_id)})
@@ -149,7 +158,7 @@ class _Resident:
     def __init__(self):
         self.values = {"客户编号": CUSTOMER_A, "跟进状态": INITIAL_VALUE}
         self.named_automation_control = _NamedControls()
-        self.current_app_text_content = _Content(self.values)
+        self.current_app_text_content = _Content(self.values, self.named_automation_control)
         self.body = _Body(self.current_app_text_content)
         self.store = _Store()
         self.work_ledger = _Ledger()
@@ -227,6 +236,28 @@ class BrowserDesktopRecordTransferTests(unittest.TestCase):
             _parse_source_context(f"{CUSTOMER_A} 已联系")
         with self.assertRaises(RuntimeError):
             _parse_source_context(f"{CUSTOMER_A} {SOURCE_VALUE} {SOURCE_VALUE}")
+
+    def test_empty_text_audit_remains_exact_instead_of_becoming_missing(self):
+        self.assertTrue(_same_text("", _bounded_audit("")))
+
+    def test_read_only_business_key_uses_text_candidate_sense_not_writable_edit_grounder(self):
+        resident = _Resident()
+        resident.named_automation_control.ambiguous.add("客户编号")
+        state = _State()
+
+        self.assertIsNone(_begin(resident, EVENT, state))
+        self.assertEqual(state.stage, "e2e14_replace")
+        self.assertEqual(resident.body.calls, [])
+
+    def test_empty_destination_value_can_be_freshly_reproven_before_replacement(self):
+        resident = _Resident()
+        resident.values["跟进状态"] = ""
+        state = _State()
+
+        self.assertIsNone(_begin(resident, EVENT, state))
+        self.assertIsNone(_replace(resident, EVENT, state))
+        self.assertEqual(len(resident.body.calls), 1)
+        self.assertEqual(resident.values["跟进状态"], SOURCE_VALUE)
 
     def test_begin_is_browser_source_first_then_requires_matching_desktop_key(self):
         resident = _Resident()
