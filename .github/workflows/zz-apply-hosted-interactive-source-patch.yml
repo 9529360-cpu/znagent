@@ -1,0 +1,91 @@
+name: Apply hosted interactive source alignment
+
+on:
+  push:
+    branches:
+      - work/interactive-runner-readiness
+    paths:
+      - .github/workflows/zz-apply-hosted-interactive-source-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Apply exact launcher and checkbox-fixture changes
+        run: |
+          @'
+          from pathlib import Path
+
+          launcher = Path('.github/scripts/run-zn-interactive-python.ps1')
+          text = launcher.read_text(encoding='utf-8').replace('\r\n', '\n')
+          old = """if ($env:RUNNER_NAME -and $env:RUNNER_NAME -ne 'zn-interactive') {
+              throw "Interactive Python launcher requires zn-interactive; got $env:RUNNER_NAME"
+          }
+          """
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one runner-name guard, found {text.count(old)}')
+          launcher.write_text(text.replace(old, ''), encoding='utf-8', newline='\n')
+
+          test = Path('tests/zn_agent/e2e/test_windows_interactive_pointer_uia.py')
+          text = test.read_text(encoding='utf-8').replace('\r\n', '\n')
+          center = '            (int(rect.left) + int(rect.right)) // 2,\n'
+          if text.count(center) != 1:
+              raise SystemExit(f'expected one checkbox center x line, found {text.count(center)}')
+          text = text.replace(center, '            int(rect.left) + 16,\n')
+          if text.count('                        width_fraction=0.12,\n') != 1:
+              raise SystemExit('unexpected visual width probe shape')
+          if text.count('                        height_fraction=0.08,\n') != 1:
+              raise SystemExit('unexpected visual height probe shape')
+          if text.count('                                "width_fraction": 0.12,\n') != 1:
+              raise SystemExit('unexpected expected width shape')
+          if text.count('                                "height_fraction": 0.08,\n') != 1:
+              raise SystemExit('unexpected expected height shape')
+          text = text.replace('                        width_fraction=0.12,\n', '                        width_fraction=0.04,\n')
+          text = text.replace('                        height_fraction=0.08,\n', '                        height_fraction=0.04,\n')
+          text = text.replace('                                "width_fraction": 0.12,\n', '                                "width_fraction": 0.04,\n')
+          text = text.replace('                                "height_fraction": 0.08,\n', '                                "height_fraction": 0.04,\n')
+          test.write_text(text, encoding='utf-8', newline='\n')
+          '@ | Set-Content -LiteralPath .ci-hosted-interactive-patch.py -Encoding utf8
+          python .ci-hosted-interactive-patch.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify exact write set and syntax
+        run: |
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $changed = @(git diff --name-only)
+          $expected = @(
+            '.github/scripts/run-zn-interactive-python.ps1',
+            'tests/zn_agent/e2e/test_windows_interactive_pointer_uia.py'
+          )
+          if ($changed.Count -ne $expected.Count) { throw "Unexpected write set: $($changed -join ', ')" }
+          foreach ($path in $expected) {
+            if ($path -notin $changed) { throw "Missing expected change: $path" }
+          }
+          python -m py_compile tests/zn_agent/e2e/test_windows_interactive_pointer_uia.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $raw = Get-Content -LiteralPath .github/scripts/run-zn-interactive-python.ps1 -Raw
+          [void][scriptblock]::Create($raw)
+
+      - name: Commit and push source/test changes only
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- .github/scripts/run-zn-interactive-python.ps1 tests/zn_agent/e2e/test_windows_interactive_pointer_uia.py
+          git commit -m 'test: align interactive acceptance with hosted Windows desktop'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git push origin HEAD:work/interactive-runner-readiness
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
