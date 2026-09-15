@@ -6,6 +6,9 @@ on:
       - main
     paths:
       - .github/workflows/zn-windows-interactive-e2e.yml
+      - .github/scripts/test-zn-interactive-desktop-readiness.ps1
+      - .github/scripts/run-zn-interactive-python.ps1
+      - .github/scripts/zn-interactive-python-entry.py
       - apps/desktop/browser-extension/background.js
       - apps/desktop/browser-extension/manifest.json
       - tests/zn_agent/e2e/_run_owned_unittest_module.py
@@ -91,6 +94,9 @@ on:
       - main
     paths:
       - .github/workflows/zn-windows-interactive-e2e.yml
+      - .github/scripts/test-zn-interactive-desktop-readiness.ps1
+      - .github/scripts/run-zn-interactive-python.ps1
+      - .github/scripts/zn-interactive-python-entry.py
       - apps/desktop/browser-extension/background.js
       - apps/desktop/browser-extension/manifest.json
       - tests/zn_agent/e2e/_run_owned_unittest_module.py
@@ -183,7 +189,7 @@ concurrency:
 jobs:
   interactive-desktop-e2e:
     name: Windows interactive product E2E
-    runs-on: [self-hosted, Windows, X64, zn-interactive]
+    runs-on: windows-latest
     timeout-minutes: 20
     env:
       CI: 'true'
@@ -191,17 +197,21 @@ jobs:
       PYTHONUTF8: '1'
       PYTHONUNBUFFERED: '1'
     steps:
-      - name: Require Windows x64 interactive runner
+      - name: Verify GitHub-hosted Windows x64 runner
         shell: powershell
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
-            throw "ZN interactive desktop E2E requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
-          }
-          if ($env:RUNNER_NAME -ne 'zn-interactive') {
-            throw "ZN interactive desktop E2E requires the dedicated zn-interactive runner; got $env:RUNNER_NAME"
+            throw "ZN interactive desktop E2E requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
           }
       - name: Checkout
         uses: actions/checkout@v7
+      - name: Prove interactive desktop readiness
+        shell: powershell
+        run: |
+          & "$env:GITHUB_WORKSPACE\.github\scripts\test-zn-interactive-desktop-readiness.ps1" -ExpectedRunnerName $env:RUNNER_NAME
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
@@ -224,16 +234,33 @@ jobs:
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-e2e-venv\Scripts\python.exe'
-          & $python tests/zn_agent/e2e/test_windows_interactive_current_app_content_cleanup.py -v
-          if ($LASTEXITCODE -ne 0) {
-            throw 'E2E-13 current-app content cleanup failed'
+          $launcher = Join-Path $env:GITHUB_WORKSPACE '.github\scripts\run-zn-interactive-python.ps1'
+          $testFile = 'tests/zn_agent/e2e/test_windows_interactive_current_app_content_cleanup.py'
+          $cases = @(
+            'WindowsInteractiveCurrentAppContentCleanupE2ETests.test_happy_path_real_winforms_valuepattern_save_and_fresh_new_window_readback',
+            'WindowsInteractiveCurrentAppContentCleanupE2ETests.test_stale_edit_runtime_is_rejected_then_freshly_regrounded_before_mutation',
+            'WindowsInteractiveCurrentAppContentCleanupE2ETests.test_content_drift_blocks_stale_transform_and_reinvestigates',
+            'WindowsInteractiveCurrentAppContentCleanupE2ETests.test_ambiguous_same_named_edit_produces_zero_mutation',
+            'WindowsInteractiveCurrentAppContentCleanupE2ETests.test_final_application_mismatch_does_not_complete'
+          )
+          foreach ($case in $cases) {
+            Write-Host "=== E2E-13 case: $case ==="
+            & $launcher -Python $python -CommandArgs @($testFile, $case, '-v')
+            if ($LASTEXITCODE -ne 0) {
+              throw "E2E-13 current-app content cleanup failed: $case"
+            }
           }
       - name: Run E2E-15 modal recovery acceptance in isolation
         shell: powershell
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-e2e-venv\Scripts\python.exe'
-          & $python tests/zn_agent/e2e/test_windows_interactive_desktop_modal_recovery.py WindowsInteractiveDesktopModalRecoveryE2ETests.test_unexpected_same_process_modal_is_safely_dismissed_then_original_work_regrounds -v
+          $launcher = Join-Path $env:GITHUB_WORKSPACE '.github\scripts\run-zn-interactive-python.ps1'
+          & $launcher -Python $python -CommandArgs @(
+            'tests/zn_agent/e2e/test_windows_interactive_desktop_modal_recovery.py',
+            'WindowsInteractiveDesktopModalRecoveryE2ETests.test_unexpected_same_process_modal_is_safely_dismissed_then_original_work_regrounds',
+            '-v'
+          )
           if ($LASTEXITCODE -ne 0) {
             throw 'E2E-15 isolated modal recovery acceptance failed'
           }
@@ -242,6 +269,7 @@ jobs:
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-e2e-venv\Scripts\python.exe'
+          $launcher = Join-Path $env:GITHUB_WORKSPACE '.github\scripts\run-zn-interactive-python.ps1'
           $ownedRunner = Join-Path $env:GITHUB_WORKSPACE 'tests\zn_agent\e2e\_run_owned_unittest_module.py'
           $excluded = @(
             'test_windows_interactive_authorized_user_browser_cdp.py',
@@ -257,7 +285,7 @@ jobs:
           }
           foreach ($test in $tests) {
             Write-Host "=== interactive module: $($test.Name) ==="
-            & $python $ownedRunner $test.FullName
+            & $launcher -Python $python -CommandArgs @($ownedRunner, $test.FullName)
             if ($LASTEXITCODE -ne 0) {
               throw "Interactive E2E module failed: $($test.Name)"
             }
@@ -286,6 +314,13 @@ jobs:
           }
       - name: Checkout
         uses: actions/checkout@v7
+      - name: Prove interactive desktop readiness
+        shell: powershell
+        run: |
+          & "$env:GITHUB_WORKSPACE\.github\scripts\test-zn-interactive-desktop-readiness.ps1"
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
@@ -307,4 +342,9 @@ jobs:
         shell: powershell
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
-          & .\.ci\interactive-diagnostics-venv\Scripts\python.exe -m unittest discover -s tests/zn_agent/e2e -p 'test_windows_interactive_*.py' -v
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-diagnostics-venv\Scripts\python.exe'
+          $launcher = Join-Path $env:GITHUB_WORKSPACE '.github\scripts\run-zn-interactive-python.ps1'
+          & $launcher -Python $python -CommandArgs @('-m', 'unittest', 'discover', '-s', 'tests/zn_agent/e2e', '-p', 'test_windows_interactive_*.py', '-v')
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Full interactive diagnostic suite failed'
+          }

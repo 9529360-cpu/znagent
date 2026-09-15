@@ -31,7 +31,7 @@ concurrency:
 jobs:
   source-boundary:
     name: ZN Source Boundary / Windows
-    runs-on: [self-hosted, Windows, X64, zn-ci]
+    runs-on: windows-latest
     timeout-minutes: 10
     env:
       UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
@@ -44,21 +44,24 @@ jobs:
               context.sha,
               context.payload.pull_request?.head?.sha,
             ].filter(Boolean))]
+            const statusContexts = ['ZN Source Boundary', 'ZN Source Boundary / Windows']
             for (const sha of statusShas) {
-              await github.rest.repos.createCommitStatus({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                sha,
-                state: 'pending',
-                context: 'ZN Source Boundary',
-                description: 'ZN Windows CI: running',
-                target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-              })
+              for (const statusContext of statusContexts) {
+                await github.rest.repos.createCommitStatus({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  sha,
+                  state: 'pending',
+                  context: statusContext,
+                  description: 'ZN Windows CI: running',
+                  target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                })
+              }
             }
-      - name: Require Windows x64 headless CI runner
+      - name: Verify GitHub-hosted Windows x64 runner
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
-            throw "ZN steady-state CI requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+            throw "ZN online CI requires a GitHub-hosted Windows X64 runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
           }
           Write-Host "ZN CI runner: $env:RUNNER_NAME"
       - name: Checkout
@@ -78,7 +81,7 @@ jobs:
 
   kernel:
     name: ZN Kernel / Python / Windows
-    runs-on: [self-hosted, Windows, X64, zn-ci]
+    runs-on: windows-latest
     timeout-minutes: 35
     env:
       UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
@@ -91,21 +94,24 @@ jobs:
               context.sha,
               context.payload.pull_request?.head?.sha,
             ].filter(Boolean))]
+            const statusContexts = ['ZN Kernel / Python', 'ZN Kernel / Python / Windows']
             for (const sha of statusShas) {
-              await github.rest.repos.createCommitStatus({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                sha,
-                state: 'pending',
-                context: 'ZN Kernel / Python',
-                description: 'ZN Windows CI: running',
-                target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-              })
+              for (const statusContext of statusContexts) {
+                await github.rest.repos.createCommitStatus({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  sha,
+                  state: 'pending',
+                  context: statusContext,
+                  description: 'ZN Windows CI: running',
+                  target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                })
+              }
             }
-      - name: Require Windows x64 headless CI runner
+      - name: Verify GitHub-hosted Windows x64 runner
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
-            throw "ZN steady-state CI requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+            throw "ZN online CI requires a GitHub-hosted Windows X64 runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
           }
           Write-Host "ZN CI runner: $env:RUNNER_NAME"
       - name: Checkout
@@ -150,7 +156,7 @@ jobs:
 
   desktop:
     name: Electron / TypeScript / Windows
-    runs-on: [self-hosted, Windows, X64, zn-ci]
+    runs-on: windows-latest
     timeout-minutes: 30
     env:
       NODE_OPTIONS: --max-old-space-size=4096
@@ -163,21 +169,24 @@ jobs:
               context.sha,
               context.payload.pull_request?.head?.sha,
             ].filter(Boolean))]
+            const statusContexts = ['Electron / TypeScript', 'Electron / TypeScript / Windows']
             for (const sha of statusShas) {
-              await github.rest.repos.createCommitStatus({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                sha,
-                state: 'pending',
-                context: 'Electron / TypeScript',
-                description: 'ZN Windows CI: running',
-                target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-              })
+              for (const statusContext of statusContexts) {
+                await github.rest.repos.createCommitStatus({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  sha,
+                  state: 'pending',
+                  context: statusContext,
+                  description: 'ZN Windows CI: running',
+                  target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                })
+              }
             }
-      - name: Require Windows x64 headless CI runner
+      - name: Verify GitHub-hosted Windows x64 runner
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
-            throw "ZN steady-state CI requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+            throw "ZN online CI requires a GitHub-hosted Windows X64 runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
           }
           Write-Host "ZN CI runner: $env:RUNNER_NAME"
       - name: Checkout
@@ -218,8 +227,11 @@ jobs:
             ].filter(Boolean))]
             const rows = [
               ['ZN Source Boundary', '${{ needs.source-boundary.result }}'],
+              ['ZN Source Boundary / Windows', '${{ needs.source-boundary.result }}'],
               ['ZN Kernel / Python', '${{ needs.kernel.result }}'],
+              ['ZN Kernel / Python / Windows', '${{ needs.kernel.result }}'],
               ['Electron / TypeScript', '${{ needs.desktop.result }}'],
+              ['Electron / TypeScript / Windows', '${{ needs.desktop.result }}'],
             ]
             for (const sha of statusShas) {
               for (const [statusContext, result] of rows) {

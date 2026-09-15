@@ -47,6 +47,104 @@ class _Win32FocusFixture:
             )
         if not self.hwnd or not self.source_hwnd or not self.target_hwnd:
             raise RuntimeError("interactive fixture did not expose native window handles")
+        self.activate_once()
+
+    def activate_once(self) -> None:
+        """Foreground only this same-process test window with an exact postcondition.
+
+        The window/message pump lives on a fixture thread while the unittest runs
+        on the Python entry thread. Windows can reject direct SetForegroundWindow
+        between those independent input queues even though both belong to this
+        test process. Keep the bounded shared-input fallback confined to those two
+        in-process test threads; product pointer/activation code never uses it.
+        """
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        user32.BringWindowToTop.argtypes = [wintypes.HWND]
+        user32.BringWindowToTop.restype = wintypes.BOOL
+        user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+        user32.SetForegroundWindow.restype = wintypes.BOOL
+        user32.GetForegroundWindow.argtypes = []
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        user32.GetWindowThreadProcessId.argtypes = [
+            wintypes.HWND,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        user32.AttachThreadInput.argtypes = [
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.BOOL,
+        ]
+        user32.AttachThreadInput.restype = wintypes.BOOL
+        user32.SetFocus.argtypes = [wintypes.HWND]
+        user32.SetFocus.restype = wintypes.HWND
+        user32.GetFocus.argtypes = []
+        user32.GetFocus.restype = wintypes.HWND
+        kernel32.GetCurrentThreadId.argtypes = []
+        kernel32.GetCurrentThreadId.restype = wintypes.DWORD
+
+        def wait_exact(timeout: float) -> bool:
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                if int(user32.GetForegroundWindow() or 0) == int(self.hwnd):
+                    return True
+                time.sleep(0.01)
+            return int(user32.GetForegroundWindow() or 0) == int(self.hwnd)
+
+        user32.BringWindowToTop(int(self.hwnd))
+        direct_accepted = bool(user32.SetForegroundWindow(int(self.hwnd)))
+        if wait_exact(0.35):
+            print("pointer_uia_fixture.foreground_mode=direct", flush=True)
+            return
+
+        target_pid = wintypes.DWORD(0)
+        target_thread = int(
+            user32.GetWindowThreadProcessId(int(self.hwnd), ctypes.byref(target_pid)) or 0
+        )
+        current_thread = int(kernel32.GetCurrentThreadId() or 0)
+        if not target_thread or int(target_pid.value) != os.getpid():
+            raise AssertionError(
+                "pointer UIA fixture lost its exact in-process HWND/thread identity before foreground bootstrap"
+            )
+        if not current_thread or current_thread == target_thread:
+            raise AssertionError(
+                "pointer UIA fixture direct foreground activation failed without a distinct fixture input queue; "
+                f"SetForegroundWindow returned {direct_accepted}"
+            )
+        if not user32.AttachThreadInput(current_thread, target_thread, True):
+            raise AssertionError(
+                "pointer UIA fixture could not share its two in-process test input queues: "
+                f"WinError {ctypes.get_last_error()}"
+            )
+
+        fallback_accepted = False
+        reached_exact = False
+        source_focused = False
+        try:
+            user32.BringWindowToTop(int(self.hwnd))
+            fallback_accepted = bool(user32.SetForegroundWindow(int(self.hwnd)))
+            user32.SetFocus(int(self.source_hwnd))
+            reached_exact = wait_exact(2.0)
+            source_focused = int(user32.GetFocus() or 0) == int(self.source_hwnd)
+        finally:
+            detached = bool(user32.AttachThreadInput(current_thread, target_thread, False))
+            detach_error = ctypes.get_last_error() if not detached else 0
+
+        if not detached:
+            raise AssertionError(
+                "pointer UIA fixture could not detach its temporary in-process input queues: "
+                f"WinError {detach_error}"
+            )
+        if reached_exact and source_focused:
+            print("pointer_uia_fixture.foreground_mode=shared-input-bootstrap", flush=True)
+            return
+        raise AssertionError(
+            "pointer UIA fixture did not establish exact foreground/source focus after bounded in-process input sharing; "
+            f"direct SetForegroundWindow returned {direct_accepted}; "
+            f"fallback returned {fallback_accepted}; source_focused={source_focused}"
+        )
 
     def close(self) -> None:
         if os.name == "nt" and self.hwnd:
@@ -83,7 +181,7 @@ class _Win32FocusFixture:
         if not user32.GetWindowRect(self.target_hwnd, ctypes.byref(rect)):
             raise OSError("GetWindowRect failed for the E2E target")
         return (
-            (int(rect.left) + int(rect.right)) // 2,
+            int(rect.left) + 16,
             (int(rect.top) + int(rect.bottom)) // 2,
         )
 
@@ -392,8 +490,8 @@ class WindowsInteractivePointerUiAE2ETests(unittest.TestCase):
                     visual = resident.visual_region.probe(
                         center_x_fraction=x_fraction,
                         center_y_fraction=y_fraction,
-                        width_fraction=0.12,
-                        height_fraction=0.08,
+                        width_fraction=0.04,
+                        height_fraction=0.04,
                     )
                     self.assertTrue(visual.signature)
                     self.assertFalse(visual.raw_frame_persisted)
@@ -412,8 +510,8 @@ class WindowsInteractivePointerUiAE2ETests(unittest.TestCase):
                             },
                             "expected_outcome": {
                                 "kind": "visual_region_changed",
-                                "width_fraction": 0.12,
-                                "height_fraction": 0.08,
+                                "width_fraction": 0.04,
+                                "height_fraction": 0.04,
                             },
                             "completion_scope": {
                                 "kind": "focused_automation_element_at_pointer",
