@@ -1,105 +1,146 @@
-# ZN Windows self-hosted CI
+# ZN Windows CI topology
 
+> This file keeps its historical name so existing repository links do not break.
+>
 > Current intended platform: Windows x64
 >
 > Canonical integration/source/release branch: `main`
 >
-> Development branches: short-lived `work/*` branches created from current `main` and merged through PR.
+> Development branches: short-lived branches created from current `main` and merged through PR.
 
 ## Purpose
 
-Steady-state ZN product verification is repository-owned automation executed by a replaceable Windows x64 self-hosted GitHub Actions runner.
+ZN CI is hosted-first. Routine repository verification must not depend on a maintainer computer being powered on, logged in, unlocked, or carrying persistent local state.
 
-The runner is infrastructure, not ZN identity and not a specific maintainer machine contract. A computer may be replaced without changing the workflow as long as a suitable Windows x64 runner is registered and online.
+The default execution environment for ordinary Windows validation is a fresh GitHub-hosted `windows-latest` runner. A workflow may keep a self-hosted runner only when its acceptance contract genuinely requires state or capabilities that cannot yet be reconstructed safely on a hosted runner.
 
-## Automatic behavior
+Runner labels are infrastructure choices, not product authority. An old `self-hosted` or `zn-interactive` label is not evidence by itself that a test requires a local machine.
 
-`.github/workflows/zn-ci.yml` runs automatically on:
+## Required ZN CI
 
-- pull requests targeting `main`, so the candidate is verified before merge;
-- pushes to `main`, so the merged canonical source is verified again.
+`.github/workflows/zn-ci.yml` runs on pull requests targeting `main`, pushes to `main`, and manual dispatch.
 
-It may also be started manually with `workflow_dispatch`.
+The required Windows checks are:
 
-The required core checks are:
+- `ZN Source Boundary / Windows`;
+- `ZN Kernel / Python / Windows`;
+- `Electron / TypeScript / Windows`.
 
-- ZN source boundary;
-- isolated Python runtime install, zero-model boot and core tests;
-- Electron/TypeScript dependency audit, typecheck, bundle and retained desktop/release tests.
+All three product-verification jobs run on GitHub-hosted Windows x64 and retain explicit `RUNNER_OS == Windows` / `RUNNER_ARCH == X64` fail-closed checks. Their test selection and product contracts are independent of any maintainer machine identity.
 
-Applicable product E2E workflows such as managed-browser, Work-recovery and Windows interactive computer-use are also configured to run on relevant pull requests targeting `main`, with path filters so unrelated changes do not consume scarce runners unnecessarily.
+The final status-publisher job only projects completed job results to GitHub commit-status APIs. It does not establish Windows product truth and does not need a Windows product-verification runner.
 
-`dev/zn-agent` is a historical compatibility branch only. It is not a CI integration target for new product development and should not accumulate independent work.
+For merge decisions, use the required checks for the exact current PR head and current `main` base. A green result from an older feature head or older base is historical evidence only.
 
-Linux Container and Linux AppImage checks are optional manual workflows and do not block normal Windows development.
+## Hosted headless acceptance
 
-## Runner selection
+Headless acceptance should use GitHub-hosted Windows when the workflow creates all of its own relevant state inside the job, for example:
 
-The product-verification jobs dispatch to the generic GitHub Actions `self-hosted` label plus the repository's Windows/x64 project labels, then immediately verify the actual runner OS/architecture where appropriate.
+- isolated Python virtual environments and `ZN_AGENT_HOME` directories;
+- repository-owned temporary files, SQLite state, loopback services, and subprocesses;
+- isolated Playwright-managed Chromium rather than an existing personal browser profile;
+- generated DOCX/XLSX fixtures rather than host Office state;
+- deterministic Work/Resident restart and side-effect recovery fixtures.
+
+Current hosted examples include the research, document-research, memory, local documents/spreadsheet, atomic overwrite, local-service diagnosis, managed-browser, command-replanning, and required ZN CI lanes.
+
+A hosted migration must preserve the original validation oracle. Changing `runs-on` is not permission to weaken test selection, retry until green, increase mutation authority, or replace a real effect with a mock.
+
+## When self-hosted infrastructure is still justified
+
+Keep a workflow on a special runner only when current evidence proves one of these boundaries matters.
+
+### Real user desktop / input authority
+
+UIA, foreground activation, pointer/keyboard input, and existing-user-browser acceptance may require a real interactive Windows session. Treat that requirement as empirical, not permanent.
+
+A candidate hosted environment must prove at least:
+
+- non-Session-0 execution;
+- `WTSActive` session state;
+- access to the input desktop;
+- same-session foreground ownership;
+- exact foreground acquisition for a test-owned window;
+- the actual product-route acceptance cases, not only a readiness probe.
+
+If the complete acceptance path is stable on GitHub-hosted Windows, remove the local-runner dependency instead of keeping it for historical reasons.
+
+### Credential-backed real-model acceptance
+
+Some guarded E2E workflows intentionally require a real cognitive provider route. Their migration boundary is secure, explicit provider configuration and secret injection, not desktop access.
+
+Do not commit provider credentials or copy a maintainer's local config into the repository. A hosted design must reconstruct the minimum route configuration from GitHub Actions secrets/variables, keep logs secret-safe, and fail closed when no authorized route is configured.
+
+### Installer, release, and publication
+
+Installer and release workflows have additional identity and credential boundaries. Moving them to hosted infrastructure requires preserving the actual package/install/restart/update contract and isolating installer identity from any existing product installation.
+
+In particular, an isolated destination directory alone does not prove an installer is isolated from upgrade/uninstall registration identity. Treat release signing, update publication, GitHub Release creation, and object-storage credentials as separate authorization surfaces.
+
+### Runner bootstrap / watchdog
+
+Runner bootstrap and watchdog workflows exist only to operate self-hosted infrastructure. They should disappear or be retired when the runner they manage is no longer part of the active CI topology.
+
+## Windows/x64 contract
+
+Hosted and self-hosted Windows jobs that rely on Windows semantics should verify the actual runner platform rather than trusting labels alone:
 
 ```text
 RUNNER_OS   = Windows
 RUNNER_ARCH = X64
 ```
 
-This deliberately avoids making a maintainer's personal computer identity part of the product contract. The dedicated interactive runner remains a special resource only for tests that genuinely require a logged-on desktop session.
+A workflow that additionally requires an interactive session, a provider route, installer isolation, or another special capability must prove that capability explicitly in the job.
 
-The final `publish-status` job is deliberately different: it does not check out or execute repository code and only projects completed job results back to GitHub commit-status APIs. It runs on a disposable GitHub-hosted runner so terminal status publication cannot sit behind scarce Windows product-verification capacity. The Windows truth still comes exclusively from the three self-hosted required jobs.
+## Security boundary
 
-If additional non-Windows self-hosted runners are ever added to this repository, runner groups or dedicated project labels should be introduced before enabling them for unrelated workloads.
+GitHub-hosted runners are disposable job environments, but workflow permissions and secrets still require least privilege.
 
-## Recovery on another Windows computer
+- Keep `GITHUB_TOKEN` permissions minimal.
+- Do not expose release/provider credentials to routine pull-request jobs that do not need them.
+- Do not print secrets or reconstructed provider configuration.
+- Treat third-party action and dependency changes as supply-chain-sensitive.
+- Keep outside-world mutations bounded and verify their postconditions independently.
 
-A replacement maintainer should use the repository's GitHub UI:
+For the remaining self-hosted jobs:
 
-```text
-Settings
-→ Actions
-→ Runners
-→ New self-hosted runner
-→ Windows x64
-```
+- use a dedicated low-privilege account or isolated machine/VM where practical;
+- do not store unrelated personal secrets, SSH keys, or browser profiles in runner workspaces;
+- do not grant administrator rights merely to make ordinary CI pass;
+- assume repository-controlled code executes with the runner account's OS permissions.
 
-Run GitHub's generated registration commands locally on that computer. The registration token is short-lived infrastructure credential material: never commit it, put it in HANDOFF, paste it into ordinary logs, or make it part of ZN resident memory.
+## Observability and queue interpretation
 
-After registration, keep the runner listener online. For unattended CI across logout/reboot, install/run the GitHub Actions runner using the supported Windows service mode on the runner host where that mode matches the workload. Interactive desktop E2E still requires a real logged-on interactive session.
+A queued or pending GitHub-hosted job is scheduling evidence, not a product-test failure. A self-hosted job that remains queued may additionally indicate that its special runner is offline or busy.
 
-Then verify repository connectivity with `.github/workflows/zn-self-hosted-runner-check.yml` and confirm a pull request to `main` produces real step execution in `ZN CI`.
+For a failed job, classify the first real failing transition:
 
-## Host safety boundary
+- assertion/product contract failure;
+- fixture/environment setup failure;
+- timeout;
+- external cancellation/runner interruption;
+- unavailable credential/capability.
 
-A self-hosted runner executes repository-controlled code with the operating-system permissions of its runner account. Therefore:
+Do not convert infrastructure interruption into a product patch without causal evidence, and do not dismiss a reproducible hosted-only product failure as infrastructure merely because the old local lane passed.
 
-- prefer a dedicated low-privilege runner account or isolated machine/VM where practical;
-- do not store personal secrets, browser profiles, SSH private keys or unrelated credentials in the runner workspace;
-- do not grant administrator privileges merely to make ordinary CI pass;
-- do not expose release/signing secrets to routine development jobs;
-- keep workflow `GITHUB_TOKEN` permissions minimal;
-- treat changes that expand runner permissions or secret access as security-sensitive review items.
+## Maintaining the topology
 
-The steady-state core development workflow currently uses repository contents read access and commit-status write access only.
+When moving a workflow from self-hosted to hosted Windows:
 
-## Observability
+1. prove the workflow does not consume hidden host state;
+2. preserve its test commands, timeout, permissions, concurrency, and acceptance oracle unless a separate reviewed change justifies otherwise;
+3. keep an explicit Windows/x64 guard;
+4. run the exact changed head on the hosted runner;
+5. refresh against current `main` before merge;
+6. remove stale local-runner documentation, bootstrap logic, and watchdog dependencies only after their final consumer is gone.
 
-Each main Windows CI job publishes its commit status as `pending` once a runner has actually accepted the job, then the runner-agnostic final status publisher records success/failure without consuming another Windows slot.
+Prefer several small migration waves with exact-head evidence over one repository-wide runner-label replacement.
 
-This means:
+## Optional non-Windows platforms
 
-```text
-no pending status     = no runner has accepted the job yet
-pending               = Windows self-hosted execution is active/accepted
-success/failure/error = terminal repository-visible evidence
-```
-
-A queued workflow without any pending status is infrastructure availability evidence, not a code-test failure.
-
-For a pull request, the merge decision must use the checks for the current PR head. A green result from an older commit is not a substitute after the branch changes. Post-merge `main` CI is canonical confirmation, not the first merge gate.
-
-## Secondary platforms
-
-The repository retains optional manual Linux workflows so historical mechanisms can still be exercised when useful:
+The repository retains optional Linux workflows such as:
 
 - `zn-linux-container-smoke.yml`;
 - `zn-linux-appimage-update-smoke.yml`.
 
-They are not current M8 blockers. Restoring Linux/macOS as intended release targets requires an explicit product decision and corresponding CI/release evidence.
+They do not replace Windows product evidence. Restoring Linux/macOS as intended desktop release targets requires an explicit product decision and corresponding CI/release acceptance.
