@@ -144,6 +144,24 @@ class WindowsCompanionBodyTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(body.dispatched, ["sense"])
 
+    def test_explicit_windows_context_action_is_read_only_and_bounded(self) -> None:
+        body = WindowsCompanionAwareBody(device_capabilities=_graph())
+        result = body.act("windows_companion_context")
+
+        self.assertTrue(result.success)
+        self.assertTrue(result.data.get("read_only"))
+        self.assertFalse(result.data.get("dispatch_sent"))
+        self.assertEqual(result.data["session"]["process_session_id"], 3)
+        self.assertEqual(result.data["power"]["ac_status"], "online")
+        self.assertTrue(result.data["network"]["has_non_loopback_address"])
+        self.assertNotIn("interfaces", result.data["network"])
+        self.assertNotIn("addresses", result.data["network"])
+
+        refused = body.act("windows_companion_context", unexpected=True)
+        self.assertFalse(refused.success)
+        self.assertEqual(refused.data.get("disposition"), "unexpected_arguments")
+        self.assertFalse(refused.data.get("dispatch_sent"))
+
     def test_admitted_window_activation_is_blocked_before_native_foreground_call(self) -> None:
         body = _RecordingCompanionBody(
             device_capabilities=_graph(input_desktop_openable=False),
