@@ -189,7 +189,7 @@ concurrency:
 jobs:
   interactive-desktop-e2e:
     name: Windows interactive product E2E
-    runs-on: [self-hosted, Windows, X64, zn-interactive]
+    runs-on: windows-latest
     timeout-minutes: 20
     env:
       CI: 'true'
@@ -197,21 +197,18 @@ jobs:
       PYTHONUTF8: '1'
       PYTHONUNBUFFERED: '1'
     steps:
-      - name: Require Windows x64 interactive runner
+      - name: Verify GitHub-hosted Windows x64 runner
         shell: powershell
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
-            throw "ZN interactive desktop E2E requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
-          }
-          if ($env:RUNNER_NAME -ne 'zn-interactive') {
-            throw "ZN interactive desktop E2E requires the dedicated zn-interactive runner; got $env:RUNNER_NAME"
+            throw "ZN interactive desktop E2E requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
           }
       - name: Checkout
         uses: actions/checkout@v7
       - name: Prove interactive desktop readiness
         shell: powershell
         run: |
-          & "$env:GITHUB_WORKSPACE\.github\scripts\test-zn-interactive-desktop-readiness.ps1"
+          & "$env:GITHUB_WORKSPACE\.github\scripts\test-zn-interactive-desktop-readiness.ps1" -ExpectedRunnerName $env:RUNNER_NAME
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
