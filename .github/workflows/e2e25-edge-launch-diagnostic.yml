@@ -42,7 +42,7 @@ jobs:
             throw "E2E25 Edge launch diagnostic requires zn-interactive; got $env:RUNNER_NAME"
           }
 
-      - name: Report runner token and browser elevation compatibility
+      - name: Report runner token browser compatibility and watchdog state
         run: |
           $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
           $principal = [Security.Principal.WindowsPrincipal]::new($identity)
@@ -56,6 +56,26 @@ jobs:
             compat_layer = [string]$env:__COMPAT_LAYER
           }
           Write-Host ('ZN_E2E25_RUNNER_TOKEN=' + ($tokenEvidence | ConvertTo-Json -Compress))
+
+          $taskName = 'ZN GitHub Actions Interactive Runner Watchdog'
+          $task = Get-ScheduledTask -TaskPath '\' -TaskName $taskName -ErrorAction SilentlyContinue
+          if ($null -eq $task) {
+            Write-Host 'ZN_E2E25_WATCHDOG={"present":false}'
+          } else {
+            $actions = @($task.Actions)
+            $watchdogEvidence = [ordered]@{
+              present = $true
+              state = [string]$task.State
+              user_id = [string]$task.Principal.UserId
+              logon_type = [string]$task.Principal.LogonType
+              run_level = [string]$task.Principal.RunLevel
+              action_count = $actions.Count
+              action_execute = if ($actions.Count -eq 1) { [string]$actions[0].Execute } else { '' }
+              action_has_run_cmd = if ($actions.Count -eq 1) { ([string]$actions[0].Arguments -match '(?i)run\.cmd') } else { $false }
+              hidden = [bool]$task.Settings.Hidden
+            }
+            Write-Host ('ZN_E2E25_WATCHDOG=' + ($watchdogEvidence | ConvertTo-Json -Compress))
+          }
 
           $browserPaths = @(
             'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
@@ -71,11 +91,14 @@ jobs:
             if (-not (Test-Path -LiteralPath $browserPath -PathType Leaf)) { continue }
             $scopes = @()
             foreach ($root in $layerRoots) {
-              $raw = Get-ItemPropertyValue -LiteralPath $root -Name $browserPath -ErrorAction SilentlyContinue
-              if ($null -eq $raw) { continue }
+              $properties = Get-ItemProperty -LiteralPath $root -ErrorAction SilentlyContinue
+              if ($null -eq $properties) { continue }
+              $property = $properties.PSObject.Properties[$browserPath]
+              if ($null -eq $property) { continue }
+              $raw = [string]$property.Value
               $scopes += [ordered]@{
                 scope = if ($root.StartsWith('HKCU:')) { 'HKCU' } else { 'HKLM' }
-                run_as_admin = ([string]$raw -match 'RUNASADMIN')
+                run_as_admin = ($raw -match 'RUNASADMIN')
               }
             }
             $browserEvidence = [ordered]@{
