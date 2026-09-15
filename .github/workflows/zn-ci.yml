@@ -37,6 +37,7 @@ jobs:
       UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
     steps:
       - name: Publish source-boundary pending status
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
@@ -44,16 +45,19 @@ jobs:
               context.sha,
               context.payload.pull_request?.head?.sha,
             ].filter(Boolean))]
+            const statusContexts = ['ZN Source Boundary', 'ZN Source Boundary / Windows']
             for (const sha of statusShas) {
-              await github.rest.repos.createCommitStatus({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                sha,
-                state: 'pending',
-                context: 'ZN Source Boundary',
-                description: 'ZN Windows CI: running',
-                target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-              })
+              for (const statusContext of statusContexts) {
+                await github.rest.repos.createCommitStatus({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  sha,
+                  state: 'pending',
+                  context: statusContext,
+                  description: 'ZN Windows CI: running',
+                  target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                })
+              }
             }
       - name: Verify GitHub-hosted Windows x64 runner
         run: |
@@ -84,6 +88,7 @@ jobs:
       UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
     steps:
       - name: Publish kernel pending status
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
@@ -91,16 +96,19 @@ jobs:
               context.sha,
               context.payload.pull_request?.head?.sha,
             ].filter(Boolean))]
+            const statusContexts = ['ZN Kernel / Python', 'ZN Kernel / Python / Windows']
             for (const sha of statusShas) {
-              await github.rest.repos.createCommitStatus({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                sha,
-                state: 'pending',
-                context: 'ZN Kernel / Python',
-                description: 'ZN Windows CI: running',
-                target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-              })
+              for (const statusContext of statusContexts) {
+                await github.rest.repos.createCommitStatus({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  sha,
+                  state: 'pending',
+                  context: statusContext,
+                  description: 'ZN Windows CI: running',
+                  target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                })
+              }
             }
       - name: Verify GitHub-hosted Windows x64 runner
         run: |
@@ -156,6 +164,7 @@ jobs:
       NODE_OPTIONS: --max-old-space-size=4096
     steps:
       - name: Publish desktop pending status
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
@@ -163,16 +172,19 @@ jobs:
               context.sha,
               context.payload.pull_request?.head?.sha,
             ].filter(Boolean))]
+            const statusContexts = ['Electron / TypeScript', 'Electron / TypeScript / Windows']
             for (const sha of statusShas) {
-              await github.rest.repos.createCommitStatus({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                sha,
-                state: 'pending',
-                context: 'Electron / TypeScript',
-                description: 'ZN Windows CI: running',
-                target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-              })
+              for (const statusContext of statusContexts) {
+                await github.rest.repos.createCommitStatus({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  sha,
+                  state: 'pending',
+                  context: statusContext,
+                  description: 'ZN Windows CI: running',
+                  target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                })
+              }
             }
       - name: Verify GitHub-hosted Windows x64 runner
         run: |
@@ -199,14 +211,16 @@ jobs:
       - name: Test release-channel, runtime staging and packaged-artifact verifiers
         run: node --test apps/desktop/scripts/prepare-zn-public-channel.test.mjs apps/desktop/scripts/stage-zn-runtime.test.mjs apps/desktop/scripts/verify-zn-packaged-runtime.test.mjs apps/desktop/scripts/verify-zn-windows-clean-install.test.mjs
 
-  publish-status:
-    name: Publish Windows CI statuses
+  publish-status-primary:
+    name: Publish Windows CI statuses / primary
     if: ${{ always() }}
     needs: [source-boundary, kernel, desktop]
     runs-on: ubuntu-latest
+    continue-on-error: true
     timeout-minutes: 10
     steps:
       - name: Publish readable CI statuses
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
@@ -218,8 +232,52 @@ jobs:
             ].filter(Boolean))]
             const rows = [
               ['ZN Source Boundary', '${{ needs.source-boundary.result }}'],
+              ['ZN Source Boundary / Windows', '${{ needs.source-boundary.result }}'],
               ['ZN Kernel / Python', '${{ needs.kernel.result }}'],
+              ['ZN Kernel / Python / Windows', '${{ needs.kernel.result }}'],
               ['Electron / TypeScript', '${{ needs.desktop.result }}'],
+              ['Electron / TypeScript / Windows', '${{ needs.desktop.result }}'],
+            ]
+            for (const sha of statusShas) {
+              for (const [statusContext, result] of rows) {
+                await github.rest.repos.createCommitStatus({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  sha,
+                  state: normalize(result),
+                  context: statusContext,
+                  description: `ZN Windows CI: ${result}`.slice(0, 140),
+                  target_url: runUrl,
+                })
+              }
+            }
+
+  publish-status-fallback:
+    name: Publish Windows CI statuses / fallback
+    if: ${{ always() }}
+    needs: [source-boundary, kernel, desktop]
+    runs-on: windows-latest
+    continue-on-error: true
+    timeout-minutes: 10
+    steps:
+      - name: Publish readable CI statuses
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const normalize = (result) => result === 'success' ? 'success' : result === 'failure' ? 'failure' : 'error'
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            const statusShas = [...new Set([
+              context.sha,
+              context.payload.pull_request?.head?.sha,
+            ].filter(Boolean))]
+            const rows = [
+              ['ZN Source Boundary', '${{ needs.source-boundary.result }}'],
+              ['ZN Source Boundary / Windows', '${{ needs.source-boundary.result }}'],
+              ['ZN Kernel / Python', '${{ needs.kernel.result }}'],
+              ['ZN Kernel / Python / Windows', '${{ needs.kernel.result }}'],
+              ['Electron / TypeScript', '${{ needs.desktop.result }}'],
+              ['Electron / TypeScript / Windows', '${{ needs.desktop.result }}'],
             ]
             for (const sha of statusShas) {
               for (const [statusContext, result] of rows) {
