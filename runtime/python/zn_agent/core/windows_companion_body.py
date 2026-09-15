@@ -65,6 +65,7 @@ class WindowsCompanionAwareBody(CurrentAppTextAwareBody):
                     completed_at=utc_now(),
                 )
             snapshot = self.device_capabilities.companion_context()
+            display = self.device_capabilities.display_context()
             return self._ok(
                 action,
                 started,
@@ -72,6 +73,7 @@ class WindowsCompanionAwareBody(CurrentAppTextAwareBody):
                     "session": asdict(snapshot.session),
                     "power": asdict(snapshot.power),
                     "network": asdict(snapshot.network),
+                    "display": asdict(display),
                     "observed_at": snapshot.observed_at,
                     "read_only": True,
                     "dispatch_sent": False,
