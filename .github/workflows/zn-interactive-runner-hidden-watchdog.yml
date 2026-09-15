@@ -8,6 +8,7 @@ on:
       - .github/workflows/zn-interactive-runner-hidden-watchdog.yml
       - .github/scripts/watch-zn-interactive-runner.ps1
       - .github/scripts/install-zn-interactive-runner-watchdog.ps1
+      - .github/scripts/test-zn-interactive-user-context.ps1
   workflow_dispatch:
 
 permissions:
@@ -44,12 +45,18 @@ jobs:
           if ($task.Principal.LogonType -notin @('Interactive','InteractiveToken')) {
             throw "Refusing to start watchdog outside interactive logon boundary: $($task.Principal.LogonType)"
           }
+          if ([string]$task.Principal.RunLevel -ne 'Limited') {
+            Write-Host "Refusing to start elevated watchdog task from Session 0: run_level=$($task.Principal.RunLevel)"
+            Write-Host 'Start zn-interactive once from a standard-user logged-on desktop session; the configure job will repair the repository watchdog to RunLevel Limited.'
+            exit 0
+          }
+          Write-Host "task.run_level=$($task.Principal.RunLevel)"
           Write-Host "task.state.before=$($task.State)"
           Start-ScheduledTask -TaskPath '\' -TaskName $taskName -ErrorAction Stop
           Start-Sleep -Seconds 15
           $task = Get-ScheduledTask -TaskPath '\' -TaskName $taskName -ErrorAction Stop
           Write-Host "task.state.after=$($task.State)"
-          Write-Host 'Existing interactive watchdog task was triggered. It can only create zn-interactive inside an already logged-on desktop session.'
+          Write-Host 'Existing Limited interactive watchdog task was triggered. It can only create zn-interactive inside an already logged-on desktop session.'
 
   configure:
     name: Configure visible interactive watchdog
@@ -74,6 +81,11 @@ jobs:
           Write-Host "runner.session_id=$sessionId"
       - name: Checkout
         uses: actions/checkout@v7
+      - name: Require standard-user interactive runner context
+        shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+        run: |
+          & "$env:GITHUB_WORKSPACE\.github\scripts\test-zn-interactive-user-context.ps1"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Configure repository-owned visible watchdog
         shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         run: .\.github\scripts\install-zn-interactive-runner-watchdog.ps1
@@ -92,11 +104,15 @@ jobs:
           if ($task.Principal.LogonType -notin @('Interactive','InteractiveToken')) {
             throw "watchdog task left interactive desktop boundary: $($task.Principal.LogonType)"
           }
+          if ([string]$task.Principal.RunLevel -ne 'Limited') {
+            throw "watchdog task must use Limited run level; got $($task.Principal.RunLevel)"
+          }
           $triggers = @($task.Triggers)
           if ($triggers.Count -ne 1 -or [string]$triggers[0].CimClass.CimClassName -ne 'MSFT_TaskLogonTrigger') {
             throw 'watchdog task must have exactly one logon trigger'
           }
           Write-Host "watchdog.task=$taskName"
           Write-Host "watchdog.visible=$(-not $task.Settings.Hidden)"
+          Write-Host "watchdog.run_level=$($task.Principal.RunLevel)"
           Write-Host "watchdog.trigger=$($triggers[0].CimClass.CimClassName)"
-          Write-Host 'Visible interactive watchdog configuration verified.'
+          Write-Host 'Visible Limited interactive watchdog configuration verified.'

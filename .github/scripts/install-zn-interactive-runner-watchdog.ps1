@@ -71,9 +71,15 @@ $cmd = Join-Path $env:SystemRoot 'System32\cmd.exe'
 $arguments = "/d /c `"cd /d $runnerRoot && run.cmd`""
 $newAction = New-ScheduledTaskAction -Execute $cmd -Argument $arguments -WorkingDirectory $runnerRoot
 $newTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentIdentity
+# Always rebuild the task principal from the currently logged-on identity. Reusing an
+# existing principal can preserve RunLevel=Highest from an older task and make the next
+# zn-interactive listener elevated even though the watchdog action itself is unchanged.
+$limitedPrincipal = New-ScheduledTaskPrincipal `
+    -UserId $currentIdentity `
+    -LogonType Interactive `
+    -RunLevel Limited
 
 if ($null -eq $existingTask) {
-    $principal = New-ScheduledTaskPrincipal -UserId $currentIdentity -LogonType Interactive -RunLevel Limited
     $settings = New-ScheduledTaskSettingsSet `
         -ExecutionTimeLimit ([TimeSpan]::Zero) `
         -RestartCount 999 `
@@ -85,9 +91,9 @@ if ($null -eq $existingTask) {
         -TaskName $TaskName `
         -Action $newAction `
         -Trigger $newTrigger `
-        -Principal $principal `
+        -Principal $limitedPrincipal `
         -Settings $settings | Out-Null
-    Write-Host "Created visible watchdog task for current interactive identity '$currentIdentity'."
+    Write-Host "Created visible Limited watchdog task for current interactive identity '$currentIdentity'."
 } else {
     $settings = $existingTask.Settings
     $settings.Hidden = $false
@@ -101,7 +107,7 @@ if ($null -eq $existingTask) {
         -TaskName $TaskName `
         -Action $newAction `
         -Trigger $newTrigger `
-        -Principal $existingTask.Principal `
+        -Principal $limitedPrincipal `
         -Settings $settings | Out-Null
 }
 
@@ -128,6 +134,9 @@ if ($updatedTask.Settings.Hidden) {
 if ($updatedTask.Principal.LogonType -notin @('Interactive','InteractiveToken')) {
     throw "Updated watchdog task left interactive desktop boundary: $($updatedTask.Principal.LogonType)"
 }
+if ([string]$updatedTask.Principal.RunLevel -ne 'Limited') {
+    throw "Updated watchdog task must run with Limited privileges; got $($updatedTask.Principal.RunLevel)."
+}
 if (-not [string]::IsNullOrWhiteSpace([string]$updatedTask.Principal.UserId) -and ([string]$updatedTask.Principal.UserId -split '\\')[-1] -ne $currentAccount) {
     throw "Updated watchdog task belongs to '$($updatedTask.Principal.UserId)', not current interactive identity '$currentIdentity'."
 }
@@ -139,4 +148,5 @@ Write-Host "ZN interactive watchdog configured as visible logon task for runner=
 Write-Host "runner.root=$runnerRoot"
 Write-Host "runner.session_id=$currentSessionId"
 Write-Host "runner.task=$TaskName"
-Write-Host 'The current listener remains intact. Future user logons start the visible watchdog automatically.'
+Write-Host "runner.task_run_level=$($updatedTask.Principal.RunLevel)"
+Write-Host 'The current listener remains intact. Future user logons start the visible Limited watchdog automatically.'
