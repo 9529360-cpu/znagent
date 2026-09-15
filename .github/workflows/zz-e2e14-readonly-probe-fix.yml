@@ -1,0 +1,84 @@
+name: Temporary E2E-14 readonly probe fix
+
+on:
+  push:
+    branches:
+      - work/e2e14-readonly-probe-fix
+    paths:
+      - .github/workflows/zz-e2e14-readonly-probe-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout patch branch
+        uses: actions/checkout@v7
+        with:
+          ref: work/e2e14-readonly-probe-fix
+          fetch-depth: 0
+      - name: Apply bounded E2E-14 fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          behavior = Path('runtime/python/zn_agent/core/browser_desktop_record_transfer_behavior.py')
+          text = behavior.read_text(encoding='utf-8')
+
+          old = '''def _same_text(value: str, audit: dict[str, Any]) -> bool:\n    return len(value) == int(audit.get("chars") or -1) and _sha(value) == str(\n        audit.get("sha256") or ""\n    )\n'''
+          new = '''def _same_text(value: str, audit: dict[str, Any]) -> bool:\n    chars = audit.get("chars")\n    if isinstance(chars, bool):\n        return False\n    try:\n        expected_chars = int(chars)\n    except (TypeError, ValueError):\n        return False\n    return (\n        expected_chars >= 0\n        and len(value) == expected_chars\n        and _sha(value) == str(audit.get("sha256") or "")\n    )\n'''
+          if text.count(old) != 1:
+              raise SystemExit('expected one _same_text implementation')
+          text = text.replace(old, new)
+
+          old = '''def _read_field(resident, foreground, name: str, *, allow_read_only: bool):\n    target = resident.named_automation_control.find_unique_edit(\n        process_id=int(foreground.process_id),\n        process_name=str(foreground.process_name),\n        name=name,\n    )\n    read = resident.current_app_text_content.read_exact(\n        process_id=int(foreground.process_id),\n        process_name=str(foreground.process_name),\n        window_handle=int(foreground.window_handle),\n        name=name,\n        runtime_id=tuple(target.runtime_id),\n        allow_read_only=allow_read_only,\n    )\n    return target, read\n'''
+          new = '''def _read_field(resident, foreground, name: str, *, allow_read_only: bool):\n    if allow_read_only:\n        candidates = resident.current_app_text_content.list_value_edits(\n            process_id=int(foreground.process_id),\n            process_name=str(foreground.process_name),\n            window_handle=int(foreground.window_handle),\n        )\n        matches = [candidate for candidate in candidates if str(candidate.name) == name]\n        if len(matches) != 1:\n            raise _Blocked(\n                f"foreground application did not expose exactly one safe exact named UIA Edit for readback: {name}"\n            )\n        target = matches[0]\n    else:\n        target = resident.named_automation_control.find_unique_edit(\n            process_id=int(foreground.process_id),\n            process_name=str(foreground.process_name),\n            name=name,\n        )\n    read = resident.current_app_text_content.read_exact(\n        process_id=int(foreground.process_id),\n        process_name=str(foreground.process_name),\n        window_handle=int(foreground.window_handle),\n        name=name,\n        runtime_id=tuple(target.runtime_id),\n        allow_read_only=allow_read_only,\n    )\n    return target, read\n'''
+          if text.count(old) != 1:
+              raise SystemExit('expected one _read_field implementation')
+          behavior.write_text(text.replace(old, new), encoding='utf-8')
+
+          test = Path('tests/zn_agent/core/test_browser_desktop_record_transfer_behavior.py')
+          text = test.read_text(encoding='utf-8')
+          old = '''    _save_prepare,\n    _title_has_saved_marker,\n    _verify_replacement,\n)\n'''
+          new = '''    _save_prepare,\n    _same_text,\n    _title_has_saved_marker,\n    _verify_replacement,\n)\n'''
+          if text.count(old) != 1:
+              raise SystemExit('expected one behavior import block')
+          text = text.replace(old, new)
+
+          old = '''class _Content:\n    def __init__(self, values: dict[str, str]):\n        self.values = values\n\n    def read_exact(self, *, name, runtime_id, **_kwargs):\n        return SimpleNamespace(text=self.values[name], audit={"runtime_id": list(runtime_id)})\n'''
+          new = '''class _Content:\n    def __init__(self, values: dict[str, str], controls: _NamedControls):\n        self.values = values\n        self.controls = controls\n\n    def list_value_edits(self, **_kwargs):\n        return tuple(\n            control\n            for control in self.controls.controls.values()\n            if int(control.control_type) == 50004\n        )\n\n    def read_exact(self, *, name, runtime_id, **_kwargs):\n        return SimpleNamespace(text=self.values[name], audit={"runtime_id": list(runtime_id)})\n'''
+          if text.count(old) != 1:
+              raise SystemExit('expected one _Content fixture')
+          text = text.replace(old, new)
+
+          old = '''        self.named_automation_control = _NamedControls()\n        self.current_app_text_content = _Content(self.values)\n        self.body = _Body(self.current_app_text_content)\n'''
+          new = '''        self.named_automation_control = _NamedControls()\n        self.current_app_text_content = _Content(self.values, self.named_automation_control)\n        self.body = _Body(self.current_app_text_content)\n'''
+          if text.count(old) != 1:
+              raise SystemExit('expected one _Resident content fixture')
+          text = text.replace(old, new)
+
+          anchor = '''    def test_begin_is_browser_source_first_then_requires_matching_desktop_key(self):\n'''
+          added = '''    def test_empty_text_audit_remains_exact_instead_of_becoming_missing(self):\n        self.assertTrue(_same_text("", _bounded_audit("")))\n\n    def test_read_only_business_key_uses_text_candidate_sense_not_writable_edit_grounder(self):\n        resident = _Resident()\n        resident.named_automation_control.ambiguous.add("客户编号")\n        state = _State()\n\n        self.assertIsNone(_begin(resident, EVENT, state))\n        self.assertEqual(state.stage, "e2e14_replace")\n        self.assertEqual(resident.body.calls, [])\n\n    def test_empty_destination_value_can_be_freshly_reproven_before_replacement(self):\n        resident = _Resident()\n        resident.values["跟进状态"] = ""\n        state = _State()\n\n        self.assertIsNone(_begin(resident, EVENT, state))\n        self.assertIsNone(_replace(resident, EVENT, state))\n        self.assertEqual(len(resident.body.calls), 1)\n        self.assertEqual(resident.values["跟进状态"], SOURCE_VALUE)\n\n'''
+          if text.count(anchor) != 1:
+              raise SystemExit('expected one test insertion anchor')
+          test.write_text(text.replace(anchor, added + anchor), encoding='utf-8')
+          PY
+      - name: Verify focused regressions
+        shell: bash
+        run: |
+          git diff --check
+          python -m compileall -q runtime/python/zn_agent/core/browser_desktop_record_transfer_behavior.py tests/zn_agent/core/test_browser_desktop_record_transfer_behavior.py
+          PYTHONPATH=runtime/python python -m unittest -v tests.zn_agent.core.test_browser_desktop_record_transfer_behavior
+      - name: Commit tested patch
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add runtime/python/zn_agent/core/browser_desktop_record_transfer_behavior.py tests/zn_agent/core/test_browser_desktop_record_transfer_behavior.py
+          git diff --cached --quiet && exit 0
+          git commit -m 'fix: use readback-safe UIA target sense for E2E-14'
+          git push origin HEAD:work/e2e14-readonly-probe-fix
