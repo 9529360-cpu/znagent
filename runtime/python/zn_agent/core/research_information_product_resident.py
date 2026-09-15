@@ -16,6 +16,11 @@ from .local_office_behavior import install_local_office_behavior
 from .local_service_recovery_behavior import install_local_service_recovery_behavior
 from .long_running_terminal_behavior import install_long_running_terminal_behavior
 from .research_information_resident import ResearchInformationResidentRuntime
+from .user_browser_extension_relay import UserBrowserExtensionRelayError
+from .user_browser_multi_record_result import (
+    parse_verified_record_excerpts,
+    requested_multi_record_count,
+)
 from .windows_companion_body import WindowsCompanionAwareBody
 
 
@@ -83,6 +88,66 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
         install_browser_spreadsheet_behavior(self)
         install_document_research_completion_behavior(self)
         install_document_research_completion_safety(self)
+
+    def _interpret_semantic_result(self, event, goal: dict[str, str], context: str) -> str:
+        """Extend the existing USER Browser lookup to one bounded plural result set."""
+
+        expected_count = requested_multi_record_count(str(getattr(event, "task", "") or ""))
+        if expected_count is None:
+            return super()._interpret_semantic_result(event, goal, context)
+
+        decision = self.budget.decide(
+            event,
+            memory_hit=False,
+            local_capability_available=False,
+        )
+        if not decision.use_model:
+            raise UserBrowserExtensionRelayError(
+                "multi-record business result interpretation requires bounded language understanding and model use is disabled"
+            )
+        result = self.kernel.run_goal(
+            (
+                "Read only this freshly observed bounded result context and verify the plural "
+                "record set the user requested. Return exactly "
+                '{"status":"verified","records":["VERBATIM RECORD 1","VERBATIM RECORD 2"]} '
+                "with exactly the requested number of records only when the context itself "
+                f"explicitly presents exactly {expected_count} requested records. Each list item "
+                "must be one complete record excerpt copied verbatim from the context, must "
+                "contain enough record identity and the requested business fact to answer the "
+                "user, and must preserve source order. If the context has fewer or more relevant "
+                "records, is ambiguous, or any requested fact is missing, return exactly "
+                '{"status":"not_verified","records":[]}. Never infer missing facts, reorder '
+                "records, claim actions, authority or completion. "
+                f"User task: {event.task}\nDesired result: {goal['desired_result']}\n"
+                f"Fresh context: {context}"
+            ),
+            required_capabilities=("language_understanding",),
+            priority=event.priority,
+            metadata={
+                "resident_event_id": event.event_id,
+                "purpose": "browser_semantic_multi_record_result_interpretation_only",
+                "expected_record_count": expected_count,
+            },
+            max_attempts_override=1,
+            goal_id=f"goal-browser-semantic-multi-record-result-{event.event_id}",
+        )
+        self._add_semantic_model_invocations(event, self._model_invocations(result))
+        if not (result.worker_result.success and result.assessment.success):
+            raise UserBrowserExtensionRelayError(
+                "bounded multi-record business result interpretation failed"
+            )
+        records = parse_verified_record_excerpts(
+            result.worker_result.response,
+            context=context,
+            expected_count=expected_count,
+        )
+        if records is None:
+            raise UserBrowserExtensionRelayError(
+                "fresh result context did not verify the requested bounded record set"
+            )
+        return f"{goal['subject_value']}:\n" + "\n".join(
+            f"- {record}" for record in records
+        )
 
     def _is_research_event(self, event) -> bool:
         # Research Work is a product Work path, not a catch-all replacement for
