@@ -37,7 +37,7 @@ concurrency:
 jobs:
   command-replan:
     name: E2E-23 command replanning / Windows
-    runs-on: [self-hosted, Windows, X64, zn-ci]
+    runs-on: windows-latest
     timeout-minutes: 15
     env:
       CI: 'true'
@@ -49,10 +49,10 @@ jobs:
       run:
         shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
     steps:
-      - name: Require Windows x64 headless CI runner
+      - name: Verify GitHub-hosted Windows x64 runner
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
-            throw "E2E-23 requires a Windows X64 self-hosted runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+            throw "E2E-23 requires a GitHub-hosted Windows X64 runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
           }
       - name: Checkout
         uses: actions/checkout@v7
