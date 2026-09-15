@@ -200,6 +200,97 @@ class OfficeDocumentHeaderFooterWorkTests(unittest.TestCase):
             self.assertEqual(inspected["blocker"], "unsupported_document_structure")
             self.assertIn("inactive", inspected["detail"])
 
+    def test_active_first_page_header_target_is_owned_and_reopens(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "active-first-header.docx"
+            destination = root / "active-first-header-updated.docx"
+            doc = Document()
+            doc.add_paragraph("正文")
+            section = doc.sections[0]
+            section.different_first_page_header_footer = True
+            first = section.first_page_header
+            first.is_linked_to_previous = False
+            self._add_payment_date(first.paragraphs[0])
+            doc.save(source)
+
+            inspected = inspect_docx(source)
+            self.assertTrue(inspected["ready"], inspected)
+            self.assertEqual(inspected["payment_date_occurrence_count"], 1)
+            self.assertTrue(
+                inspected["payment_date_occurrences"][0]["location"].startswith(
+                    "header:section:0/first/"
+                )
+            )
+
+            result = write_docx_copy(
+                source,
+                destination,
+                replacement_date="2026年9月20日",
+                precondition_identity=inspected["identity"],
+            )
+            self.assertTrue(result["destination_reopened"])
+            self.assertTrue(str(result["target_location"]).startswith("header:section:0/first/"))
+            reopened = Document(destination)
+            self.assertTrue(reopened.sections[0].different_first_page_header_footer)
+            self.assertEqual(
+                reopened.sections[0].first_page_header.paragraphs[0].text,
+                "付款日期：2026年9月20日",
+            )
+
+    def test_inactive_even_page_footer_target_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "inactive-even-footer.docx"
+            doc = Document()
+            doc.add_paragraph("正文")
+            self.assertFalse(doc.settings.odd_and_even_pages_header_footer)
+            even = doc.sections[0].even_page_footer
+            even.is_linked_to_previous = False
+            self._add_payment_date(even.paragraphs[0])
+            doc.save(source)
+
+            inspected = inspect_docx(source)
+            self.assertFalse(inspected["ready"])
+            self.assertEqual(inspected["blocker"], "unsupported_document_structure")
+            self.assertIn("inactive", inspected["detail"])
+
+    def test_active_even_page_footer_target_is_owned_and_reopens(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "active-even-footer.docx"
+            destination = root / "active-even-footer-updated.docx"
+            doc = Document()
+            doc.add_paragraph("正文")
+            doc.settings.odd_and_even_pages_header_footer = True
+            even = doc.sections[0].even_page_footer
+            even.is_linked_to_previous = False
+            self._add_payment_date(even.paragraphs[0])
+            doc.save(source)
+
+            inspected = inspect_docx(source)
+            self.assertTrue(inspected["ready"], inspected)
+            self.assertEqual(inspected["payment_date_occurrence_count"], 1)
+            self.assertTrue(
+                inspected["payment_date_occurrences"][0]["location"].startswith(
+                    "footer:section:0/even/"
+                )
+            )
+
+            result = write_docx_copy(
+                source,
+                destination,
+                replacement_date="2026年9月20日",
+                precondition_identity=inspected["identity"],
+            )
+            self.assertTrue(result["destination_reopened"])
+            self.assertTrue(str(result["target_location"]).startswith("footer:section:0/even/"))
+            reopened = Document(destination)
+            self.assertTrue(reopened.settings.odd_and_even_pages_header_footer)
+            self.assertEqual(
+                reopened.sections[0].even_page_footer.paragraphs[0].text,
+                "付款日期：2026年9月20日",
+            )
+
     def test_body_and_header_targets_remain_ambiguous_for_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
