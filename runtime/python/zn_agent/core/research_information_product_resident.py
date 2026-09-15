@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from .action_authority import install_worker_authority_gate
 from .browser_spreadsheet_behavior import install_browser_spreadsheet_behavior
-from .current_app_text_body import CurrentAppTextAwareBody
 from .current_app_text_cleanup_behavior import install_current_app_text_cleanup_behavior
 from .current_app_text_cleanup_completion import install_current_app_text_cleanup_completion
 from .document_research_completion_behavior import (
@@ -17,6 +16,7 @@ from .local_office_behavior import install_local_office_behavior
 from .local_service_recovery_behavior import install_local_service_recovery_behavior
 from .long_running_terminal_behavior import install_long_running_terminal_behavior
 from .research_information_resident import ResearchInformationResidentRuntime
+from .windows_companion_body import WindowsCompanionAwareBody
 
 
 _RESEARCH_INTENT_MARKERS = (
@@ -64,11 +64,13 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Keep one product Body. E2E-13 extends the current final application +
-        # browser/file/pointer/keyboard side-effect stack with one exact UIA Value
-        # movement. Reinstall the observers/gates that are attached to the
-        # concrete Body instance, exactly as existing Body-replacement layers do.
-        self.body = CurrentAppTextAwareBody(resident=self)
+        # Keep one product Body and one DeviceCapabilityGraph. The companion-aware
+        # layer extends the existing application/browser/file/pointer/keyboard/UIA
+        # stack; it does not introduce another execution or machine-truth surface.
+        self.body = WindowsCompanionAwareBody(
+            resident=self,
+            device_capabilities=self.device_capabilities,
+        )
         installer = getattr(self, "_install_body_dispatch_health_observer", None)
         if callable(installer):
             installer()
