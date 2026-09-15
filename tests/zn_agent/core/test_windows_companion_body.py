@@ -41,6 +41,12 @@ class _RecordingCompanionBody(WindowsCompanionAwareBody):
         )
 
 
+class _ContextCompanionBody(WindowsCompanionAwareBody):
+    @staticmethod
+    def _current_session_connection_state(session_id: int) -> str | None:
+        return "active" if session_id > 0 else None
+
+
 def _graph(
     *,
     process_session_id: int | None = 3,
@@ -144,8 +150,8 @@ class WindowsCompanionBodyTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(body.dispatched, ["sense"])
 
-    def test_explicit_windows_context_action_is_read_only_and_bounded(self) -> None:
-        body = WindowsCompanionAwareBody(device_capabilities=_graph())
+    def test_explicit_windows_context_action_is_read_only_bounded_and_reports_input_readiness(self) -> None:
+        body = _ContextCompanionBody(device_capabilities=_graph())
         result = body.act("windows_companion_context")
 
         self.assertTrue(result.success)
@@ -156,6 +162,9 @@ class WindowsCompanionBodyTests(unittest.TestCase):
         self.assertTrue(result.data["network"]["has_non_loopback_address"])
         self.assertNotIn("interfaces", result.data["network"])
         self.assertNotIn("addresses", result.data["network"])
+        self.assertTrue(result.data["interactive_input"]["ready"])
+        self.assertEqual(result.data["interactive_input"]["session_connection_state"], "active")
+        self.assertEqual(result.data["interactive_input"]["disposition"], "ready")
 
         refused = body.act("windows_companion_context", unexpected=True)
         self.assertFalse(refused.success)
