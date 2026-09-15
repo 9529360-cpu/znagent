@@ -54,6 +54,11 @@ def _same_text(value: str, audit: dict[str, Any]) -> bool:
     )
 
 
+def _title_has_saved_marker(value: str) -> bool:
+    text = str(value or "")
+    return "已保存" in text or "saved" in text.casefold()
+
+
 def _is_request(event) -> bool:
     if str(getattr(event, "kind", "") or "").strip().lower() != "desktop_user_event":
         return False
@@ -580,6 +585,9 @@ def _save_prepare(resident, event, state):
         expected = dict(meta.get("source", {}).get("value") or {})
         if not _same_text(str(field_read.text), expected):
             raise _Blocked("destination field no longer matches Browser source before Save")
+        pre_save_title = str(foreground.title or "")
+        if _title_has_saved_marker(pre_save_title):
+            raise _Blocked("destination application already reports saved state before Save")
         button = resident.named_automation_control.find_unique_button(
             process_id=int(foreground.process_id),
             process_name=str(foreground.process_name),
@@ -592,6 +600,7 @@ def _save_prepare(resident, event, state):
             state,
             f"E2E-14 Save preflight failed closed: {type(exc).__name__}: {exc}",
         )
+    meta["pre_save_title"] = _bounded_audit(pre_save_title)
     meta["save_target"] = {
         "runtime_id": list(button.runtime_id),
         "semantic_name": _SAVE_NAME,
@@ -649,7 +658,10 @@ def _safe_summary(meta: dict[str, Any]) -> str:
         "final_business_key": dict(final.get("business_key") or {}),
         "final_value": dict(final.get("value") or {}),
         "source_exact": bool(final.get("source_exact")),
+        "pre_save_title": dict(meta.get("pre_save_title") or {}),
+        "post_save_title": dict(final.get("post_save_title") or {}),
         "title_saved_postcondition": bool(final.get("title_saved_postcondition")),
+        "title_saved_transition": bool(final.get("title_saved_transition")),
         "root_readback_verified": bool(final.get("readback_verified")),
         "verified_at": str(final.get("verified_at") or ""),
     }
@@ -730,6 +742,19 @@ def _final_verify(resident, event, state):
         meta["save_dispatch_count"] = 1
         meta["save_action_id"] = str(execution.get("action_id") or "")
 
+    pre_save_title = dict(meta.get("pre_save_title") or {})
+    try:
+        pre_save_title_chars = int(pre_save_title["chars"])
+    except (KeyError, TypeError, ValueError):
+        pre_save_title_chars = -1
+    if pre_save_title_chars < 0 or len(str(pre_save_title.get("sha256") or "")) != 64:
+        return _terminal(
+            resident,
+            event,
+            state,
+            "E2E-14 Save completion lost the bounded unsaved pre-Save title evidence",
+        )
+
     observations = int(meta.get("final_observation_count") or 0) + 1
     meta["final_observation_count"] = observations
     state.data[_STATE_KEY] = meta
@@ -788,7 +813,7 @@ def _final_verify(resident, event, state):
             "E2E-14 final saved desktop field does not match Browser source value",
         )
     title = str(foreground.title or "")
-    title_saved = "已保存" in title or "saved" in title.casefold()
+    title_saved = _title_has_saved_marker(title)
     if not title_saved:
         if observations < 6:
             time.sleep(0.03)
@@ -810,7 +835,10 @@ def _final_verify(resident, event, state):
         "business_key_target": _target_audit(key_target),
         "value_target": _target_audit(field_target),
         "source_exact": True,
+        "pre_save_title": pre_save_title,
+        "post_save_title": _bounded_audit(title),
         "title_saved_postcondition": True,
+        "title_saved_transition": True,
         "readback_verified": True,
         "verified_at": utc_now(),
     }
@@ -842,7 +870,7 @@ def _final_verify(resident, event, state):
         reason=(
             "E2E-14 VERIFIED NARROW only after source-first exact USER Browser record evidence, "
             "fresh matching desktop business-key authority, shared durable UIA replacement ownership, "
-            "one Save pointer lifecycle, fresh cross-app readback and Root acceptance"
+            "one Save pointer lifecycle, causal saved-state transition, fresh cross-app readback and Root acceptance"
         ),
     )
 
@@ -899,6 +927,12 @@ def install_browser_desktop_record_transfer_behavior(resident) -> None:
                     dict(meta.get("source", {}).get("value") or {}),
                 ):
                     return "E2E-14 destination value drifted before final Save input boundary"
+                current_title = str(foreground.title or "")
+                pre_save_title = dict(meta.get("pre_save_title") or {})
+                if not pre_save_title or not _same_text(current_title, pre_save_title):
+                    return "E2E-14 application title drifted after Save preparation"
+                if _title_has_saved_marker(current_title):
+                    return "E2E-14 application already reports saved state before final Save input boundary"
                 button = resident.named_automation_control.find_unique_button(
                     process_id=int(foreground.process_id),
                     process_name=str(foreground.process_name),
