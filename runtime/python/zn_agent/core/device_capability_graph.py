@@ -2,18 +2,20 @@ from __future__ import annotations
 
 """Public V1 DeviceCapabilityGraph with conservative application name resolution.
 
-The lower-level Windows fact collectors live in ``machine_capability``.  This
+The lower-level Windows fact collectors live in ``machine_capability``. This
 composition tightens human-facing resolution so a long unknown name can never be
-accepted merely because it starts with a shorter installed alias.  Exact aliases
+accepted merely because it starts with a shorter installed alias. Exact aliases
 are resolved before bounded prefix/substring matching; fuzzy candidates can never
 make an otherwise unique exact application ambiguous.
 
 The public graph also owns read-only Windows companion, display, foreground and
-clipboard-metadata senses. This keeps session/power/network/multi-monitor/current-
-window/clipboard-presence facts in the existing Resident device graph instead of
-creating a parallel OS agent or context store. A companion frame is only a
-privacy-bounded fingerprint over its supported fresh facts; it is not a second
-source of truth.
+clipboard-metadata senses plus an explicit on-demand Explorer-selection sense.
+This keeps session/power/network/multi-monitor/current-window/clipboard-presence
+and user-invoked Explorer selection facts in the existing Resident device graph
+instead of creating a parallel OS agent or context store. Explorer selection
+paths are deliberately not part of the aggregate resident snapshot or companion
+frame. A companion frame remains only a privacy-bounded fingerprint over its
+supported fresh facts; it is not a second source of truth.
 """
 
 from dataclasses import dataclass
@@ -44,6 +46,10 @@ from .windows_display_context import (
     NativeWindowsDisplayContextSense,
     WindowsDisplayObservation,
 )
+from .windows_explorer_selection_context import (
+    NativeWindowsExplorerSelectionSense,
+    WindowsExplorerSelectionObservation,
+)
 from .windows_foreground_companion import (
     NativeWindowsForegroundCompanionSense,
     WindowsForegroundCompanionObservation,
@@ -70,6 +76,7 @@ class DeviceCapabilityGraph(_MachineFactGraph):
         display_context_sense: NativeWindowsDisplayContextSense | None = None,
         foreground_companion_sense: NativeWindowsForegroundCompanionSense | None = None,
         clipboard_context_sense: NativeWindowsClipboardContextSense | None = None,
+        explorer_selection_sense: NativeWindowsExplorerSelectionSense | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -84,6 +91,9 @@ class DeviceCapabilityGraph(_MachineFactGraph):
         )
         self._clipboard_context_sense = (
             clipboard_context_sense or NativeWindowsClipboardContextSense()
+        )
+        self._explorer_selection_sense = (
+            explorer_selection_sense or NativeWindowsExplorerSelectionSense()
         )
 
     def companion_context(self) -> WindowsCompanionContextSnapshot:
@@ -106,6 +116,11 @@ class DeviceCapabilityGraph(_MachineFactGraph):
 
         return self._clipboard_context_sense.probe()
 
+    def explorer_selection_context(self) -> WindowsExplorerSelectionObservation:
+        """Fresh exact foreground Explorer selection, read only on explicit demand."""
+
+        return self._explorer_selection_sense.probe()
+
     def companion_frame(self) -> WindowsCompanionFrame:
         """Fingerprint the current bounded Windows context for drift-safe binding."""
 
@@ -116,7 +131,12 @@ class DeviceCapabilityGraph(_MachineFactGraph):
         *,
         force_inventory_refresh: bool = False,
     ) -> ResidentDeviceContextSnapshot:
-        """Compose current machine and companion facts without caching them."""
+        """Compose current ambient machine/companion facts without caching them.
+
+        Explorer selection is intentionally omitted because raw user-selected
+        paths require an explicit contextual capability request rather than
+        ambient snapshot attachment.
+        """
 
         return ResidentDeviceContextSnapshot(
             machine=self.snapshot(force_inventory_refresh=force_inventory_refresh),
@@ -151,7 +171,7 @@ class DeviceCapabilityGraph(_MachineFactGraph):
 
         applications = self.installed_applications(force_refresh=force_refresh)
 
-        # Exact aliases are authoritative for human-facing resolution.  This
+        # Exact aliases are authoritative for human-facing resolution. This
         # keeps "Notepad" from becoming ambiguous merely because "Notepad++"
         # is installed, while two distinct identities both exactly named
         # "Notepad" still fail closed as genuinely ambiguous.
