@@ -1,12 +1,14 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { app, BrowserWindow, dialog, shell } from 'electron'
+import { app, BrowserWindow, dialog, Menu, shell, Tray } from 'electron'
 
 import { configureZnPackagedRuntime } from './zn-packaged-runtime'
 import { parseZnDeepLink, type ZnDeepLink, znDeepLinksFromArgv } from './zn-protocol'
 import { registerZnReleaseUpdaterIpc } from './zn-release-updater'
 import { registerZnResidentIpc, startZnResidentOnDesktopReady } from './zn-resident-ipc'
+import { ZnWindowsResidentSurface, znWindowsTrayIconPath } from './zn-windows-resident-surface'
 import { registerZnWorkspaceIpc } from './zn-workspace-ipc'
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url))
@@ -14,7 +16,28 @@ const preloadPath = path.join(moduleDir, 'electron-preload.js')
 const shellPath = path.join(moduleDir, 'zn-shell.html')
 
 let primaryWindow: BrowserWindow | null = null
+let windowsResidentSurface: ZnWindowsResidentSurface | null = null
+let windowsResidentTray: Tray | null = null
 const pendingDeepLinks: ZnDeepLink[] = []
+
+function isSourceDevelopmentInstance(): boolean {
+  return !app.isPackaged && process.env.ZN_DESKTOP_DEV === '1'
+}
+
+function configureSourceDevelopmentProfile(): void {
+  if (!isSourceDevelopmentInstance()) return
+  const userData = String(process.env.ZN_DESKTOP_USER_DATA || '').trim()
+  if (!userData) {
+    throw new Error('ZN_DESKTOP_USER_DATA is required for an isolated source-development desktop')
+  }
+  const resolved = path.resolve(userData)
+  const sessionData = path.join(resolved, 'session')
+  fs.mkdirSync(resolved, { recursive: true })
+  fs.mkdirSync(sessionData, { recursive: true })
+  app.setPath('userData', resolved)
+  app.setPath('sessionData', sessionData)
+  console.info(`[ZN] source-development profile isolated at ${resolved}`)
+}
 
 function isSafeExternalUrl(value: string): boolean {
   try {
@@ -90,6 +113,10 @@ export function createZnDesktopWindow(): BrowserWindow {
     event.preventDefault()
     routeNavigation(url)
   })
+  window.on('query-session-end', () => windowsResidentSurface?.beginQuit())
+  window.on('close', event => {
+    windowsResidentSurface?.handleWindowClose(event, window)
+  })
   window.on('closed', () => {
     if (primaryWindow === window) primaryWindow = null
   })
@@ -106,7 +133,50 @@ function ensurePrimaryWindow(): BrowserWindow {
   return primaryWindow
 }
 
+function initializeWindowsResidentSurface(): void {
+  if (process.platform !== 'win32' || windowsResidentSurface) return
+
+  const surface = new ZnWindowsResidentSurface(
+    () => ensurePrimaryWindow(),
+    () => app.quit()
+  )
+
+  try {
+    const tray = new Tray(
+      znWindowsTrayIconPath({
+        isPackaged: app.isPackaged,
+        resourcesPath: process.resourcesPath,
+        appPath: app.getAppPath()
+      })
+    )
+    tray.setToolTip('ZN')
+    tray.setContextMenu(
+      Menu.buildFromTemplate([
+        {
+          label: 'Open ZN',
+          click: () => surface.show()
+        },
+        { type: 'separator' },
+        {
+          label: 'Quit ZN',
+          click: () => surface.quit()
+        }
+      ])
+    )
+    tray.on('double-click', () => surface.show())
+    windowsResidentSurface = surface
+    windowsResidentTray = tray
+  } catch (error) {
+    console.error('[ZN] failed to initialize Windows resident surface', error)
+    windowsResidentSurface = null
+    windowsResidentTray = null
+  }
+}
+
 async function bootstrapZnDesktop(): Promise<void> {
+  configureSourceDevelopmentProfile()
+  const sourceDevelopment = isSourceDevelopmentInstance()
+
   if (!app.requestSingleInstanceLock()) {
     app.quit()
     return
@@ -114,6 +184,7 @@ async function bootstrapZnDesktop(): Promise<void> {
 
   for (const link of znDeepLinksFromArgv(process.argv)) pendingDeepLinks.push(link)
 
+  app.on('before-quit', () => windowsResidentSurface?.beginQuit())
   app.on('open-url', (event, url) => {
     event.preventDefault()
     receiveDeepLink(url)
@@ -138,9 +209,12 @@ async function bootstrapZnDesktop(): Promise<void> {
   registerZnReleaseUpdaterIpc()
 
   await app.whenReady()
-  if (!app.setAsDefaultProtocolClient('zn')) {
+  if (sourceDevelopment) {
+    console.info('[ZN] source-development instance skips zn:// OS protocol registration')
+  } else if (!app.setAsDefaultProtocolClient('zn')) {
     console.warn('[ZN] OS protocol registration for zn:// is unavailable in this build')
   }
+  initializeWindowsResidentSurface()
   ensurePrimaryWindow()
   await startZnResidentOnDesktopReady()
 
