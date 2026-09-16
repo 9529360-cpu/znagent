@@ -1,3 +1,5 @@
+import path from 'node:path'
+
 export interface ZnResidentSurfaceWindow {
   isDestroyed(): boolean
   isMinimized(): boolean
@@ -9,6 +11,18 @@ export interface ZnResidentSurfaceWindow {
 
 export interface ZnResidentSurfaceCloseEvent {
   preventDefault(): void
+}
+
+export function znWindowsTrayIconPath({
+  isPackaged,
+  resourcesPath,
+  appPath
+}: {
+  isPackaged: boolean
+  resourcesPath: string
+  appPath: string
+}): string {
+  return isPackaged ? path.join(resourcesPath, 'icon.ico') : path.join(appPath, 'assets', 'icon.ico')
 }
 
 /**
