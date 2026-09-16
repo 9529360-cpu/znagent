@@ -3,9 +3,10 @@ from __future__ import annotations
 """Bounded Enter-key submission for exact managed-browser textbox targets.
 
 This is intentionally not a general keyboard primitive. It admits exactly one
-semantic action: press ``Enter`` on a freshly revalidated non-sensitive textbox
-whose current text still matches the caller-provided digest/length, then prove
-an explicit same-origin URL postcondition from a fresh page observation.
+semantic action: press ``Enter`` on a freshly revalidated non-sensitive MANAGED
+Browser textbox whose current text still matches the caller-provided
+digest/length, then prove an explicit same-origin URL postcondition from a fresh
+page observation.
 """
 
 from typing import Any
@@ -16,6 +17,7 @@ from .browser import (
     BrowserActionAuthority,
     BrowserActionKind,
     BrowserEffectEvidence,
+    BrowserPlane,
 )
 from .models import utc_now
 
@@ -49,6 +51,10 @@ def perform_enter_press(
 
     if action.kind is not BrowserActionKind.PRESS:
         raise ManagedBrowserPressError("managed browser press helper received the wrong action kind")
+    if session.identity.plane is not BrowserPlane.MANAGED:
+        raise ManagedBrowserPressError(
+            "browser Enter submission is permitted only on the resident-owned MANAGED Browser"
+        )
     if action.target is None:
         raise ManagedBrowserPressError("browser press requires a current target")
     if action.target.role != "textbox":
