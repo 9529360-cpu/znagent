@@ -1,0 +1,113 @@
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { test, vi } from 'vitest'
+
+import {
+  ZnWindowsResidentSurface,
+  type ZnResidentSurfaceWindow,
+  znWindowsTrayIconPath
+} from './zn-windows-resident-surface'
+
+const here = path.dirname(fileURLToPath(import.meta.url))
+const desktopRoot = path.resolve(here, '..')
+
+function makeWindow(overrides: Partial<ZnResidentSurfaceWindow> = {}): ZnResidentSurfaceWindow {
+  return {
+    isDestroyed: () => false,
+    isMinimized: () => false,
+    restore: vi.fn(),
+    show: vi.fn(),
+    focus: vi.fn(),
+    hide: vi.fn(),
+    ...overrides
+  }
+}
+
+test('packaged Windows tray icon resolves from electron-builder extraResources', () => {
+  assert.equal(
+    znWindowsTrayIconPath({
+      isPackaged: true,
+      resourcesPath: path.join('C:', 'ZN', 'resources'),
+      appPath: path.join('C:', 'ZN', 'resources', 'app.asar')
+    }),
+    path.join('C:', 'ZN', 'resources', 'icon.ico')
+  )
+})
+
+test('ZN builder copies the source tray icon to the packaged resources root', () => {
+  const builder = fs.readFileSync(path.join(desktopRoot, 'electron-builder.zn.yml'), 'utf8')
+
+  assert.equal(fs.existsSync(path.join(desktopRoot, 'assets', 'icon.ico')), true)
+  assert.match(builder, /^extraResources:$/m)
+  assert.match(builder, /^\s+- from: assets\/icon\.ico\r?\n\s+to: icon\.ico$/m)
+})
+
+test('development Windows tray icon resolves from the source assets directory', () => {
+  assert.equal(
+    znWindowsTrayIconPath({
+      isPackaged: false,
+      resourcesPath: path.join('C:', 'Electron', 'resources'),
+      appPath: path.join('D:', 'src', 'znagent', 'apps', 'desktop')
+    }),
+    path.join('D:', 'src', 'znagent', 'apps', 'desktop', 'assets', 'icon.ico')
+  )
+})
+
+test('closing the Windows desktop window hides the surface without quitting the app', () => {
+  const window = makeWindow()
+  const quitApplication = vi.fn()
+  const preventDefault = vi.fn()
+  const surface = new ZnWindowsResidentSurface(() => window, quitApplication)
+
+  const hidden = surface.handleWindowClose({ preventDefault }, window)
+
+  assert.equal(hidden, true)
+  assert.equal(preventDefault.mock.calls.length, 1)
+  assert.equal(vi.mocked(window.hide).mock.calls.length, 1)
+  assert.equal(quitApplication.mock.calls.length, 0)
+})
+
+test('a genuine before-quit lifecycle lets the desktop window close normally', () => {
+  const window = makeWindow()
+  const preventDefault = vi.fn()
+  const surface = new ZnWindowsResidentSurface(() => window, vi.fn())
+
+  surface.beginQuit()
+  const hidden = surface.handleWindowClose({ preventDefault }, window)
+
+  assert.equal(hidden, false)
+  assert.equal(preventDefault.mock.calls.length, 0)
+  assert.equal(vi.mocked(window.hide).mock.calls.length, 0)
+})
+
+test('show restores a minimized resident window before showing and focusing it', () => {
+  const order: string[] = []
+  const window = makeWindow({
+    isMinimized: () => true,
+    restore: vi.fn(() => order.push('restore')),
+    show: vi.fn(() => order.push('show')),
+    focus: vi.fn(() => order.push('focus'))
+  })
+  const surface = new ZnWindowsResidentSurface(() => window, vi.fn())
+
+  surface.show()
+
+  assert.deepEqual(order, ['restore', 'show', 'focus'])
+})
+
+test('explicit tray quit marks the lifecycle before asking Electron to quit', () => {
+  const window = makeWindow()
+  const quitApplication = vi.fn()
+  const preventDefault = vi.fn()
+  const surface = new ZnWindowsResidentSurface(() => window, quitApplication)
+
+  surface.quit()
+  const hidden = surface.handleWindowClose({ preventDefault }, window)
+
+  assert.equal(quitApplication.mock.calls.length, 1)
+  assert.equal(hidden, false)
+  assert.equal(preventDefault.mock.calls.length, 0)
+})
