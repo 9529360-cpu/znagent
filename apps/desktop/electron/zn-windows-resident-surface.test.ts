@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict'
+import path from 'node:path'
 
 import { test, vi } from 'vitest'
 
-import { ZnWindowsResidentSurface, type ZnResidentSurfaceWindow } from './zn-windows-resident-surface'
+import {
+  ZnWindowsResidentSurface,
+  type ZnResidentSurfaceWindow,
+  znWindowsTrayIconPath
+} from './zn-windows-resident-surface'
 
 function makeWindow(overrides: Partial<ZnResidentSurfaceWindow> = {}): ZnResidentSurfaceWindow {
   return {
@@ -15,6 +20,28 @@ function makeWindow(overrides: Partial<ZnResidentSurfaceWindow> = {}): ZnResiden
     ...overrides
   }
 }
+
+test('packaged Windows tray icon resolves from electron-builder extraResources', () => {
+  assert.equal(
+    znWindowsTrayIconPath({
+      isPackaged: true,
+      resourcesPath: path.join('C:', 'ZN', 'resources'),
+      appPath: path.join('C:', 'ZN', 'resources', 'app.asar')
+    }),
+    path.join('C:', 'ZN', 'resources', 'icon.ico')
+  )
+})
+
+test('development Windows tray icon resolves from the source assets directory', () => {
+  assert.equal(
+    znWindowsTrayIconPath({
+      isPackaged: false,
+      resourcesPath: path.join('C:', 'Electron', 'resources'),
+      appPath: path.join('D:', 'src', 'znagent', 'apps', 'desktop')
+    }),
+    path.join('D:', 'src', 'znagent', 'apps', 'desktop', 'assets', 'icon.ico')
+  )
+})
 
 test('closing the Windows desktop window hides the surface without quitting the app', () => {
   const window = makeWindow()
