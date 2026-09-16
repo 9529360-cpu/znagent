@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import ctypes
 import os
-import subprocess
 import tempfile
 import time
 import unittest
@@ -31,31 +30,30 @@ class WindowsInteractiveExplorerSelectedFileE2ETests(unittest.TestCase):
             raise unittest.SkipTest("interactive input desktop is unavailable")
         user32.CloseDesktop(desktop)
 
-    @staticmethod
-    def _shell_windows():
-        from comtypes.client import CreateObject
-
-        shell = CreateObject("Shell.Application", dynamic=True)
-        windows = shell.Windows()
-        return shell, [windows.Item(index) for index in range(int(windows.Count))]
-
     @classmethod
     def _open_select_and_foreground(cls, path: Path):
         from ctypes import wintypes
+        from comtypes.client import CreateObject
 
-        subprocess.Popen(
-            ["explorer.exe", "/n,", str(path.parent)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        shell = CreateObject("Shell.Application", dynamic=True)
+        before = {
+            int(shell.Windows().Item(index).HWND)
+            for index in range(int(shell.Windows().Count))
+            if shell.Windows().Item(index) is not None
+        }
+        shell.Explore(str(path.parent))
+
         wanted_parent = os.path.normcase(os.path.abspath(str(path.parent)))
-        deadline = time.monotonic() + 10.0
+        deadline = time.monotonic() + 20.0
         window = None
+        observed_folders: set[str] = set()
         while time.monotonic() < deadline:
-            _, windows = cls._shell_windows()
-            for candidate in windows:
+            windows = shell.Windows()
+            for index in range(int(windows.Count)):
+                candidate = windows.Item(index)
                 try:
                     folder_path = str(candidate.Document.Folder.Self.Path or "")
+                    observed_folders.add(folder_path)
                 except Exception:
                     continue
                 if os.path.normcase(os.path.abspath(folder_path)) == wanted_parent:
@@ -65,7 +63,11 @@ class WindowsInteractiveExplorerSelectedFileE2ETests(unittest.TestCase):
                 break
             time.sleep(0.1)
         if window is None:
-            raise AssertionError("real Explorer window for fixture folder did not appear")
+            raise AssertionError(
+                "real Explorer window for fixture folder did not appear; "
+                f"shell_window_count={int(shell.Windows().Count)} "
+                f"prior_hwnds={sorted(before)} observed_folders={sorted(observed_folders)!r}"
+            )
 
         document = window.Document
         folder_item = document.Folder.ParseName(path.name)
@@ -86,17 +88,23 @@ class WindowsInteractiveExplorerSelectedFileE2ETests(unittest.TestCase):
         user32.SetForegroundWindow(wintypes.HWND(hwnd))
 
         deadline = time.monotonic() + 5.0
+        last_selected: list[str] = []
+        last_foreground = 0
         while time.monotonic() < deadline:
             selected = document.SelectedItems()
-            selected_paths = [
+            last_selected = [
                 str(selected.Item(index).Path or "") for index in range(int(selected.Count))
             ]
-            foreground = int(user32.GetForegroundWindow() or 0)
-            if selected_paths == [str(path)] and foreground == hwnd:
+            last_foreground = int(user32.GetForegroundWindow() or 0)
+            if last_selected == [str(path)] and last_foreground == hwnd:
                 return window
             user32.SetForegroundWindow(wintypes.HWND(hwnd))
             time.sleep(0.1)
-        raise AssertionError("fixture did not establish one stable foreground Explorer selection")
+        raise AssertionError(
+            "fixture did not establish one stable foreground Explorer selection; "
+            f"expected_hwnd={hwnd} foreground_hwnd={last_foreground} "
+            f"selected={last_selected!r}"
+        )
 
     def test_product_resident_reads_real_foreground_explorer_selection(self) -> None:
         self._require_windows_desktop()
