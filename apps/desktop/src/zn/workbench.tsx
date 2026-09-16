@@ -18,6 +18,10 @@ import {
   type ZnResidentSnapshot,
   type ZnWorkProgress
 } from './resident-client'
+import {
+  describeZnProviderReadiness,
+  providerUpdateNotice
+} from './provider-readiness'
 import { ZnMissingRestoreControls } from './restore-controls'
 import {
   addZnThreadMessage,
@@ -149,6 +153,10 @@ export function ZnWorkbench() {
       .sort((left, right) => right.updatedAt - left.updatedAt)
       .filter(thread => !normalized || thread.title.toLowerCase().includes(normalized))
   }, [query, threads])
+  const providerReadiness = useMemo(
+    () => describeZnProviderReadiness(providerSettings),
+    [providerSettings]
+  )
 
   useEffect(() => saveZnThreadCache(threads), [threads])
 
@@ -237,9 +245,10 @@ export function ZnWorkbench() {
 
   useEffect(() => {
     void refreshResident()
+    void refreshProviderSettings()
     const timer = window.setInterval(() => void refreshResident(), 12_000)
     return () => window.clearInterval(timer)
-  }, [refreshResident])
+  }, [refreshProviderSettings, refreshResident])
 
   useEffect(() => {
     if (view === 'settings') void refreshProviderSettings()
@@ -411,7 +420,7 @@ export function ZnWorkbench() {
         ...(providerApiKey.trim() ? { apiKey: providerApiKey } : {})
       })
       applyProviderSettings(settings)
-      setProviderNotice('Provider settings applied to the current resident.')
+      setProviderNotice(providerUpdateNotice(settings))
       setResidentHealth('live')
     } catch (error) {
       setProviderNotice(error instanceof Error ? error.message : String(error))
@@ -467,6 +476,7 @@ export function ZnWorkbench() {
   }, [])
 
   const showClearCredential = providerSettings?.credential.source === 'secure_store' || providerSettings?.credential.source === 'config'
+  const showProviderGuidance = providerSettings !== null && !providerSettings.cognitionAvailable
 
   return (
     <div className={`zn-app${contextOpen ? '' : ' context-closed'}`}>
@@ -635,6 +645,15 @@ export function ZnWorkbench() {
         ) : (
           <>
             <main className="zn-thread-surface">
+              {showProviderGuidance ? (
+                <div className="zn-notice" role="status">
+                  <strong>{providerReadiness.headline}.</strong> {providerReadiness.detail}
+                  <div className="zn-muted zn-small">
+                    Open-ended model-backed reasoning needs a working provider and model. Local and deterministic Resident paths remain available.
+                  </div>
+                  <button type="button" onClick={() => setView('settings')}>Open Settings</button>
+                </div>
+              ) : null}
               {deepLinkNotice ? <div className="zn-notice"><strong>Deep link received.</strong> Nothing was executed automatically.<button type="button" onClick={() => setDeepLinkNotice(null)}>Dismiss</button></div> : null}
 
               {activeThread && activeThread.messages.length > 0 ? (
