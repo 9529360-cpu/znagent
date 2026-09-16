@@ -18,6 +18,7 @@ import {
   type ZnReleaseNotes,
   type ZnReleaseTarget
 } from './zn-release-channel'
+import { verifyZnWindowsUpdateAuthenticode } from './zn-windows-update-trust'
 
 const execFileAsync = promisify(execFile)
 const USER_AGENT = 'ZN-Desktop-Updater/2'
@@ -508,8 +509,15 @@ export async function applyZnReleaseUpdate(): Promise<ZnReleaseApplyResult> {
 
     const installer = await ensurePrepared(resolved, true)
     let handoff: (() => Promise<void>) | null = null
-    if (process.platform === 'win32') handoff = () => handoffWindows(installer)
-    else if (process.platform === 'darwin') handoff = () => handoffMac(installer)
+    if (process.platform === 'win32') {
+      handoff = async () => {
+        await verifyZnWindowsUpdateAuthenticode(
+          installer,
+          String(process.env.ZN_WINDOWS_SIGNING_PUBLISHERS || '')
+        )
+        await handoffWindows(installer)
+      }
+    } else if (process.platform === 'darwin') handoff = () => handoffMac(installer)
     else if (process.platform === 'linux') handoff = () => handoffLinux(installer)
     else return { ok: false, error: 'unsupported-platform', message: process.platform }
 

@@ -35,6 +35,12 @@ const define = isDev
   : {
       'process.env.ZN_DESKTOP_UPDATE_CHANNEL_URL': JSON.stringify(
         process.env.ZN_DESKTOP_UPDATE_CHANNEL_URL || ''
+      ),
+      // Formal Windows releases bake the acceptable Authenticode publisher
+      // names into the Electron main bundle. The update channel can describe
+      // an artifact and its hash, but it cannot redefine this local trust root.
+      'process.env.ZN_WINDOWS_SIGNING_PUBLISHERS': JSON.stringify(
+        process.env.ZN_WINDOWS_SIGNING_PUBLISHERS || ''
       )
     }
 
