@@ -7,7 +7,7 @@ import { configureZnPackagedRuntime } from './zn-packaged-runtime'
 import { parseZnDeepLink, type ZnDeepLink, znDeepLinksFromArgv } from './zn-protocol'
 import { registerZnReleaseUpdaterIpc } from './zn-release-updater'
 import { registerZnResidentIpc, startZnResidentOnDesktopReady } from './zn-resident-ipc'
-import { ZnWindowsResidentSurface } from './zn-windows-resident-surface'
+import { ZnWindowsResidentSurface, znWindowsTrayIconPath } from './zn-windows-resident-surface'
 import { registerZnWorkspaceIpc } from './zn-workspace-ipc'
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url))
@@ -122,7 +122,13 @@ function initializeWindowsResidentSurface(): void {
   )
 
   try {
-    const tray = new Tray(path.join(app.getAppPath(), 'assets', 'icon.ico'))
+    const tray = new Tray(
+      znWindowsTrayIconPath({
+        isPackaged: app.isPackaged,
+        resourcesPath: process.resourcesPath,
+        appPath: app.getAppPath()
+      })
+    )
     tray.setToolTip('ZN')
     tray.setContextMenu(
       Menu.buildFromTemplate([
