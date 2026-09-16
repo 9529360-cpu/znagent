@@ -93,6 +93,7 @@ export function createZnDesktopWindow(): BrowserWindow {
     event.preventDefault()
     routeNavigation(url)
   })
+  window.on('query-session-end', () => windowsResidentSurface?.beginQuit())
   window.on('close', event => {
     windowsResidentSurface?.handleWindowClose(event, window)
   })
@@ -115,27 +116,35 @@ function ensurePrimaryWindow(): BrowserWindow {
 function initializeWindowsResidentSurface(): void {
   if (process.platform !== 'win32' || windowsResidentSurface) return
 
-  windowsResidentSurface = new ZnWindowsResidentSurface(
+  const surface = new ZnWindowsResidentSurface(
     () => ensurePrimaryWindow(),
     () => app.quit()
   )
 
-  windowsResidentTray = new Tray(path.join(app.getAppPath(), 'assets', 'icon.ico'))
-  windowsResidentTray.setToolTip('ZN')
-  windowsResidentTray.setContextMenu(
-    Menu.buildFromTemplate([
-      {
-        label: 'Open ZN',
-        click: () => windowsResidentSurface?.show()
-      },
-      { type: 'separator' },
-      {
-        label: 'Quit ZN',
-        click: () => windowsResidentSurface?.quit()
-      }
-    ])
-  )
-  windowsResidentTray.on('double-click', () => windowsResidentSurface?.show())
+  try {
+    const tray = new Tray(path.join(app.getAppPath(), 'assets', 'icon.ico'))
+    tray.setToolTip('ZN')
+    tray.setContextMenu(
+      Menu.buildFromTemplate([
+        {
+          label: 'Open ZN',
+          click: () => surface.show()
+        },
+        { type: 'separator' },
+        {
+          label: 'Quit ZN',
+          click: () => surface.quit()
+        }
+      ])
+    )
+    tray.on('double-click', () => surface.show())
+    windowsResidentSurface = surface
+    windowsResidentTray = tray
+  } catch (error) {
+    console.error('[ZN] failed to initialize Windows resident surface', error)
+    windowsResidentSurface = null
+    windowsResidentTray = null
+  }
 }
 
 async function bootstrapZnDesktop(): Promise<void> {
