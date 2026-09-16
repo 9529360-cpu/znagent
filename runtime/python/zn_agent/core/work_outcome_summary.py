@@ -27,7 +27,7 @@ def public_work_text(value: Any, *, limit: int = 600) -> str:
     return text[: max(0, int(limit))]
 
 
-def _acceptance_basis(item: Any) -> list[str]:
+def _criteria(item: Any) -> list[str]:
     values: list[str] = []
     for raw in list(getattr(item, "acceptance_criteria", ()) or ())[:_CRITERIA_LIMIT]:
         text = public_work_text(raw, limit=300)
@@ -41,9 +41,9 @@ def _completed_view(item: Any) -> dict[str, Any]:
         "title": public_work_text(getattr(item, "title", None), limit=240) or "Completed work",
         "status": "completed",
     }
-    basis = _acceptance_basis(item)
-    if basis:
-        view["acceptance_basis"] = basis
+    criteria = _criteria(item)
+    if criteria:
+        view["criteria"] = criteria
     completed_at = str(getattr(item, "completed_at", None) or "").strip()
     if completed_at:
         view["completed_at"] = completed_at
@@ -57,9 +57,9 @@ def _blocked_view(item: Any) -> dict[str, Any]:
         "status": "blocked",
         "reason": reason or "blocked in durable Work truth",
     }
-    basis = _acceptance_basis(item)
-    if basis:
-        view["acceptance_basis"] = basis
+    criteria = _criteria(item)
+    if criteria:
+        view["criteria"] = criteria
     return view
 
 
@@ -162,10 +162,10 @@ def render_work_outcome_summary(projection: dict[str, Any]) -> str | None:
             if not isinstance(item, dict):
                 continue
             title = public_work_text(item.get("title"), limit=240) or "Completed work"
-            basis = item.get("acceptance_basis")
-            accepted = [public_work_text(value, limit=240) for value in basis] if isinstance(basis, list) else []
-            accepted = [value for value in accepted if value]
-            suffix = f" — acceptance basis: {'; '.join(accepted)}" if accepted else ""
+            criteria = item.get("criteria")
+            values = [public_work_text(value, limit=240) for value in criteria] if isinstance(criteria, list) else []
+            values = [value for value in values if value]
+            suffix = f" — Work truth: completed; criteria: {'; '.join(values)}" if values else " — Work truth: completed"
             lines.append(f"- {title}{suffix}")
 
     blocked = projection.get("blocked")
