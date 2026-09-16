@@ -23,6 +23,28 @@ if (!endpointPath) throw new Error('missing endpoint path')
 
 const secret = crypto.randomBytes(32).toString('hex')
 const instanceId = 'fixture-' + process.pid + '-' + crypto.randomUUID()
+const transientRenameErrors = new Set(['EACCES', 'EPERM', 'EBUSY'])
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+async function publishEndpoint(temporary, target) {
+  let delayMs = 25
+  const deadline = Date.now() + 1_500
+  while (true) {
+    try {
+      await fs.promises.rename(temporary, target)
+      return
+    } catch (error) {
+      if (
+        process.platform !== 'win32' ||
+        !transientRenameErrors.has(error?.code) ||
+        Date.now() >= deadline
+      ) throw error
+      await sleep(delayMs)
+      delayMs = Math.min(delayMs * 2, 200)
+    }
+  }
+}
+
 const server = net.createServer(socket => {
   socket.setEncoding('utf8')
   let buffer = ''
@@ -75,7 +97,7 @@ const server = net.createServer(socket => {
   })
 })
 
-server.listen(0, '127.0.0.1', () => {
+server.listen(0, '127.0.0.1', async () => {
   const address = server.address()
   if (!address || typeof address === 'string') throw new Error('fixture server did not bind TCP')
   fs.mkdirSync(path.dirname(endpointPath), { recursive: true })
@@ -96,7 +118,7 @@ server.listen(0, '127.0.0.1', () => {
   }
   const temporary = endpointPath + '.' + process.pid + '.tmp'
   fs.writeFileSync(temporary, JSON.stringify(payload))
-  fs.renameSync(temporary, endpointPath)
+  await publishEndpoint(temporary, endpointPath)
 })
 `
 
