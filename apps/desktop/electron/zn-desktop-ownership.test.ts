@@ -161,6 +161,7 @@ test('provider settings stay resident-owned and renderer never receives a stored
   const state = read('src/zn/state.ts')
 
   assert.match(ipc, /provider_settings/)
+  assert.match(ipc, /provider_settings_update/)
   assert.match(preload, /providerSettingsUpdate/)
   assert.match(client, /loadZnProviderSettings/)
   assert.match(client, /updateZnProviderSettings/)
