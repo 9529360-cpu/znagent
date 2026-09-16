@@ -1,0 +1,70 @@
+.zn-render-fallback {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  color: var(--zn-text);
+  background: var(--zn-bg-deep);
+}
+
+.zn-render-fallback-card {
+  width: min(520px, 100%);
+  padding: 28px;
+  border: 1px solid var(--zn-line-strong);
+  border-radius: var(--zn-radius-lg);
+  background: var(--zn-content-raised);
+  box-shadow: var(--zn-shadow-float);
+}
+
+.zn-render-fallback-card h1 {
+  margin: 8px 0 10px;
+  font-size: 22px;
+}
+
+.zn-render-fallback-card p {
+  margin: 0 0 18px;
+  color: var(--zn-text-soft);
+  line-height: 1.6;
+}
+
+.zn-render-fallback-card button {
+  padding: 9px 13px;
+}
+
+@media (forced-colors: active) {
+  body::before,
+  body::after {
+    display: none;
+  }
+
+  .zn-mark {
+    font-size: 11px;
+    font-weight: 800;
+    color: ButtonText;
+    background: ButtonFace;
+    border-color: ButtonText;
+    box-shadow: none;
+  }
+
+  .zn-mark::after {
+    display: none;
+  }
+
+  .zn-thread-link.active,
+  .zn-nav-button.active,
+  .zn-artifact-link.active {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+
+  .zn-workspace-dot,
+  .zn-health-dot {
+    border: 1px solid CanvasText;
+    box-shadow: none;
+  }
+
+  .zn-render-fallback-card {
+    border: 1px solid CanvasText;
+    box-shadow: none;
+  }
+}
