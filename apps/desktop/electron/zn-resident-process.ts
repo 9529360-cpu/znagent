@@ -213,7 +213,6 @@ export class ZnResidentProcess extends EventEmitter {
     let relaunchAfterEarlyExit = false
     const maxLaunchAttempts = 4
     const releaseLaunchHandle = () => {
-      launched?.unref()
       launched = null
     }
     const launch = async (): Promise<ChildProcess | null> => {
@@ -273,7 +272,11 @@ export class ZnResidentProcess extends EventEmitter {
         windowsHide: true
       })
       const onError = (error: Error) => { child.off('spawn', onSpawn); reject(error) }
-      const onSpawn = () => { child.off('error', onError); resolve(child) }
+      const onSpawn = () => {
+        child.off('error', onError)
+        child.unref()
+        resolve(child)
+      }
       child.once('error', onError)
       child.once('spawn', onSpawn)
     })
