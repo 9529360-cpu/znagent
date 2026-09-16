@@ -4,10 +4,14 @@ import argparse
 import os
 from pathlib import Path
 
-from .browser_rpc import BrowserResidentRpcServer
 from .channel_runtime import build_zn_channel_adapters
+from .recurring_will_rpc import RecurringWillResidentRpcServer
 from .resident_server import ResidentSocketService, _serve_with_sigterm_cleanup
 
+
+# Keep the established formal-entrypoint patch/import seam stable while the
+# concrete product RPC gains recurring-Will controls through subclassing.
+BrowserResidentRpcServer = RecurringWillResidentRpcServer
 
 _FORMAL_RPC_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost"})
 
