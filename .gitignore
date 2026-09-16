@@ -6,6 +6,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
+.dev/
 node_modules/
 apps/desktop/dist/
 apps/desktop/build/
