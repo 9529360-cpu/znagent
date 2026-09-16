@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { test, vi } from 'vitest'
 
@@ -8,6 +10,9 @@ import {
   type ZnResidentSurfaceWindow,
   znWindowsTrayIconPath
 } from './zn-windows-resident-surface'
+
+const here = path.dirname(fileURLToPath(import.meta.url))
+const desktopRoot = path.resolve(here, '..')
 
 function makeWindow(overrides: Partial<ZnResidentSurfaceWindow> = {}): ZnResidentSurfaceWindow {
   return {
@@ -29,6 +34,16 @@ test('packaged Windows tray icon resolves from electron-builder extraResources',
       appPath: path.join('C:', 'ZN', 'resources', 'app.asar')
     }),
     path.join('C:', 'ZN', 'resources', 'icon.ico')
+  )
+})
+
+test('ZN builder copies the source tray icon to the packaged resources root', () => {
+  const builder = fs.readFileSync(path.join(desktopRoot, 'electron-builder.zn.yml'), 'utf8')
+
+  assert.equal(fs.existsSync(path.join(desktopRoot, 'assets', 'icon.ico')), true)
+  assert.match(
+    builder,
+    /extraResources:\s*[\r\n]+\s*- from: assets\/icon\.ico\s*[\r\n]+\s*to: icon\.ico/
   )
 })
 
