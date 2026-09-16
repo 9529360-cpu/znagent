@@ -5,10 +5,11 @@ from __future__ import annotations
 This is intentionally not a general keyboard primitive. It admits exactly one
 semantic action: press ``Enter`` on a freshly revalidated non-sensitive textbox
 whose current text still matches the caller-provided digest/length, then prove
-an explicit URL postcondition from a fresh page observation.
+an explicit same-origin URL postcondition from a fresh page observation.
 """
 
 from typing import Any
+from urllib.parse import urlsplit
 
 from .browser import (
     BrowserAction,
@@ -21,6 +22,21 @@ from .models import utc_now
 
 class ManagedBrowserPressError(RuntimeError):
     pass
+
+
+def _origin(value: str) -> tuple[str, str, int | None] | None:
+    try:
+        parsed = urlsplit(str(value or "").strip())
+        scheme = str(parsed.scheme or "").lower()
+        host = str(parsed.hostname or "").lower().rstrip(".")
+        port = parsed.port
+    except (TypeError, ValueError):
+        return None
+    if scheme not in {"http", "https"} or not host:
+        return None
+    if port is None:
+        port = 80 if scheme == "http" else 443
+    return scheme, host, port
 
 
 def perform_enter_press(
@@ -81,6 +97,12 @@ def perform_enter_press(
     if before_url == expected_url:
         raise ManagedBrowserPressError(
             "browser Enter expected URL is already observed before dispatch"
+        )
+    before_origin = _origin(before_url)
+    expected_origin = _origin(expected_url)
+    if before_origin is None or expected_origin is None or before_origin != expected_origin:
+        raise ManagedBrowserPressError(
+            "browser Enter submission requires a same-origin expected URL"
         )
 
     current_text = owner._read_target_text_state(binding.handle)
