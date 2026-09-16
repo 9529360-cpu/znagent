@@ -4,25 +4,16 @@ import { test } from 'vitest'
 
 import {
   describeZnProviderReadiness,
-  providerUpdateNotice
+  providerUpdateNotice,
+  type ZnProviderReadinessSettings
 } from '../src/zn/provider-readiness'
-import type { ZnProviderSettings } from '../src/zn/resident-client'
 
-function settings(overrides: Partial<ZnProviderSettings> = {}): ZnProviderSettings {
+function settings(
+  overrides: Partial<ZnProviderReadinessSettings> = {}
+): ZnProviderReadinessSettings {
   return {
-    mode: 'default',
-    editable: true,
     provider: 'auto',
     model: '',
-    baseUrl: '',
-    credential: {
-      configured: false,
-      source: 'none',
-      secureStore: {
-        available: true,
-        backend: 'test'
-      }
-    },
     cognitionAvailable: false,
     activeRoutes: [],
     ...overrides
