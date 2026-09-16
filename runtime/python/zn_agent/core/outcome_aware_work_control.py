@@ -7,7 +7,6 @@ surface only projects current-plan facts and reconciles the already-existing fin
 transcript message after Work finalization has settled.
 """
 
-import json
 from contextlib import closing
 from typing import Any
 
@@ -42,28 +41,14 @@ class OutcomeAwareRestoreWorkControl(RestoreAwareWorkControl):
         message_id = _event_message_id(event_id, "zn")
         with self.ledger._lock, closing(self.ledger._connect()) as conn:
             row = conn.execute(
-                "SELECT text,detail_json FROM work_messages WHERE message_id=? AND thread_id=?",
+                "SELECT text FROM work_messages WHERE message_id=? AND thread_id=?",
                 (message_id, work_run.thread_id),
             ).fetchone()
-            if row is None:
-                return
-            try:
-                raw_detail = json.loads(row["detail_json"] or "{}")
-            except (TypeError, ValueError, json.JSONDecodeError):
-                raw_detail = {}
-            detail = raw_detail if isinstance(raw_detail, dict) else {}
-            detail = dict(detail)
-            detail["work_outcome"] = projection
-            detail["partial"] = projection.get("status") == "partial"
-            detail["blocked"] = projection.get("status") == "blocked"
-            if projection.get("status") == "blocked":
-                detail["failed"] = True
-            encoded = json.dumps(detail, ensure_ascii=False, separators=(",", ":"))
-            if str(row["text"] or "") == summary and str(row["detail_json"] or "") == encoded:
+            if row is None or str(row["text"] or "") == summary:
                 return
             conn.execute(
-                "UPDATE work_messages SET text=?,detail_json=? WHERE message_id=? AND thread_id=?",
-                (summary, encoded, message_id, work_run.thread_id),
+                "UPDATE work_messages SET text=? WHERE message_id=? AND thread_id=?",
+                (summary, message_id, work_run.thread_id),
             )
             conn.commit()
 
