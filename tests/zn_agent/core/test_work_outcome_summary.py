@@ -111,6 +111,7 @@ class WorkOutcomeProjectionTests(unittest.TestCase):
         self.assertIn("Partially completed.", summary)
         self.assertIn("Completed:", summary)
         self.assertIn("Blocked:", summary)
+        self.assertIn("Work truth: completed", summary)
         self.assertNotIn("hunter2", summary)
         self.assertNotIn("sk-abcdefghijklmnop", summary)
 
@@ -201,9 +202,7 @@ class OutcomeAwareControlIntegrationTests(unittest.TestCase):
                 self.assertIn("Prepare local result", zn.text)
                 self.assertIn("Final acceptance: blocked", zn.text)
                 self.assertNotIn("hunter2", zn.text)
-                self.assertEqual(zn.detail["work_outcome"]["status"], "partial")
-                self.assertTrue(zn.detail["partial"])
-                self.assertFalse(zn.detail["blocked"])
+                self.assertEqual(zn.detail, {"failed": True})
             finally:
                 resident.store.close()
 
