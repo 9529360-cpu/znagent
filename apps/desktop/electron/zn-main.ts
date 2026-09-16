@@ -19,6 +19,22 @@ let windowsResidentSurface: ZnWindowsResidentSurface | null = null
 let windowsResidentTray: Tray | null = null
 const pendingDeepLinks: ZnDeepLink[] = []
 
+function isSourceDevelopmentInstance(): boolean {
+  return !app.isPackaged && process.env.ZN_DESKTOP_DEV === '1'
+}
+
+function configureSourceDevelopmentProfile(): void {
+  if (!isSourceDevelopmentInstance()) return
+  const userData = String(process.env.ZN_DESKTOP_USER_DATA || '').trim()
+  if (!userData) {
+    throw new Error('ZN_DESKTOP_USER_DATA is required for an isolated source-development desktop')
+  }
+  const resolved = path.resolve(userData)
+  app.setPath('userData', resolved)
+  app.setPath('sessionData', path.join(resolved, 'session'))
+  console.info(`[ZN] source-development profile isolated at ${resolved}`)
+}
+
 function isSafeExternalUrl(value: string): boolean {
   try {
     const url = new URL(value)
@@ -154,6 +170,9 @@ function initializeWindowsResidentSurface(): void {
 }
 
 async function bootstrapZnDesktop(): Promise<void> {
+  configureSourceDevelopmentProfile()
+  const sourceDevelopment = isSourceDevelopmentInstance()
+
   if (!app.requestSingleInstanceLock()) {
     app.quit()
     return
@@ -186,7 +205,9 @@ async function bootstrapZnDesktop(): Promise<void> {
   registerZnReleaseUpdaterIpc()
 
   await app.whenReady()
-  if (!app.setAsDefaultProtocolClient('zn')) {
+  if (sourceDevelopment) {
+    console.info('[ZN] source-development instance skips zn:// OS protocol registration')
+  } else if (!app.setAsDefaultProtocolClient('zn')) {
     console.warn('[ZN] OS protocol registration for zn:// is unavailable in this build')
   }
   initializeWindowsResidentSurface()
