@@ -8,7 +8,7 @@ import threading
 import unittest
 from contextlib import closing
 from pathlib import Path
-from urllib.parse import parse_qs, urlencode, urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
 from zn_agent.core.work import ResidentWorkLedger
@@ -19,28 +19,45 @@ _TYPED_DIGEST = hashlib.sha256(_TYPED.encode("utf-8")).hexdigest()
 
 
 class _EnterFormHandler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        parsed = urlsplit(self.path)
-        if parsed.path == "/done":
-            values = parse_qs(parsed.query).get("q", [])
-            submitted = len(values) == 1 and values[0] == _TYPED
-            payload = (
-                "<!doctype html><html><head><title>ZN Enter Done</title></head>"
-                f"<body><main>{'submitted' if submitted else 'wrong'}</main></body></html>"
-            ).encode("utf-8")
-        else:
-            payload = (
-                "<!doctype html><html><head><title>ZN Enter Form</title></head><body>"
-                '<form action="/done" method="get">'
-                '<label>Search <input id="search" name="q" type="text" aria-label="Search"></label>'
-                "</form>"
-                "</body></html>"
-            ).encode("utf-8")
+    @staticmethod
+    def _done_payload(*, submitted: bool) -> bytes:
+        return (
+            "<!doctype html><html><head><title>ZN Enter Done</title></head>"
+            f"<body><main>{'submitted' if submitted else 'wrong'}</main></body></html>"
+        ).encode("utf-8")
+
+    def _send_html(self, payload: bytes) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
+
+    def do_GET(self):
+        parsed = urlsplit(self.path)
+        if parsed.path == "/done":
+            self._send_html(self._done_payload(submitted=False))
+            return
+        payload = (
+            "<!doctype html><html><head><title>ZN Enter Form</title></head><body>"
+            '<form action="/done" method="post">'
+            '<label>Search <input id="search" name="q" type="text" aria-label="Search"></label>'
+            "</form>"
+            "</body></html>"
+        ).encode("utf-8")
+        self._send_html(payload)
+
+    def do_POST(self):
+        parsed = urlsplit(self.path)
+        content_length = int(self.headers.get("Content-Length") or "0")
+        body = self.rfile.read(content_length).decode("utf-8", errors="strict")
+        values = parse_qs(body).get("q", [])
+        submitted = (
+            parsed.path == "/done"
+            and len(values) == 1
+            and values[0] == _TYPED
+        )
+        self._send_html(self._done_payload(submitted=submitted))
 
     def log_message(self, fmt, *args):
         return
@@ -54,7 +71,7 @@ class ManagedBrowserEnterSubmitWindowsE2E(unittest.TestCase):
         cls.web_thread.start()
         port = int(cls.web.server_address[1])
         cls.url = f"http://127.0.0.1:{port}/"
-        cls.done_url = f"http://127.0.0.1:{port}/done?{urlencode({'q': _TYPED})}"
+        cls.done_url = f"http://127.0.0.1:{port}/done"
 
     @classmethod
     def tearDownClass(cls):
