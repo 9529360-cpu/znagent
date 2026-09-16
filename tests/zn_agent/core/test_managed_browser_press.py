@@ -187,7 +187,11 @@ class ManagedBrowserPressTests(unittest.TestCase):
 
     def test_press_rejects_user_browser_plane_before_dispatch(self) -> None:
         adapter = _PressAdapter()
-        user_identity = replace(adapter.session.identity, plane=BrowserPlane.USER)
+        user_identity = BrowserSessionIdentity.create(
+            plane=BrowserPlane.USER,
+            provider=adapter.session.identity.provider,
+            browser_name=adapter.session.identity.browser_name,
+        )
         adapter.session.identity = user_identity
         adapter.target = replace(adapter.target, session_id=user_identity.session_id)
         adapter.observation = replace(
