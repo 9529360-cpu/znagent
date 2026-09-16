@@ -64,6 +64,8 @@ A mature external mechanism may be adopted only when all of the following are tr
 
 Copying mature implementation is allowed. Cosmetic originality is not a goal. Ownership transfer and product fit are the goal.
 
+Desktop/product UX has an additional boundary: external products may be studied for failure modes, interaction lessons, installer edge cases, or protocol behavior, but ZN does not adopt their desktop layout, navigation hierarchy, component tree, theme, renderer state model, or visual identity. Active desktop composition and styling remain ZN-owned under `apps/desktop/`; external desktop source is reference material only.
+
 ## 4. Forbidden regressions
 
 Do not reintroduce another product or agent framework as:
@@ -73,6 +75,7 @@ Do not reintroduce another product or agent framework as:
 - CLI or gateway brain;
 - provider/plugin control plane;
 - desktop main/preload/renderer shell;
+- desktop layout/navigation/component/theme owner;
 - Python distribution;
 - build/package/release dependency;
 - required checkout, submodule or source path.
@@ -114,6 +117,7 @@ Steady-state CI and ownership tests must continue to prove:
 - tests run from `tests/zn_agent/core`;
 - root Node workspace is ZN-owned;
 - desktop build uses the ZN builder configuration;
+- active desktop layout/components/styles remain ZN-owned and do not depend on an external product desktop;
 - package/runtime verifiers reject foreign product package/control-plane content;
 - zero-model resident boot remains valid;
 - no clean ZN build requires a reference source checkout;
