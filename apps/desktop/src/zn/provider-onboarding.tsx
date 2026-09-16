@@ -10,6 +10,7 @@ import {
   providerUpdateNotice
 } from './provider-readiness'
 import { ZnWorkbench } from './workbench'
+import './provider-onboarding.css'
 
 type OnboardingState = 'checking' | 'setup' | 'work'
 
@@ -75,6 +76,8 @@ export function ZnProviderOnboarding() {
 
   if (state === 'work') return <ZnWorkbench />
 
+  const advancedUnavailable = settings?.editable === false
+
   return (
     <main className="zn-onboarding-shell">
       <section className="zn-onboarding-card" aria-live="polite">
@@ -85,6 +88,18 @@ export function ZnProviderOnboarding() {
 
         {state === 'checking' ? (
           <div className="zn-setting-state">Checking the resident's current model resources…</div>
+        ) : advancedUnavailable ? (
+          <>
+            <div className="zn-setting-state">
+              Advanced {settings?.mode || 'route'} configuration is active. The first-run editor will not overwrite it.
+            </div>
+            {notice ? <div className="zn-error-text">{notice}</div> : null}
+            <div className="zn-inline-actions zn-onboarding-actions">
+              <button className="zn-primary" type="button" onClick={() => setState('work')}>
+                Open ZN
+              </button>
+            </div>
+          </>
         ) : (
           <form onSubmit={save}>
             <label className="zn-context-title" htmlFor="zn-onboarding-provider">Provider</label>
@@ -132,7 +147,7 @@ export function ZnProviderOnboarding() {
             <p className="zn-muted zn-small">
               Credentials are sent to the Resident secure-store boundary and are never returned to this renderer.
             </p>
-            {notice ? <div className={readiness.ready ? 'zn-setting-state' : 'zn-error-text'}>{notice}</div> : null}
+            {notice ? <div className={settings?.cognitionAvailable ? 'zn-setting-state' : 'zn-error-text'}>{notice}</div> : null}
             <div className="zn-inline-actions zn-onboarding-actions">
               <button className="zn-primary" type="submit" disabled={busy || !provider.trim() || !model.trim()}>
                 {busy ? 'Checking…' : 'Save and verify'}
