@@ -19,34 +19,45 @@ import net from 'node:net'
 import path from 'node:path'
 
 const endpointPath = process.argv[2]
+const diagnosticsPath = process.argv[3]
 if (!endpointPath) throw new Error('missing endpoint path')
+if (!diagnosticsPath) throw new Error('missing diagnostics path')
 
-const secret = crypto.randomBytes(32).toString('hex')
-const instanceId = 'fixture-' + process.pid + '-' + crypto.randomUUID()
-const transientRenameErrors = new Set(['EACCES', 'EPERM', 'EBUSY'])
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+function diagnose(stage, detail = {}) {
+  try {
+    fs.appendFileSync(
+      diagnosticsPath,
+      JSON.stringify({
+        at: new Date().toISOString(),
+        pid: process.pid,
+        stage,
+        ...detail,
+      }) + '\n',
+      'utf8'
+    )
+  } catch {}
+}
 
-async function publishEndpoint(temporary, target) {
-  // Windows CI can transiently lock the stale target while Defender/indexing
-  // observes it. Retry only the documented lock-style rename failures; the
-  // desktop reconnect budget and all resident identity assertions stay fixed.
-  let delayMs = 25
-  const deadline = Date.now() + 1_500
-  while (true) {
-    try {
-      await fs.promises.rename(temporary, target)
-      return
-    } catch (error) {
-      if (
-        process.platform !== 'win32' ||
-        !transientRenameErrors.has(error?.code) ||
-        Date.now() >= deadline
-      ) throw error
-      await sleep(delayMs)
-      delayMs = Math.min(delayMs * 2, 200)
-    }
+function diagnosticError(error) {
+  return {
+    code: typeof error?.code === 'string' ? error.code : undefined,
+    name: typeof error?.name === 'string' ? error.name : undefined,
+    message: typeof error?.message === 'string' ? error.message.slice(0, 500) : String(error).slice(0, 500),
   }
 }
+
+process.on('uncaughtException', error => {
+  diagnose('uncaught_exception', diagnosticError(error))
+  process.exit(1)
+})
+process.on('unhandledRejection', error => {
+  diagnose('unhandled_rejection', diagnosticError(error))
+  process.exit(1)
+})
+
+diagnose('starting')
+const secret = crypto.randomBytes(32).toString('hex')
+const instanceId = 'fixture-' + process.pid + '-' + crypto.randomUUID()
 
 const server = net.createServer(socket => {
   socket.setEncoding('utf8')
@@ -89,6 +100,7 @@ const server = net.createServer(socket => {
               const current = JSON.parse(fs.readFileSync(endpointPath, 'utf8'))
               if (Number(current.pid) === process.pid) fs.unlinkSync(endpointPath)
             } catch {}
+            diagnose('shutdown_complete')
             process.exit(0)
           })
         })
@@ -100,28 +112,40 @@ const server = net.createServer(socket => {
   })
 })
 
-server.listen(0, '127.0.0.1', async () => {
-  const address = server.address()
-  if (!address || typeof address === 'string') throw new Error('fixture server did not bind TCP')
-  fs.mkdirSync(path.dirname(endpointPath), { recursive: true })
-  const payload = {
-    version: 2,
-    transport: 'tcp',
-    host: '127.0.0.1',
-    port: address.port,
-    pid: process.pid,
-    instance_id: instanceId,
-    started_at: new Date().toISOString(),
-    runtime_id: 'fixture-runtime',
-    python: process.execPath,
-    authentication: {
-      scheme: 'session-secret-v1',
-      secret,
-    },
+server.on('error', error => {
+  diagnose('listen_error', diagnosticError(error))
+})
+
+server.listen(0, '127.0.0.1', () => {
+  try {
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('fixture server did not bind TCP')
+    diagnose('listening', { port: address.port })
+    fs.mkdirSync(path.dirname(endpointPath), { recursive: true })
+    const payload = {
+      version: 2,
+      transport: 'tcp',
+      host: '127.0.0.1',
+      port: address.port,
+      pid: process.pid,
+      instance_id: instanceId,
+      started_at: new Date().toISOString(),
+      runtime_id: 'fixture-runtime',
+      python: process.execPath,
+      authentication: {
+        scheme: 'session-secret-v1',
+        secret,
+      },
+    }
+    const temporary = endpointPath + '.' + process.pid + '.tmp'
+    fs.writeFileSync(temporary, JSON.stringify(payload))
+    diagnose('endpoint_staged')
+    fs.renameSync(temporary, endpointPath)
+    diagnose('endpoint_published', { port: address.port })
+  } catch (error) {
+    diagnose('endpoint_publish_error', diagnosticError(error))
+    throw error
   }
-  const temporary = endpointPath + '.' + process.pid + '.tmp'
-  fs.writeFileSync(temporary, JSON.stringify(payload))
-  await publishEndpoint(temporary, endpointPath)
 })
 `
 
@@ -137,8 +161,51 @@ type FixtureStatus = {
   instance_id: string
 }
 
+type FixtureDiagnostic = {
+  at?: string
+  pid?: number
+  stage?: string
+  port?: number
+  code?: string
+  name?: string
+  message?: string
+}
+
 async function readEndpoint(endpointPath: string): Promise<FixtureEndpoint> {
   return JSON.parse(await fs.readFile(endpointPath, 'utf8')) as FixtureEndpoint
+}
+
+async function readFixtureDiagnostics(diagnosticsPath: string): Promise<FixtureDiagnostic[]> {
+  try {
+    const raw = await fs.readFile(diagnosticsPath, 'utf8')
+    const records: FixtureDiagnostic[] = []
+    for (const line of raw.split(/\r?\n/)) {
+      if (!line.trim()) continue
+      try {
+        const parsed = JSON.parse(line) as FixtureDiagnostic
+        if (parsed && typeof parsed === 'object') records.push(parsed)
+      } catch { void 0 }
+    }
+    return records.slice(-24)
+  } catch {
+    return []
+  }
+}
+
+async function withFixtureDiagnostics<T>(
+  promise: Promise<T>,
+  diagnosticsPath: string
+): Promise<T> {
+  try {
+    return await promise
+  } catch (error) {
+    const diagnostics = await readFixtureDiagnostics(diagnosticsPath)
+    const message = error instanceof Error ? error.message : String(error)
+    const detail = diagnostics.length > 0
+      ? ` Fixture diagnostics: ${JSON.stringify(diagnostics)}`
+      : ' Fixture diagnostics: no records were written.'
+    throw new Error(`${message}${detail}`, { cause: error })
+  }
 }
 
 async function within<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
@@ -181,12 +248,13 @@ test('default desktop launch uses the stable formal resident entrypoint', () => 
 test('desktop client relaunches and reauthenticates after a hard resident crash leaves a stale endpoint', async () => {
   const root = await fs.mkdtemp(path.join(tmpdir(), 'zn-resident-process-'))
   const endpointPath = path.join(root, 'resident-endpoint.json')
+  const diagnosticsPath = path.join(root, 'fixture-diagnostics.ndjson')
   const fixturePath = path.join(root, 'fixture-resident.mjs')
   await fs.writeFile(fixturePath, fixtureSource, 'utf8')
 
   const resident = new ZnResidentProcess({
     command: process.execPath,
-    args: [fixturePath, endpointPath],
+    args: [fixturePath, endpointPath, diagnosticsPath],
     endpointPath,
     env: { ...process.env }
   })
@@ -194,7 +262,10 @@ test('desktop client relaunches and reauthenticates after a hard resident crash 
   let firstPid: number | null = null
   let secondPid: number | null = null
   try {
-    const firstStatus = await resident.start(8_000) as FixtureStatus
+    const firstStatus = await withFixtureDiagnostics(
+      resident.start(8_000) as Promise<FixtureStatus>,
+      diagnosticsPath
+    )
     firstPid = Number(firstStatus.fixture_pid)
     const firstEndpoint = await readEndpoint(endpointPath)
     assert.equal(firstEndpoint.pid, firstPid)
@@ -211,7 +282,10 @@ test('desktop client relaunches and reauthenticates after a hard resident crash 
     assert.equal(staleEndpoint.instance_id, firstEndpoint.instance_id)
     assert.equal(staleEndpoint.authentication.secret, firstEndpoint.authentication.secret)
 
-    const secondStatus = await resident.request('status', {}, 8_000) as FixtureStatus
+    const secondStatus = await withFixtureDiagnostics(
+      resident.request('status', {}, 8_000) as Promise<FixtureStatus>,
+      diagnosticsPath
+    )
     secondPid = Number(secondStatus.fixture_pid)
     const secondEndpoint = await readEndpoint(endpointPath)
     assert.equal(secondEndpoint.pid, secondPid)
