@@ -11,6 +11,7 @@ from pathlib import Path
 
 from test_windows_interactive_user_browser_semantic_grounding import (
     _Handler,
+    _TITLE,
     WindowsInteractiveUserBrowserSemanticGroundingE2ETests,
 )
 
@@ -23,7 +24,7 @@ class _RecoveryCodeHandler(_Handler):
         if mode != "recovery":
             return super()._account_page(mode)
         body = f"""<!doctype html>
-<html><head><meta charset="utf-8"><title>ZN Recovery Code E2E</title></head>
+<html><head><meta charset="utf-8"><title>{_TITLE}</title></head>
 <body><h1>需要账户恢复验证</h1>
 <form action="/mfa-complete" method="get">
 <label>Recovery code<input aria-label="Recovery code" id="account_recovery_code" name="backup_code" type="text" autocomplete="off" value="{_RECOVERY_CODE}"></label>
