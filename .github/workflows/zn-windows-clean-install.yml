@@ -311,6 +311,18 @@ jobs:
           }
           Copy-Item -LiteralPath $runtimeManifest -Destination (Join-Path $env:RUNNER_TEMP 'zn-clean-install-runtime.json') -Force
 
+      - name: Upload verified Windows x64 main candidate
+        if: ${{ success() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: zn-windows-x64-verified-candidate-${{ steps.version.outputs.version }}-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/zn-release-windows-x64.json
+
       - name: Upload clean-install evidence when cloud storage is enabled
         if: ${{ always() && vars.ZN_ENABLE_CI_ARTIFACT_UPLOAD == 'true' }}
         uses: actions/upload-artifact@v4
