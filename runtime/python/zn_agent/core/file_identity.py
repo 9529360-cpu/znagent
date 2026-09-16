@@ -209,3 +209,76 @@ def compare_file_identities(
         "exact": bool(exact),
         "reason": "same_exact_file_identity" if exact else "file_identity_changed",
     }
+
+
+def read_text_for_exact_file_identity(
+    value: str | Path,
+    expected: dict[str, Any] | None,
+    *,
+    max_bytes: int = DEFAULT_MAX_HASH_BYTES,
+    encoding: str = "utf-8",
+) -> tuple[str | None, dict[str, Any] | None, str | None]:
+    """Read text only from the exact already-observed regular file.
+
+    The path is opened once, then the opened handle is checked against the
+    caller's exact identity *before* any bytes are read. The same handle is
+    checked again after reading, the bytes must match the expected digest, and
+    the pathname must still resolve to that exact file before content is
+    released to the caller. This closes the path-swap window between a normal
+    pre-read identity check and a later path-based read.
+    """
+
+    if not isinstance(expected, dict):
+        return None, None, "exact file identity is required"
+    path = _canonical_path(value)
+    if str(expected.get("path") or "") != str(path):
+        return None, None, "exact file identity path does not match the requested source"
+    if not (
+        expected.get("version") == IDENTITY_VERSION
+        and expected.get("observable") is True
+        and expected.get("stable") is True
+        and expected.get("exists") is True
+        and expected.get("type") == "file"
+        and expected.get("digest_complete") is True
+        and str(expected.get("content_sha256") or "")
+    ):
+        return None, None, "exact file identity is not a stable readable regular-file baseline"
+
+    cap = max(0, int(max_bytes))
+    try:
+        expected_size = int(expected.get("size_bytes"))
+    except (TypeError, ValueError):
+        return None, None, "exact file identity has no valid size"
+    if expected_size > cap:
+        return None, None, "exact file exceeds the bounded read limit"
+
+    # Path stat and opened-handle fstat do not expose identical ctime semantics
+    # on Windows 3.12+. Bind the opened object with portable object fields; the
+    # expected content digest below remains the authoritative byte identity.
+    handle_identity_keys = ("size_bytes", "mtime_ns", "device", "inode")
+    try:
+        with path.open("rb") as handle:
+            before = _stat_fields(os.fstat(handle.fileno()))
+            if any(expected.get(key) != before.get(key) for key in handle_identity_keys):
+                return None, None, "opened file identity no longer matches the expected source"
+            raw = handle.read(cap + 1)
+            after = _stat_fields(os.fstat(handle.fileno()))
+    except (FileNotFoundError, OSError) as exc:
+        return None, None, f"exact source open/read failed: {type(exc).__name__}"
+
+    if any(before.get(key) != after.get(key) for key in handle_identity_keys):
+        return None, None, "opened file changed while it was being read"
+    if len(raw) > cap or len(raw) != after["size_bytes"]:
+        return None, None, "opened file exceeded or changed across the bounded read"
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest != str(expected.get("content_sha256") or ""):
+        return None, None, "opened file content no longer matches the expected source"
+
+    current = observe_file_identity(path, max_hash_bytes=cap)
+    if compare_file_identities(expected, current).get("exact") is not True:
+        return None, current, "source path identity changed while the exact file was being read"
+    try:
+        text = raw.decode(str(encoding or "utf-8"), errors="replace")
+    except LookupError as exc:
+        return None, current, f"unknown text encoding: {exc}"
+    return text.replace("\r\n", "\n").replace("\r", "\n"), current, None
