@@ -20,6 +20,11 @@ import path from 'node:path'
 
 const endpointPath = process.argv[2]
 if (!endpointPath) throw new Error('missing endpoint path')
+const failNextLaunchPath = process.env.ZN_FIXTURE_FAIL_NEXT_LAUNCH_PATH || ''
+if (failNextLaunchPath && fs.existsSync(failNextLaunchPath)) {
+  fs.unlinkSync(failNextLaunchPath)
+  process.exit(73)
+}
 
 const secret = crypto.randomBytes(32).toString('hex')
 const instanceId = 'fixture-' + process.pid + '-' + crypto.randomUUID()
@@ -153,17 +158,18 @@ test('default desktop launch uses the stable formal resident entrypoint', () => 
   assert.deepEqual(launch.args, ['-m', 'zn_agent.resident'])
 })
 
-test('desktop client relaunches and reauthenticates after a hard resident crash leaves a stale endpoint', async () => {
+test('desktop client relaunches through an early startup failure after a hard resident crash leaves a stale endpoint', async () => {
   const root = await fs.mkdtemp(path.join(tmpdir(), 'zn-resident-process-'))
   const endpointPath = path.join(root, 'resident-endpoint.json')
   const fixturePath = path.join(root, 'fixture-resident.mjs')
+  const failNextLaunchPath = path.join(root, 'fail-next-launch')
   await fs.writeFile(fixturePath, fixtureSource, 'utf8')
 
   const resident = new ZnResidentProcess({
     command: process.execPath,
     args: [fixturePath, endpointPath],
     endpointPath,
-    env: { ...process.env }
+    env: { ...process.env, ZN_FIXTURE_FAIL_NEXT_LAUNCH_PATH: failNextLaunchPath }
   })
 
   let firstPid: number | null = null
@@ -186,9 +192,11 @@ test('desktop client relaunches and reauthenticates after a hard resident crash 
     assert.equal(staleEndpoint.instance_id, firstEndpoint.instance_id)
     assert.equal(staleEndpoint.authentication.secret, firstEndpoint.authentication.secret)
 
+    await fs.writeFile(failNextLaunchPath, 'fail the first relaunch', 'utf8')
     const secondStatus = await resident.request('status', {}, 8_000) as FixtureStatus
     secondPid = Number(secondStatus.fixture_pid)
     const secondEndpoint = await readEndpoint(endpointPath)
+    await assert.rejects(fs.access(failNextLaunchPath))
     assert.equal(secondEndpoint.pid, secondPid)
     assert.equal(secondEndpoint.instance_id, secondStatus.instance_id)
     assert.notEqual(secondPid, firstPid)

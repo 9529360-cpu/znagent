@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { promises as fs } from 'node:fs'
 import { createConnection, type Socket } from 'node:net'
@@ -207,23 +207,61 @@ export class ZnResidentProcess extends EventEmitter {
       lastError = error
       this.disconnect()
     }
-    try { await this.launchDetachedService() } catch (error) { lastError = error }
+
+    let launched: ChildProcess | null = null
+    let launchAttempts = 0
+    const maxLaunchAttempts = 4
+    const releaseLaunchHandle = () => {
+      launched?.unref()
+      launched = null
+    }
+    const launch = async () => {
+      launchAttempts += 1
+      try {
+        launched = await this.launchDetachedService()
+      } catch (error) {
+        lastError = error
+        launched = null
+      }
+    }
+
+    await launch()
     while (Date.now() < deadline) {
+      if (launched && (launched.exitCode !== null || launched.signalCode !== null)) {
+        const exit = launched.exitCode !== null
+          ? `code ${launched.exitCode}`
+          : `signal ${launched.signalCode || 'unknown'}`
+        lastError = new Error(`ZN Resident exited before publishing a reachable endpoint (${exit})`)
+        launched = null
+      }
+
+      if (!launched && launchAttempts < maxLaunchAttempts) {
+        const remaining = deadline - Date.now()
+        if (remaining <= 0) break
+        const delay = Math.min(400, 100 * (2 ** Math.max(0, launchAttempts - 1)))
+        await new Promise(resolve => setTimeout(resolve, Math.min(delay, remaining)))
+        await launch()
+        continue
+      }
+
       try {
         await this.connectFromEndpoint(Math.min(1_500, Math.max(250, deadline - Date.now())))
-        return await this.requestConnected('status', {}, Math.min(5_000, Math.max(500, deadline - Date.now())))
+        const status = await this.requestConnected('status', {}, Math.min(5_000, Math.max(500, deadline - Date.now())))
+        releaseLaunchHandle()
+        return status
       } catch (error) {
         lastError = error
         this.disconnect()
         await new Promise(resolve => setTimeout(resolve, 120))
       }
     }
+    releaseLaunchHandle()
     const detail = lastError instanceof Error ? `: ${lastError.message}` : ''
     throw new Error(`ZN Resident service did not become reachable${detail}`)
   }
 
-  private async launchDetachedService(): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
+  private async launchDetachedService(): Promise<ChildProcess> {
+    return await new Promise<ChildProcess>((resolve, reject) => {
       const child = spawn(this.launch.command, this.launch.args, {
         cwd: this.launch.cwd,
         env: this.launch.env,
@@ -232,7 +270,7 @@ export class ZnResidentProcess extends EventEmitter {
         windowsHide: true
       })
       const onError = (error: Error) => { child.off('spawn', onSpawn); reject(error) }
-      const onSpawn = () => { child.off('error', onError); child.unref(); resolve() }
+      const onSpawn = () => { child.off('error', onError); resolve(child) }
       child.once('error', onError)
       child.once('spawn', onSpawn)
     })
