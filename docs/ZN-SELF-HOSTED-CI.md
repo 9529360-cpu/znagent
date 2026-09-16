@@ -48,7 +48,9 @@ The same workflow retains a manually dispatched legacy/full diagnostics job that
 
 Before installing the production-identity candidate it verifies that the disposable machine has no pre-existing ZN process, uninstall registration, or `zn:` protocol registration. The lane then stages the packaged runtime, builds the Electron application and NSIS installer, verifies packaged artifacts and release metadata, installs the real candidate into isolated test state, and starts the installed Desktop/Resident for acceptance.
 
-This is install/start verification, not authorization to publish a formal release or replace a user's installed production version.
+After a successful `main` clean-install run, CI retains the exact Windows x64 EXE candidate and verified Windows release manifest as a seven-day GitHub Actions artifact for owner/developer evaluation. The retained artifact is an unsigned development candidate. It is not a formal GitHub Release, stable-channel publication, signed production installer, or authorization to replace a user's installed production version. Pull-request runs verify the same clean-install path but do not retain a downloadable installer candidate.
+
+This is install/start verification and a bounded development-evaluation handoff, not authorization to publish a formal release or replace a user's installed production version.
 
 ## Specialized self-hosted `zn-interactive` boundary
 
