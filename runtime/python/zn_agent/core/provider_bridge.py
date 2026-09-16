@@ -283,6 +283,7 @@ def build_resident_runtime(
     from .desktop_modal_recovery_behavior import (
         install_desktop_modal_recovery_behavior,
     )
+    from .recurring_will_behavior import install_recurring_will_behavior
     from .research_information_product_resident import (
         ProductResearchInformationResidentRuntime,
     )
@@ -323,6 +324,7 @@ def build_resident_runtime(
         research_web_resource=research_web_resource,
         research_web_error=research_web_error,
     )
+    install_recurring_will_behavior(resident)
     install_user_browser_causal_popup_behavior(resident)
     install_browser_file_desktop_handoff_behavior(resident)
     install_browser_desktop_record_transfer_behavior(resident)
