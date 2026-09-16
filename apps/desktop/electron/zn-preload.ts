@@ -44,6 +44,12 @@ contextBridge.exposeInMainWorld('znDesktop', {
     worldFocuses: (payload?: ZnDesktopPayload) =>
       ipcRenderer.invoke('zn:resident:world-focuses', payload || {}),
     worldObserve: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:world-observe', payload),
+    recurringSchedule: (payload: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:recurring-schedule', payload),
+    recurringList: (payload?: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:recurring-list', payload || {}),
+    recurringDisable: (payload: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:recurring-disable', payload),
     submit: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:submit', payload),
     remember: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:remember', payload),
     forget: (key: string) => ipcRenderer.invoke('zn:resident:forget', key)
