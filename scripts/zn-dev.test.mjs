@@ -49,11 +49,15 @@ test('development state locations can be explicitly overridden', () => {
   assert.equal(resolveDevUserData(root, { ZN_DEV_USER_DATA: './tmp/profile' }), path.resolve('./tmp/profile'))
 })
 
-test('source desktop isolates profile before single-instance lock and skips protocol registration', () => {
+test('source desktop creates isolated profile paths before lock and skips protocol registration', () => {
   const main = read('apps/desktop/electron/zn-main.ts')
   const configureIndex = main.indexOf('configureSourceDevelopmentProfile()')
   const lockIndex = main.indexOf('requestSingleInstanceLock()')
+  const mkdirIndex = main.indexOf('fs.mkdirSync(resolved')
+  const setPathIndex = main.indexOf("app.setPath('userData'")
   assert.ok(configureIndex >= 0 && configureIndex < lockIndex)
+  assert.ok(mkdirIndex >= 0 && mkdirIndex < setPathIndex)
+  assert.match(main, /fs\.mkdirSync\(sessionData, \{ recursive: true \}\)/)
   assert.match(main, /app\.setPath\(['"]userData['"]/)
   assert.match(main, /app\.setPath\(['"]sessionData['"]/)
   assert.match(main, /sourceDevelopment[\s\S]*skips zn:\/\/ OS protocol registration/)
