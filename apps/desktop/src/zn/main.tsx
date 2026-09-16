@@ -1,7 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
-import { ZnWorkbench } from './workbench'
+import { ZnProviderOnboarding } from './provider-onboarding'
 import './styles.css'
 
 document.title = 'ZN'
@@ -11,6 +11,6 @@ if (!root) throw new Error('ZN renderer root is missing')
 
 createRoot(root).render(
   <StrictMode>
-    <ZnWorkbench />
+    <ZnProviderOnboarding />
   </StrictMode>
 )
