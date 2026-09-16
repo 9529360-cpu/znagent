@@ -6,10 +6,13 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
+from zn_agent.core.application_resident import ApplicationAwareResidentRuntime
 from zn_agent.core.current_api_docs_adaptation_resident import (
     CurrentApiDocsAdaptationResidentRuntime,
 )
+from zn_agent.core.goal_resident import ResidentGoalRuntime
 from zn_agent.core.steerable_work import WorkItem
 from zn_agent.core.user_browser_extension_relay import AuthorizedUserBrowserTab
 from zn_agent.core.worker_context_boundary import (
@@ -63,6 +66,95 @@ class E2E25CurrentReferenceAndWorkspaceReadTests(unittest.TestCase):
             status=status,
             plan_version=1,
             acceptance_criteria=[criterion],
+        )
+
+    def test_current_api_docs_work_bypasses_generic_browser_orientation(self) -> None:
+        resident = CurrentApiDocsAdaptationResidentRuntime.__new__(
+            CurrentApiDocsAdaptationResidentRuntime
+        )
+        event = SimpleNamespace(
+            kind="desktop_user_event",
+            task=_GOAL,
+            payload={
+                "workspace_path": "C:/workspace",
+                "work_thread_id": "e2e25",
+                "work_item_id": "root",
+            },
+        )
+        state = SimpleNamespace()
+        readiness = SimpleNamespace()
+        sentinel = object()
+
+        with (
+            patch.object(
+                ResidentGoalRuntime,
+                "_orient_step",
+                autospec=True,
+                return_value=sentinel,
+            ) as resident_goal_orient,
+            patch.object(
+                ApplicationAwareResidentRuntime,
+                "_orient_step",
+                autospec=True,
+                side_effect=AssertionError(
+                    "generic browser orientation must not preempt the E2E-25 composite Work owner"
+                ),
+            ) as generic_orient,
+        ):
+            result = resident._orient_step(
+                event,
+                state,
+                readiness=readiness,
+                thought=None,
+            )
+
+        self.assertIs(result, sentinel)
+        resident_goal_orient.assert_called_once_with(
+            resident,
+            event,
+            state,
+            readiness=readiness,
+            thought=None,
+        )
+        generic_orient.assert_not_called()
+
+    def test_non_e2e25_browser_work_keeps_existing_orientation_chain(self) -> None:
+        resident = CurrentApiDocsAdaptationResidentRuntime.__new__(
+            CurrentApiDocsAdaptationResidentRuntime
+        )
+        event = SimpleNamespace(
+            kind="desktop_user_event",
+            task="在这个网站里查 alice@example.test 的订单状态。",
+            payload={
+                "workspace_path": "C:/workspace",
+                "work_thread_id": "other",
+                "work_item_id": "root-other",
+            },
+        )
+        state = SimpleNamespace()
+        readiness = SimpleNamespace()
+        sentinel = object()
+
+        with patch.object(
+            ApplicationAwareResidentRuntime,
+            "_orient_step",
+            autospec=True,
+            return_value=sentinel,
+        ) as generic_orient:
+            result = resident._orient_step(
+                event,
+                state,
+                readiness=readiness,
+                thought=None,
+            )
+
+        self.assertIs(result, sentinel)
+        generic_orient.assert_called_once_with(
+            resident,
+            event,
+            state,
+            readiness=readiness,
+            thought=None,
         )
 
     def test_current_page_research_proposal_is_url_free_and_resident_owned(self) -> None:
