@@ -42,7 +42,6 @@ function diagnosticError(error) {
   return {
     code: typeof error?.code === 'string' ? error.code : undefined,
     name: typeof error?.name === 'string' ? error.name : undefined,
-    message: typeof error?.message === 'string' ? error.message.slice(0, 500) : String(error).slice(0, 500),
   }
 }
 
@@ -169,7 +168,6 @@ type FixtureDiagnostic = {
   port?: number
   code?: string
   name?: string
-  message?: string
 }
 
 async function readEndpoint(endpointPath: string): Promise<FixtureEndpoint> {
@@ -296,6 +294,10 @@ test('desktop client relaunches and reauthenticates after a hard resident crash 
     assert.notEqual(secondEndpoint.authentication.secret, firstEndpoint.authentication.secret)
     assert.equal(resident.running, true)
     assert.equal(resident.runtimeIdentity.runtimeId, 'fixture-runtime')
+
+    const diagnostics = JSON.stringify(await readFixtureDiagnostics(diagnosticsPath))
+    assert.equal(diagnostics.includes(firstEndpoint.authentication.secret), false)
+    assert.equal(diagnostics.includes(secondEndpoint.authentication.secret), false)
   } finally {
     try { await resident.stop() } catch { void 0 }
     killFixture(firstPid)
