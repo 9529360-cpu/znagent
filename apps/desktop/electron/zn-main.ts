@@ -1,12 +1,13 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { app, BrowserWindow, dialog, shell } from 'electron'
+import { app, BrowserWindow, dialog, Menu, shell, Tray } from 'electron'
 
 import { configureZnPackagedRuntime } from './zn-packaged-runtime'
 import { parseZnDeepLink, type ZnDeepLink, znDeepLinksFromArgv } from './zn-protocol'
 import { registerZnReleaseUpdaterIpc } from './zn-release-updater'
 import { registerZnResidentIpc, startZnResidentOnDesktopReady } from './zn-resident-ipc'
+import { ZnWindowsResidentSurface } from './zn-windows-resident-surface'
 import { registerZnWorkspaceIpc } from './zn-workspace-ipc'
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url))
@@ -14,6 +15,8 @@ const preloadPath = path.join(moduleDir, 'electron-preload.js')
 const shellPath = path.join(moduleDir, 'zn-shell.html')
 
 let primaryWindow: BrowserWindow | null = null
+let windowsResidentSurface: ZnWindowsResidentSurface | null = null
+let windowsResidentTray: Tray | null = null
 const pendingDeepLinks: ZnDeepLink[] = []
 
 function isSafeExternalUrl(value: string): boolean {
@@ -90,6 +93,9 @@ export function createZnDesktopWindow(): BrowserWindow {
     event.preventDefault()
     routeNavigation(url)
   })
+  window.on('close', event => {
+    windowsResidentSurface?.handleWindowClose(event, window)
+  })
   window.on('closed', () => {
     if (primaryWindow === window) primaryWindow = null
   })
@@ -106,6 +112,32 @@ function ensurePrimaryWindow(): BrowserWindow {
   return primaryWindow
 }
 
+function initializeWindowsResidentSurface(): void {
+  if (process.platform !== 'win32' || windowsResidentSurface) return
+
+  windowsResidentSurface = new ZnWindowsResidentSurface(
+    () => ensurePrimaryWindow(),
+    () => app.quit()
+  )
+
+  windowsResidentTray = new Tray(path.join(app.getAppPath(), 'assets', 'icon.ico'))
+  windowsResidentTray.setToolTip('ZN')
+  windowsResidentTray.setContextMenu(
+    Menu.buildFromTemplate([
+      {
+        label: 'Open ZN',
+        click: () => windowsResidentSurface?.show()
+      },
+      { type: 'separator' },
+      {
+        label: 'Quit ZN',
+        click: () => windowsResidentSurface?.quit()
+      }
+    ])
+  )
+  windowsResidentTray.on('double-click', () => windowsResidentSurface?.show())
+}
+
 async function bootstrapZnDesktop(): Promise<void> {
   if (!app.requestSingleInstanceLock()) {
     app.quit()
@@ -114,6 +146,7 @@ async function bootstrapZnDesktop(): Promise<void> {
 
   for (const link of znDeepLinksFromArgv(process.argv)) pendingDeepLinks.push(link)
 
+  app.on('before-quit', () => windowsResidentSurface?.beginQuit())
   app.on('open-url', (event, url) => {
     event.preventDefault()
     receiveDeepLink(url)
@@ -141,6 +174,7 @@ async function bootstrapZnDesktop(): Promise<void> {
   if (!app.setAsDefaultProtocolClient('zn')) {
     console.warn('[ZN] OS protocol registration for zn:// is unavailable in this build')
   }
+  initializeWindowsResidentSurface()
   ensurePrimaryWindow()
   await startZnResidentOnDesktopReady()
 
