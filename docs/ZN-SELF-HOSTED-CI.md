@@ -1,105 +1,108 @@
-# ZN Windows self-hosted CI
+# ZN Windows CI topology
 
 > Current intended platform: Windows x64
 >
-> Canonical integration/source/release branch: `main`
+> Canonical integration/source branch: `main`
 >
 > Development branches: short-lived `work/*` branches created from current `main` and merged through PR.
+>
+> This file keeps its historical filename so existing repository links do not break.
+
+Updated: 2026-09-16
 
 ## Purpose
 
-Steady-state ZN product verification is repository-owned automation executed by a replaceable Windows x64 self-hosted GitHub Actions runner.
+Ordinary ZN development verification should run on disposable GitHub-hosted Windows x64 whenever the complete acceptance oracle can be reconstructed there.
 
-The runner is infrastructure, not ZN identity and not a specific maintainer machine contract. A computer may be replaced without changing the workflow as long as a suitable Windows x64 runner is registered and online.
+Self-hosted Windows is a special resource for workflows that genuinely depend on persistent user/session/provider state or release-specific host state. It is not the default correctness oracle, not ZN identity, and not a maintainer-machine product contract.
 
-## Automatic behavior
+## Ordinary PR and `main` verification
 
-`.github/workflows/zn-ci.yml` runs automatically on:
-
-- pull requests targeting `main`, so the candidate is verified before merge;
-- pushes to `main`, so the merged canonical source is verified again.
-
-It may also be started manually with `workflow_dispatch`.
-
-The required core checks are:
+`.github/workflows/zn-ci.yml` runs on pull requests targeting `main`, pushes to `main`, and manual dispatch. Its required jobs are currently GitHub-hosted `windows-latest` jobs:
 
 - ZN source boundary;
 - isolated Python runtime install, zero-model boot and core tests;
 - Electron/TypeScript dependency audit, typecheck, bundle and retained desktop/release tests.
 
-Applicable product E2E workflows such as managed-browser, Work-recovery and Windows interactive computer-use are also configured to run on relevant pull requests targeting `main`, with path filters so unrelated changes do not consume scarce runners unnecessarily.
+Each job verifies that the actual runner is Windows x64 before executing product code.
 
-`dev/zn-agent` is a historical compatibility branch only. It is not a CI integration target for new product development and should not accumulate independent work.
+Path-filtered product E2E should also prefer GitHub-hosted Windows when its real acceptance environment can be reconstructed without persistent user credentials or host-specific state. Current hosted examples include Local Documents/Spreadsheet, Research, Document Research, Memory/Learned Behavior, the primary Windows Interactive Desktop E2E, and Windows Clean Install.
 
-Linux Container and Linux AppImage checks are optional manual workflows and do not block normal Windows development.
+Hosted does not mean synthetic-only. The primary Windows Interactive Desktop lane proves a usable interactive Windows desktop before running real Win32/UIA/browser/desktop acceptance, and Windows Clean Install builds and installs the real NSIS candidate in isolated disposable state.
 
-## Runner selection
+`dev/zn-agent` remains a historical compatibility branch only. It is not a CI integration target for new product development.
 
-The product-verification jobs dispatch to the generic GitHub Actions `self-hosted` label plus the repository's Windows/x64 project labels, then immediately verify the actual runner OS/architecture where appropriate.
+## Hosted interactive desktop boundary
 
-```text
-RUNNER_OS   = Windows
-RUNNER_ARCH = X64
-```
+The primary PR/push job in `.github/workflows/zn-windows-interactive-e2e.yml` runs on `windows-latest`.
 
-This deliberately avoids making a maintainer's personal computer identity part of the product contract. The dedicated interactive runner remains a special resource only for tests that genuinely require a logged-on desktop session.
+Before product acceptance it runs `.github/scripts/test-zn-interactive-desktop-readiness.ps1`, which fails closed unless the runner process is in a non-Session-0, WTS-active user session that can open and switch to the Windows input desktop, observe a same-session foreground window, and acquire foreground for a bounded probe window.
 
-The final `publish-status` job is deliberately different: it does not check out or execute repository code and only projects completed job results back to GitHub commit-status APIs. It runs on a disposable GitHub-hosted runner so terminal status publication cannot sit behind scarce Windows product-verification capacity. The Windows truth still comes exclusively from the three self-hosted required jobs.
+The hosted interactive lane then exercises the current product routes, including the retained Windows application/UIA and browser-to-desktop paths. A runner label by itself is never treated as proof of an interactive desktop.
 
-If additional non-Windows self-hosted runners are ever added to this repository, runner groups or dedicated project labels should be introduced before enabling them for unrelated workloads.
+The same workflow retains a manually dispatched legacy/full diagnostics job that may use the specialized self-hosted `zn-interactive` runner. That manual diagnostic path is separate from the ordinary PR/push acceptance path.
 
-## Recovery on another Windows computer
+## Hosted clean-install boundary
 
-A replacement maintainer should use the repository's GitHub UI:
+`.github/workflows/zn-windows-clean-install.yml` runs on disposable GitHub-hosted Windows x64 for applicable PRs and `main` pushes.
 
-```text
-Settings
-→ Actions
-→ Runners
-→ New self-hosted runner
-→ Windows x64
-```
+Before installing the production-identity candidate it verifies that the disposable machine has no pre-existing ZN process, uninstall registration, or `zn:` protocol registration. The lane then stages the packaged runtime, builds the Electron application and NSIS installer, verifies packaged artifacts and release metadata, installs the real candidate into isolated test state, and starts the installed Desktop/Resident for acceptance.
 
-Run GitHub's generated registration commands locally on that computer. The registration token is short-lived infrastructure credential material: never commit it, put it in HANDOFF, paste it into ordinary logs, or make it part of ZN resident memory.
+This is install/start verification, not authorization to publish a formal release or replace a user's installed production version.
 
-After registration, keep the runner listener online. For unattended CI across logout/reboot, install/run the GitHub Actions runner using the supported Windows service mode on the runner host where that mode matches the workload. Interactive desktop E2E still requires a real logged-on interactive session.
+## Specialized self-hosted `zn-interactive` boundary
 
-Then verify repository connectivity with `.github/workflows/zn-self-hosted-runner-check.yml` and confirm a pull request to `main` produces real step execution in `ZN CI`.
+Self-hosted `zn-interactive` remains valid only where the current workflow genuinely needs host-specific state that ordinary hosted CI does not provide.
 
-## Host safety boundary
+Current examples include guarded real-model or existing-session acceptance, selected long-running real E2E workflows, release/candidate packaging, runner bootstrap/watchdog maintenance, and manually dispatched legacy interactive diagnostics.
 
-A self-hosted runner executes repository-controlled code with the operating-system permissions of its runner account. Therefore:
-
-- prefer a dedicated low-privilege runner account or isolated machine/VM where practical;
-- do not store personal secrets, browser profiles, SSH private keys or unrelated credentials in the runner workspace;
-- do not grant administrator privileges merely to make ordinary CI pass;
-- do not expose release/signing secrets to routine development jobs;
-- keep workflow `GITHUB_TOKEN` permissions minimal;
-- treat changes that expand runner permissions or secret access as security-sensitive review items.
-
-The steady-state core development workflow currently uses repository contents read access and commit-status write access only.
-
-## Observability
-
-Each main Windows CI job publishes its commit status as `pending` once a runner has actually accepted the job, then the runner-agnostic final status publisher records success/failure without consuming another Windows slot.
-
-This means:
+Where a workflow calls `.github/scripts/test-zn-interactive-user-context.ps1`, acceptance requires all of the following current facts:
 
 ```text
-no pending status     = no runner has accepted the job yet
-pending               = Windows self-hosted execution is active/accepted
-success/failure/error = terminal repository-visible evidence
+Windows x64
+runner name = zn-interactive
+process session != Session 0
+current token is not Administrator/elevated
 ```
 
-A queued workflow without any pending status is infrastructure availability evidence, not a code-test failure.
+The script rejects an Administrator token instead of trusting a runner label or machine name as proof of ordinary-user semantics.
 
-For a pull request, the merge decision must use the checks for the current PR head. A green result from an older commit is not a substitute after the branch changes. Post-merge `main` CI is canonical confirmation, not the first merge gate.
+Credential-backed model acceptance remains a separate authorization boundary. Credentials, user profiles and provider secrets must not be copied into ordinary hosted jobs merely to eliminate a specialized runner.
+
+## Release boundary
+
+Formal release and candidate workflows are separate from ordinary development CI. For example, `.github/workflows/zn-release.yml` currently packages Windows on the specialized `zn-interactive` runner for a formal `zn-v*` tag or an explicitly dispatched package run.
+
+Release signing, publishing, stable update-channel mutation, production installer replacement and related trust changes remain high-risk operations. Green ordinary CI or a green clean-install run does not authorize those effects.
+
+If release packaging later becomes reproducible on disposable hosted Windows without weakening its trust boundary, migrate it deliberately and update this document from the real workflow rather than assuming the topology has changed.
+
+## Self-hosted runner lifecycle
+
+Ordinary ZN CI no longer depends on a maintainer-owned self-hosted Windows runner.
+
+Keep self-hosted registration, bootstrap and watchdog infrastructure only while at least one live specialized workflow still needs it. If the last real consumer moves to hosted infrastructure, remove the runner-specific maintenance path instead of preserving an idle second CI architecture.
+
+For specialized self-hosted use:
+
+- prefer a dedicated standard-user account and isolated machine/VM where practical;
+- do not store unrelated personal secrets, browser profiles, SSH keys or signing material in the runner workspace;
+- do not grant Administrator privileges merely to make ordinary acceptance pass;
+- keep real-model and release credentials scoped to the workflows that actually require them;
+- treat changes that expand runner permissions, credential access or signing/release trust as security-sensitive.
+
+## Observability and merge evidence
+
+The main ZN CI jobs publish repository commit-status contexts while they execute. Treat those statuses as execution evidence, not as a substitute for checking the actual workflow identity and exact source SHA.
+
+For a pull request, the merge decision must use checks for the current PR head. A green result from an older commit is not valid after the branch changes.
+
+After merge, the `main` push workflows are canonical confirmation for the merge SHA. A queued workflow or missing status is infrastructure/scheduling evidence until a runner has accepted the job; it is not automatically a code failure.
+
+When a specialized self-hosted lane is applicable, inspect its exact current-head result and user-context proof separately. Do not reuse a historical successful run from another head or assume that a generic hosted lane proves credential-backed or release-specific behavior.
 
 ## Secondary platforms
 
-The repository retains optional manual Linux workflows so historical mechanisms can still be exercised when useful:
+The repository retains optional/manual Linux mechanisms for historical or targeted verification. They are not the current Windows product-release baseline.
 
-- `zn-linux-container-smoke.yml`;
-- `zn-linux-appimage-update-smoke.yml`.
-
-They are not current M8 blockers. Restoring Linux/macOS as intended release targets requires an explicit product decision and corresponding CI/release evidence.
+Restoring Linux or macOS as intended release targets requires an explicit product decision and corresponding build, install, runtime and release evidence.
