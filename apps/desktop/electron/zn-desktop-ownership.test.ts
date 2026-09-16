@@ -124,6 +124,19 @@ test('active ZN renderer root is content-first and independent of inherited shel
   assert.doesNotMatch(html, new RegExp(retiredProduct, 'i'))
 })
 
+test('ZN liquid OS hierarchy keeps glass in controls and content readable', () => {
+  const styles = read('src/zn/styles.css')
+
+  assert.match(styles, /body::before,\s*body::after\s*\{/)
+  assert.match(styles, /@keyframes zn-liquid-a/)
+  assert.match(styles, /@keyframes zn-liquid-b/)
+  assert.match(styles, /\.zn-sidebar,\s*\.zn-context-panel,\s*\.zn-topbar,\s*\.zn-composer\s*\{\s*backdrop-filter:/)
+  assert.doesNotMatch(styles, /\.zn-thread-surface\s*\{[^}]*backdrop-filter:/s)
+  assert.doesNotMatch(styles, /\.zn-message\.activity\s*\{[^}]*backdrop-filter:/s)
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/)
+  assert.match(styles, /:focus-visible/)
+})
+
 test('workbench browser cache is bounded fallback state, not resident authority', () => {
   const state = read('src/zn/state.ts')
   const workbench = read('src/zn/workbench.tsx')
