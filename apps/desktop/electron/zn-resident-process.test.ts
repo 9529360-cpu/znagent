@@ -114,6 +114,7 @@ const server = net.createServer(socket => {
 
 server.on('error', error => {
   diagnose('listen_error', diagnosticError(error))
+  process.exit(1)
 })
 
 server.listen(0, '127.0.0.1', () => {
