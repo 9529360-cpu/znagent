@@ -37,19 +37,12 @@ function hasRecoveryCodeMarker(attributes) {
 }
 
 sensitiveTextboxKind = function (attributes) {
-  const autocomplete = normalizedAutocomplete(attributes?.autocomplete)
-  if (
-    autocomplete.includes('one-time-code') ||
-    autocomplete.includes('current-password') ||
-    autocomplete.includes('new-password') ||
-    autocomplete.some(token => token.startsWith('cc-'))
-  ) {
-    return baseSensitiveTextboxKind(attributes)
-  }
+  const baseKind = baseSensitiveTextboxKind(attributes)
+  if (baseKind) return baseKind
 
   // HTML has no recovery-code autocomplete token. Explicit structural recovery /
   // backup / emergency-code markers therefore join the already-verified
   // user-presence authentication-code class before any textbox value is read.
   if (hasRecoveryCodeMarker(attributes)) return 'one_time_code'
-  return baseSensitiveTextboxKind(attributes)
+  return ''
 }
