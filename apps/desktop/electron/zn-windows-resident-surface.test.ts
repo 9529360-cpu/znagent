@@ -41,10 +41,8 @@ test('ZN builder copies the source tray icon to the packaged resources root', ()
   const builder = fs.readFileSync(path.join(desktopRoot, 'electron-builder.zn.yml'), 'utf8')
 
   assert.equal(fs.existsSync(path.join(desktopRoot, 'assets', 'icon.ico')), true)
-  assert.match(
-    builder,
-    /extraResources:\s*[\r\n]+\s*- from: assets\/icon\.ico\s*[\r\n]+\s*to: icon\.ico/
-  )
+  assert.match(builder, /^extraResources:$/m)
+  assert.match(builder, /^\s+- from: assets\/icon\.ico\r?\n\s+to: icon\.ico$/m)
 })
 
 test('development Windows tray icon resolves from the source assets directory', () => {
