@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -30,8 +31,11 @@ function configureSourceDevelopmentProfile(): void {
     throw new Error('ZN_DESKTOP_USER_DATA is required for an isolated source-development desktop')
   }
   const resolved = path.resolve(userData)
+  const sessionData = path.join(resolved, 'session')
+  fs.mkdirSync(resolved, { recursive: true })
+  fs.mkdirSync(sessionData, { recursive: true })
   app.setPath('userData', resolved)
-  app.setPath('sessionData', path.join(resolved, 'session'))
+  app.setPath('sessionData', sessionData)
   console.info(`[ZN] source-development profile isolated at ${resolved}`)
 }
 
