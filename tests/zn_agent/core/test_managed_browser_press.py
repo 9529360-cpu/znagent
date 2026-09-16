@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import unittest
+from dataclasses import replace
 from types import SimpleNamespace
 
 from zn_agent.core.browser import (
@@ -183,6 +184,26 @@ class ManagedBrowserPressTests(unittest.TestCase):
         self.assertTrue(effect.data["press_sent"])
         self.assertEqual(effect.data["key"], "Enter")
         self.assertEqual(effect.data["expected_text_sha256"], _DIGEST)
+
+    def test_press_rejects_user_browser_plane_before_dispatch(self) -> None:
+        adapter = _PressAdapter()
+        user_identity = replace(adapter.session.identity, plane=BrowserPlane.USER)
+        adapter.session.identity = user_identity
+        adapter.target = replace(adapter.target, session_id=user_identity.session_id)
+        adapter.observation = replace(
+            adapter.observation,
+            session=user_identity,
+            target=adapter.target,
+        )
+        adapter.session.last_observation["page-1"] = adapter.observation
+        action, authority = _action(adapter)
+
+        effect = adapter.act(action, authority)
+
+        self.assertFalse(effect.success)
+        self.assertIn("MANAGED Browser", effect.error or "")
+        self.assertEqual(adapter.press_dispatches, 0)
+        self.assertEqual(adapter.revalidate_calls, 0)
 
     def test_press_rejects_every_key_except_exact_enter_before_dispatch(self) -> None:
         adapter = _PressAdapter()
