@@ -215,17 +215,17 @@ export class ZnResidentProcess extends EventEmitter {
       launched?.unref()
       launched = null
     }
-    const launch = async () => {
+    const launch = async (): Promise<ChildProcess | null> => {
       launchAttempts += 1
       try {
-        launched = await this.launchDetachedService()
+        return await this.launchDetachedService()
       } catch (error) {
         lastError = error
-        launched = null
+        return null
       }
     }
 
-    await launch()
+    launched = await launch()
     while (Date.now() < deadline) {
       if (launched && (launched.exitCode !== null || launched.signalCode !== null)) {
         const exit = launched.exitCode !== null
@@ -240,7 +240,7 @@ export class ZnResidentProcess extends EventEmitter {
         if (remaining <= 0) break
         const delay = Math.min(400, 100 * (2 ** Math.max(0, launchAttempts - 1)))
         await new Promise(resolve => setTimeout(resolve, Math.min(delay, remaining)))
-        await launch()
+        launched = await launch()
         continue
       }
 
