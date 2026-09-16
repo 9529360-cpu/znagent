@@ -13,6 +13,15 @@ from zn_agent.core.provider_bridge import build_resident_runtime
 TASK = "我在 Windows 文件资源管理器里当前选中的这个文件是什么？告诉我文件名、大小和修改时间。"
 
 
+def _same_file(left: str | os.PathLike[str], right: str | os.PathLike[str]) -> bool:
+    try:
+        return os.path.samefile(left, right)
+    except (FileNotFoundError, OSError, ValueError):
+        return os.path.normcase(os.path.abspath(str(left))) == os.path.normcase(
+            os.path.abspath(str(right))
+        )
+
+
 class WindowsInteractiveExplorerSelectedFileE2ETests(unittest.TestCase):
     @staticmethod
     def _require_windows_desktop() -> None:
@@ -43,7 +52,6 @@ class WindowsInteractiveExplorerSelectedFileE2ETests(unittest.TestCase):
         }
         shell.Explore(str(path.parent))
 
-        wanted_parent = os.path.normcase(os.path.abspath(str(path.parent)))
         deadline = time.monotonic() + 20.0
         window = None
         observed_folders: set[str] = set()
@@ -56,7 +64,7 @@ class WindowsInteractiveExplorerSelectedFileE2ETests(unittest.TestCase):
                     observed_folders.add(folder_path)
                 except Exception:
                     continue
-                if os.path.normcase(os.path.abspath(folder_path)) == wanted_parent:
+                if _same_file(folder_path, path.parent):
                     window = candidate
                     break
             if window is not None:
@@ -96,7 +104,11 @@ class WindowsInteractiveExplorerSelectedFileE2ETests(unittest.TestCase):
                 str(selected.Item(index).Path or "") for index in range(int(selected.Count))
             ]
             last_foreground = int(user32.GetForegroundWindow() or 0)
-            if last_selected == [str(path)] and last_foreground == hwnd:
+            if (
+                len(last_selected) == 1
+                and _same_file(last_selected[0], path)
+                and last_foreground == hwnd
+            ):
                 return window
             user32.SetForegroundWindow(wintypes.HWND(hwnd))
             time.sleep(0.1)
