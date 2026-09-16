@@ -27,6 +27,9 @@ const transientRenameErrors = new Set(['EACCES', 'EPERM', 'EBUSY'])
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 
 async function publishEndpoint(temporary, target) {
+  // Windows CI can transiently lock the stale target while Defender/indexing
+  // observes it. Retry only the documented lock-style rename failures; the
+  // desktop reconnect budget and all resident identity assertions stay fixed.
   let delayMs = 25
   const deadline = Date.now() + 1_500
   while (true) {
