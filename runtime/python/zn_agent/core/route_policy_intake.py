@@ -179,6 +179,11 @@ def bind_work_event_route_policy(
     specialized cognition path bypasses the normal CognitionRequest builder, but
     Kernel never reads WorkThread state or infers user language itself.
 
+    This is also the existing shared pre-event ingress boundary used by ordinary
+    Work starts and active steering. The final Product Resident may therefore
+    attach a separate privacy-bounded start-context projection here. That hook is
+    additive evidence only; route-policy semantics remain owned by this function.
+
     Non-object explicit policy is deliberately copied through without durable
     persistence so ModelRouter rejects it fail-closed. Mapping-shaped policy is
     validated by ModelRouter's single syntax boundary before WorkThread save.
@@ -224,4 +229,10 @@ def bind_work_event_route_policy(
 
     if route_policy is not None:
         event_payload["route_policy"] = route_policy
+
+    resident = getattr(ledger, "resident", None)
+    context_binder = getattr(resident, "bind_work_event_context", None)
+    if callable(context_binder):
+        context_binder(event_payload)
+
     return route_policy

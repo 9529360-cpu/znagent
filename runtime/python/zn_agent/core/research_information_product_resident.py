@@ -22,6 +22,7 @@ from .user_browser_multi_record_result import (
     requested_multi_record_count,
 )
 from .windows_companion_body import WindowsCompanionAwareBody
+from .windows_companion_work_context import bind_windows_companion_work_context
 
 
 _RESEARCH_INTENT_MARKERS = (
@@ -88,6 +89,18 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
         install_browser_spreadsheet_behavior(self)
         install_document_research_completion_behavior(self)
         install_document_research_completion_safety(self)
+
+    def bind_work_event_context(self, event_payload):
+        """Attach fresh bounded device context before Work event durability.
+
+        The returned projection is historical start-context evidence only. Body
+        mutation paths continue to reacquire current authority independently.
+        """
+
+        return bind_windows_companion_work_context(
+            event_payload,
+            device_capabilities=self.device_capabilities,
+        )
 
     def _interpret_semantic_result(self, event, goal: dict[str, str], context: str) -> str:
         """Extend the existing USER Browser lookup to one bounded plural result set."""
