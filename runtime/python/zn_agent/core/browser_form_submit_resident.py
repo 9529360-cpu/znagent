@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Ordinary Work ownership for one bounded same-session browser form submission."""
+"""Ordinary Work ownership for bounded same-session browser form submission."""
 
 import hashlib
 import re
@@ -29,19 +29,40 @@ _ZH_FORM_RE_REVERSED = re.compile(
     r'(?:到|进|至)\s*(?:文本框|输入框|字段)\s*["“]([^"”\r\n]{1,160})["”].{0,120}?'
     r'(?:点击|按下)\s*(?:按钮)?\s*["“]([^"”\r\n]{1,160})["”]'
 )
+_EN_ENTER_FORM_RE = re.compile(
+    r'\b(?:type|enter|fill)\s+["“]([^"”\r\n]{1,512})["”]\s+'
+    r'(?:into|in)\s+(?:the\s+)?(?:textbox|field|input)\s+'
+    r'["“]([^"”\r\n]{1,160})["”].{0,120}?'
+    r'\b(?:press|hit)\s+(?:the\s+)?(?:enter|return)(?:\s+key)?\b',
+    re.IGNORECASE,
+)
+_ZH_ENTER_FORM_RE = re.compile(
+    r'(?:文本框|输入框|字段)\s*["“]([^"”\r\n]{1,160})["”]\s*'
+    r'(?:中|里)?\s*(?:输入|填写)\s*["“]([^"”\r\n]{1,512})["”].{0,120}?'
+    r'(?:按下?|敲下?)\s*(?:Enter|回车)(?:键)?',
+    re.IGNORECASE,
+)
+_ZH_ENTER_FORM_RE_REVERSED = re.compile(
+    r'(?:输入|填写)\s*["“]([^"”\r\n]{1,512})["”]\s*'
+    r'(?:到|进|至)\s*(?:文本框|输入框|字段)\s*["“]([^"”\r\n]{1,160})["”].{0,120}?'
+    r'(?:按下?|敲下?)\s*(?:Enter|回车)(?:键)?',
+    re.IGNORECASE,
+)
 
 
 class BrowserFormSubmitResidentRuntime(BrowserNamedTextWorkResidentRuntime):
-    """Close one explicit semantic form task without broad browser authority.
+    """Close explicit semantic form tasks without broad browser authority.
 
-    The task must provide exactly two HTTP(S) URLs in order (start and expected
-    destination), one quoted plaintext value, one exact quoted textbox name, and
-    one exact quoted button name. The resident forms one guarded Body action so
-    the text mutation and submit click share one browser session. No model chooses
-    the destination, targets, text, or expected result.
+    A click-submit task must provide exactly two HTTP(S) URLs in order (start
+    and expected destination), one quoted plaintext value, one exact quoted
+    textbox name, and one exact quoted button name. A second MANAGED-only slice
+    accepts the same explicit URLs/text/textbox authority when the user explicitly
+    asks to press Enter. No model chooses the destination, targets, text, key, or
+    expected result.
     """
 
     _BROWSER_FILL_AND_SUBMIT = "browser_fill_named_text_and_click_named_button_to_url"
+    _BROWSER_FILL_AND_PRESS_ENTER = "browser_fill_named_text_and_press_enter_to_url"
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
@@ -97,10 +118,53 @@ class BrowserFormSubmitResidentRuntime(BrowserNamedTextWorkResidentRuntime):
         return start_url, textbox_name, text, button_name, expected_url
 
     @classmethod
+    def _natural_enter_submit_request(
+        cls,
+        event,
+    ) -> tuple[str, str, str, str] | None:
+        payload = event.payload or {}
+        if payload.get("body_action") or payload.get("native_action"):
+            return None
+        task = str(event.task or "").strip()
+        urls = cls._explicit_urls(task)
+        if len(urls) != 2:
+            return None
+        start_url, expected_url = urls
+        remainder = task
+        for url in urls:
+            remainder = remainder.replace(url, " ")
+
+        matches: list[tuple[str, str]] = []
+        for match in _EN_ENTER_FORM_RE.finditer(remainder):
+            text = match.group(1)
+            textbox_name = match.group(2).strip()
+            if text and textbox_name:
+                matches.append((text, textbox_name))
+        for match in _ZH_ENTER_FORM_RE.finditer(remainder):
+            textbox_name = match.group(1).strip()
+            text = match.group(2)
+            if text and textbox_name:
+                matches.append((text, textbox_name))
+        for match in _ZH_ENTER_FORM_RE_REVERSED.finditer(remainder):
+            text = match.group(1)
+            textbox_name = match.group(2).strip()
+            if text and textbox_name:
+                matches.append((text, textbox_name))
+
+        unique: list[tuple[str, str]] = []
+        for item in matches:
+            if item not in unique:
+                unique.append(item)
+        if len(unique) != 1:
+            return None
+        text, textbox_name = unique[0]
+        return start_url, textbox_name, text, expected_url
+
+    @classmethod
     def _required_capabilities(cls, event) -> tuple[str, ...]:
-        if (
-            event.payload.get("required_capabilities") is None
-            and cls._natural_form_submit_request(event) is not None
+        if event.payload.get("required_capabilities") is None and (
+            cls._natural_enter_submit_request(event) is not None
+            or cls._natural_form_submit_request(event) is not None
         ):
             return ("browser",)
         return super()._required_capabilities(event)
@@ -114,6 +178,40 @@ class BrowserFormSubmitResidentRuntime(BrowserNamedTextWorkResidentRuntime):
         learning_evidence,
         thought=None,
     ):
+        enter_request = self._natural_enter_submit_request(event)
+        if enter_request is not None:
+            start_url, textbox_name, text, expected_url = enter_request
+            intent = NativeActionIntent(
+                intent_id=f"browser-form-enter-submit-{event.event_id}",
+                event_id=event.event_id,
+                kind=self._BROWSER_FILL_AND_PRESS_ENTER,
+                args={
+                    "url": start_url,
+                    "textbox_name": textbox_name,
+                    "text": text,
+                    "expected_url": expected_url,
+                },
+                reason=(
+                    "the current user Work supplies the exact managed-browser start URL, "
+                    "quoted plaintext, exact semantic textbox name, explicit Enter key "
+                    "interaction and explicit final URL"
+                ),
+                source="native_deliberation",
+            )
+            if not self._action_blocked_by_current_evidence(event, state, intent):
+                self._begin_native_action_cycle(event, state, intent)
+                self.store.save_working_state(state)
+                if thought is not None:
+                    action = f"perform body action: {self._BROWSER_FILL_AND_PRESS_ENTER}"
+                    if action not in thought.possible_actions:
+                        thought.possible_actions = (*thought.possible_actions, action)
+                    thought.reason = (
+                        f"{thought.reason}; the user supplied all form, Enter-key and result "
+                        "authority, so ZN can keep the bounded mutations in one managed-browser session"
+                    )
+                    self._persist_enriched_thought(thought)
+                return None
+
         request = self._natural_form_submit_request(event)
         if request is not None:
             start_url, textbox_name, text, button_name, expected_url = request
@@ -157,10 +255,10 @@ class BrowserFormSubmitResidentRuntime(BrowserNamedTextWorkResidentRuntime):
 
     @staticmethod
     def _generic_guarded_side_effect(intent: NativeActionIntent) -> bool:
-        if (
-            str(intent.kind or "").strip().lower()
-            == BrowserFormSubmitResidentRuntime._BROWSER_FILL_AND_SUBMIT
-        ):
+        if str(intent.kind or "").strip().lower() in {
+            BrowserFormSubmitResidentRuntime._BROWSER_FILL_AND_SUBMIT,
+            BrowserFormSubmitResidentRuntime._BROWSER_FILL_AND_PRESS_ENTER,
+        }:
             return True
         return BrowserNamedTextWorkResidentRuntime._generic_guarded_side_effect(intent)
 
@@ -187,7 +285,7 @@ class BrowserFormSubmitResidentRuntime(BrowserNamedTextWorkResidentRuntime):
                     response=str(recovered.output or intent.args.get("expected_url") or ""),
                     reason=(
                         "ZN resumed the already durable, provider-verified form submission "
-                        "after interruption without replaying text entry or the submit click"
+                        "after interruption without replaying text entry or the submit interaction"
                     ),
                 )
         return super()._native_action_step(
@@ -203,7 +301,7 @@ class BrowserFormSubmitResidentRuntime(BrowserNamedTextWorkResidentRuntime):
         intent: NativeActionIntent,
     ) -> BodyActionResult | None:
         kind = str(intent.kind or "").strip().lower()
-        if kind != self._BROWSER_FILL_AND_SUBMIT:
+        if kind not in {self._BROWSER_FILL_AND_SUBMIT, self._BROWSER_FILL_AND_PRESS_ENTER}:
             return None
         signature_hash = self.body._signature_hash(kind, dict(intent.args))
         attempt = self.body._replay_blocking_attempt(
@@ -229,7 +327,11 @@ class BrowserFormSubmitResidentRuntime(BrowserNamedTextWorkResidentRuntime):
             result = BodyActionResult(**raw)
         except (TypeError, ValueError):
             return None
-        if not self._form_submit_result_proves_intent(result, intent):
+        if kind == self._BROWSER_FILL_AND_SUBMIT:
+            proven = self._form_submit_result_proves_intent(result, intent)
+        else:
+            proven = self._enter_submit_result_proves_intent(result, intent)
+        if not proven:
             return None
         return result
 
@@ -291,4 +393,75 @@ class BrowserFormSubmitResidentRuntime(BrowserNamedTextWorkResidentRuntime):
             and submit_evidence.get("success") is True
             and isinstance(submit_data, dict)
             and submit_data.get("target_revalidated_before_dispatch") is True
+        )
+
+    @staticmethod
+    def _enter_submit_result_proves_intent(
+        result: BodyActionResult,
+        intent: NativeActionIntent,
+    ) -> bool:
+        if result.success is not True or result.event_id != intent.event_id:
+            return False
+        data = result.data if isinstance(result.data, dict) else {}
+        text_evidence = data.get("text_evidence")
+        text_data = text_evidence.get("data") if isinstance(text_evidence, dict) else None
+        submit_evidence = data.get("submit_evidence")
+        submit_data = (
+            submit_evidence.get("data") if isinstance(submit_evidence, dict) else None
+        )
+        url = str(intent.args.get("url") or "").strip()
+        expected_url = str(intent.args.get("expected_url") or "").strip()
+        textbox_name = str(intent.args.get("textbox_name") or "").strip()
+        text = intent.args.get("text")
+        if (
+            not isinstance(text, str)
+            or not text
+            or not url
+            or not expected_url
+            or not textbox_name
+        ):
+            return False
+        expected_digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        expected_length = len(text)
+        return bool(
+            result.kind == BrowserFormSubmitResidentRuntime._BROWSER_FILL_AND_PRESS_ENTER
+            and data.get("closed") is True
+            and str(data.get("url") or "") == url
+            and str(data.get("expected_url") or "") == expected_url
+            and str(data.get("observed_url") or "") == expected_url
+            and str(data.get("textbox_name") or "") == textbox_name
+            and str(data.get("submit_key") or "") == "Enter"
+            and int(data.get("expected_text_length") or -1) == expected_length
+            and str(data.get("expected_text_sha256") or "") == expected_digest
+            and int(data.get("text_length_after") or -1) == expected_length
+            and str(data.get("text_sha256_after") or "") == expected_digest
+            and str(data.get("text_postcondition") or "")
+            == "same_exact_target_text_equals_requested"
+            and data.get("text_exact_node_continuity") is True
+            and data.get("textbox_revalidated_before_enter") is True
+            and data.get("text_revalidated_before_enter") is True
+            and data.get("enter_dispatched") is True
+            and str(data.get("submit_postcondition") or "")
+            == "url_equals_after_fresh_semantic_textbox_enter"
+            and isinstance(text_evidence, dict)
+            and text_evidence.get("success") is True
+            and isinstance(text_data, dict)
+            and text_data.get("input_sent") is True
+            and text_data.get("exact_node_continuity") is True
+            and int(text_data.get("expected_text_length") or -1) == expected_length
+            and str(text_data.get("expected_text_sha256") or "") == expected_digest
+            and int(text_data.get("text_length_after") or -1) == expected_length
+            and str(text_data.get("text_sha256_after") or "") == expected_digest
+            and isinstance(submit_evidence, dict)
+            and submit_evidence.get("success") is True
+            and str(submit_evidence.get("postcondition") or "")
+            == "url_equals_after_fresh_semantic_textbox_enter"
+            and isinstance(submit_data, dict)
+            and submit_data.get("target_revalidated_before_dispatch") is True
+            and submit_data.get("text_revalidated_before_dispatch") is True
+            and submit_data.get("press_sent") is True
+            and str(submit_data.get("key") or "") == "Enter"
+            and str(submit_data.get("expected_url") or "") == expected_url
+            and int(submit_data.get("expected_text_length") or -1) == expected_length
+            and str(submit_data.get("expected_text_sha256") or "") == expected_digest
         )
