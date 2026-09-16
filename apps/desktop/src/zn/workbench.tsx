@@ -18,6 +18,10 @@ import {
   type ZnResidentSnapshot,
   type ZnWorkProgress
 } from './resident-client'
+import {
+  describeZnProviderReadiness,
+  providerUpdateNotice
+} from './provider-readiness'
 import { ZnMissingRestoreControls } from './restore-controls'
 import {
   addZnThreadMessage,
@@ -149,6 +153,10 @@ export function ZnWorkbench() {
       .sort((left, right) => right.updatedAt - left.updatedAt)
       .filter(thread => !normalized || thread.title.toLowerCase().includes(normalized))
   }, [query, threads])
+  const providerReadiness = useMemo(
+    () => describeZnProviderReadiness(providerSettings),
+    [providerSettings]
+  )
 
   useEffect(() => saveZnThreadCache(threads), [threads])
 
@@ -237,9 +245,10 @@ export function ZnWorkbench() {
 
   useEffect(() => {
     void refreshResident()
+    void refreshProviderSettings()
     const timer = window.setInterval(() => void refreshResident(), 12_000)
     return () => window.clearInterval(timer)
-  }, [refreshResident])
+  }, [refreshProviderSettings, refreshResident])
 
   useEffect(() => {
     if (view === 'settings') void refreshProviderSettings()
@@ -389,7 +398,7 @@ export function ZnWorkbench() {
         }
         setResidentError(
           residentAccepted
-            ? `${message} The resident may continue this durable work while the desktop reconnects.`
+            ? `${message} ZN may keep working on this task while the desktop reconnects.`
             : message
         )
         setResidentHealth(residentAccepted ? 'connecting' : 'offline')
@@ -411,7 +420,7 @@ export function ZnWorkbench() {
         ...(providerApiKey.trim() ? { apiKey: providerApiKey } : {})
       })
       applyProviderSettings(settings)
-      setProviderNotice('Provider settings applied to the current resident.')
+      setProviderNotice(providerUpdateNotice(settings))
       setResidentHealth('live')
     } catch (error) {
       setProviderNotice(error instanceof Error ? error.message : String(error))
@@ -467,6 +476,7 @@ export function ZnWorkbench() {
   }, [])
 
   const showClearCredential = providerSettings?.credential.source === 'secure_store' || providerSettings?.credential.source === 'config'
+  const showProviderGuidance = providerSettings !== null && !providerSettings.cognitionAvailable
 
   return (
     <div className={`zn-app${contextOpen ? '' : ' context-closed'}`}>
@@ -475,12 +485,12 @@ export function ZnWorkbench() {
           <div className="zn-mark">ZN</div>
           <div>
             <div className="zn-brand">ZN</div>
-            <div className="zn-muted zn-small">resident workbench</div>
+            <div className="zn-muted zn-small">your ideas, further.</div>
           </div>
         </div>
 
         <button className="zn-primary zn-new-work" type="button" onClick={openNewWork}>
-          + New work
+          + New task
         </button>
         <input
           className="zn-search"
@@ -562,7 +572,7 @@ export function ZnWorkbench() {
           </div>
           <button className="zn-resident-pill" type="button" onClick={() => void refreshResident()}>
             <span className={`zn-health-dot ${residentHealth}`} />
-            {residentHealth === 'live' ? 'resident live' : residentHealth}
+            {residentHealth === 'live' ? 'ZN ready' : residentHealth === 'connecting' ? 'Connecting' : 'Offline'}
           </button>
         </header>
 
@@ -572,22 +582,26 @@ export function ZnWorkbench() {
               <span className="zn-eyebrow">ZN desktop</span>
               <h1>Settings</h1>
               <p>
-                Product settings belong to the resident. Provider secrets are stored through ZN's secure credential boundary and are never returned to this renderer.
+                Settings apply to ZN on this device. Provider secrets stay behind ZN's secure credential boundary and are never returned to this renderer.
               </p>
             </div>
             <div className="zn-settings-grid">
               <section className="zn-card">
-                <h2>Resident</h2>
+                <h2>Background service</h2>
                 <p className="zn-muted">
-                  The resident outlives this window. Reconnect or inspect the current runtime without creating another identity.
+                  ZN can stay available when this window closes, so longer tasks can continue and reconnect here later.
                 </p>
-                <button type="button" onClick={() => void refreshResident()}>Refresh resident</button>
+                <button type="button" onClick={() => void refreshResident()}>Refresh status</button>
                 {residentError ? <div className="zn-error-text">{residentError}</div> : null}
+                <details>
+                  <summary className="zn-muted zn-small">Technical details</summary>
+                  <pre className="zn-compact-pre">{residentSnapshot ? renderUnknown(residentSnapshot) : 'Waiting for ZN…'}</pre>
+                </details>
               </section>
               <section className="zn-card">
                 <h2>Models & providers</h2>
                 <p className="zn-muted">
-                  External models are replaceable cognitive resources. Saving here hot-applies the resource plan without replacing ZN's identity, memory or life loop.
+                  Choose the model connection ZN can use for open-ended reasoning. Saving here applies the connection without replacing ZN's identity or history.
                 </p>
                 {providerSettings && !providerSettings.editable ? (
                   <>
@@ -596,7 +610,7 @@ export function ZnWorkbench() {
                       {providerSettings.routeCount ? ` · ${providerSettings.routeCount} routes` : ''}.
                     </div>
                     <p className="zn-muted zn-small">
-                      The simple editor will not overwrite advanced resident route configuration.
+                      The simple editor will not overwrite advanced model routing configuration.
                     </p>
                   </>
                 ) : (
@@ -635,6 +649,15 @@ export function ZnWorkbench() {
         ) : (
           <>
             <main className="zn-thread-surface">
+              {showProviderGuidance ? (
+                <div className="zn-notice" role="status">
+                  <strong>{providerReadiness.headline}.</strong> {providerReadiness.detail}
+                  <div className="zn-muted zn-small">
+                    Open-ended model-backed reasoning needs a working provider and model. Local and deterministic Resident paths remain available.
+                  </div>
+                  <button type="button" onClick={() => setView('settings')}>Open Settings</button>
+                </div>
+              ) : null}
               {deepLinkNotice ? <div className="zn-notice"><strong>Deep link received.</strong> Nothing was executed automatically.<button type="button" onClick={() => setDeepLinkNotice(null)}>Dismiss</button></div> : null}
 
               {activeThread && activeThread.messages.length > 0 ? (
@@ -695,19 +718,19 @@ export function ZnWorkbench() {
                 </div>
               ) : (
                 <div className="zn-empty-thread">
-                  <span className="zn-eyebrow">Persistent resident</span>
-                  <h1>What should ZN attend to?</h1>
-                  <p>Work enters the resident's own event loop. The desktop can detach while durable work continues; files, diffs and invoked terminal output appear contextually when the resident produces relevant evidence.</p>
+                  <span className="zn-eyebrow">ZN</span>
+                  <h1>What should we work on?</h1>
+                  <p>Ask ZN to research, create, edit, or continue work in this workspace. Longer tasks can keep going while you close the window and come back later.</p>
                 </div>
               )}
             </main>
 
             <form className="zn-composer-wrap" onSubmit={submit}>
               <div className="zn-composer">
-                <textarea aria-label="Message ZN" placeholder="Message ZN" rows={1} value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} />
+                <textarea aria-label="Message ZN" placeholder="Ask ZN to help with anything…" rows={1} value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} />
                 <button className="zn-send" type="submit" disabled={busy || !draft.trim()}>{busy ? '…' : '↑'}</button>
               </div>
-              <div className="zn-composer-caption">{activeWorkspace ? `${activeWorkspace.name} · ` : ''}{busy ? 'Resident work continues independently · ' : ''}Enter to send · Shift+Enter for newline</div>
+              <div className="zn-composer-caption">{activeWorkspace ? `${activeWorkspace.name} · ` : ''}{busy ? 'ZN can keep working in the background · ' : ''}Enter to send · Shift+Enter for newline</div>
             </form>
           </>
         )}
@@ -715,7 +738,7 @@ export function ZnWorkbench() {
 
       {contextOpen ? (
         <aside className="zn-context-panel">
-          <div className="zn-context-header"><div><div className="zn-section-label">Context</div><strong>{selectedArtifact ? artifactKindLabel(selectedArtifact.kind) : 'Resident'}</strong></div><button type="button" aria-label="Close context panel" onClick={() => setContextOpen(false)}>×</button></div>
+          <div className="zn-context-header"><div><div className="zn-section-label">Context</div><strong>{selectedArtifact ? artifactKindLabel(selectedArtifact.kind) : 'Overview'}</strong></div><button type="button" aria-label="Close context panel" onClick={() => setContextOpen(false)}>×</button></div>
           <section className="zn-context-section">
             <div className="zn-context-title">Workspace</div>
             {activeWorkspace ? (
@@ -724,7 +747,21 @@ export function ZnWorkbench() {
               <><p className="zn-muted zn-small">No local folder is attached to this work.</p><div className="zn-context-actions"><button type="button" disabled={workspaceBusy || busy || !activeThread} onClick={() => void attachWorkspace()}>Attach folder</button></div></>
             )}
           </section>
-          <section className="zn-context-section"><div className="zn-context-title">Runtime health</div><div className="zn-context-value"><span className={`zn-health-dot ${residentHealth}`} />{residentHealth}</div>{residentError ? <div className="zn-error-text">{residentError}</div> : null}</section>
+          {activeArtifacts.length > 0 ? (
+            <section className="zn-context-section zn-context-grow zn-artifact-section">
+              <div className="zn-context-title">Results</div>
+              <div className="zn-artifact-list" aria-label="Work artifacts">
+                {activeArtifacts.map(artifact => <button className={`zn-artifact-link${artifact.id === selectedArtifact?.id ? ' active' : ''}`} key={artifact.id} type="button" onClick={() => setSelectedArtifactId(artifact.id)}><span className="zn-artifact-kind">{artifactKindLabel(artifact.kind)}</span><span className="zn-artifact-name">{artifact.name}</span></button>)}
+              </div>
+              {selectedArtifact ? <div className="zn-artifact-preview"><div className="zn-artifact-preview-head"><strong>{selectedArtifact.name}</strong>{selectedArtifact.path ? <span title={selectedArtifact.path}>{selectedArtifact.path}</span> : null}</div><pre>{selectedArtifact.content || 'No textual preview available.'}</pre>{selectedArtifact.metadata?.truncated ? <div className="zn-artifact-note">Preview is bounded; content was truncated.</div> : null}</div> : null}
+            </section>
+          ) : (
+            <section className="zn-context-section">
+              <div className="zn-context-title">Results</div>
+              <p className="zn-muted zn-small">Relevant files, diffs and terminal output will appear here when this task produces them.</p>
+            </section>
+          )}
+          <section className="zn-context-section"><div className="zn-context-title">Status</div><div className="zn-context-value"><span className={`zn-health-dot ${residentHealth}`} />{residentHealth === 'live' ? 'Ready' : residentHealth === 'connecting' ? 'Connecting' : 'Offline'}</div>{residentError ? <div className="zn-error-text">{residentError}</div> : null}</section>
           <section className="zn-context-section">
             <div className="zn-context-header">
               <div className="zn-context-title">Restore points</div>
@@ -762,17 +799,6 @@ export function ZnWorkbench() {
             )}
             <p className="zn-muted zn-small">Changed, unchanged and unsafe targets remain inspection-only. Missing-target restore requires explicit preparation and approval with fresh resident revalidation.</p>
           </section>
-          {activeArtifacts.length > 0 ? (
-            <section className="zn-context-section zn-context-grow zn-artifact-section">
-              <div className="zn-context-title">Artifacts</div>
-              <div className="zn-artifact-list" aria-label="Work artifacts">
-                {activeArtifacts.map(artifact => <button className={`zn-artifact-link${artifact.id === selectedArtifact?.id ? ' active' : ''}`} key={artifact.id} type="button" onClick={() => setSelectedArtifactId(artifact.id)}><span className="zn-artifact-kind">{artifactKindLabel(artifact.kind)}</span><span className="zn-artifact-name">{artifact.name}</span></button>)}
-              </div>
-              {selectedArtifact ? <div className="zn-artifact-preview"><div className="zn-artifact-preview-head"><strong>{selectedArtifact.name}</strong>{selectedArtifact.path ? <span title={selectedArtifact.path}>{selectedArtifact.path}</span> : null}</div><pre>{selectedArtifact.content || 'No textual preview available.'}</pre>{selectedArtifact.metadata?.truncated ? <div className="zn-artifact-note">Preview is bounded; content was truncated.</div> : null}</div> : null}
-            </section>
-          ) : (
-            <section className="zn-context-section zn-context-grow"><div className="zn-context-title">Current resident state</div><pre>{residentSnapshot ? renderUnknown(residentSnapshot) : 'Waiting for resident…'}</pre><div className="zn-context-title zn-context-title-spaced">Artifacts</div><p className="zn-muted zn-small">Relevant files, diffs and invoked terminal output appear here after resident work produces them.</p></section>
-          )}
         </aside>
       ) : null}
     </div>

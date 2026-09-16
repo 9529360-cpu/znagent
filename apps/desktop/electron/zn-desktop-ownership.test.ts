@@ -75,21 +75,13 @@ test('workspace attachment uses an OS folder picker before resident association'
 
 test('active ZN renderer root is content-first and independent of inherited shell', () => {
   const main = read('src/zn/main.tsx')
-  const onboarding = read('src/zn/provider-onboarding.tsx')
   const workbench = read('src/zn/workbench.tsx')
   const residentClient = read('src/zn/resident-client.ts')
   const styles = read('src/zn/styles.css')
   const html = read('electron/zn-shell.html')
 
-  assert.match(main, /ZnProviderOnboarding/)
-  assert.match(onboarding, /ZnWorkbench/)
-  assert.match(onboarding, /className="zn-settings"/)
-  assert.match(onboarding, /zn-page-intro/)
-  assert.match(onboarding, /zn-settings-grid/)
-  assert.match(onboarding, /zn-card/)
-  assert.match(onboarding, /zn-search/)
-  assert.match(onboarding, /Continue without model/)
-  assert.doesNotMatch(onboarding, /provider-onboarding\.css/)
+  assert.match(main, /ZnWorkbench/)
+  assert.doesNotMatch(main, /ZnProviderOnboarding/)
   assert.match(styles, /\.zn-settings\s*\{/)
   assert.match(styles, /\.zn-card\s*\{/)
   assert.match(workbench, /New work/)
@@ -107,6 +99,11 @@ test('active ZN renderer root is content-first and independent of inherited shel
   assert.match(workbench, /selectedArtifactId/)
   assert.match(workbench, /Work artifacts/)
   assert.match(workbench, /artifactKindLabel/)
+  assert.match(workbench, /loadZnProviderSettings/)
+  assert.match(workbench, /describeZnProviderReadiness/)
+  assert.match(workbench, /Open Settings/)
+  assert.match(workbench, /Local and deterministic Resident paths remain available/)
+  assert.match(workbench, /disabled=\{busy \|\| !draft\.trim\(\)\}/)
   assert.match(residentClient, /resident\.workList/)
   assert.match(residentClient, /resident\.workStart/)
   assert.match(residentClient, /resident\.workProgress/)
@@ -117,15 +114,27 @@ test('active ZN renderer root is content-first and independent of inherited shel
   assert.match(html, /zn-shell-renderer\.js/)
 
   const retiredRendererPattern = new RegExp(`ContribController|${retiredDesktop}|${retiredPackageScope}|src\\/main`, 'i')
-  for (const source of [main, onboarding, workbench, residentClient]) {
+  for (const source of [main, workbench, residentClient]) {
     assert.doesNotMatch(source, retiredRendererPattern)
   }
-  assert.doesNotMatch(onboarding, new RegExp(retiredProduct, 'i'))
-  assert.doesNotMatch(onboarding, /onboarding-script|gateway|bootstrap-runner|src\/store/i)
-  assert.doesNotMatch(workbench, /gateway/i)
+  assert.doesNotMatch(workbench, new RegExp(retiredProduct, 'i'))
+  assert.doesNotMatch(workbench, /gateway|bootstrap-runner|src\/store/i)
   assert.doesNotMatch(workbench, /showOpenDialog|readFileSync|readFile\(/)
   assert.doesNotMatch(residentClient, /node:fs|electron/)
   assert.doesNotMatch(html, new RegExp(retiredProduct, 'i'))
+})
+
+test('ZN liquid OS hierarchy keeps glass in controls and content readable', () => {
+  const styles = read('src/zn/styles.css')
+
+  assert.match(styles, /body::before,\s*body::after\s*\{/)
+  assert.match(styles, /@keyframes zn-liquid-a/)
+  assert.match(styles, /@keyframes zn-liquid-b/)
+  assert.match(styles, /\.zn-sidebar,\s*\.zn-context-panel,\s*\.zn-topbar,\s*\.zn-composer\s*\{\s*backdrop-filter:/)
+  assert.doesNotMatch(styles, /\.zn-thread-surface\s*\{[^}]*backdrop-filter:/s)
+  assert.doesNotMatch(styles, /\.zn-message\.activity\s*\{[^}]*backdrop-filter:/s)
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/)
+  assert.match(styles, /:focus-visible/)
 })
 
 test('workbench browser cache is bounded fallback state, not resident authority', () => {
@@ -174,7 +183,6 @@ test('terminal context appears only as resident artifact evidence, not a permane
 test('provider settings stay resident-owned and renderer never receives a stored secret', () => {
   const ipc = read('electron/zn-resident-ipc.ts')
   const preload = read('electron/zn-preload.ts')
-  const onboarding = read('src/zn/provider-onboarding.tsx')
   const workbench = read('src/zn/workbench.tsx')
   const client = read('src/zn/resident-client.ts')
   const state = read('src/zn/state.ts')
@@ -184,10 +192,9 @@ test('provider settings stay resident-owned and renderer never receives a stored
   assert.match(preload, /providerSettingsUpdate/)
   assert.match(client, /loadZnProviderSettings/)
   assert.match(client, /updateZnProviderSettings/)
-  assert.match(onboarding, /loadZnProviderSettings/)
-  assert.match(onboarding, /updateZnProviderSettings/)
-  assert.match(onboarding, /type="password"/)
-  assert.match(onboarding, /Resident secure-store boundary/)
+  assert.match(workbench, /loadZnProviderSettings/)
+  assert.match(workbench, /updateZnProviderSettings/)
+  assert.match(workbench, /providerUpdateNotice/)
   assert.match(workbench, /Models & providers/)
   assert.match(workbench, /type="password"/)
   assert.match(workbench, /Save provider/)
