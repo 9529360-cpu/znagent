@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 
 import { ZnWorkbench } from './workbench'
 import './styles.css'
+import './liquid-performance.css'
 
 document.title = 'ZN'
 
