@@ -10,6 +10,7 @@ from typing import Any
 
 from . import side_effect_attempts
 from .body import BodyAction, BodyActionResult
+from .file_identity import DEFAULT_MAX_HASH_BYTES, read_text_for_exact_file_identity
 from .keyboard_text_body import KeyboardTextBody
 from .models import utc_now
 
@@ -40,8 +41,56 @@ class SideEffectAwareBody(KeyboardTextBody):
         {"terminal_input", "terminal_write", "command_input"}
     )
     _TEXT_WRITE_KINDS = frozenset({"write_text", "write_file"})
+    _IDENTITY_BOUND_READ_KINDS = frozenset({"read_text", "read_file"})
     _APPEND_KINDS = _TEXT_WRITE_KINDS
     _RECOVERY_STATUSES = frozenset({"verified_effect", "verified_absent"})
+
+    def _read_text(self, action: BodyAction, started: str) -> BodyActionResult:
+        expected = action.args.get("expected_file_identity")
+        if expected is None:
+            return super()._read_text(action, started)
+
+        path = self._path_arg(action.args)
+        max_chars = max(1, int(action.args.get("max_chars", 20000)))
+        max_bytes = max(
+            0,
+            int(action.args.get("max_bytes", DEFAULT_MAX_HASH_BYTES)),
+        )
+        encoding = str(action.args.get("encoding") or "utf-8")
+        text, identity, error = read_text_for_exact_file_identity(
+            path,
+            expected if isinstance(expected, dict) else None,
+            max_bytes=max_bytes,
+            encoding=encoding,
+        )
+        if error is not None or text is None:
+            return BodyActionResult(
+                action_id=action.action_id,
+                kind=action.kind,
+                success=False,
+                data={"path": str(path), "identity_bound": True},
+                error=error or "exact file identity could not be read",
+                event_id=action.event_id,
+                started_at=started,
+                completed_at=utc_now(),
+            )
+
+        truncated = len(text) > max_chars
+        output = text[:max_chars]
+        return self._ok(
+            action,
+            started,
+            output=output,
+            data={
+                "path": str(path),
+                "chars": len(text),
+                "returned_chars": len(output),
+                "truncated": truncated,
+                "encoding": encoding,
+                "identity_bound": True,
+                "content_sha256": str((identity or {}).get("content_sha256") or ""),
+            },
+        )
 
     def _record(self, action: BodyAction, result: BodyActionResult) -> None:
         """Keep sensitive input payloads out of generic durable Body history.
@@ -99,6 +148,36 @@ class SideEffectAwareBody(KeyboardTextBody):
                 started_at=result.started_at,
                 completed_at=result.completed_at,
             )
+
+        if (
+            action.kind in self._IDENTITY_BOUND_READ_KINDS
+            and "expected_file_identity" in safe_args
+        ):
+            raw_identity = safe_args.pop("expected_file_identity")
+            expected_digest = (
+                str(raw_identity.get("content_sha256") or "")
+                if isinstance(raw_identity, dict)
+                else ""
+            )
+            safe_args["expected_file_identity_bound"] = True
+            if expected_digest:
+                safe_args["expected_content_sha256"] = expected_digest
+            safe_data = dict(safe_result.data or {})
+            persisted_output = str(safe_result.output or "")
+            safe_data["read_text_output_redacted"] = True
+            safe_data["read_text_output_chars"] = len(persisted_output)
+            safe_result = BodyActionResult(
+                action_id=safe_result.action_id,
+                kind=safe_result.kind,
+                success=safe_result.success,
+                output="",
+                data=safe_data,
+                error=safe_result.error,
+                event_id=safe_result.event_id,
+                started_at=safe_result.started_at,
+                completed_at=safe_result.completed_at,
+            )
+            changed = True
 
         if action.kind in self._TEXT_WRITE_KINDS:
             source_key = "content" if "content" in safe_args else "text" if "text" in safe_args else None
