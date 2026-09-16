@@ -210,6 +210,7 @@ export class ZnResidentProcess extends EventEmitter {
 
     let launched: ChildProcess | null = null
     let launchAttempts = 0
+    let relaunchAfterEarlyExit = false
     const maxLaunchAttempts = 4
     const releaseLaunchHandle = () => {
       launched?.unref()
@@ -233,14 +234,16 @@ export class ZnResidentProcess extends EventEmitter {
           : `signal ${launched.signalCode || 'unknown'}`
         lastError = new Error(`ZN Resident exited before publishing a reachable endpoint (${exit})`)
         launched = null
+        relaunchAfterEarlyExit = true
       }
 
-      if (!launched && launchAttempts < maxLaunchAttempts) {
+      if (relaunchAfterEarlyExit && !launched && launchAttempts < maxLaunchAttempts) {
         const remaining = deadline - Date.now()
         if (remaining <= 0) break
         const delay = Math.min(400, 100 * (2 ** Math.max(0, launchAttempts - 1)))
         await new Promise(resolve => setTimeout(resolve, Math.min(delay, remaining)))
         launched = await launch()
+        relaunchAfterEarlyExit = false
         continue
       }
 
