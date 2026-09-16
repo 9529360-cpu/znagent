@@ -17,6 +17,7 @@ from .action_authority import ActionAuthorityContext, bind_worker_authority_arg
 from .application_resident import ApplicationAwareResidentRuntime
 from .cognition import CognitiveIncrement
 from .delegated_work_coordinator import DelegatedWorkCoordinator
+from .goal_resident import ResidentGoalRuntime
 from .models import utc_now
 from .path_context import resolved_within
 from .steerable_work import WorkItem
@@ -119,6 +120,39 @@ class CurrentApiDocsAdaptationResidentRuntime(ApplicationAwareResidentRuntime):
             for value in ("确认能用", "确认", "验证", "verify", "confirm")
         )
         return current_page and api_docs and adapt and run and verify
+
+    @classmethod
+    def _is_current_api_docs_adaptation_event(cls, event) -> bool:
+        payload = event.payload or {}
+        return bool(
+            str(event.kind or "").strip().lower() == "desktop_user_event"
+            and str(payload.get("workspace_path") or "").strip()
+            and str(payload.get("work_thread_id") or "").strip()
+            and str(payload.get("work_item_id") or "").strip()
+            and not payload.get("body_action")
+            and not payload.get("native_action")
+            and cls._is_current_api_docs_adaptation_text(str(event.task or ""))
+        )
+
+    def _orient_step(self, event, state, *, readiness, thought=None):
+        # E2E-25 is already a resident-owned browser-reference + workspace Work.
+        # Let the composition owner form its durable Root contract instead of
+        # allowing the narrower generic browser semantic classifier to consume
+        # this multi-surface objective first.
+        if self._is_current_api_docs_adaptation_event(event):
+            return ResidentGoalRuntime._orient_step(
+                self,
+                event,
+                state,
+                readiness=readiness,
+                thought=thought,
+            )
+        return super()._orient_step(
+            event,
+            state,
+            readiness=readiness,
+            thought=thought,
+        )
 
     @classmethod
     def _is_current_api_docs_adaptation_root(cls, root: WorkItem) -> bool:
