@@ -12,6 +12,10 @@ import {
   resolveDevUserData,
   venvPythonPathFor
 } from './zn-dev.mjs'
+import {
+  sourceBootstrapPaths,
+  validateSourceEndpoint
+} from './verify-zn-source-start.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(here, '..')
@@ -47,6 +51,36 @@ test('development state defaults stay inside the source checkout', () => {
 test('development state locations can be explicitly overridden', () => {
   assert.equal(resolveDevHome(root, { ZN_DEV_AGENT_HOME: './tmp/home' }), path.resolve('./tmp/home'))
   assert.equal(resolveDevUserData(root, { ZN_DEV_USER_DATA: './tmp/profile' }), path.resolve('./tmp/profile'))
+})
+
+test('source-start verifier pins Resident and Electron to isolated source state', () => {
+  const paths = sourceBootstrapPaths(root, {})
+  assert.equal(paths.devHome, path.join(root, '.dev', 'zn-home'))
+  assert.equal(paths.userData, path.join(root, '.dev', 'electron-user-data'))
+  assert.equal(paths.endpointPath, path.join(root, '.dev', 'zn-home', 'kernel', 'resident-endpoint.json'))
+
+  const endpoint = {
+    version: 2,
+    transport: 'tcp',
+    host: '127.0.0.1',
+    port: 43123,
+    pid: 1234,
+    instance_id: 'source-smoke',
+    python: paths.pythonPath,
+    authentication: {
+      scheme: 'session-secret-v1',
+      secret: 'a'.repeat(48)
+    }
+  }
+  assert.equal(validateSourceEndpoint(endpoint, { pythonPath: paths.pythonPath }), endpoint)
+  assert.throws(
+    () => validateSourceEndpoint({ ...endpoint, host: '0.0.0.0' }, { pythonPath: paths.pythonPath }),
+    /not loopback/
+  )
+  assert.throws(
+    () => validateSourceEndpoint({ ...endpoint, python: path.join(root, 'other-python') }, { pythonPath: paths.pythonPath }),
+    /python mismatch/
+  )
 })
 
 test('source desktop creates isolated profile paths before lock and skips protocol registration', () => {
