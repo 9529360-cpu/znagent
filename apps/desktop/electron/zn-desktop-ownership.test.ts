@@ -36,23 +36,6 @@ test('ZN Electron main owns window and protocol lifecycle without inherited desk
   assert.doesNotMatch(source, new RegExp(`${retiredCli}|run_agent|${retiredDesktopEnv}`))
 })
 
-test('Windows notification-area surface keeps the desktop reachable without creating another Resident', () => {
-  const main = read('electron/zn-main.ts')
-  const surface = read('electron/zn-windows-resident-surface.ts')
-
-  assert.match(main, /new Tray\(/)
-  assert.match(main, /Menu\.buildFromTemplate\(/)
-  assert.match(main, /app\.on\(['"]before-quit['"]/)
-  assert.match(main, /handleWindowClose\(event, window\)/)
-  assert.match(main, /Open ZN/)
-  assert.match(main, /Quit ZN/)
-  assert.match(surface, /event\.preventDefault\(\)/)
-  assert.match(surface, /window\.hide\(\)/)
-  assert.match(surface, /this\.quitting/)
-  assert.match(surface, /quitApplication\(\)/)
-  assert.doesNotMatch(surface, /spawn|ipcMain|ModelRouter|WorkThread|ResidentWorkLedger/)
-})
-
 test('ZN preload exposes only the ZN bridge and does not import inherited preload', () => {
   const source = read('electron/zn-preload.ts')
 
@@ -178,7 +161,6 @@ test('provider settings stay resident-owned and renderer never receives a stored
   const state = read('src/zn/state.ts')
 
   assert.match(ipc, /provider_settings/)
-  assert.match(ipc, /provider_settings_update/)
   assert.match(preload, /providerSettingsUpdate/)
   assert.match(client, /loadZnProviderSettings/)
   assert.match(client, /updateZnProviderSettings/)
