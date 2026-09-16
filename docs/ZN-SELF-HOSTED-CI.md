@@ -75,6 +75,20 @@ Credential-backed model acceptance remains a separate authorization boundary. Cr
 
 Formal release and candidate workflows are separate from ordinary development CI. For example, `.github/workflows/zn-release.yml` currently packages Windows on the specialized `zn-interactive` runner for a formal `zn-v*` tag or an explicitly dispatched package run.
 
+The ordinary builder baseline and hosted Clean Install continue to produce unsigned development candidates. A formal `zn-v*` tag is the only current path that enables Windows executable signing and requires code signing to succeed. Formal Windows publication therefore requires the following repository configuration in addition to the existing update-channel/S3 settings:
+
+- repository variable `ZN_WINDOWS_SIGNING_PUBLISHERS`: semicolon-separated Authenticode certificate publisher SimpleNames accepted by the packaged updater;
+- repository secret `ZN_WINDOWS_CSC_LINK`: the electron-builder Windows signing identity, using a supported certificate file, URL or encoded certificate value;
+- repository secret `ZN_WINDOWS_CSC_KEY_PASSWORD` when the selected certificate requires a password.
+
+Certificate rotation must preserve trust across already-installed builds. Before switching the signing identity, first ship a release still signed by the currently trusted certificate whose baked `ZN_WINDOWS_SIGNING_PUBLISHERS` allowlist contains both the current publisher and the next publisher. Only after that bridge release is deployed may a later release switch to the new certificate; during the transition, keep both new and previous publisher names until the supported installed population no longer depends on the old signer. If the publisher SimpleName does not change during certificate renewal, no additional publisher entry is needed.
+
+For a formal tag, `.github/workflows/zn-release.yml` overrides the unsigned builder baseline with Windows executable signing plus `forceCodeSigning`. It then verifies the actual packaged `ZN.exe` and every published root `.exe`/`.msi` with Windows `Get-AuthenticodeSignature` before release-manifest creation or artifact publication. Each signature must be Windows-valid and its certificate publisher must match `ZN_WINDOWS_SIGNING_PUBLISHERS`. Missing signing configuration, failed signing, an invalid signature or a publisher mismatch blocks the formal release.
+
+Production Electron builds bake the same publisher allowlist into the application next to the public update-channel URL. On Windows, the updater keeps its existing HTTPS, size and SHA-256 checks, but those remain integrity evidence rather than publisher identity. After the Resident update-readiness gate and immediately before launching the cached NSIS installer, the updater independently verifies Authenticode again and refuses to launch an installer whose signature is invalid or whose publisher is not in the baked allowlist. The mutable `stable.json` channel therefore cannot redefine the local publisher trust root.
+
+A manually dispatched packaging run does not publish a stable release and does not implicitly become a signed formal release. A successful ordinary CI run, Clean Install run or unsigned candidate build is not signing evidence. Conversely, the presence of signing secrets must not be used to silently change the development-candidate artifact contract.
+
 Release signing, publishing, stable update-channel mutation, production installer replacement and related trust changes remain high-risk operations. Green ordinary CI or a green clean-install run does not authorize those effects.
 
 If release packaging later becomes reproducible on disposable hosted Windows without weakening its trust boundary, migrate it deliberately and update this document from the real workflow rather than assuming the topology has changed.
