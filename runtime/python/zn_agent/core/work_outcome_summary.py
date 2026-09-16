@@ -89,22 +89,25 @@ def project_work_outcome(ledger: Any, event_id: str) -> dict[str, Any] | None:
         if item.plan_version == current_version
         and item.parent_work_item_id == root.work_item_id
     ]
-    completed_items = [item for item in children if item.status == "completed"][:_ITEM_LIMIT]
-    blocked_items = [item for item in children if item.status == "blocked"][:_ITEM_LIMIT]
-    active_items = [
+    all_completed = [item for item in children if item.status == "completed"]
+    all_blocked = [item for item in children if item.status == "blocked"]
+    all_active = [
         item
         for item in children
         if item.status in {"proposed", "ready", "running"}
-    ][:_ITEM_LIMIT]
+    ]
+    completed_items = all_completed[:_ITEM_LIMIT]
+    blocked_items = all_blocked[:_ITEM_LIMIT]
+    active_items = all_active[:_ITEM_LIMIT]
 
     root_status = str(root.status or "").strip().lower() or "running"
     if root_status == "completed":
         status = "completed"
         reason = "Completed"
-    elif root_status == "blocked" and completed_items:
+    elif root_status == "blocked" and all_completed:
         status = "partial"
         reason = "PartiallyCompleted"
-    elif root_status == "blocked" or blocked_items:
+    elif root_status == "blocked" or all_blocked:
         status = "blocked"
         reason = "Blocked"
     else:
@@ -123,9 +126,9 @@ def project_work_outcome(ledger: Any, event_id: str) -> dict[str, Any] | None:
         "reason": reason,
         "root_status": root_status,
         "counts": {
-            "completed": len(completed_items),
-            "blocked": len(blocked_items),
-            "active": len(active_items),
+            "completed": len(all_completed),
+            "blocked": len(all_blocked),
+            "active": len(all_active),
         },
         "completed": [_completed_view(item) for item in completed_items],
         "blocked": [_blocked_view(item) for item in blocked_items],
