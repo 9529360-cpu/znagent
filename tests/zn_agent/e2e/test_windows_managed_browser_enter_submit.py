@@ -20,9 +20,9 @@ _TYPED_DIGEST = hashlib.sha256(_TYPED.encode("utf-8")).hexdigest()
 
 class _EnterFormHandler(http.server.BaseHTTPRequestHandler):
     @staticmethod
-    def _done_payload(*, submitted: bool) -> bytes:
+    def _page_payload(*, submitted: bool) -> bytes:
         return (
-            "<!doctype html><html><head><title>ZN Enter Done</title></head>"
+            "<!doctype html><html><head><title>ZN Enter Result</title></head>"
             f"<body><main>{'submitted' if submitted else 'wrong'}</main></body></html>"
         ).encode("utf-8")
 
@@ -36,11 +36,14 @@ class _EnterFormHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlsplit(self.path)
         if parsed.path == "/done":
-            self._send_html(self._done_payload(submitted=False))
+            self._send_html(self._page_payload(submitted=True))
+            return
+        if parsed.path == "/wrong":
+            self._send_html(self._page_payload(submitted=False))
             return
         payload = (
             "<!doctype html><html><head><title>ZN Enter Form</title></head><body>"
-            '<form action="/done" method="post">'
+            '<form action="/submit" method="post">'
             '<label>Search <input id="search" name="q" type="text" aria-label="Search"></label>'
             "</form>"
             "</body></html>"
@@ -53,11 +56,15 @@ class _EnterFormHandler(http.server.BaseHTTPRequestHandler):
         body = self.rfile.read(content_length).decode("utf-8", errors="strict")
         values = parse_qs(body).get("q", [])
         submitted = (
-            parsed.path == "/done"
+            parsed.path == "/submit"
             and len(values) == 1
             and values[0] == _TYPED
         )
-        self._send_html(self._done_payload(submitted=submitted))
+        destination = "/done" if submitted else "/wrong"
+        self.send_response(303)
+        self.send_header("Location", destination)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def log_message(self, fmt, *args):
         return
