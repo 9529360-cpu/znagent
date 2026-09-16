@@ -1,4 +1,10 @@
-import type { ZnProviderSettings } from './resident-client'
+export type ZnProviderReadinessSettings = {
+  provider: string
+  model: string
+  cognitionAvailable: boolean
+  configurationError?: string
+  activeRoutes: Array<{ id: string; provider: string; model: string }>
+}
 
 export type ZnProviderReadinessKind =
   | 'checking'
@@ -14,7 +20,7 @@ export type ZnProviderReadiness = {
 }
 
 export function describeZnProviderReadiness(
-  settings: ZnProviderSettings | null
+  settings: ZnProviderReadinessSettings | null
 ): ZnProviderReadiness {
   if (!settings) {
     return {
@@ -67,7 +73,7 @@ export function describeZnProviderReadiness(
   }
 }
 
-export function providerUpdateNotice(settings: ZnProviderSettings): string {
+export function providerUpdateNotice(settings: ZnProviderReadinessSettings): string {
   const readiness = describeZnProviderReadiness(settings)
   if (readiness.ready) return `Model ready. ${readiness.detail}`
   return `Settings saved, but model-backed cognition is not ready. ${readiness.detail}`
