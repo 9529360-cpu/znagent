@@ -89,8 +89,7 @@ class ExplorerSelectedFileBehaviorTests(unittest.TestCase):
                 self.assertNotIn(selected_path, children[0].result)
                 self.assertNotIn("quarterly-plan.txt", children[0].result)
 
-                state = resident.store.get_working_state(run.event.event_id)
-                self.assertIsNotNone(state)
+                state = resident.store.get_working_state()
                 durable_state = json.dumps(state.data, ensure_ascii=False, sort_keys=True)
                 self.assertNotIn(selected_path, durable_state)
                 self.assertNotIn("quarterly-plan.txt", durable_state)
