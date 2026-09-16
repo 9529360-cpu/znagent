@@ -88,7 +88,6 @@ def perform_enter_press(
         )
 
     owner._validate_authority(session, action, authority)
-    owner._require_url_allowed(expected_url, session.permission)
 
     page_id = action.page_id or action.target.page_id or owner._default_page_id(session)
     page = owner._page(session, page_id)
@@ -104,6 +103,7 @@ def perform_enter_press(
         raise ManagedBrowserPressError(
             "browser Enter submission requires a same-origin expected URL"
         )
+    owner._require_url_allowed(expected_url, session.permission)
 
     current_text = owner._read_target_text_state(binding.handle)
     current_length = int(current_text.get("text_length") or -1)
