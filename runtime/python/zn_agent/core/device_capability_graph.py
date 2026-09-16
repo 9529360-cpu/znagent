@@ -11,7 +11,9 @@ make an otherwise unique exact application ambiguous.
 The public graph also owns read-only Windows companion, display and foreground
 senses. This keeps session/power/network/multi-monitor/current-window facts in the
 existing Resident device graph instead of creating a parallel OS agent or context
-store.
+store. A companion frame is only privacy-bounded optimistic-precondition evidence
+over internally stabilized fresh reads; it is not a second source of truth or an
+action authority.
 """
 
 from dataclasses import dataclass
@@ -29,6 +31,10 @@ from .models import utc_now
 from .windows_companion_context import (
     NativeWindowsCompanionContextSense,
     WindowsCompanionContextSnapshot,
+)
+from .windows_companion_frame import (
+    WindowsCompanionFrame,
+    WindowsCompanionFrameSense,
 )
 from .windows_display_context import (
     NativeWindowsDisplayContextSense,
@@ -85,6 +91,11 @@ class DeviceCapabilityGraph(_MachineFactGraph):
         """Fresh current-window identity with raw title/class content redacted."""
 
         return self._foreground_companion_sense.probe()
+
+    def companion_frame(self) -> WindowsCompanionFrame:
+        """Return one bounded, internally stabilized Windows evidence frame."""
+
+        return WindowsCompanionFrameSense(self).probe()
 
     def resident_context_snapshot(
         self,
