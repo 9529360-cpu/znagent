@@ -26,8 +26,8 @@ export function describeZnProviderReadiness(
     return {
       kind: 'checking',
       ready: false,
-      headline: 'Checking model resources',
-      detail: 'ZN is asking the resident for its current cognitive-resource state.'
+      headline: 'Checking model connection',
+      detail: 'ZN is checking whether a model is available for open-ended reasoning.'
     }
   }
 
@@ -39,8 +39,8 @@ export function describeZnProviderReadiness(
     return {
       kind: 'ready',
       ready: true,
-      headline: 'Model resources ready',
-      detail: route || 'The resident has an available cognitive route.'
+      headline: 'Model connection ready',
+      detail: route || 'A model is available for open-ended reasoning.'
     }
   }
 
@@ -58,23 +58,23 @@ export function describeZnProviderReadiness(
     return {
       kind: 'not_configured',
       ready: false,
-      headline: 'No external model configured yet',
+      headline: 'No model configured yet',
       detail:
-        'ZN can still run resident and deterministic local paths, but model-backed work needs a provider and model.'
+        'ZN can still handle local and deterministic tasks, but open-ended reasoning needs a configured provider and model.'
     }
   }
 
   return {
     kind: 'unavailable',
     ready: false,
-    headline: 'Model route is not available',
+    headline: 'Model connection is not available',
     detail:
-      'The saved provider and model do not currently produce an available cognitive route. Check the provider, model, endpoint and credential.'
+      'The saved provider and model are not currently available. Check the provider, model, endpoint and credential.'
   }
 }
 
 export function providerUpdateNotice(settings: ZnProviderReadinessSettings): string {
   const readiness = describeZnProviderReadiness(settings)
   if (readiness.ready) return `Model ready. ${readiness.detail}`
-  return `Settings saved, but model-backed cognition is not ready. ${readiness.detail}`
+  return `Settings saved, but the model connection is not ready. ${readiness.detail}`
 }

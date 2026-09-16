@@ -1,0 +1,18 @@
+/* Keep the ambient liquid fields on compositor-friendly properties only.
+   The base visual system still owns shape, blur, gradients and reduced-motion. */
+body::before,
+body::after {
+  will-change: transform;
+}
+
+@keyframes zn-liquid-a {
+  0% { transform: translate3d(-2%, -2%, 0) scale(.96) rotate(-4deg); }
+  50% { transform: translate3d(7%, 6%, 0) scale(1.05) rotate(3deg); }
+  100% { transform: translate3d(3%, 11%, 0) scale(1.01) rotate(8deg); }
+}
+
+@keyframes zn-liquid-b {
+  0% { transform: translate3d(2%, 3%, 0) scale(.98) rotate(2deg); }
+  50% { transform: translate3d(-7%, -8%, 0) scale(1.08) rotate(-5deg); }
+  100% { transform: translate3d(-3%, -13%, 0) scale(1.02) rotate(-9deg); }
+}
