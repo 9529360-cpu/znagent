@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import json
 import unittest
+from types import SimpleNamespace
 
+from zn_agent.core.research_information_product_resident import (
+    ProductResearchInformationResidentRuntime,
+)
 from zn_agent.core.user_browser_multi_record_result import (
     parse_verified_record_excerpts,
     requested_multi_record_count,
@@ -55,6 +59,48 @@ class UserBrowserMultiRecordResultTests(unittest.TestCase):
                         expected_count=3,
                     )
                 )
+
+    @staticmethod
+    def _product_runtime_with_authorization(*, authorized: bool):
+        resident = ProductResearchInformationResidentRuntime.__new__(
+            ProductResearchInformationResidentRuntime
+        )
+        resident.user_browser_authorization = lambda: {
+            "authorized": authorized,
+            "plane": "user",
+            "browser_ownership": "user",
+            "authorization_scope": "explicit_current_tab",
+        }
+        return resident
+
+    def test_existing_session_record_lookup_admission_requires_explicit_current_tab_authority(self) -> None:
+        event = SimpleNamespace(
+            kind="desktop_user_event",
+            task="去我已经登录的系统里查 Alice 最近三笔订单，把状态告诉我。",
+            payload={},
+        )
+        admitted = self._product_runtime_with_authorization(authorized=True)
+        self.assertTrue(admitted._is_explicit_existing_session_record_lookup(event))
+
+        unauthorized = self._product_runtime_with_authorization(authorized=False)
+        self.assertFalse(unauthorized._is_explicit_existing_session_record_lookup(event))
+
+    def test_existing_session_record_lookup_admission_does_not_make_system_a_global_browser_synonym(self) -> None:
+        resident = self._product_runtime_with_authorization(authorized=True)
+        rejected_tasks = (
+            "去我已经登录的系统里打开报表。",
+            "去系统里查 Alice 最近三笔订单，把状态告诉我。",
+            "去我已经登录的系统里查 Alice 的订单状态。",
+            "去我已经登录的软件里查 Alice 最近三笔订单，把状态告诉我。",
+        )
+        for task in rejected_tasks:
+            with self.subTest(task=task):
+                event = SimpleNamespace(
+                    kind="desktop_user_event",
+                    task=task,
+                    payload={},
+                )
+                self.assertFalse(resident._is_explicit_existing_session_record_lookup(event))
 
 
 if __name__ == "__main__":

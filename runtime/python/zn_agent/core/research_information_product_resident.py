@@ -3,6 +3,7 @@ from __future__ import annotations
 """Narrow product ingress for Research and Local Office representative Work."""
 
 from .action_authority import install_worker_authority_gate
+from .browser_goal_understanding_resident import browser_semantic_lookup_goal
 from .browser_spreadsheet_behavior import install_browser_spreadsheet_behavior
 from .current_app_text_cleanup_behavior import install_current_app_text_cleanup_behavior
 from .current_app_text_cleanup_completion import install_current_app_text_cleanup_completion
@@ -64,6 +65,34 @@ _CONTINUATION_INTENT_MARKERS = (
     "continue the investigation",
 )
 
+_EXISTING_SESSION_MARKERS = (
+    "已经登录",
+    "已登录",
+    "already logged",
+    "already signed in",
+    "logged-in",
+    "signed-in",
+    "existing session",
+)
+_EXISTING_SESSION_CONTAINER_MARKERS = (
+    "系统",
+    "portal",
+    "system",
+)
+_EXISTING_SESSION_LOOKUP_MARKERS = (
+    "查",
+    "找",
+    "lookup",
+    "find",
+    "show",
+)
+_EXISTING_SESSION_RECORD_MARKERS = (
+    "订单",
+    "记录",
+    "order",
+    "record",
+)
+
 
 class ProductResearchInformationResidentRuntime(ResearchInformationResidentRuntime):
     """Final product Resident with narrow Research and local Office admission."""
@@ -100,6 +129,71 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
         return bind_windows_companion_work_context(
             event_payload,
             device_capabilities=self.device_capabilities,
+        )
+
+    def _has_explicit_current_user_browser_authority(self) -> bool:
+        getter = getattr(self, "user_browser_authorization", None)
+        if not callable(getter):
+            return False
+        try:
+            authorization = getter()
+        except Exception:
+            return False
+        if not isinstance(authorization, dict):
+            return False
+        return (
+            authorization.get("authorized") is True
+            and str(authorization.get("plane") or "").strip().lower() == "user"
+            and str(authorization.get("browser_ownership") or "").strip().lower() == "user"
+            and str(authorization.get("authorization_scope") or "").strip().lower()
+            == "explicit_current_tab"
+        )
+
+    def _is_explicit_existing_session_record_lookup(self, event) -> bool:
+        """Admit only the bounded E2E-04-style existing-session lookup entrance."""
+
+        if str(getattr(event, "kind", "") or "").strip().lower() != "desktop_user_event":
+            return False
+        payload = getattr(event, "payload", None) or {}
+        if payload.get("body_action") or payload.get("native_action"):
+            return False
+        task = " ".join(str(getattr(event, "task", "") or "").split())
+        if not task or requested_multi_record_count(task) is None:
+            return False
+        lowered = task.casefold()
+        if not all(
+            any(marker.casefold() in lowered for marker in markers)
+            for markers in (
+                _EXISTING_SESSION_MARKERS,
+                _EXISTING_SESSION_CONTAINER_MARKERS,
+                _EXISTING_SESSION_LOOKUP_MARKERS,
+                _EXISTING_SESSION_RECORD_MARKERS,
+            )
+        ):
+            return False
+        # The natural phrase "the system I'm already logged into" is intentionally
+        # not a global synonym for "browser". It becomes USER-browser ingress only
+        # while the user has explicitly authorized the current browser tab.
+        return self._has_explicit_current_user_browser_authority()
+
+    def _orient_step(self, event, state, *, readiness, thought=None):
+        if (
+            browser_semantic_lookup_goal(event) is None
+            and self._is_explicit_existing_session_record_lookup(event)
+        ):
+            proposed = self._orient_browser_goal_from_cognition(
+                event,
+                state,
+                readiness=readiness,
+                thought=thought,
+            )
+            if proposed is not False:
+                return proposed
+        return super()._orient_step(
+            event,
+            state,
+            readiness=readiness,
+            thought=thought,
         )
 
     def _interpret_semantic_result(self, event, goal: dict[str, str], context: str) -> str:
