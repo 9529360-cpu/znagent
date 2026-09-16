@@ -91,11 +91,13 @@ class OutcomeAwareRestoreWorkControl(RestoreAwareWorkControl):
         return progress
 
     def get_snapshot(self, thread_id: str, *, message_limit: int = 120):
-        snapshot = super().get_snapshot(thread_id, message_limit=message_limit)
+        # The inherited call is allowed to finalize a completed Resident result and
+        # also attaches restore-point metadata. Reconcile only after that authority
+        # has settled, then call it once more so the returned snapshot preserves all
+        # inherited metadata while containing the corrected terminal transcript.
+        super().get_snapshot(thread_id, message_limit=message_limit)
         self._reconcile_thread_outcomes(thread_id)
-        # Re-read only after reconciliation so the returned transcript contains the
-        # final bounded outcome text. No Work execution/state authority is changed.
-        return self.ledger._snapshot_without_finalize(thread_id, message_limit=message_limit)
+        return super().get_snapshot(thread_id, message_limit=message_limit)
 
     def list_snapshots(
         self,
