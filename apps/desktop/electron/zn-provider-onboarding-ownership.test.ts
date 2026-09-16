@@ -13,23 +13,25 @@ function read(relative: string): string {
   return fs.readFileSync(path.join(desktopRoot, relative), 'utf8')
 }
 
-test('provider onboarding remains ZN-owned instead of importing an external desktop', () => {
+test('provider onboarding reuses ZN desktop composition instead of importing an external desktop', () => {
   const source = read('src/zn/provider-onboarding.tsx')
-  const css = read('src/zn/provider-onboarding.css')
   const main = read('src/zn/main.tsx')
+  const styles = read('src/zn/styles.css')
 
   assert.match(source, /ZnWorkbench/)
   assert.match(source, /loadZnProviderSettings/)
   assert.match(source, /updateZnProviderSettings/)
-  assert.match(source, /zn-onboarding-shell/)
+  assert.match(source, /className="zn-settings"/)
+  assert.match(source, /zn-page-intro/)
+  assert.match(source, /zn-settings-grid/)
+  assert.match(source, /zn-card/)
+  assert.match(source, /zn-search/)
   assert.match(source, /Continue without model/)
   assert.match(main, /ZnProviderOnboarding/)
+  assert.match(styles, /\.zn-settings\s*\{/)
+  assert.match(styles, /\.zn-card\s*\{/)
 
+  assert.doesNotMatch(source, /provider-onboarding\.css/)
   assert.doesNotMatch(source, new RegExp(externalDesktopName, 'i'))
-  assert.doesNotMatch(css, new RegExp(externalDesktopName, 'i'))
   assert.doesNotMatch(source, /onboarding-script|gateway|bootstrap-runner|src\/store/i)
-
-  const classNames = [...css.matchAll(/\.([A-Za-z][A-Za-z0-9_-]*)/g)].map(match => match[1])
-  assert.ok(classNames.length > 0)
-  assert.ok(classNames.every(name => name.startsWith('zn-')))
 })
