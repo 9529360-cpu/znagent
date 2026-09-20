@@ -10,6 +10,7 @@ import {
   pythonCandidatesFor,
   resolveDevHome,
   resolveDevUserData,
+  uvCandidatesFor,
   venvPythonPathFor
 } from './zn-dev.mjs'
 import {
@@ -41,6 +42,14 @@ test('explicit development Python wins over platform discovery', () => {
     argsPrefix: [],
     source: 'ZN_DEV_PYTHON'
   })
+})
+
+test('uv can be pinned and otherwise falls back to PATH discovery', () => {
+  assert.deepEqual(uvCandidatesFor({ ZN_DEV_UV: 'D:\\tools\\uv.exe' }), [
+    { command: 'D:\\tools\\uv.exe', source: 'ZN_DEV_UV' },
+    { command: 'uv', source: 'PATH' }
+  ])
+  assert.deepEqual(uvCandidatesFor({}), [{ command: 'uv', source: 'PATH' }])
 })
 
 test('development state defaults stay inside the source checkout', () => {

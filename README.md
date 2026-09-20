@@ -26,9 +26,11 @@ Later runs reuse the prepared environment unless the dependency inputs changed.
 The current product acceptance target is Windows x64. Source development requires:
 
 - Node.js **22.22.0 or newer**;
-- Python **3.11, 3.12 or 3.13**; Python 3.12 is recommended;
 - npm, which is included with Node.js;
+- either [uv](https://docs.astral.sh/uv/) (recommended) or Python **3.11, 3.12 or 3.13**;
 - network access on the first setup so npm/Python/Playwright dependencies can be installed.
+
+If no supported system Python is available, setup uses `uv` to provision Python 3.12 and seed the repository-local `.venv` automatically.
 
 No manual `ZN_AGENT_HOME`, `PYTHONPATH`, Resident endpoint, or Electron command is required for the normal source path.
 

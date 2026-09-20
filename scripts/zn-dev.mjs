@@ -95,6 +95,16 @@ export function pythonCandidatesFor(platform = process.platform, env = process.e
   })
 }
 
+export function uvCandidatesFor(env = process.env) {
+  const explicit = String(env.ZN_DEV_UV || '').trim()
+  return [
+    ...(explicit ? [{ command: explicit, source: 'ZN_DEV_UV' }] : []),
+    { command: 'uv', source: 'PATH' }
+  ].filter((candidate, index, items) =>
+    items.findIndex(item => item.command === candidate.command) === index
+  )
+}
+
 export function npmInvocation(args, env = process.env, platform = process.platform) {
   const npmExecPath = String(env.npm_execpath || '').trim()
   if (npmExecPath && fs.existsSync(npmExecPath)) {
@@ -232,9 +242,15 @@ function findBasePython() {
     const inspected = inspectPython(candidate)
     if (inspected) return inspected
   }
-  throw new Error(
-    'No supported Python found. Install Python 3.12 (supported: >=3.11,<3.14) or set ZN_DEV_PYTHON to a Python executable.'
-  )
+  return null
+}
+
+function findUv() {
+  for (const candidate of uvCandidatesFor()) {
+    const version = capture(candidate.command, ['--version'])
+    if (version && /^uv\s+\d+/i.test(version)) return { ...candidate, version }
+  }
+  return null
 }
 
 function venvPythonPath() {
@@ -245,8 +261,20 @@ function ensureVenv() {
   let pythonPath = venvPythonPath()
   if (!fs.existsSync(pythonPath)) {
     const base = findBasePython()
-    console.log(`[zn-dev] creating .venv with Python ${base.version} (${base.source})`)
-    run(base.command, [...base.argsPrefix, '-m', 'venv', VENV_ROOT])
+    if (base) {
+      console.log(`[zn-dev] creating .venv with Python ${base.version} (${base.source})`)
+      run(base.command, [...base.argsPrefix, '-m', 'venv', VENV_ROOT])
+    } else {
+      const uv = findUv()
+      if (!uv) {
+        throw new Error(
+          'No supported Python or uv found. Install uv (recommended), install Python 3.12, or set ZN_DEV_PYTHON/ZN_DEV_UV.'
+        )
+      }
+      console.log(`[zn-dev] no supported system Python found; provisioning Python 3.12 with ${uv.source}`)
+      run(uv.command, ['python', 'install', '3.12'])
+      run(uv.command, ['venv', '--seed', '--python', '3.12', VENV_ROOT])
+    }
   }
   pythonPath = venvPythonPath()
   const version = capture(pythonPath, ['-c', 'import platform; print(platform.python_version())'])
