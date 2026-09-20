@@ -28,6 +28,22 @@ MAX_CHARS = 16_384
 MAX_BYTES = 64 * 1024
 
 
+def _read_exact_text(
+    event: "AgentEvent",
+    body: Any,
+    path: str,
+    identity: Mapping[str, Any],
+):
+    return body.act(
+        "read_text",
+        event_id=event.event_id,
+        path=path,
+        max_chars=MAX_CHARS + 1,
+        max_bytes=MAX_BYTES,
+        expected_file_identity=dict(identity),
+    )
+
+
 def natural_workspace_text_edit_request(event: "AgentEvent") -> dict[str, str] | None:
     payload = event.payload or {}
     task = str(event.task or "").strip()
@@ -151,7 +167,7 @@ def compare_candidates(event: "AgentEvent", body: Any, discovery: Mapping[str, A
             and _exact_file(pre, path)
             and _direct_child(path, discovery["workspace_path"])
         )
-        observed = body.act("read_text", event_id=event.event_id, path=path, max_chars=MAX_CHARS + 1) if safe else None
+        observed = _read_exact_text(event, body, path, pre) if safe else None
         post = observe_file_identity(path) if observed is not None else None
         text = str(observed.output) if observed is not None and observed.success else ""
         readable = bool(
@@ -208,7 +224,7 @@ def read_target(event: "AgentEvent", body: Any, comparison: Mapping[str, Any]) -
     ):
         reason = "the exact target changed after comparison, so stale evidence was rejected"
         return {"complete": False, "failure_reason": reason}, None, [reason]
-    observed = body.act("read_text", event_id=event.event_id, path=path, max_chars=MAX_CHARS + 1)
+    observed = _read_exact_text(event, body, path, pre)
     post = observe_file_identity(path)
     text = str(observed.output) if observed.success else ""
     text_digest = hashlib.sha256(text.encode("utf-8")).hexdigest() if observed.success else None
@@ -301,7 +317,7 @@ def observe_workspace_text_source(
     """Bind one safe complete text source for a cross-application goal.
 
     This is the read-only counterpart of the edit-specific evidence functions
-    above.  Keeping both here gives file selection one authority boundary while
+    above. Keeping both here gives file selection one authority boundary while
     allowing callers to decide whether the observed text will be edited, typed,
     compared, or otherwise used.
     """
@@ -372,7 +388,7 @@ def observe_workspace_text_source(
     pre = observe_file_identity(path)
     if compare_file_identities(baseline, pre).get("exact") is not True:
         return {}, "the selected workspace source changed before it could be read"
-    observed = body.act("read_text", event_id=event.event_id, path=path, max_chars=MAX_CHARS + 1)
+    observed = _read_exact_text(event, body, path, pre)
     post = observe_file_identity(path)
     text = str(observed.output) if observed.success else ""
     if not observed.success or bool(observed.data.get("truncated")):
@@ -413,7 +429,7 @@ def fresh_workspace_text(
     pre = observe_file_identity(path)
     if compare_file_identities(dict(baseline), pre).get("exact") is not True:
         return None, "workspace source identity changed after investigation"
-    observed = body.act("read_text", event_id=event.event_id, path=path, max_chars=MAX_CHARS + 1)
+    observed = _read_exact_text(event, body, path, pre)
     post = observe_file_identity(path)
     if not observed.success or bool(observed.data.get("truncated")):
         return None, str(observed.error or "fresh workspace source read failed")
