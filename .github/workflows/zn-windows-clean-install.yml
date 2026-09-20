@@ -81,8 +81,9 @@ jobs:
           }
 
           # This lane deliberately installs the production-identity artifact. Prove the disposable
-          # hosted VM has no pre-existing ZN process, uninstall registration, or protocol identity
-          # before dispatching the real installer so upgrade/uninstall state cannot contaminate the proof.
+          # hosted VM has no pre-existing ZN process, uninstall registration, protocol identity,
+          # or Resident scheduled task before dispatching the real installer so persistent host
+          # state cannot contaminate either the launch or autostart proof.
           $existingProcesses = @(Get-Process -Name 'ZN' -ErrorAction SilentlyContinue)
           if ($existingProcesses.Count -ne 0) {
             throw "Hosted clean-install runner already has $($existingProcesses.Count) ZN process(es); refusing to test against persistent host state."
@@ -106,6 +107,11 @@ jobs:
           }
           if (Test-Path -LiteralPath 'HKCU:\Software\Classes\zn') {
             throw 'Hosted clean-install runner already has a zn: protocol registration; refusing production-identity install.'
+          }
+          & $env:ComSpec /d /c 'schtasks.exe /Query /TN "ZN Resident" /XML >nul 2>&1'
+          $taskQueryExit = $LASTEXITCODE
+          if ($taskQueryExit -eq 0) {
+            throw 'Hosted clean-install runner already has a ZN Resident scheduled task; refusing persistent host state.'
           }
 
           git config core.longpaths true
@@ -277,6 +283,35 @@ jobs:
             }
             $runtimeWaitSeconds = [int]((Get-Date) - $runtimeWaitStarted).TotalSeconds
             Write-Host "Installed runtime materialized after ${runtimeWaitSeconds}s: $runtimeManifest"
+
+            # Resident endpoint readiness precedes the final desktop bootstrap step that installs
+            # the scheduled autostart task. The clean verifier intentionally shuts Resident down,
+            # so prove task registration while Electron is still alive instead of racing bootstrap.
+            $autostartDeadline = (Get-Date).AddSeconds(30)
+            $autostartReady = $false
+            while ((Get-Date) -lt $autostartDeadline) {
+              & $env:ComSpec /d /c 'schtasks.exe /Query /TN "ZN Resident" /XML >nul 2>&1'
+              $taskQueryExit = $LASTEXITCODE
+              if ($taskQueryExit -eq 0) {
+                $autostartReady = $true
+                break
+              }
+              $desktop.Refresh()
+              if ($desktop.HasExited) {
+                Write-Host "Installed desktop exited before Resident autostart registration with code $($desktop.ExitCode)."
+                if (Test-Path -LiteralPath $stdout) { Write-Host '--- desktop stdout ---'; Get-Content -LiteralPath $stdout -Tail 200 }
+                if (Test-Path -LiteralPath $stderr) { Write-Host '--- desktop stderr ---'; Get-Content -LiteralPath $stderr -Tail 200 }
+                throw "installed ZN exited before Resident autostart registration completed (exit $($desktop.ExitCode))"
+              }
+              Start-Sleep -Milliseconds 250
+            }
+            if (-not $autostartReady) {
+              Write-Host 'ZN Resident scheduled task was not registered before resident shutdown proof.'
+              if (Test-Path -LiteralPath $stdout) { Write-Host '--- desktop stdout ---'; Get-Content -LiteralPath $stdout -Tail 200 }
+              if (Test-Path -LiteralPath $stderr) { Write-Host '--- desktop stderr ---'; Get-Content -LiteralPath $stderr -Tail 200 }
+              throw 'installed ZN desktop did not finish Resident autostart registration before clean verifier shutdown'
+            }
+            Write-Host 'Resident autostart task registered before clean verifier shutdown.'
 
             $oldErrorActionPreference = $ErrorActionPreference
             $ErrorActionPreference = 'Continue'
