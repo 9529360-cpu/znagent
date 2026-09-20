@@ -109,6 +109,7 @@ test('recurring list bridge is bounded and disable requires an intention id', ()
 
 test('recurring controls stay on the existing scoped Electron bridge', () => {
   const ipc = read('electron/zn-resident-ipc.ts')
+  const residentProcess = read('electron/zn-resident-process.ts')
   const preload = read('electron/zn-preload.ts')
   const desktopEnv = read('src/zn/desktop-env.d.ts')
 
@@ -121,6 +122,10 @@ test('recurring controls stay on the existing scoped Electron bridge', () => {
   assert.match(ipc, /zn:resident:recurring-disable/)
   assert.match(ipc, /request\(\s*['"]recurring_disable['"]/)
   assert.match(ipc, /normalizeZnRecurringDisablePayload\(payload\)/)
+
+  assert.match(residentProcess, /\| ['"]recurring_schedule['"]/)
+  assert.match(residentProcess, /\| ['"]recurring_list['"]/)
+  assert.match(residentProcess, /\| ['"]recurring_disable['"]/)
 
   assert.match(preload, /recurringSchedule/)
   assert.match(preload, /zn:resident:recurring-schedule/)
