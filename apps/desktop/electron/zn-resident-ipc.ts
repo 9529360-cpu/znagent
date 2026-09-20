@@ -1,6 +1,11 @@
 import { app, ipcMain } from 'electron'
 
 import { ensureZnResidentAutostart } from './zn-resident-autostart'
+import {
+  normalizeZnRecurringDisablePayload,
+  normalizeZnRecurringListPayload,
+  normalizeZnRecurringSchedulePayload
+} from './zn-recurring-will-ipc-contract'
 import { ZnResidentProcess, defaultZnResidentLaunch } from './zn-resident-process'
 import { describeZnResidentRuntime, type ZnResidentRuntimeRelation } from './zn-resident-runtime-state'
 import {
@@ -283,6 +288,24 @@ export function registerZnResidentIpc(): void {
       focus_id: focusId,
       limit: Number(payload?.limit || 5)
     })
+  })
+  ipcMain.handle('zn:resident:recurring-schedule', async (_event, payload) => {
+    return getZnResidentProcess().request(
+      'recurring_schedule',
+      normalizeZnRecurringSchedulePayload(payload)
+    )
+  })
+  ipcMain.handle('zn:resident:recurring-list', async (_event, payload) => {
+    return getZnResidentProcess().request(
+      'recurring_list',
+      normalizeZnRecurringListPayload(payload)
+    )
+  })
+  ipcMain.handle('zn:resident:recurring-disable', async (_event, payload) => {
+    return getZnResidentProcess().request(
+      'recurring_disable',
+      normalizeZnRecurringDisablePayload(payload)
+    )
   })
   ipcMain.handle('zn:resident:submit', async (_event, payload) => {
     const task = String(payload?.task || '').trim()
