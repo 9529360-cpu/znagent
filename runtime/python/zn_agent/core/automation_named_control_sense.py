@@ -8,12 +8,14 @@ import threading
 from dataclasses import dataclass
 from typing import Callable
 
+from .automation_control_action import control_type_id, normalize_control_type
 from .models import utc_now
 
 
 _UIA_BUTTON_CONTROL_TYPE = 50000
 _UIA_EDIT_CONTROL_TYPE = 50004
 _MAX_NAME_CHARS = 160
+_MAX_AUTOMATION_ID_CHARS = 256
 _MAX_CANDIDATES = 24
 
 
@@ -34,12 +36,30 @@ class NamedAutomationControlObservation:
     center_x_fraction: float
     center_y_fraction: float
     captured_at: str
+    automation_id: str = ""
     is_keyboard_focusable: bool = False
     has_keyboard_focus: bool = False
     is_password: bool = False
     is_value_pattern_available: bool = False
     value_is_read_only: bool | None = None
+    is_toggle_pattern_available: bool = False
+    is_expand_collapse_pattern_available: bool = False
+    is_selection_item_pattern_available: bool = False
     source: str = "windows-uia-foreground-control"
+
+    @property
+    def supported_patterns(self) -> tuple[str, ...]:
+        patterns: list[str] = []
+        if self.is_value_pattern_available:
+            patterns.append("value")
+        if self.is_toggle_pattern_available:
+            patterns.append("toggle")
+        if self.is_expand_collapse_pattern_available:
+            patterns.append("expand_collapse")
+        if self.is_selection_item_pattern_available:
+            patterns.append("selection_item")
+        return tuple(patterns)
+
 
 
 NamedControlProbeFn = Callable[[int, str, str], NamedAutomationControlObservation]
@@ -198,6 +218,7 @@ class _WindowsNamedControlReader:
                 client.UIA_RuntimeIdPropertyId,
                 client.UIA_ProcessIdPropertyId,
                 client.UIA_NamePropertyId,
+                client.UIA_AutomationIdPropertyId,
                 client.UIA_ControlTypePropertyId,
                 client.UIA_ClassNamePropertyId,
                 client.UIA_IsEnabledPropertyId,
@@ -206,6 +227,9 @@ class _WindowsNamedControlReader:
                 client.UIA_IsOffscreenPropertyId,
                 client.UIA_IsPasswordPropertyId,
                 client.UIA_IsValuePatternAvailablePropertyId,
+                client.UIA_IsTogglePatternAvailablePropertyId,
+                client.UIA_IsExpandCollapsePatternAvailablePropertyId,
+                client.UIA_IsSelectionItemPatternAvailablePropertyId,
                 client.UIA_ValueIsReadOnlyPropertyId,
                 client.UIA_BoundingRectanglePropertyId,
             ):
@@ -282,8 +306,12 @@ class _WindowsNamedControlReader:
                                 screen_height=screen_height,
                                 runtime_id_property_id=client.UIA_RuntimeIdPropertyId,
                                 name_property_id=client.UIA_NamePropertyId,
+                                automation_id_property_id=client.UIA_AutomationIdPropertyId,
                                 is_password_property_id=client.UIA_IsPasswordPropertyId,
                                 is_value_pattern_available_property_id=client.UIA_IsValuePatternAvailablePropertyId,
+                                is_toggle_pattern_available_property_id=client.UIA_IsTogglePatternAvailablePropertyId,
+                                is_expand_collapse_pattern_available_property_id=client.UIA_IsExpandCollapsePatternAvailablePropertyId,
+                                is_selection_item_pattern_available_property_id=client.UIA_IsSelectionItemPatternAvailablePropertyId,
                                 value_is_read_only_property_id=client.UIA_ValueIsReadOnlyPropertyId,
                             )
                         except RuntimeError:
@@ -377,8 +405,12 @@ class _WindowsNamedControlReader:
         screen_height: int,
         runtime_id_property_id: int,
         name_property_id: int,
+        automation_id_property_id: int,
         is_password_property_id: int,
         is_value_pattern_available_property_id: int,
+        is_toggle_pattern_available_property_id: int,
+        is_expand_collapse_pattern_available_property_id: int,
+        is_selection_item_pattern_available_property_id: int,
         value_is_read_only_property_id: int,
     ) -> NamedAutomationControlObservation:
         runtime_value = element.GetCachedPropertyValue(int(runtime_id_property_id))
@@ -386,6 +418,11 @@ class _WindowsNamedControlReader:
         name = " ".join(
             str(element.GetCachedPropertyValue(int(name_property_id)) or "").strip().split()
         )
+        automation_id = str(
+            element.GetCachedPropertyValue(int(automation_id_property_id)) or ""
+        ).strip()
+        if len(automation_id) > _MAX_AUTOMATION_ID_CHARS:
+            raise RuntimeError("UIA control automation id exceeds bounded length")
         process_id = int(element.CachedProcessId)
         control_type = int(element.CachedControlType)
         is_enabled = bool(element.CachedIsEnabled)
@@ -401,6 +438,21 @@ class _WindowsNamedControlReader:
             element,
             is_value_pattern_available_property_id,
             field_name="is_value_pattern_available",
+        )
+        is_toggle_pattern_available = _WindowsNamedControlReader._cached_bool(
+            element,
+            is_toggle_pattern_available_property_id,
+            field_name="is_toggle_pattern_available",
+        )
+        is_expand_collapse_pattern_available = _WindowsNamedControlReader._cached_bool(
+            element,
+            is_expand_collapse_pattern_available_property_id,
+            field_name="is_expand_collapse_pattern_available",
+        )
+        is_selection_item_pattern_available = _WindowsNamedControlReader._cached_bool(
+            element,
+            is_selection_item_pattern_available_property_id,
+            field_name="is_selection_item_pattern_available",
         )
         value_is_read_only = None
         if is_value_pattern_available:
@@ -458,6 +510,7 @@ class _WindowsNamedControlReader:
             name=name,
             control_type=control_type,
             class_name=str(element.CachedClassName or ""),
+            automation_id=automation_id,
             is_enabled=is_enabled,
             is_offscreen=is_offscreen,
             left=left,
@@ -471,6 +524,9 @@ class _WindowsNamedControlReader:
             has_keyboard_focus=has_keyboard_focus,
             is_password=is_password,
             is_value_pattern_available=is_value_pattern_available,
+            is_toggle_pattern_available=is_toggle_pattern_available,
+            is_expand_collapse_pattern_available=is_expand_collapse_pattern_available,
+            is_selection_item_pattern_available=is_selection_item_pattern_available,
             value_is_read_only=value_is_read_only,
         )
 
@@ -555,6 +611,22 @@ class NativeNamedAutomationControlSense:
             control_type=_UIA_BUTTON_CONTROL_TYPE,
             role="Button",
         )
+
+    def list_controls(
+        self,
+        *,
+        process_id: int,
+        process_name: str,
+        control_type: str,
+    ) -> tuple[NamedAutomationControlObservation, ...]:
+        normalized = normalize_control_type(control_type)
+        return self._list_candidates(
+            process_id=process_id,
+            process_name=process_name,
+            control_type=control_type_id(normalized),
+            role=normalized,
+        )
+
 
     def _list_candidates(
         self,
@@ -674,12 +746,14 @@ class NativeNamedAutomationControlSense:
             )
         )
         normalized_name = " ".join(str(observation.name or "").strip().split())
+        normalized_automation_id = str(observation.automation_id or "").strip()
         if (
             int(observation.process_id) != expected_pid
             or str(observation.process_name or "").strip().lower()
             != expected_process.lower()
             or not normalized_name
             or len(normalized_name) > _MAX_NAME_CHARS
+            or len(normalized_automation_id) > _MAX_AUTOMATION_ID_CHARS
             or (expected_name is not None and normalized_name != expected_name)
             or int(observation.control_type) != int(control_type)
             or not observation.runtime_id

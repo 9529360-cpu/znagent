@@ -19,7 +19,13 @@ from .action_fabric import (
     ActionFabricRegistry,
     build_machine_action_fabric,
 )
-from .app_competence import AppCompetenceBinding, AppCompetencePack, AppCompetenceRegistry
+from .app_competence import (
+    AppCompetenceBinding,
+    AppCompetenceCompletion,
+    AppCompetencePack,
+    AppCompetenceRegistry,
+    AppCompetenceStage,
+)
 from .body import BodyAction, BodyActionResult, NativeBody
 from .budget import CognitiveBudgetManager
 from .capabilities import CapabilityRegistry, CallableCapability, ExactTaskCapability
@@ -103,8 +109,10 @@ __all__ = [
     "AgentEvent",
     "AgentIdentity",
     "AppCompetenceBinding",
+    "AppCompetenceCompletion",
     "AppCompetencePack",
     "AppCompetenceRegistry",
+    "AppCompetenceStage",
     "Assessment",
     "BodyAction",
     "BodyActionResult",

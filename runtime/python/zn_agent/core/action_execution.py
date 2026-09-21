@@ -17,6 +17,7 @@ from .action_authority import (
     bind_worker_authority_arg,
 )
 from .action_fabric import ActionDescriptor, ActionFabricRegistry
+from .automation_control_action import normalize_control_type, text_sha256
 from .body import BodyActionResult
 from .models import utc_now
 from .windows_screen_capture import (
@@ -408,6 +409,24 @@ def build_machine_action_execution_runtime(
             ),
             verify=_verify_application_launch,
         )
+    for action_id, pattern in (
+        ("windows.ui.control.set_value", "value"),
+        ("windows.ui.control.toggle", "toggle"),
+        ("windows.ui.control.expand_collapse", "expand_collapse"),
+        ("windows.ui.control.select", "selection_item"),
+    ):
+        if fabric.descriptor(action_id) is None:
+            continue
+        runtime.register_verification(
+            action_id,
+            observe=lambda request, result, pattern=pattern: _observe_ui_control(
+                body, request, pattern
+            ),
+            verify=lambda request, observation, result, pattern=pattern: _verify_ui_control(
+                request, observation, result, pattern
+            ),
+        )
+
     return runtime
 
 
@@ -465,6 +484,117 @@ def _verify_screen_capture(
             **observed,
             "replay_recovered": bool(expected.get("replay_blocked")),
         },
+        observed_at=observation.observed_at,
+    )
+
+
+def _observe_ui_control(
+    body: Any,
+    request: ActionRequest,
+    pattern: str,
+) -> ActionObservation:
+    observer = getattr(body, "observe_automation_control", None)
+    if not callable(observer):
+        raise RuntimeError("current Body does not expose semantic UI Automation observation")
+    observed = observer(
+        application_id=str(request.args.get("application_id") or ""),
+        control_type=str(request.args.get("control_type") or ""),
+        control_name=str(request.args.get("control_name") or ""),
+        automation_id=str(request.args.get("automation_id") or ""),
+        pattern=pattern,
+    )
+    data = dict(observed.audit())
+    data["application_id"] = str(request.args.get("application_id") or "").strip()
+    return ActionObservation(
+        request.action_id,
+        "windows_uia_control_readback",
+        data=data,
+        observed_at=observed.captured_at or utc_now(),
+    )
+
+
+def _verify_ui_control(
+    request: ActionRequest,
+    observation: ActionObservation,
+    _body_result: BodyActionResult | None,
+    pattern: str,
+) -> ActionVerification:
+    data = dict(observation.data or {})
+    selector = dict(data.get("selector") or {})
+    state = dict(data.get("state") or {})
+    try:
+        expected_type = normalize_control_type(request.args.get("control_type"))
+    except ValueError as exc:
+        return ActionVerification(
+            "failed",
+            str(exc),
+            evidence=data,
+            observed_at=observation.observed_at,
+        )
+    expected_name = " ".join(str(request.args.get("control_name") or "").strip().split())
+    expected_automation_id = str(request.args.get("automation_id") or "").strip()
+    selector_matches = bool(
+        data.get("application_id") == str(request.args.get("application_id") or "").strip()
+        and selector.get("control_type") == expected_type
+        and selector.get("name") == expected_name
+        and selector.get("automation_id") == expected_automation_id
+        and data.get("pattern") == pattern
+    )
+    verified = False
+    target_evidence: dict[str, Any] = {}
+    if selector_matches and pattern == "value":
+        target = request.args.get("value")
+        if isinstance(target, str):
+            chars = state.get("value_chars")
+            expected_hash = text_sha256(target)
+            verified = bool(
+                isinstance(chars, int)
+                and chars == len(target)
+                and state.get("value_sha256") == expected_hash
+            )
+            target_evidence = {
+                "expected_value_chars": len(target),
+                "expected_value_sha256": expected_hash,
+                "observed_value_chars": chars,
+                "observed_value_sha256": state.get("value_sha256"),
+            }
+    elif selector_matches and pattern == "toggle":
+        target = str(request.args.get("state") or "").strip().lower()
+        verified = target in {"on", "off"} and state.get("toggle_state") == target
+        target_evidence = {
+            "expected_toggle_state": target,
+            "observed_toggle_state": state.get("toggle_state"),
+        }
+    elif selector_matches and pattern == "expand_collapse":
+        target = str(request.args.get("state") or "").strip().lower().replace("-", "_")
+        verified = (
+            target in {"expanded", "collapsed"}
+            and state.get("expand_collapse_state") == target
+        )
+        target_evidence = {
+            "expected_expand_collapse_state": target,
+            "observed_expand_collapse_state": state.get("expand_collapse_state"),
+        }
+    elif selector_matches and pattern == "selection_item":
+        verified = state.get("selected") is True
+        target_evidence = {"observed_selected": state.get("selected")}
+
+    evidence = {
+        "application_id": data.get("application_id"),
+        "selector": selector,
+        "runtime_id": data.get("runtime_id"),
+        "pattern": data.get("pattern"),
+        "selector_matches": selector_matches,
+        **target_evidence,
+    }
+    return ActionVerification(
+        "verified" if verified else "failed",
+        (
+            "fresh UI Automation control readback matches requested target state"
+            if verified
+            else "fresh UI Automation control readback does not match requested target state"
+        ),
+        evidence=evidence,
         observed_at=observation.observed_at,
     )
 
