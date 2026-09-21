@@ -27,6 +27,24 @@ from .app_competence import (
     AppCompetenceStage,
 )
 from .body import BodyAction, BodyActionResult, NativeBody
+from .desktop_scene import (
+    DesktopScene,
+    DesktopSceneError,
+    DesktopSceneForeground,
+    DesktopSceneForegroundBinding,
+    DesktopSceneRect,
+    DesktopSceneScreenshot,
+    DesktopSceneTarget,
+    DesktopVisualGroundingCandidate,
+    DesktopVisualGroundingProvider,
+    NativeDesktopSceneBuilder,
+    UnavailableDesktopVisualGroundingProvider,
+    desktop_scene_artifact_path,
+    desktop_scene_iou,
+    inspect_desktop_scene_artifact,
+    load_desktop_scene_artifact,
+    merge_desktop_scene_targets,
+)
 from .budget import CognitiveBudgetManager
 from .capabilities import CapabilityRegistry, CallableCapability, ExactTaskCapability
 from .capability_loader import LoadedCapability, PromotedCapabilityLoader
@@ -117,6 +135,22 @@ __all__ = [
     "BodyAction",
     "BodyActionResult",
     "BodyState",
+    "DesktopScene",
+    "DesktopSceneError",
+    "DesktopSceneForeground",
+    "DesktopSceneForegroundBinding",
+    "DesktopSceneRect",
+    "DesktopSceneScreenshot",
+    "DesktopSceneTarget",
+    "DesktopVisualGroundingCandidate",
+    "DesktopVisualGroundingProvider",
+    "NativeDesktopSceneBuilder",
+    "UnavailableDesktopVisualGroundingProvider",
+    "desktop_scene_artifact_path",
+    "desktop_scene_iou",
+    "inspect_desktop_scene_artifact",
+    "load_desktop_scene_artifact",
+    "merge_desktop_scene_targets",
     "build_resident_runtime",
     "build_resident_runtime_from_existing_stack",
     "build_runtime",

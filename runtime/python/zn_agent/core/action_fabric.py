@@ -490,6 +490,68 @@ def build_machine_action_fabric(device_capabilities: Any) -> ActionFabricRegistr
     )
     registry.register(
         ActionDescriptor(
+            action_id="windows.desktop.scene.capture",
+            provider="zn.windows.desktop.scene",
+            description=(
+                "Capture one bounded foreground Windows desktop scene that combines "
+                "ZN-owned screenshot evidence, semantic UI Automation targets and "
+                "optional visual-grounding fallback evidence."
+            ),
+            body_action_kind="windows_desktop_scene_capture",
+            input_schema={
+                "type": "object",
+                "required": ["application_id"],
+                "properties": {
+                    "application_id": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            output_schema={
+                "type": "object",
+                "properties": {
+                    "scene_id": {"type": "string"},
+                    "scene_artifact_path": {"type": "string"},
+                    "grounding_mode": {"type": "string"},
+                    "target_count": {"type": "integer"},
+                    "uia_target_count": {"type": "integer"},
+                    "visual_target_count": {"type": "integer"},
+                    "truncated": {"type": "boolean"},
+                    "scene": {"type": "object"},
+                },
+            },
+            effect_class="reversible_side_effect",
+            required_authority=("body_action",),
+            sensitivity="screen_content",
+            preconditions=(
+                "application_id resolves to exactly one current foreground application window",
+                "the foreground window intersects the captured primary screen",
+            ),
+            postconditions=(
+                "one coherent scene sidecar references one verified ZN-owned screenshot artifact",
+                "scene targets remain bounded and carry UIA/visual provenance",
+            ),
+            verification=(
+                "fresh scene sidecar digest plus screenshot path/dimensions/SHA-256 readback",
+            ),
+            reversibility=(
+                "remove the exact ZN-owned desktop-scene sidecar and referenced screenshot artifact"
+            ),
+            replay_semantics="verify_before_replay",
+            tags=(
+                "windows",
+                "desktop",
+                "scene",
+                "grounding",
+                "uia",
+                "visual_fallback",
+                "artifact",
+                "body",
+            ),
+        ),
+        availability_probe=screen_capture_availability,
+    )
+    registry.register(
+        ActionDescriptor(
             action_id="windows.screen.capture",
             provider="zn.windows",
             description=(

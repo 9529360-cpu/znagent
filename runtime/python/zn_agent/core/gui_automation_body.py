@@ -8,6 +8,7 @@ own planning, task loops, application routing, or a second action store.
 """
 
 import uuid
+from pathlib import Path
 from typing import Any
 
 from .automation_control_action import (
@@ -18,6 +19,10 @@ from .automation_control_action import (
 )
 from .automation_named_control_sense import NativeNamedAutomationControlSense
 from .body import BodyAction, BodyActionResult
+from .desktop_scene import (
+    DesktopSceneForegroundBinding,
+    NativeDesktopSceneBuilder,
+)
 from .machine_capability_body import MachineCapabilityBody
 from .models import utc_now
 
@@ -29,6 +34,21 @@ class GuiAutomationBody(MachineCapabilityBody):
     _TOGGLE_KIND = "automation_control_toggle"
     _EXPAND_COLLAPSE_KIND = "automation_control_expand_collapse"
     _SELECT_KIND = "automation_control_select"
+    _SCENE_CAPTURE_KIND = "windows_desktop_scene_capture"
+    _SCENE_DISPATCH_MARKER = "__zn_desktop_scene_dispatch_admitted"
+    _SCENE_WINDOW_ARG = "__zn_desktop_scene_window_handle"
+    _SCENE_PROCESS_ARG = "__zn_desktop_scene_process_id"
+    _SCENE_PROCESS_NAME_ARG = "__zn_desktop_scene_process_name"
+    _SCENE_CLASS_NAME_ARG = "__zn_desktop_scene_class_name"
+    _SCENE_PRIVATE_ARGS = frozenset(
+        {
+            _SCENE_DISPATCH_MARKER,
+            _SCENE_WINDOW_ARG,
+            _SCENE_PROCESS_ARG,
+            _SCENE_PROCESS_NAME_ARG,
+            _SCENE_CLASS_NAME_ARG,
+        }
+    )
     _GUI_KINDS = frozenset(
         {
             _SET_VALUE_KIND,
@@ -57,11 +77,15 @@ class GuiAutomationBody(MachineCapabilityBody):
         *args,
         automation_control: NativeAutomationControlAction | None = None,
         automation_control_sense: NativeNamedAutomationControlSense | None = None,
+        desktop_scene_builder: NativeDesktopSceneBuilder | None = None,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
         self._automation_control = automation_control or NativeAutomationControlAction()
         self._automation_control_sense = automation_control_sense or NativeNamedAutomationControlSense()
+        self._desktop_scene_builder = desktop_scene_builder or NativeDesktopSceneBuilder(
+            automation_sense=self._automation_control_sense,
+        )
 
     def act(self, kind: str, *, event_id: str | None = None, **args: Any) -> BodyActionResult:
         normalized = str(kind or "").strip().lower()
@@ -69,6 +93,8 @@ class GuiAutomationBody(MachineCapabilityBody):
             return self._act_gui_list(event_id=event_id, args=dict(args))
         if normalized == self._READ_KIND:
             return self._act_gui_read(event_id=event_id, args=dict(args))
+        if normalized == self._SCENE_CAPTURE_KIND:
+            return self._act_desktop_scene(event_id=event_id, args=dict(args))
         if normalized in self._GUI_KINDS:
             return self._act_gui_control(normalized, event_id=event_id, args=dict(args))
         return super().act(kind, event_id=event_id, **args)
@@ -326,6 +352,111 @@ class GuiAutomationBody(MachineCapabilityBody):
             },
         )
 
+    def _act_desktop_scene(
+        self,
+        *,
+        event_id: str | None,
+        args: dict[str, Any],
+    ) -> BodyActionResult:
+        rejected = sorted(key for key in args if key != "application_id")
+        app_id = str(args.get("application_id") or "").strip()
+        if rejected:
+            return self._gui_preflight_result(
+                self._SCENE_CAPTURE_KIND,
+                event_id,
+                app_id,
+                False,
+                data={
+                    "dispatch_sent": False,
+                    "rejected_arguments": rejected,
+                },
+                error=(
+                    "desktop scene capture accepts only application_id; native "
+                    "HWND/PID/coordinates are not caller authority: "
+                    + ", ".join(rejected)
+                ),
+            )
+        if not app_id:
+            return self._gui_preflight_result(
+                self._SCENE_CAPTURE_KIND,
+                event_id,
+                "",
+                False,
+                data={"dispatch_sent": False},
+                error="desktop scene capture requires a resolved application_id",
+            )
+        normalized_event = str(event_id or "").strip()
+        if not normalized_event:
+            return self._gui_preflight_result(
+                self._SCENE_CAPTURE_KIND,
+                event_id,
+                app_id,
+                False,
+                data={"dispatch_sent": False},
+                error="desktop scene capture requires a stable event_id",
+            )
+
+        artifact_path_fn = getattr(self._desktop_scene_builder, "artifact_path", None)
+        if callable(artifact_path_fn):
+            try:
+                prior_artifact = artifact_path_fn(normalized_event)
+            except Exception:
+                prior_artifact = None
+            if prior_artifact is not None and Path(prior_artifact).is_file():
+                # Enter the existing side-effect journal before any fresh foreground
+                # requirement. The stable replay signature excludes these transient
+                # native placeholders. If no matching prior attempt exists, dispatch
+                # still fails closed rather than adopting the artifact as authority.
+                return super().act(
+                    self._SCENE_CAPTURE_KIND,
+                    event_id=normalized_event,
+                    application_id=app_id,
+                    **{
+                        self._SCENE_DISPATCH_MARKER: True,
+                        self._SCENE_WINDOW_ARG: 1,
+                        self._SCENE_PROCESS_ARG: 1,
+                        self._SCENE_PROCESS_NAME_ARG: "artifact-recovery-probe",
+                        self._SCENE_CLASS_NAME_ARG: "",
+                    },
+                )
+
+        try:
+            application, process, window = self._foreground_target(app_id)
+        except Exception as exc:
+            return self._gui_preflight_result(
+                self._SCENE_CAPTURE_KIND,
+                event_id,
+                app_id,
+                False,
+                data={"dispatch_sent": False},
+                error=f"desktop scene preflight failed: {type(exc).__name__}: {exc}",
+            )
+        return super().act(
+            self._SCENE_CAPTURE_KIND,
+            event_id=event_id,
+            application_id=application.app_id,
+            **{
+                self._SCENE_DISPATCH_MARKER: True,
+                self._SCENE_WINDOW_ARG: int(window.hwnd),
+                self._SCENE_PROCESS_ARG: int(process.process_id),
+                self._SCENE_PROCESS_NAME_ARG: str(process.process_name),
+                self._SCENE_CLASS_NAME_ARG: str(window.class_name or ""),
+            },
+        )
+
+    def _desktop_scene_binding(
+        self,
+        app_id: str,
+    ) -> DesktopSceneForegroundBinding:
+        application, process, window = self._foreground_target(app_id)
+        return DesktopSceneForegroundBinding(
+            application_id=application.app_id,
+            process_id=process.process_id,
+            process_name=process.process_name,
+            window_handle=window.hwnd,
+            class_name=window.class_name,
+        )
+
     @classmethod
     def _target_for(cls, kind: str, args: dict[str, Any]) -> str:
         if kind == cls._SET_VALUE_KIND:
@@ -385,12 +516,19 @@ class GuiAutomationBody(MachineCapabilityBody):
 
     @classmethod
     def _requires_guard(cls, kind: str, args: dict[str, Any]) -> bool:
+        if kind == cls._SCENE_CAPTURE_KIND:
+            return args.get(cls._SCENE_DISPATCH_MARKER) is True
         if kind in cls._GUI_KINDS:
             return args.get(cls._DISPATCH_MARKER) is True
         return super()._requires_guard(kind, args)
 
     @classmethod
     def _signature_hash(cls, kind: str, args: dict[str, Any]) -> str:
+        if kind == cls._SCENE_CAPTURE_KIND:
+            stable = dict(args)
+            for key in cls._SCENE_PRIVATE_ARGS:
+                stable.pop(key, None)
+            return super()._signature_hash(kind, stable)
         if kind in cls._GUI_KINDS:
             stable = dict(args)
             for key in cls._PRIVATE_ARGS:
@@ -399,6 +537,54 @@ class GuiAutomationBody(MachineCapabilityBody):
         return super()._signature_hash(kind, args)
 
     def _record(self, action: BodyAction, result: BodyActionResult) -> None:
+        if action.kind == self._SCENE_CAPTURE_KIND:
+            safe_args = dict(action.args)
+            for key in self._SCENE_PRIVATE_ARGS:
+                safe_args.pop(key, None)
+            action = BodyAction(
+                action_id=action.action_id,
+                kind=action.kind,
+                args=safe_args,
+                event_id=action.event_id,
+                created_at=action.created_at,
+            )
+            data = dict(result.data or {})
+            scene = data.get("scene") if isinstance(data.get("scene"), dict) else {}
+            screenshot = (
+                scene.get("screenshot")
+                if isinstance(scene.get("screenshot"), dict)
+                else {}
+            )
+            safe_data = {
+                "application_id": data.get("application_id"),
+                "dispatch_sent": bool(data.get("dispatch_sent")),
+                "artifact_created": bool(data.get("artifact_created")),
+                "scene_artifact_path": data.get("scene_artifact_path"),
+                "scene_id": data.get("scene_id") or scene.get("scene_id"),
+                "grounding_mode": data.get("grounding_mode") or scene.get("grounding_mode"),
+                "target_count": data.get("target_count"),
+                "uia_target_count": data.get("uia_target_count"),
+                "visual_target_count": data.get("visual_target_count"),
+                "truncated": data.get("truncated"),
+                "screenshot_local_path": screenshot.get("local_path"),
+                "screenshot_sha256": screenshot.get("sha256"),
+                "screenshot_width": screenshot.get("width"),
+                "screenshot_height": screenshot.get("height"),
+                "scene_payload_redacted": True,
+                "side_effect_uncertain": bool(data.get("side_effect_uncertain")),
+                "replay_blocked": bool(data.get("replay_blocked")),
+            }
+            result = BodyActionResult(
+                action_id=result.action_id,
+                kind=result.kind,
+                success=result.success,
+                output=result.output,
+                data=safe_data,
+                error=result.error,
+                event_id=result.event_id,
+                started_at=result.started_at,
+                completed_at=result.completed_at,
+            )
         if action.kind in self._GUI_KINDS:
             safe_args = dict(action.args)
             for key in self._PRIVATE_ARGS:
@@ -418,9 +604,106 @@ class GuiAutomationBody(MachineCapabilityBody):
         super()._record(action, result)
 
     def _dispatch(self, action: BodyAction, started: str) -> BodyActionResult:
+        if action.kind == self._SCENE_CAPTURE_KIND:
+            return self._dispatch_desktop_scene(action, started)
         if action.kind in self._GUI_KINDS:
             return self._dispatch_gui_control(action, started)
         return super()._dispatch(action, started)
+
+    def _dispatch_desktop_scene(
+        self,
+        action: BodyAction,
+        started: str,
+    ) -> BodyActionResult:
+        if action.args.get(self._SCENE_DISPATCH_MARKER) is not True:
+            raise PermissionError(
+                "desktop scene dispatch did not pass foreground-app preflight"
+            )
+        app_id = str(action.args.get("application_id") or "").strip()
+        expected = DesktopSceneForegroundBinding(
+            application_id=app_id,
+            process_id=int(action.args.get(self._SCENE_PROCESS_ARG) or 0),
+            process_name=str(action.args.get(self._SCENE_PROCESS_NAME_ARG) or ""),
+            window_handle=int(action.args.get(self._SCENE_WINDOW_ARG) or 0),
+            class_name=str(action.args.get(self._SCENE_CLASS_NAME_ARG) or ""),
+        )
+        try:
+            current = self._desktop_scene_binding(app_id)
+        except Exception as exc:
+            return self._result(
+                action,
+                started,
+                False,
+                {
+                    "application_id": app_id,
+                    "dispatch_sent": False,
+                    "artifact_created": False,
+                },
+                (
+                    "desktop scene foreground changed before capture: "
+                    f"{type(exc).__name__}: {exc}"
+                ),
+            )
+        if not expected.same_identity(current):
+            return self._result(
+                action,
+                started,
+                False,
+                {
+                    "application_id": app_id,
+                    "dispatch_sent": False,
+                    "artifact_created": False,
+                    "disposition": "foreground_identity_changed",
+                },
+                "desktop scene exact foreground identity changed before capture",
+            )
+
+        try:
+            scene, scene_artifact_path = self._desktop_scene_builder.capture(
+                event_id=str(action.event_id or ""),
+                foreground=current,
+                foreground_probe=lambda: self._desktop_scene_binding(app_id),
+            )
+        except Exception as exc:
+            return self._result(
+                action,
+                started,
+                False,
+                {
+                    "application_id": app_id,
+                    "dispatch_sent": True,
+                    "artifact_created": False,
+                    "side_effect_uncertain": True,
+                },
+                (
+                    "desktop scene capture crossed the artifact dispatch boundary "
+                    f"without verified scene completion: {type(exc).__name__}: {exc}"
+                ),
+            )
+
+        scene_data = scene.audit()
+        return self._result(
+            action,
+            started,
+            True,
+            {
+                "application_id": app_id,
+                "dispatch_sent": True,
+                "artifact_created": True,
+                "scene_artifact_path": scene_artifact_path,
+                "scene_id": scene.scene_id,
+                "grounding_mode": scene.grounding_mode,
+                "target_count": len(scene.targets),
+                "uia_target_count": scene.uia_target_count,
+                "visual_target_count": scene.visual_target_count,
+                "truncated": scene.truncated,
+                "scene": scene_data,
+            },
+            output=(
+                f"captured foreground desktop scene with {len(scene.targets)} "
+                "bounded targets"
+            ),
+        )
 
     def _dispatch_gui_control(self, action: BodyAction, started: str) -> BodyActionResult:
         if action.args.get(self._DISPATCH_MARKER) is not True:

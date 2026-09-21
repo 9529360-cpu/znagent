@@ -225,6 +225,7 @@ class MachineActionFabricTests(unittest.TestCase):
                 "windows.audio.volume.read",
                 "windows.audio.volume.set",
                 "windows.context.read",
+                "windows.desktop.scene.capture",
                 "windows.display.brightness.read",
                 "windows.display.brightness.set",
                 "windows.network.wifi.read",
