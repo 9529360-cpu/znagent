@@ -57,6 +57,7 @@ contextBridge.exposeInMainWorld('znDesktop', {
     apply: () => ipcRenderer.invoke('zn:updates:apply')
   },
   shell: {
+    setWindowMode: (mode: 'compact' | 'expanded') => ipcRenderer.invoke('zn:shell:set-window-mode', mode),
     onDeepLink: (callback: (payload: ZnDesktopDeepLink) => void) => {
       const listener = (_event: IpcRendererEvent, payload: ZnDesktopDeepLink) => callback(payload)
       ipcRenderer.on('zn:deep-link', listener)
