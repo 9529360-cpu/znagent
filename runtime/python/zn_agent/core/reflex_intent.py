@@ -23,6 +23,7 @@ class ReflexIntentDescriptor:
     action_id: str | None = None
     priority: int = 0
     tags: tuple[str, ...] = ()
+
     def __post_init__(self) -> None:
         intent_id = str(self.intent_id or "").strip()
         description = " ".join(str(self.description or "").split())
@@ -108,6 +109,7 @@ class ReflexIntentRegistry:
                 key=lambda item: (-item.priority, item.intent_id),
             )
         )
+
     def matches(self, event: Any) -> tuple[ReflexIntentMatch, ...]:
         rows: list[ReflexIntentMatch] = []
         for descriptor in self.descriptors():
@@ -167,6 +169,8 @@ class ReflexIntentRegistry:
             candidates=matches,
             reason="one highest-priority deterministic resident intent matched",
         )
+
+
 def build_resident_reflex_intents() -> ReflexIntentRegistry:
     registry = ReflexIntentRegistry()
     registry.register(
@@ -176,7 +180,12 @@ def build_resident_reflex_intents() -> ReflexIntentRegistry:
             required_slots=("application_name",),
             action_id="windows.application.launch",
             priority=100,
-            tags=("windows", "application", "direct_action"),
+            tags=(
+                "windows",
+                "application",
+                "action_candidate",
+                "requires_grounding",
+            ),
         ),
         application_open_goal,
     )

@@ -188,6 +188,7 @@ class CapabilityProviderRuntime:
         if hook is not None:
             hook(descriptor)
         return self.status(descriptor.provider_id)
+
     def status_snapshot(self) -> tuple[CapabilityProviderStatus, ...]:
         return tuple(
             self.status(descriptor.provider_id)
@@ -216,6 +217,7 @@ def build_machine_provider_runtime(
         descriptor.action_id
         for descriptor in action_fabric.descriptors(provider="zn.windows")
     )
+
     def windows_health(
         descriptor: CapabilityProviderDescriptor,
     ) -> CapabilityProviderStatus:
@@ -267,6 +269,7 @@ def build_machine_provider_runtime(
     )
 
     if local_inference is not None:
+
         def local_inference_health(
             descriptor: CapabilityProviderDescriptor,
         ) -> CapabilityProviderStatus:
