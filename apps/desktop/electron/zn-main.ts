@@ -69,7 +69,7 @@ export function createZnDesktopWindow(): BrowserWindow {
     title: 'ZN',
     width: 1180,
     height: 760,
-    minWidth: 760,
+    minWidth: 520,
     minHeight: 520,
     show: false,
     backgroundColor: '#0f1115',
