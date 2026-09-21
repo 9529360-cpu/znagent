@@ -18,6 +18,9 @@ def _control(
     focusable: bool = False,
     password: bool = False,
     read_only: bool | None = None,
+    toggle: bool = False,
+    expand_collapse: bool = False,
+    selection_item: bool = False,
 ) -> NamedAutomationControlObservation:
     return NamedAutomationControlObservation(
         runtime_id=(42, process_id, runtime_tail),
@@ -40,6 +43,9 @@ def _control(
         is_password=password,
         is_value_pattern_available=control_type == 50004,
         value_is_read_only=read_only,
+        is_toggle_pattern_available=toggle,
+        is_expand_collapse_pattern_available=expand_collapse,
+        is_selection_item_pattern_available=selection_item,
         source="test-foreground-candidate",
     )
 
@@ -62,12 +68,12 @@ class NamedAutomationControlSenseTests(unittest.TestCase):
         observed = sense.find_unique_button(
             process_id=330,
             process_name="customerapp.exe",
-            name="查询",
+            name="鏌ヨ",
         )
 
-        self.assertEqual(calls, [(330, "customerapp.exe", "查询")])
+        self.assertEqual(calls, [(330, "customerapp.exe", "鏌ヨ")])
         self.assertEqual(observed.runtime_id, (42, 330, 7))
-        self.assertEqual(observed.name, "查询")
+        self.assertEqual(observed.name, "鏌ヨ")
         self.assertEqual(observed.control_type, 50000)
 
     def test_probe_cannot_return_a_different_or_unsafe_control(self) -> None:
@@ -75,7 +81,7 @@ class NamedAutomationControlSenseTests(unittest.TestCase):
             return _control(
                 process_id=process_id,
                 process_name=process_name,
-                name="删除",
+                name="鍒犻櫎",
                 control_type=50000,
                 runtime_tail=3,
             )
@@ -85,7 +91,7 @@ class NamedAutomationControlSenseTests(unittest.TestCase):
             sense.find_unique_button(
                 process_id=330,
                 process_name="customerapp.exe",
-                name="查询",
+                name="鏌ヨ",
             )
 
         with self.assertRaisesRegex(ValueError, "1..160"):
@@ -114,10 +120,10 @@ class NamedAutomationControlSenseTests(unittest.TestCase):
         observed = sense.find_unique_edit(
             process_id=330,
             process_name="customerapp.exe",
-            name="账号",
+            name="璐﹀彿",
         )
 
-        self.assertEqual(calls, [(330, "customerapp.exe", "账号")])
+        self.assertEqual(calls, [(330, "customerapp.exe", "璐﹀彿")])
         self.assertEqual(observed.runtime_id, (42, 330, 11))
         self.assertEqual(observed.control_type, 50004)
         self.assertTrue(observed.is_keyboard_focusable)
@@ -151,7 +157,7 @@ class NamedAutomationControlSenseTests(unittest.TestCase):
                 sense.find_unique_edit(
                     process_id=330,
                     process_name="customerapp.exe",
-                    name="账号",
+                    name="璐﹀彿",
                 )
 
     def test_fresh_candidate_sense_exposes_bounded_safe_names_from_current_process(self) -> None:
@@ -160,10 +166,10 @@ class NamedAutomationControlSenseTests(unittest.TestCase):
         def candidates(process_id: int, process_name: str, control_type: int):
             calls.append((process_id, process_name, control_type))
             names = (
-                ("客户名称", 1),
-                ("订单编号", 2),
-                ("备注", 3),
-            ) if control_type == 50004 else (("查找", 4), ("取消", 5))
+                ("瀹㈡埛鍚嶇О", 1),
+                ("璁㈠崟缂栧彿", 2),
+                ("澶囨敞", 3),
+            ) if control_type == 50004 else (("鏌ユ壘", 4), ("鍙栨秷", 5))
             return tuple(
                 _control(
                     process_id=process_id,
@@ -181,8 +187,8 @@ class NamedAutomationControlSenseTests(unittest.TestCase):
         edits = sense.list_safe_edits(process_id=330, process_name="customerapp.exe")
         buttons = sense.list_buttons(process_id=330, process_name="customerapp.exe")
 
-        self.assertEqual([item.name for item in edits], ["客户名称", "订单编号", "备注"])
-        self.assertEqual([item.name for item in buttons], ["查找", "取消"])
+        self.assertEqual([item.name for item in edits], ["瀹㈡埛鍚嶇О", "璁㈠崟缂栧彿", "澶囨敞"])
+        self.assertEqual([item.name for item in buttons], ["鏌ユ壘", "鍙栨秷"])
         self.assertEqual(calls, [(330, "customerapp.exe", 50004), (330, "customerapp.exe", 50000)])
         self.assertTrue(all(item.runtime_id for item in edits + buttons))
         self.assertTrue(all(not hasattr(item, "text") for item in edits))
@@ -193,7 +199,7 @@ class NamedAutomationControlSenseTests(unittest.TestCase):
                 _control(
                     process_id=process_id,
                     process_name=process_name,
-                    name="密码",
+                    name="瀵嗙爜",
                     control_type=50004,
                     runtime_tail=9,
                     focusable=True,
@@ -212,7 +218,7 @@ class NamedAutomationControlSenseTests(unittest.TestCase):
                 _control(
                     process_id=process_id,
                     process_name=process_name,
-                    name=f"字段 {index}",
+                    name=f"瀛楁 {index}",
                     control_type=50004,
                     runtime_tail=index + 1,
                     focusable=True,
@@ -224,6 +230,44 @@ class NamedAutomationControlSenseTests(unittest.TestCase):
         sense = NativeNamedAutomationControlSense(candidate_probe_fn=candidates)
         with self.assertRaisesRegex(ValueError, "bounded collection"):
             sense.list_safe_edits(process_id=330, process_name="customerapp.exe")
+
+
+    def test_generic_control_inventory_exposes_pattern_capabilities(self) -> None:
+        calls: list[tuple[int, str, int]] = []
+
+        def candidates(process_id: int, process_name: str, control_type: int):
+            calls.append((process_id, process_name, control_type))
+            return (
+                _control(
+                    process_id=process_id,
+                    process_name=process_name,
+                    name="鑷姩淇濆瓨",
+                    control_type=control_type,
+                    runtime_tail=31,
+                    toggle=True,
+                ),
+            )
+
+        sense = NativeNamedAutomationControlSense(candidate_probe_fn=candidates)
+        controls = sense.list_controls(
+            process_id=330,
+            process_name="word.exe",
+            control_type="checkbox",
+        )
+
+        self.assertEqual(calls, [(330, "word.exe", 50002)])
+        self.assertEqual(len(controls), 1)
+        self.assertEqual(controls[0].supported_patterns, ("toggle",))
+        self.assertEqual(controls[0].name, "鑷姩淇濆瓨")
+
+    def test_generic_control_inventory_rejects_unknown_control_type(self) -> None:
+        sense = NativeNamedAutomationControlSense(candidate_probe_fn=lambda *_: ())
+        with self.assertRaisesRegex(ValueError, "unsupported UI Automation control type"):
+            sense.list_controls(
+                process_id=330,
+                process_name="demo.exe",
+                control_type="mystery_widget",
+            )
 
 
 if __name__ == "__main__":

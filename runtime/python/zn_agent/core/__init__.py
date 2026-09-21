@@ -19,6 +19,13 @@ from .action_fabric import (
     ActionFabricRegistry,
     build_machine_action_fabric,
 )
+from .app_competence import (
+    AppCompetenceBinding,
+    AppCompetenceCompletion,
+    AppCompetencePack,
+    AppCompetenceRegistry,
+    AppCompetenceStage,
+)
 from .body import BodyAction, BodyActionResult, NativeBody
 from .visual_action_reasoner import (
     GeminiVisualActionReasoner,
@@ -107,6 +114,11 @@ __all__ = [
     "AffectiveState",
     "AgentEvent",
     "AgentIdentity",
+    "AppCompetenceBinding",
+    "AppCompetenceCompletion",
+    "AppCompetencePack",
+    "AppCompetenceRegistry",
+    "AppCompetenceStage",
     "Assessment",
     "BodyAction",
     "BodyActionResult",
