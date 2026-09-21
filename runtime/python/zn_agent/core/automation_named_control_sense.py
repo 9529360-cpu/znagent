@@ -341,8 +341,12 @@ class _WindowsNamedControlReader:
                         screen_height=screen_height,
                         runtime_id_property_id=client.UIA_RuntimeIdPropertyId,
                         name_property_id=client.UIA_NamePropertyId,
+                        automation_id_property_id=client.UIA_AutomationIdPropertyId,
                         is_password_property_id=client.UIA_IsPasswordPropertyId,
                         is_value_pattern_available_property_id=client.UIA_IsValuePatternAvailablePropertyId,
+                        is_toggle_pattern_available_property_id=client.UIA_IsTogglePatternAvailablePropertyId,
+                        is_expand_collapse_pattern_available_property_id=client.UIA_IsExpandCollapsePatternAvailablePropertyId,
+                        is_selection_item_pattern_available_property_id=client.UIA_IsSelectionItemPatternAvailablePropertyId,
                         value_is_read_only_property_id=client.UIA_ValueIsReadOnlyPropertyId,
                     )
             except Exception as exc:

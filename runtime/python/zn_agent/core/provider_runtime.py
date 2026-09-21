@@ -213,9 +213,13 @@ def build_machine_provider_runtime(
     """Register machine providers over fresh Action Fabric/runtime evidence."""
 
     runtime = CapabilityProviderRuntime()
-    action_ids = tuple(
+    windows_action_ids = tuple(
         descriptor.action_id
         for descriptor in action_fabric.descriptors(provider="zn.windows")
+    )
+    windows_uia_action_ids = tuple(
+        descriptor.action_id
+        for descriptor in action_fabric.descriptors(provider="zn.windows.uia")
     )
 
     def windows_health(
@@ -234,15 +238,15 @@ def build_machine_provider_runtime(
                 "degraded" if unknown_count else "healthy"
             )
             queryable = True
-            reason = "native Windows provider has currently available actions"
+            reason = "Windows action provider has currently available actions"
         elif unknown_count:
             state = "unknown"
             queryable = False
-            reason = "native Windows provider availability is not fully known"
+            reason = "Windows action provider availability is not fully known"
         else:
             state = "unavailable"
             queryable = False
-            reason = "native Windows provider has no currently available action"
+            reason = "Windows action provider has no currently available action"
         return CapabilityProviderStatus(
             descriptor.provider_id,
             state,
@@ -261,12 +265,23 @@ def build_machine_provider_runtime(
         CapabilityProviderDescriptor(
             provider_id="zn.windows",
             description="Resident deterministic Windows body and context provider.",
-            action_ids=action_ids,
+            action_ids=windows_action_ids,
             lifecycle_mode="resident",
             tags=("windows", "native", "body"),
         ),
         health_probe=windows_health,
     )
+    if windows_uia_action_ids:
+        runtime.register(
+            CapabilityProviderDescriptor(
+                provider_id="zn.windows.uia",
+                description="Resident semantic Windows UI Automation action provider.",
+                action_ids=windows_uia_action_ids,
+                lifecycle_mode="resident",
+                tags=("windows", "uia", "semantic", "body"),
+            ),
+            health_probe=windows_health,
+        )
 
     if local_inference is not None:
 

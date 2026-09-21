@@ -198,6 +198,22 @@ class ProductProviderRuntimeIntegrationTests(unittest.TestCase):
                 self.assertIsNotNone(descriptor)
                 self.assertEqual(
                     descriptor.action_ids,
+                    tuple(
+                        row.action_id
+                        for row in resident.action_fabric.descriptors(provider="zn.windows")
+                    ),
+                )
+                uia = resident.provider_runtime.descriptor("zn.windows.uia")
+                self.assertIsNotNone(uia)
+                self.assertEqual(
+                    uia.action_ids,
+                    tuple(
+                        row.action_id
+                        for row in resident.action_fabric.descriptors(provider="zn.windows.uia")
+                    ),
+                )
+                self.assertEqual(
+                    tuple(sorted((*descriptor.action_ids, *uia.action_ids))),
                     resident.action_fabric.names(),
                 )
                 status = resident.provider_runtime.status("zn.windows")
