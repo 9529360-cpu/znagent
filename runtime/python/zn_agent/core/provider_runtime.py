@@ -221,6 +221,10 @@ def build_machine_provider_runtime(
         descriptor.action_id
         for descriptor in action_fabric.descriptors(provider="zn.windows.uia")
     )
+    windows_desktop_scene_action_ids = tuple(
+        descriptor.action_id
+        for descriptor in action_fabric.descriptors(provider="zn.windows.desktop.scene")
+    )
 
     def windows_health(
         descriptor: CapabilityProviderDescriptor,
@@ -279,6 +283,18 @@ def build_machine_provider_runtime(
                 action_ids=windows_uia_action_ids,
                 lifecycle_mode="resident",
                 tags=("windows", "uia", "semantic", "body"),
+            ),
+            health_probe=windows_health,
+        )
+
+    if windows_desktop_scene_action_ids:
+        runtime.register(
+            CapabilityProviderDescriptor(
+                provider_id="zn.windows.desktop.scene",
+                description="Resident verified foreground desktop scene observation provider.",
+                action_ids=windows_desktop_scene_action_ids,
+                lifecycle_mode="resident",
+                tags=("windows", "desktop", "scene", "vision", "body"),
             ),
             health_probe=windows_health,
         )
