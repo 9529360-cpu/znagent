@@ -63,6 +63,29 @@ contextBridge.exposeInMainWorld('znDesktop', {
     setLocalePreference: (preference: ZnLocalePreference) =>
       ipcRenderer.invoke('zn:shell:set-locale-preference', preference),
     setWindowMode: (mode: 'compact' | 'expanded') => ipcRenderer.invoke('zn:shell:set-window-mode', mode),
+    ackWindowModeTransition: (payload: { transitionId: string; mode: 'compact' | 'expanded' }) =>
+      ipcRenderer.invoke('zn:shell:ack-window-mode-transition', payload),
+    onWindowModeTransition: (
+      callback: (payload: {
+        transitionId: string
+        phase: 'prepare' | 'complete'
+        mode: 'compact' | 'expanded'
+        reason: string
+        width?: number
+        height?: number
+      }) => void
+    ) => {
+      const listener = (_event: IpcRendererEvent, payload: {
+        transitionId: string
+        phase: 'prepare' | 'complete'
+        mode: 'compact' | 'expanded'
+        reason: string
+        width?: number
+        height?: number
+      }) => callback(payload)
+      ipcRenderer.on('zn:shell:window-mode-transition', listener)
+      return () => ipcRenderer.removeListener('zn:shell:window-mode-transition', listener)
+    },
     onDeepLink: (callback: (payload: ZnDesktopDeepLink) => void) => {
       const listener = (_event: IpcRendererEvent, payload: ZnDesktopDeepLink) => callback(payload)
       ipcRenderer.on('zn:deep-link', listener)

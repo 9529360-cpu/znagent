@@ -31,6 +31,23 @@ const ZN_WINDOW_BOUNDS = {
 
 type ZnWindowMode = keyof typeof ZN_WINDOW_BOUNDS
 
+type ZnWindowTransitionAck = {
+  transitionId: string
+  mode: ZnWindowMode
+}
+
+const ZN_WINDOW_TRANSITION_TIMEOUT_MS = 250
+let nextWindowTransitionId = 0
+const pendingWindowTransitionAcks = new Map<
+  string,
+  {
+    windowId: number
+    mode: ZnWindowMode
+    timer: ReturnType<typeof setTimeout>
+    resolve: () => void
+  }
+>()
+
 let primaryWindow: BrowserWindow | null = null
 let windowsResidentSurface: ZnWindowsResidentSurface | null = null
 let windowsResidentTray: Tray | null = null
@@ -207,6 +224,63 @@ function setZnWindowMode(window: BrowserWindow, mode: ZnWindowMode): void {
   window.setSize(bounds.width, bounds.height, true)
 }
 
+async function prepareZnWindowTransition(
+  window: BrowserWindow,
+  mode: ZnWindowMode,
+  reason: string
+): Promise<string | null> {
+  if (window.isDestroyed() || window.webContents.isLoading()) return null
+  const transitionId = `${window.id}:${++nextWindowTransitionId}`
+
+  await new Promise<void>(resolve => {
+    const timer = setTimeout(() => {
+      pendingWindowTransitionAcks.delete(transitionId)
+      resolve()
+    }, ZN_WINDOW_TRANSITION_TIMEOUT_MS)
+
+    pendingWindowTransitionAcks.set(transitionId, {
+      windowId: window.id,
+      mode,
+      timer,
+      resolve: () => {
+        clearTimeout(timer)
+        pendingWindowTransitionAcks.delete(transitionId)
+        resolve()
+      }
+    })
+
+    window.webContents.send('zn:shell:window-mode-transition', {
+      transitionId,
+      phase: 'prepare',
+      mode,
+      reason
+    })
+  })
+
+  return transitionId
+}
+
+async function transitionZnWindowMode(
+  window: BrowserWindow,
+  mode: ZnWindowMode,
+  reason: string
+): Promise<{ mode: ZnWindowMode; width: number; height: number }> {
+  const transitionId = await prepareZnWindowTransition(window, mode, reason)
+  setZnWindowMode(window, mode)
+  const result = { mode, ...ZN_WINDOW_BOUNDS[mode] }
+  if (transitionId && !window.isDestroyed()) {
+    window.webContents.send('zn:shell:window-mode-transition', {
+      transitionId,
+      phase: 'complete',
+      mode,
+      reason,
+      width: result.width,
+      height: result.height
+    })
+  }
+  return result
+}
+
 function focusComposerAfterInvocation(window: BrowserWindow): void {
   const notify = () => {
     if (!window.isDestroyed()) window.webContents.send('zn:global-invocation')
@@ -229,7 +303,20 @@ function showPrimaryWindow(focusComposer = false, mode?: ZnWindowMode): void {
   }
   // Windows can ignore size changes while a native window is minimized. Apply
   // compact/expanded bounds only after the resident surface has restored it.
-  if (mode) setZnWindowMode(window, mode)
+  if (mode) {
+    void transitionZnWindowMode(
+      window,
+      mode,
+      focusComposer ? 'resident-invocation' : 'resident-show'
+    )
+      .catch(error => {
+        console.error('[ZN] failed to transition resident window mode', error)
+      })
+      .finally(() => {
+        if (focusComposer) focusComposerAfterInvocation(window)
+      })
+    return
+  }
   if (focusComposer) focusComposerAfterInvocation(window)
 }
 
@@ -298,13 +385,37 @@ function registerZnShellIpc(): void {
   })
 
   ipcMain.removeHandler('zn:shell:set-window-mode')
-  ipcMain.handle('zn:shell:set-window-mode', (_event, mode: unknown) => {
+  ipcMain.removeHandler('zn:shell:ack-window-mode-transition')
+  ipcMain.handle('zn:shell:ack-window-mode-transition', (event, ack: unknown) => {
+    if (
+      !ack ||
+      typeof ack !== 'object' ||
+      typeof (ack as ZnWindowTransitionAck).transitionId !== 'string' ||
+      ((ack as ZnWindowTransitionAck).mode !== 'compact' &&
+        (ack as ZnWindowTransitionAck).mode !== 'expanded')
+    ) {
+      return { accepted: false }
+    }
+    const typedAck = ack as ZnWindowTransitionAck
+    const pending = pendingWindowTransitionAcks.get(typedAck.transitionId)
+    const sourceWindow = BrowserWindow.fromWebContents(event.sender)
+    if (
+      !pending ||
+      !sourceWindow ||
+      sourceWindow.id !== pending.windowId ||
+      typedAck.mode !== pending.mode
+    ) {
+      return { accepted: false }
+    }
+    pending.resolve()
+    return { accepted: true }
+  })
+  ipcMain.handle('zn:shell:set-window-mode', async (_event, mode: unknown) => {
     if (mode !== 'compact' && mode !== 'expanded') {
       throw new Error('invalid ZN window mode')
     }
     const window = ensurePrimaryWindow()
-    setZnWindowMode(window, mode)
-    return { mode, ...ZN_WINDOW_BOUNDS[mode] }
+    return transitionZnWindowMode(window, mode, 'renderer-request')
   })
 }
 
