@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+
+from PIL import Image
 
 from zn_agent.core.action_authority import ActionAuthorityContext
 from zn_agent.core.action_execution import (
@@ -22,6 +25,10 @@ from zn_agent.core.provider_bridge import build_resident_runtime
 from zn_agent.core.side_effect_journal import ResidentSideEffectJournal
 from zn_agent.core.store import KernelStore
 from zn_agent.core.windows_companion_body import WindowsCompanionAwareBody
+from zn_agent.core.windows_screen_capture import (
+    inspect_screen_capture_artifact,
+    screen_capture_artifact_path,
+)
 
 
 class _FakeBody:
@@ -156,6 +163,20 @@ class ActionExecutionContractTests(unittest.TestCase):
             "worker-1",
         )
 class MachineActionExecutionTests(unittest.TestCase):
+    def _screen_runtime(self, body: _FakeBody):
+        descriptor = ActionDescriptor(
+            action_id="windows.screen.capture",
+            provider="zn.windows",
+            description="Capture screen",
+            body_action_kind="windows_screen_capture",
+            effect_class="reversible_side_effect",
+        )
+        return build_machine_action_execution_runtime(
+            _registry(descriptor),
+            body,
+            device_capabilities=None,
+        )
+
     def _volume_runtime(self, body: _FakeBody):
         descriptor = ActionDescriptor(
             action_id="windows.audio.volume.set",
@@ -169,6 +190,125 @@ class MachineActionExecutionTests(unittest.TestCase):
             body,
             device_capabilities=None,
         )
+
+    @unittest.skipUnless(os.name == "nt", "Windows screen capture is Windows-only")
+    def test_screen_capture_requires_independent_artifact_readback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"ZN_AGENT_HOME": tmp},
+        ):
+            path = screen_capture_artifact_path("event-screen")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (20, 10), (1, 2, 3)).save(path)
+            observed = inspect_screen_capture_artifact(path)
+
+            body = _FakeBody()
+            body.handlers["windows_screen_capture"] = (
+                lambda kind, event_id, args: BodyActionResult(
+                    action_id="body-screen",
+                    kind=kind,
+                    success=True,
+                    data={
+                        "dispatch_sent": True,
+                        "local_path": str(path),
+                        "width": observed["width"],
+                        "height": observed["height"],
+                        "size_bytes": observed["size_bytes"],
+                        "sha256": observed["sha256"],
+                    },
+                    event_id=event_id,
+                )
+            )
+            result = self._screen_runtime(body).execute(
+                ActionRequest(
+                    "windows.screen.capture",
+                    event_id="event-screen",
+                )
+            )
+
+            self.assertTrue(result.success)
+            self.assertEqual(result.status, "verified")
+            self.assertEqual(
+                result.observations[-1].source,
+                "zn_screen_capture_artifact_readback",
+            )
+            self.assertEqual(
+                result.verification.evidence["sha256"],
+                observed["sha256"],
+            )
+
+    @unittest.skipUnless(os.name == "nt", "Windows screen capture is Windows-only")
+    def test_screen_capture_replay_recovers_from_deterministic_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"ZN_AGENT_HOME": tmp},
+        ):
+            path = screen_capture_artifact_path("event-screen-replay")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (12, 8), (4, 5, 6)).save(path)
+
+            body = _FakeBody()
+            body.handlers["windows_screen_capture"] = (
+                lambda kind, event_id, args: BodyActionResult(
+                    action_id="body-replay",
+                    kind=kind,
+                    success=False,
+                    data={
+                        "replay_blocked": True,
+                        "side_effect_uncertain": True,
+                    },
+                    error="prior dispatch requires observation",
+                    event_id=event_id,
+                )
+            )
+            result = self._screen_runtime(body).execute(
+                ActionRequest(
+                    "windows.screen.capture",
+                    event_id="event-screen-replay",
+                )
+            )
+
+            self.assertTrue(result.success)
+            self.assertTrue(result.verification.evidence["replay_recovered"])
+            self.assertEqual(
+                result.observations[-1].data["local_path"],
+                str(path.resolve()),
+            )
+
+    @unittest.skipUnless(os.name == "nt", "Windows screen capture is Windows-only")
+    def test_screen_capture_mismatched_body_hash_fails_verification(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"ZN_AGENT_HOME": tmp},
+        ):
+            path = screen_capture_artifact_path("event-screen-mismatch")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (9, 7), (7, 8, 9)).save(path)
+
+            body = _FakeBody()
+            body.handlers["windows_screen_capture"] = (
+                lambda kind, event_id, args: BodyActionResult(
+                    action_id="body-mismatch",
+                    kind=kind,
+                    success=True,
+                    data={
+                        "dispatch_sent": True,
+                        "local_path": str(path),
+                        "sha256": "0" * 64,
+                    },
+                    event_id=event_id,
+                )
+            )
+            result = self._screen_runtime(body).execute(
+                ActionRequest(
+                    "windows.screen.capture",
+                    event_id="event-screen-mismatch",
+                )
+            )
+
+            self.assertFalse(result.success)
+            self.assertEqual(result.status, "failed")
+            self.assertIn("sha256", result.verification.evidence["mismatched_fields"])
 
     def test_volume_dispatch_success_is_not_completion_without_fresh_readback(self) -> None:
         body = _FakeBody()

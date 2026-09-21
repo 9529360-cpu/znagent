@@ -19,6 +19,10 @@ from .action_authority import (
 from .action_fabric import ActionDescriptor, ActionFabricRegistry
 from .body import BodyActionResult
 from .models import utc_now
+from .windows_screen_capture import (
+    inspect_screen_capture_artifact,
+    screen_capture_artifact_path,
+)
 
 
 ExecutionStatus = Literal["verified", "pending", "failed", "uncertain"]
@@ -371,6 +375,13 @@ def build_machine_action_execution_runtime(
 ) -> ActionExecutionRuntime:
     runtime = ActionExecutionRuntime(fabric, body)
 
+    if fabric.descriptor("windows.screen.capture") is not None:
+        runtime.register_verification(
+            "windows.screen.capture",
+            observe=_observe_screen_capture,
+            verify=_verify_screen_capture,
+        )
+
     if fabric.descriptor("windows.audio.volume.set") is not None:
         runtime.register_verification(
             "windows.audio.volume.set",
@@ -391,6 +402,64 @@ def build_machine_action_execution_runtime(
             verify=_verify_application_launch,
         )
     return runtime
+
+
+def _observe_screen_capture(
+    request: ActionRequest,
+    body_result: BodyActionResult | None,
+) -> ActionObservation:
+    result_data = dict((body_result.data if body_result is not None else {}) or {})
+    local_path = str(result_data.get("local_path") or "").strip()
+    if not local_path:
+        local_path = str(screen_capture_artifact_path(str(request.event_id or "")))
+    observed = inspect_screen_capture_artifact(local_path)
+    return ActionObservation(
+        request.action_id,
+        "zn_screen_capture_artifact_readback",
+        data=observed,
+    )
+
+
+def _verify_screen_capture(
+    request: ActionRequest,
+    observation: ActionObservation,
+    body_result: BodyActionResult | None,
+) -> ActionVerification:
+    expected = dict((body_result.data if body_result is not None else {}) or {})
+    observed = dict(observation.data or {})
+    mismatches: list[str] = []
+
+    for key in ("local_path", "sha256", "width", "height", "size_bytes"):
+        value = expected.get(key)
+        if value in (None, ""):
+            continue
+        if str(observed.get(key)) != str(value):
+            mismatches.append(key)
+
+    if mismatches:
+        return ActionVerification(
+            "failed",
+            "fresh screenshot artifact readback does not match Body result",
+            evidence={
+                "mismatched_fields": mismatches,
+                **observed,
+            },
+            observed_at=observation.observed_at,
+        )
+
+    return ActionVerification(
+        "verified",
+        (
+            "fresh ZN-owned screenshot artifact exists and matches recorded evidence"
+            if not expected.get("replay_blocked")
+            else "recovered prior screenshot effect from deterministic artifact evidence"
+        ),
+        evidence={
+            **observed,
+            "replay_recovered": bool(expected.get("replay_blocked")),
+        },
+        observed_at=observation.observed_at,
+    )
 
 
 def _observe_volume(body: Any, request: ActionRequest) -> ActionObservation:

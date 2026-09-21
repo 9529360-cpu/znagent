@@ -220,6 +220,7 @@ class MachineActionFabricTests(unittest.TestCase):
                 "windows.audio.volume.read",
                 "windows.audio.volume.set",
                 "windows.context.read",
+                "windows.screen.capture",
             ),
         )
         self.assertEqual(
@@ -241,6 +242,10 @@ class MachineActionFabricTests(unittest.TestCase):
         self.assertEqual(
             registry.descriptor("windows.audio.volume.set").body_action_kind,
             "windows_audio_volume_set",
+        )
+        self.assertEqual(
+            registry.descriptor("windows.screen.capture").body_action_kind,
+            "windows_screen_capture",
         )
 
     def test_machine_availability_tracks_fresh_graph_evidence(self) -> None:
