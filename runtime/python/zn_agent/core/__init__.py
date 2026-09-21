@@ -1,4 +1,4 @@
-"""ZN Agent resident kernel.
+﻿"""ZN Agent resident kernel.
 
 The resident kernel is the persistent agent. Language models are replaceable,
 on-demand cognitive resources rather than the holder of identity or continuity.
@@ -27,6 +27,7 @@ from .app_competence import (
     AppCompetenceStage,
 )
 from .body import BodyAction, BodyActionResult, NativeBody
+<<<<<<< HEAD
 from .desktop_scene import (
     DesktopScene,
     DesktopSceneError,
@@ -44,6 +45,13 @@ from .desktop_scene import (
     inspect_desktop_scene_artifact,
     load_desktop_scene_artifact,
     merge_desktop_scene_targets,
+=======
+from .visual_action_reasoner import (
+    GeminiVisualActionReasoner,
+    VisualActionDecision,
+    VisualActionInference,
+    parse_visual_action_decision,
+>>>>>>> 7777cc37 (feat: add bounded visual action reasoner)
 )
 from .budget import CognitiveBudgetManager
 from .capabilities import CapabilityRegistry, CallableCapability, ExactTaskCapability
@@ -134,6 +142,7 @@ __all__ = [
     "Assessment",
     "BodyAction",
     "BodyActionResult",
+    "GeminiVisualActionReasoner",
     "BodyState",
     "DesktopScene",
     "DesktopSceneError",
@@ -215,8 +224,11 @@ __all__ = [
     "StructuredMemory",
     "TaskReadiness",
     "ThoughtFrame",
+    "VisualActionDecision",
+    "VisualActionInference",
     "Worker",
     "WorkerFactory",
+    "parse_visual_action_decision",
     "WorkerResult",
     "WorkingState",
     "WorldFocus",
@@ -227,3 +239,4 @@ __all__ = [
     "ZNLifeCore",
     "ZNResidentRuntime",
 ]
+
