@@ -67,10 +67,38 @@ jobs:
           } finally {
             Pop-Location
           }
-      - name: Require at least one configured real cognitive route
+      - name: Run guarded E2E-28/34 on runner-local free Gemini
         run: |
+          $hermesEnv = Join-Path $env:LOCALAPPDATA 'hermes\.env'
+          if (-not (Test-Path -LiteralPath $hermesEnv)) {
+            throw "E2E-28/34 requires the runner-local Hermes provider environment: $hermesEnv"
+          }
+          $googleLine = Get-Content -LiteralPath $hermesEnv |
+            Where-Object { $_ -match '^\s*GOOGLE_API_KEY\s*=' } |
+            Select-Object -First 1
+          if (-not $googleLine) {
+            throw "E2E-28/34 requires GOOGLE_API_KEY in the runner-local Hermes provider environment"
+          }
+          $googleKey = $googleLine.Substring($googleLine.IndexOf('=') + 1).Trim().Trim('"').Trim("'")
+          if (-not $googleKey) {
+            throw "E2E-28/34 runner-local GOOGLE_API_KEY is empty"
+          }
+
+          $configPath = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e28-34-real-config.yaml'
+          @(
+            'model:'
+            '  provider: gemini'
+            '  default: gemini-3.1-flash-lite-preview'
+            '  max_tokens: 64'
+          ) | Set-Content -LiteralPath $configPath -Encoding UTF8
+
+          $env:GOOGLE_API_KEY = $googleKey
+          $env:ZN_CONFIG_PATH = $configPath
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e28-34-real-venv\Scripts\python.exe'
+          $log = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e28-34-real.log'
+          Remove-Item -Force $log -ErrorAction SilentlyContinue
+
           @'
           import json
           from zn_agent.core.config import load_zn_config
@@ -94,13 +122,10 @@ jobs:
                   + str(plan.error)
               )
           '@ | & $python -
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Run guarded E2E-28/34 and fail on any skip
-        run: |
-          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
-          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e28-34-real-venv\Scripts\python.exe'
-          $log = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e28-34-real.log'
-          Remove-Item -Force $log -ErrorAction SilentlyContinue
+          if ($LASTEXITCODE -ne 0) {
+            throw "E2E-28/34 free Gemini route did not configure"
+          }
+
           @'
           import importlib.util
           import sys
@@ -135,6 +160,9 @@ jobs:
               raise SystemExit(1)
           '@ | & $python - 2>&1 | Tee-Object -FilePath $log
           $exitCode = $LASTEXITCODE
+          Remove-Item Env:GOOGLE_API_KEY -ErrorAction SilentlyContinue
+          Remove-Item Env:ZN_CONFIG_PATH -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath $configPath -Force -ErrorAction SilentlyContinue
           if ($exitCode -ne 0) { exit $exitCode }
       - name: Upload guarded E2E-28/34 transcript
         if: always()
