@@ -113,6 +113,8 @@ _EXISTING_SESSION_RECORD_MARKERS = (
 class ProductResearchInformationResidentRuntime(ResearchInformationResidentRuntime):
     """Final product Resident with narrow Research and local Office admission."""
 
+    _VISUAL_COMPETENCE_HANDOFF_KEY = "app_competence_visual_handoff"
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Keep one product Body and one DeviceCapabilityGraph. The companion-aware
@@ -258,80 +260,115 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
         handoff = recipe.stages[-1].handoff if recipe.stages else None
         if handoff is None:
             raise RuntimeError("pending competence recipe lost its visual stage handoff")
-        visual = self._consume_competence_visual_handoff(
+        visual = self.admit_competence_visual_handoff(
             event=event,
             state=state,
             handoff=handoff,
         )
         return recipe, visual
 
-    def _consume_competence_visual_handoff(
+    def admit_competence_visual_handoff(
         self,
         *,
         event,
         state,
         handoff: AppCompetenceStageHandoff,
-    ) -> VisualStageBridgeResult:
-        if handoff.event_id != event.event_id:
-            raise RuntimeError("visual competence handoff does not belong to the current event")
-        if handoff.kind != "visual_action":
-            raise RuntimeError("unsupported competence handoff kind")
+    ) -> VisualStageBridgeResult | None:
+        """Consume one executor handoff without creating a second recipe loop."""
 
-        raw = state.data.get("app_competence_visual_handoff")
+        if not isinstance(handoff, AppCompetenceStageHandoff):
+            raise TypeError("visual competence handoff must be AppCompetenceStageHandoff")
+        if str(getattr(event, "event_id", "") or "") != handoff.event_id:
+            raise ValueError("visual competence handoff event_id does not match current event")
+
+        raw = state.data.get(self._VISUAL_COMPETENCE_HANDOFF_KEY)
         prior = dict(raw) if isinstance(raw, dict) else {}
-        if (
-            prior.get("handoff_id") == handoff.handoff_id
-            and str(getattr(state, "stage", "") or "") in {"native_action", "native_verification"}
-        ):
-            raise RuntimeError(
-                "visual competence handoff already has an in-flight native action"
+        same_handoff = str(prior.get("handoff_id") or "") == handoff.handoff_id
+        prior_status = str(prior.get("status") or "").strip().lower()
+        if same_handoff and prior_status == "pointer_active":
+            return None
+        if same_handoff and prior_status == "evaluating":
+            state.stage = "native_investigation"
+            state.next_action = (
+                "investigate the unresolved visual cognition dispatch without replaying it"
             )
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return None
 
-        cycle = 0
-        if prior.get("handoff_id") == handoff.handoff_id:
-            try:
-                cycle = max(0, int(prior.get("next_cycle") or 0))
-            except (TypeError, ValueError):
-                cycle = 0
-        decision_id = f"{handoff.handoff_id}:cycle:{cycle}"
-
-        result = self.evaluate_visual_stage(
-            event=event,
-            state=state,
-            application_id=handoff.application_id,
-            instruction=handoff.instruction,
-            decision_id=decision_id,
-            step_index=handoff.step_instruction_index,
+        attempt = (
+            max(0, int(prior.get("observation_attempt") or 0)) + 1
+            if same_handoff
+            else 0
         )
-        outcome = str(result.inference.decision.action or "").strip().upper()
-        state.data["app_competence_visual_handoff"] = {
+        decision_id = f"{handoff.handoff_id}:observation:{attempt}"
+        marker = {
             "handoff_id": handoff.handoff_id,
             "stage_index": handoff.stage_index,
+            "application_id": handoff.application_id,
+            "instruction": handoff.instruction,
+            "step_instruction_index": handoff.step_instruction_index,
+            "stage_end_condition": handoff.stage_end_condition,
+            "observation_attempt": attempt,
             "decision_id": decision_id,
-            "cycle": cycle,
-            "next_cycle": cycle + 1,
-            "outcome": outcome,
-            "scene_id": result.scene_id,
-            "regrounded_scene_id": result.regrounded_scene_id,
-            "requires_completion_verification": bool(
-                result.requires_completion_verification
-            ),
+            "status": "evaluating",
             "updated_at": utc_now(),
         }
+        state.data[self._VISUAL_COMPETENCE_HANDOFF_KEY] = marker
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
 
-        if outcome == "WAIT":
+        try:
+            result = self.evaluate_visual_stage(
+                event=event,
+                state=state,
+                application_id=handoff.application_id,
+                instruction=handoff.instruction,
+                decision_id=decision_id,
+                step_index=handoff.step_instruction_index,
+            )
+        except Exception as exc:
+            marker = dict(state.data.get(self._VISUAL_COMPETENCE_HANDOFF_KEY) or marker)
+            marker.update(
+                {
+                    "status": "observation_failed",
+                    "error_type": type(exc).__name__,
+                    "updated_at": utc_now(),
+                }
+            )
+            state.data[self._VISUAL_COMPETENCE_HANDOFF_KEY] = marker
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            raise
+
+        marker = dict(state.data.get(self._VISUAL_COMPETENCE_HANDOFF_KEY) or marker)
+        action = result.inference.decision.action
+        if action == "TAP":
+            status = "pointer_active"
+        elif action == "WAIT":
+            status = "waiting"
+        else:
+            status = "finish_observed"
+        marker.update(
+            {
+                "status": status,
+                "decision_id": decision_id,
+                "pointer_intent_id": (
+                    result.pointer_intent.intent_id
+                    if result.pointer_intent is not None
+                    else None
+                ),
+                "updated_at": utc_now(),
+            }
+        )
+        state.data[self._VISUAL_COMPETENCE_HANDOFF_KEY] = marker
+        if action != "TAP":
             state.stage = "native_investigation"
             state.next_action = (
-                "wait for current UI state to advance, then capture a fresh desktop scene"
+                "re-check the visual competence completion from fresh reality"
+                if action == "FINISH"
+                else "wait before another fresh visual competence observation"
             )
-        elif outcome == "FINISH":
-            state.stage = "native_investigation"
-            state.next_action = (
-                "re-run the competence stage read-only completion proof before advancing"
-            )
-        elif outcome != "TAP":
-            raise RuntimeError(f"unsupported visual competence outcome: {outcome or '<empty>'}")
-
         self._sync_execution_context(event, state)
         self.store.save_working_state(state)
         return result
@@ -436,6 +473,24 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
                 }
             )
         state.data["visual_stage_progress"] = progress[-32:]
+        handoff = state.data.get(self._VISUAL_COMPETENCE_HANDOFF_KEY)
+        if isinstance(handoff, dict):
+            active_decision = str(handoff.get("decision_id") or "")
+            current_decision = (
+                str(decision.get("decision_id") or "")
+                if isinstance(decision, dict)
+                else ""
+            )
+            if active_decision and active_decision == current_decision:
+                handoff = dict(handoff)
+                handoff.update(
+                    {
+                        "status": "effect_verified",
+                        "verified_intent_id": intent_id,
+                        "updated_at": utc_now(),
+                    }
+                )
+                state.data[self._VISUAL_COMPETENCE_HANDOFF_KEY] = handoff
         state.data.pop("native_completion", None)
         state.data.pop("native_completion_scope", None)
         state.stage = "native_investigation"

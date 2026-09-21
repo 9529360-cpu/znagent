@@ -14,8 +14,10 @@ from zn_agent.core.desktop_scene import (
 )
 from zn_agent.core.action import NativeActionIntent
 from zn_agent.core.app_competence_execution import AppCompetenceStageHandoff
+from zn_agent.core.models import AgentEvent, WorkingState
 from zn_agent.core.pointer_click_completion_resident import EffectScopedPointerClickResidentRuntime
 from zn_agent.core.pointer_click_resident import VerifiedPointerClickResidentRuntime
+from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
 from zn_agent.core.research_information_product_resident import (
     ProductResearchInformationResidentRuntime,
 )
@@ -436,6 +438,116 @@ class VisualStageBridgeTests(unittest.TestCase):
             "effect_verified",
         )
         self.assertEqual(saved, [state])
+
+    def test_real_product_resident_accounts_visual_tap_then_continues(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            try:
+                event = AgentEvent(
+                    event_id="evt-visual-real",
+                    task="continue this visual app stage",
+                    kind="desktop_user_event",
+                    payload={},
+                )
+                intent = NativeActionIntent(
+                    intent_id="visual-real-intent",
+                    event_id=event.event_id,
+                    kind="pointer_click",
+                    args={"x_fraction": 0.5, "y_fraction": 0.5, "button": "left"},
+                    source="visual_stage_bridge",
+                )
+                state = WorkingState(
+                    current_event_id=event.event_id,
+                    stage="native_verification",
+                    data={
+                        "native_action_intent": intent.to_dict(),
+                        "native_verification_result": {"verified": True},
+                        "visual_stage_decision": {
+                            "decision_id": "cycle-real",
+                            "scene_id": "desktop-scene-a",
+                            "regrounded_scene_id": "desktop-scene-b",
+                        },
+                    },
+                )
+
+                result = resident._complete_successful_body_action(
+                    event,
+                    state,
+                    intent,
+                    response="changed",
+                    reason="verified visual effect",
+                )
+
+                self.assertIsNone(result)
+                self.assertEqual(state.stage, "native_investigation")
+                self.assertNotIn("native_completion", state.data)
+                self.assertEqual(
+                    state.data["visual_stage_progress"][-1]["intent_id"],
+                    "visual-real-intent",
+                )
+            finally:
+                resident.store.close()
+
+    def test_real_product_resident_resume_intercepts_visual_completion_gap(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            try:
+                event = AgentEvent(
+                    event_id="evt-visual-resume",
+                    task="continue this visual app stage",
+                    kind="desktop_user_event",
+                    payload={},
+                )
+                intent = NativeActionIntent(
+                    intent_id="visual-resume-intent",
+                    event_id=event.event_id,
+                    kind="pointer_click",
+                    args={"x_fraction": 0.5, "y_fraction": 0.5, "button": "left"},
+                    source="visual_stage_bridge",
+                )
+                state = WorkingState(
+                    current_event_id=event.event_id,
+                    stage="native_verification",
+                    data={
+                        "native_action_intent": intent.to_dict(),
+                        "native_verification_result": {"verified": True},
+                        "visual_stage_decision": {"decision_id": "cycle-resume"},
+                    },
+                )
+
+                terminal = super(
+                    ProductResearchInformationResidentRuntime,
+                    resident,
+                )._complete_successful_body_action(
+                    event,
+                    state,
+                    intent,
+                    response="changed",
+                    reason="verified visual effect",
+                )
+                self.assertTrue(terminal.success)
+                self.assertEqual(state.stage, "native_completion")
+                self.assertIn("native_completion", state.data)
+                resident.store.save_working_state(state)
+
+                restored = resident.store.get_working_state()
+                resumed = resident._resume_native_completion(event, restored)
+
+                self.assertIsNone(resumed)
+                self.assertEqual(restored.stage, "native_investigation")
+                self.assertNotIn("native_completion", restored.data)
+                self.assertEqual(
+                    restored.data["visual_stage_progress"][-1]["intent_id"],
+                    "visual-resume-intent",
+                )
+            finally:
+                resident.store.close()
 
     def test_competence_visual_handoff_admits_tap_only_once(self):
         resident = object.__new__(ProductResearchInformationResidentRuntime)
