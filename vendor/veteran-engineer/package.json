@@ -1,0 +1,34 @@
+{
+  "name": "veteran-engineer",
+  "version": "0.5.0",
+  "private": true,
+  "type": "module",
+  "description": "Cross-host Veteran Engineer plugin runtime",
+  "bin": {
+    "veteran-engineer": "./bin/veteran-engineer.mjs",
+    "veteran-remote-host": "./bin/veteran-remote-host.mjs"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "test:core": "node --test tests/state-store.test.mjs tests/state-lock.test.mjs tests/mission.test.mjs tests/mission-advance.test.mjs tests/experience.test.mjs tests/provider-experience.test.mjs tests/runtime.test.mjs tests/validation-review.test.mjs tests/worker.test.mjs tests/worker-admission.test.mjs tests/worker-execution.test.mjs",
+    "test:mcp": "node --test tests/mcp-handshake.test.mjs",
+    "test:installer": "node --test tests/installer.test.mjs",
+    "test:cli": "node --test tests/cli.test.mjs",
+    "test:remote-host": "node --test tests/remote-host.test.mjs",
+    "test:container-smoke": "node scripts/container-smoke.mjs",
+    "test:postgres": "node --test tests/postgres-state-backend.integration.mjs tests/postgres-mission-crash-recovery.integration.mjs",
+    "test:electron": "node --test --test-concurrency=1 tests/electron-validation.integration.mjs tests/electron-window-state.integration.mjs tests/electron-menu-assertion.integration.mjs tests/electron-file-dialog.integration.mjs tests/electron-visual-regression.integration.mjs",
+    "check": "node scripts/check.mjs && npm test",
+    "mcp:handshake": "node scripts/mcp-handshake.mjs",
+    "mcp:handshake:modern": "node scripts/mcp-handshake.mjs --require-sdk --require-server-sdk --mode modern-pinned --stateful"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "optionalDependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/core": "2.0.0",
+    "@modelcontextprotocol/server": "2.0.0",
+    "zod": "4.2.0"
+  }
+}

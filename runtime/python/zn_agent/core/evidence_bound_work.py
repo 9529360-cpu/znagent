@@ -604,6 +604,59 @@ class EvidenceBoundSteerableWorkLedger(SteerableWorkLedger):
             ).fetchone()
         return self._worker_from_row(row) if row is not None else None
 
+    def update_worker_run_metrics(
+        self,
+        worker_run_id: str,
+        *,
+        metrics: dict[str, Any],
+    ) -> WorkerRun:
+        """Persist bounded execution identity while a WorkerRun is still live.
+
+        This is intentionally narrower than a generic WorkerRun update. Callers
+        may checkpoint executor-owned recovery identity (for example an external
+        Mission id) but cannot change state, scopes, WorkItem binding, provider,
+        or plan version through this path.
+        """
+
+        run = self.worker_run(worker_run_id)
+        if run is None:
+            raise ValueError("unknown WorkerRun")
+        if run.state not in {"queued", "running"}:
+            raise ValueError("WorkerRun metrics may only change while queued or running")
+        item = self._work_item_by_id(run.work_item_id)
+        if item is None or item.plan_version != run.plan_version:
+            raise RuntimeError("WorkerRun lost its immutable WorkItem binding")
+        if self.plan_version(item.work_thread_id) != run.plan_version:
+            self.mark_worker_stale(
+                worker_run_id,
+                reason="WorkerRun recovery identity belongs to a stale plan",
+            )
+            refreshed = self.worker_run(worker_run_id)
+            assert refreshed is not None
+            return refreshed
+        metric_values = dict(run.metrics)
+        metric_values.update(dict(metrics or {}))
+        with self._lock, closing(self._connect()) as conn:
+            updated = conn.execute(
+                "UPDATE worker_runs SET metrics_json=? "
+                "WHERE worker_run_id=? AND state IN ('queued','running')",
+                (
+                    json.dumps(
+                        metric_values,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                    run.worker_run_id,
+                ),
+            )
+            conn.commit()
+        if updated.rowcount != 1:
+            raise RuntimeError("WorkerRun metrics update lost a concurrent state change")
+        persisted = self.worker_run(run.worker_run_id)
+        if persisted is None:
+            raise RuntimeError("WorkerRun metrics update did not persist")
+        return persisted
+
     def list_worker_runs(
         self,
         *,
