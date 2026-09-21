@@ -12,9 +12,17 @@ from zn_agent.core.desktop_scene import (
     DesktopSceneRect,
     DesktopSceneScreenshot,
 )
+from zn_agent.core.action import NativeActionIntent
 from zn_agent.core.pointer_click_resident import VerifiedPointerClickResidentRuntime
+from zn_agent.core.research_information_product_resident import (
+    ProductResearchInformationResidentRuntime,
+)
 from zn_agent.core.visual_action_reasoner import VisualActionDecision, VisualActionInference
-from zn_agent.core.visual_stage_bridge import DesktopVisualStageBridge
+from zn_agent.core.visual_stage_bridge import (
+    DesktopVisualStageBridge,
+    VisualStageBridgeResult,
+    build_current_visual_stage_bridge,
+)
 
 
 class _Runtime:
@@ -111,6 +119,16 @@ class VisualStageBridgeTests(unittest.TestCase):
                 result.event_payload["desktop_scene_precondition"]["scene_id"],
                 "desktop-scene-after",
             )
+            resident = object.__new__(VerifiedPointerClickResidentRuntime)
+            contract, error = resident._pointer_click_contract(
+                SimpleNamespace(payload={}),
+                result.pointer_intent,
+            )
+            self.assertIsNone(error)
+            self.assertEqual(
+                contract["desktop_scene_precondition"]["scene_id"],
+                "desktop-scene-after",
+            )
 
     def test_same_decision_id_replays_same_intent_identity(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -184,6 +202,181 @@ class VisualStageBridgeTests(unittest.TestCase):
             )
             self.assertIsNone(result.pointer_intent)
             self.assertTrue(result.requires_completion_verification)
+
+    def test_current_bridge_uses_router_order_and_existing_image_resource(self):
+        image_resource = SimpleNamespace(invoke_image=lambda **kwargs: None)
+        text_resource = SimpleNamespace()
+        routes = (
+            SimpleNamespace(route_id="text"),
+            SimpleNamespace(route_id="image"),
+        )
+
+        class Router:
+            def __init__(self):
+                self.routes = routes
+                self.calls = []
+
+            def select(self, goal, excluded=None):
+                excluded = set(excluded or ())
+                self.calls.append((goal, excluded))
+                return next(route for route in self.routes if route.route_id not in excluded)
+
+        class Factory:
+            def create(self, route):
+                resource = image_resource if route.route_id == "image" else text_resource
+                return SimpleNamespace(resource=resource)
+
+        router = Router()
+        kernel = SimpleNamespace(router=router, worker_factory=Factory())
+        runtime = _Runtime()
+        bridge = build_current_visual_stage_bridge(
+            action_runtime=runtime,
+            kernel=kernel,
+            route_policy={"allowed_providers": ["gemini"]},
+            data_classification="private",
+        )
+        self.assertIs(bridge.action_runtime, runtime)
+        self.assertIs(bridge.reasoner.resource, image_resource)
+        self.assertEqual(len(router.calls), 2)
+        self.assertEqual(router.calls[1][1], {"text"})
+        self.assertEqual(
+            router.calls[0][0].metadata["route_policy"]["data_classification"],
+            "private",
+        )
+        self.assertEqual(
+            router.calls[0][0].metadata["route_policy"]["allowed_providers"],
+            ["gemini"],
+        )
+
+    def test_product_resident_admits_only_tap_into_native_action_cycle(self):
+        pointer_intent = NativeActionIntent(
+            intent_id="visual-tap-test",
+            event_id="evt",
+            kind="pointer_click",
+            args={"x_fraction": 0.5, "y_fraction": 0.5, "button": "left"},
+            expected_outcome={"kind": "visual_region_changed"},
+            source="visual_stage_bridge",
+        )
+        tap = VisualStageBridgeResult(
+            inference=VisualActionInference(
+                decision=VisualActionDecision("TAP", 0.5, 0.5),
+                provider="fake",
+                model="fake",
+            ),
+            scene_id="desktop-scene-before",
+            regrounded_scene_id="desktop-scene-after",
+            pointer_intent=pointer_intent,
+        )
+        resident = object.__new__(ProductResearchInformationResidentRuntime)
+        resident._current_visual_stage_bridge = lambda event: SimpleNamespace(
+            evaluate=lambda **kwargs: tap
+        )
+        resident.budget = SimpleNamespace(
+            decide=lambda *args, **kwargs: SimpleNamespace(
+                use_model=True,
+                max_calls=1,
+                reason="visual stage admitted",
+            )
+        )
+        admitted = []
+        resident._begin_native_action_cycle = lambda event, state, intent: admitted.append(intent)
+        saved = []
+        resident.store = SimpleNamespace(save_working_state=lambda state: saved.append(state))
+        resident._sync_execution_context = lambda event, state: None
+        state = SimpleNamespace(data={})
+        event = SimpleNamespace(event_id="evt", payload={})
+
+        result = ProductResearchInformationResidentRuntime.evaluate_visual_stage(
+            resident,
+            event=event,
+            state=state,
+            application_id="app.test",
+            instruction="click target",
+            decision_id="cycle-1",
+        )
+        self.assertIs(result, tap)
+        self.assertEqual(admitted, [pointer_intent])
+        self.assertEqual(saved, [state])
+        self.assertEqual(state.data["visual_stage_decision"]["decision"]["action"], "TAP")
+
+        finish = VisualStageBridgeResult(
+            inference=VisualActionInference(
+                decision=VisualActionDecision("FINISH"),
+                provider="fake",
+                model="fake",
+            ),
+            scene_id="desktop-scene-finish",
+            requires_completion_verification=True,
+        )
+        resident._current_visual_stage_bridge = lambda event: SimpleNamespace(
+            evaluate=lambda **kwargs: finish
+        )
+        admitted.clear()
+        saved.clear()
+        result = ProductResearchInformationResidentRuntime.evaluate_visual_stage(
+            resident,
+            event=event,
+            state=state,
+            application_id="app.test",
+            instruction="confirm done",
+            decision_id="cycle-2",
+        )
+        self.assertIs(result, finish)
+        self.assertEqual(admitted, [])
+        self.assertEqual(saved, [state])
+        self.assertTrue(state.data["visual_stage_decision"]["requires_completion_verification"])
+
+    def test_product_resident_visual_stage_respects_model_policy_gate(self):
+        resident = object.__new__(ProductResearchInformationResidentRuntime)
+        resident.budget = SimpleNamespace(
+            decide=lambda event, **kwargs: SimpleNamespace(
+                use_model=False,
+                max_calls=0,
+                reason="model use disabled by policy 'never'",
+            )
+        )
+        resident._current_visual_stage_bridge = lambda event: self.fail(
+            "visual bridge must not be constructed when model policy denies cognition"
+        )
+        with self.assertRaisesRegex(RuntimeError, "does not permit"):
+            ProductResearchInformationResidentRuntime.evaluate_visual_stage(
+                resident,
+                event=SimpleNamespace(event_id="evt", payload={"model_policy": "never"}),
+                state=SimpleNamespace(data={}),
+                application_id="app.test",
+                instruction="click target",
+                decision_id="cycle-policy",
+            )
+
+    def test_product_resident_rejects_visual_model_when_budget_blocks_it(self):
+        resident = object.__new__(ProductResearchInformationResidentRuntime)
+        resident.budget = SimpleNamespace(
+            decide=lambda *args, **kwargs: SimpleNamespace(
+                use_model=False,
+                max_calls=0,
+                reason="budget blocked",
+            )
+        )
+        resident._current_visual_stage_bridge = lambda event: self.fail(
+            "bridge must not be built when model policy blocks visual cognition"
+        )
+        with self.assertRaisesRegex(RuntimeError, "does not permit it"):
+            ProductResearchInformationResidentRuntime.evaluate_visual_stage(
+                resident,
+                event=SimpleNamespace(event_id="evt", payload={}),
+                state=SimpleNamespace(data={}),
+                application_id="app.test",
+                instruction="click target",
+                decision_id="cycle-budget-blocked",
+            )
+
+    def test_product_resident_rejects_malformed_visual_route_policy(self):
+        resident = object.__new__(ProductResearchInformationResidentRuntime)
+        with self.assertRaisesRegex(RuntimeError, "route_policy is malformed"):
+            ProductResearchInformationResidentRuntime._current_visual_stage_bridge(
+                resident,
+                SimpleNamespace(payload={"route_policy": "not-an-object"}),
+            )
 
     @staticmethod
     def _scene_precondition(**overrides):

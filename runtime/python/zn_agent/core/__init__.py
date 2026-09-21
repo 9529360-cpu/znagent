@@ -51,7 +51,11 @@ from .visual_action_reasoner import (
     VisualActionInference,
     parse_visual_action_decision,
 )
-from .visual_stage_bridge import DesktopVisualStageBridge, VisualStageBridgeResult
+from .visual_stage_bridge import (
+    DesktopVisualStageBridge,
+    VisualStageBridgeResult,
+    build_current_visual_stage_bridge,
+)
 from .budget import CognitiveBudgetManager
 from .capabilities import CapabilityRegistry, CallableCapability, ExactTaskCapability
 from .capability_loader import LoadedCapability, PromotedCapabilityLoader
@@ -142,6 +146,9 @@ __all__ = [
     "BodyAction",
     "BodyActionResult",
     "GeminiVisualActionReasoner",
+    "DesktopVisualStageBridge",
+    "VisualStageBridgeResult",
+    "build_current_visual_stage_bridge",
     "BodyState",
     "DesktopScene",
     "DesktopSceneError",

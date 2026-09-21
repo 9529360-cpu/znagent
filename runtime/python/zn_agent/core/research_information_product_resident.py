@@ -29,6 +29,10 @@ from .provider_runtime import build_machine_provider_runtime
 from .reflex_intent import build_resident_reflex_intents
 from .windows_companion_body import WindowsCompanionAwareBody
 from .windows_companion_work_context import bind_windows_companion_work_context
+from .visual_stage_bridge import (
+    VisualStageBridgeResult,
+    build_current_visual_stage_bridge,
+)
 
 
 _RESEARCH_INTENT_MARKERS = (
@@ -137,6 +141,68 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
         install_browser_spreadsheet_behavior(self)
         install_document_research_completion_behavior(self)
         install_document_research_completion_safety(self)
+
+    def _current_visual_stage_bridge(self, event):
+        """Bind bounded visual cognition through current Work privacy/route policy."""
+
+        payload = event.payload if isinstance(getattr(event, "payload", None), dict) else {}
+        raw_policy = payload.get("route_policy")
+        if raw_policy is not None and not isinstance(raw_policy, dict):
+            raise RuntimeError("visual stage route_policy is malformed")
+        classification = str(payload.get("data_classification") or "private").strip() or "private"
+        return build_current_visual_stage_bridge(
+            action_runtime=self.action_executor,
+            kernel=self.kernel,
+            route_policy=dict(raw_policy or {}),
+            data_classification=classification,
+        )
+
+    def evaluate_visual_stage(
+        self,
+        *,
+        event,
+        state,
+        application_id: str,
+        instruction: str,
+        decision_id: str,
+        step_index: int | None = None,
+    ) -> VisualStageBridgeResult:
+        """Evaluate one stage and admit only a TAP into the existing native action cycle."""
+
+        cognitive_decision = self.budget.decide(
+            event,
+            memory_hit=False,
+            local_capability_available=False,
+        )
+        if not cognitive_decision.use_model or cognitive_decision.max_calls < 1:
+            raise RuntimeError(
+                "visual stage requires bounded image cognition, but current model policy "
+                f"does not permit it: {cognitive_decision.reason}"
+            )
+
+        result = self._current_visual_stage_bridge(event).evaluate(
+            event_id=event.event_id,
+            decision_id=decision_id,
+            application_id=application_id,
+            instruction=instruction,
+            step_index=step_index,
+        )
+        state.data["visual_stage_decision"] = {
+            "decision_id": str(decision_id),
+            "scene_id": result.scene_id,
+            "regrounded_scene_id": result.regrounded_scene_id,
+            "decision": result.inference.decision.audit(),
+            "provider": result.inference.provider,
+            "model": result.inference.model,
+            "requires_completion_verification": bool(
+                result.requires_completion_verification
+            ),
+        }
+        if result.pointer_intent is not None:
+            self._begin_native_action_cycle(event, state, result.pointer_intent)
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        return result
 
     def bind_work_event_context(self, event_payload):
         """Attach fresh bounded device context before Work event durability.
