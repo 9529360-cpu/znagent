@@ -19,6 +19,7 @@ from .action_fabric import (
     ActionFabricRegistry,
     build_machine_action_fabric,
 )
+from .app_competence import AppCompetenceBinding, AppCompetencePack, AppCompetenceRegistry
 from .body import BodyAction, BodyActionResult, NativeBody
 from .budget import CognitiveBudgetManager
 from .capabilities import CapabilityRegistry, CallableCapability, ExactTaskCapability
@@ -101,6 +102,9 @@ __all__ = [
     "AffectiveState",
     "AgentEvent",
     "AgentIdentity",
+    "AppCompetenceBinding",
+    "AppCompetencePack",
+    "AppCompetenceRegistry",
     "Assessment",
     "BodyAction",
     "BodyActionResult",
