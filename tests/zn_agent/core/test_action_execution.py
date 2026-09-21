@@ -195,12 +195,14 @@ class MachineActionExecutionTests(unittest.TestCase):
     def test_screen_capture_requires_independent_artifact_readback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
             os.environ,
-            {"ZN_AGENT_HOME": tmp},
+            {"ZN_AGENT_HOME": str(Path(tmp) / "path-alias" / "..")},
         ):
+            (Path(tmp) / "path-alias").mkdir()
             path = screen_capture_artifact_path("event-screen")
             path.parent.mkdir(parents=True, exist_ok=True)
             Image.new("RGB", (20, 10), (1, 2, 3)).save(path)
             observed = inspect_screen_capture_artifact(path)
+            self.assertNotEqual(str(path), observed["local_path"])
 
             body = _FakeBody()
             body.handlers["windows_screen_capture"] = (
@@ -210,7 +212,7 @@ class MachineActionExecutionTests(unittest.TestCase):
                     success=True,
                     data={
                         "dispatch_sent": True,
-                        "local_path": str(path),
+                        "local_path": observed["local_path"],
                         "width": observed["width"],
                         "height": observed["height"],
                         "size_bytes": observed["size_bytes"],
