@@ -72,6 +72,8 @@ test('ZN shell mode transition prepares renderer state before native resize and 
   assert.match(main, /ZN_WINDOW_TRANSITION_TIMEOUT_MS = 250/)
   assert.match(main, /zn:shell:window-mode-transition/)
   assert.match(main, /zn:shell:ack-window-mode-transition/)
+  assert.match(main, /latestWindowTransitionIds\.set\(window\.id, transitionId\)/)
+  assert.match(main, /latestWindowTransitionIds\.get\(window\.id\) !== transitionId/)
   assert.ok(main.includes('BrowserWindow.fromWebContents(event.sender)'))
 
   const transitionStart = main.indexOf('async function transitionZnWindowMode')

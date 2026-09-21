@@ -38,6 +38,7 @@ type ZnWindowTransitionAck = {
 
 const ZN_WINDOW_TRANSITION_TIMEOUT_MS = 250
 let nextWindowTransitionId = 0
+const latestWindowTransitionIds = new Map<number, string>()
 const pendingWindowTransitionAcks = new Map<
   string,
   {
@@ -231,6 +232,7 @@ async function prepareZnWindowTransition(
 ): Promise<string | null> {
   if (window.isDestroyed() || window.webContents.isLoading()) return null
   const transitionId = `${window.id}:${++nextWindowTransitionId}`
+  latestWindowTransitionIds.set(window.id, transitionId)
 
   await new Promise<void>(resolve => {
     const timer = setTimeout(() => {
@@ -266,9 +268,15 @@ async function transitionZnWindowMode(
   reason: string
 ): Promise<{ mode: ZnWindowMode; width: number; height: number }> {
   const transitionId = await prepareZnWindowTransition(window, mode, reason)
-  setZnWindowMode(window, mode)
   const result = { mode, ...ZN_WINDOW_BOUNDS[mode] }
-  if (transitionId && !window.isDestroyed()) {
+  if (transitionId && latestWindowTransitionIds.get(window.id) !== transitionId) return result
+  if (window.isDestroyed()) {
+    if (transitionId) latestWindowTransitionIds.delete(window.id)
+    return result
+  }
+  setZnWindowMode(window, mode)
+  if (transitionId) {
+    latestWindowTransitionIds.delete(window.id)
     window.webContents.send('zn:shell:window-mode-transition', {
       transitionId,
       phase: 'complete',
