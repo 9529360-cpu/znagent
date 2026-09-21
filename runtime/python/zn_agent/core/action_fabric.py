@@ -21,6 +21,11 @@ from .windows_brightness import (
     WindowsBrightnessUnavailable,
     read_active_brightness,
 )
+from .windows_wifi import (
+    WindowsWifiError,
+    WindowsWifiUnavailable,
+    read_windows_wifi_state,
+)
 
 
 ActionAvailabilityState = Literal[
@@ -345,6 +350,35 @@ def build_machine_action_fabric(device_capabilities: Any) -> ActionFabricRegistr
             },
         )
 
+    def wifi_availability(descriptor: ActionDescriptor) -> ActionAvailability:
+        try:
+            observed = read_windows_wifi_state()
+        except WindowsWifiUnavailable as exc:
+            return ActionAvailability(
+                descriptor.action_id,
+                "unavailable",
+                reason=str(exc),
+                evidence={"source": "windows_native_wifi"},
+            )
+        except WindowsWifiError as exc:
+            return ActionAvailability(
+                descriptor.action_id,
+                "unknown",
+                reason=str(exc),
+                evidence={"source": "windows_native_wifi"},
+            )
+        return ActionAvailability(
+            descriptor.action_id,
+            "available",
+            reason="Windows Native Wi-Fi interface state is queryable",
+            evidence={
+                "source": "windows_native_wifi",
+                "interface_count": observed.interface_count,
+                "connected_interface_count": observed.connected_interface_count,
+                "connected": observed.connected,
+            },
+        )
+
     registry.register(
         ActionDescriptor(
             action_id="windows.application.launch",
@@ -553,5 +587,33 @@ def build_machine_action_fabric(device_capabilities: Any) -> ActionFabricRegistr
             tags=("windows", "display", "brightness", "native", "body"),
         ),
         availability_probe=brightness_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.network.wifi.read",
+            provider="zn.windows",
+            description=(
+                "Read enabled Windows Wi-Fi interface state without network identity."
+            ),
+            body_action_kind="windows_network_wifi_read",
+            input_schema={"type": "object", "additionalProperties": False},
+            output_schema={
+                "type": "object",
+                "properties": {
+                    "connected": {"type": "boolean"},
+                    "interface_count": {"type": "integer"},
+                    "connected_interface_count": {"type": "integer"},
+                    "interfaces": {"type": "array"},
+                },
+            },
+            effect_class="read_only",
+            postconditions=("fresh Native Wi-Fi interface state is returned",),
+            verification=("the WlanEnumInterfaces read itself is current machine evidence",),
+            reversibility="not_applicable",
+            replay_semantics="read_only",
+            sensitivity="local_network_state",
+            tags=("windows", "network", "wifi", "native", "body"),
+        ),
+        availability_probe=wifi_availability,
     )
     return registry
