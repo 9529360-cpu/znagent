@@ -24,6 +24,7 @@ class VerifiedPointerClickResidentRuntime(RepositoryVerifyingResidentRuntime):
     _POINTER_CLICK_PRECONDITION_KEY = "native_pointer_click_precondition"
     _POINTER_CLICK_EXECUTION_KEY = "native_pointer_click_execution"
     _POINTER_CLICK_POSTCONDITION_KIND = "visual_region_changed"
+    _POINTER_CLICK_SCENE_PRECONDITION_KIND = "desktop_scene_foreground_matches"
     _POINTER_CLICK_DEFAULT_REGION = 0.08
     _POINTER_CLICK_MIN_REGION = 0.01
     _POINTER_CLICK_MAX_REGION = 0.50
@@ -71,6 +72,11 @@ class VerifiedPointerClickResidentRuntime(RepositoryVerifyingResidentRuntime):
                 thought=thought,
             )
         assert contract is not None
+        scene_error = self._desktop_scene_precondition_error(contract.get("desktop_scene_precondition"))
+        if scene_error:
+            return self._fail_pointer_click_precondition(
+                event, state, intent, scene_error, thought=thought
+            )
 
         visual_region = getattr(self, "visual_region", None)
         if visual_region is None or not callable(getattr(visual_region, "probe", None)):
@@ -286,7 +292,9 @@ class VerifiedPointerClickResidentRuntime(RepositoryVerifyingResidentRuntime):
         uncertain started click on restart.
         """
 
-        return None
+        return self._desktop_scene_precondition_error(
+            contract.get("desktop_scene_precondition")
+        )
 
     def _native_verification_step(
         self,
@@ -473,13 +481,56 @@ class VerifiedPointerClickResidentRuntime(RepositoryVerifyingResidentRuntime):
         if height_error:
             return None, height_error
 
+        scene_precondition, scene_error = self._desktop_scene_precondition(event)
+        if scene_error:
+            return None, scene_error
         return {
             "kind": self._POINTER_CLICK_POSTCONDITION_KIND,
             "center_x_fraction": x,
             "center_y_fraction": y,
             "width_fraction": width,
             "height_fraction": height,
+            "desktop_scene_precondition": scene_precondition,
         }, None
+
+    def _desktop_scene_precondition(self, event) -> tuple[dict[str, str] | None, str | None]:
+        raw = event.payload.get("desktop_scene_precondition")
+        if raw is None:
+            return None, None
+        if not isinstance(raw, dict):
+            return None, "desktop_scene_precondition must be a structured object"
+        unknown = sorted(str(key) for key in raw if key not in {"kind", "application_id", "identity_sha256", "scene_id"})
+        if unknown:
+            return None, "desktop_scene_precondition contains unsupported fields: " + ", ".join(unknown)
+        kind = str(raw.get("kind") or "").strip().lower()
+        application_id = str(raw.get("application_id") or "").strip()
+        identity = str(raw.get("identity_sha256") or "").strip().lower()
+        scene_id = str(raw.get("scene_id") or "").strip()
+        if kind != self._POINTER_CLICK_SCENE_PRECONDITION_KIND:
+            return None, "desktop_scene_precondition kind is unsupported"
+        if not application_id or len(identity) != 64 or any(ch not in "0123456789abcdef" for ch in identity):
+            return None, "desktop_scene_precondition requires exact application_id and SHA-256 identity"
+        if not scene_id.startswith("desktop-scene-"):
+            return None, "desktop_scene_precondition requires an opaque desktop scene_id"
+        return {"kind": kind, "application_id": application_id, "identity_sha256": identity, "scene_id": scene_id}, None
+
+    def _desktop_scene_precondition_error(self, precondition: Any) -> str | None:
+        if precondition is None:
+            return None
+        if not isinstance(precondition, dict):
+            return "pointer click lost its admitted desktop scene precondition"
+        observer = getattr(self.body, "observe_desktop_scene_foreground", None)
+        if not callable(observer):
+            return "pointer click requires fresh desktop-scene foreground observation"
+        try:
+            observed = observer(application_id=str(precondition["application_id"]))
+        except Exception as exc:
+            return f"fresh desktop-scene foreground observation failed: {type(exc).__name__}: {exc}"
+        if not isinstance(observed, dict):
+            return "fresh desktop-scene foreground observation returned invalid evidence"
+        if str(observed.get("application_id") or "") != str(precondition["application_id"]) or str(observed.get("identity_sha256") or "").lower() != str(precondition["identity_sha256"]).lower():
+            return "desktop scene foreground identity drifted before pointer input"
+        return None
 
     def _fail_pointer_click_precondition(
         self,
