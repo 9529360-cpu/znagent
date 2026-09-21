@@ -13,6 +13,7 @@ from .document_research_completion_behavior import (
 from .document_research_completion_safety import (
     install_document_research_completion_safety,
 )
+from .local_file_discovery import build_local_file_discovery_capability
 from .local_inference_runtime import LocalInferenceRuntimeDiscovery
 from .local_office_behavior import install_local_office_behavior
 from .local_service_recovery_behavior import install_local_service_recovery_behavior
@@ -125,6 +126,10 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
             self.body,
             device_capabilities=self.device_capabilities,
         )
+        # Read-only local file discovery is compiled resident competence. It
+        # returns only fresh path/metadata evidence from explicit known-folder
+        # scopes and never delegates path authority to a model.
+        self.capabilities.register(build_local_file_discovery_capability())
         installer = getattr(self, "_install_body_dispatch_health_observer", None)
         if callable(installer):
             installer()
