@@ -27,6 +27,7 @@ from .action_execution import build_machine_action_execution_runtime
 from .action_fabric import build_machine_action_fabric
 from .provider_runtime import build_machine_provider_runtime
 from .reflex_intent import build_resident_reflex_intents
+from .windows_audio_reflex_behavior import install_windows_audio_reflex_behavior
 from .windows_companion_body import WindowsCompanionAwareBody
 from .windows_companion_work_context import bind_windows_companion_work_context
 
@@ -129,6 +130,7 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
         if callable(installer):
             installer()
         install_worker_authority_gate(self.body, resident=self)
+        install_windows_audio_reflex_behavior(self)
         install_current_app_text_cleanup_behavior(self)
         install_current_app_text_cleanup_completion(self)
         install_local_office_behavior(self)
