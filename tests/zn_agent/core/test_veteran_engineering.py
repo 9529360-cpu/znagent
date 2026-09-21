@@ -339,7 +339,10 @@ class VeteranEngineeringTests(unittest.TestCase):
         capability = policy["requiredValidationCapabilities"][0]
         self.assertEqual(capability, "node-test")
         validation = policy["validationCapabilities"][0]
-        self.assertEqual(validation["command"], ["npm.cmd", "run", "test"])
+        self.assertEqual(
+            validation["command"],
+            ["cmd.exe", "/d", "/s", "/c", "npm.cmd", "run", "test"],
+        )
         self.assertTrue(policy["requireValidation"])
         self.assertEqual(policy["validationPolicy"]["maxParallel"], 1)
 
@@ -370,7 +373,28 @@ class VeteranEngineeringTests(unittest.TestCase):
         assert policy is not None
         self.assertEqual(
             policy["validationCapabilities"][0]["command"],
-            ["npm.cmd", "run", "test"],
+            ["cmd.exe", "/d", "/s", "/c", "npm.cmd", "run", "test"],
+        )
+
+    def test_node_validation_policy_rejects_shell_metacharacter_script_names(self) -> None:
+        project = {
+            "environmentProfile": {
+                "node": {
+                    "validationScriptNames": ["test:unit&whoami"],
+                },
+                "packageManagers": {
+                    "node": {
+                        "selected": "npm",
+                        "ambiguous": False,
+                    }
+                },
+            }
+        }
+        self.assertIsNone(
+            veteran_node_validation_policy(
+                project,
+                platform_name="win32",
+            )
         )
 
     def test_project_validation_binding_only_mutates_zn_managed_policy(self) -> None:

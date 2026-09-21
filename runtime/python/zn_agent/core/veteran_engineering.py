@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -1045,6 +1046,7 @@ _NODE_VALIDATION_PRIORITY = (
     "build",
     "lint",
 )
+_SAFE_NODE_SCRIPT = re.compile(r"^[A-Za-z0-9_.:-]+$")
 
 
 def veteran_node_validation_policy(
@@ -1101,11 +1103,25 @@ def veteran_node_validation_policy(
             ),
             None,
         )
-    if selected is None:
+    if selected is None or _SAFE_NODE_SCRIPT.fullmatch(selected) is None:
         return None
 
     windows = (platform_name or os.name).strip().lower() in {"nt", "windows", "win32"}
-    executable = manager + ".cmd" if windows and manager in {"npm", "pnpm", "yarn"} else manager
+    if windows and manager in {"npm", "pnpm", "yarn"}:
+        # Node documents that .cmd/.bat launchers are not directly executable
+        # on Windows. Spawn cmd.exe explicitly rather than shell=True, and only
+        # after restricting the repository-derived script name to a safe token.
+        command = [
+            "cmd.exe",
+            "/d",
+            "/s",
+            "/c",
+            manager + ".cmd",
+            "run",
+            selected,
+        ]
+    else:
+        command = [manager, "run", selected]
     capability_name = f"node-{selected.replace(':', '-')}"[:120]
     return {
         "requireValidation": True,
@@ -1114,7 +1130,7 @@ def veteran_node_validation_policy(
             {
                 "name": capability_name,
                 "description": f"Repository-declared {manager} script: {selected}",
-                "command": [executable, "run", selected],
+                "command": command,
                 "cwd": ".",
                 "timeoutMs": 600_000,
             }

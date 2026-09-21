@@ -263,8 +263,18 @@ class VeteranEngineeringWorkOwner:
                     outcome=outcome,
                 )
 
-            capability.advance(outcome.mission_id, run_workers=True)
+            transition = capability.advance(
+                outcome.mission_id,
+                run_workers=True,
+            )
             refreshed = executor.refresh(worker_run_id=run.worker_run_id)
+            if bool(transition.get("blocked")):
+                return self._record_proof_gate_blocker(
+                    child=child,
+                    run_id=run.worker_run_id,
+                    outcome=refreshed,
+                    transition=transition,
+                )
             return VeteranWorkOwnerStep(
                 state="advanced",
                 worker_run_id=run.worker_run_id,
@@ -390,6 +400,48 @@ class VeteranEngineeringWorkOwner:
             message="proved Veteran candidate projected into ZN workspace",
             candidate_commit=candidate.candidate_commit,
             projected_paths=projection.paths,
+        )
+
+    def _record_proof_gate_blocker(
+        self,
+        *,
+        child: Any,
+        run_id: str,
+        outcome: Any,
+        transition: Mapping[str, Any],
+    ) -> VeteranWorkOwnerStep:
+        action = str(transition.get("action") or "proof-gate").strip()[:120]
+        message = (
+            f"Veteran mission {outcome.mission_id} proof gate blocked "
+            f"at {outcome.phase or 'unknown'} during {action}"
+        )
+        run = self.ledger.worker_run(run_id)
+        metrics = dict(getattr(run, "metrics", {}) or {})
+        checkpoint = dict(metrics.get("veteran_engineering") or {})
+        checkpoint.update(
+            {
+                "state": "proof_gate_blocked",
+                "phase": outcome.phase or "unknown",
+                "blocked_action": action,
+            }
+        )
+        metrics["veteran_engineering"] = checkpoint
+        self.ledger.fail_worker_run(
+            run_id,
+            error=message,
+            result_summary=message,
+            claimed_completion=False,
+            verification_status="veteran_proof_gate_blocked",
+            metrics=metrics,
+        )
+        self.ledger.block_child_item(child.work_item_id, blocker=message)
+        return VeteranWorkOwnerStep(
+            state="blocked",
+            worker_run_id=run_id,
+            work_item_id=child.work_item_id,
+            mission_id=outcome.mission_id,
+            phase=outcome.phase,
+            message=message,
         )
 
     def _record_failure(self, *, child: Any, run_id: str, outcome: Any) -> VeteranWorkOwnerStep:

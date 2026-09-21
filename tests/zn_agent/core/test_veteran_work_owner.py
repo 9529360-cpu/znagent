@@ -27,6 +27,7 @@ class _Capability:
         self.advance_calls = 0
         self.index = 0
         self.project_environment = None
+        self.advance_result = None
         self.phases = [
             ("execution", "ready"),
             ("validation", "ready"),
@@ -123,6 +124,8 @@ class _Capability:
         self.advance_calls += 1
         if self.index < len(self.phases) - 1:
             self.index += 1
+        if self.advance_result is not None:
+            return {**self.advance_result, "missionId": mission_id}
         return {"missionId": mission_id}
 
     def execute(self, mission_id: str, *, run_workers: bool):
@@ -246,6 +249,57 @@ class VeteranWorkOwnerTests(unittest.TestCase):
         self.assertEqual(checkpoint["mission_id"], "mission-1")
         self.assertEqual(checkpoint["candidate_commit"], "c" * 40)
         self.assertEqual(checkpoint["projected_paths"], ["app.py"])
+
+    def test_owner_stops_after_blocked_proof_gate(self) -> None:
+        self.capability.advance_result = {
+            "action": "validation",
+            "blocked": True,
+        }
+        with (
+            patch(
+                "zn_agent.core.veteran_work_owner.ensure_veteran_operator_policy",
+                return_value=self.state_root / "operator.json",
+            ),
+            patch(
+                "zn_agent.core.veteran_work_owner.VeteranEngineeringCapability",
+                return_value=self.capability,
+            ),
+        ):
+            first = self._owner().advance(
+                root=self.root,
+                workspace=self.workspace,
+                goal=self.root.objective,
+                done_definition="focused tests pass",
+                risk_envelope="low",
+            )
+            self.assertEqual(first.state, "planned")
+
+            blocked = self._owner().advance(
+                root=self.root,
+                workspace=self.workspace,
+                goal=self.root.objective,
+                done_definition="focused tests pass",
+                risk_envelope="low",
+            )
+            self.assertEqual(blocked.state, "blocked")
+            self.assertEqual(blocked.phase, "validation")
+
+        child = next(
+            item
+            for item in self.ledger.list_work_items(self.root.work_thread_id)
+            if item.parent_work_item_id == self.root.work_item_id
+        )
+        self.assertEqual(child.status, "blocked")
+        run = self.ledger.list_worker_runs(work_item_id=child.work_item_id)[0]
+        self.assertEqual(run.state, "failed")
+        self.assertEqual(
+            run.verification_status,
+            "veteran_proof_gate_blocked",
+        )
+        self.assertEqual(
+            run.metrics["veteran_engineering"]["blocked_action"],
+            "validation",
+        )
 
     def test_node_validation_policy_is_bound_before_mission_planning(self) -> None:
         self.capability.project_environment = {
