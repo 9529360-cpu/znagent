@@ -149,6 +149,10 @@ class NativeBody:
             return self._pointer_move(action, started)
         if kind == "pointer_click":
             return self._pointer_click(action, started)
+        if kind == "pointer_scroll":
+            return self._pointer_scroll(action, started)
+        if kind == "pointer_drag":
+            return self._pointer_drag(action, started)
         if kind in {"git_state", "git"}:
             return self._git_state(action, started)
         if kind == "git_diff":
@@ -365,8 +369,8 @@ class NativeBody:
             action_kind="pointer_click",
         )
         button = str(action.args.get("button") or "left").strip().lower()
-        if button != "left":
-            raise ValueError("pointer_click currently supports only the left button")
+        if button not in {"left", "right", "middle"}:
+            raise ValueError("pointer_click button must be left, right, or middle")
 
         current = self._read_primary_pointer_state()
         width = int(current.get("screen_width") or 0)
@@ -466,10 +470,241 @@ class NativeBody:
         return bool(ctypes.windll.user32.SetCursorPos(int(x), int(y)))
 
     def _send_primary_pointer_click(self, button: str) -> bool:
+        normalized = str(button or "").strip().lower()
+        flags = {
+            "left": (0x0002, 0x0004),
+            "right": (0x0008, 0x0010),
+            "middle": (0x0020, 0x0040),
+        }
+        if normalized not in flags:
+            raise ValueError("pointer_click button must be left, right, or middle")
+        down_flag, up_flag = flags[normalized]
+        return self._send_primary_mouse_events(
+            (
+                (0, 0, 0, down_flag),
+                (0, 0, 0, up_flag),
+            )
+        )
+
+    def _pointer_scroll(self, action: BodyAction, started: str) -> BodyActionResult:
+        x_fraction = self._unit_fraction_arg(
+            action.args, "x_fraction", action_kind="pointer_scroll"
+        )
+        y_fraction = self._unit_fraction_arg(
+            action.args, "y_fraction", action_kind="pointer_scroll"
+        )
+        axis = str(action.args.get("axis") or "vertical").strip().lower()
+        if axis not in {"vertical", "horizontal"}:
+            raise ValueError("pointer_scroll axis must be vertical or horizontal")
+        raw_steps = action.args.get("steps")
+        if isinstance(raw_steps, bool) or not isinstance(raw_steps, int):
+            raise ValueError("pointer_scroll steps must be an integer")
+        steps = int(raw_steps)
+        if steps == 0 or abs(steps) > 20:
+            raise ValueError("pointer_scroll steps must be within -20..20 and non-zero")
+
+        current, data = self._pointer_target_state(
+            x_fraction, y_fraction, action_kind="pointer_scroll"
+        )
+        if not data["position_matches"]:
+            return BodyActionResult(
+                action_id=action.action_id,
+                kind=action.kind,
+                success=False,
+                data=data,
+                error=(
+                    "pointer_scroll refused because the current cursor position no longer "
+                    "matches the explicit target"
+                ),
+                event_id=action.event_id,
+                started_at=started,
+                completed_at=utc_now(),
+            )
+
+        sent = self._send_primary_pointer_scroll(axis, steps)
+        data.update(
+            {
+                "axis": axis,
+                "steps": steps,
+                "wheel_delta": steps * 120,
+                "dispatch_sent": bool(sent),
+                "side_effect_uncertain": not bool(sent),
+            }
+        )
+        if not sent:
+            return BodyActionResult(
+                action_id=action.action_id,
+                kind=action.kind,
+                success=False,
+                data=data,
+                error=(
+                    "Windows scroll input was rejected by the current desktop session; "
+                    "current application state must be investigated before replay"
+                ),
+                event_id=action.event_id,
+                started_at=started,
+                completed_at=utc_now(),
+            )
+        return self._ok(action, started, data=data)
+
+    def _pointer_drag(self, action: BodyAction, started: str) -> BodyActionResult:
+        start_x = self._unit_fraction_arg(
+            action.args, "start_x_fraction", action_kind="pointer_drag"
+        )
+        start_y = self._unit_fraction_arg(
+            action.args, "start_y_fraction", action_kind="pointer_drag"
+        )
+        end_x = self._unit_fraction_arg(
+            action.args, "end_x_fraction", action_kind="pointer_drag"
+        )
+        end_y = self._unit_fraction_arg(
+            action.args, "end_y_fraction", action_kind="pointer_drag"
+        )
+        button = str(action.args.get("button") or "left").strip().lower()
+        if button != "left":
+            raise ValueError("pointer_drag currently supports only the left button")
+
+        _, data = self._pointer_target_state(
+            start_x, start_y, action_kind="pointer_drag"
+        )
+        data.update(
+            {
+                "start_x_fraction": start_x,
+                "start_y_fraction": start_y,
+                "end_x_fraction": end_x,
+                "end_y_fraction": end_y,
+                "button": button,
+            }
+        )
+        if not data["position_matches"]:
+            return BodyActionResult(
+                action_id=action.action_id,
+                kind=action.kind,
+                success=False,
+                data=data,
+                error=(
+                    "pointer_drag refused because the current cursor position no longer "
+                    "matches the explicit drag start"
+                ),
+                event_id=action.event_id,
+                started_at=started,
+                completed_at=utc_now(),
+            )
+
+        sent = self._send_primary_pointer_drag(
+            button=button,
+            end_x_fraction=end_x,
+            end_y_fraction=end_y,
+        )
+        data["dispatch_sent"] = bool(sent)
+        post = self._read_primary_pointer_state()
+        width = int(post.get("screen_width") or 0)
+        height = int(post.get("screen_height") or 0)
+        end_target_x = int(round(end_x * max(0, width - 1)))
+        end_target_y = int(round(end_y * max(0, height - 1)))
+        observed_x = int(post.get("x") or 0)
+        observed_y = int(post.get("y") or 0)
+        end_verified = (
+            abs(observed_x - end_target_x) <= 1
+            and abs(observed_y - end_target_y) <= 1
+        )
+        data.update(
+            {
+                "end_target_x": end_target_x,
+                "end_target_y": end_target_y,
+                "observed_end_x": observed_x,
+                "observed_end_y": observed_y,
+                "end_position_verified": end_verified,
+                "side_effect_uncertain": bool(sent and not end_verified),
+            }
+        )
+        if not sent or not end_verified:
+            return BodyActionResult(
+                action_id=action.action_id,
+                kind=action.kind,
+                success=False,
+                data=data,
+                error=(
+                    "pointer drag was not independently confirmed at the requested end "
+                    "position; application effect is uncertain and must not be replayed blindly"
+                ),
+                event_id=action.event_id,
+                started_at=started,
+                completed_at=utc_now(),
+            )
+        return self._ok(action, started, data=data)
+
+    def _pointer_target_state(
+        self,
+        x_fraction: float,
+        y_fraction: float,
+        *,
+        action_kind: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        current = self._read_primary_pointer_state()
+        width = int(current.get("screen_width") or 0)
+        height = int(current.get("screen_height") or 0)
+        if width <= 0 or height <= 0:
+            raise RuntimeError("primary screen dimensions are unavailable")
+        target_x = int(round(x_fraction * max(0, width - 1)))
+        target_y = int(round(y_fraction * max(0, height - 1)))
+        current_x = int(current.get("x") or 0)
+        current_y = int(current.get("y") or 0)
+        tolerance = 1
+        data = {
+            "coordinate_space": "primary_screen_fraction",
+            "action_kind": action_kind,
+            "x_fraction": x_fraction,
+            "y_fraction": y_fraction,
+            "target_x": target_x,
+            "target_y": target_y,
+            "screen_width": width,
+            "screen_height": height,
+            "current_x": current_x,
+            "current_y": current_y,
+            "tolerance_pixels": tolerance,
+            "position_matches": (
+                abs(current_x - target_x) <= tolerance
+                and abs(current_y - target_y) <= tolerance
+            ),
+        }
+        return current, data
+
+    def _send_primary_pointer_scroll(self, axis: str, steps: int) -> bool:
+        normalized = str(axis or "").strip().lower()
+        if normalized not in {"vertical", "horizontal"}:
+            raise ValueError("pointer_scroll axis must be vertical or horizontal")
+        flag = 0x0800 if normalized == "vertical" else 0x1000
+        delta = (int(steps) * 120) & 0xFFFFFFFF
+        return self._send_primary_mouse_events(((0, 0, delta, flag),))
+
+    def _send_primary_pointer_drag(
+        self,
+        *,
+        button: str,
+        end_x_fraction: float,
+        end_y_fraction: float,
+    ) -> bool:
+        if str(button or "").strip().lower() != "left":
+            raise ValueError("pointer_drag currently supports only the left button")
+        dx = int(round(float(end_x_fraction) * 65535.0))
+        dy = int(round(float(end_y_fraction) * 65535.0))
+        return self._send_primary_mouse_events(
+            (
+                (0, 0, 0, 0x0002),
+                (dx, dy, 0, 0x0001 | 0x8000),
+                (0, 0, 0, 0x0004),
+            )
+        )
+
+    def _send_primary_mouse_events(
+        self,
+        events_spec: tuple[tuple[int, int, int, int], ...],
+    ) -> bool:
         if platform.system() != "Windows":
             raise RuntimeError("primary pointer body is currently supported only on Windows")
-        if str(button or "").strip().lower() != "left":
-            raise ValueError("pointer_click currently supports only the left button")
+        if not events_spec:
+            raise ValueError("mouse event batch must not be empty")
 
         import ctypes
         from ctypes import wintypes
@@ -486,36 +721,46 @@ class NativeBody:
                 ("dwExtraInfo", ulong_ptr),
             ]
 
+        class KeyboardInput(ctypes.Structure):
+            _fields_ = [
+                ("wVk", wintypes.WORD),
+                ("wScan", wintypes.WORD),
+                ("dwFlags", wintypes.DWORD),
+                ("time", wintypes.DWORD),
+                ("dwExtraInfo", ulong_ptr),
+            ]
+
+        class HardwareInput(ctypes.Structure):
+            _fields_ = [
+                ("uMsg", wintypes.DWORD),
+                ("wParamL", wintypes.WORD),
+                ("wParamH", wintypes.WORD),
+            ]
+
         class InputUnion(ctypes.Union):
-            _fields_ = [("mi", MouseInput)]
+            _fields_ = [("mi", MouseInput), ("ki", KeyboardInput), ("hi", HardwareInput)]
 
         class Input(ctypes.Structure):
             _anonymous_ = ("union",)
-            _fields_ = [
-                ("type", wintypes.DWORD),
-                ("union", InputUnion),
-            ]
+            _fields_ = [("type", wintypes.DWORD), ("union", InputUnion)]
 
         input_mouse = 0
-        mouse_left_down = 0x0002
-        mouse_left_up = 0x0004
-        events = (Input * 2)(
+        values = [
             Input(
                 type=input_mouse,
-                mi=MouseInput(0, 0, 0, mouse_left_down, 0, 0),
-            ),
-            Input(
-                type=input_mouse,
-                mi=MouseInput(0, 0, 0, mouse_left_up, 0, 0),
-            ),
-        )
-        sent = int(
-            ctypes.windll.user32.SendInput(
-                len(events),
-                events,
-                ctypes.sizeof(Input),
+                mi=MouseInput(int(dx), int(dy), int(data), int(flags), 0, 0),
             )
-        )
+            for dx, dy, data, flags in events_spec
+        ]
+        events = (Input * len(values))(*values)
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.SendInput.argtypes = [
+            wintypes.UINT,
+            ctypes.POINTER(Input),
+            ctypes.c_int,
+        ]
+        user32.SendInput.restype = wintypes.UINT
+        sent = int(user32.SendInput(len(events), events, ctypes.sizeof(Input)))
         return sent == len(events)
 
     @staticmethod

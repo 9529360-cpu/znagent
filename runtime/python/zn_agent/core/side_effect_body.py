@@ -21,7 +21,8 @@ class SideEffectAwareBody(KeyboardTextBody):
     Pointer clicks and focused keyboard text already own richer resident-level
     non-replayable lifecycles. This body deliberately leaves those contracts
     unchanged. It adds a durable pre-dispatch boundary around generic command
-    execution, interactive terminal input, and append-style text writes.
+    execution, interactive terminal input, structured fallback input gestures,
+    and append-style text writes.
 
     A ``started`` attempt is committed before dispatch. If the process dies after
     that commit, the next resident refuses the same event/action signature rather
@@ -41,6 +42,9 @@ class SideEffectAwareBody(KeyboardTextBody):
         {"terminal_input", "terminal_write", "command_input"}
     )
     _TEXT_WRITE_KINDS = frozenset({"write_text", "write_file"})
+    _INPUT_GESTURE_KINDS = frozenset(
+        {"pointer_scroll", "pointer_drag", "keyboard_key", "keyboard_chord"}
+    )
     _IDENTITY_BOUND_READ_KINDS = frozenset({"read_text", "read_file"})
     _APPEND_KINDS = _TEXT_WRITE_KINDS
     _RECOVERY_STATUSES = frozenset({"verified_effect", "verified_absent"})
@@ -291,8 +295,14 @@ class SideEffectAwareBody(KeyboardTextBody):
 
     @classmethod
     def _requires_guard(cls, kind: str, args: dict[str, Any]) -> bool:
-        if kind in cls._COMMAND_KINDS or kind in cls._TERMINAL_INPUT_KINDS:
+        if (
+            kind in cls._COMMAND_KINDS
+            or kind in cls._TERMINAL_INPUT_KINDS
+            or kind in cls._INPUT_GESTURE_KINDS
+        ):
             return True
+        if kind == "pointer_click":
+            return str(args.get("button") or "left").strip().lower() in {"right", "middle"}
         return kind in cls._APPEND_KINDS and bool(args.get("append", False))
 
     @staticmethod
