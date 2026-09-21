@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,8 +12,11 @@ from unittest.mock import patch
 from zn_agent.core.local_file_discovery import (
     LocalFileDiscovery,
     build_local_file_discovery_capability,
+    default_local_file_roots,
     parse_local_file_search_request,
 )
+from zn_agent.core.models import ExecutionPath
+from zn_agent.core.provider_bridge import build_resident_runtime
 
 
 class LocalFileDiscoveryTests(unittest.TestCase):
@@ -124,6 +128,38 @@ class LocalFileDiscoveryTests(unittest.TestCase):
                 max_scan_entries=2,
             ).search(request)
             self.assertFalse(result.complete)
+
+    @unittest.skipUnless(os.name == "nt", "Windows known-folder product path")
+    def test_product_resident_finds_real_download_without_model(self):
+        root = default_local_file_roots()["downloads"]
+        root.mkdir(parents=True, exist_ok=True)
+        token = "ZN_LOCAL_DISCOVERY_" + uuid.uuid4().hex[:10]
+        target = root / f"{token}.txt"
+        yesterday = datetime.now().astimezone() - timedelta(days=1)
+        target.write_text("private body is irrelevant to filename discovery", encoding="utf-8")
+        os.utime(target, (yesterday.timestamp(), yesterday.timestamp()))
+
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                resident = build_resident_runtime(
+                    config={"model": {}},
+                    store_path=Path(tmp) / "kernel.db",
+                )
+                try:
+                    result = resident.submit(
+                        f"找到我昨天下载的 {token}",
+                        kind="desktop_user_event",
+                        payload={"allow_memory": False},
+                    )
+                finally:
+                    resident.store.close()
+            self.assertTrue(result.success, result.reason)
+            self.assertEqual(result.execution_path, ExecutionPath.CAPABILITY)
+            self.assertEqual(result.capability_name, "local_file_discovery")
+            self.assertEqual(result.model_invocations, 0)
+            self.assertIn(str(target.resolve()), result.response)
+        finally:
+            target.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
