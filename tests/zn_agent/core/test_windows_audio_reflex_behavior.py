@@ -187,6 +187,49 @@ class WindowsAudioReflexBehaviorTests(unittest.TestCase):
     )
     @patch(
         "zn_agent.core.windows_companion_body.read_default_render_volume_percent",
+        side_effect=[31.0, RuntimeError("transient readback"), 40.0],
+    )
+    def test_uncertain_set_survives_resident_reconstruction_without_redispatch(
+        self,
+        read_volume,
+        set_volume,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            event = _event("evt-audio-restart", "把音量调到 40%")
+            first_resident = self._runtime(tmp)
+            first_state = _state(event)
+            try:
+                guards = self._zero_model_guards(first_resident)
+                with guards[0], guards[1], guards[2]:
+                    self.assertIsNone(_advance(first_resident, event, first_state))
+                self.assertEqual(first_state.stage, "windows_audio_reflex_reverify")
+            finally:
+                first_resident.store.close()
+
+            second_resident = self._runtime(tmp)
+            try:
+                resumed = second_resident.store.get_working_state()
+                self.assertEqual(resumed.current_event_id, event.event_id)
+                self.assertEqual(resumed.stage, "windows_audio_reflex_reverify")
+                guards = self._zero_model_guards(second_resident)
+                with guards[0], guards[1], guards[2]:
+                    result = _advance(second_resident, event, resumed)
+            finally:
+                second_resident.store.close()
+
+        self.assertIsNotNone(result)
+        self.assertTrue(result.success)
+        self.assertEqual(result.model_invocations, 0)
+        self.assertEqual(resumed.stage, "native_completion")
+        set_volume.assert_called_once_with(40.0)
+        self.assertEqual(read_volume.call_count, 3)
+
+    @patch(
+        "zn_agent.core.windows_companion_body.set_default_render_volume_percent",
+        return_value=40.0,
+    )
+    @patch(
+        "zn_agent.core.windows_companion_body.read_default_render_volume_percent",
         side_effect=[
             31.0,
             RuntimeError("first readback failed"),

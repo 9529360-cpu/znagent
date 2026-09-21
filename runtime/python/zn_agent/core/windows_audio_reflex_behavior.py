@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Zero-model Windows master-volume Reflex on the existing Resident/Action path."""
 
+import math
 from typing import Any, Mapping
 
 from .action import NativeActionIntent
@@ -90,9 +91,11 @@ def _level(execution) -> float | None:
     for observation in reversed(tuple(execution.observations or ())):
         raw = observation.data.get("level_percent")
         try:
-            return float(raw)
+            value = float(raw)
         except (TypeError, ValueError):
             continue
+        if math.isfinite(value) and 0.0 <= value <= 100.0:
+            return value
     return None
 
 
@@ -180,6 +183,15 @@ def _run_action(
 
     if execution.success:
         observed = _level(execution)
+        if observed is None:
+            return _blocked(
+                resident,
+                event,
+                state,
+                code="audio_verification_evidence_invalid",
+                detail="verified audio execution did not expose one finite 0-100 level readback",
+                response="系统音量操作缺少可验证的数值回读，ZN 没有把它标记完成。",
+            )
         meta["status"] = "verified"
         meta["observed_level_percent"] = observed
         state.data[_STATE_KEY] = meta
