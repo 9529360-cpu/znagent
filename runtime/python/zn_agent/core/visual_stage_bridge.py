@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from .action import NativeActionIntent
 from .action_execution import ActionExecutionRuntime, ActionRequest
@@ -89,16 +89,20 @@ class DesktopVisualStageBridge:
             decision.y_fraction,
         )
 
-        expected_outcome = {
-            "kind": "visual_region_changed",
-            "width_fraction": 0.08,
-            "height_fraction": 0.08,
-        }
         scene_precondition = {
             "kind": "desktop_scene_foreground_matches",
             "application_id": regrounded.foreground.application_id,
             "identity_sha256": regrounded.foreground.identity_sha256,
             "scene_id": regrounded.scene_id,
+            "window_rect": regrounded.foreground.window_rect.audit(),
+            "screen_width": regrounded.screenshot.width,
+            "screen_height": regrounded.screenshot.height,
+        }
+        expected_outcome = {
+            "kind": "visual_region_changed",
+            "width_fraction": 0.08,
+            "height_fraction": 0.08,
+            "desktop_scene_precondition": scene_precondition,
         }
         intent_digest = hashlib.sha256(
             (
@@ -158,3 +162,37 @@ class DesktopVisualStageBridge:
             raise RuntimeError(
                 "visual TAP fell outside the freshly re-grounded foreground window"
             )
+
+def build_current_visual_stage_bridge(
+    *,
+    action_runtime: ActionExecutionRuntime,
+    kernel: Any,
+) -> DesktopVisualStageBridge:
+    """Bind the bridge to the first current ZN cognition resource with image support."""
+
+    router = getattr(kernel, "router", None)
+    routes = tuple(getattr(router, "routes", ()) or ())
+    factory = getattr(kernel, "worker_factory", None)
+    create = getattr(factory, "create", None)
+    if not routes or not callable(create):
+        raise RuntimeError("current ZN kernel has no usable cognition resource factory")
+
+    failures: list[str] = []
+    for route in routes:
+        route_id = str(getattr(route, "route_id", "") or "").strip() or "unknown"
+        try:
+            worker = create(route)
+        except Exception as exc:
+            failures.append(f"{route_id}:{type(exc).__name__}")
+            continue
+        resource = getattr(worker, "resource", None)
+        if not callable(getattr(resource, "invoke_image", None)):
+            continue
+        return DesktopVisualStageBridge(
+            action_runtime=action_runtime,
+            reasoner=GeminiVisualActionReasoner(resource),
+        )
+
+    detail = ", ".join(failures[:4])
+    suffix = f" ({detail})" if detail else ""
+    raise RuntimeError("no current ZN cognition resource supports bounded image invocation" + suffix)
