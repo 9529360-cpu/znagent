@@ -58,7 +58,11 @@ from .desktop_scene import (
     load_desktop_scene_artifact,
     merge_desktop_scene_targets,
 )
-from .budget import CognitiveBudgetManager
+from .visual_stage_bridge import (
+    DesktopVisualStageBridge,
+    VisualStageBridgeResult,
+    build_current_visual_stage_bridge,
+)from .budget import CognitiveBudgetManager
 from .capabilities import CapabilityRegistry, CallableCapability, ExactTaskCapability
 from .capability_loader import LoadedCapability, PromotedCapabilityLoader
 from .cognition import CognitiveIncrement

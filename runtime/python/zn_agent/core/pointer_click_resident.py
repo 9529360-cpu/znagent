@@ -433,7 +433,15 @@ class VerifiedPointerClickResidentRuntime(RepositoryVerifyingResidentRuntime):
         event,
         intent: NativeActionIntent,
     ) -> tuple[dict[str, Any] | None, str | None]:
-        explicit = event.payload.get("expected_outcome")
+        resident_visual = (
+            str(intent.source or "").strip().lower() == "visual_stage_bridge"
+            and isinstance(intent.expected_outcome, dict)
+        )
+        explicit = (
+            dict(intent.expected_outcome or {})
+            if resident_visual
+            else event.payload.get("expected_outcome")
+        )
         if not isinstance(explicit, dict):
             return None, (
                 "pointer_click requires an explicit structured visual_region_changed postcondition"
@@ -443,10 +451,13 @@ class VerifiedPointerClickResidentRuntime(RepositoryVerifyingResidentRuntime):
             return None, (
                 "pointer_click currently supports only the explicit visual_region_changed postcondition"
             )
+        allowed_outcome_fields = {"kind", "width_fraction", "height_fraction"}
+        if resident_visual:
+            allowed_outcome_fields.add("desktop_scene_precondition")
         unknown = sorted(
             str(key)
             for key in explicit
-            if key not in {"kind", "width_fraction", "height_fraction"}
+            if key not in allowed_outcome_fields
         )
         if unknown:
             return None, (
@@ -481,7 +492,10 @@ class VerifiedPointerClickResidentRuntime(RepositoryVerifyingResidentRuntime):
         if height_error:
             return None, height_error
 
-        scene_precondition, scene_error = self._desktop_scene_precondition(event)
+        scene_precondition, scene_error = self._desktop_scene_precondition(
+            event,
+            intent=intent,
+        )
         if scene_error:
             return None, scene_error
         return {
@@ -493,8 +507,19 @@ class VerifiedPointerClickResidentRuntime(RepositoryVerifyingResidentRuntime):
             "desktop_scene_precondition": scene_precondition,
         }, None
 
-    def _desktop_scene_precondition(self, event) -> tuple[dict[str, Any] | None, str | None]:
+    def _desktop_scene_precondition(
+        self,
+        event,
+        *,
+        intent: NativeActionIntent | None = None,
+    ) -> tuple[dict[str, Any] | None, str | None]:
         raw = event.payload.get("desktop_scene_precondition")
+        if (
+            intent is not None
+            and str(intent.source or "").strip().lower() == "visual_stage_bridge"
+            and isinstance(intent.expected_outcome, dict)
+        ):
+            raw = intent.expected_outcome.get("desktop_scene_precondition")
         if raw is None:
             return None, None
         if not isinstance(raw, dict):

@@ -5,11 +5,13 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from .action import NativeActionIntent
 from .action_execution import ActionExecutionRuntime, ActionRequest
 from .desktop_scene import DesktopScene, load_desktop_scene_artifact
+from .models import Goal
+from .router import NoRouteAvailable
 from .visual_action_reasoner import GeminiVisualActionReasoner, VisualActionInference
 
 
@@ -167,32 +169,59 @@ def build_current_visual_stage_bridge(
     *,
     action_runtime: ActionExecutionRuntime,
     kernel: Any,
+    route_policy: Mapping[str, Any] | None = None,
+    data_classification: str = "private",
 ) -> DesktopVisualStageBridge:
-    """Bind the bridge to the first current ZN cognition resource with image support."""
+    """Bind through ZN's current router to one legal image-capable resource."""
 
     router = getattr(kernel, "router", None)
     routes = tuple(getattr(router, "routes", ()) or ())
+    select = getattr(router, "select", None)
     factory = getattr(kernel, "worker_factory", None)
     create = getattr(factory, "create", None)
-    if not routes or not callable(create):
-        raise RuntimeError("current ZN kernel has no usable cognition resource factory")
+    if not routes or not callable(select) or not callable(create):
+        raise RuntimeError("current ZN kernel has no usable routed cognition resources")
 
+    classification = str(data_classification or "private").strip().lower() or "private"
+    policy = dict(route_policy or {})
+    policy.setdefault("data_classification", classification)
+    probe = Goal(
+        goal_id="visual-stage-route-probe",
+        task="classify one bounded current desktop screenshot for one admitted UI stage",
+        required_capabilities=("general",),
+        metadata={"route_policy": policy},
+    )
+
+    excluded: set[str] = set()
     failures: list[str] = []
-    for route in routes:
+    while len(excluded) < len(routes):
+        try:
+            route = select(probe, excluded=excluded)
+        except NoRouteAvailable as exc:
+            failures.append(f"router:{exc}")
+            break
         route_id = str(getattr(route, "route_id", "") or "").strip() or "unknown"
+        if route_id in excluded:
+            failures.append(f"{route_id}:router_reselected_excluded")
+            break
         try:
             worker = create(route)
         except Exception as exc:
+            excluded.add(route_id)
             failures.append(f"{route_id}:{type(exc).__name__}")
             continue
         resource = getattr(worker, "resource", None)
         if not callable(getattr(resource, "invoke_image", None)):
+            excluded.add(route_id)
+            failures.append(f"{route_id}:no_image_input")
             continue
         return DesktopVisualStageBridge(
             action_runtime=action_runtime,
             reasoner=GeminiVisualActionReasoner(resource),
         )
 
-    detail = ", ".join(failures[:4])
+    detail = ", ".join(failures[:6])
     suffix = f" ({detail})" if detail else ""
-    raise RuntimeError("no current ZN cognition resource supports bounded image invocation" + suffix)
+    raise RuntimeError(
+        "no currently legal ZN cognition route supports bounded image invocation" + suffix
+    )
