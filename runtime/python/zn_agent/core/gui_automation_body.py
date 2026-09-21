@@ -123,6 +123,19 @@ class GuiAutomationBody(MachineCapabilityBody):
             pattern=pattern,
         )
 
+    def observe_desktop_scene_foreground(self, *, application_id: str) -> dict[str, Any]:
+        """Return privacy-safe fresh foreground identity for scene-bound input guards."""
+        app_id = str(application_id or "").strip()
+        binding = self._desktop_scene_binding(app_id)
+        rect = self._desktop_scene_builder.window_rect_fn(binding.window_handle, binding.process_id)
+        return {
+            "application_id": binding.application_id,
+            "process_name": binding.process_name,
+            "class_name": binding.class_name,
+            "identity_sha256": binding.identity_sha256,
+            "window_rect": rect.audit(),
+        }
+
     def _act_gui_list(
         self,
         *,
