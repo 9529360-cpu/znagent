@@ -188,6 +188,7 @@ class CapabilityProviderRuntime:
         if hook is not None:
             hook(descriptor)
         return self.status(descriptor.provider_id)
+
     def status_snapshot(self) -> tuple[CapabilityProviderStatus, ...]:
         return tuple(
             self.status(descriptor.provider_id)
@@ -206,14 +207,17 @@ class CapabilityProviderRuntime:
 
 def build_machine_provider_runtime(
     action_fabric: ActionFabricRegistry,
+    *,
+    local_inference: Any | None = None,
 ) -> CapabilityProviderRuntime:
-    """Register the current native Windows provider over Action Fabric evidence."""
+    """Register machine providers over fresh Action Fabric/runtime evidence."""
 
     runtime = CapabilityProviderRuntime()
     action_ids = tuple(
         descriptor.action_id
         for descriptor in action_fabric.descriptors(provider="zn.windows")
     )
+
     def windows_health(
         descriptor: CapabilityProviderDescriptor,
     ) -> CapabilityProviderStatus:
@@ -263,6 +267,62 @@ def build_machine_provider_runtime(
         ),
         health_probe=windows_health,
     )
+
+    if local_inference is not None:
+
+        def local_inference_health(
+            descriptor: CapabilityProviderDescriptor,
+        ) -> CapabilityProviderStatus:
+            snapshot = local_inference.snapshot()
+            usable = tuple(snapshot.usable_providers)
+            reachable = tuple(
+                item.provider
+                for item in snapshot.runtimes
+                if item.endpoint_reachable
+            )
+            running = bool(reachable)
+            if usable:
+                state: ProviderHealthState = "healthy"
+                queryable = True
+                reason = "one or more local inference providers expose models"
+            elif reachable:
+                state = "degraded"
+                queryable = False
+                reason = "local inference endpoint is reachable but no model is exposed"
+            else:
+                state = "unavailable"
+                queryable = False
+                reason = "no supported local inference endpoint is currently reachable"
+            return CapabilityProviderStatus(
+                descriptor.provider_id,
+                state,
+                queryable=queryable,
+                running=running,
+                reason=reason,
+                evidence={
+                    "source": "local_inference_runtime",
+                    "supported_provider_count": len(snapshot.runtimes),
+                    "reachable_provider_count": len(reachable),
+                    "usable_provider_count": len(usable),
+                    "usable_providers": usable,
+                    "gpu_count": len(snapshot.hardware.gpu_names),
+                    "ac_status": snapshot.hardware.ac_status,
+                    "battery_saver": snapshot.hardware.battery_saver,
+                },
+                observed_at=snapshot.observed_at,
+            )
+
+        runtime.register(
+            CapabilityProviderDescriptor(
+                provider_id="zn.local_inference",
+                description=(
+                    "Read-only discovery and health for supported local model runtimes."
+                ),
+                lifecycle_mode="external",
+                tags=("cognition", "local_inference", "hardware_aware"),
+            ),
+            health_probe=local_inference_health,
+        )
     return runtime
 
 
