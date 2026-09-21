@@ -685,8 +685,9 @@ class AppCompetenceRecipeExecutorTests(unittest.TestCase):
             action = decisions.pop(0)
             state = kwargs["state"]
             if action == "TAP":
-                state.stage = "native_action"
-                state.next_action = "move body: pointer_click"
+                if kwargs.get("allow_tap", True):
+                    state.stage = "native_action"
+                    state.next_action = "move body: pointer_click"
                 return VisualStageBridgeResult(
                     inference=VisualActionInference(
                         decision=VisualActionDecision("TAP", 0.5, 0.5),
@@ -735,21 +736,21 @@ class AppCompetenceRecipeExecutorTests(unittest.TestCase):
             "pointer_active",
         )
 
-        blocked, blocked_visual = resident.advance_app_competence_recipe_once(
-            registry=registry,
-            event=event,
-            state=state,
-            app="demo.app",
-            version="1.0",
-            capability="enable",
-            application_id="app-runtime-1",
-        )
-        self.assertEqual(blocked.status, "pending")
-        self.assertIsNone(blocked_visual)
+        with self.assertRaisesRegex(RuntimeError, "in-flight native action"):
+            resident.advance_app_competence_recipe_once(
+                registry=registry,
+                event=event,
+                state=state,
+                app="demo.app",
+                version="1.0",
+                capability="enable",
+                application_id="app-runtime-1",
+            )
         self.assertEqual(decisions, ["FINISH"])
 
         state.stage = "native_investigation"
         state.data["app_competence_visual_handoff"]["status"] = "effect_verified"
+        state.data["app_competence_visual_handoff"]["tap_consumed"] = True
         second, second_visual = resident.advance_app_competence_recipe_once(
             registry=registry,
             event=event,

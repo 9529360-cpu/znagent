@@ -186,6 +186,7 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
         instruction: str,
         decision_id: str,
         step_index: int | None = None,
+        allow_tap: bool = True,
     ) -> VisualStageBridgeResult:
         """Evaluate one stage and admit only a TAP into the existing native action cycle."""
 
@@ -217,9 +218,16 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
             "requires_completion_verification": bool(
                 result.requires_completion_verification
             ),
+            "tap_admitted": bool(result.pointer_intent is not None and allow_tap),
         }
-        if result.pointer_intent is not None:
+        if result.pointer_intent is not None and allow_tap:
             self._begin_native_action_cycle(event, state, result.pointer_intent)
+        elif result.pointer_intent is not None:
+            state.stage = "native_investigation"
+            state.next_action = (
+                "refuse a second TAP for the same visual competence stage; "
+                "re-check completion from fresh reality"
+            )
         self._sync_execution_context(event, state)
         self.store.save_working_state(state)
         return result
@@ -237,6 +245,19 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
         authority_context=None,
     ) -> tuple[AppCompetenceRecipeExecution, VisualStageBridgeResult | None]:
         """Advance one recipe boundary and at most one bounded visual decision."""
+
+        active_handoff = state.data.get(self._VISUAL_COMPETENCE_HANDOFF_KEY)
+        if isinstance(active_handoff, dict):
+            active_status = str(active_handoff.get("status") or "").strip().lower()
+            if (
+                active_status == "pointer_active"
+                and str(getattr(state, "stage", "") or "").strip().lower()
+                in {"native_action", "native_verification", "native_completion"}
+            ):
+                raise RuntimeError(
+                    "visual competence recipe has an in-flight native action; "
+                    "resume the resident action lifecycle before recipe re-entry"
+                )
 
         executor = AppCompetenceRecipeExecutor(registry, self.action_executor)
         recipe = executor.execute(
@@ -296,7 +317,11 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
         prior = dict(raw) if isinstance(raw, dict) else {}
         same_handoff = str(prior.get("handoff_id") or "") == handoff.handoff_id
         prior_status = str(prior.get("status") or "").strip().lower()
-        if same_handoff and prior_status == "pointer_active":
+        if same_handoff and prior_status in {
+            "pointer_active",
+            "finish_observed",
+            "repeat_tap_blocked",
+        }:
             return None
         if same_handoff and prior_status == "evaluating":
             state.stage = "native_investigation"
@@ -307,6 +332,13 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
             self.store.save_working_state(state)
             return None
 
+        tap_consumed = bool(
+            same_handoff
+            and (
+                prior.get("tap_consumed") is True
+                or prior_status == "effect_verified"
+            )
+        )
         attempt = (
             max(0, int(prior.get("observation_attempt") or 0)) + 1
             if same_handoff
@@ -323,6 +355,7 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
             "observation_attempt": attempt,
             "decision_id": decision_id,
             "status": "evaluating",
+            "tap_consumed": tap_consumed,
             "updated_at": utc_now(),
         }
         state.data[self._VISUAL_COMPETENCE_HANDOFF_KEY] = marker
@@ -337,6 +370,7 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
                 instruction=handoff.instruction,
                 decision_id=decision_id,
                 step_index=handoff.step_instruction_index,
+                allow_tap=not tap_consumed,
             )
         except Exception as exc:
             marker = dict(state.data.get(self._VISUAL_COMPETENCE_HANDOFF_KEY) or marker)
@@ -355,7 +389,7 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
         marker = dict(state.data.get(self._VISUAL_COMPETENCE_HANDOFF_KEY) or marker)
         action = result.inference.decision.action
         if action == "TAP":
-            status = "pointer_active"
+            status = "repeat_tap_blocked" if tap_consumed else "pointer_active"
         elif action == "WAIT":
             status = "waiting"
         else:
@@ -366,20 +400,29 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
                 "decision_id": decision_id,
                 "pointer_intent_id": (
                     result.pointer_intent.intent_id
-                    if result.pointer_intent is not None
+                    if result.pointer_intent is not None and not tap_consumed
                     else None
                 ),
+                "tap_consumed": tap_consumed,
                 "updated_at": utc_now(),
             }
         )
         state.data[self._VISUAL_COMPETENCE_HANDOFF_KEY] = marker
-        if action != "TAP":
+        if action != "TAP" or tap_consumed:
             state.stage = "native_investigation"
-            state.next_action = (
-                "re-check the visual competence completion from fresh reality"
-                if action == "FINISH"
-                else "wait before another fresh visual competence observation"
-            )
+            if action == "FINISH":
+                state.next_action = (
+                    "re-check the visual competence completion from fresh reality"
+                )
+            elif action == "TAP":
+                state.next_action = (
+                    "investigate the unproven visual competence completion; "
+                    "a second TAP for this handoff is blocked"
+                )
+            else:
+                state.next_action = (
+                    "wait before another fresh visual competence observation"
+                )
         self._sync_execution_context(event, state)
         self.store.save_working_state(state)
         return result
@@ -497,6 +540,7 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
                 handoff.update(
                     {
                         "status": "effect_verified",
+                        "tap_consumed": True,
                         "verified_intent_id": intent_id,
                         "updated_at": utc_now(),
                     }
