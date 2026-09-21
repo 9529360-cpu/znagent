@@ -749,6 +749,9 @@ class ResidentWorkLedger:
             "investigation": investigation_data,
             "body_actions": body_actions,
         }
+        if completed is not None:
+            result["execution_path"] = completed.execution_path.value
+            result["model_invocations"] = max(0, int(completed.model_invocations))
         if terminal and not finalized:
             result["error"] = "resident event is terminal but no durable work outcome is available"
         return result
