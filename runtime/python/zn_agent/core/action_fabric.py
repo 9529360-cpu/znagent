@@ -26,6 +26,7 @@ from .windows_wifi import (
     WindowsWifiUnavailable,
     read_windows_wifi_state,
 )
+from .windows_screen_capture import screen_capture_support
 
 
 ActionAvailabilityState = Literal[
@@ -295,6 +296,17 @@ def build_machine_action_fabric(device_capabilities: Any) -> ActionFabricRegistr
             },
         )
 
+    def screen_capture_availability(
+        descriptor: ActionDescriptor,
+    ) -> ActionAvailability:
+        supported, reason, evidence = screen_capture_support()
+        return ActionAvailability(
+            descriptor.action_id,
+            "available" if supported else "unavailable",
+            reason=reason,
+            evidence=evidence,
+        )
+
     def audio_availability(descriptor: ActionDescriptor) -> ActionAvailability:
         try:
             level = read_default_render_volume_percent()
@@ -459,6 +471,41 @@ def build_machine_action_fabric(device_capabilities: Any) -> ActionFabricRegistr
             tags=("windows", "context", "sense", "native", "body"),
         ),
         availability_probe=companion_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.screen.capture",
+            provider="zn.windows",
+            description=(
+                "Capture the current primary Windows screen into a ZN-owned PNG artifact."
+            ),
+            body_action_kind="windows_screen_capture",
+            input_schema={"type": "object", "additionalProperties": False},
+            output_schema={
+                "type": "object",
+                "properties": {
+                    "local_path": {"type": "string"},
+                    "width": {"type": "integer"},
+                    "height": {"type": "integer"},
+                    "size_bytes": {"type": "integer"},
+                    "sha256": {"type": "string"},
+                },
+            },
+            effect_class="reversible_side_effect",
+            required_authority=("body_action",),
+            sensitivity="screen_content",
+            preconditions=("an interactive Windows desktop is available to ZN",),
+            postconditions=(
+                "one PNG exists under the ZN-owned screenshot artifact root",
+            ),
+            verification=(
+                "fresh artifact path containment, PNG decode, dimensions and SHA-256 readback",
+            ),
+            reversibility="remove the exact ZN-owned screenshot artifact",
+            replay_semantics="verify_before_replay",
+            tags=("windows", "screen", "capture", "artifact", "native", "body"),
+        ),
+        availability_probe=screen_capture_availability,
     )
     registry.register(
         ActionDescriptor(

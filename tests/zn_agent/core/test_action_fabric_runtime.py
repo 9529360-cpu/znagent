@@ -51,6 +51,7 @@ class MachineActionFabricTests(unittest.TestCase):
                 "windows.display.brightness.read",
                 "windows.display.brightness.set",
                 "windows.network.wifi.read",
+                "windows.screen.capture",
             ),
         )
         self.assertEqual(
@@ -72,6 +73,10 @@ class MachineActionFabricTests(unittest.TestCase):
         self.assertEqual(
             registry.descriptor("windows.audio.volume.set").body_action_kind,
             "windows_audio_volume_set",
+        )
+        self.assertEqual(
+            registry.descriptor("windows.screen.capture").body_action_kind,
+            "windows_screen_capture",
         )
 
     def test_availability_comes_from_fresh_device_graph_evidence(self) -> None:
@@ -127,6 +132,7 @@ class ProductActionFabricIntegrationTests(unittest.TestCase):
                         "windows.display.brightness.read",
                         "windows.display.brightness.set",
                         "windows.network.wifi.read",
+                        "windows.screen.capture",
                     ),
                 )
                 self.assertIs(
