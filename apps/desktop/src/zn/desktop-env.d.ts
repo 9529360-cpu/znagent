@@ -87,6 +87,18 @@ declare interface Window {
         getLocaleState: () => Promise<ZnDesktopLocaleState>
         setLocalePreference: (preference: ZnDesktopLocalePreference) => Promise<ZnDesktopLocaleState>
         setWindowMode: (mode: 'compact' | 'expanded') => Promise<{ mode: 'compact' | 'expanded'; width: number; height: number }>
+        ackWindowModeTransition: (payload: {
+          transitionId: string
+          mode: 'compact' | 'expanded'
+        }) => Promise<{ accepted: boolean }>
+        onWindowModeTransition: (callback: (payload: {
+          transitionId: string
+          phase: 'prepare' | 'complete'
+          mode: 'compact' | 'expanded'
+          reason: string
+          width?: number
+          height?: number
+        }) => void) => () => void
         onDeepLink: (callback: (payload: ZnDesktopDeepLink) => void) => () => void
         onGlobalInvocation: (callback: () => void) => () => void
       }

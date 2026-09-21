@@ -411,6 +411,23 @@ export function ZnWorkbench() {
     })
   }, [])
 
+  useEffect(() => {
+    return window.znDesktop?.shell?.onWindowModeTransition(transition => {
+      if (transition.phase === 'prepare') {
+        if (transition.mode === 'compact') setContextOpen(false)
+        window.requestAnimationFrame(() => {
+          void window.znDesktop?.shell?.ackWindowModeTransition({
+            transitionId: transition.transitionId,
+            mode: transition.mode
+          })
+        })
+        return
+      }
+      setWindowMode(transition.mode)
+      if (transition.mode === 'compact') setContextOpen(false)
+    })
+  }, [])
+
   const openNewWork = useCallback(() => {
     const thread = newZnThread()
     setThreads(current => [thread, ...current])
@@ -634,9 +651,10 @@ export function ZnWorkbench() {
   }
 
   const requestWindowMode = useCallback((mode: WindowMode) => {
-    setWindowMode(mode)
-    void window.znDesktop?.shell?.setWindowMode?.(mode)
     if (mode === 'compact') setContextOpen(false)
+    void window.znDesktop?.shell?.setWindowMode?.(mode).catch(error => {
+      console.error('[ZN] failed to request resident window mode', error)
+    })
   }, [])
 
   const openSettings = useCallback(() => {
