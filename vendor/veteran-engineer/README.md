@@ -9,5 +9,8 @@ The exact upstream identity is recorded in `VENDOR.json`. The V1 integration
 uses Veteran's standalone newline-delimited JSON-RPC/MCP fallback and forces a
 ZN-owned state directory. It does not require the optional MCP SDK packages.
 
+The embedded runtime intentionally excludes upstream `src/installer/`: host
+installation adapters are not part of ZN's embedded Mission runtime.
+
 Do not edit vendored runtime files as ZN-specific code. ZN-specific policy and
 bridging belong under `runtime/python/zn_agent/core/`.
