@@ -22,17 +22,30 @@ from typing import Any
 from .body import BodyAction, BodyActionResult
 from .current_app_text_body import CurrentAppTextAwareBody
 from .models import utc_now
+from .windows_audio import (
+    read_default_render_volume_percent,
+    set_default_render_volume_percent,
+    validate_volume_percent,
+)
 
 
 class WindowsCompanionAwareBody(CurrentAppTextAwareBody):
     """Keep one final Body while failing closed on non-interactive input sessions."""
 
     _WINDOWS_CONTEXT_KIND = "windows_companion_context"
+    _WINDOWS_VOLUME_READ_KIND = "windows_audio_volume_read"
+    _WINDOWS_VOLUME_SET_KIND = "windows_audio_volume_set"
     _INTERACTIVE_INPUT_KINDS = frozenset({
         "pointer_move",
         "pointer_click",
         "keyboard_text",
     })
+
+    @classmethod
+    def _requires_guard(cls, kind: str, args: dict[str, Any]) -> bool:
+        if kind == cls._WINDOWS_VOLUME_SET_KIND:
+            return True
+        return super()._requires_guard(kind, args)
 
     def act(
         self,
@@ -52,6 +65,71 @@ class WindowsCompanionAwareBody(CurrentAppTextAwareBody):
         return super().act(normalized, event_id=event_id, **args)
 
     def _dispatch(self, action: BodyAction, started: str) -> BodyActionResult:
+        if action.kind == self._WINDOWS_VOLUME_READ_KIND:
+            if action.args:
+                return BodyActionResult(
+                    action_id=action.action_id,
+                    kind=action.kind,
+                    success=False,
+                    data={"dispatch_sent": False, "disposition": "unexpected_arguments"},
+                    error="windows_audio_volume_read accepts no action arguments",
+                    event_id=action.event_id,
+                    started_at=started,
+                    completed_at=utc_now(),
+                )
+            level = read_default_render_volume_percent()
+            return self._ok(
+                action,
+                started,
+                data={
+                    "level_percent": level,
+                    "source": "windows_core_audio",
+                    "read_only": True,
+                    "dispatch_sent": False,
+                },
+            )
+
+        if action.kind == self._WINDOWS_VOLUME_SET_KIND:
+            if set(action.args) != {"level_percent"}:
+                return BodyActionResult(
+                    action_id=action.action_id,
+                    kind=action.kind,
+                    success=False,
+                    data={"dispatch_sent": False, "disposition": "invalid_arguments"},
+                    error="windows_audio_volume_set requires only level_percent",
+                    event_id=action.event_id,
+                    started_at=started,
+                    completed_at=utc_now(),
+                )
+            requested = validate_volume_percent(action.args["level_percent"])
+            previous = read_default_render_volume_percent()
+            observed = set_default_render_volume_percent(requested)
+            verified = abs(observed - requested) <= 0.5
+            data = {
+                "previous_level_percent": previous,
+                "requested_level_percent": requested,
+                "observed_level_percent": observed,
+                "verification_tolerance_percent": 0.5,
+                "verified": verified,
+                "source": "windows_core_audio",
+                "dispatch_sent": True,
+            }
+            if not verified:
+                return BodyActionResult(
+                    action_id=action.action_id,
+                    kind=action.kind,
+                    success=False,
+                    data=data,
+                    error=(
+                        "Core Audio accepted the volume write but the fresh "
+                        "default-endpoint readback did not prove the requested level"
+                    ),
+                    event_id=action.event_id,
+                    started_at=started,
+                    completed_at=utc_now(),
+                )
+            return self._ok(action, started, data=data)
+
         if action.kind == self._WINDOWS_CONTEXT_KIND:
             if action.args:
                 return BodyActionResult(

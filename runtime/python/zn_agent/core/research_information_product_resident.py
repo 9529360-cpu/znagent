@@ -22,6 +22,9 @@ from .user_browser_multi_record_result import (
     parse_verified_record_excerpts,
     requested_multi_record_count,
 )
+from .action_execution import build_machine_action_execution_runtime
+from .action_fabric import build_machine_action_fabric
+from .provider_runtime import build_machine_provider_runtime
 from .windows_companion_body import WindowsCompanionAwareBody
 from .windows_companion_work_context import bind_windows_companion_work_context
 
@@ -104,6 +107,15 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
         # stack; it does not introduce another execution or machine-truth surface.
         self.body = WindowsCompanionAwareBody(
             resident=self,
+            device_capabilities=self.device_capabilities,
+        )
+        # Semantic Action Fabric is descriptive/discovery-only. Real effects
+        # still pass through this one Body plus existing authority/verification.
+        self.action_fabric = build_machine_action_fabric(self.device_capabilities)
+        self.provider_runtime = build_machine_provider_runtime(self.action_fabric)
+        self.action_executor = build_machine_action_execution_runtime(
+            self.action_fabric,
+            self.body,
             device_capabilities=self.device_capabilities,
         )
         installer = getattr(self, "_install_body_dispatch_health_observer", None)

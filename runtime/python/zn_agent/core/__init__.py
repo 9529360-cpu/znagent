@@ -5,6 +5,20 @@ on-demand cognitive resources rather than the holder of identity or continuity.
 """
 
 from .action import NativeActionIntent, derive_native_action_intent
+from .action_execution import (
+    ActionExecution,
+    ActionExecutionRuntime,
+    ActionObservation,
+    ActionRequest,
+    ActionVerification,
+    build_machine_action_execution_runtime,
+)
+from .action_fabric import (
+    ActionAvailability,
+    ActionDescriptor,
+    ActionFabricRegistry,
+    build_machine_action_fabric,
+)
 from .body import BodyAction, BodyActionResult, NativeBody
 from .budget import CognitiveBudgetManager
 from .capabilities import CapabilityRegistry, CallableCapability, ExactTaskCapability
@@ -76,6 +90,14 @@ from .worker import Worker, WorkerFactory
 from .world_sense import NativeWorldSense, WorldFocus, WorldObservation
 
 __all__ = [
+    "ActionAvailability",
+    "ActionDescriptor",
+    "ActionExecution",
+    "ActionExecutionRuntime",
+    "ActionFabricRegistry",
+    "ActionObservation",
+    "ActionRequest",
+    "ActionVerification",
     "AffectiveState",
     "AgentEvent",
     "AgentIdentity",
@@ -153,6 +175,8 @@ __all__ = [
     "WorkingState",
     "WorldFocus",
     "WorldObservation",
+    "build_machine_action_execution_runtime",
+    "build_machine_action_fabric",
     "ZNKernelRuntime",
     "ZNLifeCore",
     "ZNResidentRuntime",
