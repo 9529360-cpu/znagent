@@ -78,6 +78,7 @@ declare interface Window {
     }
     shell: {
       setWindowMode: (mode: 'compact' | 'expanded') => Promise<{ mode: 'compact' | 'expanded'; width: number; height: number }>
+      reportWorkAttention: (payload: { eventId?: string; state: 'idle' | 'running' | 'complete' | 'failed' | 'needs_attention' }) => void
       onDeepLink: (callback: (payload: ZnDesktopDeepLink) => void) => () => void
       onGlobalInvocation: (callback: () => void) => () => void
     }

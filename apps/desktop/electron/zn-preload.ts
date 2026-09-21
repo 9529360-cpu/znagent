@@ -58,6 +58,8 @@ contextBridge.exposeInMainWorld('znDesktop', {
   },
   shell: {
     setWindowMode: (mode: 'compact' | 'expanded') => ipcRenderer.invoke('zn:shell:set-window-mode', mode),
+    reportWorkAttention: (payload: { eventId?: string; state: 'idle' | 'running' | 'complete' | 'failed' | 'needs_attention' }) =>
+      ipcRenderer.send('zn:shell:work-attention', payload),
     onDeepLink: (callback: (payload: ZnDesktopDeepLink) => void) => {
       const listener = (_event: IpcRendererEvent, payload: ZnDesktopDeepLink) => callback(payload)
       ipcRenderer.on('zn:deep-link', listener)

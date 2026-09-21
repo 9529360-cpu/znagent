@@ -20,10 +20,19 @@ const ZN_WINDOW_BOUNDS = {
 } as const
 
 type ZnWindowMode = keyof typeof ZN_WINDOW_BOUNDS
+type ZnWorkAttentionState = 'idle' | 'running' | 'complete' | 'failed' | 'needs_attention'
+type ZnWorkAttentionPayload = {
+  eventId?: string
+  state: ZnWorkAttentionState
+}
+type ZnUnreadWorkAttention = Exclude<ZnWorkAttentionState, 'idle' | 'running'>
 
 let primaryWindow: BrowserWindow | null = null
 let windowsResidentSurface: ZnWindowsResidentSurface | null = null
 let windowsResidentTray: Tray | null = null
+let activeWorkAttentionState: ZnWorkAttentionState = 'idle'
+let unreadWorkAttention: ZnUnreadWorkAttention | null = null
+let lastAnnouncedWorkAttention = ''
 const pendingDeepLinks: ZnDeepLink[] = []
 
 function isSafeExternalUrl(value: string): boolean {
@@ -110,6 +119,7 @@ export function createZnDesktopWindow(): BrowserWindow {
     routeNavigation(url)
   })
   window.on('query-session-end', () => windowsResidentSurface?.beginQuit())
+  window.on('focus', () => clearUnreadWorkAttention())
   window.on('close', event => {
     windowsResidentSurface?.handleWindowClose(event, window)
   })
@@ -135,6 +145,85 @@ function setZnWindowMode(window: BrowserWindow, mode: ZnWindowMode): void {
   window.setSize(bounds.width, bounds.height, true)
 }
 
+function workAttentionLabel(state: ZnWorkAttentionState | null): string {
+  if (state === 'running') return 'ZN 路 Working'
+  if (state === 'complete') return 'ZN 路 Work complete'
+  if (state === 'failed') return 'ZN 路 Work failed'
+  if (state === 'needs_attention') return 'ZN 路 Needs attention'
+  return 'ZN'
+}
+
+function refreshTrayAttention(): void {
+  if (!windowsResidentTray) return
+  windowsResidentTray.setToolTip(
+    workAttentionLabel(unreadWorkAttention || activeWorkAttentionState)
+  )
+}
+
+function clearUnreadWorkAttention(): void {
+  unreadWorkAttention = null
+  refreshTrayAttention()
+}
+
+function parseWorkAttentionPayload(value: unknown): ZnWorkAttentionPayload | null {
+  if (!value || typeof value !== 'object') return null
+  const item = value as Record<string, unknown>
+  const state = item.state
+  if (
+    state !== 'idle' &&
+    state !== 'running' &&
+    state !== 'complete' &&
+    state !== 'failed' &&
+    state !== 'needs_attention'
+  ) {
+    return null
+  }
+  const eventId = typeof item.eventId === 'string' ? item.eventId.trim() : ''
+  if (eventId.length > 256) return null
+  if (state !== 'idle' && !eventId) return null
+  return eventId ? { state, eventId } : { state }
+}
+
+function workAttentionMessage(state: ZnUnreadWorkAttention): string {
+  if (state === 'complete') return 'Work completed. Open ZN to review the result.'
+  if (state === 'failed') return 'Work ended with an error. Open ZN to review.'
+  return 'Work needs your attention before it can continue.'
+}
+
+function reportWorkAttention(payload: ZnWorkAttentionPayload): void {
+  activeWorkAttentionState = payload.state
+  if (payload.state === 'idle' || payload.state === 'running') {
+    refreshTrayAttention()
+    return
+  }
+
+  const window = primaryWindow
+  const userIsLooking =
+    Boolean(window) &&
+    !window!.isDestroyed() &&
+    window!.isVisible() &&
+    window!.isFocused()
+
+  if (userIsLooking) {
+    unreadWorkAttention = null
+    refreshTrayAttention()
+    return
+  }
+
+  unreadWorkAttention = payload.state
+  refreshTrayAttention()
+
+  const identity = `${payload.eventId || ''}:${payload.state}`
+  if (!windowsResidentTray || !payload.eventId || identity === lastAnnouncedWorkAttention) return
+  lastAnnouncedWorkAttention = identity
+  windowsResidentTray.displayBalloon({
+    title: 'ZN',
+    content: workAttentionMessage(payload.state),
+    noSound: true,
+    respectQuietTime: true
+  })
+}
+
 function focusComposerAfterInvocation(window: BrowserWindow): void {
   const notify = () => {
     if (!window.isDestroyed()) window.webContents.send('zn:global-invocation')
@@ -158,6 +247,7 @@ function showPrimaryWindow(focusComposer = false, mode?: ZnWindowMode): void {
   // Windows can ignore size changes while a native window is minimized. Apply
   // compact/expanded bounds only after the resident surface has restored it.
   if (mode) setZnWindowMode(window, mode)
+  clearUnreadWorkAttention()
   if (focusComposer) focusComposerAfterInvocation(window)
 }
 
@@ -177,7 +267,8 @@ function initializeWindowsResidentSurface(): void {
         appPath: app.getAppPath()
       })
     )
-    tray.setToolTip('ZN')
+    windowsResidentTray = tray
+    refreshTrayAttention()
     tray.setContextMenu(
       Menu.buildFromTemplate([
         {
@@ -192,8 +283,8 @@ function initializeWindowsResidentSurface(): void {
       ])
     )
     tray.on('double-click', () => showPrimaryWindow(true, 'compact'))
+    tray.on('balloon-click', () => showPrimaryWindow(true, 'compact'))
     windowsResidentSurface = surface
-    windowsResidentTray = tray
   } catch (error) {
     console.error('[ZN] failed to initialize Windows resident surface', error)
     windowsResidentSurface = null
@@ -220,6 +311,15 @@ function registerZnShellIpc(): void {
     const window = ensurePrimaryWindow()
     setZnWindowMode(window, mode)
     return { mode, ...ZN_WINDOW_BOUNDS[mode] }
+  })
+
+  ipcMain.removeAllListeners('zn:shell:work-attention')
+  ipcMain.on('zn:shell:work-attention', (event, value: unknown) => {
+    const window = primaryWindow
+    if (!window || window.isDestroyed() || event.sender !== window.webContents) return
+    const payload = parseWorkAttentionPayload(value)
+    if (!payload) return
+    reportWorkAttention(payload)
   })
 }
 

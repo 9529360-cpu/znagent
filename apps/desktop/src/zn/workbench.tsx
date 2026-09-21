@@ -57,6 +57,19 @@ import {
 type ResidentHealth = 'connecting' | 'live' | 'offline'
 type MainView = 'work' | 'settings'
 type WindowMode = 'compact' | 'expanded'
+type WorkAttentionState = 'idle' | 'running' | 'complete' | 'failed' | 'needs_attention'
+
+function workAttentionState(progress: ZnWorkProgress | null): WorkAttentionState {
+  if (!progress) return 'idle'
+  if (progress.recovery?.replayBlocked || progress.stage === 'inspection_complete') {
+    return 'needs_attention'
+  }
+  const failureText = `${progress.status} ${progress.stage} ${progress.blockedBy || ''}`.toLowerCase()
+  if (progress.error || /fail|error|blocked/.test(failureText)) return 'failed'
+  if (progress.finalized) return 'complete'
+  if (progress.terminal) return 'needs_attention'
+  return 'running'
+}
 
 function renderUnknown(value: unknown): string {
   if (typeof value === 'string') return value
@@ -243,6 +256,14 @@ export function ZnWorkbench() {
     )
   }, [])
 
+  const presentWorkProgress = useCallback((progress: ZnWorkProgress | null) => {
+    setWorkProgress(progress)
+    window.znDesktop?.shell?.reportWorkAttention({
+      ...(progress ? { eventId: progress.eventId } : {}),
+      state: workAttentionState(progress)
+    })
+  }, [])
+
   const refreshResident = useCallback(async () => {
     setResidentHealth(previous => (previous === 'live' ? previous : 'connecting'))
     try {
@@ -393,7 +414,7 @@ export function ZnWorkbench() {
     setCancelBusy(true)
     try {
       const result = await cancelZnWork(threadId, eventId)
-      setWorkProgress(result.progress)
+      presentWorkProgress(result.progress)
       if (result.thread) replaceThread(result.thread)
       setResidentError(null)
       setResidentHealth('live')
@@ -425,7 +446,7 @@ export function ZnWorkbench() {
         residentAccepted = true
         replaceThread(started.thread)
         setActiveThreadId(started.thread.id)
-        setWorkProgress(started.progress)
+        presentWorkProgress(started.progress)
         setResidentError(null)
         setResidentHealth('live')
 
@@ -436,7 +457,7 @@ export function ZnWorkbench() {
           await sleep(700)
           const update = await loadZnWorkProgress(progressThreadId, current.eventId)
           current = update.progress
-          setWorkProgress(current)
+          presentWorkProgress(current)
           if (update.thread) finalThread = update.thread
         }
 
@@ -458,7 +479,7 @@ export function ZnWorkbench() {
             setContextOpen(false)
           }
         }
-        setWorkProgress(null)
+        presentWorkProgress(null)
         void loadZnResidentSnapshot().then(setResidentSnapshot).catch(() => undefined)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
