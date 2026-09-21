@@ -70,28 +70,37 @@ class AppCompetenceStageHandoff:
             raise ValueError("visual competence handoff_id is invalid")
         if self.kind != "visual_action":
             raise ValueError("visual competence handoff kind is invalid")
-        if int(self.stage_index) < 0 or not event_id or not application_id:
+        if (
+            isinstance(self.stage_index, bool)
+            or not isinstance(self.stage_index, int)
+            or self.stage_index < 0
+            or not event_id
+            or not application_id
+        ):
             raise ValueError("visual competence handoff lost runtime stage identity")
         if self.grounding_action_id != "windows.desktop.scene.capture":
             raise ValueError("visual competence handoff grounding action is invalid")
         if not instruction:
             raise ValueError("visual competence handoff instruction must not be empty")
+        if len(instruction) > 768:
+            raise ValueError("visual competence handoff instruction exceeds 768 characters")
+        if (
+            isinstance(self.step_instruction_index, bool)
+            or not isinstance(self.step_instruction_index, int)
+            or self.step_instruction_index < 0
+        ):
+            raise ValueError("visual competence handoff step index is invalid")
+        if self.stage_end_condition is not None and (
+            isinstance(self.stage_end_condition, bool)
+            or not isinstance(self.stage_end_condition, int)
+            or self.stage_end_condition < 0
+        ):
+            raise ValueError("visual competence handoff stage end condition is invalid")
         object.__setattr__(self, "handoff_id", handoff_id)
-        object.__setattr__(self, "stage_index", int(self.stage_index))
+        object.__setattr__(self, "stage_index", self.stage_index)
         object.__setattr__(self, "event_id", event_id)
         object.__setattr__(self, "application_id", application_id)
         object.__setattr__(self, "instruction", instruction)
-        object.__setattr__(
-            self,
-            "step_instruction_index",
-            int(self.step_instruction_index),
-        )
-        if self.stage_end_condition is not None:
-            object.__setattr__(
-                self,
-                "stage_end_condition",
-                int(self.stage_end_condition),
-            )
 
 
 @dataclass(frozen=True, slots=True)

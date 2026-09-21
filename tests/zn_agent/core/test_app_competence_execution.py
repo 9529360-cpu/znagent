@@ -456,6 +456,38 @@ class AppCompetenceRecipeExecutorTests(unittest.TestCase):
         self.assertEqual(second.stages[0].status, "already_verified")
         self.assertEqual(runtime.stage_dispatches, 1)
 
+    def test_visual_handoff_rejects_ambiguous_or_unbounded_runtime_fields(self) -> None:
+        base = {
+            "handoff_id": "competence-visual-1234567890abcdef1234",
+            "kind": "visual_action",
+            "stage_index": 0,
+            "event_id": "evt",
+            "application_id": "app-runtime-1",
+            "grounding_action_id": "windows.desktop.scene.capture",
+            "instruction": "Click Continue",
+            "step_instruction_index": 0,
+        }
+        from zn_agent.core.app_competence_execution import AppCompetenceStageHandoff
+
+        for field, value in (
+            ("stage_index", True),
+            ("stage_index", -1),
+            ("step_instruction_index", True),
+            ("step_instruction_index", -1),
+            ("stage_end_condition", True),
+            ("stage_end_condition", -1),
+        ):
+            with self.subTest(field=field, value=value):
+                values = dict(base)
+                values[field] = value
+                with self.assertRaises(ValueError):
+                    AppCompetenceStageHandoff(**values)
+
+        values = dict(base)
+        values["instruction"] = "x" * 769
+        with self.assertRaisesRegex(ValueError, "exceeds 768"):
+            AppCompetenceStageHandoff(**values)
+
     def test_visual_stage_returns_stable_pending_handoff_without_dispatch(self) -> None:
         stage = AppCompetenceStage(
             action_id="windows.desktop.scene.capture",
@@ -695,23 +727,29 @@ class AppCompetenceRecipeExecutorTests(unittest.TestCase):
         self.assertEqual(first_visual.inference.decision.action, "TAP")
         self.assertEqual(state.stage, "native_action")
         self.assertEqual(
-            state.data["app_competence_visual_handoff"]["next_cycle"],
-            1,
+            state.data["app_competence_visual_handoff"]["observation_attempt"],
+            0,
+        )
+        self.assertEqual(
+            state.data["app_competence_visual_handoff"]["status"],
+            "pointer_active",
         )
 
-        with self.assertRaisesRegex(RuntimeError, "in-flight native action"):
-            resident.advance_app_competence_recipe_once(
-                registry=registry,
-                event=event,
-                state=state,
-                app="demo.app",
-                version="1.0",
-                capability="enable",
-                application_id="app-runtime-1",
-            )
+        blocked, blocked_visual = resident.advance_app_competence_recipe_once(
+            registry=registry,
+            event=event,
+            state=state,
+            app="demo.app",
+            version="1.0",
+            capability="enable",
+            application_id="app-runtime-1",
+        )
+        self.assertEqual(blocked.status, "pending")
+        self.assertIsNone(blocked_visual)
         self.assertEqual(decisions, ["FINISH"])
 
         state.stage = "native_investigation"
+        state.data["app_competence_visual_handoff"]["status"] = "effect_verified"
         second, second_visual = resident.advance_app_competence_recipe_once(
             registry=registry,
             event=event,
@@ -723,10 +761,14 @@ class AppCompetenceRecipeExecutorTests(unittest.TestCase):
         )
         self.assertEqual(second.status, "pending")
         self.assertEqual(second_visual.inference.decision.action, "FINISH")
-        self.assertIn("completion proof", state.next_action)
+        self.assertIn("fresh reality", state.next_action)
         self.assertEqual(
-            state.data["app_competence_visual_handoff"]["next_cycle"],
-            2,
+            state.data["app_competence_visual_handoff"]["observation_attempt"],
+            1,
+        )
+        self.assertEqual(
+            state.data["app_competence_visual_handoff"]["status"],
+            "finish_observed",
         )
 
         runtime.state = "on"
