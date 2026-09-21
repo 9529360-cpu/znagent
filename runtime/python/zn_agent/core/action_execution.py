@@ -378,6 +378,13 @@ def build_machine_action_execution_runtime(
             verify=_verify_volume,
         )
 
+    if fabric.descriptor("windows.display.brightness.set") is not None:
+        runtime.register_verification(
+            "windows.display.brightness.set",
+            observe=lambda request, result: _observe_brightness(body, request),
+            verify=_verify_brightness,
+        )
+
     if (
         device_capabilities is not None
         and fabric.descriptor("windows.application.launch") is not None
@@ -432,6 +439,80 @@ def _verify_volume(
             else "fresh Core Audio readback does not match requested volume"
         ),
         evidence={
+            "requested_level_percent": requested,
+            "observed_level_percent": observed,
+            "delta_percent": delta,
+            "tolerance_percent": 0.5,
+        },
+        observed_at=observation.observed_at,
+    )
+
+
+def _observe_brightness(body: Any, request: ActionRequest) -> ActionObservation:
+    result = body.act(
+        "windows_display_brightness_read",
+        event_id=request.event_id,
+    )
+    if not result.success:
+        raise RuntimeError(result.error or "Windows brightness readback failed")
+    return ActionObservation(
+        request.action_id,
+        "windows_wmi_brightness_readback",
+        data=dict(result.data or {}),
+        observed_at=result.completed_at or utc_now(),
+    )
+
+
+def _verify_brightness(
+    request: ActionRequest,
+    observation: ActionObservation,
+    body_result: BodyActionResult | None,
+) -> ActionVerification:
+    requested = _finite_number(request.args.get("level_percent"))
+    observed = _finite_number(observation.data.get("level_percent"))
+    observed_instance = str(observation.data.get("instance_name") or "").strip()
+    expected_instance = str(
+        ((body_result.data or {}).get("instance_name") if body_result is not None else "")
+        or ""
+    ).strip()
+    if (
+        requested is None
+        or observed is None
+        or not observed_instance
+        or not expected_instance
+    ):
+        return ActionVerification(
+            "failed",
+            "brightness verification lacks numeric requested/readback evidence or the original monitor identity",
+            evidence={
+                **dict(observation.data),
+                "expected_instance_name": expected_instance,
+            },
+            observed_at=observation.observed_at,
+        )
+    if observed_instance != expected_instance:
+        return ActionVerification(
+            "failed",
+            "fresh brightness readback belongs to a different monitor identity",
+            evidence={
+                "expected_instance_name": expected_instance,
+                "observed_instance_name": observed_instance,
+                "requested_level_percent": requested,
+                "observed_level_percent": observed,
+            },
+            observed_at=observation.observed_at,
+        )
+    delta = abs(observed - requested)
+    verified = delta <= 0.5
+    return ActionVerification(
+        "verified" if verified else "failed",
+        (
+            "fresh WMI readback matches requested brightness on the same monitor"
+            if verified
+            else "fresh WMI readback does not match requested brightness"
+        ),
+        evidence={
+            "instance_name": observed_instance,
             "requested_level_percent": requested,
             "observed_level_percent": observed,
             "delta_percent": delta,
