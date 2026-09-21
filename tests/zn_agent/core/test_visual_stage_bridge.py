@@ -302,6 +302,23 @@ class VisualStageBridgeTests(unittest.TestCase):
         self.assertEqual(admitted, [pointer_intent])
         self.assertEqual(saved, [state])
         self.assertEqual(state.data["visual_stage_decision"]["decision"]["action"], "TAP")
+        self.assertTrue(state.data["visual_stage_decision"]["tap_admitted"])
+
+        admitted.clear()
+        saved.clear()
+        result = ProductResearchInformationResidentRuntime.evaluate_visual_stage(
+            resident,
+            event=event,
+            state=state,
+            application_id="app.test",
+            instruction="click target",
+            decision_id="cycle-1-no-second-tap",
+            allow_tap=False,
+        )
+        self.assertIs(result, tap)
+        self.assertEqual(admitted, [])
+        self.assertFalse(state.data["visual_stage_decision"]["tap_admitted"])
+        self.assertIn("refuse a second TAP", state.next_action)
 
         finish = VisualStageBridgeResult(
             inference=VisualActionInference(
@@ -614,6 +631,69 @@ class VisualStageBridgeTests(unittest.TestCase):
             "competence-visual-1234567890abcdef1234:observation:0",
         )
         self.assertGreaterEqual(len(saved), 2)
+
+    def test_competence_visual_handoff_blocks_second_tap_after_verified_effect(self):
+        resident = object.__new__(ProductResearchInformationResidentRuntime)
+        resident.store = SimpleNamespace(save_working_state=lambda state: None)
+        resident._sync_execution_context = lambda event, state: None
+        tap = VisualStageBridgeResult(
+            inference=VisualActionInference(
+                decision=VisualActionDecision("TAP", 0.3, 0.7),
+                provider="fake",
+                model="fake",
+            ),
+            scene_id="desktop-scene-repeat",
+            regrounded_scene_id="desktop-scene-repeat-grounded",
+            pointer_intent=NativeActionIntent(
+                intent_id="repeat-tap-should-not-run",
+                event_id="evt",
+                kind="pointer_click",
+                args={"x_fraction": 0.3, "y_fraction": 0.7, "button": "left"},
+                source="visual_stage_bridge",
+            ),
+        )
+        allow_tap_values = []
+        resident.evaluate_visual_stage = lambda **kwargs: (
+            allow_tap_values.append(kwargs["allow_tap"]) or tap
+        )
+        handoff = AppCompetenceStageHandoff(
+            handoff_id="competence-visual-repeat12345678",
+            kind="visual_action",
+            stage_index=0,
+            event_id="evt",
+            application_id="app.test",
+            grounding_action_id="windows.desktop.scene.capture",
+            instruction="Click Continue",
+            step_instruction_index=0,
+        )
+        state = SimpleNamespace(
+            data={
+                resident._VISUAL_COMPETENCE_HANDOFF_KEY: {
+                    "handoff_id": handoff.handoff_id,
+                    "status": "effect_verified",
+                    "tap_consumed": True,
+                    "observation_attempt": 0,
+                }
+            },
+            stage="native_investigation",
+            next_action=None,
+        )
+        event = SimpleNamespace(event_id="evt")
+
+        result = ProductResearchInformationResidentRuntime.admit_competence_visual_handoff(
+            resident,
+            event=event,
+            state=state,
+            handoff=handoff,
+        )
+
+        self.assertIs(result, tap)
+        self.assertEqual(allow_tap_values, [False])
+        marker = state.data[resident._VISUAL_COMPETENCE_HANDOFF_KEY]
+        self.assertEqual(marker["status"], "repeat_tap_blocked")
+        self.assertTrue(marker["tap_consumed"])
+        self.assertIsNone(marker["pointer_intent_id"])
+        self.assertIn("second TAP", state.next_action)
 
     def test_competence_visual_wait_reobserves_with_fresh_decision_id(self):
         resident = object.__new__(ProductResearchInformationResidentRuntime)
