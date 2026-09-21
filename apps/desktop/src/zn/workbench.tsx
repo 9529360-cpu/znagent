@@ -90,6 +90,30 @@ function delegatedStatusMarker(status: string): string {
   return '○'
 }
 
+type ExecutionEvidence = {
+  executionPath: string
+  modelInvocations: number
+}
+
+function executionPathLabel(path: string): string {
+  if (path === 'memory') return 'Resident memory'
+  if (path === 'capability') return 'Resident capability'
+  if (path === 'investigation') return 'Resident investigation'
+  if (path === 'body') return 'PC action'
+  if (path === 'model') return 'Model cognition'
+  if (path === 'control') return 'Resident control'
+  if (path === 'budget_blocked') return 'Cognition budget blocked'
+  return path.replaceAll('_', ' ')
+}
+
+function executionEvidenceFromDetail(detail?: Record<string, unknown>): ExecutionEvidence | null {
+  if (!detail) return null
+  const executionPath = String(detail.execution_path ?? detail.executionPath ?? '').trim()
+  const modelInvocations = Number(detail.model_invocations ?? detail.modelInvocations)
+  if (!executionPath || !Number.isSafeInteger(modelInvocations) || modelInvocations < 0) return null
+  return { executionPath, modelInvocations }
+}
+
 function credentialLabel(settings: ZnProviderSettings | null): string {
   if (!settings) return 'Credential status unavailable'
   const { credential } = settings
@@ -676,13 +700,31 @@ export function ZnWorkbench() {
 
               {activeThread && activeThread.messages.length > 0 ? (
                 <div className="zn-messages">
-                  {activeThread.messages.map(message => (
-                    <article className={`zn-message ${message.role}`} key={message.id}>
-                      <div className="zn-message-label">{message.role === 'user' ? 'You' : message.role === 'zn' ? 'ZN' : 'Activity'}</div>
-                      <div className="zn-message-body">{message.text}</div>
-                      {message.detail ? <pre className="zn-activity-detail">{renderUnknown(message.detail)}</pre> : null}
-                    </article>
-                  ))}
+                  {activeThread.messages.map(message => {
+                    const executionEvidence = message.role === 'activity'
+                      ? executionEvidenceFromDetail(message.detail)
+                      : null
+                    return (
+                      <article className={`zn-message ${message.role}`} key={message.id}>
+                        <div className="zn-message-label">{message.role === 'user' ? 'You' : message.role === 'zn' ? 'ZN' : 'Activity'}</div>
+                        <div className="zn-message-body">{message.text}</div>
+                        {executionEvidence ? (
+                          <div className="zn-execution-evidence" aria-label="Execution evidence">
+                            <span>{executionPathLabel(executionEvidence.executionPath)}</span>
+                            <span>{executionEvidence.modelInvocations} model {executionEvidence.modelInvocations === 1 ? 'call' : 'calls'}</span>
+                          </div>
+                        ) : null}
+                        {message.detail ? (
+                          executionEvidence ? (
+                            <details className="zn-activity-technical">
+                              <summary>Technical details</summary>
+                              <pre className="zn-activity-detail">{renderUnknown(message.detail)}</pre>
+                            </details>
+                          ) : <pre className="zn-activity-detail">{renderUnknown(message.detail)}</pre>
+                        ) : null}
+                      </article>
+                    )
+                  })}
                   {workProgress && workProgress.threadId === activeThread.id && !workProgress.finalized ? (
                     <article className="zn-message activity" aria-live="polite">
                       <div className="zn-message-label">Resident progress · {workProgress.status}</div>

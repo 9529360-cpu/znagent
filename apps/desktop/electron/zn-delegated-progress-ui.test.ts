@@ -51,6 +51,27 @@ test('delegated renderer path never references internal WorkerRun routing or fin
   ]) assert.doesNotMatch(delegatedSection, new RegExp(internalName, 'i'))
 })
 
+test('completed Work exposes durable execution evidence without inferring model use from provider readiness', () => {
+  const workbench = read('src/zn/workbench.tsx')
+  const client = read('src/zn/resident-client.ts')
+
+  assert.match(client, /executionPath\?: string/)
+  assert.match(client, /modelInvocations\?: number/)
+  assert.match(client, /item\.execution_path \|\| item\.executionPath/)
+  assert.match(client, /item\.model_invocations \?\? item\.modelInvocations/)
+  assert.match(workbench, /executionEvidenceFromDetail/)
+  assert.match(workbench, /detail\.execution_path \?\? detail\.executionPath/)
+  assert.match(workbench, /detail\.model_invocations \?\? detail\.modelInvocations/)
+  assert.match(workbench, /aria-label="Execution evidence"/)
+  assert.match(workbench, /model \{executionEvidence\.modelInvocations === 1 \? 'call' : 'calls'\}/)
+
+  const helperStart = workbench.indexOf('function executionEvidenceFromDetail')
+  const helperEnd = workbench.indexOf('function credentialLabel', helperStart)
+  assert.ok(helperStart >= 0)
+  assert.ok(helperEnd > helperStart)
+  assert.doesNotMatch(workbench.slice(helperStart, helperEnd), /providerSettings|cognitionAvailable/)
+})
+
 test('continuation inspection returns control to the composer without finalizing the durable Work', () => {
   const workbench = read('src/zn/workbench.tsx')
 
