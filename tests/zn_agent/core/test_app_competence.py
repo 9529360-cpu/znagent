@@ -174,6 +174,24 @@ class AppCompetenceRegistryTests(unittest.TestCase):
                         arguments={key: 1},
                     )
 
+    def test_competence_rejects_nested_runtime_native_authority(self) -> None:
+        with self.assertRaisesRegex(ValueError, r"selector\.hwnd"):
+            AppCompetenceStage(
+                action_id="windows.ui.control.toggle",
+                arguments={"selector": {"name": "Sync", "hwnd": 123}},
+            )
+        with self.assertRaisesRegex(ValueError, r"fallbacks\[0\]\.coordinates"):
+            AppCompetenceStage(
+                action_id="windows.ui.control.toggle",
+                metadata={"fallbacks": [{"coordinates": [0.5, 0.5]}]},
+            )
+        with self.assertRaisesRegex(ValueError, r"evidence\.runtime_id"):
+            AppCompetenceCompletion(
+                action_id="windows.ui.control.read",
+                expected={"evidence": {"runtime_id": [1, 2, 3]}},
+            )
+
+
     def test_competence_completion_must_use_read_only_action(self) -> None:
         registry = AppCompetenceRegistry()
         completion = AppCompetenceCompletion(
