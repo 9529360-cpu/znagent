@@ -237,7 +237,11 @@ class ModelRouter:
             snapshot = resolver(route)
         except Exception:
             return None
-        if not isinstance(snapshot, dict) or snapshot.get("healthy") is not False:
+        if not isinstance(snapshot, dict):
+            return None
+        if snapshot.get("available") is False:
+            return "route dynamically unavailable from resident runtime evidence"
+        if snapshot.get("healthy") is not False:
             return None
         try:
             consecutive = max(0, int(snapshot.get("consecutive_failures") or 0))

@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from zn_agent.core.action_fabric import (
     ActionAvailability,
@@ -153,6 +154,37 @@ class MachineProviderRuntimeTests(unittest.TestCase):
         self.assertEqual(status.state, "unavailable")
         self.assertFalse(status.queryable)
 
+    def test_local_inference_provider_uses_fresh_runtime_snapshot(self) -> None:
+        snapshot = SimpleNamespace(
+            usable_providers=("ollama",),
+            runtimes=(
+                SimpleNamespace(provider="ollama", endpoint_reachable=True),
+                SimpleNamespace(provider="lmstudio", endpoint_reachable=False),
+                SimpleNamespace(provider="vllm", endpoint_reachable=False),
+            ),
+            hardware=SimpleNamespace(
+                gpu_names=("Intel Arc",),
+                ac_status="online",
+                battery_saver=False,
+            ),
+            observed_at="2026-09-21T00:00:00+00:00",
+        )
+        local_inference = SimpleNamespace(snapshot=lambda: snapshot)
+        runtime = build_machine_provider_runtime(
+            ActionFabricRegistry(),
+            local_inference=local_inference,
+        )
+
+        descriptor = runtime.descriptor("zn.local_inference")
+        status = runtime.status("zn.local_inference")
+
+        self.assertIsNotNone(descriptor)
+        self.assertEqual(descriptor.lifecycle_mode, "external")
+        self.assertEqual(status.state, "healthy")
+        self.assertTrue(status.queryable)
+        self.assertEqual(status.evidence["usable_providers"], ("ollama",))
+        self.assertEqual(status.evidence["gpu_count"], 1)
+
 
 class ProductProviderRuntimeIntegrationTests(unittest.TestCase):
     def test_final_resident_exposes_windows_provider_runtime(self) -> None:
@@ -173,6 +205,9 @@ class ProductProviderRuntimeIntegrationTests(unittest.TestCase):
                     status.state,
                     {"healthy", "degraded", "unavailable", "unknown"},
                 )
+                local = resident.provider_runtime.descriptor("zn.local_inference")
+                self.assertIsNotNone(local)
+                self.assertEqual(local.lifecycle_mode, "external")
             finally:
                 resident.store.close()
 

@@ -13,6 +13,7 @@ from .document_research_completion_behavior import (
 from .document_research_completion_safety import (
     install_document_research_completion_safety,
 )
+from .local_inference_runtime import LocalInferenceRuntimeDiscovery
 from .local_office_behavior import install_local_office_behavior
 from .local_service_recovery_behavior import install_local_service_recovery_behavior
 from .long_running_terminal_behavior import install_long_running_terminal_behavior
@@ -25,6 +26,7 @@ from .user_browser_multi_record_result import (
 from .action_execution import build_machine_action_execution_runtime
 from .action_fabric import build_machine_action_fabric
 from .provider_runtime import build_machine_provider_runtime
+from .reflex_intent import build_resident_reflex_intents
 from .windows_companion_body import WindowsCompanionAwareBody
 from .windows_companion_work_context import bind_windows_companion_work_context
 
@@ -112,7 +114,12 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
         # Semantic Action Fabric is descriptive/discovery-only. Real effects
         # still pass through this one Body plus existing authority/verification.
         self.action_fabric = build_machine_action_fabric(self.device_capabilities)
-        self.provider_runtime = build_machine_provider_runtime(self.action_fabric)
+        self.reflex_intents = build_resident_reflex_intents()
+        self.local_inference = LocalInferenceRuntimeDiscovery(self.device_capabilities)
+        self.provider_runtime = build_machine_provider_runtime(
+            self.action_fabric,
+            local_inference=self.local_inference,
+        )
         self.action_executor = build_machine_action_execution_runtime(
             self.action_fabric,
             self.body,
