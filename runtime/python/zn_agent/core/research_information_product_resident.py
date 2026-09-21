@@ -195,7 +195,38 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
         # while the user has explicitly authorized the current browser tab.
         return self._has_explicit_current_user_browser_authority()
 
+    def _admit_grounded_reflex_action_candidate(self, event, state) -> bool:
+        resolution = self.reflex_intents.resolve(event)
+        match = resolution.match
+        if resolution.status != "matched" or match is None or not match.action_id:
+            return False
+
+        reflex = self.reflex_intents.descriptor(match.intent_id)
+        if reflex is None or not {
+            "action_candidate",
+            "requires_grounding",
+        }.issubset(set(reflex.tags)):
+            return False
+
+        action = self.action_fabric.descriptor(match.action_id)
+        if action is None or not action.body_action_kind:
+            return False
+
+        state.data["reflex_intent"] = {
+            "event_id": event.event_id,
+            "intent_id": match.intent_id,
+            "action_id": action.action_id,
+            "body_action_kind": action.body_action_kind,
+            "slots": dict(match.slots),
+        }
+        state.stage = "native_investigation"
+        state.next_action = "ground deterministic reflex through current machine evidence"
+        self.store.save_working_state(state)
+        return True
+
     def _orient_step(self, event, state, *, readiness, thought=None):
+        if self._admit_grounded_reflex_action_candidate(event, state):
+            return None
         if (
             browser_semantic_lookup_goal(event) is None
             and self._is_explicit_existing_session_record_lookup(event)
