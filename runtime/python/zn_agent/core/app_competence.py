@@ -39,13 +39,26 @@ def _key(value: object) -> str:
     return _clean(value).casefold()
 
 
+def _forbidden_runtime_paths(value: object, *, path: str = "") -> tuple[str, ...]:
+    found: list[str] = []
+    if isinstance(value, Mapping):
+        for raw_name, nested in value.items():
+            name = str(raw_name).strip()
+            key = name.casefold()
+            child_path = f"{path}.{name}" if path else name
+            if key in _FORBIDDEN_RUNTIME_ARGUMENTS:
+                found.append(child_path)
+            found.extend(_forbidden_runtime_paths(nested, path=child_path))
+    elif isinstance(value, (list, tuple)):
+        for index, nested in enumerate(value):
+            child_path = f"{path}[{index}]" if path else f"[{index}]"
+            found.extend(_forbidden_runtime_paths(nested, path=child_path))
+    return tuple(found)
+
+
 def _safe_arguments(value: Mapping[str, Any] | None, *, owner: str) -> dict[str, Any]:
     arguments = dict(value or {})
-    forbidden = sorted(
-        str(name)
-        for name in arguments
-        if str(name).strip().casefold() in _FORBIDDEN_RUNTIME_ARGUMENTS
-    )
+    forbidden = sorted(set(_forbidden_runtime_paths(arguments)))
     if forbidden:
         raise ValueError(
             f"{owner} cannot persist runtime/native action authority: " + ", ".join(forbidden)
@@ -66,7 +79,7 @@ class AppCompetenceCompletion:
         if not action_id:
             raise ValueError("competence completion action_id must not be empty")
         arguments = _safe_arguments(self.arguments, owner="competence completion")
-        expected = dict(self.expected or {})
+        expected = _safe_arguments(self.expected, owner="competence completion expected evidence")
         if not expected:
             raise ValueError("competence completion must declare expected read-only evidence")
         object.__setattr__(self, "action_id", action_id)
@@ -106,7 +119,7 @@ class AppCompetenceStage:
         object.__setattr__(self, "arguments", arguments)
         object.__setattr__(self, "timeout_ms", timeout_ms)
         object.__setattr__(self, "execution_mode", execution_mode)
-        object.__setattr__(self, "metadata", dict(self.metadata or {}))
+        object.__setattr__(self, "metadata", _safe_arguments(self.metadata, owner="competence stage metadata"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,7 +145,7 @@ class AppCompetenceBinding:
             )
         object.__setattr__(self, "capability", capability)
         object.__setattr__(self, "action_id", action_id)
-        object.__setattr__(self, "metadata", dict(self.metadata or {}))
+        object.__setattr__(self, "metadata", _safe_arguments(self.metadata, owner="competence binding metadata"))
         object.__setattr__(self, "stages", stages)
 
     def stage_plan(self) -> tuple[AppCompetenceStage, ...]:
