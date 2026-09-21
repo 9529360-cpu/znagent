@@ -13,6 +13,8 @@ from zn_agent.core.desktop_scene import (
     DesktopSceneScreenshot,
 )
 from zn_agent.core.action import NativeActionIntent
+from zn_agent.core.app_competence_execution import AppCompetenceStageHandoff
+from zn_agent.core.pointer_click_completion_resident import EffectScopedPointerClickResidentRuntime
 from zn_agent.core.pointer_click_resident import VerifiedPointerClickResidentRuntime
 from zn_agent.core.research_information_product_resident import (
     ProductResearchInformationResidentRuntime,
@@ -348,6 +350,37 @@ class VisualStageBridgeTests(unittest.TestCase):
                 decision_id="cycle-policy",
             )
 
+    def test_product_pointer_mro_accepts_visual_bridge_without_effect_probe_scope(self):
+        resident = object.__new__(ProductResearchInformationResidentRuntime)
+        event = SimpleNamespace(kind="desktop_user_event", payload={})
+        intent = NativeActionIntent(
+            intent_id="visual-tap-mro",
+            event_id="evt",
+            kind="pointer_click",
+            args={"x_fraction": 0.5, "y_fraction": 0.5, "button": "left"},
+            expected_outcome={
+                "kind": "visual_region_changed",
+                "width_fraction": 0.08,
+                "height_fraction": 0.08,
+                "desktop_scene_precondition": self._scene_precondition(),
+            },
+            source="visual_stage_bridge",
+        )
+
+        contract, error = ProductResearchInformationResidentRuntime._pointer_click_contract(
+            resident,
+            event,
+            intent,
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(contract["kind"], "visual_region_changed")
+        self.assertNotIn("completion_scope", contract)
+        self.assertEqual(
+            contract["desktop_scene_precondition"]["scene_id"],
+            "desktop-scene-current",
+        )
+
     def test_verified_visual_tap_returns_to_fresh_scene_investigation(self):
         resident = object.__new__(ProductResearchInformationResidentRuntime)
         saved = []
@@ -363,6 +396,11 @@ class VisualStageBridgeTests(unittest.TestCase):
                     "regrounded_scene_id": "desktop-scene-after",
                 },
                 "native_verification_result": {"verified": True},
+                "app_competence_visual_handoff": {
+                    "handoff_id": "competence-visual-rollforward",
+                    "decision_id": "cycle-1",
+                    "status": "pointer_active",
+                },
             },
             stage="native_verification",
             next_action="verify pointer result",
@@ -376,25 +414,164 @@ class VisualStageBridgeTests(unittest.TestCase):
             source="visual_stage_bridge",
         )
 
-        result = ProductResearchInformationResidentRuntime._complete_successful_body_action(
+        result = ProductResearchInformationResidentRuntime._roll_forward_verified_visual_stage(
             resident,
             event,
             state,
             intent,
-            response="clicked",
-            reason="verified",
+            result=SimpleNamespace(success=True),
         )
 
         self.assertIsNone(result)
         self.assertEqual(state.stage, "native_investigation")
-        self.assertIn("fresh desktop scene", state.next_action)
+        self.assertIn("fresh reality", state.next_action)
         self.assertNotIn("native_completion", state.data)
         self.assertEqual(
             state.data["visual_stage_progress"][-1]["decision_id"],
             "cycle-1",
         )
         self.assertTrue(state.data["visual_stage_progress"][-1]["verified"])
+        self.assertEqual(
+            state.data["app_competence_visual_handoff"]["status"],
+            "effect_verified",
+        )
         self.assertEqual(saved, [state])
+
+    def test_competence_visual_handoff_admits_tap_only_once(self):
+        resident = object.__new__(ProductResearchInformationResidentRuntime)
+        saved = []
+        resident.store = SimpleNamespace(
+            save_working_state=lambda state: saved.append(dict(state.data))
+        )
+        resident._sync_execution_context = lambda event, state: None
+        pointer_intent = NativeActionIntent(
+            intent_id="visual-tap-handoff",
+            event_id="evt",
+            kind="pointer_click",
+            args={"x_fraction": 0.4, "y_fraction": 0.6, "button": "left"},
+            source="visual_stage_bridge",
+        )
+        result = VisualStageBridgeResult(
+            inference=VisualActionInference(
+                decision=VisualActionDecision("TAP", 0.4, 0.6),
+                provider="fake",
+                model="fake",
+            ),
+            scene_id="desktop-scene-before",
+            regrounded_scene_id="desktop-scene-after",
+            pointer_intent=pointer_intent,
+        )
+        calls = []
+        resident.evaluate_visual_stage = lambda **kwargs: (
+            calls.append(dict(kwargs)) or result
+        )
+        state = SimpleNamespace(data={}, stage="native_investigation", next_action=None)
+        event = SimpleNamespace(event_id="evt")
+        handoff = AppCompetenceStageHandoff(
+            handoff_id="competence-visual-1234567890abcdef1234",
+            kind="visual_action",
+            stage_index=0,
+            event_id="evt",
+            application_id="app.test",
+            grounding_action_id="windows.desktop.scene.capture",
+            instruction="Click Continue",
+            step_instruction_index=0,
+        )
+
+        first = ProductResearchInformationResidentRuntime.admit_competence_visual_handoff(
+            resident,
+            event=event,
+            state=state,
+            handoff=handoff,
+        )
+        second = ProductResearchInformationResidentRuntime.admit_competence_visual_handoff(
+            resident,
+            event=event,
+            state=state,
+            handoff=handoff,
+        )
+
+        self.assertIs(first, result)
+        self.assertIsNone(second)
+        self.assertEqual(len(calls), 1)
+        marker = state.data[resident._VISUAL_COMPETENCE_HANDOFF_KEY]
+        self.assertEqual(marker["status"], "pointer_active")
+        self.assertEqual(marker["pointer_intent_id"], "visual-tap-handoff")
+        self.assertEqual(
+            calls[0]["decision_id"],
+            "competence-visual-1234567890abcdef1234:observation:0",
+        )
+        self.assertGreaterEqual(len(saved), 2)
+
+    def test_competence_visual_wait_reobserves_with_fresh_decision_id(self):
+        resident = object.__new__(ProductResearchInformationResidentRuntime)
+        resident.store = SimpleNamespace(save_working_state=lambda state: None)
+        resident._sync_execution_context = lambda event, state: None
+        wait = VisualStageBridgeResult(
+            inference=VisualActionInference(
+                decision=VisualActionDecision("WAIT"),
+                provider="fake",
+                model="fake",
+            ),
+            scene_id="desktop-scene-wait",
+        )
+        decisions = []
+        resident.evaluate_visual_stage = lambda **kwargs: (
+            decisions.append(kwargs["decision_id"]) or wait
+        )
+        state = SimpleNamespace(data={}, stage="native_investigation", next_action=None)
+        event = SimpleNamespace(event_id="evt")
+        handoff = AppCompetenceStageHandoff(
+            handoff_id="competence-visual-abcdef1234567890abcd",
+            kind="visual_action",
+            stage_index=1,
+            event_id="evt",
+            application_id="app.test",
+            grounding_action_id="windows.desktop.scene.capture",
+            instruction="Wait for Continue",
+            step_instruction_index=1,
+        )
+
+        ProductResearchInformationResidentRuntime.admit_competence_visual_handoff(
+            resident, event=event, state=state, handoff=handoff
+        )
+        ProductResearchInformationResidentRuntime.admit_competence_visual_handoff(
+            resident, event=event, state=state, handoff=handoff
+        )
+
+        self.assertEqual(
+            decisions,
+            [
+                "competence-visual-abcdef1234567890abcd:observation:0",
+                "competence-visual-abcdef1234567890abcd:observation:1",
+            ],
+        )
+        self.assertEqual(
+            state.data[resident._VISUAL_COMPETENCE_HANDOFF_KEY]["status"],
+            "waiting",
+        )
+
+    def test_resident_visual_pointer_substep_is_not_limited_to_effect_probe_event(self):
+        resident = object.__new__(EffectScopedPointerClickResidentRuntime)
+        intent = NativeActionIntent(
+            intent_id="visual-tap-contract",
+            event_id="evt",
+            kind="pointer_click",
+            args={"x_fraction": 0.5, "y_fraction": 0.5, "button": "left"},
+            expected_outcome={
+                "kind": "visual_region_changed",
+                "width_fraction": 0.08,
+                "height_fraction": 0.08,
+            },
+            source="visual_stage_bridge",
+        )
+        contract, error = EffectScopedPointerClickResidentRuntime._pointer_click_contract(
+            resident,
+            SimpleNamespace(kind="desktop_user_event", payload={}),
+            intent,
+        )
+        self.assertIsNone(error)
+        self.assertEqual(contract["kind"], "visual_region_changed")
 
     def test_product_resident_rejects_visual_model_when_budget_blocks_it(self):
         resident = object.__new__(ProductResearchInformationResidentRuntime)

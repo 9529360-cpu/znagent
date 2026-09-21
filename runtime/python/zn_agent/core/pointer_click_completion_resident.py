@@ -30,6 +30,8 @@ class EffectScopedPointerClickResidentRuntime(VerifiedPointerClickResidentRuntim
         if error:
             return contract, error
         assert contract is not None
+        if str(intent.source or "").strip().lower() == "visual_stage_bridge":
+            return contract, None
 
         event_kind = str(event.kind or "").strip().lower()
         if event_kind != self._POINTER_CLICK_EVENT_KIND:
@@ -53,7 +55,10 @@ class EffectScopedPointerClickResidentRuntime(VerifiedPointerClickResidentRuntim
         response: str,
         reason: str,
     ) -> ResidentRunResult | None:
-        if intent.kind != "pointer_click":
+        if (
+            intent.kind != "pointer_click"
+            or str(intent.source or "").strip().lower() == "visual_stage_bridge"
+        ):
             return super()._complete_successful_body_action(
                 event,
                 state,
