@@ -11,6 +11,8 @@ const runtimeProject = path.join(repoRoot, 'runtime', 'python')
 const runtimeRoot = path.join(desktopRoot, 'build', 'zn-runtime')
 const pythonInstallDir = path.join(runtimeRoot, 'python')
 const browserInstallDir = path.join(runtimeRoot, 'playwright-browsers')
+const veteranSourceRoot = path.join(repoRoot, 'vendor', 'veteran-engineer')
+const veteranRuntimeDir = path.join(runtimeRoot, 'veteran-engineer')
 const retiredPackageName = Buffer.from('6865726d65735f636c69', 'hex').toString('utf8')
 
 function run(command, args, options = {}) {
@@ -94,6 +96,18 @@ function gitHead() {
 fs.rmSync(runtimeRoot, { recursive: true, force: true })
 fs.mkdirSync(pythonInstallDir, { recursive: true })
 
+const veteranServer = path.join(veteranSourceRoot, 'mcp', 'server.mjs')
+const veteranManifest = path.join(veteranSourceRoot, 'VENDOR.json')
+if (!fs.existsSync(veteranServer) || !fs.existsSync(veteranManifest)) {
+  throw new Error(`Vendored Veteran runtime is incomplete under ${veteranSourceRoot}`)
+}
+console.log('[zn-runtime] staging Veteran engineering runtime')
+fs.cpSync(veteranSourceRoot, veteranRuntimeDir, {
+  recursive: true,
+  force: true,
+  verbatimSymlinks: true
+})
+
 console.log('[zn-runtime] installing portable CPython 3.11')
 run('uv', ['python', 'install', '3.11', '--install-dir', pythonInstallDir, '--no-bin'])
 const pythonPath = findPortablePython(pythonInstallDir)
@@ -119,16 +133,16 @@ if (fs.readdirSync(browserInstallDir).length === 0) {
 // assuming a platform-specific site-packages layout. uv's portable Windows
 // CPython's generic site-package discovery can report the runtime root, while
 // the installed package itself lives under Lib/site-packages.
-const backendRoot = capture(pythonPath, [
+const backendRoot = JSON.parse(capture(pythonPath, [
   '-c',
   [
-    'import importlib.util',
+    'import importlib.util, json',
     'from pathlib import Path',
     "spec = importlib.util.find_spec('zn_agent')",
     "assert spec is not None and spec.origin is not None, 'installed zn_agent package not found'",
-    'print(Path(spec.origin).resolve().parent.parent)'
+    'print(json.dumps(str(Path(spec.origin).resolve().parent.parent)))'
   ].join('; ')
-])
+]))
 const residentEntry = path.join(backendRoot, 'zn_agent', 'resident.py')
 const residentCore = path.join(backendRoot, 'zn_agent', 'core', 'browser_resident_server.py')
 if (!fs.existsSync(residentEntry)) throw new Error(`Installed runtime is missing zn_agent/resident.py under ${backendRoot}`)
@@ -177,7 +191,8 @@ const manifest = {
   python_version: pythonVersion,
   python: portableRelative(runtimeRoot, pythonPath),
   backend_root: portableRelative(runtimeRoot, backendRoot),
-  browser_root: portableRelative(runtimeRoot, browserInstallDir)
+  browser_root: portableRelative(runtimeRoot, browserInstallDir),
+  veteran_runtime: portableRelative(runtimeRoot, veteranRuntimeDir)
 }
 fs.writeFileSync(path.join(runtimeRoot, 'runtime.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
 console.log(`[zn-runtime] staged ${runtimeId} at ${runtimeRoot}`)

@@ -1,0 +1,10 @@
+export const RUNTIME_NAME = 'veteran-engineer';
+export const RUNTIME_VERSION = '0.5.0';
+export const STATE_SCHEMA_VERSION = 3;
+export const HOST_ADAPTER_API_VERSION = 1;
+export const LEGACY_PROTOCOL_VERSION = '2025-11-25';
+export const MODERN_PROTOCOL_VERSION = '2026-07-28';
+export const DEFAULT_LOCK_TIMEOUT_MS = 10_000;
+export const DEFAULT_LOCK_STALE_MS = 120_000;
+export const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
+export const RISK_LEVELS = ['low', 'medium', 'high', 'critical'];
