@@ -106,6 +106,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => window.setTimeout(resolve, ms))
 }
 
+function focusComposerInput(): void {
+  window.requestAnimationFrame(() => {
+    const composer = document.querySelector<HTMLTextAreaElement>('.zn-composer textarea')
+    composer?.focus()
+    composer?.setSelectionRange(composer.value.length, composer.value.length)
+  })
+}
+
 const ZN_HOME_QUICK_STARTS = [
   { label: 'Open an app', prompt: 'Open Chrome.' },
   { label: 'Clean current app', prompt: 'Clean up the text in the current app.' },
@@ -264,6 +272,13 @@ export function ZnWorkbench() {
     return window.znDesktop?.shell?.onDeepLink(link => {
       setDeepLinkNotice(link)
       setView('work')
+    })
+  }, [])
+
+  useEffect(() => {
+    return window.znDesktop?.shell?.onGlobalInvocation(() => {
+      setView('work')
+      focusComposerInput()
     })
   }, [])
 
@@ -485,11 +500,7 @@ export function ZnWorkbench() {
   const showProviderGuidance = providerSettings !== null && !providerSettings.cognitionAvailable
   const chooseHomePrompt = (prompt: string) => {
     setDraft(prompt)
-    window.requestAnimationFrame(() => {
-      const composer = document.querySelector<HTMLTextAreaElement>('.zn-composer textarea')
-      composer?.focus()
-      composer?.setSelectionRange(composer.value.length, composer.value.length)
-    })
+    focusComposerInput()
   }
 
   return (

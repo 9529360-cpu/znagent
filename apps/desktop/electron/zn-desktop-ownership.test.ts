@@ -52,6 +52,33 @@ test('ZN desktop window can enter the compact renderer breakpoint', () => {
   assert.match(styles, /\.zn-home-capabilities \{ grid-template-columns: 1fr; \}/)
 })
 
+test('ZN global invocation is Windows-only, best-effort, and reuses the resident surface', () => {
+  const source = read('electron/zn-main.ts')
+  const preload = read('electron/zn-preload.ts')
+  const workbench = read('src/zn/workbench.tsx')
+
+  assert.match(source, /CommandOrControl\+Alt\+Space/)
+  assert.match(source, /function initializeGlobalInvocation\(\)/)
+  assert.match(source, /if \(process\.platform !== 'win32'\) return/)
+  assert.match(source, /globalShortcut\.register\(ZN_GLOBAL_INVOCATION_SHORTCUT/)
+  assert.match(source, /if \(!registered\)/)
+  assert.match(source, /showPrimaryWindow\(true\)/)
+  assert.match(source, /zn:global-invocation/)
+  assert.match(source, /globalShortcut\.unregister\(ZN_GLOBAL_INVOCATION_SHORTCUT\)/)
+  assert.doesNotMatch(source, /globalShortcut\.unregisterAll\(\)/)
+  assert.match(preload, /onGlobalInvocation/)
+  assert.match(preload, /zn:global-invocation/)
+  assert.match(workbench, /onGlobalInvocation/)
+  assert.match(workbench, /focusComposerInput\(\)/)
+
+  const callbackStart = workbench.indexOf('onGlobalInvocation(() =>')
+  const callbackEnd = workbench.indexOf('})', callbackStart)
+  assert.ok(callbackStart >= 0)
+  assert.ok(callbackEnd > callbackStart)
+  const callback = workbench.slice(callbackStart, callbackEnd)
+  assert.doesNotMatch(callback, /startZnWork|requestSubmit|submitZnWork/)
+})
+
 test('ZN preload exposes only the ZN bridge and does not import inherited preload', () => {
   const source = read('electron/zn-preload.ts')
 

@@ -61,6 +61,11 @@ contextBridge.exposeInMainWorld('znDesktop', {
       const listener = (_event: IpcRendererEvent, payload: ZnDesktopDeepLink) => callback(payload)
       ipcRenderer.on('zn:deep-link', listener)
       return () => ipcRenderer.removeListener('zn:deep-link', listener)
+    },
+    onGlobalInvocation: (callback: () => void) => {
+      const listener = () => callback()
+      ipcRenderer.on('zn:global-invocation', listener)
+      return () => ipcRenderer.removeListener('zn:global-invocation', listener)
     }
   }
 })
