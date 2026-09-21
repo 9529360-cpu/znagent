@@ -1149,7 +1149,11 @@ def configure_veteran_project_validation(
     ):
         return None
 
-    workspace_key = str(Path(workspace).expanduser().resolve())
+    # Veteran canonicalizes local repository paths to forward-slash form
+    # before projectPolicy lookup, including on Windows. Store the managed
+    # project override under that same identity so validation cannot silently
+    # fall back to defaults.
+    workspace_key = str(Path(workspace).expanduser().resolve()).replace("\\", "/")
     projects = raw.get("projects")
     if projects is None:
         projects = {}

@@ -410,7 +410,8 @@ class VeteranEngineeringTests(unittest.TestCase):
             )
             self.assertEqual(bound, "node-test")
             updated = json.loads(target.read_text(encoding="utf-8"))
-            project_policy = updated["projects"][str(workspace.resolve())]
+            project_key = str(workspace.resolve()).replace("\\", "/")
+            project_policy = updated["projects"][project_key]
             self.assertTrue(project_policy["requireValidation"])
             self.assertEqual(
                 project_policy["requiredValidationCapabilities"],

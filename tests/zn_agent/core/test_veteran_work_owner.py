@@ -299,7 +299,8 @@ class VeteranWorkOwnerTests(unittest.TestCase):
             self.assertEqual(configured.phase, "planning")
             self.assertEqual(self.capability.plan_calls, 0)
             policy = json.loads(operator.read_text(encoding="utf-8"))
-            project_policy = policy["projects"][str(self.workspace.resolve())]
+            project_key = str(self.workspace.resolve()).replace("\\", "/")
+            project_policy = policy["projects"][project_key]
             self.assertTrue(project_policy["requireValidation"])
             self.assertEqual(
                 project_policy["requiredValidationCapabilities"],
