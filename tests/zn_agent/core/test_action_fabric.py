@@ -228,6 +228,7 @@ class MachineActionFabricTests(unittest.TestCase):
                 "windows.display.brightness.read",
                 "windows.display.brightness.set",
                 "windows.network.wifi.read",
+                "windows.screen.capture",
             ),
         )
         self.assertEqual(
@@ -261,6 +262,10 @@ class MachineActionFabricTests(unittest.TestCase):
         self.assertEqual(
             registry.descriptor("windows.network.wifi.read").body_action_kind,
             "windows_network_wifi_read",
+        )
+        self.assertEqual(
+            registry.descriptor("windows.screen.capture").body_action_kind,
+            "windows_screen_capture",
         )
 
     def test_machine_availability_tracks_fresh_graph_evidence(self) -> None:
