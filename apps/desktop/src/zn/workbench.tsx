@@ -48,6 +48,7 @@ import {
 } from './i18n'
 import type { ZnLocalePreference } from '../../localization/zn-localization'
 import { ZnMissingRestoreControls } from './restore-controls'
+import { ZnSlidesWorkstation } from './slides-workstation'
 import {
   addZnThreadMessage,
   loadZnThreadCache,
@@ -79,6 +80,7 @@ function artifactKindLabel(kind: string, t: TFunction): string {
   if (kind === 'diff') return t('artifact.diff')
   if (kind === 'file') return t('artifact.file')
   if (kind === 'terminal') return t('artifact.terminal')
+  if (kind === 'presentation') return 'Slides'
   return t('artifact.other')
 }
 
@@ -262,6 +264,10 @@ export function ZnWorkbench() {
   )
   const activeWorkspace = activeThread?.workspace || null
   const activeArtifacts = useMemo(() => activeThread?.artifacts || [], [activeThread])
+  const activePresentation = useMemo(
+    () => activeArtifacts.find(artifact => artifact.kind === 'presentation') || null,
+    [activeArtifacts]
+  )
   const activeRestorePoints = activeThread?.restorePoints
   const selectedArtifact = useMemo(
     () => activeArtifacts.find(artifact => artifact.id === selectedArtifactId) || activeArtifacts[0] || null,
@@ -657,6 +663,10 @@ export function ZnWorkbench() {
     })
   }, [])
 
+  useEffect(() => {
+    if (activePresentation && view === 'work') requestWindowMode('expanded')
+  }, [activePresentation?.id, activeThreadId, requestWindowMode, view])
+
   const openSettings = useCallback(() => {
     setView('settings')
     requestWindowMode('expanded')
@@ -681,7 +691,7 @@ export function ZnWorkbench() {
   const firstResult = activeArtifacts[0] || null
 
   return (
-    <div className={'zn-app ' + windowMode + (contextOpen ? ' details-open' : '')}>
+    <div className={'zn-app ' + windowMode + (contextOpen ? ' details-open' : '') + (activePresentation && view === 'work' ? ' slides-open' : '')}>
       <aside className="zn-sidebar">
         <div className="zn-brand-row">
           <div className="zn-mark" aria-hidden="true">ZN</div>
@@ -772,7 +782,7 @@ export function ZnWorkbench() {
           </div>
 
           <div className="zn-topbar-copy">
-            <div className="zn-topbar-title">{view === 'settings' ? t('settings.title') : activeThread ? threadDisplayTitle(activeThread.title, t) : t('sidebar.newWork')}</div>
+            <div className="zn-topbar-title">{view === 'settings' ? t('settings.title') : activePresentation ? activePresentation.name : activeThread ? threadDisplayTitle(activeThread.title, t) : t('sidebar.newWork')}</div>
             <div className="zn-muted zn-small">{view === 'settings' ? `ZN · ${t('topbar.thisComputer')}` : activeWorkspace?.name || t('topbar.thisComputer')}</div>
           </div>
 
@@ -894,6 +904,9 @@ export function ZnWorkbench() {
           </main>
         ) : (
           <>
+            {activePresentation ? (
+              <ZnSlidesWorkstation artifact={activePresentation} artifacts={activeArtifacts} />
+            ) : (
             <main className="zn-thread-surface">
               {deepLinkNotice ? (
                 <div className="zn-notice">
@@ -1055,6 +1068,7 @@ export function ZnWorkbench() {
                 </section>
               ) : null}
             </main>
+            )}
 
             <form className="zn-composer-wrap" onSubmit={submit}>
               <div className="zn-composer">
@@ -1148,7 +1162,11 @@ export function ZnWorkbench() {
                     <strong>{selectedArtifact.name}</strong>
                     {selectedArtifact.path ? <span title={selectedArtifact.path}>{selectedArtifact.path}</span> : null}
                   </div>
-                  <pre>{selectedArtifact.content || t('details.noPreview')}</pre>
+                  {selectedArtifact.kind === 'presentation' ? (
+                    <div className="zn-artifact-note">{selectedArtifact.name}</div>
+                  ) : (
+                    <pre>{selectedArtifact.content || t('details.noPreview')}</pre>
+                  )}
                   {selectedArtifact.metadata?.truncated ? <div className="zn-artifact-note">{t('details.previewTruncated')}</div> : null}
                 </div>
               ) : null}

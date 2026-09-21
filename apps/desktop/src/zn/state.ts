@@ -14,7 +14,7 @@ export type ZnWorkspace = {
   attachedAt?: number
 }
 
-export type ZnArtifactKind = 'file' | 'diff' | 'terminal' | 'other'
+export type ZnArtifactKind = 'file' | 'diff' | 'terminal' | 'presentation' | 'other'
 
 export type ZnArtifact = {
   id: string

@@ -15,6 +15,7 @@ from .document_research_completion_safety import (
 )
 from .local_inference_runtime import LocalInferenceRuntimeDiscovery
 from .local_office_behavior import install_local_office_behavior
+from .presentation_work_behavior import install_presentation_work_behavior
 from .local_service_recovery_behavior import install_local_service_recovery_behavior
 from .long_running_terminal_behavior import install_long_running_terminal_behavior
 from .research_information_resident import ResearchInformationResidentRuntime
@@ -132,6 +133,7 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
         install_current_app_text_cleanup_behavior(self)
         install_current_app_text_cleanup_completion(self)
         install_local_office_behavior(self)
+        install_presentation_work_behavior(self)
         install_long_running_terminal_behavior(self)
         install_local_service_recovery_behavior(self)
         install_browser_spreadsheet_behavior(self)
