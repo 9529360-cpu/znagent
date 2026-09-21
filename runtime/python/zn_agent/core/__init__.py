@@ -20,6 +20,12 @@ from .action_fabric import (
     build_machine_action_fabric,
 )
 from .body import BodyAction, BodyActionResult, NativeBody
+from .visual_action_reasoner import (
+    GeminiVisualActionReasoner,
+    VisualActionDecision,
+    VisualActionInference,
+    parse_visual_action_decision,
+)
 from .budget import CognitiveBudgetManager
 from .capabilities import CapabilityRegistry, CallableCapability, ExactTaskCapability
 from .capability_loader import LoadedCapability, PromotedCapabilityLoader
@@ -104,6 +110,7 @@ __all__ = [
     "Assessment",
     "BodyAction",
     "BodyActionResult",
+    "GeminiVisualActionReasoner",
     "BodyState",
     "build_resident_runtime",
     "build_resident_runtime_from_existing_stack",
@@ -169,8 +176,11 @@ __all__ = [
     "StructuredMemory",
     "TaskReadiness",
     "ThoughtFrame",
+    "VisualActionDecision",
+    "VisualActionInference",
     "Worker",
     "WorkerFactory",
+    "parse_visual_action_decision",
     "WorkerResult",
     "WorkingState",
     "WorldFocus",
