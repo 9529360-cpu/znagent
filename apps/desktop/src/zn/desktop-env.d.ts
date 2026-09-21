@@ -78,6 +78,7 @@ declare interface Window {
     }
     shell: {
       onDeepLink: (callback: (payload: ZnDesktopDeepLink) => void) => () => void
+      onGlobalInvocation: (callback: () => void) => () => void
     }
   }
 }

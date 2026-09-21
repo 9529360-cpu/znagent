@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { app, BrowserWindow, dialog, Menu, shell, Tray } from 'electron'
+import { app, BrowserWindow, dialog, globalShortcut, Menu, shell, Tray } from 'electron'
 
 import { configureZnPackagedRuntime } from './zn-packaged-runtime'
 import { parseZnDeepLink, type ZnDeepLink, znDeepLinksFromArgv } from './zn-protocol'
@@ -13,6 +13,7 @@ import { registerZnWorkspaceIpc } from './zn-workspace-ipc'
 const moduleDir = path.dirname(fileURLToPath(import.meta.url))
 const preloadPath = path.join(moduleDir, 'electron-preload.js')
 const shellPath = path.join(moduleDir, 'zn-shell.html')
+const ZN_GLOBAL_INVOCATION_SHORTCUT = 'CommandOrControl+Alt+Space'
 
 let primaryWindow: BrowserWindow | null = null
 let windowsResidentSurface: ZnWindowsResidentSurface | null = null
@@ -113,6 +114,29 @@ function ensurePrimaryWindow(): BrowserWindow {
   return primaryWindow
 }
 
+function focusComposerAfterInvocation(window: BrowserWindow): void {
+  const notify = () => {
+    if (!window.isDestroyed()) window.webContents.send('zn:global-invocation')
+  }
+  if (window.webContents.isLoading()) {
+    window.webContents.once('did-finish-load', notify)
+    return
+  }
+  notify()
+}
+
+function showPrimaryWindow(focusComposer = false): void {
+  const window = ensurePrimaryWindow()
+  if (windowsResidentSurface) {
+    windowsResidentSurface.show()
+  } else {
+    if (window.isMinimized()) window.restore()
+    window.show()
+    window.focus()
+  }
+  if (focusComposer) focusComposerAfterInvocation(window)
+}
+
 function initializeWindowsResidentSurface(): void {
   if (process.platform !== 'win32' || windowsResidentSurface) return
 
@@ -153,6 +177,16 @@ function initializeWindowsResidentSurface(): void {
   }
 }
 
+function initializeGlobalInvocation(): void {
+  if (process.platform !== 'win32') return
+  const registered = globalShortcut.register(ZN_GLOBAL_INVOCATION_SHORTCUT, () => {
+    showPrimaryWindow(true)
+  })
+  if (!registered) {
+    console.warn(`[ZN] global invocation shortcut unavailable: ${ZN_GLOBAL_INVOCATION_SHORTCUT}`)
+  }
+}
+
 async function bootstrapZnDesktop(): Promise<void> {
   if (!app.requestSingleInstanceLock()) {
     app.quit()
@@ -162,16 +196,16 @@ async function bootstrapZnDesktop(): Promise<void> {
   for (const link of znDeepLinksFromArgv(process.argv)) pendingDeepLinks.push(link)
 
   app.on('before-quit', () => windowsResidentSurface?.beginQuit())
+  app.on('will-quit', () => {
+    if (process.platform === 'win32') globalShortcut.unregister(ZN_GLOBAL_INVOCATION_SHORTCUT)
+  })
   app.on('open-url', (event, url) => {
     event.preventDefault()
     receiveDeepLink(url)
   })
   app.on('second-instance', (_event, argv) => {
     for (const link of znDeepLinksFromArgv(argv)) deliverDeepLink(link)
-    const window = ensurePrimaryWindow()
-    if (window.isMinimized()) window.restore()
-    window.show()
-    window.focus()
+    showPrimaryWindow(true)
   })
 
   if (app.isPackaged) {
@@ -190,6 +224,7 @@ async function bootstrapZnDesktop(): Promise<void> {
     console.warn('[ZN] OS protocol registration for zn:// is unavailable in this build')
   }
   initializeWindowsResidentSurface()
+  initializeGlobalInvocation()
   ensurePrimaryWindow()
   await startZnResidentOnDesktopReady()
 
