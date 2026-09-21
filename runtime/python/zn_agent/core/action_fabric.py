@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 """ZN-owned semantic action discovery substrate.
 
 This module describes actions and their current availability.  It deliberately
@@ -391,6 +393,20 @@ def build_machine_action_fabric(device_capabilities: Any) -> ActionFabricRegistr
             },
         )
 
+    def uia_availability(descriptor: ActionDescriptor) -> ActionAvailability:
+        if os.name != "nt":
+            return ActionAvailability(
+                descriptor.action_id,
+                "unavailable",
+                reason="Windows UI Automation control actions are available only on Windows",
+                evidence={"source": "windows_uia"},
+            )
+        return ActionAvailability(
+            descriptor.action_id,
+            "available",
+            reason="Windows UI Automation control-pattern runtime is available",
+            evidence={"source": "windows_uia", "semantic_selector": True},
+        )
     registry.register(
         ActionDescriptor(
             action_id="windows.application.launch",
@@ -634,6 +650,215 @@ def build_machine_action_fabric(device_capabilities: Any) -> ActionFabricRegistr
             tags=("windows", "display", "brightness", "native", "body"),
         ),
         availability_probe=brightness_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.ui.controls.list",
+            provider="zn.windows.uia",
+            description=(
+                "List a bounded set of one semantic Windows UI Automation control type "
+                "inside the exact current foreground application."
+            ),
+            body_action_kind="automation_controls_list",
+            input_schema={
+                "type": "object",
+                "required": ["application_id", "control_type"],
+                "properties": {
+                    "application_id": {"type": "string"},
+                    "control_type": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            effect_class="read_only",
+            sensitivity="interactive_desktop_state",
+            preconditions=(
+                "application_id is the exact current foreground application",
+                "control_type is one supported bounded UI Automation semantic type",
+            ),
+            postconditions=(
+                "at most 24 current controls of the requested type are returned without text values",
+            ),
+            verification=("the bounded UI Automation candidate read itself is current evidence",),
+            reversibility="not_applicable",
+            replay_semantics="read_only",
+            tags=("windows", "uia", "gui", "sense", "candidate_inventory", "body"),
+        ),
+        availability_probe=uia_availability,
+    )
+
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.ui.control.read",
+            provider="zn.windows.uia",
+            description=(
+                "Read one exact foreground Windows UI Automation control-pattern state "
+                "through a semantic selector."
+            ),
+            body_action_kind="automation_control_read",
+            input_schema={
+                "type": "object",
+                "required": ["application_id", "control_type", "pattern"],
+                "properties": {
+                    "application_id": {"type": "string"},
+                    "control_type": {"type": "string"},
+                    "control_name": {"type": "string"},
+                    "automation_id": {"type": "string"},
+                    "pattern": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            effect_class="read_only",
+            sensitivity="interactive_desktop_state",
+            preconditions=(
+                "application_id is the exact current foreground application",
+                "name/automation_id selector resolves to exactly one enabled onscreen control",
+                "the requested UI Automation control pattern is exposed",
+            ),
+            postconditions=("fresh exact-control pattern state is returned",),
+            verification=("the UI Automation pattern read itself is current desktop evidence",),
+            reversibility="not_applicable",
+            replay_semantics="read_only",
+            tags=("windows", "uia", "gui", "sense", "semantic_control", "body"),
+        ),
+        availability_probe=uia_availability,
+    )
+
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.ui.control.set_value",
+            provider="zn.windows.uia",
+            description=(
+                "Set one exact foreground Windows UI Automation ValuePattern control "
+                "through a semantic selector."
+            ),
+            body_action_kind="automation_control_set_value",
+            input_schema={
+                "type": "object",
+                "required": ["application_id", "control_type", "value"],
+                "properties": {
+                "application_id": {"type": "string"},
+                "control_type": {"type": "string"},
+                "control_name": {"type": "string"},
+                "automation_id": {"type": "string"},                    "value": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            effect_class="reversible_side_effect",
+            required_authority=("body_action",),
+            sensitivity="interactive_desktop_control",
+            preconditions=(
+                "application_id is the exact current foreground application",
+                "name/automation_id selector resolves to exactly one enabled onscreen non-password control",
+                "the control exposes writable ValuePattern",
+            ),
+            postconditions=("fresh exact-control ValuePattern digest matches the requested value",),
+            verification=("fresh UI Automation ValuePattern readback",),
+            reversibility="set the previously observed value through the same semantic control action",
+            replay_semantics="verify_before_replay",
+            tags=("windows", "uia", "gui", "value", "semantic_control", "body"),
+        ),
+        availability_probe=uia_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.ui.control.toggle",
+            provider="zn.windows.uia",
+            description="Set one exact foreground Windows UI Automation TogglePattern control on or off.",
+            body_action_kind="automation_control_toggle",
+            input_schema={
+                "type": "object",
+                "required": ["application_id", "control_type", "state"],
+                "properties": {
+                "application_id": {"type": "string"},
+                "control_type": {"type": "string"},
+                "control_name": {"type": "string"},
+                "automation_id": {"type": "string"},                    "state": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            effect_class="reversible_side_effect",
+            required_authority=("body_action",),
+            sensitivity="interactive_desktop_control",
+            preconditions=(
+                "application_id is the exact current foreground application",
+                "semantic selector resolves to exactly one enabled onscreen TogglePattern control",
+                "indeterminate toggle state is rejected",
+            ),
+            postconditions=("fresh exact-control TogglePattern state equals on/off target",),
+            verification=("fresh UI Automation TogglePattern readback",),
+            reversibility="toggle to the previously observed on/off state",
+            replay_semantics="verify_before_replay",
+            tags=("windows", "uia", "gui", "toggle", "semantic_control", "body"),
+        ),
+        availability_probe=uia_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.ui.control.expand_collapse",
+            provider="zn.windows.uia",
+            description=(
+                "Expand or collapse one exact foreground Windows UI Automation "
+                "ExpandCollapsePattern control."
+            ),
+            body_action_kind="automation_control_expand_collapse",
+            input_schema={
+                "type": "object",
+                "required": ["application_id", "control_type", "state"],
+                "properties": {
+                "application_id": {"type": "string"},
+                "control_type": {"type": "string"},
+                "control_name": {"type": "string"},
+                "automation_id": {"type": "string"},                    "state": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            effect_class="reversible_side_effect",
+            required_authority=("body_action",),
+            sensitivity="interactive_desktop_control",
+            preconditions=(
+                "application_id is the exact current foreground application",
+                "semantic selector resolves to exactly one enabled onscreen ExpandCollapsePattern control",
+            ),
+            postconditions=("fresh exact-control state equals expanded/collapsed target",),
+            verification=("fresh UI Automation ExpandCollapsePattern readback",),
+            reversibility="restore the previously observed expand/collapse state",
+            replay_semantics="verify_before_replay",
+            tags=("windows", "uia", "gui", "expand_collapse", "semantic_control", "body"),
+        ),
+        availability_probe=uia_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.ui.control.select",
+            provider="zn.windows.uia",
+            description=(
+                "Select one exact foreground Windows UI Automation SelectionItemPattern control."
+            ),
+            body_action_kind="automation_control_select",
+            input_schema={
+                "type": "object",
+                "required": ["application_id", "control_type"],
+                "properties": {
+                "application_id": {"type": "string"},
+                "control_type": {"type": "string"},
+                "control_name": {"type": "string"},
+                "automation_id": {"type": "string"},                },
+                "additionalProperties": False,
+            },
+            effect_class="reversible_side_effect",
+            required_authority=("body_action",),
+            sensitivity="interactive_desktop_control",
+            preconditions=(
+                "application_id is the exact current foreground application",
+                "semantic selector resolves to exactly one enabled onscreen SelectionItemPattern control",
+            ),
+            postconditions=("fresh exact-control SelectionItemPattern reports selected=true",),
+            verification=("fresh UI Automation SelectionItemPattern readback",),
+            reversibility="selection is application/container specific",
+            replay_semantics="verify_before_replay",
+            tags=("windows", "uia", "gui", "selection", "semantic_control", "body"),
+        ),
+        availability_probe=uia_availability,
     )
     registry.register(
         ActionDescriptor(

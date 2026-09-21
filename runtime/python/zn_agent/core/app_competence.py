@@ -2,13 +2,33 @@ from __future__ import annotations
 
 """Version-aware application competence metadata for ZN.
 
-This registry is data-only. It selects app/version-specific bindings to existing
-Action Fabric action IDs; it does not execute actions, grant authority, persist a
-second capability universe, or bypass Body verification.
+Competence packs are data, not another agent runtime. They can describe a staged
+sequence of existing Action Fabric actions plus explicit read-only completion
+conditions. Execution, authority, replay policy, Work state and verification
+remain owned by ZN's existing Action Fabric / Body / Work chain.
 """
 
 from dataclasses import dataclass, field
 from typing import Any, Mapping
+
+
+_FORBIDDEN_RUNTIME_ARGUMENTS = frozenset(
+    {
+        "application_id",
+        "event_id",
+        "hwnd",
+        "window_handle",
+        "pid",
+        "process_id",
+        "runtime_id",
+        "x",
+        "y",
+        "screen_x",
+        "screen_y",
+        "coordinates",
+        "cursor_position",
+    }
+)
 
 
 def _clean(value: object) -> str:
@@ -19,11 +39,82 @@ def _key(value: object) -> str:
     return _clean(value).casefold()
 
 
+def _safe_arguments(value: Mapping[str, Any] | None, *, owner: str) -> dict[str, Any]:
+    arguments = dict(value or {})
+    forbidden = sorted(
+        str(name)
+        for name in arguments
+        if str(name).strip().casefold() in _FORBIDDEN_RUNTIME_ARGUMENTS
+    )
+    if forbidden:
+        raise ValueError(
+            f"{owner} cannot persist runtime/native action authority: " + ", ".join(forbidden)
+        )
+    return arguments
+
+
+@dataclass(frozen=True, slots=True)
+class AppCompetenceCompletion:
+    """Read-only proof expected after one competence stage."""
+
+    action_id: str
+    arguments: Mapping[str, Any] = field(default_factory=dict)
+    expected: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        action_id = _clean(self.action_id)
+        if not action_id:
+            raise ValueError("competence completion action_id must not be empty")
+        arguments = _safe_arguments(self.arguments, owner="competence completion")
+        expected = dict(self.expected or {})
+        if not expected:
+            raise ValueError("competence completion must declare expected read-only evidence")
+        object.__setattr__(self, "action_id", action_id)
+        object.__setattr__(self, "arguments", arguments)
+        object.__setattr__(self, "expected", expected)
+
+
+@dataclass(frozen=True, slots=True)
+class AppCompetenceStage:
+    """One bounded semantic action in an app/version competence recipe."""
+
+    action_id: str
+    arguments: Mapping[str, Any] = field(default_factory=dict)
+    completion: AppCompetenceCompletion | None = None
+    timeout_ms: int = 3000
+    execution_mode: str = "semantic_action"
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        action_id = _clean(self.action_id)
+        if not action_id:
+            raise ValueError("competence stage action_id must not be empty")
+        arguments = _safe_arguments(self.arguments, owner="competence stage")
+        timeout_ms = int(self.timeout_ms)
+        if not 100 <= timeout_ms <= 120_000:
+            raise ValueError("competence stage timeout_ms must be within 100..120000")
+        execution_mode = _key(self.execution_mode).replace(" ", "_")
+        if execution_mode != "semantic_action":
+            raise ValueError(
+                "competence stage execution_mode must be semantic_action in schema v1"
+            )
+        if self.completion is not None and not isinstance(
+            self.completion, AppCompetenceCompletion
+        ):
+            raise TypeError("competence stage completion must be AppCompetenceCompletion")
+        object.__setattr__(self, "action_id", action_id)
+        object.__setattr__(self, "arguments", arguments)
+        object.__setattr__(self, "timeout_ms", timeout_ms)
+        object.__setattr__(self, "execution_mode", execution_mode)
+        object.__setattr__(self, "metadata", dict(self.metadata or {}))
+
+
 @dataclass(frozen=True, slots=True)
 class AppCompetenceBinding:
     capability: str
     action_id: str
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    stages: tuple[AppCompetenceStage, ...] = ()
 
     def __post_init__(self) -> None:
         capability = _key(self.capability)
@@ -32,9 +123,27 @@ class AppCompetenceBinding:
             raise ValueError("competence capability must not be empty")
         if not action_id:
             raise ValueError("competence action_id must not be empty")
+        stages = tuple(self.stages or ())
+        if any(not isinstance(stage, AppCompetenceStage) for stage in stages):
+            raise TypeError("competence stages must contain AppCompetenceStage values")
+        if stages and stages[0].action_id != action_id:
+            raise ValueError(
+                "competence binding action_id must equal the first staged action_id"
+            )
         object.__setattr__(self, "capability", capability)
         object.__setattr__(self, "action_id", action_id)
         object.__setattr__(self, "metadata", dict(self.metadata or {}))
+        object.__setattr__(self, "stages", stages)
+
+    def stage_plan(self) -> tuple[AppCompetenceStage, ...]:
+        if self.stages:
+            return self.stages
+        return (
+            AppCompetenceStage(
+                action_id=self.action_id,
+                metadata=dict(self.metadata or {}),
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,19 +216,44 @@ class AppCompetenceRegistry:
         pack = self.resolve(app, version)
         return pack.binding(capability) if pack is not None else None
 
+    def stage_plan(
+        self,
+        app: str,
+        version: str,
+        capability: str,
+    ) -> tuple[AppCompetenceStage, ...]:
+        binding = self.binding(app, version, capability)
+        return binding.stage_plan() if binding is not None else ()
+
     def validate_action_fabric(self, action_fabric: object) -> None:
         descriptor = getattr(action_fabric, "descriptor", None)
         if not callable(descriptor):
             raise TypeError("action_fabric must expose descriptor(action_id)")
-        missing = sorted({
-            binding.action_id
-            for pack in self._packs.values()
-            for binding in pack.bindings
-            if descriptor(binding.action_id) is None
-        })
+
+        missing: set[str] = set()
+        non_read_only_completions: set[str] = set()
+        for pack in self._packs.values():
+            for binding in pack.bindings:
+                for stage in binding.stage_plan():
+                    stage_descriptor = descriptor(stage.action_id)
+                    if stage_descriptor is None:
+                        missing.add(stage.action_id)
+                    completion = stage.completion
+                    if completion is None:
+                        continue
+                    completion_descriptor = descriptor(completion.action_id)
+                    if completion_descriptor is None:
+                        missing.add(completion.action_id)
+                    elif str(getattr(completion_descriptor, "effect_class", "")) != "read_only":
+                        non_read_only_completions.add(completion.action_id)
         if missing:
             raise ValueError(
-                "competence references unknown Action Fabric actions: " + ", ".join(missing)
+                "competence references unknown Action Fabric actions: " + ", ".join(sorted(missing))
+            )
+        if non_read_only_completions:
+            raise ValueError(
+                "competence completion actions must be read_only: "
+                + ", ".join(sorted(non_read_only_completions))
             )
 
     def packs(self, *, app: str | None = None) -> tuple[AppCompetencePack, ...]:

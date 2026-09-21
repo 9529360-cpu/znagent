@@ -51,7 +51,15 @@ class MachineActionFabricTests(unittest.TestCase):
                 "windows.display.brightness.read",
                 "windows.display.brightness.set",
                 "windows.network.wifi.read",
+
                 "windows.screen.capture",
+
+                "windows.ui.control.expand_collapse",
+                "windows.ui.control.read",
+                "windows.ui.control.select",
+                "windows.ui.control.set_value",
+                "windows.ui.control.toggle",
+                "windows.ui.controls.list",
             ),
         )
         self.assertEqual(
@@ -132,7 +140,15 @@ class ProductActionFabricIntegrationTests(unittest.TestCase):
                         "windows.display.brightness.read",
                         "windows.display.brightness.set",
                         "windows.network.wifi.read",
+
                         "windows.screen.capture",
+
+                        "windows.ui.control.expand_collapse",
+                        "windows.ui.control.read",
+                        "windows.ui.control.select",
+                        "windows.ui.control.set_value",
+                        "windows.ui.control.toggle",
+                        "windows.ui.controls.list",
                     ),
                 )
                 self.assertIs(
