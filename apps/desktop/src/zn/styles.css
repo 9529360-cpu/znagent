@@ -456,6 +456,33 @@ button, input, textarea { -webkit-tap-highlight-color: transparent; }
   background: rgba(5, 9, 17, .34);
   border: 1px solid rgba(177, 196, 255, .06);
 }
+.zn-execution-evidence {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 2px;
+}
+.zn-execution-evidence span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(190, 207, 255, .1);
+  background: rgba(29, 39, 64, .56);
+  color: #aab6cb;
+  font-size: 10.5px;
+  font-weight: 650;
+}
+.zn-activity-technical {
+  grid-column: 2;
+  margin-top: 1px;
+  color: #748198;
+  font-size: 10.5px;
+}
+.zn-activity-technical summary { cursor: pointer; user-select: none; }
+.zn-activity-technical .zn-activity-detail { margin-top: 8px; }
 
 .zn-notice {
   width: min(780px, 100%);

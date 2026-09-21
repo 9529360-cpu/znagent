@@ -78,6 +78,8 @@ export type ZnWorkProgress = {
   terminal: boolean
   finalized: boolean
   updatedAt: number
+  executionPath?: string
+  modelInvocations?: number
   error?: string
   recovery?: ZnWorkRecovery
   delegation?: ZnDelegatedProgress
@@ -248,6 +250,12 @@ function boundedCount(value: unknown): number {
   const count = Number(value)
   if (!Number.isFinite(count) || count < 0) return 0
   return Math.min(256, Math.floor(count))
+}
+
+function optionalNonNegativeInteger(value: unknown): number | undefined {
+  const count = Number(value)
+  if (!Number.isSafeInteger(count) || count < 0) return undefined
+  return count
 }
 
 export function normalizeDelegatedProgress(value: unknown): ZnDelegatedProgress | undefined {
@@ -535,6 +543,8 @@ function normalizeWorkProgress(value: unknown): ZnWorkProgress {
     })
   const error = String(item.error || '').trim()
   const blockedBy = String(item.blocked_by || item.blockedBy || '').trim()
+  const executionPath = String(item.execution_path || item.executionPath || '').trim()
+  const modelInvocations = optionalNonNegativeInteger(item.model_invocations ?? item.modelInvocations)
   return {
     eventId,
     threadId,
@@ -545,6 +555,8 @@ function normalizeWorkProgress(value: unknown): ZnWorkProgress {
     terminal: item.terminal === true,
     finalized: item.finalized === true,
     updatedAt: timestamp(item.updated_at || item.updatedAt),
+    ...(executionPath ? { executionPath } : {}),
+    ...(modelInvocations !== undefined ? { modelInvocations } : {}),
     ...(error ? { error } : {}),
     ...(recovery ? { recovery } : {}),
     ...(delegation ? { delegation } : {}),
