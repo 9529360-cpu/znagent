@@ -69,15 +69,15 @@ jobs:
           }
       - name: Run guarded E2E-28/34 on runner-local free Gemini
         run: |
-          $hermesEnv = Join-Path $env:LOCALAPPDATA 'hermes\.env'
-          if (-not (Test-Path -LiteralPath $hermesEnv)) {
-            throw "E2E-28/34 requires the runner-local Hermes provider environment: $hermesEnv"
+          $providerEnv = Join-Path $env:LOCALAPPDATA 'znagent-ci\provider.env'
+          if (-not (Test-Path -LiteralPath $providerEnv)) {
+            throw "E2E-28/34 requires the ZN runner-local provider environment: $providerEnv"
           }
-          $googleLine = Get-Content -LiteralPath $hermesEnv |
+          $googleLine = Get-Content -LiteralPath $providerEnv |
             Where-Object { $_ -match '^\s*GOOGLE_API_KEY\s*=' } |
             Select-Object -First 1
           if (-not $googleLine) {
-            throw "E2E-28/34 requires GOOGLE_API_KEY in the runner-local Hermes provider environment"
+            throw "E2E-28/34 requires GOOGLE_API_KEY in the ZN runner-local provider environment"
           }
           $googleKey = $googleLine.Substring($googleLine.IndexOf('=') + 1).Trim().Trim('"').Trim("'")
           if (-not $googleKey) {
