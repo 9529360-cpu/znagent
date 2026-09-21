@@ -20,11 +20,11 @@ test('existing Resident progress card renders bounded delegated phase/status tex
   assert.match(client, /export type ZnDelegatedPhaseProgress/)
   assert.match(client, /normalizeDelegatedProgress/)
   assert.match(client, /delegation\?: ZnDelegatedProgress/)
-  assert.match(workbench, /Resident progress/)
+  assert.match(workbench, /work\.residentProgress/)
   assert.match(workbench, /workProgress\.delegation/)
-  assert.match(workbench, /Delegated work/)
-  assert.match(workbench, /delegatedKindLabel\(phase\.kind\)/)
-  assert.match(workbench, /delegatedStageLabel\(phase\.stage\)/)
+  assert.match(workbench, /work\.delegated/)
+  assert.match(workbench, /delegatedKindLabel\(phase\.kind, t\)/)
+  assert.match(workbench, /delegatedStageLabel\(phase\.stage, t\)/)
 })
 
 test('delegated renderer path never references internal WorkerRun routing or fingerprint fields', () => {
@@ -62,8 +62,9 @@ test('completed Work exposes durable execution evidence without inferring model 
   assert.match(workbench, /executionEvidenceFromDetail/)
   assert.match(workbench, /detail\.execution_path \?\? detail\.executionPath/)
   assert.match(workbench, /detail\.model_invocations \?\? detail\.modelInvocations/)
-  assert.match(workbench, /aria-label="Execution evidence"/)
-  assert.match(workbench, /model \{executionEvidence\.modelInvocations === 1 \? 'call' : 'calls'\}/)
+  assert.match(workbench, /message\.executionEvidence/)
+  assert.match(workbench, /message\.modelCalls/)
+  assert.match(workbench, /executionPathLabel\(executionEvidence\.executionPath, t\)/)
 
   const helperStart = workbench.indexOf('function executionEvidenceFromDetail')
   const helperEnd = workbench.indexOf('function credentialLabel', helperStart)
