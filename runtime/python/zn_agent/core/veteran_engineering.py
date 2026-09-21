@@ -766,17 +766,19 @@ def ensure_veteran_operator_policy(
     root = Path(state_root).expanduser().resolve()
     target = root / "operator.json"
     existing_managed = False
+    existing: dict[str, Any] | None = None
     if target.exists():
         try:
-            existing = json.loads(target.read_text(encoding="utf-8"))
+            loaded = json.loads(target.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return target
-        marker = existing.get("znManaged") if isinstance(existing, dict) else None
+        marker = loaded.get("znManaged") if isinstance(loaded, dict) else None
         if (
             not isinstance(marker, dict)
             or marker.get("contract") != _ZN_MANAGED_OPERATOR_CONTRACT
         ):
             return target
+        existing = dict(loaded)
         existing_managed = True
 
     worker = discover_veteran_codex_worker(env)
@@ -785,6 +787,13 @@ def ensure_veteran_operator_policy(
 
     root.mkdir(parents=True, exist_ok=True)
     payload = veteran_operator_policy_for_codex(worker)
+    if existing_managed and existing is not None:
+        projects = existing.get("projects")
+        if isinstance(projects, dict) and projects:
+            # Project validation is a ZN-managed override layer derived from
+            # observed repository truth. Refresh bounded defaults without
+            # erasing those per-project bindings on every Resident pulse.
+            payload["projects"] = dict(projects)
     serialized = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
     if existing_managed:
         try:

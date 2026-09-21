@@ -268,6 +268,25 @@ class VeteranEngineeringTests(unittest.TestCase):
                 str(first.absolute()),
             )
 
+            project_overrides = {
+                str((root / "repo").resolve()): {
+                    "requireValidation": True,
+                    "requiredValidationCapabilities": ["node-test"],
+                    "validationCapabilities": [
+                        {
+                            "name": "node-test",
+                            "command": ["npm.cmd", "run", "test"],
+                            "cwd": ".",
+                        }
+                    ],
+                }
+            }
+            created["projects"] = project_overrides
+            target.write_text(
+                json.dumps(created, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
             refreshed = ensure_veteran_operator_policy(
                 state,
                 env={"ZN_VETERAN_CODEX": str(second)},
@@ -278,6 +297,7 @@ class VeteranEngineeringTests(unittest.TestCase):
                 updated["defaults"]["workerPolicy"]["codex"]["command"],
                 str(second.absolute()),
             )
+            self.assertEqual(updated["projects"], project_overrides)
 
             custom = {
                 "defaults": {
