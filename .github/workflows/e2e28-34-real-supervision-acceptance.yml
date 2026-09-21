@@ -83,6 +83,7 @@ jobs:
           if (-not $googleKey) {
             throw "E2E-28/34 runner-local GOOGLE_API_KEY is empty"
           }
+          Write-Output "::add-mask::$googleKey"
 
           $configPath = Join-Path $env:GITHUB_WORKSPACE '.ci\e2e28-34-real-config.yaml'
           @(
