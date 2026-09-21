@@ -17,7 +17,7 @@ from .path_context import canonical_host_path, resolved_within
 _CAPABILITY_NAME = "local_file_discovery"
 _MAX_SCAN_ENTRIES = 20_000
 _MAX_RESULTS = 8
-_MAX_DEPTH = 5
+_MAX_DEPTH = 12
 
 _SCOPE_MARKERS: dict[str, tuple[str, ...]] = {
     "downloads": (
@@ -241,12 +241,12 @@ def _windows_known_folder(folder_id: str) -> Path | None:
             ctypes.POINTER(_Guid),
             ctypes.c_ulong,
             ctypes.c_void_p,
-            ctypes.POINTER(ctypes.c_wchar_p),
+            ctypes.POINTER(ctypes.c_void_p),
         ]
         shell32.SHGetKnownFolderPath.restype = ctypes.c_long
         ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
         guid = _Guid.parse(folder_id)
-        pointer = ctypes.c_wchar_p()
+        pointer = ctypes.c_void_p()
         status = int(
             shell32.SHGetKnownFolderPath(
                 ctypes.byref(guid),
@@ -258,9 +258,9 @@ def _windows_known_folder(folder_id: str) -> Path | None:
         if status != 0 or not pointer.value:
             return None
         try:
-            return Path(pointer.value)
+            return Path(ctypes.wstring_at(pointer.value))
         finally:
-            ole32.CoTaskMemFree(ctypes.cast(pointer, ctypes.c_void_p))
+            ole32.CoTaskMemFree(pointer)
     except (AttributeError, OSError, ValueError):
         return None
 
@@ -328,6 +328,7 @@ class LocalFileDiscovery:
             try:
                 iterator = os.scandir(directory)
             except OSError:
+                complete = False
                 continue
             with iterator:
                 for entry in iterator:
@@ -340,12 +341,17 @@ class LocalFileDiscovery:
                         if entry.is_symlink():
                             continue
                         if entry.is_dir(follow_symlinks=False):
-                            if depth < self.max_depth and not _ignored_dir(entry.name):
+                            if _ignored_dir(entry.name):
+                                continue
+                            if depth < self.max_depth:
                                 stack.append((Path(entry.path), depth + 1))
+                            else:
+                                complete = False
                             continue
                         if not entry.is_file(follow_symlinks=False):
                             continue
                     except OSError:
+                        complete = False
                         continue
 
                     path = Path(entry.path)
