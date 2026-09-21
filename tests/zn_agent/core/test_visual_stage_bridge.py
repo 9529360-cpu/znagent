@@ -185,23 +185,67 @@ class VisualStageBridgeTests(unittest.TestCase):
             self.assertIsNone(result.pointer_intent)
             self.assertTrue(result.requires_completion_verification)
 
+    @staticmethod
+    def _scene_precondition(**overrides):
+        value = {
+            "kind": "desktop_scene_foreground_matches",
+            "application_id": "app.test",
+            "identity_sha256": "a" * 64,
+            "scene_id": "desktop-scene-current",
+            "window_rect": {"left": 10.0, "top": 10.0, "right": 90.0, "bottom": 90.0},
+            "screen_width": 100,
+            "screen_height": 100,
+        }
+        value.update(overrides)
+        return value
+
+    @staticmethod
+    def _guard_body(*, identity="a" * 64, rect=None, width=100, height=100):
+        current_rect = rect or {"left": 10.0, "top": 10.0, "right": 90.0, "bottom": 90.0}
+
+        class Body:
+            def observe_desktop_scene_foreground(self, **kwargs):
+                return {
+                    "application_id": "app.test",
+                    "identity_sha256": identity,
+                    "window_rect": dict(current_rect),
+                }
+
+            def act(self, kind, *, event_id=None, **kwargs):
+                assert kind == "pointer_state"
+                return SimpleNamespace(
+                    success=True,
+                    data={"screen_width": width, "screen_height": height},
+                )
+
+        return Body()
+
+    def test_pointer_scene_guard_accepts_fresh_matching_geometry(self):
+        resident = object.__new__(VerifiedPointerClickResidentRuntime)
+        resident.body = self._guard_body()
+        self.assertIsNone(
+            resident._desktop_scene_precondition_error(self._scene_precondition())
+        )
+
     def test_pointer_scene_guard_rejects_identity_drift(self):
         resident = object.__new__(VerifiedPointerClickResidentRuntime)
-        resident.body = SimpleNamespace(
-            observe_desktop_scene_foreground=lambda **kwargs: {
-                "application_id": "app.test",
-                "identity_sha256": "c" * 64,
-            }
+        resident.body = self._guard_body(identity="c" * 64)
+        error = resident._desktop_scene_precondition_error(self._scene_precondition())
+        self.assertIn("identity drifted", error)
+
+    def test_pointer_scene_guard_rejects_window_geometry_drift(self):
+        resident = object.__new__(VerifiedPointerClickResidentRuntime)
+        resident.body = self._guard_body(
+            rect={"left": 20.0, "top": 10.0, "right": 100.0, "bottom": 90.0}
         )
-        error = resident._desktop_scene_precondition_error(
-            {
-                "kind": "desktop_scene_foreground_matches",
-                "application_id": "app.test",
-                "identity_sha256": "a" * 64,
-                "scene_id": "desktop-scene-current",
-            }
-        )
-        self.assertIn("drifted", error)
+        error = resident._desktop_scene_precondition_error(self._scene_precondition())
+        self.assertIn("geometry drifted", error)
+
+    def test_pointer_scene_guard_rejects_screen_geometry_drift(self):
+        resident = object.__new__(VerifiedPointerClickResidentRuntime)
+        resident.body = self._guard_body(width=120)
+        error = resident._desktop_scene_precondition_error(self._scene_precondition())
+        self.assertIn("primary-screen geometry drifted", error)
 
 
 if __name__ == "__main__":

@@ -493,26 +493,72 @@ class VerifiedPointerClickResidentRuntime(RepositoryVerifyingResidentRuntime):
             "desktop_scene_precondition": scene_precondition,
         }, None
 
-    def _desktop_scene_precondition(self, event) -> tuple[dict[str, str] | None, str | None]:
+    def _desktop_scene_precondition(self, event) -> tuple[dict[str, Any] | None, str | None]:
         raw = event.payload.get("desktop_scene_precondition")
         if raw is None:
             return None, None
         if not isinstance(raw, dict):
             return None, "desktop_scene_precondition must be a structured object"
-        unknown = sorted(str(key) for key in raw if key not in {"kind", "application_id", "identity_sha256", "scene_id"})
+        allowed = {
+            "kind",
+            "application_id",
+            "identity_sha256",
+            "scene_id",
+            "window_rect",
+            "screen_width",
+            "screen_height",
+        }
+        unknown = sorted(str(key) for key in raw if key not in allowed)
         if unknown:
-            return None, "desktop_scene_precondition contains unsupported fields: " + ", ".join(unknown)
+            return None, (
+                "desktop_scene_precondition contains unsupported fields: "
+                + ", ".join(unknown)
+            )
         kind = str(raw.get("kind") or "").strip().lower()
         application_id = str(raw.get("application_id") or "").strip()
         identity = str(raw.get("identity_sha256") or "").strip().lower()
         scene_id = str(raw.get("scene_id") or "").strip()
         if kind != self._POINTER_CLICK_SCENE_PRECONDITION_KIND:
             return None, "desktop_scene_precondition kind is unsupported"
-        if not application_id or len(identity) != 64 or any(ch not in "0123456789abcdef" for ch in identity):
-            return None, "desktop_scene_precondition requires exact application_id and SHA-256 identity"
+        if (
+            not application_id
+            or len(identity) != 64
+            or any(ch not in "0123456789abcdef" for ch in identity)
+        ):
+            return None, (
+                "desktop_scene_precondition requires exact application_id and SHA-256 identity"
+            )
         if not scene_id.startswith("desktop-scene-"):
             return None, "desktop_scene_precondition requires an opaque desktop scene_id"
-        return {"kind": kind, "application_id": application_id, "identity_sha256": identity, "scene_id": scene_id}, None
+
+        rect = raw.get("window_rect")
+        if not isinstance(rect, dict) or set(rect) != {"left", "top", "right", "bottom"}:
+            return None, "desktop_scene_precondition requires an exact window_rect"
+        try:
+            normalized_rect = {
+                name: round(float(rect[name]), 3)
+                for name in ("left", "top", "right", "bottom")
+            }
+            screen_width = int(raw.get("screen_width") or 0)
+            screen_height = int(raw.get("screen_height") or 0)
+        except (TypeError, ValueError):
+            return None, "desktop_scene_precondition geometry is invalid"
+        if (
+            normalized_rect["right"] <= normalized_rect["left"]
+            or normalized_rect["bottom"] <= normalized_rect["top"]
+            or screen_width <= 0
+            or screen_height <= 0
+        ):
+            return None, "desktop_scene_precondition geometry must have positive bounds"
+        return {
+            "kind": kind,
+            "application_id": application_id,
+            "identity_sha256": identity,
+            "scene_id": scene_id,
+            "window_rect": normalized_rect,
+            "screen_width": screen_width,
+            "screen_height": screen_height,
+        }, None
 
     def _desktop_scene_precondition_error(self, precondition: Any) -> str | None:
         if precondition is None:
@@ -525,11 +571,35 @@ class VerifiedPointerClickResidentRuntime(RepositoryVerifyingResidentRuntime):
         try:
             observed = observer(application_id=str(precondition["application_id"]))
         except Exception as exc:
-            return f"fresh desktop-scene foreground observation failed: {type(exc).__name__}: {exc}"
+            return (
+                "fresh desktop-scene foreground observation failed: "
+                f"{type(exc).__name__}: {exc}"
+            )
         if not isinstance(observed, dict):
             return "fresh desktop-scene foreground observation returned invalid evidence"
-        if str(observed.get("application_id") or "") != str(precondition["application_id"]) or str(observed.get("identity_sha256") or "").lower() != str(precondition["identity_sha256"]).lower():
+        if (
+            str(observed.get("application_id") or "")
+            != str(precondition["application_id"])
+            or str(observed.get("identity_sha256") or "").lower()
+            != str(precondition["identity_sha256"]).lower()
+        ):
             return "desktop scene foreground identity drifted before pointer input"
+        if dict(observed.get("window_rect") or {}) != dict(precondition.get("window_rect") or {}):
+            return "desktop scene foreground geometry drifted before pointer input"
+
+        pointer_state = self.body.act("pointer_state", event_id=None)
+        if not getattr(pointer_state, "success", False):
+            return "fresh primary-screen dimensions are unavailable before pointer input"
+        try:
+            width = int(pointer_state.data.get("screen_width") or 0)
+            height = int(pointer_state.data.get("screen_height") or 0)
+        except (AttributeError, TypeError, ValueError):
+            return "fresh primary-screen dimensions are invalid before pointer input"
+        if (
+            width != int(precondition.get("screen_width") or 0)
+            or height != int(precondition.get("screen_height") or 0)
+        ):
+            return "primary-screen geometry drifted before pointer input"
         return None
 
     def _fail_pointer_click_precondition(
