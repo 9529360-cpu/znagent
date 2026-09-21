@@ -33,6 +33,7 @@ from .windows_brightness import (
     set_active_brightness,
     validate_brightness_percent,
 )
+from .windows_wifi import read_windows_wifi_state
 
 
 class WindowsCompanionAwareBody(CurrentAppTextAwareBody):
@@ -43,6 +44,7 @@ class WindowsCompanionAwareBody(CurrentAppTextAwareBody):
     _WINDOWS_VOLUME_SET_KIND = "windows_audio_volume_set"
     _WINDOWS_BRIGHTNESS_READ_KIND = "windows_display_brightness_read"
     _WINDOWS_BRIGHTNESS_SET_KIND = "windows_display_brightness_set"
+    _WINDOWS_WIFI_READ_KIND = "windows_network_wifi_read"
     _INTERACTIVE_INPUT_KINDS = frozenset({
         "pointer_move",
         "pointer_click",
@@ -230,6 +232,34 @@ class WindowsCompanionAwareBody(CurrentAppTextAwareBody):
                     completed_at=utc_now(),
                 )
             return self._ok(action, started, data=data)
+
+        if action.kind == self._WINDOWS_WIFI_READ_KIND:
+            if action.args:
+                return BodyActionResult(
+                    action_id=action.action_id,
+                    kind=action.kind,
+                    success=False,
+                    data={"dispatch_sent": False, "disposition": "unexpected_arguments"},
+                    error="windows_network_wifi_read accepts no action arguments",
+                    event_id=action.event_id,
+                    started_at=started,
+                    completed_at=utc_now(),
+                )
+            observed = read_windows_wifi_state()
+            return self._ok(
+                action,
+                started,
+                data={
+                    "interfaces": [asdict(item) for item in observed.interfaces],
+                    "interface_count": observed.interface_count,
+                    "connected_interface_count": observed.connected_interface_count,
+                    "connected": observed.connected,
+                    "observed_at": observed.observed_at,
+                    "source": "windows_native_wifi",
+                    "read_only": True,
+                    "dispatch_sent": False,
+                },
+            )
 
         if action.kind == self._WINDOWS_CONTEXT_KIND:
             if action.args:

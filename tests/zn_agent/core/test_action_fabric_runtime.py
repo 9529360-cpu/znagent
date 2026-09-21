@@ -50,6 +50,7 @@ class MachineActionFabricTests(unittest.TestCase):
                 "windows.context.read",
                 "windows.display.brightness.read",
                 "windows.display.brightness.set",
+                "windows.network.wifi.read",
             ),
         )
         self.assertEqual(
@@ -125,6 +126,7 @@ class ProductActionFabricIntegrationTests(unittest.TestCase):
                         "windows.context.read",
                         "windows.display.brightness.read",
                         "windows.display.brightness.set",
+                        "windows.network.wifi.read",
                     ),
                 )
                 self.assertIs(

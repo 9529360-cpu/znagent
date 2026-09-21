@@ -11,6 +11,10 @@ from zn_agent.core.action_fabric import (
     build_machine_action_fabric,
 )
 from zn_agent.core.windows_brightness import WindowsBrightnessObservation
+from zn_agent.core.windows_wifi import (
+    WindowsWifiInterfaceObservation,
+    WindowsWifiObservation,
+)
 
 
 class ActionFabricRegistryTests(unittest.TestCase):
@@ -223,6 +227,7 @@ class MachineActionFabricTests(unittest.TestCase):
                 "windows.context.read",
                 "windows.display.brightness.read",
                 "windows.display.brightness.set",
+                "windows.network.wifi.read",
             ),
         )
         self.assertEqual(
@@ -252,6 +257,10 @@ class MachineActionFabricTests(unittest.TestCase):
         self.assertEqual(
             registry.descriptor("windows.display.brightness.set").body_action_kind,
             "windows_display_brightness_set",
+        )
+        self.assertEqual(
+            registry.descriptor("windows.network.wifi.read").body_action_kind,
+            "windows_network_wifi_read",
         )
 
     def test_machine_availability_tracks_fresh_graph_evidence(self) -> None:
@@ -308,6 +317,38 @@ class MachineActionFabricTests(unittest.TestCase):
         self.assertEqual(read_state.evidence["current_level_percent"], 88.0)
         self.assertEqual(set_state.evidence["current_level_percent"], 88.0)
         self.assertEqual(read_brightness.call_count, 2)
+
+    @patch(
+        "zn_agent.core.action_fabric.read_windows_wifi_state",
+        return_value=WindowsWifiObservation(
+            (
+                WindowsWifiInterfaceObservation(
+                    "Intel Wi-Fi",
+                    "connected",
+                    True,
+                ),
+                WindowsWifiInterfaceObservation(
+                    "USB Wi-Fi",
+                    "disconnected",
+                    False,
+                ),
+            ),
+            "2026-09-21T12:00:00Z",
+        ),
+    )
+    def test_wifi_availability_uses_fresh_native_interface_state(
+        self,
+        read_wifi,
+    ) -> None:
+        registry = build_machine_action_fabric(self._Graph())
+
+        state = registry.availability("windows.network.wifi.read")
+
+        self.assertTrue(state.available)
+        self.assertEqual(state.evidence["interface_count"], 2)
+        self.assertEqual(state.evidence["connected_interface_count"], 1)
+        self.assertTrue(state.evidence["connected"])
+        read_wifi.assert_called_once_with()
 
     def test_companion_context_fails_closed_when_platform_is_unsupported(self) -> None:
         graph = self._Graph()
