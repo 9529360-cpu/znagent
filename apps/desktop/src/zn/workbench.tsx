@@ -106,6 +106,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => window.setTimeout(resolve, ms))
 }
 
+const ZN_HOME_QUICK_STARTS = [
+  { label: 'Open an app', prompt: 'Open Chrome.' },
+  { label: 'Clean current app', prompt: 'Clean up the text in the current app.' },
+  { label: 'Research a topic', prompt: 'Research this topic and give me the useful evidence: ' }
+] as const
+
 export function ZnWorkbench() {
   const [threads, setThreads] = useState<ZnThread[]>(() => {
     const cached = loadZnThreadCache()
@@ -477,6 +483,14 @@ export function ZnWorkbench() {
 
   const showClearCredential = providerSettings?.credential.source === 'secure_store' || providerSettings?.credential.source === 'config'
   const showProviderGuidance = providerSettings !== null && !providerSettings.cognitionAvailable
+  const chooseHomePrompt = (prompt: string) => {
+    setDraft(prompt)
+    window.requestAnimationFrame(() => {
+      const composer = document.querySelector<HTMLTextAreaElement>('.zn-composer textarea')
+      composer?.focus()
+      composer?.setSelectionRange(composer.value.length, composer.value.length)
+    })
+  }
 
   return (
     <div className={`zn-app${contextOpen ? '' : ' context-closed'}`}>
@@ -718,9 +732,48 @@ export function ZnWorkbench() {
                 </div>
               ) : (
                 <div className="zn-empty-thread">
-                  <span className="zn-eyebrow">ZN</span>
+                  <span className="zn-eyebrow">ZN resident</span>
                   <h1>What should we work on?</h1>
-                  <p>Ask ZN to research, create, edit, or continue work in this workspace. Longer tasks can keep going while you close the window and come back later.</p>
+                  <p>Start with a direct PC action or hand ZN a longer task. Clear system commands stay local when ZN has a deterministic path; open-ended work can use cognition resources when needed.</p>
+
+                  <div className="zn-home-status" aria-label="ZN readiness">
+                    <span><i className={`zn-health-dot ${residentHealth}`} />{residentHealth === 'live' ? 'Resident ready' : residentHealth === 'connecting' ? 'Resident connecting' : 'Resident offline'}</span>
+                    <span>{activeWorkspace ? `Workspace · ${activeWorkspace.name}` : 'No workspace attached'}</span>
+                    <span>{providerSettings?.cognitionAvailable ? 'Cognition available' : 'Local paths remain available'}</span>
+                  </div>
+
+                  <div className="zn-home-quick-starts" aria-label="Quick starts">
+                    {ZN_HOME_QUICK_STARTS.map(action => (
+                      <button key={action.label} type="button" onClick={() => chooseHomePrompt(action.prompt)}>
+                        {action.label}
+                      </button>
+                    ))}
+                    {activeWorkspace ? (
+                      <button type="button" onClick={() => chooseHomePrompt('Review the files in this workspace and tell me what needs attention.')}>Review workspace</button>
+                    ) : (
+                      <button type="button" disabled={workspaceBusy || busy || !activeThread} onClick={() => void attachWorkspace()}>
+                        {workspaceBusy ? 'Attaching…' : 'Attach a folder'}
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="zn-home-capabilities" aria-label="Ways to work with ZN">
+                    <article className="zn-home-card">
+                      <span className="zn-home-card-kicker">PC</span>
+                      <strong>Use this computer</strong>
+                      <span>Open apps and act through ZN-owned Windows capabilities with verification.</span>
+                    </article>
+                    <article className="zn-home-card">
+                      <span className="zn-home-card-kicker">WORK</span>
+                      <strong>Keep work durable</strong>
+                      <span>Attach local work, keep results visible, and reconnect to longer-running tasks later.</span>
+                    </article>
+                    <article className="zn-home-card">
+                      <span className="zn-home-card-kicker">THINK</span>
+                      <strong>Use models as resources</strong>
+                      <span>Bring in model reasoning for ambiguous work without handing over ZN's execution authority.</span>
+                    </article>
+                  </div>
                 </div>
               )}
             </main>
