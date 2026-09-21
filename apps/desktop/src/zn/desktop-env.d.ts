@@ -77,7 +77,9 @@ declare interface Window {
       apply: () => Promise<ZnDesktopUpdateApplyResult>
     }
     shell: {
+      setWindowMode: (mode: 'compact' | 'expanded') => Promise<{ mode: 'compact' | 'expanded'; width: number; height: number }>
       onDeepLink: (callback: (payload: ZnDesktopDeepLink) => void) => () => void
+      onGlobalInvocation: (callback: () => void) => () => void
     }
   }
 }

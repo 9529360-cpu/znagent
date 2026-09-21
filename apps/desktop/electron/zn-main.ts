@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { app, BrowserWindow, dialog, Menu, shell, Tray } from 'electron'
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, shell, Tray } from 'electron'
 
 import { configureZnPackagedRuntime } from './zn-packaged-runtime'
 import { parseZnDeepLink, type ZnDeepLink, znDeepLinksFromArgv } from './zn-protocol'
@@ -13,6 +13,13 @@ import { registerZnWorkspaceIpc } from './zn-workspace-ipc'
 const moduleDir = path.dirname(fileURLToPath(import.meta.url))
 const preloadPath = path.join(moduleDir, 'electron-preload.js')
 const shellPath = path.join(moduleDir, 'zn-shell.html')
+const ZN_GLOBAL_INVOCATION_SHORTCUT = 'CommandOrControl+Alt+Space'
+const ZN_WINDOW_BOUNDS = {
+  compact: { width: 480, height: 620 },
+  expanded: { width: 1120, height: 760 }
+} as const
+
+type ZnWindowMode = keyof typeof ZN_WINDOW_BOUNDS
 
 let primaryWindow: BrowserWindow | null = null
 let windowsResidentSurface: ZnWindowsResidentSurface | null = null
@@ -67,12 +74,20 @@ function routeNavigation(value: string): void {
 export function createZnDesktopWindow(): BrowserWindow {
   const window = new BrowserWindow({
     title: 'ZN',
-    width: 1180,
-    height: 760,
-    minWidth: 760,
-    minHeight: 520,
+    width: ZN_WINDOW_BOUNDS.compact.width,
+    height: ZN_WINDOW_BOUNDS.compact.height,
+    minWidth: 420,
+    minHeight: 480,
     show: false,
     backgroundColor: '#0f1115',
+    backgroundMaterial: 'mica',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#0a1323',
+      symbolColor: '#b7c4d9',
+      height: 62
+    },
+    roundedCorners: true,
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
@@ -80,6 +95,7 @@ export function createZnDesktopWindow(): BrowserWindow {
       sandbox: true
     }
   })
+  window.setMenu(null)
 
   window.once('ready-to-show', () => window.show())
   window.webContents.on('did-finish-load', () => flushDeepLinks(window))
@@ -113,6 +129,38 @@ function ensurePrimaryWindow(): BrowserWindow {
   return primaryWindow
 }
 
+function setZnWindowMode(window: BrowserWindow, mode: ZnWindowMode): void {
+  const bounds = ZN_WINDOW_BOUNDS[mode]
+  if (window.isMaximized()) window.unmaximize()
+  window.setSize(bounds.width, bounds.height, true)
+}
+
+function focusComposerAfterInvocation(window: BrowserWindow): void {
+  const notify = () => {
+    if (!window.isDestroyed()) window.webContents.send('zn:global-invocation')
+  }
+  if (window.webContents.isLoading()) {
+    window.webContents.once('did-finish-load', notify)
+    return
+  }
+  notify()
+}
+
+function showPrimaryWindow(focusComposer = false, mode?: ZnWindowMode): void {
+  const window = ensurePrimaryWindow()
+  if (windowsResidentSurface) {
+    windowsResidentSurface.show()
+  } else {
+    if (window.isMinimized()) window.restore()
+    window.show()
+    window.focus()
+  }
+  // Windows can ignore size changes while a native window is minimized. Apply
+  // compact/expanded bounds only after the resident surface has restored it.
+  if (mode) setZnWindowMode(window, mode)
+  if (focusComposer) focusComposerAfterInvocation(window)
+}
+
 function initializeWindowsResidentSurface(): void {
   if (process.platform !== 'win32' || windowsResidentSurface) return
 
@@ -134,7 +182,7 @@ function initializeWindowsResidentSurface(): void {
       Menu.buildFromTemplate([
         {
           label: 'Open ZN',
-          click: () => surface.show()
+          click: () => showPrimaryWindow(true, 'compact')
         },
         { type: 'separator' },
         {
@@ -143,7 +191,7 @@ function initializeWindowsResidentSurface(): void {
         }
       ])
     )
-    tray.on('double-click', () => surface.show())
+    tray.on('double-click', () => showPrimaryWindow(true, 'compact'))
     windowsResidentSurface = surface
     windowsResidentTray = tray
   } catch (error) {
@@ -151,6 +199,28 @@ function initializeWindowsResidentSurface(): void {
     windowsResidentSurface = null
     windowsResidentTray = null
   }
+}
+
+function initializeGlobalInvocation(): void {
+  if (process.platform !== 'win32') return
+  const registered = globalShortcut.register(ZN_GLOBAL_INVOCATION_SHORTCUT, () => {
+    showPrimaryWindow(true, 'compact')
+  })
+  if (!registered) {
+    console.warn(`[ZN] global invocation shortcut unavailable: ${ZN_GLOBAL_INVOCATION_SHORTCUT}`)
+  }
+}
+
+function registerZnShellIpc(): void {
+  ipcMain.removeHandler('zn:shell:set-window-mode')
+  ipcMain.handle('zn:shell:set-window-mode', (_event, mode: unknown) => {
+    if (mode !== 'compact' && mode !== 'expanded') {
+      throw new Error('invalid ZN window mode')
+    }
+    const window = ensurePrimaryWindow()
+    setZnWindowMode(window, mode)
+    return { mode, ...ZN_WINDOW_BOUNDS[mode] }
+  })
 }
 
 async function bootstrapZnDesktop(): Promise<void> {
@@ -162,16 +232,16 @@ async function bootstrapZnDesktop(): Promise<void> {
   for (const link of znDeepLinksFromArgv(process.argv)) pendingDeepLinks.push(link)
 
   app.on('before-quit', () => windowsResidentSurface?.beginQuit())
+  app.on('will-quit', () => {
+    if (process.platform === 'win32') globalShortcut.unregister(ZN_GLOBAL_INVOCATION_SHORTCUT)
+  })
   app.on('open-url', (event, url) => {
     event.preventDefault()
     receiveDeepLink(url)
   })
   app.on('second-instance', (_event, argv) => {
     for (const link of znDeepLinksFromArgv(argv)) deliverDeepLink(link)
-    const window = ensurePrimaryWindow()
-    if (window.isMinimized()) window.restore()
-    window.show()
-    window.focus()
+    showPrimaryWindow(true, 'compact')
   })
 
   if (app.isPackaged) {
@@ -184,12 +254,14 @@ async function bootstrapZnDesktop(): Promise<void> {
   registerZnResidentIpc()
   registerZnWorkspaceIpc()
   registerZnReleaseUpdaterIpc()
+  registerZnShellIpc()
 
   await app.whenReady()
   if (!app.setAsDefaultProtocolClient('zn')) {
     console.warn('[ZN] OS protocol registration for zn:// is unavailable in this build')
   }
   initializeWindowsResidentSurface()
+  initializeGlobalInvocation()
   ensurePrimaryWindow()
   await startZnResidentOnDesktopReady()
 
