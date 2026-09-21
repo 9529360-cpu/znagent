@@ -3,6 +3,12 @@ from __future__ import annotations
 """Narrow product ingress for Research and Local Office representative Work."""
 
 from .action_authority import install_worker_authority_gate
+from .app_competence import AppCompetenceRegistry
+from .app_competence_execution import (
+    AppCompetenceRecipeExecution,
+    AppCompetenceRecipeExecutor,
+    AppCompetenceStageHandoff,
+)
 from .browser_goal_understanding_resident import browser_semantic_lookup_goal
 from .browser_spreadsheet_behavior import install_browser_spreadsheet_behavior
 from .current_app_text_cleanup_behavior import install_current_app_text_cleanup_behavior
@@ -16,6 +22,7 @@ from .document_research_completion_safety import (
 from .local_inference_runtime import LocalInferenceRuntimeDiscovery
 from .local_office_behavior import install_local_office_behavior
 from .local_service_recovery_behavior import install_local_service_recovery_behavior
+from .models import utc_now
 from .long_running_terminal_behavior import install_long_running_terminal_behavior
 from .research_information_resident import ResearchInformationResidentRuntime
 from .user_browser_extension_relay import UserBrowserExtensionRelayError
@@ -203,6 +210,242 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
         self._sync_execution_context(event, state)
         self.store.save_working_state(state)
         return result
+
+    def advance_app_competence_recipe_once(
+        self,
+        *,
+        registry: AppCompetenceRegistry,
+        event,
+        state,
+        app: str,
+        version: str,
+        capability: str,
+        application_id: str,
+        authority_context=None,
+    ) -> tuple[AppCompetenceRecipeExecution, VisualStageBridgeResult | None]:
+        """Advance one recipe boundary and at most one bounded visual decision."""
+
+        executor = AppCompetenceRecipeExecutor(registry, self.action_executor)
+        recipe = executor.execute(
+            app=app,
+            version=version,
+            capability=capability,
+            event_id=event.event_id,
+            application_id=application_id,
+            authority_context=authority_context,
+        )
+        state.data["app_competence_recipe"] = {
+            "pack_id": recipe.pack_id,
+            "app_id": recipe.app_id,
+            "app_version": recipe.app_version,
+            "capability": recipe.capability,
+            "status": recipe.status,
+            "stage_statuses": [stage.status for stage in recipe.stages],
+            "pending_handoff_id": (
+                recipe.stages[-1].handoff.handoff_id
+                if recipe.stages and recipe.stages[-1].handoff is not None
+                else None
+            ),
+            "error": recipe.error,
+        }
+
+        if recipe.status != "pending":
+            state.data.pop("app_competence_visual_handoff", None)
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return recipe, None
+
+        handoff = recipe.stages[-1].handoff if recipe.stages else None
+        if handoff is None:
+            raise RuntimeError("pending competence recipe lost its visual stage handoff")
+        visual = self._consume_competence_visual_handoff(
+            event=event,
+            state=state,
+            handoff=handoff,
+        )
+        return recipe, visual
+
+    def _consume_competence_visual_handoff(
+        self,
+        *,
+        event,
+        state,
+        handoff: AppCompetenceStageHandoff,
+    ) -> VisualStageBridgeResult:
+        if handoff.event_id != event.event_id:
+            raise RuntimeError("visual competence handoff does not belong to the current event")
+        if handoff.kind != "visual_action":
+            raise RuntimeError("unsupported competence handoff kind")
+
+        raw = state.data.get("app_competence_visual_handoff")
+        prior = dict(raw) if isinstance(raw, dict) else {}
+        if (
+            prior.get("handoff_id") == handoff.handoff_id
+            and str(getattr(state, "stage", "") or "") in {"native_action", "native_verification"}
+        ):
+            raise RuntimeError(
+                "visual competence handoff already has an in-flight native action"
+            )
+
+        cycle = 0
+        if prior.get("handoff_id") == handoff.handoff_id:
+            try:
+                cycle = max(0, int(prior.get("next_cycle") or 0))
+            except (TypeError, ValueError):
+                cycle = 0
+        decision_id = f"{handoff.handoff_id}:cycle:{cycle}"
+
+        result = self.evaluate_visual_stage(
+            event=event,
+            state=state,
+            application_id=handoff.application_id,
+            instruction=handoff.instruction,
+            decision_id=decision_id,
+            step_index=handoff.step_instruction_index,
+        )
+        outcome = str(result.inference.decision.action or "").strip().upper()
+        state.data["app_competence_visual_handoff"] = {
+            "handoff_id": handoff.handoff_id,
+            "stage_index": handoff.stage_index,
+            "decision_id": decision_id,
+            "cycle": cycle,
+            "next_cycle": cycle + 1,
+            "outcome": outcome,
+            "scene_id": result.scene_id,
+            "regrounded_scene_id": result.regrounded_scene_id,
+            "requires_completion_verification": bool(
+                result.requires_completion_verification
+            ),
+            "updated_at": utc_now(),
+        }
+
+        if outcome == "WAIT":
+            state.stage = "native_investigation"
+            state.next_action = (
+                "wait for current UI state to advance, then capture a fresh desktop scene"
+            )
+        elif outcome == "FINISH":
+            state.stage = "native_investigation"
+            state.next_action = (
+                "re-run the competence stage read-only completion proof before advancing"
+            )
+        elif outcome != "TAP":
+            raise RuntimeError(f"unsupported visual competence outcome: {outcome or '<empty>'}")
+
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        return result
+
+    @staticmethod
+    def _is_visual_stage_intent(intent) -> bool:
+        return (
+            str(getattr(intent, "kind", "") or "").strip().lower() == "pointer_click"
+            and str(getattr(intent, "source", "") or "").strip().lower()
+            == "visual_stage_bridge"
+        )
+
+    def _complete_successful_body_action(
+        self,
+        event,
+        state,
+        intent,
+        *,
+        response: str,
+        reason: str,
+    ):
+        """Account a verified visual TAP, then continue instead of closing the event."""
+
+        if not self._is_visual_stage_intent(intent):
+            return super()._complete_successful_body_action(
+                event,
+                state,
+                intent,
+                response=response,
+                reason=reason,
+            )
+
+        result = super()._complete_successful_body_action(
+            event,
+            state,
+            intent,
+            response=response,
+            reason=reason,
+        )
+        if result is None and state.stage != "native_completion":
+            return None
+        return self._roll_forward_verified_visual_stage(
+            event,
+            state,
+            intent,
+            result=result,
+        )
+
+    def _resume_native_completion(self, event, state):
+        raw_intent = state.data.get("native_action_intent")
+        if isinstance(raw_intent, dict):
+            from .action import NativeActionIntent
+
+            intent = NativeActionIntent.from_dict(raw_intent)
+            if self._is_visual_stage_intent(intent):
+                result = super()._resume_native_completion(event, state)
+                if result is None or not result.success:
+                    return result
+                return self._roll_forward_verified_visual_stage(
+                    event,
+                    state,
+                    intent,
+                    result=result,
+                )
+        return super()._resume_native_completion(event, state)
+
+    def _roll_forward_verified_visual_stage(self, event, state, intent, *, result):
+        """Convert the durable Body completion checkpoint into a visual substep checkpoint."""
+
+        raw_progress = state.data.get("visual_stage_progress")
+        progress = list(raw_progress) if isinstance(raw_progress, list) else []
+        decision = state.data.get("visual_stage_decision")
+        verification = state.data.get("native_verification_result")
+        intent_id = str(getattr(intent, "intent_id", "") or "")
+        if not any(
+            isinstance(item, dict) and str(item.get("intent_id") or "") == intent_id
+            for item in progress
+        ):
+            progress.append(
+                {
+                    "intent_id": intent_id,
+                    "decision_id": (
+                        str(decision.get("decision_id") or "")
+                        if isinstance(decision, dict)
+                        else ""
+                    ),
+                    "scene_id": (
+                        decision.get("scene_id")
+                        if isinstance(decision, dict)
+                        else None
+                    ),
+                    "regrounded_scene_id": (
+                        decision.get("regrounded_scene_id")
+                        if isinstance(decision, dict)
+                        else None
+                    ),
+                    "verified": bool(
+                        isinstance(verification, dict)
+                        and verification.get("verified") is True
+                    ),
+                    "completed_at": utc_now(),
+                }
+            )
+        state.data["visual_stage_progress"] = progress[-32:]
+        state.data.pop("native_completion", None)
+        state.data.pop("native_completion_scope", None)
+        state.stage = "native_investigation"
+        state.next_action = (
+            "re-check the admitted visual stage completion from fresh reality "
+            "before any further pointer input"
+        )
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        return None
 
     def bind_work_event_context(self, event_payload):
         """Attach fresh bounded device context before Work event durability.

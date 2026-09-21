@@ -107,19 +107,68 @@ class AppCompetenceStage:
         if not 100 <= timeout_ms <= 120_000:
             raise ValueError("competence stage timeout_ms must be within 100..120000")
         execution_mode = _key(self.execution_mode).replace(" ", "_")
-        if execution_mode != "semantic_action":
+        if execution_mode not in {"semantic_action", "visual_action"}:
             raise ValueError(
-                "competence stage execution_mode must be semantic_action in schema v1"
+                "competence stage execution_mode must be semantic_action or visual_action"
             )
         if self.completion is not None and not isinstance(
             self.completion, AppCompetenceCompletion
         ):
             raise TypeError("competence stage completion must be AppCompetenceCompletion")
+        metadata = _safe_arguments(self.metadata, owner="competence stage metadata")
+        if execution_mode == "visual_action":
+            if action_id != "windows.desktop.scene.capture":
+                raise ValueError(
+                    "visual_action competence stage must bind windows.desktop.scene.capture"
+                )
+            if arguments:
+                raise ValueError(
+                    "visual_action competence stage cannot persist Action Fabric arguments"
+                )
+            if self.completion is None:
+                raise ValueError(
+                    "visual_action competence stage requires a read-only completion proof"
+                )
+            allowed_metadata = {
+                "instruction",
+                "step_instruction_index",
+                "stage_end_condition",
+            }
+            unknown_metadata = sorted(str(key) for key in metadata if key not in allowed_metadata)
+            if unknown_metadata:
+                raise ValueError(
+                    "visual_action competence stage metadata contains unsupported fields: "
+                    + ", ".join(unknown_metadata)
+                )
+            instruction = _clean(metadata.get("instruction"))
+            if not instruction:
+                raise ValueError("visual_action competence stage requires instruction")
+            if len(instruction) > 768:
+                raise ValueError(
+                    "visual_action competence stage instruction exceeds 768 characters"
+                )
+            raw_step = metadata.get("step_instruction_index")
+            if isinstance(raw_step, bool) or not isinstance(raw_step, int) or raw_step < 0:
+                raise ValueError(
+                    "visual_action competence stage requires non-negative step_instruction_index"
+                )
+            normalized_metadata: dict[str, Any] = {
+                "instruction": instruction,
+                "step_instruction_index": int(raw_step),
+            }
+            if "stage_end_condition" in metadata:
+                raw_end = metadata.get("stage_end_condition")
+                if isinstance(raw_end, bool) or not isinstance(raw_end, int) or raw_end < 0:
+                    raise ValueError(
+                        "visual_action stage_end_condition must be a non-negative integer"
+                    )
+                normalized_metadata["stage_end_condition"] = int(raw_end)
+            metadata = normalized_metadata
         object.__setattr__(self, "action_id", action_id)
         object.__setattr__(self, "arguments", arguments)
         object.__setattr__(self, "timeout_ms", timeout_ms)
         object.__setattr__(self, "execution_mode", execution_mode)
-        object.__setattr__(self, "metadata", _safe_arguments(self.metadata, owner="competence stage metadata"))
+        object.__setattr__(self, "metadata", metadata)
 
 
 @dataclass(frozen=True, slots=True)

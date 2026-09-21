@@ -348,6 +348,54 @@ class VisualStageBridgeTests(unittest.TestCase):
                 decision_id="cycle-policy",
             )
 
+    def test_verified_visual_tap_returns_to_fresh_scene_investigation(self):
+        resident = object.__new__(ProductResearchInformationResidentRuntime)
+        saved = []
+        resident.store = SimpleNamespace(
+            save_working_state=lambda state: saved.append(state)
+        )
+        resident._sync_execution_context = lambda event, state: None
+        state = SimpleNamespace(
+            data={
+                "visual_stage_decision": {
+                    "decision_id": "cycle-1",
+                    "scene_id": "desktop-scene-before",
+                    "regrounded_scene_id": "desktop-scene-after",
+                },
+                "native_verification_result": {"verified": True},
+            },
+            stage="native_verification",
+            next_action="verify pointer result",
+        )
+        event = SimpleNamespace(event_id="evt")
+        intent = NativeActionIntent(
+            intent_id="visual-tap-test",
+            event_id="evt",
+            kind="pointer_click",
+            args={"x_fraction": 0.5, "y_fraction": 0.5, "button": "left"},
+            source="visual_stage_bridge",
+        )
+
+        result = ProductResearchInformationResidentRuntime._complete_successful_body_action(
+            resident,
+            event,
+            state,
+            intent,
+            response="clicked",
+            reason="verified",
+        )
+
+        self.assertIsNone(result)
+        self.assertEqual(state.stage, "native_investigation")
+        self.assertIn("fresh desktop scene", state.next_action)
+        self.assertNotIn("native_completion", state.data)
+        self.assertEqual(
+            state.data["visual_stage_progress"][-1]["decision_id"],
+            "cycle-1",
+        )
+        self.assertTrue(state.data["visual_stage_progress"][-1]["verified"])
+        self.assertEqual(saved, [state])
+
     def test_product_resident_rejects_visual_model_when_budget_blocks_it(self):
         resident = object.__new__(ProductResearchInformationResidentRuntime)
         resident.budget = SimpleNamespace(

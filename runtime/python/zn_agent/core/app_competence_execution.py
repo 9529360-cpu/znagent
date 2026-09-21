@@ -13,6 +13,7 @@ executor observes completion until the bounded stage deadline and never blindly
 redispatches the effect.
 """
 
+import hashlib
 import json
 import time
 from dataclasses import dataclass, field
@@ -31,8 +32,8 @@ from .app_competence import (
 from .models import utc_now
 
 
-RecipeStatus = Literal["verified", "failed", "uncertain"]
-StageStatus = Literal["already_verified", "verified", "failed", "uncertain"]
+RecipeStatus = Literal["verified", "pending", "failed", "uncertain"]
+StageStatus = Literal["already_verified", "verified", "pending", "failed", "uncertain"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +50,51 @@ class AppCompetenceCompletionCheck:
 
 
 @dataclass(frozen=True, slots=True)
+class AppCompetenceStageHandoff:
+    handoff_id: str
+    kind: Literal["visual_action"]
+    stage_index: int
+    event_id: str
+    application_id: str
+    grounding_action_id: str
+    instruction: str
+    step_instruction_index: int
+    stage_end_condition: int | None = None
+
+    def __post_init__(self) -> None:
+        handoff_id = str(self.handoff_id or "").strip()
+        event_id = str(self.event_id or "").strip()
+        application_id = str(self.application_id or "").strip()
+        instruction = " ".join(str(self.instruction or "").split()).strip()
+        if not handoff_id.startswith("competence-visual-"):
+            raise ValueError("visual competence handoff_id is invalid")
+        if self.kind != "visual_action":
+            raise ValueError("visual competence handoff kind is invalid")
+        if int(self.stage_index) < 0 or not event_id or not application_id:
+            raise ValueError("visual competence handoff lost runtime stage identity")
+        if self.grounding_action_id != "windows.desktop.scene.capture":
+            raise ValueError("visual competence handoff grounding action is invalid")
+        if not instruction:
+            raise ValueError("visual competence handoff instruction must not be empty")
+        object.__setattr__(self, "handoff_id", handoff_id)
+        object.__setattr__(self, "stage_index", int(self.stage_index))
+        object.__setattr__(self, "event_id", event_id)
+        object.__setattr__(self, "application_id", application_id)
+        object.__setattr__(self, "instruction", instruction)
+        object.__setattr__(
+            self,
+            "step_instruction_index",
+            int(self.step_instruction_index),
+        )
+        if self.stage_end_condition is not None:
+            object.__setattr__(
+                self,
+                "stage_end_condition",
+                int(self.stage_end_condition),
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class AppCompetenceStageExecution:
     index: int
     stage: AppCompetenceStage
@@ -56,6 +102,7 @@ class AppCompetenceStageExecution:
     preflight: AppCompetenceCompletionCheck | None = None
     action: ActionExecution | None = None
     completion_checks: tuple[AppCompetenceCompletionCheck, ...] = ()
+    handoff: AppCompetenceStageHandoff | None = None
     error: str | None = None
     started_at: str = field(default_factory=utc_now)
     completed_at: str = field(default_factory=utc_now)
@@ -174,6 +221,18 @@ class AppCompetenceRecipeExecutor:
                 authority_context=authority_context,
             )
             completed.append(stage_result)
+            if stage_result.status == "pending":
+                return AppCompetenceRecipeExecution(
+                    pack_id=pack.pack_id,
+                    app_id=pack.app_id,
+                    app_version=pack.app_version,
+                    capability=binding.capability,
+                    event_id=normalized_event,
+                    status="pending",
+                    stages=tuple(completed),
+                    started_at=started,
+                    completed_at=utc_now(),
+                )
             if not stage_result.success:
                 status: RecipeStatus = (
                     "uncertain" if stage_result.status == "uncertain" else "failed"
@@ -281,6 +340,22 @@ class AppCompetenceRecipeExecutor:
                     started_at=started,
                     completed_at=utc_now(),
                 )
+
+        if stage.execution_mode == "visual_action":
+            return AppCompetenceStageExecution(
+                index=index,
+                stage=stage,
+                status="pending",
+                preflight=preflight,
+                handoff=self._visual_stage_handoff(
+                    index=index,
+                    stage=stage,
+                    event_id=event_id,
+                    application_id=str(request_args.get("application_id") or ""),
+                ),
+                started_at=started,
+                completed_at=utc_now(),
+            )
 
         action = self.action_runtime.execute(
             ActionRequest(
@@ -411,6 +486,26 @@ class AppCompetenceRecipeExecutor:
                         f"{completion.action_id} must be read_only"
                     )
 
+            if stage.execution_mode == "visual_action":
+                if stage.action_id != "windows.desktop.scene.capture":
+                    return (
+                        f"competence visual stage {index} must bind "
+                        "windows.desktop.scene.capture"
+                    )
+                if completion is None:
+                    return (
+                        f"competence visual stage {index} requires "
+                        "a read-only completion proof"
+                    )
+                identity = self._stage_identity(stage)
+                if identity in seen_side_effects:
+                    return (
+                        "competence recipe contains duplicate visual stage identity; "
+                        "step instructions must remain distinguishable"
+                    )
+                seen_side_effects.add(identity)
+                continue
+
             if descriptor.effect_class == "read_only":
                 continue
             if completion is None:
@@ -429,15 +524,55 @@ class AppCompetenceRecipeExecutor:
 
     @staticmethod
     def _stage_identity(stage: AppCompetenceStage) -> str:
+        identity: dict[str, Any] = {
+            "execution_mode": stage.execution_mode,
+            "action_id": stage.action_id,
+            "arguments": dict(stage.arguments or {}),
+        }
+        if stage.execution_mode == "visual_action":
+            identity["instruction"] = str(stage.metadata.get("instruction") or "")
+            identity["step_instruction_index"] = int(
+                stage.metadata.get("step_instruction_index") or 0
+            )
         return json.dumps(
-            {
-                "action_id": stage.action_id,
-                "arguments": dict(stage.arguments or {}),
-            },
+            identity,
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
             default=str,
+        )
+
+    def _visual_stage_handoff(
+        self,
+        *,
+        index: int,
+        stage: AppCompetenceStage,
+        event_id: str,
+        application_id: str,
+    ) -> AppCompetenceStageHandoff:
+        instruction = str(stage.metadata.get("instruction") or "").strip()
+        step_index = int(stage.metadata.get("step_instruction_index") or 0)
+        stage_end_condition = stage.metadata.get("stage_end_condition")
+        identity = hashlib.sha256(
+            (
+                f"{event_id}{index}{application_id}"
+                f"{self._stage_identity(stage)}"
+            ).encode("utf-8")
+        ).hexdigest()[:20]
+        return AppCompetenceStageHandoff(
+            handoff_id=f"competence-visual-{identity}",
+            kind="visual_action",
+            stage_index=index,
+            event_id=event_id,
+            application_id=application_id,
+            grounding_action_id=stage.action_id,
+            instruction=instruction,
+            step_instruction_index=step_index,
+            stage_end_condition=(
+                int(stage_end_condition)
+                if stage_end_condition is not None
+                else None
+            ),
         )
 
     def _check_completion(

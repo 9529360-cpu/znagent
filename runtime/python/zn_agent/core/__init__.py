@@ -31,6 +31,7 @@ from .app_competence_execution import (
     AppCompetenceRecipeExecution,
     AppCompetenceRecipeExecutor,
     AppCompetenceStageExecution,
+    AppCompetenceStageHandoff,
     completion_expected_matches,
 )
 from .body import BodyAction, BodyActionResult, NativeBody
@@ -153,6 +154,7 @@ __all__ = [
     "AppCompetenceRecipeExecution",
     "AppCompetenceRecipeExecutor",
     "AppCompetenceStageExecution",
+    "AppCompetenceStageHandoff",
     "completion_expected_matches",
     "Assessment",
     "BodyAction",
