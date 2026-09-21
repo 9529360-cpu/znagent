@@ -26,11 +26,16 @@ function read(relative: string): string {
 test('desktop localization resolves supported Windows language families with English fallback', () => {
   assert.equal(normalizeZnSupportedLocale('zh-CN'), 'zh-CN')
   assert.equal(normalizeZnSupportedLocale('zh-Hans-CN'), 'zh-CN')
-  assert.equal(normalizeZnSupportedLocale('zh-TW'), 'zh-CN')
+  assert.equal(normalizeZnSupportedLocale('zh-SG'), 'zh-CN')
+  assert.equal(normalizeZnSupportedLocale('zh-TW'), null)
+  assert.equal(normalizeZnSupportedLocale('zh-Hant-TW'), null)
+  assert.equal(normalizeZnSupportedLocale('zh-HK'), null)
   assert.equal(normalizeZnSupportedLocale('en-GB'), 'en-US')
   assert.equal(normalizeZnSupportedLocale('fr-FR'), null)
 
   assert.equal(resolveZnLocale('system', ['fr-FR', 'zh-Hans-CN']), 'zh-CN')
+  assert.equal(resolveZnLocale('system', ['zh-Hant-TW', 'en-US']), 'en-US')
+  assert.equal(resolveZnLocale('system', ['zh-TW']), 'en-US')
   assert.equal(resolveZnLocale('system', ['fr-FR', 'de-DE']), 'en-US')
   assert.equal(resolveZnLocale('en-US', ['zh-CN']), 'en-US')
   assert.equal(resolveZnLocale('zh-CN', ['en-US']), 'zh-CN')

@@ -488,7 +488,15 @@ export function isZnLocalePreference(value: unknown): value is ZnLocalePreferenc
 export function normalizeZnSupportedLocale(value: string): ZnSupportedLocale | null {
   const normalized = value.trim().replaceAll('_', '-').toLowerCase()
   if (!normalized) return null
-  if (normalized === 'zh' || normalized.startsWith('zh-')) return 'zh-CN'
+  if (normalized === 'zh') return 'zh-CN'
+  if (normalized.startsWith('zh-')) {
+    const subtags = normalized.split('-').slice(1)
+    if (subtags.includes('hant')) return null
+    if (subtags.includes('hans')) return 'zh-CN'
+    if (subtags.some((subtag) => subtag === 'tw' || subtag === 'hk' || subtag === 'mo')) return null
+    if (subtags.some((subtag) => subtag === 'cn' || subtag === 'sg')) return 'zh-CN'
+    return null
+  }
   if (normalized === 'en' || normalized.startsWith('en-')) return 'en-US'
   return null
 }
