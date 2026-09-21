@@ -40,6 +40,18 @@ test('ZN Electron main owns window and protocol lifecycle without inherited desk
   assert.doesNotMatch(source, new RegExp(`${retiredCli}|run_agent|${retiredDesktopEnv}`))
 })
 
+test('ZN desktop window can enter the compact renderer breakpoint', () => {
+  const main = read('electron/zn-main.ts')
+  const styles = read('src/zn/styles.css')
+  const minimum = main.match(/minWidth:\s*(\d+)/)
+
+  assert.ok(minimum)
+  assert.ok(Number(minimum[1]) <= 720)
+  assert.match(styles, /@media \(max-width: 720px\)/)
+  assert.match(styles, /\.zn-sidebar \{ display: none; \}/)
+  assert.match(styles, /\.zn-home-capabilities \{ grid-template-columns: 1fr; \}/)
+})
+
 test('ZN preload exposes only the ZN bridge and does not import inherited preload', () => {
   const source = read('electron/zn-preload.ts')
 
