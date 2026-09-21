@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 
+import type { ZnLocalePreference } from '../localization/zn-localization'
+
 type ZnDesktopPayload = Record<string, unknown>
 
 type ZnDesktopDeepLink = {
@@ -57,6 +59,9 @@ contextBridge.exposeInMainWorld('znDesktop', {
     apply: () => ipcRenderer.invoke('zn:updates:apply')
   },
   shell: {
+    getLocaleState: () => ipcRenderer.invoke('zn:shell:get-locale-state'),
+    setLocalePreference: (preference: ZnLocalePreference) =>
+      ipcRenderer.invoke('zn:shell:set-locale-preference', preference),
     setWindowMode: (mode: 'compact' | 'expanded') => ipcRenderer.invoke('zn:shell:set-window-mode', mode),
     onDeepLink: (callback: (payload: ZnDesktopDeepLink) => void) => {
       const listener = (_event: IpcRendererEvent, payload: ZnDesktopDeepLink) => callback(payload)
