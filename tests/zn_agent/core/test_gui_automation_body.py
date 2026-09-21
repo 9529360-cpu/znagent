@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import sqlite3
 import tempfile
+from types import SimpleNamespace
 import unittest
 from pathlib import Path
 
@@ -109,6 +112,57 @@ class _FakeControlSense:
         )
 
 
+class _FakeSceneBuilder:
+    def __init__(self, root: Path) -> None:
+        self.root = Path(root)
+        self.calls: list[dict] = []
+
+    def artifact_path(self, event_id):
+        return self.root / f"{event_id}.scene.json"
+
+    def capture(self, *, event_id, foreground, foreground_probe):
+        fresh = foreground_probe()
+        if not foreground.same_identity(fresh):
+            raise RuntimeError("foreground drifted during fake scene capture")
+        self.calls.append(
+            {
+                "event_id": event_id,
+                "application_id": foreground.application_id,
+                "process_id": foreground.process_id,
+                "process_name": foreground.process_name,
+                "window_handle": foreground.window_handle,
+            }
+        )
+        scene_payload = {
+            "scene_id": "desktop-scene-test",
+            "grounding_mode": "uia_only",
+            "targets": [
+                {
+                    "target_id": "desktop-target-test",
+                    "accessible_name": "Sensitive customer label",
+                }
+            ],
+            "screenshot": {
+                "local_path": r"C:\zn\shot.png",
+                "sha256": "b" * 64,
+                "width": 1000,
+                "height": 800,
+                "size_bytes": 1234,
+            },
+        }
+        self.artifact_path(event_id).write_text("{}", encoding="utf-8")
+        scene = SimpleNamespace(
+            scene_id="desktop-scene-test",
+            grounding_mode="uia_only",
+            targets=("target",),
+            uia_target_count=1,
+            visual_target_count=0,
+            truncated=False,
+            audit=lambda: scene_payload,
+        )
+        return scene, r"C:\zn\scene.json"
+
+
 class GuiAutomationBodyTests(unittest.TestCase):
     def _fixture(self, tmp: str):
         executable = Path(tmp) / "notepad.exe"
@@ -151,13 +205,146 @@ class GuiAutomationBodyTests(unittest.TestCase):
         driver = _FakeControlDriver()
         control_sense = _FakeControlSense()
         control = NativeAutomationControlAction(read_fn=driver.read, mutate_fn=driver.mutate)
+        scene_builder = _FakeSceneBuilder(Path(tmp))
         body = GuiAutomationBody(
             store=store,
             device_capabilities=graph,
             automation_control=control,
             automation_control_sense=control_sense,
+            desktop_scene_builder=scene_builder,
         )
         return store, body, app, runtime, driver, executable, control_sense
+
+    def test_desktop_scene_rejects_native_authority_and_requires_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store, body, app, _runtime, _driver, _, _sense = self._fixture(tmp)
+            try:
+                builder = body._desktop_scene_builder
+                for index, key in enumerate(
+                    (
+                        "hwnd",
+                        "pid",
+                        "x",
+                        "y",
+                        "coordinates",
+                        body._SCENE_DISPATCH_MARKER,
+                    )
+                ):
+                    with self.subTest(key=key):
+                        result = body.act(
+                            "windows_desktop_scene_capture",
+                            event_id=f"evt-scene-raw-{index}",
+                            application_id=app.app_id,
+                            **{key: 1},
+                        )
+                        self.assertFalse(result.success)
+                        self.assertFalse(result.data["dispatch_sent"])
+                        self.assertIn(key, result.data["rejected_arguments"])
+                missing = body.act(
+                    "windows_desktop_scene_capture",
+                    application_id=app.app_id,
+                )
+                self.assertFalse(missing.success)
+                self.assertIn("stable event_id", missing.error or "")
+                self.assertEqual(builder.calls, [])
+            finally:
+                store.close()
+
+    def test_desktop_scene_uses_exact_foreground_identity_and_replay_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store, body, app, _runtime, _driver, _, _sense = self._fixture(tmp)
+            try:
+                builder = body._desktop_scene_builder
+                first = body.act(
+                    "windows_desktop_scene_capture",
+                    event_id="evt-scene",
+                    application_id=app.app_id,
+                )
+                self.assertTrue(first.success, first.error)
+                self.assertTrue(first.data["dispatch_sent"])
+                self.assertTrue(first.data["artifact_created"])
+                self.assertEqual(first.data["scene_id"], "desktop-scene-test")
+                self.assertEqual(first.data["target_count"], 1)
+                self.assertEqual(
+                    builder.calls,
+                    [
+                        {
+                            "event_id": "evt-scene",
+                            "application_id": app.app_id,
+                            "process_id": 55,
+                            "process_name": "notepad.exe",
+                            "window_handle": 66,
+                        }
+                    ],
+                )
+
+                _runtime["windows"][0]["foreground"] = False
+                second = body.act(
+                    "windows_desktop_scene_capture",
+                    event_id="evt-scene",
+                    application_id=app.app_id,
+                )
+                self.assertFalse(second.success)
+                self.assertTrue(second.data["replay_blocked"])
+                self.assertEqual(len(builder.calls), 1)
+            finally:
+                store.close()
+
+    def test_orphan_scene_artifact_never_becomes_replay_authority(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store, body, app, runtime, _driver, _, _sense = self._fixture(tmp)
+            try:
+                builder = body._desktop_scene_builder
+                builder.artifact_path("evt-orphan").write_text("{}", encoding="utf-8")
+                runtime["windows"][0]["foreground"] = False
+
+                result = body.act(
+                    "windows_desktop_scene_capture",
+                    event_id="evt-orphan",
+                    application_id=app.app_id,
+                )
+
+                self.assertFalse(result.success)
+                self.assertFalse(result.data.get("replay_blocked", False))
+                self.assertFalse(result.data.get("dispatch_sent", False))
+                self.assertEqual(builder.calls, [])
+            finally:
+                store.close()
+
+    def test_desktop_scene_durable_body_history_redacts_full_scene_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store, body, app, _runtime, _driver, _, _sense = self._fixture(tmp)
+            try:
+                result = body.act(
+                    "windows_desktop_scene_capture",
+                    event_id="evt-scene-history",
+                    application_id=app.app_id,
+                )
+                self.assertTrue(result.success)
+                conn = sqlite3.connect(store.path)
+                try:
+                    row = conn.execute(
+                        "SELECT result_json FROM native_body_actions "
+                        "WHERE kind=? ORDER BY completed_at DESC LIMIT 1",
+                        ("windows_desktop_scene_capture",),
+                    ).fetchone()
+                finally:
+                    conn.close()
+                self.assertIsNotNone(row)
+                persisted = json.loads(row[0])
+                persisted_data = dict(persisted.get("data") or {})
+                self.assertTrue(persisted_data["scene_payload_redacted"])
+                self.assertNotIn("scene", persisted_data)
+                self.assertNotIn(
+                    "Sensitive customer label",
+                    str(persisted_data),
+                )
+                self.assertEqual(
+                    persisted_data["scene_id"],
+                    "desktop-scene-test",
+                )
+            finally:
+                store.close()
 
     def test_public_gui_action_rejects_native_targets_and_coordinates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

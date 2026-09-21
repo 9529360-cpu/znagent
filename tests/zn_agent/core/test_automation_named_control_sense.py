@@ -232,6 +232,39 @@ class NamedAutomationControlSenseTests(unittest.TestCase):
             sense.list_safe_edits(process_id=330, process_name="customerapp.exe")
 
 
+    def test_scene_control_inventory_truncates_without_weakening_strict_list(self) -> None:
+        def candidates(process_id: int, process_name: str, control_type: int):
+            return tuple(
+                _control(
+                    process_id=process_id,
+                    process_name=process_name,
+                    name=f"button-{index}",
+                    control_type=control_type,
+                    runtime_tail=index + 1,
+                )
+                for index in range(30)
+            )
+
+        sense = NativeNamedAutomationControlSense(candidate_probe_fn=candidates)
+        with self.assertRaisesRegex(ValueError, "bounded collection"):
+            sense.list_controls(
+                process_id=330,
+                process_name="electron.exe",
+                control_type="button",
+            )
+
+        scene_rows = sense.list_scene_controls(
+            process_id=330,
+            process_name="electron.exe",
+            control_type="button",
+            max_candidates=7,
+        )
+        self.assertEqual(len(scene_rows), 7)
+        self.assertEqual(
+            [item.name for item in scene_rows],
+            [f"button-{index}" for index in range(7)],
+        )
+
     def test_generic_control_inventory_exposes_pattern_capabilities(self) -> None:
         calls: list[tuple[int, str, int]] = []
 
