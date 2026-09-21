@@ -211,6 +211,14 @@ class SideEffectAwareBody(KeyboardTextBody):
     ) -> BodyActionResult:
         normalized_kind = str(kind or "").strip().lower()
         normalized_event = str(event_id or "").strip()
+        if normalized_kind in {"keyboard_key", "keyboard_chord"}:
+            try:
+                args = self.normalize_keyboard_action_args(normalized_kind, dict(args))
+            except (TypeError, ValueError):
+                # Deterministic argument rejection is pre-dispatch truth. Do not
+                # create a replay-blocking side-effect attempt for an action that
+                # cannot possibly reach the input boundary.
+                return super().act(kind, event_id=event_id, **args)
         if not normalized_event or not self._requires_guard(normalized_kind, args):
             return super().act(kind, event_id=event_id, **args)
 
@@ -291,6 +299,29 @@ class SideEffectAwareBody(KeyboardTextBody):
             "side_effect_attempt_id": attempt_id,
             "side_effect_dispatch_observed": True,
         }
+        if (
+            normalized_kind in {"keyboard_key", "keyboard_chord"}
+            and result.data.get("dispatch_sent") is False
+            and result.data.get("side_effect_uncertain") is False
+        ):
+            resolved = self.resolve_uncertain_attempt(
+                attempt_id,
+                event_id=normalized_event,
+                status="verified_absent",
+                evidence_action_id=result.action_id,
+            )
+            if not resolved:
+                return self._uncertain_result(
+                    normalized_kind,
+                    normalized_event,
+                    attempt_id=attempt_id,
+                    signature_hash=signature_hash,
+                    error=(
+                        "keyboard dispatch was proven absent but its durable replay "
+                        "attempt could not be closed safely"
+                    ),
+                )
+            result.data["side_effect_absence_verified"] = True
         return result
 
     @classmethod

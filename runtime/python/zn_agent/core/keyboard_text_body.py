@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Bounded real keyboard-text movement for ZN's Windows computer body."""
+"""Bounded real keyboard input movements for ZN's Windows computer body."""
 
 import hashlib
 import platform
@@ -11,11 +11,11 @@ from .models import utc_now
 
 
 class KeyboardTextBody(NativeBody):
-    """Extend the native body with one bounded Unicode text movement.
+    """Extend the native body with bounded text, key, and chord movements.
 
-    This primitive deliberately has no target-selection logic, shortcuts,
-    deletion, selection, Enter/Tab, or replay policy. The resident must prove an
-    exact focused target before calling it and independently verify the effect.
+    These primitives never choose a target or claim application-level completion.
+    The resident/competence layer must prove the focused target before dispatch and
+    independently verify the application effect afterward.
     """
 
     MAX_UTF16_UNITS = 512
@@ -182,6 +182,22 @@ class KeyboardTextBody(NativeBody):
         return key
 
     @classmethod
+    def normalize_keyboard_action_args(
+        cls,
+        kind: str,
+        args: dict[str, Any],
+    ) -> dict[str, Any]:
+        normalized = dict(args)
+        action_kind = str(kind or "").strip().lower()
+        if action_kind == "keyboard_key":
+            normalized["key"] = cls.normalize_key(normalized.get("key"))
+            return normalized
+        if action_kind == "keyboard_chord":
+            normalized["keys"] = list(cls.validate_chord(normalized.get("keys")))
+            return normalized
+        return normalized
+
+    @classmethod
     def validate_chord(cls, value: Any) -> tuple[str, ...]:
         if not isinstance(value, (list, tuple)):
             raise ValueError("keyboard_chord keys must be a list or tuple")
@@ -212,12 +228,20 @@ class KeyboardTextBody(NativeBody):
         return cls._NAMED_VK[key]
 
     def _keyboard_key(self, action: BodyAction, started: str) -> BodyActionResult:
-        key = self.normalize_key(action.args.get("key"))
-        return self._keyboard_key_sequence(action, started, (key,))
+        normalized = self.normalize_keyboard_action_args(action.kind, action.args)
+        return self._keyboard_key_sequence(
+            action,
+            started,
+            (str(normalized["key"]),),
+        )
 
     def _keyboard_chord(self, action: BodyAction, started: str) -> BodyActionResult:
-        keys = self.validate_chord(action.args.get("keys"))
-        return self._keyboard_key_sequence(action, started, keys)
+        normalized = self.normalize_keyboard_action_args(action.kind, action.args)
+        return self._keyboard_key_sequence(
+            action,
+            started,
+            tuple(str(key) for key in normalized["keys"]),
+        )
 
     def _keyboard_key_sequence(
         self,
@@ -225,24 +249,60 @@ class KeyboardTextBody(NativeBody):
         started: str,
         keys: tuple[str, ...],
     ) -> BodyActionResult:
-        sent, expected = self._send_keyboard_keys(keys)
-        data = {
+        held_before = self._keyboard_keys_down(keys)
+        base_data = {
             "keys": list(keys),
             "key_count": len(keys),
-            "input_events_expected": int(expected),
-            "input_events_sent": int(sent),
-            "dispatch_sent": sent > 0,
-            "side_effect_uncertain": sent != expected,
+            "held_before": list(held_before),
+            "dispatch_sent": False,
+            "side_effect_uncertain": False,
         }
-        if sent != expected:
+        if held_before:
+            return BodyActionResult(
+                action_id=action.action_id,
+                kind=action.kind,
+                success=False,
+                data=base_data,
+                error=(
+                    "keyboard input refused because one or more target keys are already "
+                    "physically/logically down; refusing to interfere with current user input"
+                ),
+                event_id=action.event_id,
+                started_at=started,
+                completed_at=utc_now(),
+            )
+
+        dispatch = dict(self._send_keyboard_keys(keys))
+        sent = int(dispatch.get("input_events_sent") or 0)
+        expected = int(dispatch.get("input_events_expected") or 0)
+        cleanup_sent = int(dispatch.get("cleanup_events_sent") or 0)
+        cleanup_expected = int(dispatch.get("cleanup_events_expected") or 0)
+        keys_down_after = tuple(
+            str(key) for key in (dispatch.get("keys_down_after") or ())
+        )
+        release_verified = not keys_down_after
+        complete_send = expected > 0 and sent == expected
+        data = {
+            **base_data,
+            "input_events_expected": expected,
+            "input_events_sent": sent,
+            "cleanup_events_expected": cleanup_expected,
+            "cleanup_events_sent": cleanup_sent,
+            "keys_down_after": list(keys_down_after),
+            "key_release_verified": release_verified,
+            "dispatch_sent": sent > 0,
+            "side_effect_uncertain": bool(sent > 0 and (not complete_send or not release_verified)),
+        }
+        if not complete_send or not release_verified:
             return BodyActionResult(
                 action_id=action.action_id,
                 kind=action.kind,
                 success=False,
                 data=data,
                 error=(
-                    "Windows keyboard input was rejected or only partially accepted; "
-                    "current application state must be investigated before replay"
+                    "Windows keyboard input was rejected, partially accepted, or could not "
+                    "prove all injected keys were released; application state must be "
+                    "investigated before replay"
                 ),
                 event_id=action.event_id,
                 started_at=started,
@@ -250,7 +310,23 @@ class KeyboardTextBody(NativeBody):
             )
         return self._ok(action, started, data=data)
 
-    def _send_keyboard_keys(self, keys: tuple[str, ...]) -> tuple[int, int]:
+    def _keyboard_keys_down(self, keys: tuple[str, ...]) -> tuple[str, ...]:
+        if platform.system() != "Windows":
+            raise RuntimeError("keyboard key body is currently supported only on Windows")
+
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.GetAsyncKeyState.argtypes = [wintypes.INT]
+        user32.GetAsyncKeyState.restype = wintypes.SHORT
+        return tuple(
+            key
+            for key in keys
+            if int(user32.GetAsyncKeyState(self._virtual_key(key))) & 0x8000
+        )
+
+    def _send_keyboard_keys(self, keys: tuple[str, ...]) -> dict[str, Any]:
         if platform.system() != "Windows":
             raise RuntimeError("keyboard key body is currently supported only on Windows")
         if not keys:
@@ -337,7 +413,41 @@ class KeyboardTextBody(NativeBody):
         ]
         user32.SendInput.restype = wintypes.UINT
         sent = int(user32.SendInput(len(events), events, ctypes.sizeof(Input)))
-        return sent, len(events)
+        expected = len(events)
+
+        cleanup_sent = 0
+        cleanup_expected = 0
+        keys_down_after = self._keyboard_keys_down(keys)
+        if sent != expected or keys_down_after:
+            cleanup_values: list[Input] = []
+            for key in reversed(keys):
+                flags = keyeventf_keyup
+                if key in self._EXTENDED_KEYS:
+                    flags |= keyeventf_extendedkey
+                cleanup_values.append(
+                    Input(
+                        type=input_keyboard,
+                        ki=KeyboardInput(self._virtual_key(key), 0, flags, 0, 0),
+                    )
+                )
+            cleanup_expected = len(cleanup_values)
+            cleanup_events = (Input * cleanup_expected)(*cleanup_values)
+            cleanup_sent = int(
+                user32.SendInput(
+                    cleanup_expected,
+                    cleanup_events,
+                    ctypes.sizeof(Input),
+                )
+            )
+            keys_down_after = self._keyboard_keys_down(keys)
+
+        return {
+            "input_events_sent": sent,
+            "input_events_expected": expected,
+            "cleanup_events_sent": cleanup_sent,
+            "cleanup_events_expected": cleanup_expected,
+            "keys_down_after": list(keys_down_after),
+        }
 
     def _send_keyboard_text(self, text: str) -> tuple[int, int]:
         if platform.system() != "Windows":

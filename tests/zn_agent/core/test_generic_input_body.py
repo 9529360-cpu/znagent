@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import ctypes
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from zn_agent.core.keyboard_text_body import KeyboardTextBody
 from zn_agent.core.side_effect_body import SideEffectAwareBody
 from zn_agent.core.store import KernelStore
 
@@ -20,6 +23,8 @@ class _GenericInputBody(SideEffectAwareBody):
         self.drags: list[tuple[str, float, float]] = []
         self.key_sequences: list[tuple[str, ...]] = []
         self.partial_keys = False
+        self.cleanup_keys_fail = False
+        self.held_keys: set[str] = set()
 
     def _read_primary_pointer_state(self):
         return {
@@ -53,12 +58,31 @@ class _GenericInputBody(SideEffectAwareBody):
         self.pointer_y = int(round(float(end_y_fraction) * (self.screen_height - 1)))
         return True
 
-    def _send_keyboard_keys(self, keys: tuple[str, ...]) -> tuple[int, int]:
+    def _keyboard_keys_down(self, keys: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(key for key in keys if key in self.held_keys)
+
+    def _send_keyboard_keys(self, keys: tuple[str, ...]) -> dict:
         self.key_sequences.append(tuple(keys))
         expected = len(keys) * 2
-        if self.partial_keys:
-            return expected - 1, expected
-        return expected, expected
+        if not self.partial_keys:
+            return {
+                "input_events_sent": expected,
+                "input_events_expected": expected,
+                "cleanup_events_sent": 0,
+                "cleanup_events_expected": 0,
+                "keys_down_after": [],
+            }
+
+        cleanup_expected = len(keys)
+        cleanup_sent = 0 if self.cleanup_keys_fail else cleanup_expected
+        keys_down_after = list(keys[:1]) if self.cleanup_keys_fail else []
+        return {
+            "input_events_sent": expected - 1,
+            "input_events_expected": expected,
+            "cleanup_events_sent": cleanup_sent,
+            "cleanup_events_expected": cleanup_expected,
+            "keys_down_after": keys_down_after,
+        }
 
 
 class GenericInputBodyTests(unittest.TestCase):
@@ -260,6 +284,140 @@ class GenericInputBodyTests(unittest.TestCase):
                 self.assertFalse(result.success)
 
         self.assertEqual(body.key_sequences, [])
+
+    def test_keyboard_aliases_share_one_semantic_replay_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = KernelStore(Path(tmp) / "kernel.db")
+            try:
+                body = _GenericInputBody(store=store)
+                first = body.act(
+                    "keyboard_chord",
+                    event_id="evt-alias",
+                    keys=["control", "s"],
+                )
+                second = body.act(
+                    "keyboard_chord",
+                    event_id="evt-alias",
+                    keys=["ctrl", "s"],
+                )
+
+                self.assertTrue(first.success, first.error)
+                self.assertFalse(second.success)
+                self.assertTrue(second.data["replay_blocked"])
+                self.assertEqual(body.key_sequences, [("ctrl", "s")])
+            finally:
+                store.close()
+
+    def test_invalid_keyboard_args_do_not_create_replay_blocker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = KernelStore(Path(tmp) / "kernel.db")
+            try:
+                body = _GenericInputBody(store=store)
+                invalid = body.act(
+                    "keyboard_chord",
+                    event_id="evt-invalid-chord",
+                    keys=["s", "ctrl"],
+                )
+                valid = body.act(
+                    "keyboard_chord",
+                    event_id="evt-invalid-chord",
+                    keys=["ctrl", "s"],
+                )
+
+                self.assertFalse(invalid.success)
+                self.assertNotIn("side_effect_attempt_id", invalid.data)
+                self.assertTrue(valid.success, valid.error)
+                self.assertEqual(body.key_sequences, [("ctrl", "s")])
+            finally:
+                store.close()
+
+    def test_preheld_key_refusal_is_proven_absent_and_can_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = KernelStore(Path(tmp) / "kernel.db")
+            try:
+                body = _GenericInputBody(store=store)
+                body.held_keys.add("ctrl")
+                refused = body.act(
+                    "keyboard_chord",
+                    event_id="evt-held",
+                    keys=["ctrl", "s"],
+                )
+
+                self.assertFalse(refused.success)
+                self.assertFalse(refused.data["dispatch_sent"])
+                self.assertFalse(refused.data["side_effect_uncertain"])
+                self.assertTrue(refused.data["side_effect_absence_verified"])
+                self.assertEqual(body.key_sequences, [])
+
+                body.held_keys.clear()
+                retried = body.act(
+                    "keyboard_chord",
+                    event_id="evt-held",
+                    keys=["control", "s"],
+                )
+                self.assertTrue(retried.success, retried.error)
+                self.assertEqual(body.key_sequences, [("ctrl", "s")])
+            finally:
+                store.close()
+
+    def test_native_partial_send_emits_keyup_cleanup_batch(self) -> None:
+        body = KeyboardTextBody()
+
+        class _SendInput:
+            def __init__(self) -> None:
+                self.calls: list[list[tuple[int, int]]] = []
+                self.argtypes = None
+                self.restype = None
+
+            def __call__(self, count, events, _size):
+                rows = [
+                    (int(events[index].ki.wVk), int(events[index].ki.dwFlags))
+                    for index in range(int(count))
+                ]
+                self.calls.append(rows)
+                if len(self.calls) == 1:
+                    return max(0, int(count) - 1)
+                return int(count)
+
+        class _User32:
+            def __init__(self) -> None:
+                self.SendInput = _SendInput()
+
+        user32 = _User32()
+        with (
+            patch("zn_agent.core.keyboard_text_body.platform.system", return_value="Windows"),
+            patch.object(ctypes, "WinDLL", return_value=user32, create=True),
+            patch.object(body, "_keyboard_keys_down", side_effect=[("ctrl",), ()]),
+        ):
+            result = body._send_keyboard_keys(("ctrl", "s"))
+
+        self.assertEqual(result["input_events_sent"], 3)
+        self.assertEqual(result["input_events_expected"], 4)
+        self.assertEqual(result["cleanup_events_sent"], 2)
+        self.assertEqual(result["cleanup_events_expected"], 2)
+        self.assertEqual(result["keys_down_after"], [])
+        self.assertEqual(
+            user32.SendInput.calls[0],
+            [(0x11, 0x0), (0x53, 0x0), (0x53, 0x2), (0x11, 0x2)],
+        )
+        self.assertEqual(
+            user32.SendInput.calls[1],
+            [(0x53, 0x2), (0x11, 0x2)],
+        )
+
+    def test_partial_keyboard_cleanup_failure_reports_stuck_key_evidence(self) -> None:
+        body = _GenericInputBody()
+        body.partial_keys = True
+        body.cleanup_keys_fail = True
+
+        result = body.act("keyboard_chord", keys=["ctrl", "s"])
+
+        self.assertFalse(result.success)
+        self.assertTrue(result.data["side_effect_uncertain"])
+        self.assertFalse(result.data["key_release_verified"])
+        self.assertEqual(result.data["keys_down_after"], ["ctrl"])
+        self.assertEqual(result.data["cleanup_events_sent"], 0)
+        self.assertEqual(result.data["cleanup_events_expected"], 2)
 
     def test_partial_keyboard_send_is_uncertain_and_not_replayed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
