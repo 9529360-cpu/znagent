@@ -16,6 +16,11 @@ from .windows_audio import (
     WindowsAudioUnavailable,
     read_default_render_volume_percent,
 )
+from .windows_brightness import (
+    WindowsBrightnessError,
+    WindowsBrightnessUnavailable,
+    read_active_brightness,
+)
 
 
 ActionAvailabilityState = Literal[
@@ -312,6 +317,34 @@ def build_machine_action_fabric(device_capabilities: Any) -> ActionFabricRegistr
             },
         )
 
+    def brightness_availability(descriptor: ActionDescriptor) -> ActionAvailability:
+        try:
+            observed = read_active_brightness()
+        except WindowsBrightnessUnavailable as exc:
+            return ActionAvailability(
+                descriptor.action_id,
+                "unavailable",
+                reason=str(exc),
+                evidence={"source": "windows_wmi_brightness"},
+            )
+        except WindowsBrightnessError as exc:
+            return ActionAvailability(
+                descriptor.action_id,
+                "unknown",
+                reason=str(exc),
+                evidence={"source": "windows_wmi_brightness"},
+            )
+        return ActionAvailability(
+            descriptor.action_id,
+            "available",
+            reason="one active Windows WMI monitor exposes brightness control",
+            evidence={
+                "source": "windows_wmi_brightness",
+                "instance_name": observed.instance_name,
+                "current_level_percent": observed.level_percent,
+            },
+        )
+
     registry.register(
         ActionDescriptor(
             action_id="windows.application.launch",
@@ -454,5 +487,71 @@ def build_machine_action_fabric(device_capabilities: Any) -> ActionFabricRegistr
             tags=("windows", "audio", "volume", "native", "body"),
         ),
         availability_probe=audio_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.display.brightness.read",
+            provider="zn.windows",
+            description="Read the brightness of the unique active Windows WMI monitor.",
+            body_action_kind="windows_display_brightness_read",
+            input_schema={"type": "object", "additionalProperties": False},
+            output_schema={
+                "type": "object",
+                "properties": {
+                    "level_percent": {"type": "number"},
+                    "instance_name": {"type": "string"},
+                },
+            },
+            effect_class="read_only",
+            postconditions=("fresh active-monitor brightness is returned",),
+            verification=("the WMI read itself is current machine evidence",),
+            reversibility="not_applicable",
+            replay_semantics="read_only",
+            tags=("windows", "display", "brightness", "native", "body"),
+        ),
+        availability_probe=brightness_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.display.brightness.set",
+            provider="zn.windows",
+            description="Set the brightness of the unique active Windows WMI monitor.",
+            body_action_kind="windows_display_brightness_set",
+            input_schema={
+                "type": "object",
+                "required": ["level_percent"],
+                "properties": {
+                    "level_percent": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 100,
+                    }
+                },
+                "additionalProperties": False,
+            },
+            output_schema={
+                "type": "object",
+                "properties": {
+                    "instance_name": {"type": "string"},
+                    "requested_level_percent": {"type": "number"},
+                    "observed_level_percent": {"type": "number"},
+                    "verified": {"type": "boolean"},
+                },
+            },
+            effect_class="reversible_side_effect",
+            required_authority=("body_action",),
+            sensitivity="local_display_control",
+            preconditions=(
+                "exactly one active WmiMonitorBrightness target is currently observed",
+            ),
+            postconditions=(
+                "fresh active-monitor readback matches the requested brightness within tolerance",
+            ),
+            verification=("fresh WMI active-monitor brightness readback",),
+            reversibility="set the previously observed brightness through the same action",
+            replay_semantics="verify_before_replay",
+            tags=("windows", "display", "brightness", "native", "body"),
+        ),
+        availability_probe=brightness_availability,
     )
     return registry

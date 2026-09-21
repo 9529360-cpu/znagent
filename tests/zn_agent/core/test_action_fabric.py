@@ -10,6 +10,7 @@ from zn_agent.core.action_fabric import (
     ActionFabricRegistry,
     build_machine_action_fabric,
 )
+from zn_agent.core.windows_brightness import WindowsBrightnessObservation
 
 
 class ActionFabricRegistryTests(unittest.TestCase):
@@ -220,6 +221,8 @@ class MachineActionFabricTests(unittest.TestCase):
                 "windows.audio.volume.read",
                 "windows.audio.volume.set",
                 "windows.context.read",
+                "windows.display.brightness.read",
+                "windows.display.brightness.set",
             ),
         )
         self.assertEqual(
@@ -241,6 +244,14 @@ class MachineActionFabricTests(unittest.TestCase):
         self.assertEqual(
             registry.descriptor("windows.audio.volume.set").body_action_kind,
             "windows_audio_volume_set",
+        )
+        self.assertEqual(
+            registry.descriptor("windows.display.brightness.read").body_action_kind,
+            "windows_display_brightness_read",
+        )
+        self.assertEqual(
+            registry.descriptor("windows.display.brightness.set").body_action_kind,
+            "windows_display_brightness_set",
         )
 
     def test_machine_availability_tracks_fresh_graph_evidence(self) -> None:
@@ -277,6 +288,26 @@ class MachineActionFabricTests(unittest.TestCase):
         self.assertEqual(read_state.evidence["current_level_percent"], 44.0)
         self.assertEqual(set_state.evidence["current_level_percent"], 44.0)
         self.assertEqual(read_volume.call_count, 2)
+
+    @patch(
+        "zn_agent.core.action_fabric.read_active_brightness",
+        return_value=WindowsBrightnessObservation("DISPLAY\\PANEL", 88.0),
+    )
+    def test_brightness_actions_share_one_fresh_wmi_availability_probe(
+        self,
+        read_brightness,
+    ) -> None:
+        registry = build_machine_action_fabric(self._Graph())
+
+        read_state = registry.availability("windows.display.brightness.read")
+        set_state = registry.availability("windows.display.brightness.set")
+
+        self.assertTrue(read_state.available)
+        self.assertTrue(set_state.available)
+        self.assertEqual(read_state.evidence["instance_name"], "DISPLAY\\PANEL")
+        self.assertEqual(read_state.evidence["current_level_percent"], 88.0)
+        self.assertEqual(set_state.evidence["current_level_percent"], 88.0)
+        self.assertEqual(read_brightness.call_count, 2)
 
     def test_companion_context_fails_closed_when_platform_is_unsupported(self) -> None:
         graph = self._Graph()

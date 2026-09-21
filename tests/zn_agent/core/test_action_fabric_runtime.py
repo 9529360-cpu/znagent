@@ -48,6 +48,8 @@ class MachineActionFabricTests(unittest.TestCase):
                 "windows.audio.volume.read",
                 "windows.audio.volume.set",
                 "windows.context.read",
+                "windows.display.brightness.read",
+                "windows.display.brightness.set",
             ),
         )
         self.assertEqual(
@@ -121,6 +123,8 @@ class ProductActionFabricIntegrationTests(unittest.TestCase):
                         "windows.audio.volume.read",
                         "windows.audio.volume.set",
                         "windows.context.read",
+                        "windows.display.brightness.read",
+                        "windows.display.brightness.set",
                     ),
                 )
                 self.assertIs(
