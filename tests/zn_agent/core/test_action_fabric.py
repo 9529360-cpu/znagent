@@ -228,9 +228,12 @@ class MachineActionFabricTests(unittest.TestCase):
                 "windows.display.brightness.read",
                 "windows.display.brightness.set",
                 "windows.network.wifi.read",
-
+                "windows.office.excel.cell.read",
+                "windows.office.excel.cell.set",
+                "windows.office.session.read",
+                "windows.office.word.selection.read",
+                "windows.office.word.selection.set_text",
                 "windows.screen.capture",
-
                 "windows.ui.control.expand_collapse",
                 "windows.ui.control.read",
                 "windows.ui.control.select",

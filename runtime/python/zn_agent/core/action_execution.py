@@ -19,6 +19,7 @@ from .action_authority import (
 from .action_fabric import ActionDescriptor, ActionFabricRegistry
 from .automation_control_action import normalize_control_type, text_sha256
 from .body import BodyActionResult
+from .office_native_action import scalar_digest
 from .models import utc_now
 from .windows_screen_capture import (
     inspect_screen_capture_artifact,
@@ -427,6 +428,19 @@ def build_machine_action_execution_runtime(
             ),
         )
 
+    if fabric.descriptor("windows.office.excel.cell.set") is not None:
+        runtime.register_verification(
+            "windows.office.excel.cell.set",
+            observe=lambda request, result: _observe_office_excel_cell(body, request),
+            verify=_verify_office_excel_cell,
+        )
+    if fabric.descriptor("windows.office.word.selection.set_text") is not None:
+        runtime.register_verification(
+            "windows.office.word.selection.set_text",
+            observe=lambda request, result: _observe_office_word_selection(body, request),
+            verify=_verify_office_word_selection,
+        )
+
     return runtime
 
 
@@ -483,6 +497,136 @@ def _verify_screen_capture(
         evidence={
             **observed,
             "replay_recovered": bool(expected.get("replay_blocked")),
+        },
+        observed_at=observation.observed_at,
+    )
+
+
+def _observe_office_excel_cell(
+    body: Any,
+    request: ActionRequest,
+) -> ActionObservation:
+    observer = getattr(body, "observe_excel_cell", None)
+    if not callable(observer):
+        raise RuntimeError("current Body does not expose Excel NativeOM observation")
+    observed = observer(
+        application_id=str(request.args.get("application_id") or ""),
+        worksheet_name=str(request.args.get("worksheet_name") or ""),
+        cell_address=str(request.args.get("cell_address") or ""),
+    )
+    data = dict(observed.audit())
+    data["application_id"] = str(request.args.get("application_id") or "").strip()
+    return ActionObservation(
+        request.action_id,
+        "office_excel_nativeom_readback",
+        data=data,
+        observed_at=observed.captured_at or utc_now(),
+    )
+
+
+def _verify_office_excel_cell(
+    request: ActionRequest,
+    observation: ActionObservation,
+    _body_result: BodyActionResult | None,
+) -> ActionVerification:
+    data = dict(observation.data or {})
+    target = dict(data.get("target") or {})
+    state = dict(data.get("state") or {})
+    try:
+        expected = scalar_digest(request.args.get("value"))
+    except ValueError as exc:
+        return ActionVerification(
+            "failed",
+            str(exc),
+            evidence={"application_id": data.get("application_id")},
+            observed_at=observation.observed_at,
+        )
+    selector_matches = bool(
+        data.get("application_id") == str(request.args.get("application_id") or "").strip()
+        and target.get("worksheet_name") == str(request.args.get("worksheet_name") or "").strip()
+        and target.get("cell_address") == str(request.args.get("cell_address") or "").strip().replace("$", "").upper()
+    )
+    verified = selector_matches and state == expected
+    return ActionVerification(
+        "verified" if verified else "failed",
+        (
+            "fresh Excel NativeOM cell digest matches requested value"
+            if verified
+            else "fresh Excel NativeOM cell digest does not match requested value"
+        ),
+        evidence={
+            "application_id": data.get("application_id"),
+            "target": target,
+            "selector_matches": selector_matches,
+            "expected": expected,
+            "observed": state,
+        },
+        observed_at=observation.observed_at,
+    )
+
+
+def _observe_office_word_selection(
+    body: Any,
+    request: ActionRequest,
+) -> ActionObservation:
+    observer = getattr(body, "observe_word_selection", None)
+    if not callable(observer):
+        raise RuntimeError("current Body does not expose Word NativeOM selection observation")
+    observed = observer(
+        application_id=str(request.args.get("application_id") or ""),
+    )
+    data = dict(observed.audit())
+    data["application_id"] = str(request.args.get("application_id") or "").strip()
+    return ActionObservation(
+        request.action_id,
+        "office_word_nativeom_readback",
+        data=data,
+        observed_at=observed.captured_at or utc_now(),
+    )
+
+
+def _verify_office_word_selection(
+    request: ActionRequest,
+    observation: ActionObservation,
+    _body_result: BodyActionResult | None,
+) -> ActionVerification:
+    data = dict(observation.data or {})
+    state = dict(data.get("state") or {})
+    text = request.args.get("text")
+    if not isinstance(text, str):
+        return ActionVerification(
+            "failed",
+            "Word replacement text is not a string",
+            evidence={"application_id": data.get("application_id")},
+            observed_at=observation.observed_at,
+        )
+    expected = {
+        "selection_chars": len(text),
+        "selection_sha256": text_sha256(text),
+    }
+    application_matches = (
+        data.get("application_id") == str(request.args.get("application_id") or "").strip()
+    )
+    verified = bool(
+        application_matches
+        and state.get("selection_chars") == expected["selection_chars"]
+        and state.get("selection_sha256") == expected["selection_sha256"]
+    )
+    return ActionVerification(
+        "verified" if verified else "failed",
+        (
+            "fresh Word NativeOM selection digest matches requested text"
+            if verified
+            else "fresh Word NativeOM selection digest does not match requested text"
+        ),
+        evidence={
+            "application_id": data.get("application_id"),
+            "application_matches": application_matches,
+            "expected": expected,
+            "observed": {
+                "selection_chars": state.get("selection_chars"),
+                "selection_sha256": state.get("selection_sha256"),
+            },
         },
         observed_at=observation.observed_at,
     )

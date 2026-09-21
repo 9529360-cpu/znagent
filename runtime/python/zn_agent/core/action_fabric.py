@@ -407,6 +407,22 @@ def build_machine_action_fabric(device_capabilities: Any) -> ActionFabricRegistr
             reason="Windows UI Automation control-pattern runtime is available",
             evidence={"source": "windows_uia", "semantic_selector": True},
         )
+
+    def office_availability(descriptor: ActionDescriptor) -> ActionAvailability:
+        if os.name != "nt":
+            return ActionAvailability(
+                descriptor.action_id,
+                "unavailable",
+                reason="Microsoft Office native-object actions are available only on Windows",
+                evidence={"source": "office_nativeom"},
+            )
+        return ActionAvailability(
+            descriptor.action_id,
+            "available",
+            reason="Office Native Object Model binding is available when an admitted Office window is foreground",
+            evidence={"source": "office_nativeom", "exact_hwnd_binding": True},
+        )
+
     registry.register(
         ActionDescriptor(
             action_id="windows.application.launch",
@@ -860,6 +876,142 @@ def build_machine_action_fabric(device_capabilities: Any) -> ActionFabricRegistr
         ),
         availability_probe=uia_availability,
     )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.office.session.read",
+            provider="zn.windows.office",
+            description="Read bounded identity for the exact foreground Microsoft Office session.",
+            body_action_kind="office_session_read",
+            input_schema={
+                "type": "object",
+                "required": ["application_id"],
+                "properties": {"application_id": {"type": "string"}},
+                "additionalProperties": False,
+            },
+            effect_class="read_only",
+            sensitivity="local_document_state",
+            preconditions=("application_id is the exact current foreground Word/Excel/PowerPoint app",),
+            postconditions=("current Office version and active document identity are returned",),
+            verification=("the exact-HWND Native Object Model read itself is current evidence",),
+            reversibility="not_applicable",
+            replay_semantics="read_only",
+            tags=("windows", "office", "com", "nativeom", "sense", "body"),
+        ),
+        availability_probe=office_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.office.excel.cell.read",
+            provider="zn.windows.office",
+            description="Read privacy-safe state for one exact cell in the foreground Excel workbook.",
+            body_action_kind="office_excel_cell_read",
+            input_schema={
+                "type": "object",
+                "required": ["application_id", "worksheet_name", "cell_address"],
+                "properties": {
+                    "application_id": {"type": "string"},
+                    "worksheet_name": {"type": "string"},
+                    "cell_address": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            effect_class="read_only",
+            sensitivity="local_document_content_digest",
+            preconditions=(
+                "application_id is the exact current foreground Microsoft Excel app",
+                "worksheet_name resolves exactly and cell_address is one A1-style cell",
+            ),
+            postconditions=("fresh cell type/length/digest state is returned without raw content",),
+            verification=("the exact-HWND Excel NativeOM read itself is current evidence",),
+            reversibility="not_applicable",
+            replay_semantics="read_only",
+            tags=("windows", "office", "excel", "com", "cell", "sense", "body"),
+        ),
+        availability_probe=office_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.office.excel.cell.set",
+            provider="zn.windows.office",
+            description="Set one exact cell in the foreground Excel workbook through Native Object Model.",
+            body_action_kind="office_excel_cell_set",
+            input_schema={
+                "type": "object",
+                "required": ["application_id", "worksheet_name", "cell_address", "value"],
+                "properties": {
+                    "application_id": {"type": "string"},
+                    "worksheet_name": {"type": "string"},
+                    "cell_address": {"type": "string"},
+                    "value": {},
+                },
+                "additionalProperties": False,
+            },
+            effect_class="reversible_side_effect",
+            required_authority=("body_action",),
+            sensitivity="local_document_control",
+            preconditions=(
+                "application_id is the exact current foreground Microsoft Excel app",
+                "worksheet_name resolves exactly and cell_address is one A1-style cell",
+            ),
+            postconditions=("fresh exact-cell digest matches the requested scalar value",),
+            verification=("fresh Excel NativeOM cell readback",),
+            reversibility="set the previously observed scalar value through the same action",
+            replay_semantics="verify_before_replay",
+            tags=("windows", "office", "excel", "com", "cell", "mutation", "body"),
+        ),
+        availability_probe=office_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.office.word.selection.read",
+            provider="zn.windows.office",
+            description="Read privacy-safe text state for the current foreground Word selection.",
+            body_action_kind="office_word_selection_read",
+            input_schema={
+                "type": "object",
+                "required": ["application_id"],
+                "properties": {"application_id": {"type": "string"}},
+                "additionalProperties": False,
+            },
+            effect_class="read_only",
+            sensitivity="local_document_content_digest",
+            preconditions=("application_id is the exact current foreground Microsoft Word app",),
+            postconditions=("fresh selection length/digest state is returned without raw text",),
+            verification=("the exact-HWND Word NativeOM selection read itself is current evidence",),
+            reversibility="not_applicable",
+            replay_semantics="read_only",
+            tags=("windows", "office", "word", "com", "selection", "sense", "body"),
+        ),
+        availability_probe=office_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.office.word.selection.set_text",
+            provider="zn.windows.office",
+            description="Replace the current foreground Word selection through Native Object Model.",
+            body_action_kind="office_word_selection_set_text",
+            input_schema={
+                "type": "object",
+                "required": ["application_id", "text"],
+                "properties": {
+                    "application_id": {"type": "string"},
+                    "text": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            effect_class="reversible_side_effect",
+            required_authority=("body_action",),
+            sensitivity="local_document_control",
+            preconditions=("application_id is the exact current foreground Microsoft Word app",),
+            postconditions=("fresh selection digest matches the requested replacement text",),
+            verification=("fresh Word NativeOM selection readback",),
+            reversibility="Office Undo or a later explicit replacement",
+            replay_semantics="verify_before_replay",
+            tags=("windows", "office", "word", "com", "selection", "mutation", "body"),
+        ),
+        availability_probe=office_availability,
+    )
+
     registry.register(
         ActionDescriptor(
             action_id="windows.network.wifi.read",
