@@ -29,8 +29,7 @@ test('runtime staging packages Playwright and Chromium inside the versioned ZN r
   assert.match(source, /\['-m', 'playwright', 'install', 'chromium'\]/)
   assert.match(source, /PLAYWRIGHT_BROWSERS_PATH:\s*browserInstallDir/)
   assert.match(source, /browser_root:\s*portableRelative\(runtimeRoot, browserInstallDir\)/)
-  assert.match(source, /p\.chromium\.executable_path/)
-  assert.match(source, /browser_executable:\s*portableRelative\(runtimeRoot, browserExecutable\)/)
+  assert.doesNotMatch(source, /browser_executable/)
   assert.doesNotMatch(source, /PLAYWRIGHT_BROWSERS_PATH\s*:\s*(?:os\.|process\.env\.LOCALAPPDATA|process\.env\.USERPROFILE)/)
 })
 
