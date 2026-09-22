@@ -15,7 +15,7 @@ existing narrow route.
 from dataclasses import dataclass
 
 
-_BROWSER_REFERENCE_MARKERS = (
+_BROWSER_CONTEXT_MARKERS = (
     "this website",
     "current website",
     "this site",
@@ -30,6 +30,26 @@ _BROWSER_REFERENCE_MARKERS = (
     "浏览器",
     "api 文档",
     "api文档",
+)
+
+_BROWSER_REFERENCE_RELATION_MARKERS = (
+    "reference",
+    "documentation",
+    "docs",
+    "according to",
+    "based on",
+    "use this page",
+    "use the current page",
+    "use this website",
+    "use the current website",
+    "参考",
+    "根据",
+    "按照",
+    "按这个网站",
+    "按当前网站",
+    "按这个页面",
+    "按当前页面",
+    "文档",
 )
 
 _WORKSPACE_OBJECT_MARKERS = (
@@ -102,7 +122,11 @@ def classify_composite_work_text(text: object) -> CompositeWorkRouteDecision:
     if not task:
         return _deny("task text is empty")
 
-    browser_reference = any(marker in task for marker in _BROWSER_REFERENCE_MARKERS)
+    browser_context = any(marker in task for marker in _BROWSER_CONTEXT_MARKERS)
+    reference_relation = any(
+        marker in task for marker in _BROWSER_REFERENCE_RELATION_MARKERS
+    )
+    browser_reference = browser_context and reference_relation
     workspace_object = any(marker in task for marker in _WORKSPACE_OBJECT_MARKERS)
     workspace_mutation = any(marker in task for marker in _WORKSPACE_MUTATION_MARKERS)
     local_verification = any(marker in task for marker in _LOCAL_VERIFICATION_MARKERS)
