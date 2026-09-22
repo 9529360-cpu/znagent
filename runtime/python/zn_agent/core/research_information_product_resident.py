@@ -27,6 +27,8 @@ from .user_browser_multi_record_result import (
 )
 from .action_execution import build_machine_action_execution_runtime
 from .action_fabric import build_machine_action_fabric
+from .app_competence import AppCompetenceRegistry
+from .app_competence_execution import AppCompetenceRecipeExecutor
 from .provider_runtime import build_machine_provider_runtime
 from .reflex_intent import build_resident_reflex_intents
 from .windows_companion_body import WindowsCompanionAwareBody
@@ -126,6 +128,11 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
             self.action_fabric,
             self.body,
             device_capabilities=self.device_capabilities,
+        )
+        self.app_competences = AppCompetenceRegistry()
+        self.app_competence_executor = AppCompetenceRecipeExecutor(
+            self.app_competences,
+            self.action_executor,
         )
         installer = getattr(self, "_install_body_dispatch_health_observer", None)
         if callable(installer):
