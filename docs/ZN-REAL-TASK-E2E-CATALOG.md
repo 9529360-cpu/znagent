@@ -33,7 +33,8 @@ The 50 scenario IDs and product intents remain stable. The status overlay record
 | E2E-08 | CLOSED representative path | Same authorized USER tab/generation/origin standard `one-time-code` user-presence handoff. ZN does not read/type/store OTP. |
 | E2E-09 | CLOSED representative path | Bounded yesterday DOCX payment-date edit to a new verified copy. Not general Word support. |
 | E2E-10 | CLOSED representative path | Zero-model bounded XLSX exact-row dedupe + amount format normalization to a new verified copy. Not general Excel support. |
-| E2E-11 | CLOSED representative path; PR #251 merged as `5dbc663c7035dc523e34477501fee59914a8cff4` | MANAGED Browser unique simple table -> exact attached-workspace XLSX append-copy with source/destination/browser verification. Not arbitrary website tables/Excel. |
+| E2E-11 | HISTORICAL representative closure; dedicated product behavior retired | PR #251 remains historical evidence for one narrow browser->XLSX transfer. The scenario-specific behavior/test gate is no longer an active product route; any future proof must compose the generic managed BrowserAdapter with normal Work/File/Spreadsheet capabilities. |
+| E2E-14 | HISTORICAL representative scenario; dedicated product behavior retired | Browser->desktop record transfer no longer owns a special Resident path or merge gate. Future acceptance must come from generic USER-browser grounding + Desktop/Action Fabric/App Competence composition with fresh authority. |
 | E2E-12 | CLOSED representative path | Bounded public-Web evidence -> 1–3 explicit DOCX placeholders with prompt-safe two-source support and fresh reopen verification. Not arbitrary DOCX/Deep Research/Word. |
 | **E2E-13** | **VERIFIED NARROW / CLOSED representative path; PR #252 merged as `cc3fd3edc25b436a5c42ec1e2d13d4b786fb18b3`** | Current foreground non-browser Windows app; exact process/HWND + unique multiline ValuePattern Edit; deterministic trim/drop-blank/stable-dedupe; guarded replacement; durable restart/no-replay reconciliation before ordinary content drift; at most one Save; fresh same-process read-only result verification. **Not Desktop complete, arbitrary app automation, Office automation or general RPA.** |
 | E2E-15 | CLOSED representative path | Exact same-process owned UIA modal with one deterministic safe defer/continue action; fresh parent readiness/re-ground. Not arbitrary dialogs/UAC/credentials/business decisions. |
@@ -141,7 +142,7 @@ User:
 
 > “把这个网站里的数据整理进我现在这个表里。”
 
-Must combine exact Browser structured source evidence with exact attached-workspace spreadsheet mutation and verify Browser/source/destination. Current representative closure is MANAGED Browser unique simple table -> conservative XLSX append-copy, implemented by PR #251 and squash-merged to canonical `main` as `5dbc663c7035dc523e34477501fee59914a8cff4`; it does not claim arbitrary tables/grids or Excel complete.
+Historical proof combined exact Browser structured source evidence with exact attached-workspace spreadsheet mutation and verified Browser/source/destination. That dedicated scenario path has now been retired from normal product wiring and CI. Future closure must be produced by the generic managed BrowserAdapter plus normal Work/File/Spreadsheet capabilities; do not reintroduce an E2E-11-specific Resident behavior.
 
 ### E2E-12 — Document with missing information
 
@@ -216,7 +217,7 @@ User:
 
 > “把浏览器里这几项信息填到桌面软件对应的记录里。”
 
-Must preserve source/record identity across applications and prevent wrong-record writes.
+Must preserve source/record identity across applications and prevent wrong-record writes. The old E2E-14-specific Resident behavior and isolated merge gate are retired; future closure must compose generic USER-browser grounding with Desktop/Action Fabric/App Competence capabilities and fresh verification.
 
 ### E2E-15 — Unexpected dialog recovery
 
