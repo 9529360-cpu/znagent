@@ -1,4 +1,4 @@
-name: ZN Windows Interactive Desktop E2E
+name: ZN Windows Interactive Desktop Contract
 
 on:
   pull_request:
