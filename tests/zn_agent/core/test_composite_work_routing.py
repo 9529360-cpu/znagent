@@ -97,6 +97,17 @@ class CompositeWorkRoutingTests(unittest.TestCase):
         self.assertNotIn("browser_reference", decision.surfaces)
         self.assertIn("workspace_mutation", decision.surfaces)
 
+    def test_repo_abbreviation_matches_on_word_boundary(self) -> None:
+        decision = classify_composite_work_route(
+            _event(
+                "Use this page as the reference to update the repo, then verify it."
+            )
+        )
+
+        self.assertTrue(decision.preempt_narrow_browser)
+        self.assertIn("browser_reference", decision.surfaces)
+        self.assertIn("workspace_mutation", decision.surfaces)
+
     def test_report_does_not_match_repo_marker(self) -> None:
         decision = classify_composite_work_route(
             _event(
