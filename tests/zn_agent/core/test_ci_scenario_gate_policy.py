@@ -14,7 +14,7 @@ class CiScenarioGatePolicyTests(unittest.TestCase):
 
         offenders: list[str] = []
         scenario_ref = re.compile(
-            r"tests(?:/|\\|\.)zn_agent(?:/|\\|\.)e2e(?:/|\\|\.)test_e2e",
+            r"tests(?:/|\\|\.)zn_agent(?:/|\\|\.)(?:core|e2e)(?:/|\\|\.)test_e2e",
             re.IGNORECASE,
         )
         numbered_name = re.compile(r"e2e\d+", re.IGNORECASE)
