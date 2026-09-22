@@ -49,13 +49,13 @@ assert (
     / "chrome-devtools-mcp.js"
 ).is_file()
 
-browser = build_managed_browser_adapter(preferred="chrome-devtools-mcp")
+browser = build_managed_browser_adapter(preferred="playwright")
 session = browser.open_session(permission=BrowserPermissionContext(), headless=True)
 try:
     observation = browser.observe(session.session_id)
     assert observation.url == "about:blank"
     assert session.profile_scope == "ephemeral"
-    assert session.provider == "chrome-devtools-mcp"
+    assert session.provider == "playwright-chromium"
 finally:
     browser.close()
 `
@@ -137,11 +137,6 @@ export async function verifyPackagedZnRuntime(runtimeRoot, { version, commit }) 
   const python = resolveInside(runtimeRoot, manifest.python, 'python')
   const backendRoot = resolveInside(runtimeRoot, manifest.backend_root, 'backend_root')
   const browserRoot = resolveInside(runtimeRoot, manifest.browser_root, 'browser_root')
-  const browserExecutable = resolveInside(
-    runtimeRoot,
-    manifest.browser_executable,
-    'browser_executable'
-  )
   const veteranRuntimeRoot = resolveInside(runtimeRoot, manifest.veteran_runtime, 'veteran_runtime')
   const chromeDevtoolsMcpRuntimeRoot = resolveInside(
     runtimeRoot,
@@ -152,7 +147,6 @@ export async function verifyPackagedZnRuntime(runtimeRoot, { version, commit }) 
   if (process.platform !== 'win32' && (pythonStat.mode & 0o111) === 0) throw new Error(`packaged runtime python is not executable: ${python}`)
   await requireDirectory(backendRoot, 'backend root')
   await requireDirectory(browserRoot, 'managed browser root')
-  await requireFile(browserExecutable, 'managed browser executable')
   await requireDirectory(veteranRuntimeRoot, 'Veteran runtime root')
   await requireFile(path.join(veteranRuntimeRoot, 'mcp', 'server.mjs'), 'Veteran MCP server')
   await requireFile(path.join(veteranRuntimeRoot, 'VENDOR.json'), 'Veteran vendor manifest')
@@ -203,7 +197,6 @@ export async function verifyPackagedZnRuntime(runtimeRoot, { version, commit }) 
     python,
     backendRoot,
     browserRoot,
-    browserExecutable,
     veteranRuntimeRoot,
     chromeDevtoolsMcpRuntimeRoot
   }
@@ -223,7 +216,6 @@ export async function smokePackagedZnRuntime(runtime, { run = execFileAsync } = 
         ZN_RUNTIME_ID: runtime.runtimeId,
         ZN_VETERAN_RUNTIME_ROOT: runtime.veteranRuntimeRoot,
         ZN_CHROME_DEVTOOLS_MCP_ROOT: runtime.chromeDevtoolsMcpRuntimeRoot,
-        ZN_BROWSER_EXECUTABLE: runtime.browserExecutable,
         PLAYWRIGHT_BROWSERS_PATH: runtime.browserRoot
       },
       timeout: PACKAGED_RUNTIME_SMOKE_TIMEOUT_MS,
