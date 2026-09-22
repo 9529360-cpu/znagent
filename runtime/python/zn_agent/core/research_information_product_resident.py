@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Narrow product ingress for Research and Local Office representative Work."""
+"""Product Resident composition over reusable Research, OS, document, and application capabilities."""
 
 from .action_authority import install_worker_authority_gate
 from .app_competence import AppCompetenceRegistry
@@ -10,23 +10,12 @@ from .app_competence_execution import (
     AppCompetenceStageHandoff,
 )
 from .browser_goal_understanding_resident import browser_semantic_lookup_goal
-from .current_app_text_cleanup_behavior import install_current_app_text_cleanup_behavior
-from .current_app_text_cleanup_completion import install_current_app_text_cleanup_completion
-from .document_research_completion_behavior import (
-    install_document_research_completion_behavior,
-)
-from .document_research_completion_safety import (
-    install_document_research_completion_safety,
-)
 from .explorer_selected_file_behavior import install_explorer_selected_file_behavior
 from .local_file_discovery import build_local_file_discovery_capability
 from .local_inference_runtime import LocalInferenceRuntimeDiscovery
-from .local_office_behavior import install_local_office_behavior
 from .presentation_work_behavior import install_presentation_work_behavior
 from .document_work_behavior import install_document_work_behavior
-from .local_service_recovery_behavior import install_local_service_recovery_behavior
 from .models import utc_now
-from .long_running_terminal_behavior import install_long_running_terminal_behavior
 from .research_information_resident import ResearchInformationResidentRuntime
 from .user_browser_extension_relay import UserBrowserExtensionRelayError
 from .user_browser_multi_record_result import (
@@ -117,7 +106,7 @@ _EXISTING_SESSION_RECORD_MARKERS = (
 
 
 class ProductResearchInformationResidentRuntime(ResearchInformationResidentRuntime):
-    """Final product Resident with narrow Research and local Office admission."""
+    """Final Product Resident assembled from reusable capability layers."""
 
     _VISUAL_COMPETENCE_HANDOFF_KEY = "app_competence_visual_handoff"
 
@@ -158,16 +147,9 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
             installer()
         install_worker_authority_gate(self.body, resident=self)
         install_windows_audio_reflex_behavior(self)
-        install_current_app_text_cleanup_behavior(self)
-        install_current_app_text_cleanup_completion(self)
-        install_local_office_behavior(self)
         install_presentation_work_behavior(self)
         install_document_work_behavior(self)
-        install_long_running_terminal_behavior(self)
-        install_local_service_recovery_behavior(self)
         install_explorer_selected_file_behavior(self)
-        install_document_research_completion_behavior(self)
-        install_document_research_completion_safety(self)
 
     def _current_visual_stage_bridge(self, event):
         """Bind bounded visual cognition through current Work privacy/route policy."""
