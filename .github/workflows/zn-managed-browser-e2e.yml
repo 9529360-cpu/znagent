@@ -10,6 +10,9 @@ on:
       - runtime/python/zn_agent/resident.py
       - runtime/python/zn_agent/core/action.py
       - runtime/python/zn_agent/core/browser.py
+      - runtime/python/zn_agent/core/browser_provider_registry.py
+      - runtime/python/zn_agent/core/chrome_devtools_mcp_browser.py
+      - runtime/python/zn_agent/core/stdio_mcp.py
       - runtime/python/zn_agent/core/browser_causal_popup.py
       - runtime/python/zn_agent/core/browser_scene_actions.py
       - runtime/python/zn_agent/core/browser_scene_command.py
@@ -40,6 +43,9 @@ on:
       - runtime/python/zn_agent/core/spreadsheet_work.py
       - runtime/python/zn_agent/core/url_safety.py
       - tests/zn_agent/core/test_browser_contract.py
+      - tests/zn_agent/core/test_browser_provider_registry.py
+      - tests/zn_agent/core/test_chrome_devtools_mcp_browser.py
+      - tests/zn_agent/e2e/test_windows_managed_browser_provider_contract.py
       - tests/zn_agent/core/test_browser_causal_popup.py
       - tests/zn_agent/core/test_browser_scene_actions.py
       - tests/zn_agent/core/test_browser_scene_command.py
@@ -89,6 +95,9 @@ on:
       - runtime/python/zn_agent/resident.py
       - runtime/python/zn_agent/core/action.py
       - runtime/python/zn_agent/core/browser.py
+      - runtime/python/zn_agent/core/browser_provider_registry.py
+      - runtime/python/zn_agent/core/chrome_devtools_mcp_browser.py
+      - runtime/python/zn_agent/core/stdio_mcp.py
       - runtime/python/zn_agent/core/browser_causal_popup.py
       - runtime/python/zn_agent/core/browser_scene_actions.py
       - runtime/python/zn_agent/core/browser_scene_command.py
@@ -119,6 +128,9 @@ on:
       - runtime/python/zn_agent/core/spreadsheet_work.py
       - runtime/python/zn_agent/core/url_safety.py
       - tests/zn_agent/core/test_browser_contract.py
+      - tests/zn_agent/core/test_browser_provider_registry.py
+      - tests/zn_agent/core/test_chrome_devtools_mcp_browser.py
+      - tests/zn_agent/e2e/test_windows_managed_browser_provider_contract.py
       - tests/zn_agent/core/test_browser_causal_popup.py
       - tests/zn_agent/core/test_browser_scene_actions.py
       - tests/zn_agent/core/test_browser_scene_command.py
@@ -191,6 +203,11 @@ jobs:
           Write-Host "ZN managed-browser runner: $env:RUNNER_NAME"
       - name: Checkout
         uses: actions/checkout@v7
+      - name: Set up Node 24 for pinned Chrome DevTools MCP
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: false
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
@@ -209,6 +226,12 @@ jobs:
             Pop-Location
           }
           & $python -m playwright install chromium
+          $chromeMcpRoot = Join-Path $env:GITHUB_WORKSPACE '.ci\browser-runtimes\chrome-devtools-mcp'
+          Remove-Item -Recurse -Force $chromeMcpRoot -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force $chromeMcpRoot | Out-Null
+          npm install --prefix $chromeMcpRoot --no-save --package-lock=false --omit=dev --ignore-scripts chrome-devtools-mcp@1.9.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "ZN_CHROME_DEVTOOLS_MCP_ROOT=$chromeMcpRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Run managed browser contract tests
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
@@ -218,6 +241,12 @@ jobs:
           & $python -m unittest discover -s tests/zn_agent/core -p 'test_*browser*.py' -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $python -m unittest tests.zn_agent.core.test_structured_action_text_alias -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run Chrome DevTools MCP BrowserAdapter contract
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
+          & $python -m unittest tests.zn_agent.e2e.test_windows_managed_browser_provider_contract -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run real local Chromium E2E
         run: |
