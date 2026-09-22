@@ -367,10 +367,9 @@ def build_managed_browser_adapter(
             preferred=selected,
         )
 
-    available = list(providers.available(plane=BrowserPlane.MANAGED))
-    if len(available) == 1:
-        return available[0].factory()
-    if not available:
-        providers.resolve(plane=BrowserPlane.MANAGED)
-        raise AssertionError("unreachable")
+    # Keep the MANAGED owner capability-routed even when only one provider is
+    # currently available. Availability is volatile, while action/query
+    # requirements belong to each new session. Returning a concrete provider here
+    # would bypass session-time fail-closed capability checks.
+    providers.resolve(plane=BrowserPlane.MANAGED)
     return ManagedBrowserProviderRouter(registry=providers)

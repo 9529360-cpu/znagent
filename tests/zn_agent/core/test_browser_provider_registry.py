@@ -90,8 +90,13 @@ class BrowserProviderRegistryTests(unittest.TestCase):
         )
 
         adapter = build_managed_browser_adapter(registry=registry)
-        self.assertEqual(adapter.name, "legacy")
+        self.assertIsInstance(adapter, ManagedBrowserProviderRouter)
         self.assertIs(adapter.plane, BrowserPlane.MANAGED)
+        session = adapter.open_session(permission=BrowserPermissionContext())
+        try:
+            self.assertEqual(session.provider, "legacy")
+        finally:
+            adapter.close_session(session.session_id)
 
     def test_readable_browser_prefers_mature_provider_then_falls_back(self):
         registry = BrowserProviderRegistry()
