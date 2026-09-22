@@ -270,17 +270,18 @@ jobs:
           npm install --prefix $chromeMcpRoot --no-save --omit=dev --ignore-scripts --no-audit --no-fund chrome-devtools-mcp@1.9.0
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          $chromeCandidates = @(
+          $chromeExecutable = @(
             (Join-Path $env:PROGRAMFILES 'Google\Chrome\Application\chrome.exe'),
             (Join-Path ${env:ProgramFiles(x86)} 'Google\Chrome\Application\chrome.exe'),
             (Join-Path $env:LOCALAPPDATA 'Google\Chrome\Application\chrome.exe')
-          ) | Where-Object { $_ -and (Test-Path $_) }
-          if (-not $chromeCandidates) {
+          ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } |
+            Select-Object -First 1
+          if (-not $chromeExecutable) {
             throw 'Google Chrome is required for the Chrome DevTools MCP provider contract'
           }
 
           $env:ZN_CHROME_DEVTOOLS_MCP_ROOT = $chromeMcpRoot
-          $env:ZN_BROWSER_EXECUTABLE = $chromeCandidates[0]
+          $env:ZN_BROWSER_EXECUTABLE = [string]$chromeExecutable
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
           & $python tests/zn_agent/e2e/test_windows_mature_browser_provider.py -v
