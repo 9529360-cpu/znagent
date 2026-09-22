@@ -1,12 +1,9 @@
 name: Memory and Learned Behavior E2E
 
+# Full representative subsystem regression runs after merge or on demand.
+# Pull requests are gated by generic core/subsystem contracts instead.
+# Historical/full representative regression. Generic contracts gate PRs; run this only on demand.
 on:
-  pull_request:
-    branches:
-      - main
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
