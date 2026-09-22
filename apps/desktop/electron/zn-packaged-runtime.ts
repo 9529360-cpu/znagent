@@ -16,6 +16,8 @@ type ZnRuntimeManifest = {
   python: string
   backend_root: string
   browser_root?: string
+  chrome_devtools_mcp_runtime?: string
+  chrome_devtools_mcp_version?: string
   veteran_runtime?: string
 }
 
@@ -24,6 +26,7 @@ type ResolvedZnRuntime = {
   python: string
   backendRoot: string
   browserRoot?: string
+  chromeDevtoolsMcpRoot?: string
   veteranRuntimeRoot?: string
   manifest: ZnRuntimeManifest
 }
@@ -64,6 +67,18 @@ function readManifest(runtimeRoot: string): ZnRuntimeManifest {
   }
   if (manifest.browser_root !== undefined && (typeof manifest.browser_root !== 'string' || !manifest.browser_root.trim())) {
     throw new Error(`ZN runtime manifest has an invalid browser_root at ${manifestPath}`)
+  }
+  if (
+    manifest.chrome_devtools_mcp_runtime !== undefined
+    && (typeof manifest.chrome_devtools_mcp_runtime !== 'string' || !manifest.chrome_devtools_mcp_runtime.trim())
+  ) {
+    throw new Error(`ZN runtime manifest has an invalid chrome_devtools_mcp_runtime at ${manifestPath}`)
+  }
+  if (
+    manifest.chrome_devtools_mcp_version !== undefined
+    && manifest.chrome_devtools_mcp_version !== '1.9.0'
+  ) {
+    throw new Error(`ZN runtime manifest has an unsupported Chrome DevTools MCP version at ${manifestPath}`)
   }
   if (manifest.veteran_runtime !== undefined && (typeof manifest.veteran_runtime !== 'string' || !manifest.veteran_runtime.trim())) {
     throw new Error(`ZN runtime manifest has an invalid veteran_runtime at ${manifestPath}`)
@@ -112,12 +127,21 @@ function resolveRuntime(runtimeRoot: string, expectedRuntimeId?: string): Resolv
   const browserRoot = manifest.browser_root
     ? resolveInside(runtimeRoot, manifest.browser_root, 'browser_root')
     : undefined
+  const chromeDevtoolsMcpRoot = manifest.chrome_devtools_mcp_runtime
+    ? resolveInside(runtimeRoot, manifest.chrome_devtools_mcp_runtime, 'chrome_devtools_mcp_runtime')
+    : undefined
   const veteranRuntimeRoot = manifest.veteran_runtime
     ? resolveInside(runtimeRoot, manifest.veteran_runtime, 'veteran_runtime')
     : undefined
   requireFile(python, 'python executable')
   requireDirectory(backendRoot, 'backend root')
   if (browserRoot) requireDirectory(browserRoot, 'managed browser root')
+  if (chromeDevtoolsMcpRoot) {
+    requireDirectory(chromeDevtoolsMcpRoot, 'Chrome DevTools MCP runtime root')
+    const packageRoot = path.join(chromeDevtoolsMcpRoot, 'node_modules', 'chrome-devtools-mcp')
+    requireFile(path.join(packageRoot, 'package.json'), 'Chrome DevTools MCP package manifest')
+    requireFile(path.join(packageRoot, 'build', 'src', 'bin', 'chrome-devtools-mcp.js'), 'Chrome DevTools MCP server')
+  }
   if (veteranRuntimeRoot) {
     requireDirectory(veteranRuntimeRoot, 'Veteran runtime root')
     requireFile(path.join(veteranRuntimeRoot, 'mcp', 'server.mjs'), 'Veteran MCP server')
@@ -133,6 +157,7 @@ function resolveRuntime(runtimeRoot: string, expectedRuntimeId?: string): Resolv
     python,
     backendRoot,
     ...(browserRoot ? { browserRoot } : {}),
+    ...(chromeDevtoolsMcpRoot ? { chromeDevtoolsMcpRoot } : {}),
     ...(veteranRuntimeRoot ? { veteranRuntimeRoot } : {}),
     manifest
   }
@@ -187,6 +212,8 @@ function configureZnPackagedRuntime({
   env.ZN_RESIDENT_PYTHON = runtime.python
   if (runtime.browserRoot) env.PLAYWRIGHT_BROWSERS_PATH = runtime.browserRoot
   else delete env.PLAYWRIGHT_BROWSERS_PATH
+  if (runtime.chromeDevtoolsMcpRoot) env.ZN_CHROME_DEVTOOLS_MCP_ROOT = runtime.chromeDevtoolsMcpRoot
+  else delete env.ZN_CHROME_DEVTOOLS_MCP_ROOT
   if (runtime.veteranRuntimeRoot) env.ZN_VETERAN_RUNTIME_ROOT = runtime.veteranRuntimeRoot
   else delete env.ZN_VETERAN_RUNTIME_ROOT
   env.ZN_DESKTOP_EXECUTABLE = path.resolve(desktopExecutable)

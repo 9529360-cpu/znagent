@@ -47,3 +47,11 @@ test('runtime staging transports the installed backend path as ASCII-safe JSON',
   assert.match(source, /import importlib\.util, json/)
   assert.match(source, /json\.dumps\(str\(Path\(spec\.origin\)\.resolve\(\)\.parent\.parent\)\)/)
 })
+
+test('runtime staging packages exact Chrome DevTools MCP sidecar inside ZN runtime', () => {
+  assert.match(source, /const chromeDevtoolsMcpVersion = '1\.9\.0'/)
+  assert.match(source, /chrome-devtools-mcp@\$\{chromeDevtoolsMcpVersion\}/)
+  assert.match(source, /chrome_devtools_mcp_runtime:\s*portableRelative\(runtimeRoot, chromeDevtoolsMcpRuntimeDir\)/)
+  assert.match(source, /chrome_devtools_mcp_version:\s*chromeDevtoolsMcpVersion/)
+  assert.match(source, /build['"],\s*['"]src['"],\s*['"]bin['"],\s*['"]chrome-devtools-mcp\.js['"]/)
+})

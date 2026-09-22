@@ -11,6 +11,8 @@ const runtimeProject = path.join(repoRoot, 'runtime', 'python')
 const runtimeRoot = path.join(desktopRoot, 'build', 'zn-runtime')
 const pythonInstallDir = path.join(runtimeRoot, 'python')
 const browserInstallDir = path.join(runtimeRoot, 'playwright-browsers')
+const chromeDevtoolsMcpVersion = '1.9.0'
+const chromeDevtoolsMcpRuntimeDir = path.join(runtimeRoot, 'browser-runtimes', 'chrome-devtools-mcp')
 const veteranSourceRoot = path.join(repoRoot, 'vendor', 'veteran-engineer')
 const veteranRuntimeDir = path.join(runtimeRoot, 'veteran-engineer')
 const retiredPackageName = Buffer.from('6865726d65735f636c69', 'hex').toString('utf8')
@@ -129,6 +131,44 @@ if (fs.readdirSync(browserInstallDir).length === 0) {
   throw new Error(`Playwright Chromium installation produced an empty browser root: ${browserInstallDir}`)
 }
 
+console.log(`[zn-runtime] installing chrome-devtools-mcp@${chromeDevtoolsMcpVersion}`)
+fs.mkdirSync(chromeDevtoolsMcpRuntimeDir, { recursive: true })
+run('npm', [
+  'install',
+  '--prefix',
+  chromeDevtoolsMcpRuntimeDir,
+  '--no-save',
+  '--package-lock=false',
+  '--omit=dev',
+  '--ignore-scripts',
+  `chrome-devtools-mcp@${chromeDevtoolsMcpVersion}`
+])
+const chromeDevtoolsMcpPackageRoot = path.join(
+  chromeDevtoolsMcpRuntimeDir,
+  'node_modules',
+  'chrome-devtools-mcp'
+)
+const chromeDevtoolsMcpManifestPath = path.join(chromeDevtoolsMcpPackageRoot, 'package.json')
+const chromeDevtoolsMcpServer = path.join(
+  chromeDevtoolsMcpPackageRoot,
+  'build',
+  'src',
+  'bin',
+  'chrome-devtools-mcp.js'
+)
+if (!fs.existsSync(chromeDevtoolsMcpManifestPath) || !fs.existsSync(chromeDevtoolsMcpServer)) {
+  throw new Error(`Pinned Chrome DevTools MCP runtime is incomplete under ${chromeDevtoolsMcpRuntimeDir}`)
+}
+const chromeDevtoolsMcpManifest = JSON.parse(fs.readFileSync(chromeDevtoolsMcpManifestPath, 'utf8'))
+if (
+  chromeDevtoolsMcpManifest.name !== 'chrome-devtools-mcp'
+  || chromeDevtoolsMcpManifest.version !== chromeDevtoolsMcpVersion
+) {
+  throw new Error(
+    `Chrome DevTools MCP version mismatch: expected ${chromeDevtoolsMcpVersion}, got ${chromeDevtoolsMcpManifest.version || '<missing>'}`
+  )
+}
+
 // Ask the staged interpreter where zn_agent was actually installed instead of
 // assuming a platform-specific site-packages layout. uv's portable Windows
 // CPython's generic site-package discovery can report the runtime root, while
@@ -192,6 +232,8 @@ const manifest = {
   python: portableRelative(runtimeRoot, pythonPath),
   backend_root: portableRelative(runtimeRoot, backendRoot),
   browser_root: portableRelative(runtimeRoot, browserInstallDir),
+  chrome_devtools_mcp_runtime: portableRelative(runtimeRoot, chromeDevtoolsMcpRuntimeDir),
+  chrome_devtools_mcp_version: chromeDevtoolsMcpVersion,
   veteran_runtime: portableRelative(runtimeRoot, veteranRuntimeDir)
 }
 fs.writeFileSync(path.join(runtimeRoot, 'runtime.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
