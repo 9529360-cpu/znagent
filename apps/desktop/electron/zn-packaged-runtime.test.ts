@@ -97,7 +97,10 @@ test('packaged runtime materializes under ZN home and uses only ZN runtime entry
     assert.equal(env.ZN_RESIDENT_PYTHON, runtime.python)
     assert.equal(runtime.browserRoot, path.join(expectedRoot, 'playwright-browsers'))
     assert.equal(env.PLAYWRIGHT_BROWSERS_PATH, runtime.browserRoot)
-    assert.equal(runtime.browserExecutable, path.join(expectedRoot, ...browserExecutableRelative.split('/')))
+    assert.equal(
+      runtime.browserExecutable,
+      path.join(expectedRoot, 'playwright-browsers', 'chromium-fixture', 'chrome.exe')
+    )
     assert.equal(env.ZN_BROWSER_EXECUTABLE, runtime.browserExecutable)
     assert.equal(runtime.veteranRuntimeRoot, path.join(expectedRoot, 'veteran-engineer'))
     assert.equal(env.ZN_VETERAN_RUNTIME_ROOT, runtime.veteranRuntimeRoot)
