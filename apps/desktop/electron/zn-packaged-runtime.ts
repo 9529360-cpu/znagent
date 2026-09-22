@@ -16,6 +16,7 @@ type ZnRuntimeManifest = {
   python: string
   backend_root: string
   browser_root?: string
+  browser_executable?: string
   veteran_runtime?: string
   chrome_devtools_mcp_runtime?: string
   chrome_devtools_mcp_version?: string
@@ -26,6 +27,7 @@ type ResolvedZnRuntime = {
   python: string
   backendRoot: string
   browserRoot?: string
+  browserExecutable?: string
   veteranRuntimeRoot?: string
   chromeDevtoolsMcpRuntimeRoot?: string
   manifest: ZnRuntimeManifest
@@ -67,6 +69,12 @@ function readManifest(runtimeRoot: string): ZnRuntimeManifest {
   }
   if (manifest.browser_root !== undefined && (typeof manifest.browser_root !== 'string' || !manifest.browser_root.trim())) {
     throw new Error(`ZN runtime manifest has an invalid browser_root at ${manifestPath}`)
+  }
+  if (
+    manifest.browser_executable !== undefined &&
+    (typeof manifest.browser_executable !== 'string' || !manifest.browser_executable.trim())
+  ) {
+    throw new Error(`ZN runtime manifest has an invalid browser_executable at ${manifestPath}`)
   }
   if (manifest.veteran_runtime !== undefined && (typeof manifest.veteran_runtime !== 'string' || !manifest.veteran_runtime.trim())) {
     throw new Error(`ZN runtime manifest has an invalid veteran_runtime at ${manifestPath}`)
@@ -130,6 +138,9 @@ function resolveRuntime(runtimeRoot: string, expectedRuntimeId?: string): Resolv
   const browserRoot = manifest.browser_root
     ? resolveInside(runtimeRoot, manifest.browser_root, 'browser_root')
     : undefined
+  const browserExecutable = manifest.browser_executable
+    ? resolveInside(runtimeRoot, manifest.browser_executable, 'browser_executable')
+    : undefined
   const veteranRuntimeRoot = manifest.veteran_runtime
     ? resolveInside(runtimeRoot, manifest.veteran_runtime, 'veteran_runtime')
     : undefined
@@ -139,6 +150,7 @@ function resolveRuntime(runtimeRoot: string, expectedRuntimeId?: string): Resolv
   requireFile(python, 'python executable')
   requireDirectory(backendRoot, 'backend root')
   if (browserRoot) requireDirectory(browserRoot, 'managed browser root')
+  if (browserExecutable) requireFile(browserExecutable, 'managed browser executable')
   if (veteranRuntimeRoot) {
     requireDirectory(veteranRuntimeRoot, 'Veteran runtime root')
     requireFile(path.join(veteranRuntimeRoot, 'mcp', 'server.mjs'), 'Veteran MCP server')
@@ -182,6 +194,7 @@ function resolveRuntime(runtimeRoot: string, expectedRuntimeId?: string): Resolv
     python,
     backendRoot,
     ...(browserRoot ? { browserRoot } : {}),
+    ...(browserExecutable ? { browserExecutable } : {}),
     ...(veteranRuntimeRoot ? { veteranRuntimeRoot } : {}),
     ...(chromeDevtoolsMcpRuntimeRoot ? { chromeDevtoolsMcpRuntimeRoot } : {}),
     manifest
@@ -237,6 +250,8 @@ function configureZnPackagedRuntime({
   env.ZN_RESIDENT_PYTHON = runtime.python
   if (runtime.browserRoot) env.PLAYWRIGHT_BROWSERS_PATH = runtime.browserRoot
   else delete env.PLAYWRIGHT_BROWSERS_PATH
+  if (runtime.browserExecutable) env.ZN_BROWSER_EXECUTABLE = runtime.browserExecutable
+  else delete env.ZN_BROWSER_EXECUTABLE
   if (runtime.veteranRuntimeRoot) env.ZN_VETERAN_RUNTIME_ROOT = runtime.veteranRuntimeRoot
   else delete env.ZN_VETERAN_RUNTIME_ROOT
   if (runtime.chromeDevtoolsMcpRuntimeRoot) {
