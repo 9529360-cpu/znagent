@@ -19,6 +19,10 @@ For each E2E, record the natural-language user goal, environment/state, resource
 
 Do not create synthetic complexity only to make a test harder. Prefer tasks ordinary users could actually ask.
 
+### CI policy
+
+Real-task E2E scenarios are representative acceptance evidence, not merge-gating architecture owners. Workflows whose product identity is an `E2E` scenario are manual regressions only. Pull-request and automatic mainline gates must be generic capability or subsystem contracts that can serve many tasks. If a representative E2E fails because the substrate is missing a reusable capability, improve the substrate or contract; do not add a scenario-specific Resident, behavior, route or worker-phase sequence merely to make that E2E pass.
+
 ### Current representative acceptance status
 
 The 50 scenario IDs and product intents remain stable. The status overlay records current evidence without promoting a representative implementation into a whole capability-class claim.
