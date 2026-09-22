@@ -12,22 +12,15 @@ on:
       - apps/desktop/browser-extension/background.js
       - apps/desktop/browser-extension/manifest.json
       - tests/zn_agent/e2e/_run_owned_unittest_module.py
-      - tests/zn_agent/e2e/_current_app_content_cleanup_fixture.py
       - tests/zn_agent/e2e/test_windows_interactive_pointer_uia.py
       - tests/zn_agent/e2e/test_windows_interactive_text_entry.py
       - tests/zn_agent/e2e/test_windows_interactive_uia_text_capability.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_bridge.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_extension.py
-      - tests/zn_agent/e2e/test_windows_interactive_user_browser_natural_search_work.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_semantic_grounding.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_task_context.py
-      - tests/zn_agent/e2e/test_windows_interactive_user_browser_managed_research_return_work.py
-      - tests/zn_agent/e2e/test_windows_interactive_browser_result_file_work.py
-      - tests/zn_agent/e2e/test_windows_interactive_current_app_content_cleanup.py
       - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_grounding.py
       - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_reground.py
-      - tests/zn_agent/e2e/test_windows_interactive_desktop_modal_recovery.py
-      - tests/zn_agent/e2e/test_windows_interactive_file_desktop_goal.py
       - tests/zn_agent/e2e/test_windows_interactive_machine_capability.py
       - tests/zn_agent/e2e/test_windows_interactive_application_activation.py
       - runtime/python/pyproject.toml
@@ -99,22 +92,15 @@ on:
       - apps/desktop/browser-extension/background.js
       - apps/desktop/browser-extension/manifest.json
       - tests/zn_agent/e2e/_run_owned_unittest_module.py
-      - tests/zn_agent/e2e/_current_app_content_cleanup_fixture.py
       - tests/zn_agent/e2e/test_windows_interactive_pointer_uia.py
       - tests/zn_agent/e2e/test_windows_interactive_text_entry.py
       - tests/zn_agent/e2e/test_windows_interactive_uia_text_capability.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_bridge.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_extension.py
-      - tests/zn_agent/e2e/test_windows_interactive_user_browser_natural_search_work.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_semantic_grounding.py
       - tests/zn_agent/e2e/test_windows_interactive_user_browser_task_context.py
-      - tests/zn_agent/e2e/test_windows_interactive_user_browser_managed_research_return_work.py
-      - tests/zn_agent/e2e/test_windows_interactive_browser_result_file_work.py
-      - tests/zn_agent/e2e/test_windows_interactive_current_app_content_cleanup.py
       - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_grounding.py
       - tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_reground.py
-      - tests/zn_agent/e2e/test_windows_interactive_desktop_modal_recovery.py
-      - tests/zn_agent/e2e/test_windows_interactive_file_desktop_goal.py
       - tests/zn_agent/e2e/test_windows_interactive_machine_capability.py
       - tests/zn_agent/e2e/test_windows_interactive_application_activation.py
       - runtime/python/pyproject.toml
@@ -186,7 +172,7 @@ concurrency:
 
 jobs:
   interactive-desktop-e2e:
-    name: Windows interactive desktop contract
+    name: Windows interactive capability contracts
     runs-on: windows-latest
     timeout-minutes: 20
     env:
@@ -227,34 +213,35 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw 'Playwright Chromium runtime installation failed for interactive E2E'
           }
-      - name: Run interactive desktop contract modules
+      - name: Run generic interactive capability contracts
         shell: powershell
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-e2e-venv\Scripts\python.exe'
           $launcher = Join-Path $env:GITHUB_WORKSPACE '.github\scripts\run-zn-interactive-python.ps1'
           $ownedRunner = Join-Path $env:GITHUB_WORKSPACE 'tests\zn_agent\e2e\_run_owned_unittest_module.py'
-          $contractTests = @(
+          $tests = @(
             'tests/zn_agent/e2e/test_windows_interactive_pointer_uia.py',
             'tests/zn_agent/e2e/test_windows_interactive_text_entry.py',
             'tests/zn_agent/e2e/test_windows_interactive_uia_text_capability.py',
             'tests/zn_agent/e2e/test_windows_interactive_user_browser_bridge.py',
             'tests/zn_agent/e2e/test_windows_interactive_user_browser_extension.py',
             'tests/zn_agent/e2e/test_windows_interactive_user_browser_semantic_grounding.py',
+            'tests/zn_agent/e2e/test_windows_interactive_user_browser_task_context.py',
             'tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_grounding.py',
             'tests/zn_agent/e2e/test_windows_interactive_desktop_semantic_reground.py',
             'tests/zn_agent/e2e/test_windows_interactive_machine_capability.py',
             'tests/zn_agent/e2e/test_windows_interactive_application_activation.py'
           )
-          foreach ($relative in $contractTests) {
-            $test = Join-Path $env:GITHUB_WORKSPACE $relative
-            if (-not (Test-Path -LiteralPath $test -PathType Leaf)) {
-              throw "Interactive contract module is missing: $relative"
+          foreach ($test in $tests) {
+            $path = Join-Path $env:GITHUB_WORKSPACE $test
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Generic interactive contract is missing: $test"
             }
-            Write-Host "=== interactive contract module: $relative ==="
-            & $launcher -Python $python -CommandArgs @($ownedRunner, $test)
+            Write-Host "=== interactive contract: $test ==="
+            & $launcher -Python $python -CommandArgs @($ownedRunner, $path)
             if ($LASTEXITCODE -ne 0) {
-              throw "Interactive contract module failed: $relative"
+              throw "Interactive capability contract failed: $test"
             }
           }
 
