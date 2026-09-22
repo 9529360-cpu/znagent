@@ -4,7 +4,6 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
 
 from zn_agent.core.models import ModelRoute, WorkerResult
 from zn_agent.core.provider_bridge import build_resident_runtime
@@ -72,45 +71,20 @@ class ThreadRoutePolicyIntakeTests(unittest.TestCase):
             thread_id="privacy-thread",
             title="Private project",
         )
-        coordinator = resident._delegated_work_coordinator()
-        root = SimpleNamespace(
-            work_thread_id=thread.thread_id,
-            work_item_id="root-privacy",
-            objective="research current evidence then build and review the requested result",
-            plan_version=1,
-        )
-        child = SimpleNamespace(
-            work_item_id="item-research",
-            objective="perform bounded research",
-            acceptance_criteria=("delegated_worker_evidence: research/research_page",),
-        )
-        profile = resident._WORKER_SCOPE_PROFILES["research"]
-        worker = SimpleNamespace(
-            worker_run_id="worker-research",
-            work_item_id=child.work_item_id,
-            model_goal_id="goal-cog-worker-research",
-            cognition_request_id="cog-worker-research",
-            executor_kind="research",
-            tool_scope=profile["tool_scope"],
-            authority_scope=profile["authority_scope"],
-        )
         request = SimpleNamespace(
             request_id="original",
-            required_capabilities=("general",),
+            required_capabilities=("research", "reasoning"),
             context={},
             question="perform research cognition",
         )
-        event = SimpleNamespace(task=task, payload=dict(payload or {}))
-        with patch.object(ledger, "list_work_items", return_value=[]):
-            return coordinator.bind_worker_request(
-                event,
-                root,
-                request,
-                worker,
-                child,
-                expected_action="research_page",
-                completed=[],
-            )
+        event = SimpleNamespace(
+            task=task,
+            payload={
+                "work_thread_id": thread.thread_id,
+                **dict(payload or {}),
+            },
+        )
+        return resident._bind_work_route_policy(event, request)
 
     @staticmethod
     def _run_request(tmp: str, request, factory):

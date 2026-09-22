@@ -9,7 +9,6 @@ from .app_competence_execution import (
     AppCompetenceRecipeExecutor,
     AppCompetenceStageHandoff,
 )
-from .browser_goal_understanding_resident import browser_semantic_lookup_goal
 from .explorer_selected_file_behavior import install_explorer_selected_file_behavior
 from .local_file_discovery import build_local_file_discovery_capability
 from .local_inference_runtime import LocalInferenceRuntimeDiscovery
@@ -75,35 +74,6 @@ _CONTINUATION_INTENT_MARKERS = (
     "continue the research",
     "continue the investigation",
 )
-
-_EXISTING_SESSION_MARKERS = (
-    "已经登录",
-    "已登录",
-    "already logged",
-    "already signed in",
-    "logged-in",
-    "signed-in",
-    "existing session",
-)
-_EXISTING_SESSION_CONTAINER_MARKERS = (
-    "系统",
-    "portal",
-    "system",
-)
-_EXISTING_SESSION_LOOKUP_MARKERS = (
-    "查",
-    "找",
-    "lookup",
-    "find",
-    "show",
-)
-_EXISTING_SESSION_RECORD_MARKERS = (
-    "订单",
-    "记录",
-    "order",
-    "record",
-)
-
 
 class ProductResearchInformationResidentRuntime(ResearchInformationResidentRuntime):
     """Final Product Resident assembled from reusable capability layers."""
@@ -558,51 +528,6 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
             device_capabilities=self.device_capabilities,
         )
 
-    def _has_explicit_current_user_browser_authority(self) -> bool:
-        getter = getattr(self, "user_browser_authorization", None)
-        if not callable(getter):
-            return False
-        try:
-            authorization = getter()
-        except Exception:
-            return False
-        if not isinstance(authorization, dict):
-            return False
-        return (
-            authorization.get("authorized") is True
-            and str(authorization.get("plane") or "").strip().lower() == "user"
-            and str(authorization.get("browser_ownership") or "").strip().lower() == "user"
-            and str(authorization.get("authorization_scope") or "").strip().lower()
-            == "explicit_current_tab"
-        )
-
-    def _is_explicit_existing_session_record_lookup(self, event) -> bool:
-        """Admit only the bounded E2E-04-style existing-session lookup entrance."""
-
-        if str(getattr(event, "kind", "") or "").strip().lower() != "desktop_user_event":
-            return False
-        payload = getattr(event, "payload", None) or {}
-        if payload.get("body_action") or payload.get("native_action"):
-            return False
-        task = " ".join(str(getattr(event, "task", "") or "").split())
-        if not task or requested_multi_record_count(task) is None:
-            return False
-        lowered = task.casefold()
-        if not all(
-            any(marker.casefold() in lowered for marker in markers)
-            for markers in (
-                _EXISTING_SESSION_MARKERS,
-                _EXISTING_SESSION_CONTAINER_MARKERS,
-                _EXISTING_SESSION_LOOKUP_MARKERS,
-                _EXISTING_SESSION_RECORD_MARKERS,
-            )
-        ):
-            return False
-        # The natural phrase "the system I'm already logged into" is intentionally
-        # not a global synonym for "browser". It becomes USER-browser ingress only
-        # while the user has explicitly authorized the current browser tab.
-        return self._has_explicit_current_user_browser_authority()
-
     def _admit_grounded_reflex_action_candidate(self, event, state) -> bool:
         resolution = self.reflex_intents.resolve(event)
         match = resolution.match
@@ -635,18 +560,6 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
     def _orient_step(self, event, state, *, readiness, thought=None):
         if self._admit_grounded_reflex_action_candidate(event, state):
             return None
-        if (
-            browser_semantic_lookup_goal(event) is None
-            and self._is_explicit_existing_session_record_lookup(event)
-        ):
-            proposed = self._orient_browser_goal_from_cognition(
-                event,
-                state,
-                readiness=readiness,
-                thought=thought,
-            )
-            if proposed is not False:
-                return proposed
         return super()._orient_step(
             event,
             state,

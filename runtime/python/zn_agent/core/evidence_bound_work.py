@@ -6,7 +6,7 @@ A Resident event can finish successfully while the WorkItem it serves still has
 unmet acceptance criteria. This layer preserves the event/result as evidence but
 prevents executor/model success from becoming Work acceptance by itself.
 
-E2E-29 adds a small Work-owned WorkerRun ledger here. WorkerRun is a disposable
+A Work-owned WorkerRun ledger records disposable execution attempts. WorkerRun is a disposable
 execution attempt bound to an existing WorkItem and plan version; it is not a
 Resident, Agent identity, scheduler, provider Worker, model route, or second
 store. Provider dispatch durability remains owned by ZNKernelRuntime.

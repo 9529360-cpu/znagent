@@ -25,7 +25,7 @@ from .work import title_for_work_task
 
 
 class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
-    """Add the smallest rolling-decomposition bridge required by E2E-26."""
+    """Add a bounded rolling-decomposition bridge over durable Work."""
 
     _ROLLING_STEP_KEY = "broad_goal_rolling_step"
     _ROLLING_HISTORY_KEY = "broad_goal_rolling_history"
