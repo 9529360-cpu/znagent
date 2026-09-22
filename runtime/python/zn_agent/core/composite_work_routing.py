@@ -95,25 +95,10 @@ class CompositeWorkRouteDecision:
     reason: str
 
 
-def classify_composite_work_route(event) -> CompositeWorkRouteDecision:
-    """Classify only a durable Work-bound browser + workspace request."""
+def classify_composite_work_text(text: object) -> CompositeWorkRouteDecision:
+    """Classify cross-surface intent without granting any execution authority."""
 
-    kind = str(getattr(event, "kind", "") or "").strip().lower()
-    payload = getattr(event, "payload", {}) or {}
-    if kind != "desktop_user_event":
-        return _deny("event is not a desktop user Work request")
-    if payload.get("body_action") or payload.get("native_action"):
-        return _deny("action execution events stay on their admitted action path")
-
-    required_bindings = (
-        str(payload.get("work_thread_id") or "").strip(),
-        str(payload.get("work_item_id") or "").strip(),
-        str(payload.get("workspace_path") or "").strip(),
-    )
-    if not all(required_bindings):
-        return _deny("request is not bound to durable Work plus an attached workspace")
-
-    task = " ".join(str(getattr(event, "task", "") or "").casefold().split())
+    task = " ".join(str(text or "").casefold().split())
     if not task:
         return _deny("task text is empty")
 
@@ -140,12 +125,39 @@ def classify_composite_work_route(event) -> CompositeWorkRouteDecision:
     return CompositeWorkRouteDecision(
         preempt_narrow_browser=True,
         surfaces=tuple(surfaces),
+        reason="task text spans an explicit browser reference and workspace mutation",
+    )
+
+
+def classify_composite_work_route(event) -> CompositeWorkRouteDecision:
+    """Classify only a durable Work-bound browser + workspace request."""
+
+    kind = str(getattr(event, "kind", "") or "").strip().lower()
+    payload = getattr(event, "payload", {}) or {}
+    if kind != "desktop_user_event":
+        return _deny("event is not a desktop user Work request")
+    if payload.get("body_action") or payload.get("native_action"):
+        return _deny("action execution events stay on their admitted action path")
+
+    required_bindings = (
+        str(payload.get("work_thread_id") or "").strip(),
+        str(payload.get("work_item_id") or "").strip(),
+        str(payload.get("workspace_path") or "").strip(),
+    )
+    if not all(required_bindings):
+        return _deny("request is not bound to durable Work plus an attached workspace")
+
+    decision = classify_composite_work_text(getattr(event, "task", ""))
+    if not decision.preempt_narrow_browser:
+        return decision
+    return CompositeWorkRouteDecision(
+        preempt_narrow_browser=True,
+        surfaces=decision.surfaces,
         reason=(
             "durable Work spans a browser reference and an attached workspace mutation; "
             "the composite Work owner is more specific than generic browser understanding"
         ),
     )
-
 
 def composite_work_preempts_browser_understanding(event) -> bool:
     return classify_composite_work_route(event).preempt_narrow_browser
