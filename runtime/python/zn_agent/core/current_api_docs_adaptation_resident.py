@@ -798,7 +798,7 @@ class BrowserWorkspaceAdaptationResidentRuntime(ApplicationAwareResidentRuntime)
         state.data.pop("local_failure", None)
         state.stage = "native_deliberation"
         state.next_action = (
-            "choose the smallest workspace change from fresh docs and existing source evidence"
+            "choose the smallest workspace change from fresh browser-reference and existing source evidence"
         )
         self._sync_execution_context(event, state)
         self.store.save_working_state(state)
