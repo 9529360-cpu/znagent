@@ -83,7 +83,7 @@ def default_managed_browser_registry() -> BrowserProviderRegistry:
         BrowserProviderDescriptor(
             name="chrome-devtools-mcp",
             plane=BrowserPlane.MANAGED,
-            priority=200,
+            priority=100,
             factory=ChromeDevToolsMcpManagedBrowser,
             available=chrome_devtools_mcp_available,
         )
@@ -92,7 +92,7 @@ def default_managed_browser_registry() -> BrowserProviderRegistry:
         BrowserProviderDescriptor(
             name="playwright",
             plane=BrowserPlane.MANAGED,
-            priority=100,
+            priority=200,
             factory=ResearchSemanticPlaywrightManagedBrowser,
             available=lambda: True,
         )
@@ -100,12 +100,57 @@ def default_managed_browser_registry() -> BrowserProviderRegistry:
     return registry
 
 
+def build_readable_managed_browser_adapter(
+    *,
+    preferred: str | None = None,
+    registry: BrowserProviderRegistry | None = None,
+) -> BrowserAdapter:
+    """Build an ephemeral research browser.
+
+    Read-only managed research prefers the mature Chrome DevTools MCP provider
+    when its pinned runtime and a supported Chrome installation are present.
+    Interactive BrowserScene/file-transfer ownership stays on the complete
+    Playwright provider until the mature provider exposes those ZN contracts.
+    """
+
+    selected = (
+        str(preferred).strip()
+        if preferred is not None
+        else str(os.getenv("ZN_RESEARCH_BROWSER_PROVIDER") or "").strip()
+    )
+    providers = registry or default_managed_browser_registry()
+    if selected:
+        descriptor = providers.resolve(
+            plane=BrowserPlane.MANAGED,
+            preferred=selected,
+        )
+        return descriptor.factory()
+
+    try:
+        descriptor = providers.resolve(
+            plane=BrowserPlane.MANAGED,
+            preferred="chrome-devtools-mcp",
+        )
+    except RuntimeError:
+        descriptor = providers.resolve(
+            plane=BrowserPlane.MANAGED,
+            preferred="playwright",
+        )
+    return descriptor.factory()
+
+
 def build_managed_browser_adapter(
     *,
     preferred: str | None = None,
     registry: BrowserProviderRegistry | None = None,
 ) -> BrowserAdapter:
-    """Build one managed browser without leaking provider choice into Resident code."""
+    """Build the complete interactive managed-browser owner.
+
+    The default provider remains Playwright because ZN's active BrowserScene,
+    causal popup and file-transfer contracts extend beyond the base
+    BrowserAdapter protocol. Read-only research uses
+    build_readable_managed_browser_adapter() and can prefer Chrome DevTools MCP.
+    """
 
     selected = (
         str(preferred).strip()
