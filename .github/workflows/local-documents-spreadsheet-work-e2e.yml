@@ -1,9 +1,8 @@
 name: Local Documents and Spreadsheet Work E2E
 
+# Full representative subsystem regression runs after merge or on demand.
+# Pull requests are gated by generic core/subsystem contracts instead.
 on:
-  pull_request:
-    branches:
-      - main
   push:
     branches:
       - main
