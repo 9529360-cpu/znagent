@@ -1,0 +1,108 @@
+from __future__ import annotations
+
+import unittest
+
+from zn_agent.core.browser import BrowserPlane, BrowserSessionIdentity
+from zn_agent.core.browser_provider_registry import (
+    BrowserProviderDescriptor,
+    BrowserProviderRegistry,
+    build_managed_browser_adapter,
+)
+
+
+class _Adapter:
+    plane = BrowserPlane.MANAGED
+
+    def __init__(self, name):
+        self.name = name
+
+    def open_session(self, *, permission=None, headless=True):
+        return BrowserSessionIdentity.create(
+            plane=BrowserPlane.MANAGED,
+            provider=self.name,
+        )
+
+    def close_session(self, session_id):
+        return None
+
+    def observe(self, session_id, *, page_id=""):
+        raise NotImplementedError
+
+    def observe_target(self, session_id, query, *, page_id=""):
+        raise NotImplementedError
+
+    def act(self, action, authority):
+        raise NotImplementedError
+
+
+class BrowserProviderRegistryTests(unittest.TestCase):
+    def test_highest_priority_available_provider_wins(self):
+        registry = BrowserProviderRegistry()
+        registry.register(
+            BrowserProviderDescriptor(
+                name="legacy",
+                plane=BrowserPlane.MANAGED,
+                priority=100,
+                factory=lambda: _Adapter("legacy"),
+                available=lambda: True,
+            )
+        )
+        registry.register(
+            BrowserProviderDescriptor(
+                name="mature",
+                plane=BrowserPlane.MANAGED,
+                priority=200,
+                factory=lambda: _Adapter("mature"),
+                available=lambda: True,
+            )
+        )
+
+        descriptor = registry.resolve(plane=BrowserPlane.MANAGED)
+        self.assertEqual(descriptor.name, "mature")
+
+    def test_unavailable_mature_provider_falls_back_without_new_authority(self):
+        registry = BrowserProviderRegistry()
+        registry.register(
+            BrowserProviderDescriptor(
+                name="legacy",
+                plane=BrowserPlane.MANAGED,
+                priority=100,
+                factory=lambda: _Adapter("legacy"),
+                available=lambda: True,
+            )
+        )
+        registry.register(
+            BrowserProviderDescriptor(
+                name="mature",
+                plane=BrowserPlane.MANAGED,
+                priority=200,
+                factory=lambda: _Adapter("mature"),
+                available=lambda: False,
+            )
+        )
+
+        adapter = build_managed_browser_adapter(registry=registry)
+        self.assertEqual(adapter.name, "legacy")
+        self.assertIs(adapter.plane, BrowserPlane.MANAGED)
+
+    def test_explicit_unavailable_provider_fails_closed(self):
+        registry = BrowserProviderRegistry()
+        registry.register(
+            BrowserProviderDescriptor(
+                name="mature",
+                plane=BrowserPlane.MANAGED,
+                priority=200,
+                factory=lambda: _Adapter("mature"),
+                available=lambda: False,
+            )
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "unavailable"):
+            build_managed_browser_adapter(
+                preferred="mature",
+                registry=registry,
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()
