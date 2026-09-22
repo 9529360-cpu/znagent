@@ -60,6 +60,10 @@ class WindowsAudioReflexBehaviorTests(unittest.TestCase):
                 "run_goal",
                 side_effect=AssertionError("audio reflex must not call a model"),
             ),
+            patch(
+                "zn_agent.core.action_fabric.read_default_render_volume_percent",
+                return_value=50.0,
+            ),
         )
 
     @patch(
@@ -73,7 +77,7 @@ class WindowsAudioReflexBehaviorTests(unittest.TestCase):
             state = _state(event)
             try:
                 guards = self._zero_model_guards(resident)
-                with guards[0], guards[1], guards[2]:
+                with guards[0], guards[1], guards[2], guards[3]:
                     result = _advance(resident, event, state)
             finally:
                 resident.store.close()
@@ -104,7 +108,7 @@ class WindowsAudioReflexBehaviorTests(unittest.TestCase):
             state = _state(event)
             try:
                 guards = self._zero_model_guards(resident)
-                with guards[0], guards[1], guards[2]:
+                with guards[0], guards[1], guards[2], guards[3]:
                     result = _advance(resident, event, state)
             finally:
                 resident.store.close()
@@ -163,7 +167,7 @@ class WindowsAudioReflexBehaviorTests(unittest.TestCase):
             state = _state(event)
             try:
                 guards = self._zero_model_guards(resident)
-                with guards[0], guards[1], guards[2]:
+                with guards[0], guards[1], guards[2], guards[3]:
                     first = _advance(resident, event, state)
                     self.assertIsNone(first)
                     self.assertEqual(state.stage, "windows_audio_reflex_reverify")
@@ -200,7 +204,7 @@ class WindowsAudioReflexBehaviorTests(unittest.TestCase):
             first_state = _state(event)
             try:
                 guards = self._zero_model_guards(first_resident)
-                with guards[0], guards[1], guards[2]:
+                with guards[0], guards[1], guards[2], guards[3]:
                     self.assertIsNone(_advance(first_resident, event, first_state))
                 self.assertEqual(first_state.stage, "windows_audio_reflex_reverify")
             finally:
@@ -212,7 +216,7 @@ class WindowsAudioReflexBehaviorTests(unittest.TestCase):
                 self.assertEqual(resumed.current_event_id, event.event_id)
                 self.assertEqual(resumed.stage, "windows_audio_reflex_reverify")
                 guards = self._zero_model_guards(second_resident)
-                with guards[0], guards[1], guards[2]:
+                with guards[0], guards[1], guards[2], guards[3]:
                     result = _advance(second_resident, event, resumed)
             finally:
                 second_resident.store.close()
@@ -247,7 +251,7 @@ class WindowsAudioReflexBehaviorTests(unittest.TestCase):
             state = _state(event)
             try:
                 guards = self._zero_model_guards(resident)
-                with guards[0], guards[1], guards[2]:
+                with guards[0], guards[1], guards[2], guards[3]:
                     self.assertIsNone(_advance(resident, event, state))
                     self.assertEqual(state.stage, "windows_audio_reflex_reverify")
                     self.assertIsNone(_advance(resident, event, state))
@@ -269,7 +273,7 @@ class WindowsAudioReflexBehaviorTests(unittest.TestCase):
             try:
                 resident.action_fabric.unregister("windows.audio.volume.read")
                 guards = self._zero_model_guards(resident)
-                with guards[0], guards[1], guards[2]:
+                with guards[0], guards[1], guards[2], guards[3]:
                     result = _advance(resident, event, state)
             finally:
                 resident.store.close()
