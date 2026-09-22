@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 """ZN-owned semantic action discovery substrate.
 
 This module describes actions and their current availability.  It deliberately
@@ -16,6 +18,17 @@ from .windows_audio import (
     WindowsAudioUnavailable,
     read_default_render_volume_percent,
 )
+from .windows_brightness import (
+    WindowsBrightnessError,
+    WindowsBrightnessUnavailable,
+    read_active_brightness,
+)
+from .windows_wifi import (
+    WindowsWifiError,
+    WindowsWifiUnavailable,
+    read_windows_wifi_state,
+)
+from .windows_screen_capture import screen_capture_support
 
 
 ActionAvailabilityState = Literal[
@@ -285,6 +298,17 @@ def build_machine_action_fabric(device_capabilities: Any) -> ActionFabricRegistr
             },
         )
 
+    def screen_capture_availability(
+        descriptor: ActionDescriptor,
+    ) -> ActionAvailability:
+        supported, reason, evidence = screen_capture_support()
+        return ActionAvailability(
+            descriptor.action_id,
+            "available" if supported else "unavailable",
+            reason=reason,
+            evidence=evidence,
+        )
+
     def audio_availability(descriptor: ActionDescriptor) -> ActionAvailability:
         try:
             level = read_default_render_volume_percent()
@@ -310,6 +334,93 @@ def build_machine_action_fabric(device_capabilities: Any) -> ActionFabricRegistr
                 "source": "windows_core_audio",
                 "current_level_percent": level,
             },
+        )
+
+    def brightness_availability(descriptor: ActionDescriptor) -> ActionAvailability:
+        try:
+            observed = read_active_brightness()
+        except WindowsBrightnessUnavailable as exc:
+            return ActionAvailability(
+                descriptor.action_id,
+                "unavailable",
+                reason=str(exc),
+                evidence={"source": "windows_wmi_brightness"},
+            )
+        except WindowsBrightnessError as exc:
+            return ActionAvailability(
+                descriptor.action_id,
+                "unknown",
+                reason=str(exc),
+                evidence={"source": "windows_wmi_brightness"},
+            )
+        return ActionAvailability(
+            descriptor.action_id,
+            "available",
+            reason="one active Windows WMI monitor exposes brightness control",
+            evidence={
+                "source": "windows_wmi_brightness",
+                "instance_name": observed.instance_name,
+                "current_level_percent": observed.level_percent,
+            },
+        )
+
+    def wifi_availability(descriptor: ActionDescriptor) -> ActionAvailability:
+        try:
+            observed = read_windows_wifi_state()
+        except WindowsWifiUnavailable as exc:
+            return ActionAvailability(
+                descriptor.action_id,
+                "unavailable",
+                reason=str(exc),
+                evidence={"source": "windows_native_wifi"},
+            )
+        except WindowsWifiError as exc:
+            return ActionAvailability(
+                descriptor.action_id,
+                "unknown",
+                reason=str(exc),
+                evidence={"source": "windows_native_wifi"},
+            )
+        return ActionAvailability(
+            descriptor.action_id,
+            "available",
+            reason="Windows Native Wi-Fi interface state is queryable",
+            evidence={
+                "source": "windows_native_wifi",
+                "interface_count": observed.interface_count,
+                "connected_interface_count": observed.connected_interface_count,
+                "connected": observed.connected,
+            },
+        )
+
+    def uia_availability(descriptor: ActionDescriptor) -> ActionAvailability:
+        if os.name != "nt":
+            return ActionAvailability(
+                descriptor.action_id,
+                "unavailable",
+                reason="Windows UI Automation control actions are available only on Windows",
+                evidence={"source": "windows_uia"},
+            )
+        return ActionAvailability(
+            descriptor.action_id,
+            "available",
+            reason="Windows UI Automation control-pattern runtime is available",
+            evidence={"source": "windows_uia", "semantic_selector": True},
+        )
+
+    def office_availability(descriptor: ActionDescriptor) -> ActionAvailability:
+        if os.name != "nt":
+            return ActionAvailability(
+                descriptor.action_id,
+                "unavailable",
+                reason="Microsoft Office native-object actions are available only on Windows",
+                evidence={"source": "office_nativeom"},
+            )
+        return ActionAvailability(
+            descriptor.action_id,
+            "available",
+            reason="Office Native Object Model binding is available when an admitted Office window is foreground",
+            evidence={"source": "office_nativeom", "exact_hwnd_binding": True},
         )
 
     registry.register(
@@ -395,6 +506,103 @@ def build_machine_action_fabric(device_capabilities: Any) -> ActionFabricRegistr
     )
     registry.register(
         ActionDescriptor(
+            action_id="windows.desktop.scene.capture",
+            provider="zn.windows.desktop.scene",
+            description=(
+                "Capture one bounded foreground Windows desktop scene that combines "
+                "ZN-owned screenshot evidence, semantic UI Automation targets and "
+                "optional visual-grounding fallback evidence."
+            ),
+            body_action_kind="windows_desktop_scene_capture",
+            input_schema={
+                "type": "object",
+                "required": ["application_id"],
+                "properties": {
+                    "application_id": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            output_schema={
+                "type": "object",
+                "properties": {
+                    "scene_id": {"type": "string"},
+                    "scene_artifact_path": {"type": "string"},
+                    "grounding_mode": {"type": "string"},
+                    "target_count": {"type": "integer"},
+                    "uia_target_count": {"type": "integer"},
+                    "visual_target_count": {"type": "integer"},
+                    "truncated": {"type": "boolean"},
+                    "scene": {"type": "object"},
+                },
+            },
+            effect_class="reversible_side_effect",
+            required_authority=("body_action",),
+            sensitivity="screen_content",
+            preconditions=(
+                "application_id resolves to exactly one current foreground application window",
+                "the foreground window intersects the captured primary screen",
+            ),
+            postconditions=(
+                "one coherent scene sidecar references one verified ZN-owned screenshot artifact",
+                "scene targets remain bounded and carry UIA/visual provenance",
+            ),
+            verification=(
+                "fresh scene sidecar digest plus screenshot path/dimensions/SHA-256 readback",
+            ),
+            reversibility=(
+                "remove the exact ZN-owned desktop-scene sidecar and referenced screenshot artifact"
+            ),
+            replay_semantics="verify_before_replay",
+            tags=(
+                "windows",
+                "desktop",
+                "scene",
+                "grounding",
+                "uia",
+                "visual_fallback",
+                "artifact",
+                "body",
+            ),
+        ),
+        availability_probe=screen_capture_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.screen.capture",
+            provider="zn.windows",
+            description=(
+                "Capture the current primary Windows screen into a ZN-owned PNG artifact."
+            ),
+            body_action_kind="windows_screen_capture",
+            input_schema={"type": "object", "additionalProperties": False},
+            output_schema={
+                "type": "object",
+                "properties": {
+                    "local_path": {"type": "string"},
+                    "width": {"type": "integer"},
+                    "height": {"type": "integer"},
+                    "size_bytes": {"type": "integer"},
+                    "sha256": {"type": "string"},
+                },
+            },
+            effect_class="reversible_side_effect",
+            required_authority=("body_action",),
+            sensitivity="screen_content",
+            preconditions=("an interactive Windows desktop is available to ZN",),
+            postconditions=(
+                "one PNG exists under the ZN-owned screenshot artifact root",
+            ),
+            verification=(
+                "fresh artifact path containment, PNG decode, dimensions and SHA-256 readback",
+            ),
+            reversibility="remove the exact ZN-owned screenshot artifact",
+            replay_semantics="verify_before_replay",
+            tags=("windows", "screen", "capture", "artifact", "native", "body"),
+        ),
+        availability_probe=screen_capture_availability,
+    )
+    registry.register(
+        ActionDescriptor(
             action_id="windows.audio.volume.read",
             provider="zn.windows",
             description="Read the master volume of the default Windows render endpoint.",
@@ -454,5 +662,444 @@ def build_machine_action_fabric(device_capabilities: Any) -> ActionFabricRegistr
             tags=("windows", "audio", "volume", "native", "body"),
         ),
         availability_probe=audio_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.display.brightness.read",
+            provider="zn.windows",
+            description="Read the brightness of the unique active Windows WMI monitor.",
+            body_action_kind="windows_display_brightness_read",
+            input_schema={"type": "object", "additionalProperties": False},
+            output_schema={
+                "type": "object",
+                "properties": {
+                    "level_percent": {"type": "number"},
+                    "instance_name": {"type": "string"},
+                },
+            },
+            effect_class="read_only",
+            postconditions=("fresh active-monitor brightness is returned",),
+            verification=("the WMI read itself is current machine evidence",),
+            reversibility="not_applicable",
+            replay_semantics="read_only",
+            tags=("windows", "display", "brightness", "native", "body"),
+        ),
+        availability_probe=brightness_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.display.brightness.set",
+            provider="zn.windows",
+            description="Set the brightness of the unique active Windows WMI monitor.",
+            body_action_kind="windows_display_brightness_set",
+            input_schema={
+                "type": "object",
+                "required": ["level_percent"],
+                "properties": {
+                    "level_percent": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 100,
+                    }
+                },
+                "additionalProperties": False,
+            },
+            output_schema={
+                "type": "object",
+                "properties": {
+                    "instance_name": {"type": "string"},
+                    "requested_level_percent": {"type": "number"},
+                    "observed_level_percent": {"type": "number"},
+                    "verified": {"type": "boolean"},
+                },
+            },
+            effect_class="reversible_side_effect",
+            required_authority=("body_action",),
+            sensitivity="local_display_control",
+            preconditions=(
+                "exactly one active WmiMonitorBrightness target is currently observed",
+            ),
+            postconditions=(
+                "fresh active-monitor readback matches the requested brightness within tolerance",
+            ),
+            verification=("fresh WMI active-monitor brightness readback",),
+            reversibility="set the previously observed brightness through the same action",
+            replay_semantics="verify_before_replay",
+            tags=("windows", "display", "brightness", "native", "body"),
+        ),
+        availability_probe=brightness_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.ui.controls.list",
+            provider="zn.windows.uia",
+            description=(
+                "List a bounded set of one semantic Windows UI Automation control type "
+                "inside the exact current foreground application."
+            ),
+            body_action_kind="automation_controls_list",
+            input_schema={
+                "type": "object",
+                "required": ["application_id", "control_type"],
+                "properties": {
+                    "application_id": {"type": "string"},
+                    "control_type": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            effect_class="read_only",
+            sensitivity="interactive_desktop_state",
+            preconditions=(
+                "application_id is the exact current foreground application",
+                "control_type is one supported bounded UI Automation semantic type",
+            ),
+            postconditions=(
+                "at most 24 current controls of the requested type are returned without text values",
+            ),
+            verification=("the bounded UI Automation candidate read itself is current evidence",),
+            reversibility="not_applicable",
+            replay_semantics="read_only",
+            tags=("windows", "uia", "gui", "sense", "candidate_inventory", "body"),
+        ),
+        availability_probe=uia_availability,
+    )
+
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.ui.control.read",
+            provider="zn.windows.uia",
+            description=(
+                "Read one exact foreground Windows UI Automation control-pattern state "
+                "through a semantic selector."
+            ),
+            body_action_kind="automation_control_read",
+            input_schema={
+                "type": "object",
+                "required": ["application_id", "control_type", "pattern"],
+                "properties": {
+                    "application_id": {"type": "string"},
+                    "control_type": {"type": "string"},
+                    "control_name": {"type": "string"},
+                    "automation_id": {"type": "string"},
+                    "pattern": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            effect_class="read_only",
+            sensitivity="interactive_desktop_state",
+            preconditions=(
+                "application_id is the exact current foreground application",
+                "name/automation_id selector resolves to exactly one enabled onscreen control",
+                "the requested UI Automation control pattern is exposed",
+            ),
+            postconditions=("fresh exact-control pattern state is returned",),
+            verification=("the UI Automation pattern read itself is current desktop evidence",),
+            reversibility="not_applicable",
+            replay_semantics="read_only",
+            tags=("windows", "uia", "gui", "sense", "semantic_control", "body"),
+        ),
+        availability_probe=uia_availability,
+    )
+
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.ui.control.set_value",
+            provider="zn.windows.uia",
+            description=(
+                "Set one exact foreground Windows UI Automation ValuePattern control "
+                "through a semantic selector."
+            ),
+            body_action_kind="automation_control_set_value",
+            input_schema={
+                "type": "object",
+                "required": ["application_id", "control_type", "value"],
+                "properties": {
+                "application_id": {"type": "string"},
+                "control_type": {"type": "string"},
+                "control_name": {"type": "string"},
+                "automation_id": {"type": "string"},                    "value": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            effect_class="reversible_side_effect",
+            required_authority=("body_action",),
+            sensitivity="interactive_desktop_control",
+            preconditions=(
+                "application_id is the exact current foreground application",
+                "name/automation_id selector resolves to exactly one enabled onscreen non-password control",
+                "the control exposes writable ValuePattern",
+            ),
+            postconditions=("fresh exact-control ValuePattern digest matches the requested value",),
+            verification=("fresh UI Automation ValuePattern readback",),
+            reversibility="set the previously observed value through the same semantic control action",
+            replay_semantics="verify_before_replay",
+            tags=("windows", "uia", "gui", "value", "semantic_control", "body"),
+        ),
+        availability_probe=uia_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.ui.control.toggle",
+            provider="zn.windows.uia",
+            description="Set one exact foreground Windows UI Automation TogglePattern control on or off.",
+            body_action_kind="automation_control_toggle",
+            input_schema={
+                "type": "object",
+                "required": ["application_id", "control_type", "state"],
+                "properties": {
+                "application_id": {"type": "string"},
+                "control_type": {"type": "string"},
+                "control_name": {"type": "string"},
+                "automation_id": {"type": "string"},                    "state": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            effect_class="reversible_side_effect",
+            required_authority=("body_action",),
+            sensitivity="interactive_desktop_control",
+            preconditions=(
+                "application_id is the exact current foreground application",
+                "semantic selector resolves to exactly one enabled onscreen TogglePattern control",
+                "indeterminate toggle state is rejected",
+            ),
+            postconditions=("fresh exact-control TogglePattern state equals on/off target",),
+            verification=("fresh UI Automation TogglePattern readback",),
+            reversibility="toggle to the previously observed on/off state",
+            replay_semantics="verify_before_replay",
+            tags=("windows", "uia", "gui", "toggle", "semantic_control", "body"),
+        ),
+        availability_probe=uia_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.ui.control.expand_collapse",
+            provider="zn.windows.uia",
+            description=(
+                "Expand or collapse one exact foreground Windows UI Automation "
+                "ExpandCollapsePattern control."
+            ),
+            body_action_kind="automation_control_expand_collapse",
+            input_schema={
+                "type": "object",
+                "required": ["application_id", "control_type", "state"],
+                "properties": {
+                "application_id": {"type": "string"},
+                "control_type": {"type": "string"},
+                "control_name": {"type": "string"},
+                "automation_id": {"type": "string"},                    "state": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            effect_class="reversible_side_effect",
+            required_authority=("body_action",),
+            sensitivity="interactive_desktop_control",
+            preconditions=(
+                "application_id is the exact current foreground application",
+                "semantic selector resolves to exactly one enabled onscreen ExpandCollapsePattern control",
+            ),
+            postconditions=("fresh exact-control state equals expanded/collapsed target",),
+            verification=("fresh UI Automation ExpandCollapsePattern readback",),
+            reversibility="restore the previously observed expand/collapse state",
+            replay_semantics="verify_before_replay",
+            tags=("windows", "uia", "gui", "expand_collapse", "semantic_control", "body"),
+        ),
+        availability_probe=uia_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.ui.control.select",
+            provider="zn.windows.uia",
+            description=(
+                "Select one exact foreground Windows UI Automation SelectionItemPattern control."
+            ),
+            body_action_kind="automation_control_select",
+            input_schema={
+                "type": "object",
+                "required": ["application_id", "control_type"],
+                "properties": {
+                "application_id": {"type": "string"},
+                "control_type": {"type": "string"},
+                "control_name": {"type": "string"},
+                "automation_id": {"type": "string"},                },
+                "additionalProperties": False,
+            },
+            effect_class="reversible_side_effect",
+            required_authority=("body_action",),
+            sensitivity="interactive_desktop_control",
+            preconditions=(
+                "application_id is the exact current foreground application",
+                "semantic selector resolves to exactly one enabled onscreen SelectionItemPattern control",
+            ),
+            postconditions=("fresh exact-control SelectionItemPattern reports selected=true",),
+            verification=("fresh UI Automation SelectionItemPattern readback",),
+            reversibility="selection is application/container specific",
+            replay_semantics="verify_before_replay",
+            tags=("windows", "uia", "gui", "selection", "semantic_control", "body"),
+        ),
+        availability_probe=uia_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.office.session.read",
+            provider="zn.windows.office",
+            description="Read bounded identity for the exact foreground Microsoft Office session.",
+            body_action_kind="office_session_read",
+            input_schema={
+                "type": "object",
+                "required": ["application_id"],
+                "properties": {"application_id": {"type": "string"}},
+                "additionalProperties": False,
+            },
+            effect_class="read_only",
+            sensitivity="local_document_state",
+            preconditions=("application_id is the exact current foreground Word/Excel/PowerPoint app",),
+            postconditions=("current Office version and active document identity are returned",),
+            verification=("the exact-HWND Native Object Model read itself is current evidence",),
+            reversibility="not_applicable",
+            replay_semantics="read_only",
+            tags=("windows", "office", "com", "nativeom", "sense", "body"),
+        ),
+        availability_probe=office_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.office.excel.cell.read",
+            provider="zn.windows.office",
+            description="Read privacy-safe state for one exact cell in the foreground Excel workbook.",
+            body_action_kind="office_excel_cell_read",
+            input_schema={
+                "type": "object",
+                "required": ["application_id", "worksheet_name", "cell_address"],
+                "properties": {
+                    "application_id": {"type": "string"},
+                    "worksheet_name": {"type": "string"},
+                    "cell_address": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            effect_class="read_only",
+            sensitivity="local_document_content_digest",
+            preconditions=(
+                "application_id is the exact current foreground Microsoft Excel app",
+                "worksheet_name resolves exactly and cell_address is one A1-style cell",
+            ),
+            postconditions=("fresh cell type/length/digest state is returned without raw content",),
+            verification=("the exact-HWND Excel NativeOM read itself is current evidence",),
+            reversibility="not_applicable",
+            replay_semantics="read_only",
+            tags=("windows", "office", "excel", "com", "cell", "sense", "body"),
+        ),
+        availability_probe=office_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.office.excel.cell.set",
+            provider="zn.windows.office",
+            description="Set one exact cell in the foreground Excel workbook through Native Object Model.",
+            body_action_kind="office_excel_cell_set",
+            input_schema={
+                "type": "object",
+                "required": ["application_id", "worksheet_name", "cell_address", "value"],
+                "properties": {
+                    "application_id": {"type": "string"},
+                    "worksheet_name": {"type": "string"},
+                    "cell_address": {"type": "string"},
+                    "value": {},
+                },
+                "additionalProperties": False,
+            },
+            effect_class="reversible_side_effect",
+            required_authority=("body_action",),
+            sensitivity="local_document_control",
+            preconditions=(
+                "application_id is the exact current foreground Microsoft Excel app",
+                "worksheet_name resolves exactly and cell_address is one A1-style cell",
+            ),
+            postconditions=("fresh exact-cell digest matches the requested scalar value",),
+            verification=("fresh Excel NativeOM cell readback",),
+            reversibility="set the previously observed scalar value through the same action",
+            replay_semantics="verify_before_replay",
+            tags=("windows", "office", "excel", "com", "cell", "mutation", "body"),
+        ),
+        availability_probe=office_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.office.word.selection.read",
+            provider="zn.windows.office",
+            description="Read privacy-safe text state for the current foreground Word selection.",
+            body_action_kind="office_word_selection_read",
+            input_schema={
+                "type": "object",
+                "required": ["application_id"],
+                "properties": {"application_id": {"type": "string"}},
+                "additionalProperties": False,
+            },
+            effect_class="read_only",
+            sensitivity="local_document_content_digest",
+            preconditions=("application_id is the exact current foreground Microsoft Word app",),
+            postconditions=("fresh selection length/digest state is returned without raw text",),
+            verification=("the exact-HWND Word NativeOM selection read itself is current evidence",),
+            reversibility="not_applicable",
+            replay_semantics="read_only",
+            tags=("windows", "office", "word", "com", "selection", "sense", "body"),
+        ),
+        availability_probe=office_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.office.word.selection.set_text",
+            provider="zn.windows.office",
+            description="Replace the current foreground Word selection through Native Object Model.",
+            body_action_kind="office_word_selection_set_text",
+            input_schema={
+                "type": "object",
+                "required": ["application_id", "text"],
+                "properties": {
+                    "application_id": {"type": "string"},
+                    "text": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            effect_class="reversible_side_effect",
+            required_authority=("body_action",),
+            sensitivity="local_document_control",
+            preconditions=("application_id is the exact current foreground Microsoft Word app",),
+            postconditions=("fresh selection digest matches the requested replacement text",),
+            verification=("fresh Word NativeOM selection readback",),
+            reversibility="Office Undo or a later explicit replacement",
+            replay_semantics="verify_before_replay",
+            tags=("windows", "office", "word", "com", "selection", "mutation", "body"),
+        ),
+        availability_probe=office_availability,
+    )
+
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.network.wifi.read",
+            provider="zn.windows",
+            description=(
+                "Read enabled Windows Wi-Fi interface state without network identity."
+            ),
+            body_action_kind="windows_network_wifi_read",
+            input_schema={"type": "object", "additionalProperties": False},
+            output_schema={
+                "type": "object",
+                "properties": {
+                    "connected": {"type": "boolean"},
+                    "interface_count": {"type": "integer"},
+                    "connected_interface_count": {"type": "integer"},
+                    "interfaces": {"type": "array"},
+                },
+            },
+            effect_class="read_only",
+            postconditions=("fresh Native Wi-Fi interface state is returned",),
+            verification=("the WlanEnumInterfaces read itself is current machine evidence",),
+            reversibility="not_applicable",
+            replay_semantics="read_only",
+            sensitivity="local_network_state",
+            tags=("windows", "network", "wifi", "native", "body"),
+        ),
+        availability_probe=wifi_availability,
     )
     return registry

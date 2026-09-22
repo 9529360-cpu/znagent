@@ -24,6 +24,7 @@ from docx.document import Document as _Document
 from docx.text.paragraph import Paragraph
 
 from .file_identity import compare_file_identities, observe_file_identity
+from .document_spec import document_visible_texts, normalize_document_spec
 
 MAX_FILE_BYTES = 8 * 1024 * 1024
 MAX_PARAGRAPHS = 512
@@ -1073,6 +1074,87 @@ def write_docx_completion_copy(
                 target_verification,
                 key=lambda value: str(value["target_id"]),
             ),
+        }
+    except Exception:
+        if temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+        raise
+
+def create_docx_from_spec(
+    destination_path: str | Path,
+    *,
+    spec: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Create one verified DOCX export from the current native DocumentSpec v1."""
+
+    destination = Path(destination_path).resolve(strict=False)
+    if destination.suffix.casefold() != ".docx":
+        raise ValueError("DOCX destination must use the .docx extension")
+    if not destination.parent.exists() or not destination.parent.is_dir():
+        raise FileNotFoundError("DOCX destination parent directory does not exist")
+    if destination.exists():
+        raise FileExistsError("output_collision: destination already exists; refusing overwrite")
+
+    normalized = normalize_document_spec(spec)
+    expected_texts = document_visible_texts(normalized)
+
+    document = Document()
+    document.add_heading(normalized["title"], level=0)
+    if normalized["subtitle"]:
+        subtitle = document.add_paragraph()
+        run = subtitle.add_run(normalized["subtitle"])
+        run.italic = True
+    for section in normalized["sections"]:
+        document.add_heading(section["heading"], level=1)
+        for paragraph in section["paragraphs"]:
+            document.add_paragraph(paragraph)
+        for bullet in section["bullets"]:
+            document.add_paragraph(bullet, style="List Bullet")
+
+    fd, raw_temp = tempfile.mkstemp(
+        prefix=f".{destination.name}.",
+        suffix=".docx",
+        dir=destination.parent,
+    )
+    os.close(fd)
+    temp_path = Path(raw_temp)
+    try:
+        document.save(temp_path)
+        temp_inspection = inspect_docx(temp_path)
+        if temp_inspection.get("ready") is not True:
+            raise RuntimeError(
+                f"DOCX generated package failed reopen: {temp_inspection.get('detail')}"
+            )
+        if int(temp_inspection.get("table_count") or 0) != 0:
+            raise RuntimeError("DocumentSpec v1 export unexpectedly contains a table")
+        temp_records = _records(Document(temp_path))
+        observed_texts = [str(record["text"]) for record in temp_records]
+        if observed_texts != expected_texts:
+            raise RuntimeError("DOCX generated visible text differs from the current DocumentSpec")
+        if destination.exists():
+            raise FileExistsError("output_collision: destination appeared during DOCX generation")
+        _publish_no_overwrite(temp_path, destination)
+
+        final_inspection = inspect_docx(destination)
+        if final_inspection.get("ready") is not True:
+            raise RuntimeError("DOCX final fresh reopen/inspection failed")
+        final_records = _records(Document(destination))
+        final_texts = [str(record["text"]) for record in final_records]
+        if final_texts != expected_texts:
+            raise RuntimeError("DOCX final visible text differs from the current DocumentSpec")
+        if final_records != temp_records:
+            raise RuntimeError("DOCX final fresh reopen changed verified paragraph/run state")
+        if final_inspection.get("structure_fingerprint") != temp_inspection.get(
+            "structure_fingerprint"
+        ):
+            raise RuntimeError("DOCX final structure fingerprint differs from verified temp output")
+        return {
+            "verified": True,
+            "destination": str(destination),
+            "identity": final_inspection["identity"],
+            "paragraph_count": len(final_records),
+            "visible_text_chars": sum(len(text) for text in final_texts),
+            "structure_fingerprint": final_inspection["structure_fingerprint"],
         }
     except Exception:
         if temp_path.exists():

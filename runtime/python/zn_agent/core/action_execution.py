@@ -17,8 +17,15 @@ from .action_authority import (
     bind_worker_authority_arg,
 )
 from .action_fabric import ActionDescriptor, ActionFabricRegistry
+from .automation_control_action import normalize_control_type, text_sha256
 from .body import BodyActionResult
+from .office_native_action import scalar_digest
+from .desktop_scene import inspect_desktop_scene_artifact
 from .models import utc_now
+from .windows_screen_capture import (
+    inspect_screen_capture_artifact,
+    screen_capture_artifact_path,
+)
 
 
 ExecutionStatus = Literal["verified", "pending", "failed", "uncertain"]
@@ -371,11 +378,32 @@ def build_machine_action_execution_runtime(
 ) -> ActionExecutionRuntime:
     runtime = ActionExecutionRuntime(fabric, body)
 
+    if fabric.descriptor("windows.screen.capture") is not None:
+        runtime.register_verification(
+            "windows.screen.capture",
+            observe=_observe_screen_capture,
+            verify=_verify_screen_capture,
+        )
+
+    if fabric.descriptor("windows.desktop.scene.capture") is not None:
+        runtime.register_verification(
+            "windows.desktop.scene.capture",
+            observe=_observe_desktop_scene,
+            verify=_verify_desktop_scene,
+        )
+
     if fabric.descriptor("windows.audio.volume.set") is not None:
         runtime.register_verification(
             "windows.audio.volume.set",
             observe=lambda request, result: _observe_volume(body, request),
             verify=_verify_volume,
+        )
+
+    if fabric.descriptor("windows.display.brightness.set") is not None:
+        runtime.register_verification(
+            "windows.display.brightness.set",
+            observe=lambda request, result: _observe_brightness(body, request),
+            verify=_verify_brightness,
         )
 
     if (
@@ -390,7 +418,423 @@ def build_machine_action_execution_runtime(
             ),
             verify=_verify_application_launch,
         )
+    for action_id, pattern in (
+        ("windows.ui.control.set_value", "value"),
+        ("windows.ui.control.toggle", "toggle"),
+        ("windows.ui.control.expand_collapse", "expand_collapse"),
+        ("windows.ui.control.select", "selection_item"),
+    ):
+        if fabric.descriptor(action_id) is None:
+            continue
+        runtime.register_verification(
+            action_id,
+            observe=lambda request, result, pattern=pattern: _observe_ui_control(
+                body, request, pattern
+            ),
+            verify=lambda request, observation, result, pattern=pattern: _verify_ui_control(
+                request, observation, result, pattern
+            ),
+        )
+
+    if fabric.descriptor("windows.office.excel.cell.set") is not None:
+        runtime.register_verification(
+            "windows.office.excel.cell.set",
+            observe=lambda request, result: _observe_office_excel_cell(body, request),
+            verify=_verify_office_excel_cell,
+        )
+    if fabric.descriptor("windows.office.word.selection.set_text") is not None:
+        runtime.register_verification(
+            "windows.office.word.selection.set_text",
+            observe=lambda request, result: _observe_office_word_selection(body, request),
+            verify=_verify_office_word_selection,
+        )
+
     return runtime
+
+
+def _observe_screen_capture(
+    request: ActionRequest,
+    body_result: BodyActionResult | None,
+) -> ActionObservation:
+    result_data = dict((body_result.data if body_result is not None else {}) or {})
+    local_path = str(result_data.get("local_path") or "").strip()
+    if not local_path:
+        local_path = str(screen_capture_artifact_path(str(request.event_id or "")))
+    observed = inspect_screen_capture_artifact(local_path)
+    return ActionObservation(
+        request.action_id,
+        "zn_screen_capture_artifact_readback",
+        data=observed,
+    )
+
+
+def _verify_screen_capture(
+    request: ActionRequest,
+    observation: ActionObservation,
+    body_result: BodyActionResult | None,
+) -> ActionVerification:
+    expected = dict((body_result.data if body_result is not None else {}) or {})
+    observed = dict(observation.data or {})
+    mismatches: list[str] = []
+
+    for key in ("local_path", "sha256", "width", "height", "size_bytes"):
+        value = expected.get(key)
+        if value in (None, ""):
+            continue
+        if str(observed.get(key)) != str(value):
+            mismatches.append(key)
+
+    if mismatches:
+        return ActionVerification(
+            "failed",
+            "fresh screenshot artifact readback does not match Body result",
+            evidence={
+                "mismatched_fields": mismatches,
+                **observed,
+            },
+            observed_at=observation.observed_at,
+        )
+
+    return ActionVerification(
+        "verified",
+        (
+            "fresh ZN-owned screenshot artifact exists and matches recorded evidence"
+            if not expected.get("replay_blocked")
+            else "recovered prior screenshot effect from deterministic artifact evidence"
+        ),
+        evidence={
+            **observed,
+            "replay_recovered": bool(expected.get("replay_blocked")),
+        },
+        observed_at=observation.observed_at,
+    )
+
+
+def _observe_office_excel_cell(
+    body: Any,
+    request: ActionRequest,
+) -> ActionObservation:
+    observer = getattr(body, "observe_excel_cell", None)
+    if not callable(observer):
+        raise RuntimeError("current Body does not expose Excel NativeOM observation")
+    observed = observer(
+        application_id=str(request.args.get("application_id") or ""),
+        worksheet_name=str(request.args.get("worksheet_name") or ""),
+        cell_address=str(request.args.get("cell_address") or ""),
+    )
+    data = dict(observed.audit())
+    data["application_id"] = str(request.args.get("application_id") or "").strip()
+    return ActionObservation(
+        request.action_id,
+        "office_excel_nativeom_readback",
+        data=data,
+        observed_at=observed.captured_at or utc_now(),
+    )
+
+
+def _verify_office_excel_cell(
+    request: ActionRequest,
+    observation: ActionObservation,
+    _body_result: BodyActionResult | None,
+) -> ActionVerification:
+    data = dict(observation.data or {})
+    target = dict(data.get("target") or {})
+    state = dict(data.get("state") or {})
+    try:
+        expected = scalar_digest(request.args.get("value"))
+    except ValueError as exc:
+        return ActionVerification(
+            "failed",
+            str(exc),
+            evidence={"application_id": data.get("application_id")},
+            observed_at=observation.observed_at,
+        )
+    selector_matches = bool(
+        data.get("application_id") == str(request.args.get("application_id") or "").strip()
+        and target.get("worksheet_name") == str(request.args.get("worksheet_name") or "").strip()
+        and target.get("cell_address") == str(request.args.get("cell_address") or "").strip().replace("$", "").upper()
+    )
+    verified = selector_matches and state == expected
+    return ActionVerification(
+        "verified" if verified else "failed",
+        (
+            "fresh Excel NativeOM cell digest matches requested value"
+            if verified
+            else "fresh Excel NativeOM cell digest does not match requested value"
+        ),
+        evidence={
+            "application_id": data.get("application_id"),
+            "target": target,
+            "selector_matches": selector_matches,
+            "expected": expected,
+            "observed": state,
+        },
+        observed_at=observation.observed_at,
+    )
+
+
+def _observe_office_word_selection(
+    body: Any,
+    request: ActionRequest,
+) -> ActionObservation:
+    observer = getattr(body, "observe_word_selection", None)
+    if not callable(observer):
+        raise RuntimeError("current Body does not expose Word NativeOM selection observation")
+    observed = observer(
+        application_id=str(request.args.get("application_id") or ""),
+    )
+    data = dict(observed.audit())
+    data["application_id"] = str(request.args.get("application_id") or "").strip()
+    return ActionObservation(
+        request.action_id,
+        "office_word_nativeom_readback",
+        data=data,
+        observed_at=observed.captured_at or utc_now(),
+    )
+
+
+def _verify_office_word_selection(
+    request: ActionRequest,
+    observation: ActionObservation,
+    _body_result: BodyActionResult | None,
+) -> ActionVerification:
+    data = dict(observation.data or {})
+    state = dict(data.get("state") or {})
+    text = request.args.get("text")
+    if not isinstance(text, str):
+        return ActionVerification(
+            "failed",
+            "Word replacement text is not a string",
+            evidence={"application_id": data.get("application_id")},
+            observed_at=observation.observed_at,
+        )
+    expected = {
+        "selection_chars": len(text),
+        "selection_sha256": text_sha256(text),
+    }
+    application_matches = (
+        data.get("application_id") == str(request.args.get("application_id") or "").strip()
+    )
+    verified = bool(
+        application_matches
+        and state.get("selection_chars") == expected["selection_chars"]
+        and state.get("selection_sha256") == expected["selection_sha256"]
+    )
+    return ActionVerification(
+        "verified" if verified else "failed",
+        (
+            "fresh Word NativeOM selection digest matches requested text"
+            if verified
+            else "fresh Word NativeOM selection digest does not match requested text"
+        ),
+        evidence={
+            "application_id": data.get("application_id"),
+            "application_matches": application_matches,
+            "expected": expected,
+            "observed": {
+                "selection_chars": state.get("selection_chars"),
+                "selection_sha256": state.get("selection_sha256"),
+            },
+        },
+        observed_at=observation.observed_at,
+    )
+
+
+def _observe_ui_control(
+    body: Any,
+    request: ActionRequest,
+    pattern: str,
+) -> ActionObservation:
+    observer = getattr(body, "observe_automation_control", None)
+    if not callable(observer):
+        raise RuntimeError("current Body does not expose semantic UI Automation observation")
+    observed = observer(
+        application_id=str(request.args.get("application_id") or ""),
+        control_type=str(request.args.get("control_type") or ""),
+        control_name=str(request.args.get("control_name") or ""),
+        automation_id=str(request.args.get("automation_id") or ""),
+        pattern=pattern,
+    )
+    data = dict(observed.audit())
+    data["application_id"] = str(request.args.get("application_id") or "").strip()
+    return ActionObservation(
+        request.action_id,
+        "windows_uia_control_readback",
+        data=data,
+        observed_at=observed.captured_at or utc_now(),
+    )
+
+
+def _verify_ui_control(
+    request: ActionRequest,
+    observation: ActionObservation,
+    _body_result: BodyActionResult | None,
+    pattern: str,
+) -> ActionVerification:
+    data = dict(observation.data or {})
+    selector = dict(data.get("selector") or {})
+    state = dict(data.get("state") or {})
+    try:
+        expected_type = normalize_control_type(request.args.get("control_type"))
+    except ValueError as exc:
+        return ActionVerification(
+            "failed",
+            str(exc),
+            evidence=data,
+            observed_at=observation.observed_at,
+        )
+    expected_name = " ".join(str(request.args.get("control_name") or "").strip().split())
+    expected_automation_id = str(request.args.get("automation_id") or "").strip()
+    selector_matches = bool(
+        data.get("application_id") == str(request.args.get("application_id") or "").strip()
+        and selector.get("control_type") == expected_type
+        and selector.get("name") == expected_name
+        and selector.get("automation_id") == expected_automation_id
+        and data.get("pattern") == pattern
+    )
+    verified = False
+    target_evidence: dict[str, Any] = {}
+    if selector_matches and pattern == "value":
+        target = request.args.get("value")
+        if isinstance(target, str):
+            chars = state.get("value_chars")
+            expected_hash = text_sha256(target)
+            verified = bool(
+                isinstance(chars, int)
+                and chars == len(target)
+                and state.get("value_sha256") == expected_hash
+            )
+            target_evidence = {
+                "expected_value_chars": len(target),
+                "expected_value_sha256": expected_hash,
+                "observed_value_chars": chars,
+                "observed_value_sha256": state.get("value_sha256"),
+            }
+    elif selector_matches and pattern == "toggle":
+        target = str(request.args.get("state") or "").strip().lower()
+        verified = target in {"on", "off"} and state.get("toggle_state") == target
+        target_evidence = {
+            "expected_toggle_state": target,
+            "observed_toggle_state": state.get("toggle_state"),
+        }
+    elif selector_matches and pattern == "expand_collapse":
+        target = str(request.args.get("state") or "").strip().lower().replace("-", "_")
+        verified = (
+            target in {"expanded", "collapsed"}
+            and state.get("expand_collapse_state") == target
+        )
+        target_evidence = {
+            "expected_expand_collapse_state": target,
+            "observed_expand_collapse_state": state.get("expand_collapse_state"),
+        }
+    elif selector_matches and pattern == "selection_item":
+        verified = state.get("selected") is True
+        target_evidence = {"observed_selected": state.get("selected")}
+
+    evidence = {
+        "application_id": data.get("application_id"),
+        "selector": selector,
+        "runtime_id": data.get("runtime_id"),
+        "pattern": data.get("pattern"),
+        "selector_matches": selector_matches,
+        **target_evidence,
+    }
+    return ActionVerification(
+        "verified" if verified else "failed",
+        (
+            "fresh UI Automation control readback matches requested target state"
+            if verified
+            else "fresh UI Automation control readback does not match requested target state"
+        ),
+        evidence=evidence,
+        observed_at=observation.observed_at,
+    )
+
+
+def _observe_desktop_scene(
+    request: ActionRequest,
+    body_result: BodyActionResult | None,
+) -> ActionObservation:
+    event_id = str(request.event_id or "").strip()
+    if not event_id:
+        raise RuntimeError("desktop scene verification requires the stable event_id")
+    observed = inspect_desktop_scene_artifact(event_id)
+    return ActionObservation(
+        request.action_id,
+        "zn_desktop_scene_artifact_readback",
+        data=observed,
+    )
+
+
+def _verify_desktop_scene(
+    request: ActionRequest,
+    observation: ActionObservation,
+    body_result: BodyActionResult | None,
+) -> ActionVerification:
+    expected = dict((body_result.data if body_result is not None else {}) or {})
+    observed = dict(observation.data or {})
+    mismatches: list[str] = []
+    for key in (
+        "scene_artifact_path",
+        "scene_id",
+        "grounding_mode",
+        "target_count",
+        "uia_target_count",
+        "visual_target_count",
+        "truncated",
+    ):
+        value = expected.get(key)
+        if value in (None, ""):
+            continue
+        if str(observed.get(key)) != str(value):
+            mismatches.append(key)
+
+    expected_scene = expected.get("scene")
+    if isinstance(expected_scene, Mapping):
+        expected_screenshot = expected_scene.get("screenshot")
+        observed_screenshot = observed.get("screenshot")
+        if isinstance(expected_screenshot, Mapping) and isinstance(
+            observed_screenshot, Mapping
+        ):
+            for key in ("local_path", "sha256", "width", "height", "size_bytes"):
+                value = expected_screenshot.get(key)
+                if value in (None, ""):
+                    continue
+                if str(observed_screenshot.get(key)) != str(value):
+                    mismatches.append(f"screenshot.{key}")
+
+    if mismatches:
+        return ActionVerification(
+            "failed",
+            "fresh desktop scene artifact readback does not match Body result",
+            evidence={
+                "mismatched_fields": tuple(mismatches),
+                "scene_id": observed.get("scene_id"),
+                "scene_artifact_path": observed.get("scene_artifact_path"),
+            },
+            observed_at=observation.observed_at,
+        )
+
+    return ActionVerification(
+        "verified",
+        (
+            "fresh desktop scene sidecar and screenshot artifact match recorded evidence"
+            if not expected.get("replay_blocked")
+            else "recovered prior desktop scene effect from deterministic artifacts"
+        ),
+        evidence={
+            "scene_id": observed.get("scene_id"),
+            "scene_artifact_path": observed.get("scene_artifact_path"),
+            "grounding_mode": observed.get("grounding_mode"),
+            "target_count": observed.get("target_count"),
+            "uia_target_count": observed.get("uia_target_count"),
+            "visual_target_count": observed.get("visual_target_count"),
+            "truncated": observed.get("truncated"),
+            "screenshot_sha256": dict(observed.get("screenshot") or {}).get("sha256"),
+            "replay_recovered": bool(expected.get("replay_blocked")),
+        },
+        observed_at=observation.observed_at,
+    )
 
 
 def _observe_volume(body: Any, request: ActionRequest) -> ActionObservation:
@@ -432,6 +876,80 @@ def _verify_volume(
             else "fresh Core Audio readback does not match requested volume"
         ),
         evidence={
+            "requested_level_percent": requested,
+            "observed_level_percent": observed,
+            "delta_percent": delta,
+            "tolerance_percent": 0.5,
+        },
+        observed_at=observation.observed_at,
+    )
+
+
+def _observe_brightness(body: Any, request: ActionRequest) -> ActionObservation:
+    result = body.act(
+        "windows_display_brightness_read",
+        event_id=request.event_id,
+    )
+    if not result.success:
+        raise RuntimeError(result.error or "Windows brightness readback failed")
+    return ActionObservation(
+        request.action_id,
+        "windows_wmi_brightness_readback",
+        data=dict(result.data or {}),
+        observed_at=result.completed_at or utc_now(),
+    )
+
+
+def _verify_brightness(
+    request: ActionRequest,
+    observation: ActionObservation,
+    body_result: BodyActionResult | None,
+) -> ActionVerification:
+    requested = _finite_number(request.args.get("level_percent"))
+    observed = _finite_number(observation.data.get("level_percent"))
+    observed_instance = str(observation.data.get("instance_name") or "").strip()
+    expected_instance = str(
+        ((body_result.data or {}).get("instance_name") if body_result is not None else "")
+        or ""
+    ).strip()
+    if (
+        requested is None
+        or observed is None
+        or not observed_instance
+        or not expected_instance
+    ):
+        return ActionVerification(
+            "failed",
+            "brightness verification lacks numeric requested/readback evidence or the original monitor identity",
+            evidence={
+                **dict(observation.data),
+                "expected_instance_name": expected_instance,
+            },
+            observed_at=observation.observed_at,
+        )
+    if observed_instance != expected_instance:
+        return ActionVerification(
+            "failed",
+            "fresh brightness readback belongs to a different monitor identity",
+            evidence={
+                "expected_instance_name": expected_instance,
+                "observed_instance_name": observed_instance,
+                "requested_level_percent": requested,
+                "observed_level_percent": observed,
+            },
+            observed_at=observation.observed_at,
+        )
+    delta = abs(observed - requested)
+    verified = delta <= 0.5
+    return ActionVerification(
+        "verified" if verified else "failed",
+        (
+            "fresh WMI readback matches requested brightness on the same monitor"
+            if verified
+            else "fresh WMI readback does not match requested brightness"
+        ),
+        evidence={
+            "instance_name": observed_instance,
             "requested_level_percent": requested,
             "observed_level_percent": observed,
             "delta_percent": delta,

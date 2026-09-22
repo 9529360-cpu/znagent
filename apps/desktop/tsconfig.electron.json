@@ -18,6 +18,7 @@
     "noEmit": true
   },
   "include": [
-    "electron/zn-*.ts"
+    "electron/zn-*.ts",
+    "localization/*.ts"
   ]
 }

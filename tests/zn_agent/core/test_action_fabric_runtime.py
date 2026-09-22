@@ -48,6 +48,22 @@ class MachineActionFabricTests(unittest.TestCase):
                 "windows.audio.volume.read",
                 "windows.audio.volume.set",
                 "windows.context.read",
+                "windows.desktop.scene.capture",
+                "windows.display.brightness.read",
+                "windows.display.brightness.set",
+                "windows.network.wifi.read",
+                "windows.office.excel.cell.read",
+                "windows.office.excel.cell.set",
+                "windows.office.session.read",
+                "windows.office.word.selection.read",
+                "windows.office.word.selection.set_text",
+                "windows.screen.capture",
+                "windows.ui.control.expand_collapse",
+                "windows.ui.control.read",
+                "windows.ui.control.select",
+                "windows.ui.control.set_value",
+                "windows.ui.control.toggle",
+                "windows.ui.controls.list",
             ),
         )
         self.assertEqual(
@@ -69,6 +85,10 @@ class MachineActionFabricTests(unittest.TestCase):
         self.assertEqual(
             registry.descriptor("windows.audio.volume.set").body_action_kind,
             "windows_audio_volume_set",
+        )
+        self.assertEqual(
+            registry.descriptor("windows.screen.capture").body_action_kind,
+            "windows_screen_capture",
         )
 
     def test_availability_comes_from_fresh_device_graph_evidence(self) -> None:
@@ -121,6 +141,22 @@ class ProductActionFabricIntegrationTests(unittest.TestCase):
                         "windows.audio.volume.read",
                         "windows.audio.volume.set",
                         "windows.context.read",
+                        "windows.desktop.scene.capture",
+                        "windows.display.brightness.read",
+                        "windows.display.brightness.set",
+                        "windows.network.wifi.read",
+                        "windows.office.excel.cell.read",
+                        "windows.office.excel.cell.set",
+                        "windows.office.session.read",
+                        "windows.office.word.selection.read",
+                        "windows.office.word.selection.set_text",
+                        "windows.screen.capture",
+                        "windows.ui.control.expand_collapse",
+                        "windows.ui.control.read",
+                        "windows.ui.control.select",
+                        "windows.ui.control.set_value",
+                        "windows.ui.control.toggle",
+                        "windows.ui.controls.list",
                     ),
                 )
                 self.assertIs(
