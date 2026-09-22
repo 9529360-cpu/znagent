@@ -236,15 +236,18 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
             )
             node = root / "node.exe"
             chrome = root / "chrome.exe"
+            playwright_chromium = root / "playwright-chromium.exe"
             node.write_text("fixture", encoding="utf-8")
             chrome.write_text("fixture", encoding="utf-8")
+            playwright_chromium.write_text("fixture", encoding="utf-8")
 
             with patch.dict(
                 os.environ,
                 {
                     "ZN_CHROME_DEVTOOLS_MCP_ROOT": str(root),
                     "ZN_NODE_EXECUTABLE": str(node),
-                    "ZN_BROWSER_EXECUTABLE": str(chrome),
+                    "ZN_BROWSER_EXECUTABLE": str(playwright_chromium),
+                    "ZN_CHROME_EXECUTABLE": str(chrome),
                 },
                 clear=False,
             ):
@@ -262,6 +265,7 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
             self.assertIn("--executable-path", command.argv)
             chrome_arg = command.argv[command.argv.index("--executable-path") + 1]
             self.assertTrue(os.path.samefile(chrome_arg, chrome))
+            self.assertFalse(os.path.samefile(chrome_arg, playwright_chromium))
             self.assertNotIn("chrome-devtools-mcp@latest", " ".join(command.argv))
 
     def test_file_transfer_permission_fails_before_provider_start(self):
