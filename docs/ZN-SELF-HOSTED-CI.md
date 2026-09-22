@@ -8,7 +8,7 @@
 >
 > This file keeps its historical filename so existing repository links do not break.
 
-Updated: 2026-09-16
+Updated: 2026-09-22
 
 ## Purpose
 
@@ -26,9 +26,15 @@ Self-hosted Windows is a special resource for workflows that genuinely depend on
 
 Each job verifies that the actual runner is Windows x64 before executing product code.
 
-Path-filtered product E2E should also prefer GitHub-hosted Windows when its real acceptance environment can be reconstructed without persistent user credentials or host-specific state. Current hosted examples include Local Documents/Spreadsheet, Research, Document Research, Memory/Learned Behavior, the primary Windows Interactive Desktop E2E, and Windows Clean Install.
+PR verification is split by stability and ownership rather than by historical task number:
 
-Hosted does not mean synthetic-only. The primary Windows Interactive Desktop lane proves a usable interactive Windows desktop before running real Win32/UIA/browser/desktop acceptance, and Windows Clean Install builds and installs the real NSIS candidate in isolated disposable state.
+- **PR merge gates:** generic substrate contracts and smoke tests such as `ZN CI`, managed-browser provider/authority contracts, Work recovery contracts, Windows interactive capability contracts, and Windows Clean Install.
+- **Post-merge / on-demand subsystem regression:** broader Research, Documents/Spreadsheet, Document Research, and Memory/Learned Behavior scenario suites run on `main` pushes or manual dispatch, not on every pull request.
+- **Manual representative acceptance:** numbered real-account, real-model, or host-state scenarios such as E2E-05/06/27/28/30 are `workflow_dispatch` only.
+
+A numbered representative E2E is evidence about a capability composition; it is never the owner of product routing and must not become a normal PR merge gate. `tests/zn_agent/core/test_ci_scenario_gate_policy.py` enforces that workflows which execute numbered `test_e2eNN` scenarios cannot declare `pull_request`.
+
+Hosted does not mean synthetic-only. The primary Windows Interactive Desktop lane proves a usable interactive Windows desktop before running generic Win32/UIA/browser/desktop capability acceptance, and Windows Clean Install builds and installs the real NSIS candidate in isolated disposable state.
 
 `dev/zn-agent` remains a historical compatibility branch only. It is not a CI integration target for new product development.
 
@@ -38,7 +44,7 @@ The primary PR/push job in `.github/workflows/zn-windows-interactive-e2e.yml` ru
 
 Before product acceptance it runs `.github/scripts/test-zn-interactive-desktop-readiness.ps1`, which fails closed unless the runner process is in a non-Session-0, WTS-active user session that can open and switch to the Windows input desktop, observe a same-session foreground window, and acquire foreground for a bounded probe window.
 
-The hosted interactive lane then exercises the current product routes, including the retained Windows application/UIA and browser-to-desktop paths. A runner label by itself is never treated as proof of an interactive desktop.
+The hosted interactive lane then exercises reusable Windows application/UIA, USER-browser bridge, semantic grounding, re-grounding and modal-recovery capabilities. Historical numbered browser-to-desktop scenario handlers are not restored merely to satisfy this lane. A runner label by itself is never treated as proof of an interactive desktop.
 
 The same workflow retains a manually dispatched legacy/full diagnostics job that may use the specialized self-hosted `zn-interactive` runner. That manual diagnostic path is separate from the ordinary PR/push acceptance path.
 
