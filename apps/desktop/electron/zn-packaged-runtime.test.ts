@@ -22,11 +22,13 @@ function writeBundledRuntime(resourcesPath: string, runtimeId = 'abcdef123456789
   const pythonRelative = process.platform === 'win32' ? 'python/python.exe' : 'python/bin/python3'
   const backendRelative = 'python/site-packages'
   const browserRelative = 'playwright-browsers'
+  const browserExecutableRelative = 'playwright-browsers/chromium-fixture/chrome.exe'
   const veteranRelative = 'veteran-engineer'
   const chromeMcpRelative = 'browser-runtimes/chrome-devtools-mcp'
   const python = path.join(runtimeRoot, ...pythonRelative.split('/'))
   const backendRoot = path.join(runtimeRoot, ...backendRelative.split('/'))
   const browserRoot = path.join(runtimeRoot, browserRelative)
+  const browserExecutable = path.join(runtimeRoot, ...browserExecutableRelative.split('/'))
   const veteranRuntimeRoot = path.join(runtimeRoot, veteranRelative)
   const chromeDevtoolsMcpRuntimeRoot = path.join(runtimeRoot, ...chromeMcpRelative.split('/'))
   const chromeDevtoolsMcpPackageRoot = path.join(
@@ -41,6 +43,7 @@ function writeBundledRuntime(resourcesPath: string, runtimeId = 'abcdef123456789
   fs.writeFileSync(path.join(backendRoot, 'zn_agent', 'core', 'resident_server.py'), '# resident core\n')
   fs.mkdirSync(path.join(browserRoot, 'chromium-fixture'), { recursive: true })
   fs.writeFileSync(path.join(browserRoot, 'chromium-fixture', 'marker'), 'managed chromium')
+  fs.writeFileSync(browserExecutable, 'fake chromium executable')
   fs.mkdirSync(path.join(veteranRuntimeRoot, 'mcp'), { recursive: true })
   fs.writeFileSync(path.join(veteranRuntimeRoot, 'mcp', 'server.mjs'), '// veteran fixture\n')
   fs.writeFileSync(path.join(veteranRuntimeRoot, 'VENDOR.json'), '{}\n')
@@ -64,6 +67,7 @@ function writeBundledRuntime(resourcesPath: string, runtimeId = 'abcdef123456789
     python: pythonRelative,
     backend_root: backendRelative,
     browser_root: browserRelative,
+    browser_executable: browserExecutableRelative,
     veteran_runtime: veteranRelative,
     chrome_devtools_mcp_runtime: chromeMcpRelative,
     chrome_devtools_mcp_version: '1.9.0'
@@ -73,6 +77,7 @@ function writeBundledRuntime(resourcesPath: string, runtimeId = 'abcdef123456789
     runtimeId,
     backendRoot,
     browserRoot,
+    browserExecutable,
     veteranRuntimeRoot,
     chromeDevtoolsMcpRuntimeRoot
   }
@@ -92,6 +97,8 @@ test('packaged runtime materializes under ZN home and uses only ZN runtime entry
     assert.equal(env.ZN_RESIDENT_PYTHON, runtime.python)
     assert.equal(runtime.browserRoot, path.join(expectedRoot, 'playwright-browsers'))
     assert.equal(env.PLAYWRIGHT_BROWSERS_PATH, runtime.browserRoot)
+    assert.equal(runtime.browserExecutable, path.join(expectedRoot, ...browserExecutableRelative.split('/')))
+    assert.equal(env.ZN_BROWSER_EXECUTABLE, runtime.browserExecutable)
     assert.equal(runtime.veteranRuntimeRoot, path.join(expectedRoot, 'veteran-engineer'))
     assert.equal(env.ZN_VETERAN_RUNTIME_ROOT, runtime.veteranRuntimeRoot)
     assert.equal(
@@ -108,6 +115,7 @@ test('packaged runtime materializes under ZN home and uses only ZN runtime entry
     fs.rmSync(path.join(resourcesPath, 'zn-runtime'), { recursive: true, force: true })
     assert.equal(resolveRuntime(expectedRoot, runtimeId).python, runtime.python)
     assert.equal(resolveRuntime(expectedRoot, runtimeId).browserRoot, runtime.browserRoot)
+    assert.equal(resolveRuntime(expectedRoot, runtimeId).browserExecutable, runtime.browserExecutable)
     assert.equal(
       resolveRuntime(expectedRoot, runtimeId).chromeDevtoolsMcpRuntimeRoot,
       runtime.chromeDevtoolsMcpRuntimeRoot
@@ -141,6 +149,7 @@ test('packaged N+1 materializes beside N with its own managed browser root', () 
     assert.equal(current.browserRoot, path.join(current.root, 'playwright-browsers'))
     assert.equal(desired.browserRoot, path.join(desired.root, 'playwright-browsers'))
     assert.notEqual(desired.browserRoot, current.browserRoot)
+    assert.notEqual(desired.browserExecutable, current.browserExecutable)
     assert.equal(
       current.chromeDevtoolsMcpRuntimeRoot,
       path.join(current.root, 'browser-runtimes', 'chrome-devtools-mcp')
@@ -157,6 +166,7 @@ test('packaged N+1 materializes beside N with its own managed browser root', () 
     assert.equal(env.ZN_RUNTIME_ID, 'runtime-n-plus-1')
     assert.equal(env.ZN_RESIDENT_PYTHON, desired.python)
     assert.equal(env.PLAYWRIGHT_BROWSERS_PATH, desired.browserRoot)
+    assert.equal(env.ZN_BROWSER_EXECUTABLE, desired.browserExecutable)
     assert.equal(
       env.ZN_CHROME_DEVTOOLS_MCP_ROOT,
       desired.chromeDevtoolsMcpRuntimeRoot
@@ -170,16 +180,22 @@ test('packaged runtime without browser manifest clears inherited Playwright cach
   const root = mkTmpRoot()
   const resourcesPath = path.join(root, 'resources')
   const znHome = path.join(root, 'zn-home')
-  const env: Record<string, string | undefined> = { PLAYWRIGHT_BROWSERS_PATH: 'machine-global-cache' }
+  const env: Record<string, string | undefined> = {
+    PLAYWRIGHT_BROWSERS_PATH: 'machine-global-cache',
+    ZN_BROWSER_EXECUTABLE: 'machine-global-browser'
+  }
   try {
     const { runtimeRoot } = writeBundledRuntime(resourcesPath)
     const manifestPath = path.join(runtimeRoot, 'runtime.json')
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
     delete manifest.browser_root
+    delete manifest.browser_executable
     fs.writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`)
     const runtime = configureZnPackagedRuntime({ resourcesPath, znHome, env })
     assert.equal(runtime.browserRoot, undefined)
+    assert.equal(runtime.browserExecutable, undefined)
     assert.equal(env.PLAYWRIGHT_BROWSERS_PATH, undefined)
+    assert.equal(env.ZN_BROWSER_EXECUTABLE, undefined)
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
