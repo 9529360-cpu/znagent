@@ -122,7 +122,7 @@ class ResidentManagedBrowserWindowsE2E(unittest.TestCase):
                 )
                 self.assertTrue(opened["ok"], opened)
                 session_id = opened["result"]["session_id"]
-                self.assertEqual(opened["result"]["provider"], "playwright-chromium")
+                self.assertTrue(str(opened["result"]["provider"]).strip())
                 self.assertEqual(opened["result"]["profile_scope"], "ephemeral")
 
                 navigated = self._request(

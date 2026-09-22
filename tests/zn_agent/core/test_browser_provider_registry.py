@@ -7,6 +7,7 @@ from zn_agent.core.browser import (
     BrowserPermissionContext,
     BrowserPlane,
     BrowserSessionIdentity,
+    BrowserTargetQueryKind,
 )
 from zn_agent.core.browser_provider_registry import (
     BrowserProviderDescriptor,
@@ -190,6 +191,57 @@ class BrowserProviderRegistryTests(unittest.TestCase):
         )
         self.assertEqual(download.provider, "playwright")
         adapter.close_session(download.session_id)
+
+    def test_target_query_capability_routes_legacy_dom_id_to_playwright(self):
+        registry = BrowserProviderRegistry()
+        registry.register(
+            BrowserProviderDescriptor(
+                name="playwright",
+                plane=BrowserPlane.MANAGED,
+                priority=100,
+                factory=lambda: _Adapter("playwright"),
+                available=lambda: True,
+            )
+        )
+        registry.register(
+            BrowserProviderDescriptor(
+                name="mature",
+                plane=BrowserPlane.MANAGED,
+                priority=200,
+                factory=lambda: _Adapter("mature"),
+                available=lambda: True,
+                supported_target_queries=frozenset(
+                    kind
+                    for kind in BrowserTargetQueryKind
+                    if kind is not BrowserTargetQueryKind.DOM_ID
+                ),
+            )
+        )
+
+        adapter = build_managed_browser_adapter(registry=registry)
+        self.assertIsInstance(adapter, ManagedBrowserProviderRouter)
+
+        semantic = adapter.open_session_for_requirements(
+            permission=BrowserPermissionContext(
+                allow_navigation=True,
+                allow_page_interaction=True,
+            ),
+            required_target_queries=(
+                BrowserTargetQueryKind.ACCESSIBLE_CHECKBOX_NAME,
+            ),
+        )
+        self.assertEqual(semantic.provider, "mature")
+        adapter.close_session(semantic.session_id)
+
+        legacy_dom = adapter.open_session_for_requirements(
+            permission=BrowserPermissionContext(
+                allow_navigation=True,
+                allow_page_interaction=True,
+            ),
+            required_target_queries=(BrowserTargetQueryKind.DOM_ID,),
+        )
+        self.assertEqual(legacy_dom.provider, "playwright")
+        adapter.close_session(legacy_dom.session_id)
 
     def test_explicit_provider_capability_mismatch_fails_closed(self):
         registry = BrowserProviderRegistry()

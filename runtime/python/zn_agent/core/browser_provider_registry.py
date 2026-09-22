@@ -18,6 +18,7 @@ from .browser import (
     BrowserAdapter,
     BrowserPermissionContext,
     BrowserPlane,
+    BrowserTargetQueryKind,
 )
 
 
@@ -34,9 +35,19 @@ class BrowserProviderDescriptor:
     supported_actions: frozenset[BrowserActionKind] = field(
         default_factory=lambda: frozenset(BrowserActionKind)
     )
+    supported_target_queries: frozenset[BrowserTargetQueryKind] = field(
+        default_factory=lambda: frozenset(BrowserTargetQueryKind)
+    )
 
-    def supports(self, required_actions: Iterable[BrowserActionKind]) -> bool:
-        return set(required_actions).issubset(self.supported_actions)
+    def supports(
+        self,
+        required_actions: Iterable[BrowserActionKind],
+        required_target_queries: Iterable[BrowserTargetQueryKind] = (),
+    ) -> bool:
+        return (
+            set(required_actions).issubset(self.supported_actions)
+            and set(required_target_queries).issubset(self.supported_target_queries)
+        )
 
 
 class BrowserProviderRegistry:
@@ -59,9 +70,11 @@ class BrowserProviderRegistry:
         plane: BrowserPlane,
         preferred: str = "",
         required_actions: Iterable[BrowserActionKind] = (),
+        required_target_queries: Iterable[BrowserTargetQueryKind] = (),
     ) -> BrowserProviderDescriptor:
         wanted = str(preferred or "").strip().lower()
         required = frozenset(required_actions)
+        required_queries = frozenset(required_target_queries)
         if wanted:
             descriptor = self._providers.get(wanted)
             if descriptor is None:
@@ -72,11 +85,24 @@ class BrowserProviderRegistry:
                 )
             if not descriptor.available():
                 raise RuntimeError(f"browser provider is unavailable: {wanted}")
-            if not descriptor.supports(required):
+            if not descriptor.supports(required, required_queries):
                 missing = required.difference(descriptor.supported_actions)
+                missing_queries = required_queries.difference(
+                    descriptor.supported_target_queries
+                )
+                details: list[str] = []
+                if missing:
+                    details.append(
+                        "actions: " + ", ".join(sorted(item.value for item in missing))
+                    )
+                if missing_queries:
+                    details.append(
+                        "target queries: "
+                        + ", ".join(sorted(item.value for item in missing_queries))
+                    )
                 raise RuntimeError(
-                    f"browser provider {wanted} does not support required actions: "
-                    + ", ".join(sorted(item.value for item in missing))
+                    f"browser provider {wanted} does not support required "
+                    + "; ".join(details)
                 )
             return descriptor
 
@@ -85,14 +111,19 @@ class BrowserProviderRegistry:
             for descriptor in self._providers.values()
             if descriptor.plane is plane
             and descriptor.available()
-            and descriptor.supports(required)
+            and descriptor.supports(required, required_queries)
         ]
         if not candidates:
             suffix = ""
-            if required:
-                suffix = " supporting " + ", ".join(
-                    sorted(item.value for item in required)
-                )
+            needs = [
+                *(item.value for item in sorted(required, key=lambda item: item.value)),
+                *(
+                    f"target:{item.value}"
+                    for item in sorted(required_queries, key=lambda item: item.value)
+                ),
+            ]
+            if needs:
+                suffix = " supporting " + ", ".join(needs)
             raise RuntimeError(
                 f"no available browser provider for {plane.value} plane{suffix}"
             )
@@ -143,11 +174,24 @@ class ManagedBrowserProviderRouter:
         permission: BrowserPermissionContext | None = None,
         headless: bool = True,
     ):
+        return self.open_session_for_requirements(
+            permission=permission,
+            headless=headless,
+        )
+
+    def open_session_for_requirements(
+        self,
+        *,
+        permission: BrowserPermissionContext | None = None,
+        headless: bool = True,
+        required_target_queries: Iterable[BrowserTargetQueryKind] = (),
+    ):
         policy = permission or BrowserPermissionContext()
         descriptor = self._registry.resolve(
             plane=BrowserPlane.MANAGED,
             preferred=self._preferred,
             required_actions=self._required_actions(policy),
+            required_target_queries=required_target_queries,
         )
         adapter = descriptor.factory()
         try:
@@ -235,6 +279,11 @@ def default_managed_browser_registry() -> BrowserProviderRegistry:
                     BrowserActionKind.UPLOAD_FILE,
                     BrowserActionKind.DOWNLOAD_FILE,
                 }
+            ),
+            supported_target_queries=frozenset(
+                kind
+                for kind in BrowserTargetQueryKind
+                if kind is not BrowserTargetQueryKind.DOM_ID
             ),
         )
     )
