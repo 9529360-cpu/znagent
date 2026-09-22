@@ -1,4 +1,4 @@
-name: ZN Atomic Overwrite E2E
+name: ZN Atomic Overwrite Contract
 
 on:
   pull_request:
@@ -23,7 +23,7 @@ on:
       - tests/zn_agent/core/test_windows_atomic_overwrite_namespace_repair.py
   push:
     branches:
-      - dev/zn-agent
+      - main
     paths:
       - .github/workflows/zn-atomic-overwrite-e2e.yml
       - runtime/python/pyproject.toml
@@ -64,7 +64,7 @@ jobs:
       - name: Verify GitHub-hosted Windows x64 runner
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
-            throw "ZN atomic overwrite E2E requires a GitHub-hosted Windows X64 runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+            throw "ZN atomic overwrite contract requires a GitHub-hosted Windows X64 runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
           }
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v6
