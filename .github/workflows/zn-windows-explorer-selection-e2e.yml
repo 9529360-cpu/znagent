@@ -1,34 +1,11 @@
 name: ZN Windows Explorer Selection E2E
 
+# Representative capability scenario: validate after merge or on demand.
+# PR merge gates are owned by generic subsystem contracts.
 on:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - .github/workflows/zn-windows-explorer-selection-e2e.yml
-      - .github/scripts/test-zn-interactive-desktop-readiness.ps1
-      - .github/scripts/run-zn-interactive-python.ps1
-      - .github/scripts/zn-interactive-python-entry.py
-      - runtime/python/pyproject.toml
-      - runtime/python/zn_agent/core/device_capability_graph.py
-      - runtime/python/zn_agent/core/windows_explorer_selection.py
-      - runtime/python/zn_agent/core/explorer_selected_file_behavior.py
-      - runtime/python/zn_agent/core/research_information_product_resident.py
-      - tests/zn_agent/e2e/test_windows_interactive_explorer_selected_file.py
   push:
     branches:
       - main
-    paths:
-      - .github/workflows/zn-windows-explorer-selection-e2e.yml
-      - .github/scripts/test-zn-interactive-desktop-readiness.ps1
-      - .github/scripts/run-zn-interactive-python.ps1
-      - .github/scripts/zn-interactive-python-entry.py
-      - runtime/python/pyproject.toml
-      - runtime/python/zn_agent/core/device_capability_graph.py
-      - runtime/python/zn_agent/core/windows_explorer_selection.py
-      - runtime/python/zn_agent/core/explorer_selected_file_behavior.py
-      - runtime/python/zn_agent/core/research_information_product_resident.py
-      - tests/zn_agent/e2e/test_windows_interactive_explorer_selected_file.py
   workflow_dispatch:
 
 permissions:
