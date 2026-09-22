@@ -82,6 +82,47 @@ class E2E25CurrentReferenceAndWorkspaceReadTests(unittest.TestCase):
             )
         )
 
+    def test_generic_browser_workspace_root_uses_same_safe_phase_sequence(self) -> None:
+        resident = self._resident()
+        root = SimpleNamespace(
+            work_item_id="root-generic",
+            work_thread_id="generic-adaptation",
+            plan_version=1,
+            objective=(
+                "Use this page as the reference, update the attached repository, "
+                "then run tests and verify the change."
+            ),
+        )
+        resident.work_ledger.plan_version = lambda _thread_id: 1
+
+        first = resident._next_worker_phase(root, [], [])
+        self.assertEqual(first, ("research", "research_current_page"))
+
+        research_item = WorkItem(
+            work_item_id="research-generic",
+            work_thread_id=root.work_thread_id,
+            parent_work_item_id=root.work_item_id,
+            title="research",
+            objective="research current reference",
+            status="completed",
+            plan_version=1,
+            acceptance_criteria=[
+                "delegated_worker_evidence: research/research_current_page"
+            ],
+        )
+        accepted_research = SimpleNamespace(
+            work_item_id=research_item.work_item_id,
+            executor_kind="research",
+            state="completed",
+            verification_status="accepted",
+        )
+        second = resident._next_worker_phase(
+            root,
+            [research_item],
+            [accepted_research],
+        )
+        self.assertEqual(second, ("coding", "read_workspace_file"))
+
     def test_current_page_research_proposal_is_url_free_and_resident_owned(self) -> None:
         resident = self._resident()
         content = json.dumps(
