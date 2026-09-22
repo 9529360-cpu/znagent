@@ -222,6 +222,11 @@ def build_machine_provider_runtime(
         for descriptor in action_fabric.descriptors(provider="zn.windows.uia")
     )
 
+    windows_office_action_ids = tuple(
+        descriptor.action_id
+        for descriptor in action_fabric.descriptors(provider="zn.windows.office")
+    )
+
     def windows_health(
         descriptor: CapabilityProviderDescriptor,
     ) -> CapabilityProviderStatus:
@@ -279,6 +284,18 @@ def build_machine_provider_runtime(
                 action_ids=windows_uia_action_ids,
                 lifecycle_mode="resident",
                 tags=("windows", "uia", "semantic", "body"),
+            ),
+            health_probe=windows_health,
+        )
+
+    if windows_office_action_ids:
+        runtime.register(
+            CapabilityProviderDescriptor(
+                provider_id="zn.windows.office",
+                description="Resident exact-foreground Microsoft Office NativeOM provider.",
+                action_ids=windows_office_action_ids,
+                lifecycle_mode="resident",
+                tags=("windows", "office", "nativeom", "body"),
             ),
             health_probe=windows_health,
         )
