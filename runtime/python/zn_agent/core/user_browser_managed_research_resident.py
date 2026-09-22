@@ -11,7 +11,7 @@ from .action import NativeActionIntent
 from .body import BodyActionResult
 from .browser import BrowserAction, BrowserActionAuthority, BrowserActionKind, BrowserPermissionContext
 from .goal_resident import ResidentGoalRuntime
-from .research_managed_browser import ResearchSemanticPlaywrightManagedBrowser
+from .browser_provider_registry import build_managed_browser_adapter
 from .user_browser_extension_relay import UserBrowserExtensionRelayError
 from .user_browser_extension_resident import UserBrowserExtensionResidentRuntime
 
@@ -67,7 +67,7 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
-        self.managed_browser = ResearchSemanticPlaywrightManagedBrowser()
+        self.managed_browser = build_managed_browser_adapter()
 
     @classmethod
     def _natural_managed_reference_search(cls, event) -> bool:
