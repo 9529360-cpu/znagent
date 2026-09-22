@@ -11,6 +11,7 @@ from zn_agent.core.browser import (
 from zn_agent.core.browser_provider_registry import (
     BrowserProviderDescriptor,
     BrowserProviderRegistry,
+    ManagedBrowserProviderRouter,
     build_managed_browser_adapter,
     build_readable_managed_browser_adapter,
 )
