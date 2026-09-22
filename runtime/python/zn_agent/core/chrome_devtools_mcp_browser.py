@@ -205,8 +205,14 @@ class ChromeDevToolsMcpManagedBrowser:
     name = CHROME_DEVTOOLS_MCP_PROVIDER
     plane = BrowserPlane.MANAGED
 
-    def __init__(self, *, client_factory=StdioMcpClient) -> None:
+    def __init__(
+        self,
+        *,
+        client_factory=StdioMcpClient,
+        command_factory=resolve_chrome_devtools_mcp_command,
+    ) -> None:
         self._client_factory = client_factory
+        self._command_factory = command_factory
         self._sessions: dict[str, _ChromeSession] = {}
 
     def open_session(
@@ -216,7 +222,7 @@ class ChromeDevToolsMcpManagedBrowser:
         headless: bool = True,
     ) -> BrowserSessionIdentity:
         policy = permission or BrowserPermissionContext()
-        command = resolve_chrome_devtools_mcp_command(
+        command = self._command_factory(
             headless=headless,
             permission=policy,
         )
