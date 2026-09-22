@@ -77,7 +77,7 @@ def default_managed_browser_registry() -> BrowserProviderRegistry:
         ChromeDevToolsMcpManagedBrowser,
         chrome_devtools_mcp_available,
     )
-    from .semantic_managed_browser import SemanticPlaywrightManagedBrowser
+    from .research_managed_browser import ResearchSemanticPlaywrightManagedBrowser
 
     registry.register(
         BrowserProviderDescriptor(
@@ -93,7 +93,7 @@ def default_managed_browser_registry() -> BrowserProviderRegistry:
             name="playwright",
             plane=BrowserPlane.MANAGED,
             priority=100,
-            factory=SemanticPlaywrightManagedBrowser,
+            factory=ResearchSemanticPlaywrightManagedBrowser,
             available=lambda: True,
         )
     )
