@@ -26,6 +26,13 @@ from .app_competence import (
     AppCompetenceRegistry,
     AppCompetenceStage,
 )
+from .app_competence_execution import (
+    AppCompetenceCompletionCheck,
+    AppCompetenceRecipeExecution,
+    AppCompetenceRecipeExecutor,
+    AppCompetenceStageExecution,
+    completion_expected_matches,
+)
 from .body import BodyAction, BodyActionResult, NativeBody
 from .visual_action_reasoner import (
     GeminiVisualActionReasoner,
@@ -119,6 +126,11 @@ __all__ = [
     "AppCompetencePack",
     "AppCompetenceRegistry",
     "AppCompetenceStage",
+    "AppCompetenceCompletionCheck",
+    "AppCompetenceRecipeExecution",
+    "AppCompetenceRecipeExecutor",
+    "AppCompetenceStageExecution",
+    "completion_expected_matches",
     "Assessment",
     "BodyAction",
     "BodyActionResult",
