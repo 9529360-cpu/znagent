@@ -12,7 +12,7 @@ from pathlib import Path
 from test_windows_interactive_user_browser_semantic_grounding import (
     _Handler,
     _TITLE,
-    WindowsInteractiveUserBrowserSemanticGroundingE2ETests,
+    WindowsInteractiveUserBrowserSemanticGroundingContractTests,
 )
 
 
@@ -35,14 +35,14 @@ class _RecoveryCodeHandler(_Handler):
 
 class WindowsInteractiveUserBrowserRecoveryCodeContractTests(unittest.TestCase):
     _require_input_desktop = staticmethod(
-        WindowsInteractiveUserBrowserSemanticGroundingE2ETests._require_input_desktop
+        WindowsInteractiveUserBrowserSemanticGroundingContractTests._require_input_desktop
     )
     _enable_cognition = staticmethod(
-        WindowsInteractiveUserBrowserSemanticGroundingE2ETests._enable_cognition
+        WindowsInteractiveUserBrowserSemanticGroundingContractTests._enable_cognition
     )
-    _make_runtime = WindowsInteractiveUserBrowserSemanticGroundingE2ETests._make_runtime
-    _close_runtime = WindowsInteractiveUserBrowserSemanticGroundingE2ETests._close_runtime
-    _start_work = WindowsInteractiveUserBrowserSemanticGroundingE2ETests._start_work
+    _make_runtime = WindowsInteractiveUserBrowserSemanticGroundingContractTests._make_runtime
+    _close_runtime = WindowsInteractiveUserBrowserSemanticGroundingContractTests._close_runtime
+    _start_work = WindowsInteractiveUserBrowserSemanticGroundingContractTests._start_work
 
     def _start_server(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), _RecoveryCodeHandler)
