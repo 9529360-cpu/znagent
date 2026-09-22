@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from zn_agent.core.browser import (
     BrowserAction,
@@ -11,7 +14,12 @@ from zn_agent.core.browser import (
     BrowserTargetQuery,
     BrowserTargetQueryKind,
 )
-from zn_agent.core.chrome_devtools_mcp_browser import ChromeDevToolsMcpManagedBrowser
+from zn_agent.core.chrome_devtools_mcp_browser import (
+    CHROME_DEVTOOLS_MCP_PROVIDER,
+    ChromeDevToolsMcpBrowserUnavailable,
+    ChromeDevToolsMcpManagedBrowser,
+    resolve_chrome_devtools_mcp_command,
+)
 from zn_agent.core.stdio_mcp import StdioMcpCommand
 
 
@@ -143,7 +151,8 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
                 ),
             )
             self.assertTrue(effect.success)
-            self.assertEqual(effect.data["provider"], "chrome-devtools-mcp")
+            self.assertEqual(effect.data["provider"], CHROME_DEVTOOLS_MCP_PROVIDER)
+            self.assertEqual(effect.data["provider"], "chrome-devtools-mcp@1.9.0")
 
             textbox = browser.observe_target(
                 session.session_id,
@@ -196,6 +205,80 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
         finally:
             browser.close()
         self.assertEqual(browser._sessions, {})
+
+    def test_command_uses_pinned_runtime_real_chrome_and_privacy_flags(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package = root / "node_modules" / "chrome-devtools-mcp"
+            server = package / "build" / "src" / "bin" / "chrome-devtools-mcp.js"
+            server.parent.mkdir(parents=True)
+            server.write_text("// fixture\n", encoding="utf-8")
+            (package / "package.json").write_text(
+                '{"name":"chrome-devtools-mcp","version":"1.9.0"}',
+                encoding="utf-8",
+            )
+            node = root / "node.exe"
+            chrome = root / "chrome.exe"
+            node.write_text("fixture", encoding="utf-8")
+            chrome.write_text("fixture", encoding="utf-8")
+
+            with patch.dict(
+                os.environ,
+                {
+                    "ZN_CHROME_DEVTOOLS_MCP_ROOT": str(root),
+                    "ZN_NODE_EXECUTABLE": str(node),
+                    "ZN_BROWSER_EXECUTABLE": str(chrome),
+                },
+                clear=False,
+            ):
+                command = resolve_chrome_devtools_mcp_command(
+                    headless=True,
+                    permission=self._permission(),
+                )
+
+            self.assertEqual(Path(command.argv[0]), node)
+            self.assertIn(str(server), command.argv)
+            self.assertIn("--experimental-structured-content=true", command.argv)
+            self.assertIn("--no-usage-statistics", command.argv)
+            self.assertIn("--no-performance-crux", command.argv)
+            self.assertIn("--redact-network-headers=true", command.argv)
+            self.assertIn("--executable-path", command.argv)
+            self.assertIn(str(chrome), command.argv)
+            self.assertNotIn("chrome-devtools-mcp@latest", " ".join(command.argv))
+
+    def test_command_rejects_unpinned_runtime_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package = root / "node_modules" / "chrome-devtools-mcp"
+            server = package / "build" / "src" / "bin" / "chrome-devtools-mcp.js"
+            server.parent.mkdir(parents=True)
+            server.write_text("// fixture\n", encoding="utf-8")
+            (package / "package.json").write_text(
+                '{"name":"chrome-devtools-mcp","version":"9.9.9"}',
+                encoding="utf-8",
+            )
+            node = root / "node.exe"
+            chrome = root / "chrome.exe"
+            node.write_text("fixture", encoding="utf-8")
+            chrome.write_text("fixture", encoding="utf-8")
+
+            with patch.dict(
+                os.environ,
+                {
+                    "ZN_CHROME_DEVTOOLS_MCP_ROOT": str(root),
+                    "ZN_NODE_EXECUTABLE": str(node),
+                    "ZN_BROWSER_EXECUTABLE": str(chrome),
+                },
+                clear=False,
+            ):
+                with self.assertRaisesRegex(
+                    ChromeDevToolsMcpBrowserUnavailable,
+                    "version mismatch",
+                ):
+                    resolve_chrome_devtools_mcp_command(
+                        headless=True,
+                        permission=self._permission(),
+                    )
 
     def test_stale_authority_is_rejected_before_provider_dispatch(self):
         browser = self._browser()
