@@ -13,23 +13,44 @@ existing narrow route.
 """
 
 from dataclasses import dataclass
+import re
 
 
-_BROWSER_REFERENCE_MARKERS = (
+_BROWSER_CONTEXT_MARKERS = (
     "this website",
     "current website",
     "this site",
     "current site",
     "this page",
     "current page",
-    "browser",
+    "current browser",
+    "browser page",
     "这个网站",
     "当前网站",
     "这个页面",
     "当前页面",
-    "浏览器",
-    "api 文档",
-    "api文档",
+    "当前浏览器",
+    "浏览器页面",
+)
+
+_BROWSER_REFERENCE_RELATION_MARKERS = (
+    "reference",
+    "documentation",
+    "docs",
+    "according to",
+    "based on",
+    "use this page",
+    "use the current page",
+    "use this website",
+    "use the current website",
+    "参考",
+    "根据",
+    "按照",
+    "按这个网站",
+    "按当前网站",
+    "按这个页面",
+    "按当前页面",
+    "文档",
 )
 
 _WORKSPACE_OBJECT_MARKERS = (
@@ -95,32 +116,40 @@ class CompositeWorkRouteDecision:
     reason: str
 
 
-def classify_composite_work_route(event) -> CompositeWorkRouteDecision:
-    """Classify only a durable Work-bound browser + workspace request."""
+def _contains_marker(text: str, marker: str) -> bool:
+    """Match ASCII language markers by token boundary; keep CJK markers literal."""
 
-    kind = str(getattr(event, "kind", "") or "").strip().lower()
-    payload = getattr(event, "payload", {}) or {}
-    if kind != "desktop_user_event":
-        return _deny("event is not a desktop user Work request")
-    if payload.get("body_action") or payload.get("native_action"):
-        return _deny("action execution events stay on their admitted action path")
+    normalized = str(marker or "").casefold()
+    if not normalized:
+        return False
+    if normalized.isascii():
+        return (
+            re.search(
+                rf"(?<![0-9a-z_]){re.escape(normalized)}(?![0-9a-z_])",
+                text,
+            )
+            is not None
+        )
+    return normalized in text
 
-    required_bindings = (
-        str(payload.get("work_thread_id") or "").strip(),
-        str(payload.get("work_item_id") or "").strip(),
-        str(payload.get("workspace_path") or "").strip(),
-    )
-    if not all(required_bindings):
-        return _deny("request is not bound to durable Work plus an attached workspace")
 
-    task = " ".join(str(getattr(event, "task", "") or "").casefold().split())
+def _contains_any(text: str, markers: tuple[str, ...]) -> bool:
+    return any(_contains_marker(text, marker) for marker in markers)
+
+
+def classify_composite_work_text(text: object) -> CompositeWorkRouteDecision:
+    """Classify cross-surface intent without granting any execution authority."""
+
+    task = " ".join(str(text or "").casefold().split())
     if not task:
         return _deny("task text is empty")
 
-    browser_reference = any(marker in task for marker in _BROWSER_REFERENCE_MARKERS)
-    workspace_object = any(marker in task for marker in _WORKSPACE_OBJECT_MARKERS)
-    workspace_mutation = any(marker in task for marker in _WORKSPACE_MUTATION_MARKERS)
-    local_verification = any(marker in task for marker in _LOCAL_VERIFICATION_MARKERS)
+    browser_context = _contains_any(task, _BROWSER_CONTEXT_MARKERS)
+    reference_relation = _contains_any(task, _BROWSER_REFERENCE_RELATION_MARKERS)
+    browser_reference = browser_context and reference_relation
+    workspace_object = _contains_any(task, _WORKSPACE_OBJECT_MARKERS)
+    workspace_mutation = _contains_any(task, _WORKSPACE_MUTATION_MARKERS)
+    local_verification = _contains_any(task, _LOCAL_VERIFICATION_MARKERS)
 
     surfaces: list[str] = []
     if browser_reference:
@@ -140,6 +169,34 @@ def classify_composite_work_route(event) -> CompositeWorkRouteDecision:
     return CompositeWorkRouteDecision(
         preempt_narrow_browser=True,
         surfaces=tuple(surfaces),
+        reason="task text spans an explicit browser reference and workspace mutation",
+    )
+
+
+def classify_composite_work_route(event) -> CompositeWorkRouteDecision:
+    """Classify only a durable Work-bound browser + workspace request."""
+
+    kind = str(getattr(event, "kind", "") or "").strip().lower()
+    payload = getattr(event, "payload", {}) or {}
+    if kind != "desktop_user_event":
+        return _deny("event is not a desktop user Work request")
+    if payload.get("body_action") or payload.get("native_action"):
+        return _deny("action execution events stay on their admitted action path")
+
+    required_bindings = (
+        str(payload.get("work_thread_id") or "").strip(),
+        str(payload.get("work_item_id") or "").strip(),
+        str(payload.get("workspace_path") or "").strip(),
+    )
+    if not all(required_bindings):
+        return _deny("request is not bound to durable Work plus an attached workspace")
+
+    decision = classify_composite_work_text(getattr(event, "task", ""))
+    if not decision.preempt_narrow_browser:
+        return decision
+    return CompositeWorkRouteDecision(
+        preempt_narrow_browser=True,
+        surfaces=decision.surfaces,
         reason=(
             "durable Work spans a browser reference and an attached workspace mutation; "
             "the composite Work owner is more specific than generic browser understanding"
