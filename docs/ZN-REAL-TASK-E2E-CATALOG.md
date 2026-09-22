@@ -29,7 +29,7 @@ The 50 scenario IDs and product intents remain stable. The status overlay record
 | E2E-02 | CLOSED representative path | Bounded Research -> exact attached-workspace editable Markdown with fresh file verification. Not arbitrary Office/PDF authoring. |
 | E2E-03 | CLOSED representative path | Unique same-Work referent may continue; ambiguity asks first. Durable research evidence survives restart while fresh. |
 | E2E-05 | CLOSED representative path | Real USER Browser authenticated research -> persisted mutation. Not arbitrary authenticated sites/mutation. |
-| E2E-07 | CLOSED representative path | Exact-root causal USER Browser child attribution via root `Page.windowOpen` + unique fresh target binding, fresh identity reread, child -> exact root return, authorization-generation binding and unverified-click no-replay. Not arbitrary popup/frame support. |
+| E2E-07 | HISTORICAL representative closure; dedicated scenario behavior retired | The old exact-root popup/new-tab scenario remains historical evidence. Its E2E-specific behavior and acceptance gate are retired; generic causal-popup authority/body primitives remain available for reusable composition. |
 | E2E-08 | CLOSED representative path | Same authorized USER tab/generation/origin standard `one-time-code` user-presence handoff. ZN does not read/type/store OTP. |
 | E2E-09 | CLOSED representative path | Bounded yesterday DOCX payment-date edit to a new verified copy. Not general Word support. |
 | E2E-10 | CLOSED representative path | Zero-model bounded XLSX exact-row dedupe + amount format normalization to a new verified copy. Not general Excel support. |
@@ -104,7 +104,7 @@ Same task as E2E-05, but page layout/control identity changes after research. Mu
 
 ### E2E-07 — Popup/new-tab interruption
 
-Task produces a popup/new tab midway. Must prove the child belongs causally to the exact root action, derive bounded child authority, verify result, return to the exact original authorization generation, fresh re-ground the root and never replay a possibly executed click merely because child proof is missing.
+Task produces a popup/new tab midway. The old E2E-07-specific Resident behavior and isolated acceptance path are retired from the product line. The reusable causal-popup adapter/body primitives remain: future popup handling must compose those generic primitives with normal USER-browser authority instead of restoring an E2E-07 scenario handler.
 
 The representative fixture keeps `target="_blank" rel="opener"` so the web-level opener intent is explicit, but PR #252 proved Chromium's extension Tabs metadata does not reliably surface `openerTabId` for this popup/new-window shape. A same-head rerun reproduced the regression, so it was not treated as timing. Two speculative production stabilizations—longer waiting and broader tab enumeration—were ineffective and reverted.
 
