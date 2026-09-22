@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import unittest
 
-from zn_agent.core.browser import BrowserPlane, BrowserSessionIdentity
+from zn_agent.core.browser import (
+    BrowserActionKind,
+    BrowserPermissionContext,
+    BrowserPlane,
+    BrowserSessionIdentity,
+)
 from zn_agent.core.browser_provider_registry import (
     BrowserProviderDescriptor,
     BrowserProviderRegistry,
@@ -133,6 +138,83 @@ class BrowserProviderRegistryTests(unittest.TestCase):
         )
         fallback = build_readable_managed_browser_adapter(registry=unavailable)
         self.assertEqual(fallback.name, "playwright")
+
+    def test_capability_router_prefers_mature_but_keeps_file_transfer_on_complete_provider(self):
+        registry = BrowserProviderRegistry()
+        mature_actions = frozenset(
+            kind
+            for kind in BrowserActionKind
+            if kind
+            not in {
+                BrowserActionKind.UPLOAD_FILE,
+                BrowserActionKind.DOWNLOAD_FILE,
+            }
+        )
+        registry.register(
+            BrowserProviderDescriptor(
+                name="playwright",
+                plane=BrowserPlane.MANAGED,
+                priority=100,
+                factory=lambda: _Adapter("playwright"),
+                available=lambda: True,
+            )
+        )
+        registry.register(
+            BrowserProviderDescriptor(
+                name="mature",
+                plane=BrowserPlane.MANAGED,
+                priority=200,
+                factory=lambda: _Adapter("mature"),
+                available=lambda: True,
+                supported_actions=mature_actions,
+            )
+        )
+
+        adapter = build_managed_browser_adapter(registry=registry)
+        self.assertIsInstance(adapter, ManagedBrowserProviderRouter)
+
+        semantic = adapter.open_session(
+            permission=BrowserPermissionContext(
+                allow_navigation=True,
+                allow_page_interaction=True,
+                allow_text_entry=True,
+            )
+        )
+        self.assertEqual(semantic.provider, "mature")
+        adapter.close_session(semantic.session_id)
+
+        download = adapter.open_session(
+            permission=BrowserPermissionContext(
+                allow_page_interaction=True,
+                allow_downloads=True,
+            )
+        )
+        self.assertEqual(download.provider, "playwright")
+        adapter.close_session(download.session_id)
+
+    def test_explicit_provider_capability_mismatch_fails_closed(self):
+        registry = BrowserProviderRegistry()
+        registry.register(
+            BrowserProviderDescriptor(
+                name="mature",
+                plane=BrowserPlane.MANAGED,
+                priority=200,
+                factory=lambda: _Adapter("mature"),
+                available=lambda: True,
+                supported_actions=frozenset(
+                    kind
+                    for kind in BrowserActionKind
+                    if kind is not BrowserActionKind.DOWNLOAD_FILE
+                ),
+            )
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "does not support required actions"):
+            registry.resolve(
+                plane=BrowserPlane.MANAGED,
+                preferred="mature",
+                required_actions=(BrowserActionKind.DOWNLOAD_FILE,),
+            )
 
     def test_explicit_unavailable_provider_fails_closed(self):
         registry = BrowserProviderRegistry()
