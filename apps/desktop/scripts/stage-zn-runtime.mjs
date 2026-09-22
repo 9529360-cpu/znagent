@@ -128,7 +128,8 @@ run('npm', [
   env: {
     ...process.env,
     PUPPETEER_SKIP_DOWNLOAD: 'true'
-  }
+  },
+  shell: process.platform === 'win32'
 })
 if (!fs.existsSync(chromeDevtoolsMcpEntry)) {
   throw new Error(`Chrome DevTools MCP entry is missing: ${chromeDevtoolsMcpEntry}`)
