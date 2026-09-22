@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import shutil
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -37,7 +38,7 @@ from .url_safety import is_safe_url
 
 CHROME_DEVTOOLS_MCP_PACKAGE = "chrome-devtools-mcp"
 CHROME_DEVTOOLS_MCP_VERSION = "1.9.0"
-CHROME_DEVTOOLS_MCP_PROVIDER = "chrome-devtools-mcp"
+CHROME_DEVTOOLS_MCP_PROVIDER = f"chrome-devtools-mcp@{CHROME_DEVTOOLS_MCP_VERSION}"
 
 _REQUIRED_TOOLS = (
     "list_pages",
@@ -130,6 +131,32 @@ def _server_entry(root: Path) -> Path | None:
     return next((path for path in candidates if path.is_file()), None)
 
 
+def _chrome_executable() -> Path | None:
+    explicit = str(os.getenv("ZN_CHROME_EXECUTABLE") or "").strip()
+    if explicit:
+        candidate = Path(explicit).expanduser().resolve()
+        return candidate if candidate.is_file() else None
+
+    candidates: list[Path] = []
+    if os.name == "nt":
+        for name in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+            root = str(os.getenv(name) or "").strip()
+            if root:
+                candidates.append(
+                    Path(root) / "Google" / "Chrome" / "Application" / "chrome.exe"
+                )
+    elif sys.platform == "darwin":
+        candidates.append(
+            Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+        )
+    else:
+        for command in ("google-chrome", "google-chrome-stable", "chrome"):
+            found = shutil.which(command)
+            if found:
+                candidates.append(Path(found))
+    return next((path.resolve() for path in candidates if path.is_file()), None)
+
+
 def resolve_chrome_devtools_mcp_command(
     *,
     headless: bool,
@@ -148,7 +175,11 @@ def resolve_chrome_devtools_mcp_command(
             "pinned chrome-devtools-mcp runtime is not installed"
         )
 
-    node = str(os.getenv("ZN_BROWSER_NODE") or "").strip() or shutil.which("node")
+    node = (
+        str(os.getenv("ZN_NODE_EXECUTABLE") or "").strip()
+        or str(os.getenv("ZN_BROWSER_NODE") or "").strip()
+        or shutil.which("node")
+    )
     env: dict[str, str] = {
         "CI": "true",
         "CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS": "1",
@@ -170,6 +201,7 @@ def resolve_chrome_devtools_mcp_command(
         str(entry),
         "--isolated=true",
         "--page-id-routing=true",
+        "--experimental-structured-content=true",
         "--no-usage-statistics",
         "--no-performance-crux",
         "--category-performance=false",
@@ -177,6 +209,12 @@ def resolve_chrome_devtools_mcp_command(
         "--category-extensions=false",
         "--redact-network-headers=true",
     ]
+    chrome = _chrome_executable()
+    if chrome is None:
+        raise ChromeDevToolsMcpBrowserUnavailable(
+            "chrome-devtools-mcp needs Google Chrome or ZN_CHROME_EXECUTABLE"
+        )
+    args.append(f"--executable-path={chrome}")
     if headless:
         args.append("--headless=true")
     for origin in permission.allowed_origins:
