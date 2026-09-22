@@ -77,6 +77,15 @@ class CompositeWorkRoutingTests(unittest.TestCase):
         self.assertFalse(decision.preempt_narrow_browser)
         self.assertEqual(decision.surfaces, ())
 
+    def test_repository_documentation_update_is_not_a_browser_reference(self) -> None:
+        decision = classify_composite_work_route(
+            _event("Update the documentation in this repository and run tests.")
+        )
+
+        self.assertFalse(decision.preempt_narrow_browser)
+        self.assertNotIn("browser_reference", decision.surfaces)
+        self.assertIn("workspace_mutation", decision.surfaces)
+
     def test_workspace_only_change_does_not_claim_browser_precedence(self) -> None:
         decision = classify_composite_work_route(
             _event("修改这个项目的客户端代码并运行测试。")
