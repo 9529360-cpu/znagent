@@ -221,8 +221,30 @@ class ProductProviderRuntimeIntegrationTests(unittest.TestCase):
                         for row in resident.action_fabric.descriptors(provider="zn.windows.office")
                     ),
                 )
+                desktop_scene = resident.provider_runtime.descriptor(
+                    "zn.windows.desktop.scene"
+                )
+                self.assertIsNotNone(desktop_scene)
                 self.assertEqual(
-                    tuple(sorted((*descriptor.action_ids, *uia.action_ids, *office.action_ids))),
+                    desktop_scene.action_ids,
+                    tuple(
+                        row.action_id
+                        for row in resident.action_fabric.descriptors(
+                            provider="zn.windows.desktop.scene"
+                        )
+                    ),
+                )
+                self.assertEqual(
+                    tuple(
+                        sorted(
+                            (
+                                *descriptor.action_ids,
+                                *uia.action_ids,
+                                *office.action_ids,
+                                *desktop_scene.action_ids,
+                            )
+                        )
+                    ),
                     resident.action_fabric.names(),
                 )
                 status = resident.provider_runtime.status("zn.windows")

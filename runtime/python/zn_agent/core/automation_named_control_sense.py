@@ -76,6 +76,8 @@ class _NamedControlRequest:
     control_type: int
     role: str
     collect_candidates: bool = False
+    max_candidates: int = _MAX_CANDIDATES
+    truncate_candidates: bool = False
     done: threading.Event | None = None
     result: NamedAutomationControlObservation | tuple[NamedAutomationControlObservation, ...] | None = None
     error: str | None = None
@@ -134,6 +136,8 @@ class _WindowsNamedControlReader:
         *,
         control_type: int,
         role: str,
+        max_candidates: int = _MAX_CANDIDATES,
+        truncate_candidates: bool = False,
     ) -> tuple[NamedAutomationControlObservation, ...]:
         result = self._request(
             process_id=process_id,
@@ -142,6 +146,8 @@ class _WindowsNamedControlReader:
             control_type=control_type,
             role=role,
             collect_candidates=True,
+            max_candidates=max_candidates,
+            truncate_candidates=truncate_candidates,
         )
         if not isinstance(result, tuple):
             raise RuntimeError("Windows UI Automation candidate probe returned no collection")
@@ -156,6 +162,8 @@ class _WindowsNamedControlReader:
         control_type: int,
         role: str,
         collect_candidates: bool,
+        max_candidates: int = _MAX_CANDIDATES,
+        truncate_candidates: bool = False,
     ):
         if self._failure:
             raise RuntimeError(self._failure)
@@ -166,6 +174,8 @@ class _WindowsNamedControlReader:
             control_type=int(control_type),
             role=str(role),
             collect_candidates=bool(collect_candidates),
+            max_candidates=max(1, min(int(max_candidates), _MAX_CANDIDATES)),
+            truncate_candidates=bool(truncate_candidates),
             done=threading.Event(),
         )
         try:
@@ -277,13 +287,14 @@ class _WindowsNamedControlReader:
                 )
                 count = int(matches.Length)
                 if request.collect_candidates:
-                    if count > _MAX_CANDIDATES:
+                    limit = max(1, min(int(request.max_candidates), _MAX_CANDIDATES))
+                    if count > limit and not request.truncate_candidates:
                         raise RuntimeError(
                             "foreground application exposed too many UIA "
                             f"{request.role} candidates for bounded grounding (matches={count})"
                         )
                     candidates: list[NamedAutomationControlObservation] = []
-                    for index in range(count):
+                    for index in range(min(count, limit)):
                         element = matches.GetElement(index)
                         if not element:
                             continue
@@ -632,6 +643,27 @@ class NativeNamedAutomationControlSense:
         )
 
 
+    def list_scene_controls(
+        self,
+        *,
+        process_id: int,
+        process_name: str,
+        control_type: str,
+        max_candidates: int = _MAX_CANDIDATES,
+    ) -> tuple[NamedAutomationControlObservation, ...]:
+        """Bound one control type for scene composition without weakening list_controls."""
+
+        normalized = normalize_control_type(control_type)
+        return self._list_candidates(
+            process_id=process_id,
+            process_name=process_name,
+            control_type=control_type_id(normalized),
+            role=normalized,
+            max_candidates=max_candidates,
+            truncate_candidates=True,
+        )
+
+
     def _list_candidates(
         self,
         *,
@@ -639,6 +671,8 @@ class NativeNamedAutomationControlSense:
         process_name: str,
         control_type: int,
         role: str,
+        max_candidates: int = _MAX_CANDIDATES,
+        truncate_candidates: bool = False,
     ) -> tuple[NamedAutomationControlObservation, ...]:
         expected_pid = int(process_id)
         expected_process = str(process_name or "").strip()
@@ -646,12 +680,23 @@ class NativeNamedAutomationControlSense:
             raise ValueError(
                 f"desktop {role} candidate discovery requires current process identity"
             )
+        limit = max(1, min(int(max_candidates), _MAX_CANDIDATES))
         if self.candidate_probe_fn is not None:
             observations = self.candidate_probe_fn(
                 expected_pid,
                 expected_process,
                 int(control_type),
             )
+            if not isinstance(observations, tuple):
+                raise ValueError(
+                    "desktop candidate probe exceeded its bounded collection contract"
+                )
+            if len(observations) > limit:
+                if not truncate_candidates:
+                    raise ValueError(
+                        "desktop candidate probe exceeded its bounded collection contract"
+                    )
+                observations = observations[:limit]
         else:
             reader = self._reader(role)
             observations = reader.candidates(
@@ -659,8 +704,10 @@ class NativeNamedAutomationControlSense:
                 expected_process,
                 control_type=control_type,
                 role=role,
+                max_candidates=limit,
+                truncate_candidates=truncate_candidates,
             )
-        if not isinstance(observations, tuple) or len(observations) > _MAX_CANDIDATES:
+        if not isinstance(observations, tuple) or len(observations) > limit:
             raise ValueError("desktop candidate probe exceeded its bounded collection contract")
         checked: list[NamedAutomationControlObservation] = []
         for observation in observations:

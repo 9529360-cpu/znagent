@@ -20,6 +20,7 @@ from .action_fabric import ActionDescriptor, ActionFabricRegistry
 from .automation_control_action import normalize_control_type, text_sha256
 from .body import BodyActionResult
 from .office_native_action import scalar_digest
+from .desktop_scene import inspect_desktop_scene_artifact
 from .models import utc_now
 from .windows_screen_capture import (
     inspect_screen_capture_artifact,
@@ -384,6 +385,13 @@ def build_machine_action_execution_runtime(
             verify=_verify_screen_capture,
         )
 
+    if fabric.descriptor("windows.desktop.scene.capture") is not None:
+        runtime.register_verification(
+            "windows.desktop.scene.capture",
+            observe=_observe_desktop_scene,
+            verify=_verify_desktop_scene,
+        )
+
     if fabric.descriptor("windows.audio.volume.set") is not None:
         runtime.register_verification(
             "windows.audio.volume.set",
@@ -739,6 +747,92 @@ def _verify_ui_control(
             else "fresh UI Automation control readback does not match requested target state"
         ),
         evidence=evidence,
+        observed_at=observation.observed_at,
+    )
+
+
+def _observe_desktop_scene(
+    request: ActionRequest,
+    body_result: BodyActionResult | None,
+) -> ActionObservation:
+    event_id = str(request.event_id or "").strip()
+    if not event_id:
+        raise RuntimeError("desktop scene verification requires the stable event_id")
+    observed = inspect_desktop_scene_artifact(event_id)
+    return ActionObservation(
+        request.action_id,
+        "zn_desktop_scene_artifact_readback",
+        data=observed,
+    )
+
+
+def _verify_desktop_scene(
+    request: ActionRequest,
+    observation: ActionObservation,
+    body_result: BodyActionResult | None,
+) -> ActionVerification:
+    expected = dict((body_result.data if body_result is not None else {}) or {})
+    observed = dict(observation.data or {})
+    mismatches: list[str] = []
+    for key in (
+        "scene_artifact_path",
+        "scene_id",
+        "grounding_mode",
+        "target_count",
+        "uia_target_count",
+        "visual_target_count",
+        "truncated",
+    ):
+        value = expected.get(key)
+        if value in (None, ""):
+            continue
+        if str(observed.get(key)) != str(value):
+            mismatches.append(key)
+
+    expected_scene = expected.get("scene")
+    if isinstance(expected_scene, Mapping):
+        expected_screenshot = expected_scene.get("screenshot")
+        observed_screenshot = observed.get("screenshot")
+        if isinstance(expected_screenshot, Mapping) and isinstance(
+            observed_screenshot, Mapping
+        ):
+            for key in ("local_path", "sha256", "width", "height", "size_bytes"):
+                value = expected_screenshot.get(key)
+                if value in (None, ""):
+                    continue
+                if str(observed_screenshot.get(key)) != str(value):
+                    mismatches.append(f"screenshot.{key}")
+
+    if mismatches:
+        return ActionVerification(
+            "failed",
+            "fresh desktop scene artifact readback does not match Body result",
+            evidence={
+                "mismatched_fields": tuple(mismatches),
+                "scene_id": observed.get("scene_id"),
+                "scene_artifact_path": observed.get("scene_artifact_path"),
+            },
+            observed_at=observation.observed_at,
+        )
+
+    return ActionVerification(
+        "verified",
+        (
+            "fresh desktop scene sidecar and screenshot artifact match recorded evidence"
+            if not expected.get("replay_blocked")
+            else "recovered prior desktop scene effect from deterministic artifacts"
+        ),
+        evidence={
+            "scene_id": observed.get("scene_id"),
+            "scene_artifact_path": observed.get("scene_artifact_path"),
+            "grounding_mode": observed.get("grounding_mode"),
+            "target_count": observed.get("target_count"),
+            "uia_target_count": observed.get("uia_target_count"),
+            "visual_target_count": observed.get("visual_target_count"),
+            "truncated": observed.get("truncated"),
+            "screenshot_sha256": dict(observed.get("screenshot") or {}).get("sha256"),
+            "replay_recovered": bool(expected.get("replay_blocked")),
+        },
         observed_at=observation.observed_at,
     )
 

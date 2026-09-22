@@ -26,7 +26,14 @@ from zn_agent.core.side_effect_journal import ResidentSideEffectJournal
 from zn_agent.core.store import KernelStore
 from zn_agent.core.windows_brightness import WindowsBrightnessObservation
 from zn_agent.core.windows_companion_body import WindowsCompanionAwareBody
+from zn_agent.core.desktop_scene import (
+    DesktopSceneForegroundBinding,
+    DesktopSceneRect,
+    NativeDesktopSceneBuilder,
+    desktop_scene_capture_event_id,
+)
 from zn_agent.core.windows_screen_capture import (
+    capture_primary_screen_artifact,
     inspect_screen_capture_artifact,
     screen_capture_artifact_path,
 )
@@ -164,6 +171,28 @@ class ActionExecutionContractTests(unittest.TestCase):
             "worker-1",
         )
 class MachineActionExecutionTests(unittest.TestCase):
+    def _scene_runtime(self, body: _FakeBody):
+        descriptor = ActionDescriptor(
+            action_id="windows.desktop.scene.capture",
+            provider="zn.windows.desktop.scene",
+            description="Capture desktop scene",
+            body_action_kind="windows_desktop_scene_capture",
+            input_schema={
+                "type": "object",
+                "required": ["application_id"],
+                "properties": {
+                    "application_id": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            effect_class="reversible_side_effect",
+        )
+        return build_machine_action_execution_runtime(
+            _registry(descriptor),
+            body,
+            device_capabilities=None,
+        )
+
     def _screen_runtime(self, body: _FakeBody):
         descriptor = ActionDescriptor(
             action_id="windows.screen.capture",
@@ -205,6 +234,175 @@ class MachineActionExecutionTests(unittest.TestCase):
             body,
             device_capabilities=None,
         )
+    @staticmethod
+    def _build_scene_artifact(home: Path, event_id: str):
+        class _EmptySense:
+            def list_controls(self, **_kwargs):
+                return ()
+
+        def capture(scene_event_id):
+            return capture_primary_screen_artifact(
+                desktop_scene_capture_event_id(scene_event_id),
+                home=home,
+                capture_fn=lambda: Image.new("RGB", (200, 120), (10, 20, 30)),
+            )
+
+        binding = DesktopSceneForegroundBinding(
+            application_id="app.demo",
+            process_id=77,
+            process_name="demo.exe",
+            window_handle=88,
+            class_name="Demo",
+        )
+        builder = NativeDesktopSceneBuilder(
+            automation_sense=_EmptySense(),
+            capture_fn=capture,
+            window_rect_fn=lambda hwnd, pid: DesktopSceneRect(5, 5, 180, 110),
+            home=home,
+        )
+        return builder.capture(
+            event_id=event_id,
+            foreground=binding,
+            foreground_probe=lambda: binding,
+        )
+
+    def test_desktop_scene_requires_independent_artifact_readback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"ZN_AGENT_HOME": tmp},
+        ):
+            scene, scene_path = self._build_scene_artifact(
+                Path(tmp),
+                "event-scene",
+            )
+            body = _FakeBody()
+            body.handlers["windows_desktop_scene_capture"] = (
+                lambda kind, event_id, args: BodyActionResult(
+                    action_id="body-scene",
+                    kind=kind,
+                    success=True,
+                    data={
+                        "dispatch_sent": True,
+                        "artifact_created": True,
+                        "scene_artifact_path": scene_path,
+                        "scene_id": scene.scene_id,
+                        "grounding_mode": scene.grounding_mode,
+                        "target_count": len(scene.targets),
+                        "uia_target_count": scene.uia_target_count,
+                        "visual_target_count": scene.visual_target_count,
+                        "truncated": scene.truncated,
+                        "scene": scene.audit(),
+                    },
+                    event_id=event_id,
+                )
+            )
+
+            result = self._scene_runtime(body).execute(
+                ActionRequest(
+                    "windows.desktop.scene.capture",
+                    {"application_id": "app.demo"},
+                    event_id="event-scene",
+                )
+            )
+
+            self.assertTrue(result.success, result.error)
+            self.assertEqual(
+                result.observations[-1].source,
+                "zn_desktop_scene_artifact_readback",
+            )
+            self.assertEqual(
+                result.observations[-1].data["scene_id"],
+                scene.scene_id,
+            )
+            self.assertEqual(
+                result.observations[-1].data["scene"]["screenshot"]["sha256"],
+                scene.screenshot.sha256,
+            )
+
+    def test_desktop_scene_replay_recovers_exact_scene_without_recapture(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"ZN_AGENT_HOME": tmp},
+        ):
+            scene, _scene_path = self._build_scene_artifact(
+                Path(tmp),
+                "event-scene-replay",
+            )
+            body = _FakeBody()
+            body.handlers["windows_desktop_scene_capture"] = (
+                lambda kind, event_id, args: BodyActionResult(
+                    action_id="body-scene-replay",
+                    kind=kind,
+                    success=False,
+                    data={
+                        "replay_blocked": True,
+                        "side_effect_uncertain": True,
+                    },
+                    error="prior scene capture requires observation",
+                    event_id=event_id,
+                )
+            )
+
+            result = self._scene_runtime(body).execute(
+                ActionRequest(
+                    "windows.desktop.scene.capture",
+                    {"application_id": "app.demo"},
+                    event_id="event-scene-replay",
+                )
+            )
+
+            self.assertTrue(result.success, result.error)
+            self.assertTrue(result.verification.evidence["replay_recovered"])
+            self.assertEqual(
+                result.observations[-1].data["scene_id"],
+                scene.scene_id,
+            )
+            self.assertEqual(
+                result.observations[-1].data["scene"],
+                scene.audit(),
+            )
+            self.assertEqual(len(body.calls), 1)
+
+    def test_desktop_scene_mismatched_body_scene_id_fails_verification(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"ZN_AGENT_HOME": tmp},
+        ):
+            scene, scene_path = self._build_scene_artifact(
+                Path(tmp),
+                "event-scene-mismatch",
+            )
+            body = _FakeBody()
+            body.handlers["windows_desktop_scene_capture"] = (
+                lambda kind, event_id, args: BodyActionResult(
+                    action_id="body-scene-mismatch",
+                    kind=kind,
+                    success=True,
+                    data={
+                        "dispatch_sent": True,
+                        "artifact_created": True,
+                        "scene_artifact_path": scene_path,
+                        "scene_id": "desktop-scene-wrong",
+                    },
+                    event_id=event_id,
+                )
+            )
+
+            result = self._scene_runtime(body).execute(
+                ActionRequest(
+                    "windows.desktop.scene.capture",
+                    {"application_id": "app.demo"},
+                    event_id="event-scene-mismatch",
+                )
+            )
+
+            self.assertFalse(result.success)
+            self.assertEqual(result.status, "failed")
+            self.assertIn(
+                "scene_id",
+                result.verification.evidence["mismatched_fields"],
+            )
+
     @unittest.skipUnless(os.name == "nt", "Windows screen capture is Windows-only")
     def test_screen_capture_requires_independent_artifact_readback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
