@@ -13,6 +13,7 @@ existing narrow route.
 """
 
 from dataclasses import dataclass
+import re
 
 
 _BROWSER_CONTEXT_MARKERS = (
@@ -115,6 +116,27 @@ class CompositeWorkRouteDecision:
     reason: str
 
 
+def _contains_marker(text: str, marker: str) -> bool:
+    """Match ASCII language markers by token boundary; keep CJK markers literal."""
+
+    normalized = str(marker or "").casefold()
+    if not normalized:
+        return False
+    if normalized.isascii():
+        return (
+            re.search(
+                rf"(?<![0-9a-z_]){re.escape(normalized)}(?![0-9a-z_])",
+                text,
+            )
+            is not None
+        )
+    return normalized in text
+
+
+def _contains_any(text: str, markers: tuple[str, ...]) -> bool:
+    return any(_contains_marker(text, marker) for marker in markers)
+
+
 def classify_composite_work_text(text: object) -> CompositeWorkRouteDecision:
     """Classify cross-surface intent without granting any execution authority."""
 
@@ -122,14 +144,12 @@ def classify_composite_work_text(text: object) -> CompositeWorkRouteDecision:
     if not task:
         return _deny("task text is empty")
 
-    browser_context = any(marker in task for marker in _BROWSER_CONTEXT_MARKERS)
-    reference_relation = any(
-        marker in task for marker in _BROWSER_REFERENCE_RELATION_MARKERS
-    )
+    browser_context = _contains_any(task, _BROWSER_CONTEXT_MARKERS)
+    reference_relation = _contains_any(task, _BROWSER_REFERENCE_RELATION_MARKERS)
     browser_reference = browser_context and reference_relation
-    workspace_object = any(marker in task for marker in _WORKSPACE_OBJECT_MARKERS)
-    workspace_mutation = any(marker in task for marker in _WORKSPACE_MUTATION_MARKERS)
-    local_verification = any(marker in task for marker in _LOCAL_VERIFICATION_MARKERS)
+    workspace_object = _contains_any(task, _WORKSPACE_OBJECT_MARKERS)
+    workspace_mutation = _contains_any(task, _WORKSPACE_MUTATION_MARKERS)
+    local_verification = _contains_any(task, _LOCAL_VERIFICATION_MARKERS)
 
     surfaces: list[str] = []
     if browser_reference:
@@ -182,6 +202,7 @@ def classify_composite_work_route(event) -> CompositeWorkRouteDecision:
             "the composite Work owner is more specific than generic browser understanding"
         ),
     )
+
 
 def composite_work_preempts_browser_understanding(event) -> bool:
     return classify_composite_work_route(event).preempt_narrow_browser
