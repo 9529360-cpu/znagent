@@ -9,7 +9,6 @@ from .app_competence_execution import (
     AppCompetenceRecipeExecutor,
     AppCompetenceStageHandoff,
 )
-from .explorer_selected_file_behavior import install_explorer_selected_file_behavior
 from .local_file_discovery import build_local_file_discovery_capability
 from .local_inference_runtime import LocalInferenceRuntimeDiscovery
 from .presentation_work_behavior import install_presentation_work_behavior
@@ -23,8 +22,6 @@ from .user_browser_multi_record_result import (
 )
 from .action_execution import build_machine_action_execution_runtime
 from .action_fabric import build_machine_action_fabric
-from .app_competence import AppCompetenceRegistry
-from .app_competence_execution import AppCompetenceRecipeExecutor
 from .provider_runtime import build_machine_provider_runtime
 from .reflex_intent import build_resident_reflex_intents
 from .windows_audio_reflex_behavior import install_windows_audio_reflex_behavior
@@ -119,7 +116,6 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
         install_windows_audio_reflex_behavior(self)
         install_presentation_work_behavior(self)
         install_document_work_behavior(self)
-        install_explorer_selected_file_behavior(self)
 
     def _current_visual_stage_bridge(self, event):
         """Bind bounded visual cognition through current Work privacy/route policy."""
