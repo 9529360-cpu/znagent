@@ -54,8 +54,19 @@ class CompositeWorkRoutingTests(unittest.TestCase):
         )
 
         self.assertFalse(decision.preempt_narrow_browser)
-        self.assertIn("browser_reference", decision.surfaces)
+        self.assertNotIn("browser_reference", decision.surfaces)
         self.assertNotIn("workspace_mutation", decision.surfaces)
+
+    def test_browser_mutation_of_repository_named_object_stays_on_browser_route(self) -> None:
+        decision = classify_composite_work_route(
+            _event(
+                "On this website, update the repository setting and confirm the change."
+            )
+        )
+
+        self.assertFalse(decision.preempt_narrow_browser)
+        self.assertNotIn("browser_reference", decision.surfaces)
+        self.assertIn("workspace_mutation", decision.surfaces)
 
     def test_business_website_update_is_not_mistaken_for_workspace_code_work(self) -> None:
         decision = classify_composite_work_route(
@@ -63,7 +74,7 @@ class CompositeWorkRoutingTests(unittest.TestCase):
         )
 
         self.assertFalse(decision.preempt_narrow_browser)
-        self.assertIn("browser_reference", decision.surfaces)
+        self.assertNotIn("browser_reference", decision.surfaces)
         self.assertNotIn("workspace_mutation", decision.surfaces)
 
     def test_missing_durable_work_binding_never_preempts_browser(self) -> None:
@@ -76,6 +87,26 @@ class CompositeWorkRoutingTests(unittest.TestCase):
 
         self.assertFalse(decision.preempt_narrow_browser)
         self.assertEqual(decision.surfaces, ())
+
+    def test_api_docs_without_current_browser_context_do_not_claim_current_page(self) -> None:
+        decision = classify_composite_work_route(
+            _event("Use the API documentation to update this repository, then run tests.")
+        )
+
+        self.assertFalse(decision.preempt_narrow_browser)
+        self.assertNotIn("browser_reference", decision.surfaces)
+        self.assertIn("workspace_mutation", decision.surfaces)
+
+    def test_report_does_not_match_repo_marker(self) -> None:
+        decision = classify_composite_work_route(
+            _event(
+                "Use this page as the reference to update the report, then verify it."
+            )
+        )
+
+        self.assertFalse(decision.preempt_narrow_browser)
+        self.assertIn("browser_reference", decision.surfaces)
+        self.assertNotIn("workspace_mutation", decision.surfaces)
 
     def test_repository_documentation_update_is_not_a_browser_reference(self) -> None:
         decision = classify_composite_work_route(
