@@ -67,12 +67,16 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
     guessing whether the outside-world mutation happened.
     """
 
+    def _new_managed_browser_adapter(self):
+        """Create the idle MANAGED adapter owned by this Resident capability stack."""
+        return SemanticPlaywrightManagedBrowser()
+
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
         # The inherited managed-browser owner is lazy and has not launched a
-        # provider during construction. Replace only its adapter implementation;
-        # resident ownership and lifecycle remain unchanged.
-        self.managed_browser = SemanticPlaywrightManagedBrowser()
+        # provider during construction. Select the adapter through one overridable
+        # capability seam; session pinning still begins only when a session opens.
+        self.managed_browser = self._new_managed_browser_adapter()
         self.body = BrowserSideEffectAwareBody(resident=self)
 
     @staticmethod

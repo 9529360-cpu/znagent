@@ -33,6 +33,10 @@ class BroadGoalResearchResidentRuntime(BroadGoalRecoverableCodingResidentRuntime
     _BROAD_RESEARCH_HISTORY_KEY = "broad_goal_research_history"
     _MAX_RESEARCH_EVIDENCE_TEXT = 8192
 
+    def _new_managed_browser_adapter(self):
+        """Use the additive readable MANAGED adapter for generic research Work."""
+        return ResearchSemanticPlaywrightManagedBrowser()
+
     def _criterion_bound_root(self, event) -> WorkItem | None:
         root = super()._criterion_bound_root(event)
         if root is not None:
