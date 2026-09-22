@@ -15,7 +15,6 @@ from .broad_goal_recoverable_resident import BroadGoalRecoverableCodingResidentR
 from .browser import BrowserPermissionContext
 from .cognition import CognitiveIncrement
 from .models import utc_now
-from .research_managed_browser import ResearchSemanticPlaywrightManagedBrowser
 from .steerable_work import WorkItem
 from .work import title_for_work_task
 
@@ -236,7 +235,7 @@ class BroadGoalResearchResidentRuntime(BroadGoalRecoverableCodingResidentRuntime
             return self._roll_forward_research_state(event, state)
 
         browser = self.managed_browser
-        if not isinstance(browser, ResearchSemanticPlaywrightManagedBrowser):
+        if not callable(getattr(browser, "read_page", None)):
             return self._fail_research_step(
                 event,
                 state,
