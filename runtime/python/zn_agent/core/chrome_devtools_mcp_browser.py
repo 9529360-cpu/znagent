@@ -210,9 +210,11 @@ class ChromeDevToolsMcpManagedBrowser:
         *,
         client_factory=StdioMcpClient,
         command_factory=resolve_chrome_devtools_mcp_command,
+        url_checker=is_safe_url,
     ) -> None:
         self._client_factory = client_factory
         self._command_factory = command_factory
+        self._url_checker = url_checker
         self._sessions: dict[str, _ChromeSession] = {}
 
     def open_session(
@@ -1118,8 +1120,11 @@ class ChromeDevToolsMcpManagedBrowser:
             error=error,
         )
 
-    @staticmethod
-    def _require_url_allowed(url: str, permission: BrowserPermissionContext) -> None:
+    def _require_url_allowed(
+        self,
+        url: str,
+        permission: BrowserPermissionContext,
+    ) -> None:
         value = str(url or "").strip()
         if value == "about:blank":
             return
@@ -1127,10 +1132,16 @@ class ChromeDevToolsMcpManagedBrowser:
             raise ChromeDevToolsMcpBrowserError(
                 "browser URL left the resident-authorized origin scope"
             )
-        if not is_safe_url(
-            value,
-            allow_private=permission.allow_private_network,
-        ):
+        try:
+            safe = bool(
+                self._url_checker(
+                    value,
+                    allow_private=permission.allow_private_network,
+                )
+            )
+        except Exception:
+            safe = False
+        if not safe:
             raise ChromeDevToolsMcpBrowserError(
                 "browser URL failed resident URL safety checks"
             )
