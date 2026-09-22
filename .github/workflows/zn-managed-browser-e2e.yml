@@ -78,7 +78,6 @@ on:
       - tests/zn_agent/core/test_structured_action_text_alias.py
       - tests/zn_agent/e2e/test_e2e11_browser_data_to_spreadsheet.py
       - tests/zn_agent/e2e/test_windows_managed_browser.py
-      - tests/zn_agent/e2e/test_windows_chrome_devtools_mcp_provider.py
       - tests/zn_agent/e2e/test_windows_managed_browser_causal_popup.py
       - tests/zn_agent/e2e/test_windows_managed_browser_command.py
       - tests/zn_agent/e2e/test_windows_managed_browser_controls.py
@@ -168,7 +167,6 @@ on:
       - tests/zn_agent/core/test_structured_action_text_alias.py
       - tests/zn_agent/e2e/test_e2e11_browser_data_to_spreadsheet.py
       - tests/zn_agent/e2e/test_windows_managed_browser.py
-      - tests/zn_agent/e2e/test_windows_chrome_devtools_mcp_provider.py
       - tests/zn_agent/e2e/test_windows_managed_browser_causal_popup.py
       - tests/zn_agent/e2e/test_windows_managed_browser_command.py
       - tests/zn_agent/e2e/test_windows_managed_browser_controls.py
@@ -233,18 +231,6 @@ jobs:
           & $python -m playwright install chromium
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          $browserExecutable = (& $python -c "from playwright.sync_api import sync_playwright; p=sync_playwright().start(); print(p.chromium.executable_path); p.stop()").Trim()
-          if (-not $browserExecutable -or -not (Test-Path -LiteralPath $browserExecutable -PathType Leaf)) {
-            throw "Bundled Chromium executable was not resolved"
-          }
-          "ZN_BROWSER_EXECUTABLE=$browserExecutable" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-
-          $chromeMcpRoot = Join-Path $env:GITHUB_WORKSPACE '.ci\chrome-devtools-mcp'
-          Remove-Item -Recurse -Force $chromeMcpRoot -ErrorAction SilentlyContinue
-          $env:PUPPETEER_SKIP_DOWNLOAD = 'true'
-          npm install --prefix $chromeMcpRoot --no-save --omit=dev --ignore-scripts --no-audit --no-fund chrome-devtools-mcp@1.9.0
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "ZN_CHROME_DEVTOOLS_MCP_ROOT=$chromeMcpRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Run managed browser contract tests
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
@@ -261,9 +247,7 @@ jobs:
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
           & $python -m unittest discover -s tests/zn_agent/e2e -p 'test_windows_managed_browser*.py' -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $python tests/zn_agent/e2e/test_windows_mature_browser_provider.py -v
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Run real Chrome DevTools MCP provider contract
+      - name: Run real official Chrome DevTools MCP provider contract
         run: |
           $chromeMcpRoot = Join-Path $env:GITHUB_WORKSPACE '.ci\chrome-devtools-mcp'
           Remove-Item -Recurse -Force $chromeMcpRoot -ErrorAction SilentlyContinue
@@ -284,5 +268,5 @@ jobs:
           $env:ZN_BROWSER_EXECUTABLE = $chromeCandidates[0]
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
-          & $python tests/zn_agent/e2e/test_windows_chrome_devtools_mcp_provider.py -v
+          & $python tests/zn_agent/e2e/test_windows_mature_browser_provider.py -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
