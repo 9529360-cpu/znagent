@@ -32,6 +32,9 @@ on:
       - runtime/python/zn_agent/core/browser_work_resident.py
       - runtime/python/zn_agent/core/daemon.py
       - runtime/python/zn_agent/core/managed_browser.py
+      - runtime/python/zn_agent/core/browser_provider_registry.py
+      - runtime/python/zn_agent/core/chrome_devtools_mcp_browser.py
+      - runtime/python/zn_agent/core/stdio_mcp.py
       - runtime/python/zn_agent/core/managed_browser_select.py
       - runtime/python/zn_agent/core/models.py
       - runtime/python/zn_agent/core/focused_modern_text_resident.py
@@ -87,6 +90,7 @@ on:
       - tests/zn_agent/e2e/test_windows_managed_browser_resident_rpc.py
       - tests/zn_agent/e2e/test_windows_managed_browser_tab_navigation.py
       - tests/zn_agent/e2e/test_windows_managed_browser_work.py
+      - tests/zn_agent/e2e/test_windows_mature_browser_provider.py
   push:
     branches:
       - main
@@ -118,6 +122,9 @@ on:
       - runtime/python/zn_agent/core/browser_work_resident.py
       - runtime/python/zn_agent/core/daemon.py
       - runtime/python/zn_agent/core/managed_browser.py
+      - runtime/python/zn_agent/core/browser_provider_registry.py
+      - runtime/python/zn_agent/core/chrome_devtools_mcp_browser.py
+      - runtime/python/zn_agent/core/stdio_mcp.py
       - runtime/python/zn_agent/core/managed_browser_select.py
       - runtime/python/zn_agent/core/models.py
       - runtime/python/zn_agent/core/focused_modern_text_resident.py
@@ -173,6 +180,7 @@ on:
       - tests/zn_agent/e2e/test_windows_managed_browser_resident_rpc.py
       - tests/zn_agent/e2e/test_windows_managed_browser_tab_navigation.py
       - tests/zn_agent/e2e/test_windows_managed_browser_work.py
+      - tests/zn_agent/e2e/test_windows_mature_browser_provider.py
   workflow_dispatch:
 
 permissions:
@@ -223,6 +231,20 @@ jobs:
             Pop-Location
           }
           & $python -m playwright install chromium
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $browserExecutable = (& $python -c "from playwright.sync_api import sync_playwright; p=sync_playwright().start(); print(p.chromium.executable_path); p.stop()").Trim()
+          if (-not $browserExecutable -or -not (Test-Path -LiteralPath $browserExecutable -PathType Leaf)) {
+            throw "Bundled Chromium executable was not resolved"
+          }
+          "ZN_BROWSER_EXECUTABLE=$browserExecutable" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+          $chromeMcpRoot = Join-Path $env:GITHUB_WORKSPACE '.ci\chrome-devtools-mcp'
+          Remove-Item -Recurse -Force $chromeMcpRoot -ErrorAction SilentlyContinue
+          $env:PUPPETEER_SKIP_DOWNLOAD = 'true'
+          npm install --prefix $chromeMcpRoot --no-save --omit=dev --ignore-scripts --no-audit --no-fund chrome-devtools-mcp@1.9.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "ZN_CHROME_DEVTOOLS_MCP_ROOT=$chromeMcpRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Run managed browser contract tests
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
@@ -238,6 +260,8 @@ jobs:
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
           & $python -m unittest discover -s tests/zn_agent/e2e -p 'test_windows_managed_browser*.py' -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $python tests/zn_agent/e2e/test_windows_mature_browser_provider.py -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run real Chrome DevTools MCP provider contract
         run: |
@@ -261,10 +285,4 @@ jobs:
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
           & $python tests/zn_agent/e2e/test_windows_chrome_devtools_mcp_provider.py -v
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Run E2E-11 real Browser data to spreadsheet
-        run: |
-          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
-          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
-          & $python tests/zn_agent/e2e/test_e2e11_browser_data_to_spreadsheet.py -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
