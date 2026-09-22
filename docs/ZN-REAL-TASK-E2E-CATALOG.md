@@ -297,7 +297,7 @@ User:
 
 > “按这个网站的新 API 文档把项目适配一下，然后跑起来确认能用。”
 
-Must research current external docs, edit the actual repo, test/run locally and verify final behavior.
+Must research current external docs, edit the actual repo, test/run locally and verify final behavior. The old E2E-25-specific Resident, worker-phase sequence and dedicated workflow are retired from the product line. This capability must now emerge from generic research + workspace/file + coding/terminal + verification composition; do not restore phrase-gated E2E-25 routing.
 
 ## 9. Long-running product development and delegated Work
 
