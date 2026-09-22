@@ -8,9 +8,9 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from .action import NativeActionIntent
+from .browser_provider_registry import build_managed_browser_adapter
 from .browser_work_body import BrowserSideEffectAwareBody
 from .recovery_bounded_resident import RecoveryBoundedResidentRuntime
-from .semantic_managed_browser import SemanticPlaywrightManagedBrowser
 
 
 _URL_RE = re.compile(r"https?://[^\s<>{}\[\]\"']+", re.IGNORECASE)
@@ -72,7 +72,7 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
         # The inherited managed-browser owner is lazy and has not launched a
         # provider during construction. Replace only its adapter implementation;
         # resident ownership and lifecycle remain unchanged.
-        self.managed_browser = SemanticPlaywrightManagedBrowser()
+        self.managed_browser = build_managed_browser_adapter()
         self.body = BrowserSideEffectAwareBody(resident=self)
 
     @staticmethod
