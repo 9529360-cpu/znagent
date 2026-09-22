@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -35,6 +36,13 @@ PRIVATE_SOURCE_MARKER = bytes.fromhex("393532393336302d6370752f7a6e6167656e74")
 SHIPPED_PRIVATE_SCAN_PREFIX = "runtime/python/zn_agent/core/"
 SHIPPED_PRIVATE_SCAN_FILES = {"apps/desktop/package.json"}
 
+PRODUCT_CORE_PREFIX = "runtime/python/zn_agent/core/"
+E2E_RUNTIME_NAME = re.compile(r"(?:^|[_-])e2e\d+", re.IGNORECASE)
+BROWSER_SCENARIO_BEHAVIOR_NAME = re.compile(
+    r".*browser.*behavior\.py$",
+    re.IGNORECASE,
+)
+
 
 def tracked_paths() -> list[Path]:
     output = subprocess.check_output(
@@ -52,6 +60,18 @@ def main() -> int:
     for path in tracked_paths():
         relative = path.relative_to(ROOT).as_posix()
         lowered_path = relative.encode("utf-8", errors="surrogateescape").lower()
+
+        if relative.startswith(PRODUCT_CORE_PREFIX):
+            product_name = path.name
+            if E2E_RUNTIME_NAME.search(product_name):
+                failures.append(
+                    f"{relative}: production runtime modules must express reusable capability, not E2E scenario identity"
+                )
+            if BROWSER_SCENARIO_BEHAVIOR_NAME.fullmatch(product_name):
+                failures.append(
+                    f"{relative}: browser scenario behavior modules are retired; compose BrowserAdapter/Work capabilities instead"
+                )
+
         for marker in FORBIDDEN_MARKERS:
             if marker in lowered_path:
                 failures.append(f"{relative}: path contains retired marker {marker.hex()}")
@@ -87,7 +107,7 @@ def main() -> int:
         return 1
 
     print(
-        "ZN source-boundary verification passed: active source is reference-product clean; documentation may name studied systems; shipped product metadata does not embed private source identity."
+        "ZN source-boundary verification passed: active source is reference-product clean; product runtime has no E2E-named modules or browser scenario behaviors; documentation may name studied systems; shipped product metadata does not embed private source identity."
     )
     return 0
 
