@@ -181,12 +181,12 @@ defaults:
     shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
 
 concurrency:
-  group: zn-managed-browser-e2e-${{ github.ref }}
+  group: zn-managed-browser-contract-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  managed-browser-e2e:
-    name: Windows local managed Chromium E2E
+  managed-browser-contract:
+    name: Windows managed browser contract
     runs-on: windows-latest
     timeout-minutes: 20
     env:
@@ -198,7 +198,7 @@ jobs:
       - name: Verify GitHub-hosted Windows x64 runner
         run: |
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
-            throw "ZN managed browser E2E requires a GitHub-hosted Windows X64 runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+            throw "ZN managed browser contract requires a GitHub-hosted Windows X64 runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
           }
           Write-Host "ZN managed-browser runner: $env:RUNNER_NAME"
       - name: Checkout
