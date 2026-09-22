@@ -125,7 +125,7 @@ ZN 是持续存在的 resident subject，不是一次性请求处理器。涉及
 → 跑本地/针对性验证
 → commit / push
 → 打开以 main 为 base 的 PR
-→ 在 PR 上跑完整适用 CI / E2E
+→ 在 PR 上跑完整适用 CI / integration
 → 修复失败，直到当前 PR head 的必需验证通过
 → 检查 diff / 安全 / 连续性 / 回归风险
 → 正常 merge 到 main
@@ -141,7 +141,7 @@ ZN 是持续存在的 resident subject，不是一次性请求处理器。涉及
 
 发现与当前工作直接相关、低风险且明显的 bug、测试缺口、脆弱错误处理、类型问题、死代码或维护性问题，可以顺手修复；不要借机做无关的大规模重构。
 
-流程强度与风险匹配：小型低风险修改用“定位 → 修改 → 相关测试 → PR CI → diff → merge”的轻量闭环；中大型、跨模块、发布或高风险工作增加架构核对、集成/E2E、Task Queue 和更完整的 HANDOFF。验证质量不能因为流程轻量而降低。
+流程强度与风险匹配：小型低风险修改用“定位 → 修改 → 相关测试 → PR CI → diff → merge”的轻量闭环；中大型、跨模块、发布或高风险工作增加架构核对、集成/真实系统验证、Task Queue 和更完整的 HANDOFF。验证质量不能因为流程轻量而降低。
 
 ## HANDOFF 事实纪律
 
@@ -173,7 +173,7 @@ main
 → work/<one-real-product-slice>
 → implementation + focused verification
 → PR(base=main)
-→ required CI / applicable real E2E on the PR head
+→ required CI / applicable real integration on the PR head
 → green
 → merge main
 → delete/retire work branch
@@ -181,7 +181,7 @@ main
 
 **分支是隔离风险的工具，不是长期堆积工作的仓库。** 一个 `work/*` 默认只承载一个明确产品切片；不要在一个分支连续堆多个已经可以独立合并的功能。PR 变绿后应及时合并，不再制造“开发线领先 main 数十/数百个 commit 后再 promotion”的批量集成。
 
-`main` 合并后的 CI 是 canonical 复核，不是第一次发现集成问题的地方。如果某类真实 E2E 是该产品切片的 merge gate，它必须能在 PR 阶段运行；不能先 merge 再用 `main` 失败来决定这次改动是否合格。
+`main` 合并后的 CI 是 canonical 复核，不是第一次发现集成问题的地方。如果某类真实 integration 是该产品切片的 merge gate，它必须能在 PR 阶段运行；不能先 merge 再用 `main` 失败来决定这次改动是否合格。
 
 不要把“同步 main”“promotion”“canonical source”当成独立产品里程碑。正常开发完成时 merge main 就是闭环本身，不再另设长期 promotion 阶段。
 

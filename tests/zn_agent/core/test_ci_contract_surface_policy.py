@@ -43,22 +43,27 @@ class CiContractSurfacePolicyTests(unittest.TestCase):
     def test_active_sources_do_not_reference_numbered_story_ids(self) -> None:
         root = self._root()
         candidates = [
+            root / "AGENTS.md",
+            root / "ZN.md",
             root / ".agent" / "HANDOFF.md",
+            *list((root / ".agent").rglob("*")),
             *list((root / "docs").rglob("*")),
             *list((root / "runtime" / "python" / "zn_agent" / "core").rglob("*")),
+            *list((root / "tests" / "zn_agent").rglob("*")),
             *list((root / ".github" / "workflows").rglob("*")),
+            *list((root / ".github" / "scripts").rglob("*")),
         ]
         offenders: list[str] = []
         for path in candidates:
             if not path.is_file() or path.suffix.lower() not in _ACTIVE_TEXT_SUFFIXES:
                 continue
             text = path.read_text(encoding="utf-8")
-            if _NUMBERED_STORY.search(text):
+            if _RETIRED_FRAGMENT in text.casefold() or _NUMBERED_STORY.search(text):
                 offenders.append(path.relative_to(root).as_posix())
         self.assertEqual(
             offenders,
             [],
-            "numbered scenario identifiers remain in active sources:\n" + "\n".join(offenders),
+            "retired scenario terminology remains in active sources:\n" + "\n".join(offenders),
         )
 
     def test_required_automatic_gates_are_contract_named(self) -> None:

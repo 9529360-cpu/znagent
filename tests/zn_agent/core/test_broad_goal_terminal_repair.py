@@ -75,7 +75,7 @@ class _RepairSequenceCognition:
         if self._BROAD_STEP_MARKER not in question:
             return CognitiveIncrement(
                 text="Use the attached workspace and continue with the user's stated objective.",
-                provider="e2e-cognition",
+                provider="fixture-cognition",
                 model="bounded-repair-fixture",
             )
 
@@ -97,7 +97,7 @@ class _RepairSequenceCognition:
             text = self._run("rerun the repaired probe and verify READY")
         return CognitiveIncrement(
             text=text,
-            provider="e2e-cognition",
+            provider="fixture-cognition",
             model="bounded-repair-fixture",
         )
 
@@ -117,7 +117,7 @@ class BroadGoalTerminalRepairTests(unittest.TestCase):
                 resident.kernel.reconfigure_resources(
                     routes=[
                         ModelRoute(
-                            route_id="e2e-26-repair-cognition",
+                            route_id="broad-goal-repair-cognition",
                             provider="fixture",
                             model="bounded-repair-fixture",
                             capabilities={
