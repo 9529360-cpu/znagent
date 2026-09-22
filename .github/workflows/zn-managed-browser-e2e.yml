@@ -26,7 +26,6 @@ on:
       - runtime/python/zn_agent/core/browser_observed_result_recovery_resident.py
       - runtime/python/zn_agent/core/browser_rpc.py
       - runtime/python/zn_agent/core/browser_resident_server.py
-      - runtime/python/zn_agent/core/browser_spreadsheet_behavior.py
       - runtime/python/zn_agent/core/browser_text_work_body.py
       - runtime/python/zn_agent/core/browser_work_body.py
       - runtime/python/zn_agent/core/browser_work_resident.py
@@ -53,7 +52,6 @@ on:
       - tests/zn_agent/core/test_browser_scene_controls.py
       - tests/zn_agent/core/test_browser_scene_file_transfer.py
       - tests/zn_agent/core/test_browser_scene_table.py
-      - tests/zn_agent/core/test_browser_spreadsheet_behavior.py
       - tests/zn_agent/core/test_browser_tab_navigation.py
       - tests/zn_agent/core/test_browser_work_button_recovery.py
       - tests/zn_agent/core/test_browser_work_form_submit.py
@@ -76,7 +74,6 @@ on:
       - tests/zn_agent/core/test_semantic_managed_browser_textbox.py
       - tests/zn_agent/core/test_spreadsheet_work.py
       - tests/zn_agent/core/test_structured_action_text_alias.py
-      - tests/zn_agent/e2e/test_e2e11_browser_data_to_spreadsheet.py
       - tests/zn_agent/e2e/test_windows_managed_browser.py
       - tests/zn_agent/e2e/test_windows_managed_browser_causal_popup.py
       - tests/zn_agent/e2e/test_windows_managed_browser_command.py
@@ -115,7 +112,6 @@ on:
       - runtime/python/zn_agent/core/browser_observed_result_recovery_resident.py
       - runtime/python/zn_agent/core/browser_rpc.py
       - runtime/python/zn_agent/core/browser_resident_server.py
-      - runtime/python/zn_agent/core/browser_spreadsheet_behavior.py
       - runtime/python/zn_agent/core/browser_text_work_body.py
       - runtime/python/zn_agent/core/browser_work_body.py
       - runtime/python/zn_agent/core/browser_work_resident.py
@@ -142,7 +138,6 @@ on:
       - tests/zn_agent/core/test_browser_scene_controls.py
       - tests/zn_agent/core/test_browser_scene_file_transfer.py
       - tests/zn_agent/core/test_browser_scene_table.py
-      - tests/zn_agent/core/test_browser_spreadsheet_behavior.py
       - tests/zn_agent/core/test_browser_tab_navigation.py
       - tests/zn_agent/core/test_browser_work_button_recovery.py
       - tests/zn_agent/core/test_browser_work_form_submit.py
@@ -165,7 +160,6 @@ on:
       - tests/zn_agent/core/test_semantic_managed_browser_textbox.py
       - tests/zn_agent/core/test_spreadsheet_work.py
       - tests/zn_agent/core/test_structured_action_text_alias.py
-      - tests/zn_agent/e2e/test_e2e11_browser_data_to_spreadsheet.py
       - tests/zn_agent/e2e/test_windows_managed_browser.py
       - tests/zn_agent/e2e/test_windows_managed_browser_causal_popup.py
       - tests/zn_agent/e2e/test_windows_managed_browser_command.py
