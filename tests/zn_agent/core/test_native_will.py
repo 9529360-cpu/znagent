@@ -70,6 +70,7 @@ class NativeWillTests(unittest.TestCase):
                 config={"model": {}},
                 store_path=root / "kernel.db",
             )
+            capabilities_before = resident.capabilities.names()
             intention = resident.intend(
                 "leave a durable result in my environment",
                 priority=5,
@@ -92,7 +93,7 @@ class NativeWillTests(unittest.TestCase):
             self.assertEqual(engaged.status, "engaged")
             self.assertIsNotNone(engaged.related_event_id)
             self.assertIsNone(engaged.next_task)
-            self.assertEqual(resident.capabilities.names(), ())
+            self.assertEqual(resident.capabilities.names(), capabilities_before)
 
             terminal = None
             for _ in range(20):

@@ -16,6 +16,7 @@ class NativeWorldSenseTests(unittest.TestCase):
                 config={"model": {}},
                 store_path=Path(tmp) / "kernel.db",
             )
+            capabilities_before = resident.capabilities.names()
             self.assertIsInstance(resident, IntentionalResidentRuntime)
             focus = resident.follow_world(
                 "battery storage research",
@@ -48,7 +49,7 @@ class NativeWorldSenseTests(unittest.TestCase):
             self.assertEqual(calls, [("battery storage research", 3)])
             traces = resident.nervous.activate("solid-state battery cycle life", limit=8)
             self.assertTrue(any(item.trace.channel == "world" for item in traces))
-            self.assertEqual(resident.capabilities.names(), ())
+            self.assertEqual(resident.capabilities.names(), capabilities_before)
 
             # The same focus is not due again immediately. Background life may
             # call maybe_observe every few seconds without repeatedly hitting
