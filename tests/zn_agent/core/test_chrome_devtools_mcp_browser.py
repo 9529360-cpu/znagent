@@ -253,14 +253,15 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
                     permission=self._permission(),
                 )
 
-            self.assertEqual(Path(command.argv[0]), node)
-            self.assertIn(str(server), command.argv)
+            self.assertTrue(os.path.samefile(command.argv[0], node))
+            self.assertTrue(os.path.samefile(command.argv[1], server))
             self.assertIn("--experimental-structured-content=true", command.argv)
             self.assertIn("--no-usage-statistics", command.argv)
             self.assertIn("--no-performance-crux", command.argv)
             self.assertIn("--redact-network-headers=true", command.argv)
             self.assertIn("--executable-path", command.argv)
-            self.assertIn(str(chrome), command.argv)
+            chrome_arg = command.argv[command.argv.index("--executable-path") + 1]
+            self.assertTrue(os.path.samefile(chrome_arg, chrome))
             self.assertNotIn("chrome-devtools-mcp@latest", " ".join(command.argv))
 
     def test_command_rejects_unpinned_runtime_version(self):
