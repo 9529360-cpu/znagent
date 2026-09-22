@@ -22,7 +22,9 @@ The active cleanup line has already removed several story-owned product paths:
 - document-research-completion story behavior/safety layer;
 - managed-reference browser research story runtime;
 - browser-result-to-file story routing;
-- fixed delegated-worker story orchestration.
+- fixed delegated-worker story orchestration;
+- File-to-Desktop composite goal / semantic grounding / automatic modal-recovery route;
+- payment-date-specific DOCX inspection and mutation path.
 
 Generic mechanisms remain where they have reusable ownership:
 
