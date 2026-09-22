@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from zn_agent.core.current_api_docs_adaptation_resident import (
+    BrowserWorkspaceAdaptationResidentRuntime,
     CurrentApiDocsAdaptationResidentRuntime,
 )
 from zn_agent.core.steerable_work import WorkItem
@@ -36,8 +37,8 @@ class _Relay:
 
 class E2E25CurrentReferenceAndWorkspaceReadTests(unittest.TestCase):
     @staticmethod
-    def _resident() -> CurrentApiDocsAdaptationResidentRuntime:
-        resident = CurrentApiDocsAdaptationResidentRuntime.__new__(
+    def _resident() -> BrowserWorkspaceAdaptationResidentRuntime:
+        resident = BrowserWorkspaceAdaptationResidentRuntime.__new__(
             CurrentApiDocsAdaptationResidentRuntime
         )
         resident.work_ledger = _Ledger()
@@ -63,6 +64,20 @@ class E2E25CurrentReferenceAndWorkspaceReadTests(unittest.TestCase):
             status=status,
             plan_version=1,
             acceptance_criteria=[criterion],
+        )
+
+    def test_generic_browser_workspace_goal_is_not_tied_to_e2e25_phrase(self) -> None:
+        resident = self._resident()
+        self.assertTrue(
+            resident._is_browser_workspace_adaptation_text(
+                "Use this page as the reference, update the attached repository, "
+                "then run tests and verify the change."
+            )
+        )
+        self.assertFalse(
+            resident._is_browser_workspace_adaptation_text(
+                "Update this client's status on this website and confirm it."
+            )
         )
 
     def test_current_page_research_proposal_is_url_free_and_resident_owned(self) -> None:
@@ -220,17 +235,17 @@ class E2E25CurrentReferenceAndWorkspaceReadTests(unittest.TestCase):
         resident.work_ledger.list_work_items = lambda _thread_id, limit=256: meta_items + real_items
         resident.work_ledger.list_worker_runs = lambda thread_id, limit=256: runs
 
-        complete, reason = resident._e2e25_required_phase_evidence(root)
+        complete, reason = resident._required_adaptation_phase_evidence(root)
         self.assertTrue(complete, reason)
 
         runs[0].verification_status = "execution_failed"
-        complete, reason = resident._e2e25_required_phase_evidence(root)
+        complete, reason = resident._required_adaptation_phase_evidence(root)
         self.assertFalse(complete)
         self.assertIn("research/research_current_page", reason)
 
         runs[0].verification_status = "accepted"
         real_items[0].status = "blocked"
-        complete, reason = resident._e2e25_required_phase_evidence(root)
+        complete, reason = resident._required_adaptation_phase_evidence(root)
         self.assertFalse(complete)
         self.assertIn("page_read", reason)
 
@@ -323,7 +338,7 @@ class E2E25CurrentReferenceAndWorkspaceReadTests(unittest.TestCase):
         with self.assertRaises(WorkerContextBoundaryError):
             pack.to_dict()
 
-    def test_normal_product_runtime_type_is_the_e2e25_composition_layer(self) -> None:
+    def test_normal_product_runtime_uses_generic_browser_workspace_adaptation_layer(self) -> None:
         from zn_agent.core.provider_bridge import build_resident_runtime
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -333,7 +348,11 @@ class E2E25CurrentReferenceAndWorkspaceReadTests(unittest.TestCase):
             )
             try:
                 self.assertIsInstance(
-                    resident, CurrentApiDocsAdaptationResidentRuntime
+                    resident, BrowserWorkspaceAdaptationResidentRuntime
+                )
+                self.assertIs(
+                    CurrentApiDocsAdaptationResidentRuntime,
+                    BrowserWorkspaceAdaptationResidentRuntime,
                 )
             finally:
                 resident.store.close()
