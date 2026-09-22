@@ -14,9 +14,7 @@ from zn_agent.core.user_browser_extension_relay import (
     UserBrowserExtensionRelayError,
 )
 from zn_agent.core.user_browser_extension_resident import UserBrowserExtensionResidentRuntime
-from zn_agent.core.user_browser_managed_research_resident import (
-    UserBrowserManagedResearchResidentRuntime,
-)
+from zn_agent.core.user_browser_resident import UserBrowserBridgeResidentRuntime
 
 
 class _TaskContextRelay:
@@ -156,8 +154,8 @@ class UserBrowserTaskContextIdentityTests(unittest.TestCase):
             worker.join(timeout=2.0)
 
     def test_work_context_pins_tab_authorization_generation_not_foreground_or_title(self) -> None:
-        resident = UserBrowserManagedResearchResidentRuntime.__new__(
-            UserBrowserManagedResearchResidentRuntime
+        resident = UserBrowserExtensionResidentRuntime.__new__(
+            UserBrowserExtensionResidentRuntime
         )
         relay = _TaskContextRelay()
         resident.user_browser_extension = relay
@@ -201,8 +199,8 @@ class UserBrowserTaskContextIdentityTests(unittest.TestCase):
             resident._ensure_user_browser_task_context(event, state)
 
     def test_browser_action_cycle_carries_only_resident_owned_context_evidence(self) -> None:
-        resident = UserBrowserManagedResearchResidentRuntime.__new__(
-            UserBrowserManagedResearchResidentRuntime
+        resident = UserBrowserExtensionResidentRuntime.__new__(
+            UserBrowserExtensionResidentRuntime
         )
         state = SimpleNamespace(
             data={
@@ -227,7 +225,7 @@ class UserBrowserTaskContextIdentityTests(unittest.TestCase):
         sentinel = object()
 
         with patch.object(
-            UserBrowserExtensionResidentRuntime,
+            UserBrowserBridgeResidentRuntime,
             "_begin_native_action_cycle",
             autospec=True,
             return_value=sentinel,

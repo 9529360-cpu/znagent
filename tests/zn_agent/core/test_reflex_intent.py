@@ -50,43 +50,6 @@ class ReflexIntentRegistryTests(unittest.TestCase):
             result = registry.resolve(_event(task))
             self.assertEqual(result.status, "no_match", task)
 
-    def test_existing_current_app_cleanup_fast_path_is_indexed(self) -> None:
-        registry = build_resident_reflex_intents()
-        task = (
-            "现在这个软件里面，把这份工作记录整理一下：去掉空行和完全重复的行，"
-            "每行首尾空格也去掉，保留原来的顺序，然后保存。"
-        )
-
-        result = registry.resolve(_event(task))
-
-        self.assertEqual(result.status, "matched")
-        self.assertEqual(
-            result.match.intent_id,
-            "windows.current_app.text_cleanup",
-        )
-        self.assertEqual(result.match.slots["field_name"], "工作记录")
-        self.assertEqual(result.match.slots["save_button_name"], "保存")
-        self.assertIsNone(result.match.action_id)
-
-    def test_existing_workspace_text_edit_fast_path_is_indexed(self) -> None:
-        registry = build_resident_reflex_intents()
-        task = (
-            "找到这里昨天改过、名字像报价的那个 txt，把草稿改成最终版，"
-            "保存后再读回来确认"
-        )
-        result = registry.resolve(
-            _event(task, {"workspace_path": r"D:\workspace"})
-        )
-
-        self.assertEqual(result.status, "matched")
-        self.assertEqual(
-            result.match.intent_id,
-            "windows.workspace.text_edit",
-        )
-        self.assertEqual(result.match.slots["name_hint"], "报价")
-        self.assertEqual(result.match.slots["old_text"], "草稿")
-        self.assertEqual(result.match.slots["new_text"], "最终版")
-
     def test_equal_priority_collision_fails_closed_as_ambiguous(self) -> None:
         registry = ReflexIntentRegistry()
         for intent_id in ("test.one", "test.two"):
@@ -138,7 +101,8 @@ class ProductReflexIntentIntegrationTests(unittest.TestCase):
                     for descriptor in resident.reflex_intents.descriptors()
                 )
                 self.assertIn("windows.application.open", ids)
-                self.assertIn("windows.current_app.text_cleanup", ids)
+                self.assertIn("windows.audio.volume.read", ids)
+                self.assertIn("windows.audio.volume.set", ids)
 
                 result = resident.reflex_intents.resolve(
                     _event("please launch VS Code")

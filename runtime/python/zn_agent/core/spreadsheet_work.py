@@ -25,8 +25,8 @@ MAX_ROWS = 2_000
 MAX_COLUMNS = 64
 AMOUNT_NUMBER_FORMAT = "#,##0.00"
 
-# E2E-11 deliberately inherits the Browser structured-table bounds. The table
-# row cap includes its header, so append data itself is at most 63 rows.
+# Browser-to-spreadsheet append inherits the generic structured-table bounds.
+# The table row cap includes its header, so append data itself is at most 63 rows.
 MAX_BROWSER_TABLE_ROWS = 64
 MAX_BROWSER_TABLE_COLUMNS = 32
 MAX_BROWSER_CELL_TEXT = 512
@@ -178,7 +178,7 @@ def _load_supported(path: Path, *, rich_text: bool = False):
 
 
 def _snapshot(path: Path) -> dict[str, Any]:
-    """E2E-10 cleanup-specific snapshot. Keep public behavior unchanged."""
+    """Snapshot the bounded one-sheet cleanup target."""
     workbook = _load_supported(path)
     if len(workbook.worksheets) != 1:
         raise ValueError("XLSX v1 requires exactly one worksheet")
@@ -382,7 +382,7 @@ def _append_region_fingerprint(sheet: Any, *, max_row: int, max_column: int) -> 
 
 
 def _append_snapshot(path: Path) -> dict[str, Any]:
-    """Snapshot the conservative one-sheet append target without E2E-10 semantics."""
+    """Snapshot the conservative one-sheet append target."""
     workbook = _load_supported(path, rich_text=True)
     if len(workbook.worksheets) != 1:
         raise ValueError("XLSX append-copy requires exactly one worksheet")

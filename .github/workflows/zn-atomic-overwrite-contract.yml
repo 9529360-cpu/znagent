@@ -1,0 +1,88 @@
+name: ZN Atomic Overwrite Contract
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/zn-atomic-overwrite-contract.yml
+      - runtime/python/pyproject.toml
+      - runtime/python/zn_agent/core/body.py
+      - runtime/python/zn_agent/core/file_identity.py
+      - runtime/python/zn_agent/core/side_effect_attempts.py
+      - runtime/python/zn_agent/core/side_effect_body.py
+      - runtime/python/zn_agent/core/overwrite_recovery_resident.py
+      - runtime/python/zn_agent/core/atomic_overwrite_protocols.py
+      - runtime/python/zn_agent/core/staged_text_write.py
+      - runtime/python/zn_agent/core/atomic_overwrite_resident.py
+      - runtime/python/zn_agent/core/atomic_overwrite_namespace_recovery_resident.py
+      - runtime/python/zn_agent/core/recovery_bounded_resident.py
+      - tests/zn_agent/core/test_work_overwrite_recovery.py
+      - tests/zn_agent/core/test_windows_atomic_overwrite.py
+      - tests/zn_agent/core/test_windows_atomic_overwrite_namespace_recovery.py
+      - tests/zn_agent/core/test_windows_atomic_overwrite_namespace_repair.py
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/zn-atomic-overwrite-contract.yml
+      - runtime/python/pyproject.toml
+      - runtime/python/zn_agent/core/body.py
+      - runtime/python/zn_agent/core/file_identity.py
+      - runtime/python/zn_agent/core/side_effect_attempts.py
+      - runtime/python/zn_agent/core/side_effect_body.py
+      - runtime/python/zn_agent/core/overwrite_recovery_resident.py
+      - runtime/python/zn_agent/core/atomic_overwrite_protocols.py
+      - runtime/python/zn_agent/core/staged_text_write.py
+      - runtime/python/zn_agent/core/atomic_overwrite_resident.py
+      - runtime/python/zn_agent/core/atomic_overwrite_namespace_recovery_resident.py
+      - runtime/python/zn_agent/core/recovery_bounded_resident.py
+      - tests/zn_agent/core/test_work_overwrite_recovery.py
+      - tests/zn_agent/core/test_windows_atomic_overwrite.py
+      - tests/zn_agent/core/test_windows_atomic_overwrite_namespace_recovery.py
+      - tests/zn_agent/core/test_windows_atomic_overwrite_namespace_repair.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
+
+jobs:
+  atomic-overwrite:
+    name: Windows atomic overwrite lifecycle
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      CI: 'true'
+      PYTHONUTF8: '1'
+      PYTHONUNBUFFERED: '1'
+      ZN_AGENT_HOME: ${{ github.workspace }}/.ci/atomic-overwrite-home
+    steps:
+      - name: Verify GitHub-hosted Windows x64 runner
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "ZN atomic overwrite contract requires a GitHub-hosted Windows X64 runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare isolated runtime
+        run: |
+          uv python install 3.12
+          uv venv .ci/atomic-overwrite-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\atomic-overwrite-venv\Scripts\python.exe'
+          uv pip install --python $python runtime/python
+      - name: Compile atomic overwrite path
+        run: |
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\atomic-overwrite-venv\Scripts\python.exe'
+          & $python -m py_compile runtime/python/zn_agent/core/atomic_overwrite_protocols.py runtime/python/zn_agent/core/staged_text_write.py runtime/python/zn_agent/core/atomic_overwrite_resident.py runtime/python/zn_agent/core/atomic_overwrite_namespace_recovery_resident.py runtime/python/zn_agent/core/recovery_bounded_resident.py tests/zn_agent/core/test_windows_atomic_overwrite.py tests/zn_agent/core/test_windows_atomic_overwrite_namespace_recovery.py tests/zn_agent/core/test_windows_atomic_overwrite_namespace_repair.py
+      - name: Verify overwrite recovery and Windows commit semantics
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\atomic-overwrite-venv\Scripts\python.exe'
+          & $python -m unittest tests.zn_agent.core.test_work_overwrite_recovery tests.zn_agent.core.test_windows_atomic_overwrite tests.zn_agent.core.test_windows_atomic_overwrite_namespace_recovery tests.zn_agent.core.test_windows_atomic_overwrite_namespace_repair -v

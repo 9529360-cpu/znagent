@@ -847,7 +847,7 @@ Evaluate:
 - mobile companion apps and encrypted device sync;
 - CRDT/event-log mechanisms if true multi-device concurrent Work becomes necessary.
 
-Do not adopt these technologies before a concrete product E2E proves the need.
+Do not adopt these technologies before a concrete product integration need proves the need.
 
 ## 16. Roadmap: how ZN should evolve
 

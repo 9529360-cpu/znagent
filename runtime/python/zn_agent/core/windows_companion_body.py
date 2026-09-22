@@ -20,7 +20,7 @@ from dataclasses import asdict
 from typing import Any
 
 from .body import BodyAction, BodyActionResult
-from .current_app_text_body import CurrentAppTextAwareBody
+from .office_com_body import OfficeComAwareBody
 from .models import utc_now
 from .windows_audio import (
     read_default_render_volume_percent,
@@ -36,7 +36,7 @@ from .windows_brightness import (
 from .windows_wifi import read_windows_wifi_state
 
 
-class WindowsCompanionAwareBody(CurrentAppTextAwareBody):
+class WindowsCompanionAwareBody(OfficeComAwareBody):
     """Keep one final Body while failing closed on non-interactive input sessions."""
 
     _WINDOWS_CONTEXT_KIND = "windows_companion_context"

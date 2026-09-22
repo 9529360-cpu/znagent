@@ -6,19 +6,13 @@ This layer does not add a scheduler, worker runtime, or store. When one active
 Root Work has an attached workspace but no acceptance criteria yet, ZN borrows
 one bounded cognition increment to define observable success criteria, persists
 them once into the existing WorkItem, and only then enters the mature
-research/write/run/verify loop. Delegated work is coordinated by one composed
-Resident-internal component; cognition cannot materialize WorkerRuns directly.
+research/write/run/verify loop. Any delegated work must still materialize through
+generic Work/WorkerRun primitives; cognition cannot materialize WorkerRuns directly.
 """
 
-from .action_authority import (
-    ActionAuthorityContext,
-    bind_worker_authority_arg,
-    install_worker_authority_gate,
-)
+from .action_authority import install_worker_authority_gate
 from .broad_goal_completion_resident import BroadGoalCompletionResidentRuntime
 from .cognition import CognitiveIncrement
-from .delegated_work_coordinator import DelegatedWorkCoordinator
-from .delegation_admission import BoundedDelegationPlanner
 from .models import utc_now
 from .route_policy_intake import infer_thread_route_policy, merge_route_policy
 from .steerable_work import WorkItem
@@ -43,23 +37,15 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
         # only its act admission boundary is decorated.
         install_worker_authority_gate(self.body, resident=self)
 
-    def _delegated_work_coordinator(self) -> DelegatedWorkCoordinator:
-        coordinator = getattr(self, "_delegated_work_coordinator_instance", None)
-        if coordinator is None:
-            coordinator = DelegatedWorkCoordinator(self)
-            self._delegated_work_coordinator_instance = coordinator
-        return coordinator
-
     def _bind_work_route_policy(self, event, request):
         """Persist Work privacy policy before any external cognition.
 
-        Delegated Work re-checks the same policy before building a
-        WorkerContextPack. Broad Root acceptance is itself an external cognition
-        call, though, so user policy must already belong to the durable WorkThread
-        before that first call. Natural-language restrictions, data classification,
-        and an explicit valid route-policy object are therefore merged into the
-        same WorkThread policy. ModelRouter remains the sole owner of provider
-        eligibility and fail-closed validation.
+        Root acceptance and later external cognition both route through the same
+        ModelRouter, so user policy must belong to durable WorkThread truth before
+        the first external call. Natural-language restrictions, data classification,
+        and an explicit valid route-policy object are merged into that one policy.
+        ModelRouter remains the sole owner of provider eligibility and fail-closed
+        validation.
         """
 
         payload = event.payload if isinstance(getattr(event, "payload", None), dict) else {}
@@ -109,63 +95,6 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
                 "route_policy": route_policy,
             }
         return request
-
-    @staticmethod
-    def _root_requests_delegated_worker_sequence(root: WorkItem) -> bool:
-        """Admit only a bounded plan the current flat-worker substrate can honor."""
-
-        return BoundedDelegationPlanner.decide(root).admitted
-
-    def _prepare_delegated_worker_request(self, event, root, request, completed):
-        """Active product composition boundary for WorkerRun coordination."""
-
-        return self._delegated_work_coordinator().prepare_request(
-            event,
-            root,
-            request,
-            completed,
-        )
-
-    def _begin_native_action_cycle(self, event, state, intent):
-        """Bind transient WorkerRun authority to the concrete persisted action."""
-
-        pending = state.data.get(self._DELEGATED_PENDING_KEY)
-        if isinstance(pending, dict):
-            worker_run_id = str(pending.get("worker_run_id") or "").strip()
-            work_item_id = str(pending.get("work_item_id") or "").strip()
-            expected_action = str(pending.get("expected_action") or "").strip()
-            worker = self.work_ledger.worker_run(worker_run_id) if worker_run_id else None
-            item = (
-                self.work_ledger._work_item_by_id(worker.work_item_id)
-                if worker is not None
-                else None
-            )
-            if worker is None or item is None or not work_item_id or not expected_action:
-                raise PermissionError("delegated action lost its durable WorkerRun authority context")
-            if item.work_item_id != work_item_id or worker.work_item_id != item.work_item_id:
-                raise PermissionError("delegated action WorkItem does not match its WorkerRun")
-            if item.plan_version != worker.plan_version:
-                raise PermissionError("delegated action WorkItem plan does not match its WorkerRun")
-            current_plan = int(self.work_ledger.plan_version(item.work_thread_id))
-            if worker.plan_version != current_plan:
-                raise PermissionError("delegated action belongs to a stale Work plan")
-            command = str(intent.args.get("command") or "")
-            context = ActionAuthorityContext(
-                work_thread_id=item.work_thread_id,
-                work_item_id=worker.work_item_id,
-                worker_run_id=worker.worker_run_id,
-                plan_version=worker.plan_version,
-                executor_kind=worker.executor_kind,
-                expected_action=expected_action,
-                tool_scope=tuple(worker.tool_scope),
-                authority_scope=tuple(worker.authority_scope),
-                workspace_root=str(event.payload.get("workspace_path") or "").strip() or None,
-                allowed_command_sha256=(
-                    ActionAuthorityContext.command_digest(command) if command else None
-                ),
-            )
-            intent.args = bind_worker_authority_arg(intent.args, context)
-        return super()._begin_native_action_cycle(event, state, intent)
 
     def _autonomous_root_candidate(self, event) -> WorkItem | None:
         payload = event.payload if isinstance(getattr(event, "payload", None), dict) else {}

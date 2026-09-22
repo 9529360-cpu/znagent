@@ -26,7 +26,7 @@ Self-hosted Windows is a special resource for workflows that genuinely depend on
 
 Each job verifies that the actual runner is Windows x64 before executing product code.
 
-Path-filtered product E2E should also prefer GitHub-hosted Windows when its real acceptance environment can be reconstructed without persistent user credentials or host-specific state. Current hosted examples include Local Documents/Spreadsheet, Research, Document Research, Memory/Learned Behavior, the primary Windows Interactive Desktop E2E, and Windows Clean Install.
+Path-filtered product integration should also prefer GitHub-hosted Windows when its real acceptance environment can be reconstructed without persistent user credentials or host-specific state. Current hosted examples include Local Documents/Spreadsheet, Research, Document Research, Memory/Learned Behavior, the primary Windows Interactive Desktop Contract, and Windows Clean Install.
 
 Hosted does not mean synthetic-only. The primary Windows Interactive Desktop lane proves a usable interactive Windows desktop before running real Win32/UIA/browser/desktop acceptance, and Windows Clean Install builds and installs the real NSIS candidate in isolated disposable state.
 
@@ -34,7 +34,7 @@ Hosted does not mean synthetic-only. The primary Windows Interactive Desktop lan
 
 ## Hosted interactive desktop boundary
 
-The primary PR/push job in `.github/workflows/zn-windows-interactive-e2e.yml` runs on `windows-latest`.
+The primary PR/push job in `.github/workflows/zn-windows-interactive-contract.yml` runs on `windows-latest`.
 
 Before product acceptance it runs `.github/scripts/test-zn-interactive-desktop-readiness.ps1`, which fails closed unless the runner process is in a non-Session-0, WTS-active user session that can open and switch to the Windows input desktop, observe a same-session foreground window, and acquire foreground for a bounded probe window.
 
@@ -56,7 +56,7 @@ This is install/start verification and a bounded development-evaluation handoff,
 
 Self-hosted `zn-interactive` remains valid only where the current workflow genuinely needs host-specific state that ordinary hosted CI does not provide.
 
-Current examples include guarded real-model or existing-session acceptance, selected long-running real E2E workflows, release/candidate packaging, runner bootstrap/watchdog maintenance, and manually dispatched legacy interactive diagnostics.
+Current examples include guarded real-model or existing-session acceptance, selected long-running real integration workflows, release/candidate packaging, runner bootstrap/watchdog maintenance, and manually dispatched legacy interactive diagnostics.
 
 Where a workflow calls `.github/scripts/test-zn-interactive-user-context.ps1`, acceptance requires all of the following current facts:
 

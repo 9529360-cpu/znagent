@@ -2,7 +2,7 @@
 
 > Research snapshot: 2026-09-04; current-ZN-facts overlay synchronized 2026-09-08.
 >
-> This document records external product research and the resulting ZN adoption decisions. It is not proof that the described ZN mechanisms are already implemented. Real code, Git state, tests and E2E remain authoritative.
+> This document records external product research and the resulting ZN adoption decisions. It is not proof that the described ZN mechanisms are already implemented. Real code, Git state and contract/integration evidence remain authoritative.
 
 ## 1. Why this research exists
 
@@ -22,7 +22,7 @@ The following are current code facts as of 2026-09-08, not future plans:
 - `ModelRouter` applies hard eligibility before soft scoring and now incorporates durable route/privacy policy plus dynamic health-aware routing.
 - provider construction supports multiple `ModelRoute` entries and hot reconfiguration without replacing ZN identity/store.
 - `CognitiveResource` returns bounded cognition rather than becoming the Resident subject.
-- `DelegatedWorkCoordinator` exists inside the same Resident; no second store/router/orchestrator subject is introduced.
+- the fixed task-phase `DelegatedWorkCoordinator` has been retired; generic WorkItem/WorkerRun, authority, routing, progress and recovery mechanisms remain inside the existing Resident/Work control plane.
 - durable WorkerRun progress/supervision, heartbeat/no-progress/stall detection, bounded retry/fallback/reassignment and restart reconciliation are connected for the bounded delegated path.
 - natural-language same-Work steering, plan-version stale gating and restart continuation are connected for representative paths.
 - delegated progress is projected from durable Work facts into the existing `work_progress` contract/Resident UI; there is no second progress truth.
@@ -150,7 +150,7 @@ Provider gateways demonstrate useful transport, retry/fallback, usage/cost and h
 
 ZN already owns route selection through its existing provider bridge + `ModelRouter`, so adoption rule remains:
 
-- borrow missing mechanisms when a real E2E proves the need;
+- borrow missing mechanisms when a real integration evidence proves the need;
 - do not insert a second routing control plane merely because gateways exist.
 
 ## 11. Cross-product synthesis
@@ -226,10 +226,10 @@ This research must not cause ZN to become:
 
 The research snapshot predated several now-merged acceptance slices. Current docs should not send maintainers back to reimplement them:
 
-- E2E-29 one-route/multi-worker — closed;
-- E2E-30/42 route policy/privacy — closed under current acceptance policy with documented environment waiver for missing second real provider family;
-- E2E-28/34 dynamic health/stall/restart supervision — representative path closed;
-- E2E-27/33 active steering/continuation — representative path closed;
+- one-route/multi-worker contract — closed;
+- route policy/privacy contract — closed under current acceptance policy with documented environment waiver for missing second real provider family;
+- dynamic health/stall/restart supervision contract — representative path closed;
+- active steering/continuation contract — representative path closed;
 - delegated progress projection — connected/verified narrow;
 - bounded flat dependency/readiness — implemented/verified narrow.
 
@@ -241,4 +241,4 @@ The direction remains:
 
 > **ZN remains the long-lived personal assistant and Root Work owner. Existing Work owns durable decomposition, bounded dependency/readiness, supervision, steering and progress. Existing ModelRouter owns cognition routing under explicit policy and current health. Workers remain replaceable scoped execution contexts. Body/tools make changes in the real world. ZN independently verifies results and keeps continuity.**
 
-The implementation design is in `docs/ZN-DELEGATED-WORK-DESIGN.md`; acceptance scenarios are in `docs/ZN-REAL-TASK-E2E-CATALOG.md`.
+The implementation design is in `docs/ZN-DELEGATED-WORK-DESIGN.md`; current capability status is in `docs/ZN-PRODUCT-CAPABILITY-MAP.md`.

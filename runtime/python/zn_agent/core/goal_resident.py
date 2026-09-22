@@ -9,14 +9,9 @@ deciding what to do next. It deliberately owns no generic planner and stores no
 replayable action sequence.
 """
 
-import hashlib
-import json
-import uuid
 from dataclasses import asdict, replace
 from typing import Any
 
-from .action import NativeActionIntent
-from .automation_named_control_sense import NativeNamedAutomationControlSense
 from .browser_form_submit_resident import BrowserFormSubmitResidentRuntime
 from .browser_named_goal import (
     browser_named_text_intent,
@@ -24,12 +19,9 @@ from .browser_named_goal import (
     browser_named_text_state,
 )
 from .browser_named_target_sense import NativeBrowserNamedTargetSense
-from .desktop_task_goal import desktop_task_goal
 from .focused_text_sense import NativeFocusedTextSense
 from .keyboard_text_body import KeyboardTextBody
 from .models import ExecutionPath, utc_now
-from .natural_file_goal import fresh_workspace_text, observe_workspace_text_source
-from .pointer_click_resident import VerifiedPointerClickResidentRuntime
 from .repo_goal import (
     repo_text_staged_action_intents,
     repo_text_staged_request,
@@ -45,42 +37,10 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
     _BROWSER_GOAL_BINDING_KEY = "resident_browser_goal_binding"
     _BROWSER_GOAL_FOCUS_VERIFICATION_KEY = "resident_browser_goal_focus_verification"
     _MAX_RESIDENT_GOAL_PROGRESS = 16
-    _DESKTOP_TASK_OBSERVATION_KEY = "resident_desktop_task_observation"
-    _DESKTOP_TASK_PROGRESS_KEY = "resident_desktop_task_progress"
-    _DESKTOP_EDIT_FOCUS_KIND = "desktop_task_edit_focused"
-    _DESKTOP_TEXT_KIND = "desktop_task_text_equals"
-    _DESKTOP_SUBMIT_KIND = "desktop_task_button_submitted"
-    _DESKTOP_SUBMIT_OBSERVATION_LIMIT = 12
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
         self.browser_named_target = NativeBrowserNamedTargetSense()
-        self.named_automation_control = NativeNamedAutomationControlSense()
-
-    def _evidence_fingerprint(self, event_id: str) -> str:
-        """Bind desktop retries to stable fresh task observations as well as Investigation."""
-
-        base = super()._evidence_fingerprint(event_id)
-        state = self.store.get_working_state()
-        observation = (
-            state.data.get(self._DESKTOP_TASK_OBSERVATION_KEY)
-            if state.current_event_id == event_id
-            else None
-        )
-        if not isinstance(observation, dict):
-            return base
-        stable_observation = self._stable_fact_value(observation)
-        encoded = json.dumps(
-            {
-                "investigation": base,
-                "desktop_task_observation": stable_observation,
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            default=str,
-        ).encode("utf-8")
-        return hashlib.sha256(encoded).hexdigest()
 
     def _investigation_step(
         self,
@@ -92,14 +52,6 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
         thought=None,
     ):
         """Do not let a satisfied subcondition terminate a composite goal."""
-
-        if desktop_task_goal(event) is not None:
-            return self._desktop_task_investigation(
-                event,
-                state,
-                readiness=readiness,
-                thought=thought,
-            )
 
         if browser_named_text_request(event) is not None:
             return self._browser_named_goal_investigation(
@@ -177,229 +129,6 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
 
         state.stage = "native_deliberation"
         state.next_action = "form the next bounded movement from current goal evidence"
-        self.store.save_working_state(state)
-        return None
-
-    def _desktop_task_investigation(
-        self,
-        event,
-        state,
-        *,
-        readiness,
-        thought=None,
-    ):
-        """Re-sense one typed desktop goal and expose only its next phase."""
-
-        goal = desktop_task_goal(event)
-        assert goal is not None
-
-        progress = state.data.get(self._DESKTOP_TASK_PROGRESS_KEY)
-        progress = dict(progress) if isinstance(progress, dict) else {}
-        if progress.get("submit_dispatched") is True:
-            foreground, error = self._probe_foreground_window()
-            expected_process_id = int(progress.get("process_id") or 0)
-            expected_process_name = str(progress.get("process_name") or "").strip().lower()
-            pre_title = str(progress.get("pre_title") or "")
-            title = str(foreground.title or "").strip() if foreground is not None else ""
-            same_foreground = bool(
-                foreground is not None
-                and int(foreground.process_id) == expected_process_id
-                and str(foreground.process_name or "").strip().lower() == expected_process_name
-                and title
-            )
-            final_matches = bool(
-                same_foreground
-                and (
-                    title == goal.expected_title
-                    if goal.expected_title
-                    else title != pre_title
-                )
-            )
-            if final_matches:
-                return self._complete_goal_from_fresh_investigation(
-                    event,
-                    state,
-                    readiness=readiness,
-                    response=(
-                        f"foreground process={foreground.process_name} title={foreground.title}"
-                    ),
-                    reason=(
-                        "fresh foreground evidence independently proved the requested result "
-                        "after the one non-replayable submit action"
-                    ),
-                )
-
-            observations = int(progress.get("completion_observations") or 0) + 1
-            progress.update(
-                {
-                    "completion_observations": observations,
-                    "last_observed_process_id": (
-                        int(foreground.process_id) if foreground is not None else None
-                    ),
-                    "last_observed_process_name": (
-                        str(foreground.process_name or "").strip().lower()
-                        if foreground is not None
-                        else None
-                    ),
-                    "last_observed_title": title or None,
-                    "last_observation_error": str(error or "") or None,
-                    "last_observed_at": utc_now(),
-                }
-            )
-            state.data[self._DESKTOP_TASK_PROGRESS_KEY] = progress
-            state.data.pop("local_failure", None)
-            state.data.pop(self._DESKTOP_TASK_OBSERVATION_KEY, None)
-            if observations < self._DESKTOP_SUBMIT_OBSERVATION_LIMIT:
-                state.stage = "native_investigation"
-                state.next_action = (
-                    "re-observe the final desktop result after the dispatched submit; "
-                    "do not replay input"
-                )
-                self._sync_execution_context(event, state)
-                self.store.save_working_state(state)
-                return None
-
-            detail = (
-                f"foreground process={foreground.process_name} title={foreground.title}"
-                if foreground is not None
-                else str(error or "foreground observation unavailable")
-            )
-            return self._fail_composite_goal_investigation(
-                event,
-                state,
-                reason=(
-                    "the submit action was already dispatched once, but repeated fresh "
-                    "foreground observations did not prove the requested final result; "
-                    "refusing any additional desktop input: "
-                    + detail
-                ),
-            )
-
-        source, failure = observe_workspace_text_source(
-            event,
-            self.body,
-            workspace_path=goal.workspace_path,
-            name_hint=goal.source_name_hint,
-            modified_yesterday=goal.source_modified_yesterday,
-        )
-        foreground = None
-        target = None
-        focused = None
-        text_state = None
-        button = None
-        phase = "blocked"
-
-        if failure is None:
-            foreground, error = self._probe_foreground_window()
-            if foreground is None:
-                failure = "foreground desktop window is unavailable: " + str(error)
-            elif not str(foreground.title or "").strip():
-                failure = "foreground desktop window has no exact title for action authority"
-            elif str(foreground.process_name or "").strip().lower() in {
-                "chrome.exe",
-                "msedge.exe",
-                "firefox.exe",
-                "brave.exe",
-                "opera.exe",
-            }:
-                failure = "this goal requires the current non-browser desktop application"
-
-        if failure is None:
-            assert foreground is not None
-            process_name = str(foreground.process_name or "").strip().lower()
-            try:
-                target = self.named_automation_control.find_unique_edit(
-                    process_id=int(foreground.process_id),
-                    process_name=process_name,
-                    name=goal.input_name,
-                )
-            except Exception as exc:
-                failure = (
-                    "fresh investigation could not bind one safe named desktop input: "
-                    f"{type(exc).__name__}: {exc}"
-                )
-
-        if failure is None:
-            assert target is not None and foreground is not None
-            focused, focus_error = self._probe_focused_automation_element()
-            same_focused_target = bool(
-                focused is not None
-                and tuple(focused.runtime_id) == tuple(target.runtime_id)
-                and int(focused.process_id) == int(target.process_id)
-                and int(focused.control_type) == 50004
-                and focused.has_keyboard_focus
-                and focused.is_enabled
-                and focused.is_keyboard_focusable
-                and not focused.is_offscreen
-                and not focused.is_password
-            )
-            if not same_focused_target:
-                phase = "focus"
-            else:
-                try:
-                    text_state = self.automation_text_state.probe()
-                except Exception as exc:
-                    failure = (
-                        "fresh privacy-safe text evidence is unavailable for the exact input: "
-                        f"{type(exc).__name__}: {exc}"
-                    )
-                if failure is None:
-                    expected_chars = int(source["text_chars"])
-                    expected_sha = str(source["text_sha256"])
-                    if (
-                        int(text_state.text_length) == expected_chars
-                        and str(text_state.text_sha256 or "") == expected_sha
-                    ):
-                        phase = "submit"
-                    elif int(text_state.text_length) == 0:
-                        phase = "fill"
-                    else:
-                        failure = (
-                            "the exact desktop input already contains different text; "
-                            "ZN will not delete or replace it implicitly"
-                        )
-
-        if failure is None and phase == "submit":
-            assert foreground is not None
-            try:
-                button = self.named_automation_control.find_unique_button(
-                    process_id=int(foreground.process_id),
-                    process_name=str(foreground.process_name or "").strip().lower(),
-                    name=goal.button_name,
-                )
-            except Exception as exc:
-                failure = (
-                    "fresh investigation could not bind one exact named desktop Button: "
-                    f"{type(exc).__name__}: {exc}"
-                )
-
-        observation = {
-            "phase": "blocked" if failure else phase,
-            "failure": failure,
-            "source": source,
-            "foreground": asdict(foreground) if foreground is not None else None,
-            "target": asdict(target) if target is not None else None,
-            "focused": asdict(focused) if focused is not None else None,
-            "text": asdict(text_state) if text_state is not None else None,
-            "button": asdict(button) if button is not None else None,
-            "observed_at": utc_now(),
-        }
-        state.data[self._DESKTOP_TASK_OBSERVATION_KEY] = observation
-        state.data.pop("local_failure", None)
-        self._sync_execution_context(event, state)
-        self.store.save_working_state(state)
-        if failure:
-            return self._fail_composite_goal_investigation(event, state, reason=failure)
-        if thought is not None:
-            known = (
-                "fresh workspace, foreground-window and exact-name UI Automation evidence "
-                f"placed the desktop goal in phase={phase}"
-            )
-            if known not in thought.known:
-                thought.known = (*thought.known, known)
-            self._persist_enriched_thought(thought)
-        state.stage = "native_deliberation"
-        state.next_action = f"form the next desktop-goal movement for phase={phase}"
         self.store.save_working_state(state)
         return None
 
@@ -566,145 +295,6 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
         learning_evidence,
         thought=None,
     ):
-        desktop_goal = desktop_task_goal(event)
-        if desktop_goal is not None:
-            raw = state.data.get(self._DESKTOP_TASK_OBSERVATION_KEY)
-            if not isinstance(raw, dict):
-                state.stage = "native_investigation"
-                state.next_action = "freshly observe the typed desktop goal"
-                self._sync_execution_context(event, state)
-                self.store.save_working_state(state)
-                return None
-            failure = str(raw.get("failure") or "").strip()
-            phase = str(raw.get("phase") or "").strip().lower()
-            source = raw.get("source")
-            foreground = raw.get("foreground")
-            target = raw.get("target")
-            focused = raw.get("focused")
-            button = raw.get("button")
-            if failure:
-                return self._fail_composite_goal_investigation(
-                    event, state, reason=failure
-                )
-            intent = None
-            if (
-                phase == "focus"
-                and isinstance(foreground, dict)
-                and isinstance(target, dict)
-            ):
-                intent = NativeActionIntent(
-                    intent_id=f"desktop-goal-focus-{uuid.uuid4().hex[:12]}",
-                    event_id=event.event_id,
-                    kind="pointer_click",
-                    args={
-                        "x_fraction": float(target["center_x_fraction"]),
-                        "y_fraction": float(target["center_y_fraction"]),
-                        "button": "left",
-                        "target_runtime_id": list(target["runtime_id"]),
-                    },
-                    expected_outcome={
-                        "kind": self._DESKTOP_EDIT_FOCUS_KIND,
-                        "process_name": str(foreground["process_name"]).strip().lower(),
-                        "pre_title": str(foreground["title"]),
-                        "input_name": desktop_goal.input_name,
-                        "target_runtime_id": list(target["runtime_id"]),
-                        "target_center_x_fraction": float(target["center_x_fraction"]),
-                        "target_center_y_fraction": float(target["center_y_fraction"]),
-                        "target_class_name": str(target.get("class_name") or ""),
-                    },
-                    reason=(
-                        "fresh exact-name evidence bound one safe input in the current app; "
-                        "perform only the focus movement before re-sensing"
-                    ),
-                    source="resident_choice",
-                )
-            elif (
-                phase == "fill"
-                and isinstance(source, dict)
-                and isinstance(foreground, dict)
-                and isinstance(target, dict)
-                and isinstance(focused, dict)
-            ):
-                scope = {
-                    "kind": self._AUTOMATION_TEXT_SCOPE_KIND,
-                    "process_name": str(foreground["process_name"]).strip().lower(),
-                    "title_equals": str(foreground["title"]),
-                    "control_type": 50004,
-                    "class_name_equals": str(focused.get("class_name") or ""),
-                    "automation_id_equals": str(focused.get("automation_id") or ""),
-                }
-                intent = NativeActionIntent(
-                    intent_id=f"desktop-goal-text-{uuid.uuid4().hex[:12]}",
-                    event_id=event.event_id,
-                    kind="keyboard_text",
-                    args={},
-                    expected_outcome={
-                        "kind": self._DESKTOP_TEXT_KIND,
-                        "source": dict(source),
-                        "completion_scope": scope,
-                        "action_precondition": {
-                            "kind": "foreground_window_matches",
-                            "process_name": scope["process_name"],
-                            "title_equals": scope["title_equals"],
-                        },
-                        "target_runtime_id": list(target["runtime_id"]),
-                    },
-                    reason=(
-                        "fresh file identity and fresh focused safe Edit evidence authorize "
-                        "one bounded text movement before re-sensing"
-                    ),
-                    source="resident_choice",
-                )
-            elif (
-                phase == "submit"
-                and isinstance(foreground, dict)
-                and isinstance(button, dict)
-            ):
-                intent = NativeActionIntent(
-                    intent_id=f"desktop-goal-submit-{uuid.uuid4().hex[:12]}",
-                    event_id=event.event_id,
-                    kind="pointer_click",
-                    args={
-                        "x_fraction": float(button["center_x_fraction"]),
-                        "y_fraction": float(button["center_y_fraction"]),
-                        "button": "left",
-                        "target_runtime_id": list(button["runtime_id"]),
-                    },
-                    expected_outcome={
-                        "kind": self._DESKTOP_SUBMIT_KIND,
-                        "process_name": str(foreground["process_name"]).strip().lower(),
-                        "pre_title": str(foreground["title"]),
-                        "button_name": desktop_goal.button_name,
-                        "button_runtime_id": list(button["runtime_id"]),
-                        "button_center_x_fraction": float(button["center_x_fraction"]),
-                        "button_center_y_fraction": float(button["center_y_fraction"]),
-                        "expected_title": desktop_goal.expected_title,
-                    },
-                    reason=(
-                        "verified requested text and fresh exact-name Button evidence authorize "
-                        "one non-replayable submit movement"
-                    ),
-                    source="resident_choice",
-                )
-            if intent is None:
-                return self._fail_composite_goal_investigation(
-                    event,
-                    state,
-                    reason="fresh typed desktop-goal evidence did not form one safe next movement",
-                )
-            if self._action_blocked_by_current_evidence(event, state, intent):
-                return self._checkpoint_terminal_failure(
-                    event,
-                    state,
-                    reason=(
-                        "the same desktop movement remains blocked by unchanged evidence; "
-                        "ZN will not replay it"
-                    ),
-                )
-            self._begin_native_action_cycle(event, state, intent)
-            self.store.save_working_state(state)
-            return None
-
         browser_request = browser_named_text_request(event)
         if browser_request is not None:
             raw_observation = state.data.get(self._BROWSER_GOAL_OBSERVATION_KEY)
@@ -802,50 +392,6 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
         return self._checkpoint_terminal_failure(event, state, reason=reason)
 
     def _pointer_click_contract(self, event, intent):
-        desktop_goal = desktop_task_goal(event)
-        raw_desktop = intent.expected_outcome if isinstance(intent.expected_outcome, dict) else {}
-        desktop_kind = str(raw_desktop.get("kind") or "").strip().lower()
-        if desktop_goal is not None and intent.kind == "pointer_click":
-            if desktop_kind == self._DESKTOP_EDIT_FOCUS_KIND:
-                scope: dict[str, Any] = {
-                    "kind": self._AUTOMATION_SCOPE_KIND,
-                    "process_name": str(raw_desktop.get("process_name") or "").strip().lower(),
-                    "title_equals": str(raw_desktop.get("pre_title") or "").strip(),
-                    "control_type": 50004,
-                }
-                class_name = str(raw_desktop.get("target_class_name") or "").strip()
-                if class_name:
-                    scope["class_name_equals"] = class_name
-                return {
-                    "kind": self._POINTER_CLICK_POSTCONDITION_KIND,
-                    "center_x_fraction": float(intent.args["x_fraction"]),
-                    "center_y_fraction": float(intent.args["y_fraction"]),
-                    "width_fraction": self._POINTER_CLICK_DEFAULT_REGION,
-                    "height_fraction": self._POINTER_CLICK_DEFAULT_REGION,
-                    "completion_scope": scope,
-                    "completion_event_kind": str(event.kind or "").strip().lower(),
-                    "action_precondition": {
-                        "kind": self._UI_SCOPE_KIND,
-                        "process_name": scope["process_name"],
-                        "title_equals": scope["title_equals"],
-                    },
-                }, None
-            if desktop_kind == self._DESKTOP_SUBMIT_KIND:
-                synthetic = replace(
-                    event,
-                    payload={
-                        **dict(event.payload or {}),
-                        "expected_outcome": {
-                            "kind": self._POINTER_CLICK_POSTCONDITION_KIND,
-                            "width_fraction": 0.08,
-                            "height_fraction": 0.08,
-                        },
-                    },
-                )
-                return VerifiedPointerClickResidentRuntime._pointer_click_contract(
-                    self, synthetic, intent
-                )
-
         request = browser_named_text_request(event)
         raw_goal = intent.expected_outcome if isinstance(intent.expected_outcome, dict) else {}
         if (
@@ -880,47 +426,6 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
         return super()._pointer_click_contract(event, intent)
 
     def _keyboard_text_contract(self, event, intent):
-        goal = desktop_task_goal(event)
-        raw_desktop = intent.expected_outcome if isinstance(intent.expected_outcome, dict) else {}
-        if (
-            goal is not None
-            and intent.kind == "keyboard_text"
-            and str(raw_desktop.get("kind") or "").strip().lower()
-            == self._DESKTOP_TEXT_KIND
-        ):
-            source = raw_desktop.get("source")
-            if not isinstance(source, dict):
-                return None, "desktop goal lost its exact workspace source evidence"
-            text, error = fresh_workspace_text(event, self.body, source)
-            if error or text is None:
-                return None, error or "workspace source text is unavailable"
-            completion_scope = raw_desktop.get("completion_scope")
-            action_precondition = raw_desktop.get("action_precondition")
-            if not isinstance(completion_scope, dict) or not isinstance(action_precondition, dict):
-                return None, "desktop goal lost its exact focused-target authority"
-            synthetic = replace(
-                event,
-                kind=self._UI_EVENT_KIND,
-                payload={
-                    **dict(event.payload or {}),
-                    "expected_outcome": {"kind": self._TEXT_OUTCOME_KIND},
-                    "completion_scope": dict(completion_scope),
-                    "action_precondition": dict(action_precondition),
-                    "model_policy": "never",
-                },
-            )
-            transient = NativeActionIntent(
-                intent_id=intent.intent_id,
-                event_id=intent.event_id,
-                kind=intent.kind,
-                args={"text": text},
-                expected_outcome=intent.expected_outcome,
-                reason=intent.reason,
-                source=intent.source,
-                created_at=intent.created_at,
-            )
-            return super()._keyboard_text_contract(synthetic, transient)
-
         request = browser_named_text_request(event)
         raw_goal = intent.expected_outcome if isinstance(intent.expected_outcome, dict) else {}
         if (
@@ -965,154 +470,6 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
             }, None
         return super()._keyboard_text_contract(event, intent)
 
-    def _pointer_click_final_input_precondition(
-        self,
-        event,
-        state,
-        intent,
-        contract,
-        prepared,
-    ):
-        goal = desktop_task_goal(event)
-        expected = intent.expected_outcome if isinstance(intent.expected_outcome, dict) else {}
-        kind = str(expected.get("kind") or "").strip().lower()
-        if goal is None or intent.kind != "pointer_click" or kind not in {
-            self._DESKTOP_EDIT_FOCUS_KIND,
-            self._DESKTOP_SUBMIT_KIND,
-        }:
-            return super()._pointer_click_final_input_precondition(
-                event, state, intent, contract, prepared
-            )
-        foreground, error = self._probe_foreground_window()
-        process_name = str(expected.get("process_name") or "").strip().lower()
-        pre_title = str(expected.get("pre_title") or "").strip()
-        if foreground is None:
-            return "fresh foreground recheck before desktop input is unavailable: " + str(error)
-        if (
-            str(foreground.process_name or "").strip().lower() != process_name
-            or str(foreground.title or "").strip() != pre_title
-        ):
-            return "foreground desktop application changed before the final input boundary"
-        try:
-            if kind == self._DESKTOP_EDIT_FOCUS_KIND:
-                fresh = self.named_automation_control.find_unique_edit(
-                    process_id=int(foreground.process_id),
-                    process_name=process_name,
-                    name=goal.input_name,
-                )
-                expected_runtime = tuple(int(v) for v in expected.get("target_runtime_id") or ())
-                expected_x = float(expected.get("target_center_x_fraction") or -1.0)
-                expected_y = float(expected.get("target_center_y_fraction") or -1.0)
-            else:
-                fresh = self.named_automation_control.find_unique_button(
-                    process_id=int(foreground.process_id),
-                    process_name=process_name,
-                    name=goal.button_name,
-                )
-                expected_runtime = tuple(int(v) for v in expected.get("button_runtime_id") or ())
-                expected_x = float(expected.get("button_center_x_fraction") or -1.0)
-                expected_y = float(expected.get("button_center_y_fraction") or -1.0)
-        except Exception as exc:
-            return f"exact named desktop control could not be freshly revalidated: {type(exc).__name__}: {exc}"
-        if tuple(fresh.runtime_id) != expected_runtime:
-            return "exact named desktop control RuntimeId changed before input"
-        if (
-            abs(float(fresh.center_x_fraction) - expected_x) > 0.002
-            or abs(float(fresh.center_y_fraction) - expected_y) > 0.002
-        ):
-            return "exact named desktop control moved materially before input"
-        return super()._pointer_click_final_input_precondition(
-            event, state, intent, contract, prepared
-        )
-
-    def _verify_pointer_click_effect(
-        self,
-        event,
-        state,
-        intent,
-        contract,
-        *,
-        thought=None,
-    ):
-        """After desktop submit dispatch, verify only the task result and never replay input."""
-
-        goal = desktop_task_goal(event)
-        expected = intent.expected_outcome if isinstance(intent.expected_outcome, dict) else {}
-        desktop_kind = str(expected.get("kind") or "").strip().lower()
-        if (
-            goal is None
-            or intent.kind != "pointer_click"
-            or desktop_kind != self._DESKTOP_SUBMIT_KIND
-        ):
-            return super()._verify_pointer_click_effect(
-                event, state, intent, contract, thought=thought
-            )
-
-        execution = state.data.get(self._POINTER_CLICK_EXECUTION_KEY)
-        action_result = state.data.get("native_action_result")
-        action_id = (
-            str(execution.get("action_id") or "").strip()
-            if isinstance(execution, dict)
-            else ""
-        )
-        dispatch_proven = bool(
-            isinstance(execution, dict)
-            and str(execution.get("intent_id") or "") == intent.intent_id
-            and str(execution.get("status") or "") == "completed"
-            and execution.get("success") is True
-            and action_id
-            and isinstance(action_result, dict)
-            and str(action_result.get("action_id") or "") == action_id
-            and str(action_result.get("kind") or "").strip().lower() == "pointer_click"
-            and action_result.get("success") is True
-        )
-        if not dispatch_proven:
-            return self._fail_composite_goal_investigation(
-                event,
-                state,
-                reason=(
-                    "desktop submit reached verification without durable proof of the exact "
-                    "pointer dispatch; refusing any replay because side-effect delivery is uncertain"
-                ),
-            )
-
-        observation = state.data.get(self._DESKTOP_TASK_OBSERVATION_KEY)
-        foreground = (
-            observation.get("foreground")
-            if isinstance(observation, dict)
-            else None
-        )
-        if not isinstance(foreground, dict):
-            return self._fail_composite_goal_investigation(
-                event,
-                state,
-                reason=(
-                    "desktop submit was dispatched once but its pre-submit foreground identity "
-                    "is unavailable; refusing any replay"
-                ),
-            )
-
-        state.data[self._DESKTOP_TASK_PROGRESS_KEY] = {
-            "submit_dispatched": True,
-            "pre_title": str(expected.get("pre_title") or ""),
-            "process_id": int(foreground.get("process_id") or 0),
-            "process_name": str(expected.get("process_name") or "").strip().lower(),
-            "button_runtime_id": list(expected.get("button_runtime_id") or ()),
-            "pointer_action_id": action_id,
-            "completion_observations": 0,
-            "dispatched_at": utc_now(),
-        }
-        self._reset_investigation_after_goal_substep(event, state, intent)
-        state.data.pop(self._DESKTOP_TASK_OBSERVATION_KEY, None)
-        state.stage = "native_investigation"
-        state.next_action = (
-            "observe the final desktop result after one non-replayable submit dispatch; "
-            "do not send more input"
-        )
-        self._sync_execution_context(event, state)
-        self.store.save_working_state(state)
-        return None
-
     def _verification_contract(self, event, intent, *, result=None):
         request = repo_text_staged_request(event)
         raw_goal = intent.expected_outcome if isinstance(intent.expected_outcome, dict) else {}
@@ -1149,55 +506,6 @@ class ResidentGoalRuntime(BrowserFormSubmitResidentRuntime):
         reason: str,
     ):
         """Treat a verified movement as progress until the composite goal is re-sensed."""
-
-        desktop_goal = desktop_task_goal(event)
-        expected = intent.expected_outcome if isinstance(intent.expected_outcome, dict) else {}
-        desktop_kind = str(expected.get("kind") or "").strip().lower()
-        if desktop_goal is not None and desktop_kind in {
-            self._DESKTOP_EDIT_FOCUS_KIND,
-            self._DESKTOP_TEXT_KIND,
-        }:
-            verification = state.data.get("native_verification_result")
-            if not isinstance(verification, dict) or verification.get("verified") is not True:
-                return super()._complete_successful_body_action(
-                    event, state, intent, response=response, reason=reason
-                )
-            if desktop_kind == self._DESKTOP_EDIT_FOCUS_KIND:
-                foreground, error = self._probe_foreground_window()
-                try:
-                    fresh = (
-                        self.named_automation_control.find_unique_edit(
-                            process_id=int(foreground.process_id),
-                            process_name=str(foreground.process_name or "").strip().lower(),
-                            name=desktop_goal.input_name,
-                        )
-                        if foreground is not None
-                        else None
-                    )
-                except Exception as exc:
-                    fresh = None
-                    error = f"{type(exc).__name__}: {exc}"
-                if not (
-                    fresh is not None
-                    and fresh.has_keyboard_focus
-                    and tuple(fresh.runtime_id)
-                    == tuple(int(v) for v in expected.get("target_runtime_id") or ())
-                ):
-                    return self._fail_composite_goal_investigation(
-                        event,
-                        state,
-                        reason=(
-                            "the focus click was already delivered, but fresh exact-target "
-                            f"evidence did not prove focus; refusing replay: {error or 'focus mismatch'}"
-                        ),
-                    )
-            self._reset_investigation_after_goal_substep(event, state, intent)
-            state.data.pop(self._DESKTOP_TASK_OBSERVATION_KEY, None)
-            state.stage = "native_investigation"
-            state.next_action = "re-sense the complete desktop goal after the verified substep"
-            self._sync_execution_context(event, state)
-            self.store.save_working_state(state)
-            return None
 
         is_repo_goal = repo_text_staged_request(event) is not None
         browser_request = browser_named_text_request(event)

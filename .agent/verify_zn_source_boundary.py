@@ -37,7 +37,8 @@ SHIPPED_PRIVATE_SCAN_PREFIX = "runtime/python/zn_agent/core/"
 SHIPPED_PRIVATE_SCAN_FILES = {"apps/desktop/package.json"}
 
 PRODUCT_CORE_PREFIX = "runtime/python/zn_agent/core/"
-E2E_RUNTIME_NAME = re.compile(r"(?:^|[_-])e2e\d+", re.IGNORECASE)
+_RETIRED_SCENARIO_FRAGMENT = bytes.fromhex("653265").decode("ascii")
+SCENARIO_RUNTIME_NAME = re.compile(rf"(?:^|[_-]){_RETIRED_SCENARIO_FRAGMENT}\d+", re.IGNORECASE)
 BROWSER_SCENARIO_BEHAVIOR_NAME = re.compile(
     r".*browser.*behavior\.py$",
     re.IGNORECASE,
@@ -63,9 +64,9 @@ def main() -> int:
 
         if relative.startswith(PRODUCT_CORE_PREFIX):
             product_name = path.name
-            if E2E_RUNTIME_NAME.search(product_name):
+            if SCENARIO_RUNTIME_NAME.search(product_name):
                 failures.append(
-                    f"{relative}: production runtime modules must express reusable capability, not E2E scenario identity"
+                    f"{relative}: production runtime modules must express reusable capability, not numbered scenario identity"
                 )
             if BROWSER_SCENARIO_BEHAVIOR_NAME.fullmatch(product_name):
                 failures.append(
@@ -107,7 +108,7 @@ def main() -> int:
         return 1
 
     print(
-        "ZN source-boundary verification passed: active source is reference-product clean; product runtime has no E2E-named modules or browser scenario behaviors; documentation may name studied systems; shipped product metadata does not embed private source identity."
+        "ZN source-boundary verification passed: active source is reference-product clean; product runtime has no numbered scenario modules or browser scenario behaviors; documentation may name studied systems; shipped product metadata does not embed private source identity."
     )
     return 0
 

@@ -9,7 +9,7 @@ binds the script to the workspace, chooses its own interpreter, quotes argv,
 executes through the existing Terminal Body, and feeds real failures back into
 the same Root Work.
 
-E2E-23 adds one equally narrow reality-replanning rule: if cognition proposes a
+One bounded reality-replanning rule is retained: if cognition proposes a
 valid relative ``.py`` path that does not exist, ZN may search the attached
 workspace for one unique existing file with the same basename. The scan is
 bounded, does not follow directory symlinks or Windows reparse points, rejects
@@ -40,7 +40,7 @@ from .veteran_work_owner import VeteranEngineeringWorkOwner
 
 
 class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
-    """Add the smallest real Modify -> Run -> Observe -> Fix loop for E2E-26."""
+    """Add a bounded real Modify -> Run -> Observe -> Fix loop."""
 
     _MAX_PYTHON_ARGS = 24
     _MAX_ARG_CHARS = 2048
