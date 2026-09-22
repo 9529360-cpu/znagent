@@ -6,8 +6,8 @@ This layer does not add a scheduler, worker runtime, or store. When one active
 Root Work has an attached workspace but no acceptance criteria yet, ZN borrows
 one bounded cognition increment to define observable success criteria, persists
 them once into the existing WorkItem, and only then enters the mature
-research/write/run/verify loop. Delegated work is coordinated by one composed
-Resident-internal component; cognition cannot materialize WorkerRuns directly.
+research/write/run/verify loop. Any delegated work must still materialize through
+generic Work/WorkerRun primitives; cognition cannot materialize WorkerRuns directly.
 """
 
 from .action_authority import install_worker_authority_gate
