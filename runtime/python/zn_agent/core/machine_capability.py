@@ -858,22 +858,42 @@ def _native_gpus() -> tuple[GpuObservation, ...]:
     if platform.system() != "Windows":
         return ()
     try:
-        from comtypes.client import GetObject
-        service = GetObject(r"winmgmts:root\cimv2", dynamic=True)
-        controllers = list(service.ExecQuery("SELECT Name, PNPDeviceID FROM Win32_VideoController"))
+        from comtypes.client import CoGetObject
+        service = CoGetObject(r"winmgmts:root\cimv2", dynamic=True)
+        controllers = list(
+            service.ExecQuery(
+                "SELECT Name, PNPDeviceID FROM Win32_VideoController"
+            )
+        )
     except Exception:
         return ()
     observed = utc_now()
     rows: list[GpuObservation] = []
     for controller in controllers:
-        try:
-            name = str(getattr(controller, "Name", "") or "").strip()
-            pnp = str(getattr(controller, "PNPDeviceID", "") or "").strip() or None
-        except Exception:
-            continue
+        name = _wmi_property_text(controller, "Name")
+        pnp = _wmi_property_text(controller, "PNPDeviceID") or None
         if name:
             rows.append(GpuObservation(name, pnp, observed))
     return tuple(rows)
+
+
+def _wmi_property_text(row: Any, name: str) -> str:
+    """Read one SWbemObject property across comtypes dynamic-binding versions."""
+
+    try:
+        value = getattr(row, name)
+    except Exception:
+        value = None
+    text = str(value or "").strip()
+    if text:
+        return text
+    try:
+        for prop in row.Properties_:
+            if str(getattr(prop, "Name", "") or "").casefold() == name.casefold():
+                return str(getattr(prop, "Value", "") or "").strip()
+    except Exception:
+        return ""
+    return ""
 
 
 def _application_from_dict(raw: dict[str, Any]) -> InstalledApplication:

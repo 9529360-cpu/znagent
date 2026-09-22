@@ -2,7 +2,7 @@
 
 这是一份当前实现事实表，不是 roadmap。真实代码、真实 Git、真实测试和真实 E2E 高于本文件。
 
-Updated: 2026-09-13
+Updated: 2026-09-21
 
 ## 仓库状态规则
 
@@ -38,6 +38,9 @@ Product-closed
 | Browser -> Spreadsheet | VERIFIED NARROW; E2E-11 representative path closed; PR #251 merged as `5dbc663c7035dc523e34477501fee59914a8cff4` | MANAGED Browser simple-table -> exact XLSX append-copy；不是 arbitrary website/Excel |
 | Document Research Completion | VERIFIED NARROW; E2E-12 representative path closed | bounded public-Web evidence -> 1–3 DOCX placeholders；不是 arbitrary DOCX/Deep Research/Word complete |
 | Windows machine/application awareness | CONNECTED + VERIFIED NARROW | 更多应用/系统语义继续扩大 |
+| Action Fabric / native execution substrate | CONNECTED + VERIFIED NARROW | typed ActionDescriptor + fresh availability + Provider Runtime + verified Action Executor 已接通 Windows application launch/activate、master volume read/set、companion context；继续扩大系统/应用 action catalog |
+| Deterministic Reflex / Intent fast paths | CONNECTED + VERIFIED NARROW | registry 已统一索引 application open、current-app cleanup、bounded workspace text edit、workspace-to-desktop goal；只产出 semantic intent/slots，Body authority/current-world grounding/completion 仍由既有 Resident owner 持有 |
+| Local inference runtime discovery | CONNECTED + VERIFIED NARROW | Ollama / LM Studio / vLLM loopback model discovery、RAM/GPU/power observation、ModelRouter dynamic availability 已接通；不自动下载/安装模型，也不为未知模型编造 capability |
 | **Windows current-app content cleanup** | **VERIFIED NARROW; E2E-13 representative path closed; PR #252 merged as `cc3fd3edc25b436a5c42ec1e2d13d4b786fb18b3`** | current foreground non-browser process/HWND + unique multiline ValuePattern Edit + deterministic cleanup + guarded replacement + restart/no-replay reconciliation + one Save + fresh same-process read-only result verification；不是 Desktop complete / arbitrary app automation / Office / general RPA |
 | Windows unexpected-modal recovery | VERIFIED NARROW; E2E-15 representative path closed | exact same-process safe-modal slice；任意 dialog/UAC/credentials/business decisions 不在 closure 内 |
 | Browser + File + Desktop | VERIFIED NARROW; E2E-24 representative path closed | bounded three-surface path；更复杂任务仍需扩大 |

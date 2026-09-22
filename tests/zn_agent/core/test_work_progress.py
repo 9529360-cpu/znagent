@@ -34,6 +34,8 @@ class ResidentWorkProgressTests(unittest.TestCase):
             self.assertFalse(pending["terminal"])
             self.assertFalse(pending["finalized"])
             self.assertIsNone(pending["recovery"])
+            self.assertNotIn("execution_path", pending)
+            self.assertNotIn("model_invocations", pending)
 
             body = getattr(resident, "body", None)
             self.assertIsNotNone(body)
@@ -51,6 +53,8 @@ class ResidentWorkProgressTests(unittest.TestCase):
             self.assertTrue(completed["finalized"])
             self.assertEqual(completed["stage"], "complete")
             self.assertIsNone(completed["recovery"])
+            self.assertEqual(completed["execution_path"], "memory")
+            self.assertEqual(completed["model_invocations"], 0)
             final_thread, messages = ledger.get_snapshot("work-progress")
             self.assertEqual(final_thread.thread_id, "work-progress")
             self.assertEqual([message.role for message in messages], ["user", "zn", "activity"])
