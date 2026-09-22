@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from zn_agent.core.local_file_discovery import (
     LocalFileDiscovery,
+    _initialize_com_for_known_folder,
     build_local_file_discovery_capability,
     default_local_file_roots,
     parse_local_file_search_request,
@@ -19,7 +20,45 @@ from zn_agent.core.models import ExecutionPath
 from zn_agent.core.provider_bridge import build_resident_runtime
 
 
+class _FakeComFunction:
+    def __init__(self, result=None):
+        self.result = result
+        self.calls = []
+        self.argtypes = None
+        self.restype = None
+
+    def __call__(self, *args):
+        self.calls.append(args)
+        return self.result
+
+
+class _FakeOle32:
+    def __init__(self, initialize_result):
+        self.CoInitializeEx = _FakeComFunction(initialize_result)
+        self.CoUninitialize = _FakeComFunction()
+        self.CoTaskMemFree = _FakeComFunction()
+
+
 class LocalFileDiscoveryTests(unittest.TestCase):
+    def test_known_folder_com_initialization_balances_only_successful_calls(self):
+        initialized = _FakeOle32(0)
+        self.assertTrue(_initialize_com_for_known_folder(initialized))
+        self.assertEqual(initialized.CoInitializeEx.calls, [(None, 0x2)])
+
+        already_initialized_same_mode = _FakeOle32(1)
+        self.assertTrue(
+            _initialize_com_for_known_folder(already_initialized_same_mode)
+        )
+
+        already_initialized_other_mode = _FakeOle32(-2147417850)
+        self.assertFalse(
+            _initialize_com_for_known_folder(already_initialized_other_mode)
+        )
+
+        failed = _FakeOle32(-2147467259)
+        with self.assertRaisesRegex(OSError, "CoInitializeEx failed"):
+            _initialize_com_for_known_folder(failed)
+
     def test_parses_bounded_downloads_yesterday_goal_without_model(self):
         request = parse_local_file_search_request("找到我昨天下载的合同")
         self.assertIsNotNone(request)

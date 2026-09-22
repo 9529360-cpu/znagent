@@ -68,6 +68,28 @@ _KNOWN_FOLDER_IDS = {
     "documents": "FDD39AD0-238F-46AF-ADB4-6C85480369C7",
     "desktop": "B4BFCC3A-DB2C-424C-B029-7FE99A87C641",
 }
+_COINIT_APARTMENTTHREADED = 0x2
+_RPC_E_CHANGED_MODE = 0x80010106
+
+
+def _initialize_com_for_known_folder(ole32) -> bool:
+    """Ensure the calling thread can use the Windows Known Folder COM API.
+
+    Returns whether this call successfully incremented COM initialization and
+    therefore must be balanced with CoUninitialize. A different existing
+    apartment is still usable, but must not be uninitialized by this function.
+    """
+
+    ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    ole32.CoInitializeEx.restype = ctypes.c_long
+    status = int(ole32.CoInitializeEx(None, _COINIT_APARTMENTTHREADED))
+    code = status & 0xFFFFFFFF
+    if status in {0, 1}:
+        return True
+    if code == _RPC_E_CHANGED_MODE:
+        return False
+    raise OSError(f"CoInitializeEx failed with HRESULT 0x{code:08X}")
+
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,22 +267,29 @@ def _windows_known_folder(folder_id: str) -> Path | None:
         ]
         shell32.SHGetKnownFolderPath.restype = ctypes.c_long
         ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+        ole32.CoTaskMemFree.restype = None
+        ole32.CoUninitialize.argtypes = []
+        ole32.CoUninitialize.restype = None
+        uninitialize = _initialize_com_for_known_folder(ole32)
         guid = _Guid.parse(folder_id)
         pointer = ctypes.c_void_p()
-        status = int(
-            shell32.SHGetKnownFolderPath(
-                ctypes.byref(guid),
-                0,
-                None,
-                ctypes.byref(pointer),
-            )
-        )
-        if status != 0 or not pointer.value:
-            return None
         try:
+            status = int(
+                shell32.SHGetKnownFolderPath(
+                    ctypes.byref(guid),
+                    0,
+                    None,
+                    ctypes.byref(pointer),
+                )
+            )
+            if status != 0 or not pointer.value:
+                return None
             return Path(ctypes.wstring_at(pointer.value))
         finally:
-            ole32.CoTaskMemFree(pointer)
+            if pointer.value:
+                ole32.CoTaskMemFree(pointer)
+            if uninitialize:
+                ole32.CoUninitialize()
     except (AttributeError, OSError, ValueError):
         return None
 
