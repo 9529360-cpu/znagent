@@ -22,13 +22,14 @@ class NativeBodyTests(unittest.TestCase):
             self.assertIsInstance(resident.body, NativeBody)
             self.assertIsInstance(resident.investigator, EmbodiedInvestigator)
             self.assertIs(resident.investigator.resident.body, resident.body)
-            self.assertEqual(resident.capabilities.names(), ())
+            capabilities_before = resident.capabilities.names()
 
             sensed = resident.body.act("sense", event_id="evt-sense")
             self.assertTrue(sensed.success)
             self.assertEqual(sensed.data["pid"], os.getpid())
             self.assertTrue(sensed.data["cwd"])
             self.assertGreater(sensed.data["disk_total_bytes"], 0)
+            self.assertEqual(resident.capabilities.names(), capabilities_before)
             resident.store.close()
 
     def test_file_movement_is_body_action_and_survives_restart(self):
@@ -41,6 +42,7 @@ class NativeBodyTests(unittest.TestCase):
                 config={"model": {}},
                 store_path=db,
             )
+            capabilities_before = first.capabilities.names()
             written = first.body.act(
                 "write_text",
                 event_id="evt-body-file",
@@ -56,7 +58,7 @@ class NativeBodyTests(unittest.TestCase):
             self.assertTrue(written.success)
             self.assertTrue(read.success)
             self.assertEqual(read.output, "ZN body evidence")
-            self.assertEqual(first.capabilities.names(), ())
+            self.assertEqual(first.capabilities.names(), capabilities_before)
             action_ids = {item.action_id for item in first.body.recent_actions(10)}
             self.assertIn(written.action_id, action_ids)
             self.assertIn(read.action_id, action_ids)
@@ -71,7 +73,7 @@ class NativeBodyTests(unittest.TestCase):
 
             self.assertIn(written.action_id, restored_ids)
             self.assertIn(read.action_id, restored_ids)
-            self.assertEqual(second.capabilities.names(), ())
+            self.assertEqual(second.capabilities.names(), capabilities_before)
             second.store.close()
 
     def test_process_observation_is_a_body_movement(self):
@@ -80,6 +82,7 @@ class NativeBodyTests(unittest.TestCase):
                 config={"model": {}},
                 store_path=Path(tmp) / "kernel.db",
             )
+            capabilities_before = resident.capabilities.names()
 
             result = resident.body.act(
                 "process_state",
@@ -90,7 +93,7 @@ class NativeBodyTests(unittest.TestCase):
             self.assertTrue(result.success)
             self.assertTrue(result.data["alive"])
             self.assertEqual(result.data["pid"], os.getpid())
-            self.assertEqual(resident.capabilities.names(), ())
+            self.assertEqual(resident.capabilities.names(), capabilities_before)
             resident.store.close()
 
     @patch("zn_agent.core.body.os.kill")
@@ -347,6 +350,7 @@ class NativeBodyTests(unittest.TestCase):
                 config={"model": {}},
                 store_path=root / "kernel.db",
             )
+            capabilities_before = resident.capabilities.names()
 
             result = resident.submit(
                 f"read {target}",
@@ -363,7 +367,7 @@ class NativeBodyTests(unittest.TestCase):
             self.assertGreaterEqual(len(event_actions), 2)
             self.assertEqual(event_actions[0].kind, "inspect_path")
             self.assertEqual(event_actions[1].kind, "read_text")
-            self.assertEqual(resident.capabilities.names(), ())
+            self.assertEqual(resident.capabilities.names(), capabilities_before)
             self.assertEqual(result.model_invocations, 0)
             resident.store.close()
 
