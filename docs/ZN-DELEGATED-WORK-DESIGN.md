@@ -46,9 +46,9 @@ Implemented and verified in the active path:
 - durable `WorkThread`, Work items, messages, artifacts and run facts owned by existing Work/Resident storage;
 - explicit Work lifecycle control and restart recovery;
 - plan versioning and stale-result protection;
-- bounded delegation admission owned by Resident;
-- Resident-internal `DelegatedWorkCoordinator`; no second Resident/store/router/control plane;
-- durable flat WorkerRun lifecycle and provenance;
+- durable flat WorkerRun lifecycle and provenance owned by existing Work;
+- no active task-specific delegation admission planner or fixed phase coordinator; those acceptance-owned layers are retired;
+- future delegated materialization must compose from generic WorkItem/WorkerRun contracts without introducing a second Resident/store/router/control plane;
 - strict bounded `WorkerContextPack` sanitation/classification boundary;
 - action-time WorkerRun/WorkItem/plan/workspace authority revalidation at the existing Body boundary;
 - existing kernel-owned `ModelRouter` hard eligibility before soft scoring;
@@ -63,12 +63,7 @@ Implemented and verified in the active path:
 - privacy-safe bounded delegated progress projection through the existing `work_progress` contract and Resident UI;
 - durable `WorkItem.dependency_ids` with bounded flat current-plan sibling dependency/readiness semantics, fan-in, restart durability and invalid-graph fail-closed behavior.
 
-Representative acceptance now closed:
-
-- one-route/multi-worker contract — one real model route serving multiple isolated WorkerRuns;
-- route/privacy contract — route policy/privacy under current acceptance semantics, with an explicit environment waiver for the missing second real provider family;
-- supervision/recovery contract — dynamic health, stall/no-progress supervision, bounded retry/reassign and restart reconciliation;
-- steering/continuation contract — natural-language steering and restart continuation with stale-plan/non-replay discipline.
+Historical representative orchestration tests helped establish the underlying contracts, but they no longer own active product routing. The reusable substrate retained on the product line includes route/privacy policy, WorkerRun provenance/progress, restart/non-replay discipline, steering/stale-plan gating, and bounded dependency/readiness semantics.
 
 The accurate boundary is:
 
@@ -166,7 +161,6 @@ Current guards include:
 - immutable dependency edges for the current item semantics;
 - fan-in;
 - WorkerRun creation readiness gate;
-- coordinator cognition-binding readiness gate;
 - child completion gate;
 - restart durability;
 - corrupt/cyclic/dangling/cross-plan graph fail closed.
@@ -200,7 +194,7 @@ Delegation should occur only when it has a concrete benefit such as:
 
 Small/sequential/context-heavy work should stay direct when delegation adds no value.
 
-The current `BoundedDelegationPlanner` is deliberately conservative. Explicit negation and current task evidence must beat keyword coincidence.
+No task-specific delegation planner is currently product-wired. Any future delegation admission must start from structured Work need and reusable capability/resource requirements; prompt keyword coincidence must never materialize workers.
 
 Correct design:
 

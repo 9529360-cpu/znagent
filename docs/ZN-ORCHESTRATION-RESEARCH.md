@@ -22,7 +22,7 @@ The following are current code facts as of 2026-09-08, not future plans:
 - `ModelRouter` applies hard eligibility before soft scoring and now incorporates durable route/privacy policy plus dynamic health-aware routing.
 - provider construction supports multiple `ModelRoute` entries and hot reconfiguration without replacing ZN identity/store.
 - `CognitiveResource` returns bounded cognition rather than becoming the Resident subject.
-- `DelegatedWorkCoordinator` exists inside the same Resident; no second store/router/orchestrator subject is introduced.
+- the fixed task-phase `DelegatedWorkCoordinator` has been retired; generic WorkItem/WorkerRun, authority, routing, progress and recovery mechanisms remain inside the existing Resident/Work control plane.
 - durable WorkerRun progress/supervision, heartbeat/no-progress/stall detection, bounded retry/fallback/reassignment and restart reconciliation are connected for the bounded delegated path.
 - natural-language same-Work steering, plan-version stale gating and restart continuation are connected for representative paths.
 - delegated progress is projected from durable Work facts into the existing `work_progress` contract/Resident UI; there is no second progress truth.
