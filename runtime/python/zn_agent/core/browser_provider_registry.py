@@ -8,10 +8,17 @@ available managed browser instead of instantiating a concrete engine directly.
 """
 
 import os
-from dataclasses import dataclass
-from typing import Callable
+from dataclasses import dataclass, field
+from typing import Any, Callable, Iterable
 
-from .browser import BrowserAdapter, BrowserPlane
+from .browser import (
+    BrowserAction,
+    BrowserActionAuthority,
+    BrowserActionKind,
+    BrowserAdapter,
+    BrowserPermissionContext,
+    BrowserPlane,
+)
 
 
 BrowserFactory = Callable[[], BrowserAdapter]
@@ -24,6 +31,12 @@ class BrowserProviderDescriptor:
     priority: int
     factory: BrowserFactory
     available: Callable[[], bool]
+    supported_actions: frozenset[BrowserActionKind] = field(
+        default_factory=lambda: frozenset(BrowserActionKind)
+    )
+
+    def supports(self, required_actions: Iterable[BrowserActionKind]) -> bool:
+        return set(required_actions).issubset(self.supported_actions)
 
 
 class BrowserProviderRegistry:
@@ -45,8 +58,10 @@ class BrowserProviderRegistry:
         *,
         plane: BrowserPlane,
         preferred: str = "",
+        required_actions: Iterable[BrowserActionKind] = (),
     ) -> BrowserProviderDescriptor:
         wanted = str(preferred or "").strip().lower()
+        required = frozenset(required_actions)
         if wanted:
             descriptor = self._providers.get(wanted)
             if descriptor is None:
@@ -57,18 +72,130 @@ class BrowserProviderRegistry:
                 )
             if not descriptor.available():
                 raise RuntimeError(f"browser provider is unavailable: {wanted}")
+            if not descriptor.supports(required):
+                missing = required.difference(descriptor.supported_actions)
+                raise RuntimeError(
+                    f"browser provider {wanted} does not support required actions: "
+                    + ", ".join(sorted(item.value for item in missing))
+                )
             return descriptor
 
         candidates = [
             descriptor
             for descriptor in self._providers.values()
-            if descriptor.plane is plane and descriptor.available()
+            if descriptor.plane is plane
+            and descriptor.available()
+            and descriptor.supports(required)
         ]
         if not candidates:
-            raise RuntimeError(f"no available browser provider for {plane.value} plane")
+            suffix = ""
+            if required:
+                suffix = " supporting " + ", ".join(
+                    sorted(item.value for item in required)
+                )
+            raise RuntimeError(
+                f"no available browser provider for {plane.value} plane{suffix}"
+            )
         candidates.sort(key=lambda item: (-item.priority, item.name))
         return candidates[0]
 
+
+
+
+class ManagedBrowserProviderRouter:
+    """Choose one provider per session from explicit capability requirements."""
+
+    name = "managed-browser-provider-router"
+    plane = BrowserPlane.MANAGED
+
+    def __init__(
+        self,
+        *,
+        registry: BrowserProviderRegistry,
+    ) -> None:
+        self._registry = registry
+        self._sessions: dict[str, BrowserAdapter] = {}
+
+    @staticmethod
+    def _required_actions(
+        permission: BrowserPermissionContext,
+    ) -> frozenset[BrowserActionKind]:
+        return frozenset(
+            kind for kind in BrowserActionKind if permission.allows_action(kind)
+        )
+
+    def open_session(
+        self,
+        *,
+        permission: BrowserPermissionContext | None = None,
+        headless: bool = True,
+    ):
+        policy = permission or BrowserPermissionContext()
+        descriptor = self._registry.resolve(
+            plane=BrowserPlane.MANAGED,
+            required_actions=self._required_actions(policy),
+        )
+        adapter = descriptor.factory()
+        try:
+            identity = adapter.open_session(
+                permission=policy,
+                headless=headless,
+            )
+        except BaseException:
+            close = getattr(adapter, "close", None)
+            if callable(close):
+                close()
+            raise
+        self._sessions[identity.session_id] = adapter
+        return identity
+
+    def close_session(self, session_id: str) -> None:
+        adapter = self._sessions.pop(str(session_id), None)
+        if adapter is None:
+            return
+        try:
+            adapter.close_session(session_id)
+        finally:
+            close = getattr(adapter, "close", None)
+            if callable(close):
+                close()
+
+    def close(self) -> None:
+        for session_id in tuple(self._sessions):
+            self.close_session(session_id)
+
+    def observe(self, session_id: str, *, page_id: str = ""):
+        return self._adapter(session_id).observe(session_id, page_id=page_id)
+
+    def observe_target(self, session_id: str, query, *, page_id: str = ""):
+        return self._adapter(session_id).observe_target(
+            session_id,
+            query,
+            page_id=page_id,
+        )
+
+    def act(
+        self,
+        action: BrowserAction,
+        authority: BrowserActionAuthority,
+    ):
+        return self._adapter(action.session_id).act(action, authority)
+
+    def read_page(self, session_id: str, *, page_id: str = "") -> dict[str, Any]:
+        adapter = self._adapter(session_id)
+        reader = getattr(adapter, "read_page", None)
+        if not callable(reader):
+            raise RuntimeError(
+                f"browser provider {getattr(adapter, 'name', '<unknown>')} "
+                "does not support readable page evidence"
+            )
+        return reader(session_id, page_id=page_id)
+
+    def _adapter(self, session_id: str) -> BrowserAdapter:
+        adapter = self._sessions.get(str(session_id))
+        if adapter is None:
+            raise RuntimeError(f"unknown managed browser session: {session_id}")
+        return adapter
 
 def default_managed_browser_registry() -> BrowserProviderRegistry:
     registry = BrowserProviderRegistry()
@@ -86,6 +213,15 @@ def default_managed_browser_registry() -> BrowserProviderRegistry:
             priority=100,
             factory=ChromeDevToolsMcpManagedBrowser,
             available=chrome_devtools_mcp_available,
+            supported_actions=frozenset(
+                kind
+                for kind in BrowserActionKind
+                if kind
+                not in {
+                    BrowserActionKind.UPLOAD_FILE,
+                    BrowserActionKind.DOWNLOAD_FILE,
+                }
+            ),
         )
     )
     registry.register(
@@ -158,8 +294,21 @@ def build_managed_browser_adapter(
         else str(os.getenv("ZN_BROWSER_PROVIDER") or "").strip()
     )
     providers = registry or default_managed_browser_registry()
-    descriptor = providers.resolve(
-        plane=BrowserPlane.MANAGED,
-        preferred=selected,
-    )
-    return descriptor.factory()
+    if selected:
+        descriptor = providers.resolve(
+            plane=BrowserPlane.MANAGED,
+            preferred=selected,
+        )
+        return descriptor.factory()
+
+    available = [
+        descriptor
+        for descriptor in providers._providers.values()
+        if descriptor.plane is BrowserPlane.MANAGED and descriptor.available()
+    ]
+    if len(available) == 1:
+        return available[0].factory()
+    if not available:
+        providers.resolve(plane=BrowserPlane.MANAGED)
+        raise AssertionError("unreachable")
+    return ManagedBrowserProviderRouter(registry=providers)
