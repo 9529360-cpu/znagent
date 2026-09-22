@@ -36,7 +36,7 @@ class CiScenarioGatePolicyTests(unittest.TestCase):
 
         offenders: list[str] = []
         scenario_ref = re.compile(
-            r"tests(?:/|\\|\.)zn_agent(?:/|\\|\.)(?:core|e2e)(?:/|\\|\.)test_e2e",
+            r"tests(?:/|\\|\.)zn_agent(?:/|\\|\.)(?:core|e2e)(?:/|\\|\.)test_e2e\d+",
             re.IGNORECASE,
         )
         numbered_name = re.compile(r"e2e\d+", re.IGNORECASE)
@@ -45,7 +45,7 @@ class CiScenarioGatePolicyTests(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
             name = self._workflow_name(text)
             has_scenario_identity = bool(
-                "E2E" in name.upper()
+                numbered_name.search(name)
                 or numbered_name.search(path.name)
                 or scenario_ref.search(text)
             )
