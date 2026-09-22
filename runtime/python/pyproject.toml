@@ -27,7 +27,7 @@ dependencies = [
 anthropic = ["anthropic==0.87.0"]
 exa = ["exa-py==2.10.2"]
 firecrawl = ["firecrawl-py==4.17.0"]
-browser = ["playwright==1.62.0"]
+browser = ["mcp==2.2.0", "playwright==1.62.0"]
 
 [project.scripts]
 zn-resident = "zn_agent.resident:main"
