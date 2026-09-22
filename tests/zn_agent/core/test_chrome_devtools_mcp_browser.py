@@ -89,6 +89,21 @@ class _FakeChromeMcpClient:
             return {"structuredContent": {}}
         if name == "evaluate_script":
             fence = chr(96) * 3
+            function = str(args.get("function") or "")
+            value = (
+                {
+                    "connected": True,
+                    "sensitive": False,
+                    "disabled": False,
+                    "read_only": False,
+                    "checked": None,
+                    "focused": False,
+                    "value": self.text_value,
+                    "selected_text": "",
+                }
+                if "selected_text" in function
+                else True
+            )
             return {
                 "content": [
                     {
@@ -96,7 +111,9 @@ class _FakeChromeMcpClient:
                         "text": (
                             "Script ran on page and returned:\n"
                             + fence
-                            + "json\ntrue\n"
+                            + "json\n"
+                            + __import__("json").dumps(value)
+                            + "\n"
                             + fence
                         ),
                     }
@@ -152,7 +169,7 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
             )
             self.assertTrue(effect.success)
             self.assertEqual(effect.data["provider"], CHROME_DEVTOOLS_MCP_PROVIDER)
-            self.assertEqual(effect.data["provider"], "chrome-devtools-mcp@1.9.0")
+            self.assertEqual(effect.data["provider"], "chrome-devtools-mcp")
 
             textbox = browser.observe_target(
                 session.session_id,
