@@ -162,6 +162,24 @@ run(pythonPath, ['-m', 'playwright', 'install', 'chromium'], {
 if (fs.readdirSync(browserInstallDir).length === 0) {
   throw new Error(`Playwright Chromium installation produced an empty browser root: ${browserInstallDir}`)
 }
+const browserExecutable = JSON.parse(capture(pythonPath, [
+  '-c',
+  [
+    'import json',
+    'from playwright.sync_api import sync_playwright',
+    'p = sync_playwright().start()',
+    'print(json.dumps(p.chromium.executable_path))',
+    'p.stop()'
+  ].join('; ')
+], {
+  env: {
+    ...process.env,
+    PLAYWRIGHT_BROWSERS_PATH: browserInstallDir
+  }
+}))
+if (!browserExecutable || !fs.existsSync(browserExecutable)) {
+  throw new Error(`Bundled Chromium executable is missing: ${browserExecutable}`)
+}
 
 // Ask the staged interpreter where zn_agent was actually installed instead of
 // assuming a platform-specific site-packages layout. uv's portable Windows
@@ -226,6 +244,7 @@ const manifest = {
   python: portableRelative(runtimeRoot, pythonPath),
   backend_root: portableRelative(runtimeRoot, backendRoot),
   browser_root: portableRelative(runtimeRoot, browserInstallDir),
+  browser_executable: portableRelative(runtimeRoot, browserExecutable),
   veteran_runtime: portableRelative(runtimeRoot, veteranRuntimeDir),
   chrome_devtools_mcp_runtime: portableRelative(runtimeRoot, chromeDevtoolsMcpRuntimeDir),
   chrome_devtools_mcp_version: chromeDevtoolsMcpVersion
