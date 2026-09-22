@@ -7,6 +7,7 @@ from zn_agent.core.browser_provider_registry import (
     BrowserProviderDescriptor,
     BrowserProviderRegistry,
     build_managed_browser_adapter,
+    build_readable_managed_browser_adapter,
 )
 
 
@@ -84,6 +85,54 @@ class BrowserProviderRegistryTests(unittest.TestCase):
         adapter = build_managed_browser_adapter(registry=registry)
         self.assertEqual(adapter.name, "legacy")
         self.assertIs(adapter.plane, BrowserPlane.MANAGED)
+
+    def test_readable_browser_prefers_mature_provider_then_falls_back(self):
+        registry = BrowserProviderRegistry()
+        registry.register(
+            BrowserProviderDescriptor(
+                name="chrome-devtools-mcp",
+                plane=BrowserPlane.MANAGED,
+                priority=100,
+                factory=lambda: _Adapter("mature"),
+                available=lambda: True,
+            )
+        )
+        registry.register(
+            BrowserProviderDescriptor(
+                name="playwright",
+                plane=BrowserPlane.MANAGED,
+                priority=200,
+                factory=lambda: _Adapter("playwright"),
+                available=lambda: True,
+            )
+        )
+
+        readable = build_readable_managed_browser_adapter(registry=registry)
+        complete = build_managed_browser_adapter(registry=registry)
+        self.assertEqual(readable.name, "mature")
+        self.assertEqual(complete.name, "playwright")
+
+        unavailable = BrowserProviderRegistry()
+        unavailable.register(
+            BrowserProviderDescriptor(
+                name="chrome-devtools-mcp",
+                plane=BrowserPlane.MANAGED,
+                priority=100,
+                factory=lambda: _Adapter("mature"),
+                available=lambda: False,
+            )
+        )
+        unavailable.register(
+            BrowserProviderDescriptor(
+                name="playwright",
+                plane=BrowserPlane.MANAGED,
+                priority=200,
+                factory=lambda: _Adapter("playwright"),
+                available=lambda: True,
+            )
+        )
+        fallback = build_readable_managed_browser_adapter(registry=unavailable)
+        self.assertEqual(fallback.name, "playwright")
 
     def test_explicit_unavailable_provider_fails_closed(self):
         registry = BrowserProviderRegistry()
