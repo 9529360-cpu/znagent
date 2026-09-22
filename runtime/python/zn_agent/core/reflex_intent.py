@@ -9,6 +9,10 @@ from .application_goal import application_open_goal
 from .current_app_text_cleanup_goal import current_app_text_cleanup_goal
 from .desktop_task_goal import desktop_task_goal
 from .natural_file_goal import natural_workspace_text_edit_request
+from .windows_audio_intent import (
+    windows_audio_volume_read_goal,
+    windows_audio_volume_set_goal,
+)
 
 
 ReflexResolutionStatus = Literal["matched", "no_match", "ambiguous"]
@@ -173,6 +177,27 @@ class ReflexIntentRegistry:
 
 def build_resident_reflex_intents() -> ReflexIntentRegistry:
     registry = ReflexIntentRegistry()
+    registry.register(
+        ReflexIntentDescriptor(
+            intent_id="windows.audio.volume.set",
+            description="Set the Windows master volume to one explicit absolute percentage.",
+            required_slots=("level_percent",),
+            action_id="windows.audio.volume.set",
+            priority=110,
+            tags=("windows", "audio", "action_candidate", "direct_action"),
+        ),
+        windows_audio_volume_set_goal,
+    )
+    registry.register(
+        ReflexIntentDescriptor(
+            intent_id="windows.audio.volume.read",
+            description="Read the current Windows master volume.",
+            action_id="windows.audio.volume.read",
+            priority=110,
+            tags=("windows", "audio", "action_candidate", "direct_action"),
+        ),
+        windows_audio_volume_read_goal,
+    )
     registry.register(
         ReflexIntentDescriptor(
             intent_id="windows.application.open",
