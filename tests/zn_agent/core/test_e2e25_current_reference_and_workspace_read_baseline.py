@@ -7,8 +7,10 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from zn_agent.core.current_api_docs_adaptation_resident import (
+from zn_agent.core.browser_workspace_adaptation_resident import (
     BrowserWorkspaceAdaptationResidentRuntime,
+)
+from zn_agent.core.current_api_docs_adaptation_resident import (
     CurrentApiDocsAdaptationResidentRuntime,
 )
 from zn_agent.core.steerable_work import WorkItem
