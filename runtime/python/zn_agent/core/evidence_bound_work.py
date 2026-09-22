@@ -549,8 +549,8 @@ class EvidenceBoundSteerableWorkLedger(SteerableWorkLedger):
             raise ValueError("WorkerRun WorkItem is not bound to the current Root")
         self.assert_dependencies_ready(item.work_item_id)
         kind = str(executor_kind or "").strip().lower()
-        if kind not in {"research", "coding", "review"}:
-            raise ValueError("WorkerRun executor_kind must be research, coding, or review")
+        if not kind:
+            raise ValueError("WorkerRun executor_kind must not be empty")
         tools = self._normalized_scope(tool_scope)
         authority = self._normalized_scope(authority_scope)
         worker_run_id = f"worker-{uuid.uuid4().hex[:16]}"

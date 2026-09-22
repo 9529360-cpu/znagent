@@ -118,7 +118,7 @@ function Acquire-ExactForeground {
 }
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "ZN Interactive E2E Launcher $([Guid]::NewGuid().ToString('N'))"
+$form.Text = "ZN Interactive Contract Launcher $([Guid]::NewGuid().ToString('N'))"
 $form.Width = 240
 $form.Height = 80
 $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual

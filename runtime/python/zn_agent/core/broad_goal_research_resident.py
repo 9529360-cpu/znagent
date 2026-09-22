@@ -9,10 +9,16 @@ executes that movement through ZN's existing readable managed Chromium adapter.
 
 import hashlib
 import json
+from typing import Any
 from urllib.parse import urlsplit
 
 from .broad_goal_recoverable_resident import BroadGoalRecoverableCodingResidentRuntime
-from .browser import BrowserPermissionContext
+from .browser import (
+    BrowserAction,
+    BrowserActionAuthority,
+    BrowserActionKind,
+    BrowserPermissionContext,
+)
 from .cognition import CognitiveIncrement
 from .models import utc_now
 from .research_managed_browser import ResearchSemanticPlaywrightManagedBrowser
@@ -307,6 +313,31 @@ class BroadGoalResearchResidentRuntime(BroadGoalRecoverableCodingResidentRuntime
         state.data[self._BROAD_RESEARCH_HISTORY_KEY] = history[-6:]
         state.data.pop("local_failure", None)
         return self._roll_forward_research_state(event, state)
+
+    @staticmethod
+    def _navigate_and_read(
+        browser,
+        session_id: str,
+        url: str,
+        permission: BrowserPermissionContext,
+    ) -> dict[str, Any]:
+        observation = browser.observe(session_id)
+        action = BrowserAction.create(
+            session_id=session_id,
+            kind=BrowserActionKind.NAVIGATE,
+            page_id=observation.page_id,
+            args={"url": url},
+            expected={"url_equals": url},
+        )
+        authority = BrowserActionAuthority.from_observation(
+            action,
+            observation,
+            permission,
+        )
+        effect = browser.act(action, authority)
+        if not effect.success:
+            raise RuntimeError(effect.error or "managed browser navigation failed")
+        return browser.read_page(session_id, page_id=effect.page_id)
 
     def _fail_research_step(self, event, state, child: WorkItem, failure: str):
         child.status = "blocked"

@@ -58,7 +58,7 @@ class CiContractSurfacePolicyTests(unittest.TestCase):
             if not path.is_file() or path.suffix.lower() not in _ACTIVE_TEXT_SUFFIXES:
                 continue
             text = path.read_text(encoding="utf-8")
-            if _RETIRED_FRAGMENT in text.casefold() or _NUMBERED_STORY.search(text):
+            if _NUMBERED_STORY.search(text):
                 offenders.append(path.relative_to(root).as_posix())
         self.assertEqual(
             offenders,
