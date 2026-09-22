@@ -17,11 +17,13 @@ async function writeFakePackagedRuntime(root, { version = '1.2.3', commit = 'a'.
   const pythonRelative = process.platform === 'win32' ? 'python/python.exe' : 'python/bin/python3'
   const backendRelative = 'python/site-packages'
   const browserRelative = 'playwright-browsers'
+  const browserExecutableRelative = 'playwright-browsers/chromium-fixture/chrome.exe'
   const veteranRelative = 'veteran-engineer'
   const chromeMcpRelative = 'browser-runtimes/chrome-devtools-mcp'
   const python = path.join(runtimeRoot, ...pythonRelative.split('/'))
   const backendRoot = path.join(runtimeRoot, ...backendRelative.split('/'))
   const browserRoot = path.join(runtimeRoot, browserRelative)
+  const browserExecutable = path.join(runtimeRoot, ...browserExecutableRelative.split('/'))
   const veteranRuntimeRoot = path.join(runtimeRoot, veteranRelative)
   const chromeDevtoolsMcpRuntimeRoot = path.join(runtimeRoot, ...chromeMcpRelative.split('/'))
   const chromeDevtoolsMcpPackageRoot = path.join(
@@ -37,6 +39,7 @@ async function writeFakePackagedRuntime(root, { version = '1.2.3', commit = 'a'.
   await fs.writeFile(path.join(backendRoot, 'zn_agent', 'core', 'resident_server.py'), '# resident core\n')
   await fs.mkdir(path.join(browserRoot, 'chromium-fixture'), { recursive: true })
   await fs.writeFile(path.join(browserRoot, 'chromium-fixture', 'marker'), 'managed chromium')
+  await fs.writeFile(browserExecutable, 'fake chromium executable')
   await fs.mkdir(path.join(veteranRuntimeRoot, 'mcp'), { recursive: true })
   await fs.writeFile(path.join(veteranRuntimeRoot, 'mcp', 'server.mjs'), '// veteran fixture\n')
   await fs.writeFile(path.join(veteranRuntimeRoot, 'VENDOR.json'), '{}\n')
@@ -60,6 +63,7 @@ async function writeFakePackagedRuntime(root, { version = '1.2.3', commit = 'a'.
     python: pythonRelative,
     backend_root: backendRelative,
     browser_root: browserRelative,
+    browser_executable: browserExecutableRelative,
     veteran_runtime: veteranRelative,
     chrome_devtools_mcp_runtime: chromeMcpRelative,
     chrome_devtools_mcp_version: '1.9.0'
@@ -70,6 +74,7 @@ async function writeFakePackagedRuntime(root, { version = '1.2.3', commit = 'a'.
     python,
     backendRoot,
     browserRoot,
+    browserExecutable,
     veteranRuntimeRoot,
     chromeDevtoolsMcpRuntimeRoot
   }
@@ -84,6 +89,7 @@ test('packaged release verifier validates ZN runtime and version-bound managed b
     assert.equal(verified.length, 1)
     assert.equal(verified[0].python, fixture.python)
     assert.equal(verified[0].browserRoot, fixture.browserRoot)
+    assert.equal(verified[0].browserExecutable, fixture.browserExecutable)
     assert.equal(verified[0].veteranRuntimeRoot, fixture.veteranRuntimeRoot)
     assert.equal(
       verified[0].chromeDevtoolsMcpRuntimeRoot,
@@ -109,12 +115,14 @@ test('packaged runtime smoke binds Chromium lookup to the verified runtime root'
     assert.equal(invocation.python, fixture.python)
     assert.deepEqual(invocation.args.slice(0, 2), ['-I', '-c'])
     assert.equal(invocation.options.env.PLAYWRIGHT_BROWSERS_PATH, fixture.browserRoot)
+    assert.equal(invocation.options.env.ZN_BROWSER_EXECUTABLE, fixture.browserExecutable)
     assert.equal(invocation.options.env.ZN_VETERAN_RUNTIME_ROOT, fixture.veteranRuntimeRoot)
     assert.equal(
       invocation.options.env.ZN_CHROME_DEVTOOLS_MCP_ROOT,
       fixture.chromeDevtoolsMcpRuntimeRoot
     )
-    assert.match(invocation.args[2], /PlaywrightManagedBrowser/)
+    assert.match(invocation.args[2], /build_managed_browser_adapter/)
+    assert.match(invocation.args[2], /chrome-devtools-mcp/)
     assert.match(invocation.args[2], /ZN_CHROME_DEVTOOLS_MCP_ROOT/)
     assert.match(invocation.args[2], /vendored_veteran_root/)
     assert.match(invocation.args[2], /about:blank/)
