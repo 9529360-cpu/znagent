@@ -19,6 +19,10 @@ For each E2E, record the natural-language user goal, environment/state, resource
 
 Do not create synthetic complexity only to make a test harder. Prefer tasks ordinary users could actually ask.
 
+### CI policy
+
+Real-task E2E scenarios are representative acceptance evidence, not merge-gating architecture owners. Workflows whose product identity is an `E2E` scenario are manual regressions only. Pull-request and automatic mainline gates must be generic capability or subsystem contracts that can serve many tasks. If a representative E2E fails because the substrate is missing a reusable capability, improve the substrate or contract; do not add a scenario-specific Resident, behavior, route or worker-phase sequence merely to make that E2E pass.
+
 ### Current representative acceptance status
 
 The 50 scenario IDs and product intents remain stable. The status overlay records current evidence without promoting a representative implementation into a whole capability-class claim.
@@ -29,15 +33,16 @@ The 50 scenario IDs and product intents remain stable. The status overlay record
 | E2E-02 | CLOSED representative path | Bounded Research -> exact attached-workspace editable Markdown with fresh file verification. Not arbitrary Office/PDF authoring. |
 | E2E-03 | CLOSED representative path | Unique same-Work referent may continue; ambiguity asks first. Durable research evidence survives restart while fresh. |
 | E2E-05 | CLOSED representative path | Real USER Browser authenticated research -> persisted mutation. Not arbitrary authenticated sites/mutation. |
-| E2E-07 | CLOSED representative path | Exact-root causal USER Browser child attribution via root `Page.windowOpen` + unique fresh target binding, fresh identity reread, child -> exact root return, authorization-generation binding and unverified-click no-replay. Not arbitrary popup/frame support. |
+| E2E-07 | HISTORICAL representative closure; dedicated scenario behavior retired | The old exact-root popup/new-tab scenario remains historical evidence. Its E2E-specific behavior and acceptance gate are retired; generic causal-popup authority/body primitives remain available for reusable composition. |
 | E2E-08 | CLOSED representative path | Same authorized USER tab/generation/origin standard `one-time-code` user-presence handoff. ZN does not read/type/store OTP. |
 | E2E-09 | CLOSED representative path | Bounded yesterday DOCX payment-date edit to a new verified copy. Not general Word support. |
 | E2E-10 | CLOSED representative path | Zero-model bounded XLSX exact-row dedupe + amount format normalization to a new verified copy. Not general Excel support. |
-| E2E-11 | CLOSED representative path; PR #251 merged as `5dbc663c7035dc523e34477501fee59914a8cff4` | MANAGED Browser unique simple table -> exact attached-workspace XLSX append-copy with source/destination/browser verification. Not arbitrary website tables/Excel. |
+| E2E-11 | HISTORICAL representative closure; dedicated product behavior retired | PR #251 remains historical evidence for one narrow browser->XLSX transfer. The scenario-specific behavior/test gate is no longer an active product route; any future proof must compose the generic managed BrowserAdapter with normal Work/File/Spreadsheet capabilities. |
+| E2E-14 | HISTORICAL representative scenario; dedicated product behavior retired | Browser->desktop record transfer no longer owns a special Resident path or merge gate. Future acceptance must come from generic USER-browser grounding + Desktop/Action Fabric/App Competence composition with fresh authority. |
 | E2E-12 | CLOSED representative path | Bounded public-Web evidence -> 1–3 explicit DOCX placeholders with prompt-safe two-source support and fresh reopen verification. Not arbitrary DOCX/Deep Research/Word. |
 | **E2E-13** | **VERIFIED NARROW / CLOSED representative path; PR #252 merged as `cc3fd3edc25b436a5c42ec1e2d13d4b786fb18b3`** | Current foreground non-browser Windows app; exact process/HWND + unique multiline ValuePattern Edit; deterministic trim/drop-blank/stable-dedupe; guarded replacement; durable restart/no-replay reconciliation before ordinary content drift; at most one Save; fresh same-process read-only result verification. **Not Desktop complete, arbitrary app automation, Office automation or general RPA.** |
 | E2E-15 | CLOSED representative path | Exact same-process owned UIA modal with one deterministic safe defer/continue action; fresh parent readiness/re-ground. Not arbitrary dialogs/UAC/credentials/business decisions. |
-| E2E-24 | CLOSED representative path | Same Root USER Browser -> exact File -> exact Desktop customer record with fresh verification and stale UIA rejection. Not general RPA. |
+| E2E-24 | HISTORICAL representative closure; dedicated product behavior retired | The old USER Browser -> File -> Desktop customer-record path remains historical evidence only. Its E2E-specific Resident behavior and merge gate are retired; future cross-surface work must compose generic browser, file and desktop capabilities. |
 | E2E-27 | CLOSED representative path | Same-Work steering/replan/stale-old-worker gating/non-replay. |
 | E2E-28 | CLOSED representative path | Durable supervision, no-progress/stall detection, health-aware bounded retry/fallback/reassignment. |
 | E2E-29 | CLOSED | One actual model route can serve multiple isolated WorkerRuns while Root completion stays ZN-owned. |
@@ -103,7 +108,7 @@ Same task as E2E-05, but page layout/control identity changes after research. Mu
 
 ### E2E-07 — Popup/new-tab interruption
 
-Task produces a popup/new tab midway. Must prove the child belongs causally to the exact root action, derive bounded child authority, verify result, return to the exact original authorization generation, fresh re-ground the root and never replay a possibly executed click merely because child proof is missing.
+Task produces a popup/new tab midway. The old E2E-07-specific Resident behavior and isolated acceptance path are retired from the product line. The reusable causal-popup adapter/body primitives remain: future popup handling must compose those generic primitives with normal USER-browser authority instead of restoring an E2E-07 scenario handler.
 
 The representative fixture keeps `target="_blank" rel="opener"` so the web-level opener intent is explicit, but PR #252 proved Chromium's extension Tabs metadata does not reliably surface `openerTabId` for this popup/new-window shape. A same-head rerun reproduced the regression, so it was not treated as timing. Two speculative production stabilizations—longer waiting and broader tab enumeration—were ineffective and reverted.
 
@@ -141,7 +146,7 @@ User:
 
 > “把这个网站里的数据整理进我现在这个表里。”
 
-Must combine exact Browser structured source evidence with exact attached-workspace spreadsheet mutation and verify Browser/source/destination. Current representative closure is MANAGED Browser unique simple table -> conservative XLSX append-copy, implemented by PR #251 and squash-merged to canonical `main` as `5dbc663c7035dc523e34477501fee59914a8cff4`; it does not claim arbitrary tables/grids or Excel complete.
+Historical proof combined exact Browser structured source evidence with exact attached-workspace spreadsheet mutation and verified Browser/source/destination. That dedicated scenario path has now been retired from normal product wiring and CI. Future closure must be produced by the generic managed BrowserAdapter plus normal Work/File/Spreadsheet capabilities; do not reintroduce an E2E-11-specific Resident behavior.
 
 ### E2E-12 — Document with missing information
 
@@ -216,7 +221,7 @@ User:
 
 > “把浏览器里这几项信息填到桌面软件对应的记录里。”
 
-Must preserve source/record identity across applications and prevent wrong-record writes.
+Must preserve source/record identity across applications and prevent wrong-record writes. The old E2E-14-specific Resident behavior and isolated merge gate are retired; future closure must compose generic USER-browser grounding with Desktop/Action Fabric/App Competence capabilities and fresh verification.
 
 ### E2E-15 — Unexpected dialog recovery
 
@@ -288,7 +293,7 @@ User:
 
 > “从网站查这批客户的状态，整理成文件，再把异常的几项更新到桌面软件里。”
 
-Must preserve one business identity across USER Browser, exact File and exact Desktop record, with fresh verification after each mutation. Current representative closure is bounded and is not general RPA.
+Must preserve one business identity across USER Browser, exact File and exact Desktop record, with fresh verification after each mutation. The old E2E-24-specific Resident behavior and isolated acceptance path are retired from the product line; future proof must come from generic browser, file and desktop capability composition rather than reintroducing a scenario handler.
 
 ### E2E-25 — Browser + coding + local result
 
@@ -296,7 +301,7 @@ User:
 
 > “按这个网站的新 API 文档把项目适配一下，然后跑起来确认能用。”
 
-Must research current external docs, edit the actual repo, test/run locally and verify final behavior.
+Must research current external docs, edit the actual repo, test/run locally and verify final behavior. The old E2E-25-specific Resident, worker-phase sequence and dedicated workflow are retired from the product line. This capability must now emerge from generic research + workspace/file + coding/terminal + verification composition; do not restore phrase-gated E2E-25 routing.
 
 ## 9. Long-running product development and delegated Work
 

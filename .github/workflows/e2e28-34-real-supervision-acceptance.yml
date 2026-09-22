@@ -1,19 +1,9 @@
 name: E2E28-34 Real Supervision Recovery Acceptance
 
+# Historical / high-cost representative acceptance only.
+# PR merge gates validate the reusable subsystem contracts instead.
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [main]
-    paths:
-      - '.github/workflows/e2e28-34-real-supervision-acceptance.yml'
-      - '.github/scripts/test-zn-interactive-user-context.ps1'
-      - 'runtime/python/zn_agent/core/delegated_work_coordinator.py'
-      - 'runtime/python/zn_agent/core/health_aware_resident.py'
-      - 'runtime/python/zn_agent/core/provider_bridge.py'
-      - 'runtime/python/zn_agent/core/router.py'
-      - 'runtime/python/zn_agent/core/worker_progress.py'
-      - 'tests/zn_agent/e2e/test_e2e28_34_real_supervision_recovery.py'
-      - 'tests/zn_agent/e2e/test_e2e28_real_dynamic_health.py'
 
 permissions:
   contents: read

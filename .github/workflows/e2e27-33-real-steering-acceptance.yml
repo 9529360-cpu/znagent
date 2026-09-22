@@ -1,18 +1,9 @@
 name: E2E27-33 Real Steering Replan Acceptance
 
+# Historical / high-cost representative acceptance only.
+# PR merge gates validate the reusable subsystem contracts instead.
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [main]
-    paths:
-      - '.github/workflows/e2e27-33-real-steering-acceptance.yml'
-      - 'runtime/python/zn_agent/core/evidence_bound_work.py'
-      - 'runtime/python/zn_agent/core/steerable_work.py'
-      - 'runtime/python/zn_agent/core/work_restore_control.py'
-      - 'runtime/python/zn_agent/core/delegated_work_coordinator.py'
-      - 'runtime/python/zn_agent/core/broad_goal_research_resident.py'
-      - 'runtime/python/zn_agent/core/broad_goal_completion_resident.py'
-      - 'tests/zn_agent/e2e/test_e2e27_33_real_steering_replan.py'
 
 permissions:
   contents: read

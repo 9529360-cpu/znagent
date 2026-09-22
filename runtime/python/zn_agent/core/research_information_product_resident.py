@@ -10,7 +10,6 @@ from .app_competence_execution import (
     AppCompetenceStageHandoff,
 )
 from .browser_goal_understanding_resident import browser_semantic_lookup_goal
-from .browser_spreadsheet_behavior import install_browser_spreadsheet_behavior
 from .current_app_text_cleanup_behavior import install_current_app_text_cleanup_behavior
 from .current_app_text_cleanup_completion import install_current_app_text_cleanup_completion
 from .document_research_completion_behavior import (
@@ -167,7 +166,6 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
         install_long_running_terminal_behavior(self)
         install_local_service_recovery_behavior(self)
         install_explorer_selected_file_behavior(self)
-        install_browser_spreadsheet_behavior(self)
         install_document_research_completion_behavior(self)
         install_document_research_completion_safety(self)
 

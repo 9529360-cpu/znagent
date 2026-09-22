@@ -1,32 +1,9 @@
 name: ZN Local Service Diagnosis E2E
 
+# Representative capability scenario: validate after merge or on demand.
+# PR merge gates are owned by generic subsystem contracts.
+# Representative scenario regression. Generic contracts gate PRs; run this only on demand.
 on:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - .github/workflows/zn-local-service-e2e.yml
-      - runtime/python/zn_agent/core/current_app_text_body.py
-      - runtime/python/zn_agent/core/local_service_diagnosis.py
-      - runtime/python/zn_agent/core/local_service_recovery_behavior.py
-      - runtime/python/zn_agent/core/research_information_product_resident.py
-      - runtime/python/zn_agent/core/terminal.py
-      - tests/zn_agent/core/test_local_service_diagnosis.py
-      - tests/zn_agent/core/test_local_service_recovery_behavior.py
-      - tests/zn_agent/e2e/test_e2e21_local_service_diagnosis.py
-  push:
-    branches:
-      - main
-    paths:
-      - .github/workflows/zn-local-service-e2e.yml
-      - runtime/python/zn_agent/core/current_app_text_body.py
-      - runtime/python/zn_agent/core/local_service_diagnosis.py
-      - runtime/python/zn_agent/core/local_service_recovery_behavior.py
-      - runtime/python/zn_agent/core/research_information_product_resident.py
-      - runtime/python/zn_agent/core/terminal.py
-      - tests/zn_agent/core/test_local_service_diagnosis.py
-      - tests/zn_agent/core/test_local_service_recovery_behavior.py
-      - tests/zn_agent/e2e/test_e2e21_local_service_diagnosis.py
   workflow_dispatch:
 
 permissions:

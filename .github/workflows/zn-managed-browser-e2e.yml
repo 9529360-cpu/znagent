@@ -1,4 +1,4 @@
-name: ZN Managed Browser E2E
+name: ZN Managed Browser Contract
 
 on:
   pull_request:
@@ -23,7 +23,6 @@ on:
       - runtime/python/zn_agent/core/browser_observed_result_recovery_resident.py
       - runtime/python/zn_agent/core/browser_rpc.py
       - runtime/python/zn_agent/core/browser_resident_server.py
-      - runtime/python/zn_agent/core/browser_spreadsheet_behavior.py
       - runtime/python/zn_agent/core/browser_text_work_body.py
       - runtime/python/zn_agent/core/browser_work_body.py
       - runtime/python/zn_agent/core/browser_work_resident.py
@@ -47,7 +46,6 @@ on:
       - tests/zn_agent/core/test_browser_scene_controls.py
       - tests/zn_agent/core/test_browser_scene_file_transfer.py
       - tests/zn_agent/core/test_browser_scene_table.py
-      - tests/zn_agent/core/test_browser_spreadsheet_behavior.py
       - tests/zn_agent/core/test_browser_tab_navigation.py
       - tests/zn_agent/core/test_browser_work_button_recovery.py
       - tests/zn_agent/core/test_browser_work_form_submit.py
@@ -70,7 +68,6 @@ on:
       - tests/zn_agent/core/test_semantic_managed_browser_textbox.py
       - tests/zn_agent/core/test_spreadsheet_work.py
       - tests/zn_agent/core/test_structured_action_text_alias.py
-      - tests/zn_agent/e2e/test_e2e11_browser_data_to_spreadsheet.py
       - tests/zn_agent/e2e/test_windows_managed_browser.py
       - tests/zn_agent/e2e/test_windows_managed_browser_causal_popup.py
       - tests/zn_agent/e2e/test_windows_managed_browser_command.py
@@ -105,7 +102,6 @@ on:
       - runtime/python/zn_agent/core/browser_observed_result_recovery_resident.py
       - runtime/python/zn_agent/core/browser_rpc.py
       - runtime/python/zn_agent/core/browser_resident_server.py
-      - runtime/python/zn_agent/core/browser_spreadsheet_behavior.py
       - runtime/python/zn_agent/core/browser_text_work_body.py
       - runtime/python/zn_agent/core/browser_work_body.py
       - runtime/python/zn_agent/core/browser_work_resident.py
@@ -129,7 +125,6 @@ on:
       - tests/zn_agent/core/test_browser_scene_controls.py
       - tests/zn_agent/core/test_browser_scene_file_transfer.py
       - tests/zn_agent/core/test_browser_scene_table.py
-      - tests/zn_agent/core/test_browser_spreadsheet_behavior.py
       - tests/zn_agent/core/test_browser_tab_navigation.py
       - tests/zn_agent/core/test_browser_work_button_recovery.py
       - tests/zn_agent/core/test_browser_work_form_submit.py
@@ -152,7 +147,6 @@ on:
       - tests/zn_agent/core/test_semantic_managed_browser_textbox.py
       - tests/zn_agent/core/test_spreadsheet_work.py
       - tests/zn_agent/core/test_structured_action_text_alias.py
-      - tests/zn_agent/e2e/test_e2e11_browser_data_to_spreadsheet.py
       - tests/zn_agent/e2e/test_windows_managed_browser.py
       - tests/zn_agent/e2e/test_windows_managed_browser_causal_popup.py
       - tests/zn_agent/e2e/test_windows_managed_browser_command.py
@@ -230,10 +224,4 @@ jobs:
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
           & $python -m unittest discover -s tests/zn_agent/e2e -p 'test_windows_managed_browser*.py' -v
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Run E2E-11 real Browser data to spreadsheet
-        run: |
-          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
-          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
-          & $python tests/zn_agent/e2e/test_e2e11_browser_data_to_spreadsheet.py -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
