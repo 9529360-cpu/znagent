@@ -12,6 +12,7 @@ from zn_agent.core.browser import (
     BrowserPermissionContext,
     BrowserPlane,
     BrowserSessionIdentity,
+    BrowserTargetQueryKind,
 )
 from zn_agent.core.browser_rpc import BrowserResidentRpcServer
 from zn_agent.core.daemon import ResidentRpcServer
@@ -24,6 +25,7 @@ class _FakeManagedBrowser:
         self.sessions: dict[str, BrowserPermissionContext] = {}
         self.closed: set[str] = set()
         self.last_action = None
+        self.last_required_target_queries = ()
         self.call_threads: list[int] = []
 
     def _record_thread(self) -> None:
@@ -31,6 +33,25 @@ class _FakeManagedBrowser:
 
     def open_session(self, *, permission=None, headless=True):
         self._record_thread()
+        assert headless is True
+        policy = permission or BrowserPermissionContext()
+        session = BrowserSessionIdentity.create(
+            plane=BrowserPlane.MANAGED,
+            provider="fake-chromium",
+            browser_name="chromium",
+        )
+        self.sessions[session.session_id] = policy
+        return session
+
+    def open_session_for_requirements(
+        self,
+        *,
+        permission=None,
+        headless=True,
+        required_target_queries=(),
+    ):
+        self._record_thread()
+        self.last_required_target_queries = tuple(required_target_queries)
         assert headless is True
         policy = permission or BrowserPermissionContext()
         session = BrowserSessionIdentity.create(
@@ -163,6 +184,28 @@ class ResidentBrowserRpcTests(unittest.TestCase):
                         }
                     )
                 self.assertIsNone(browser.last_action)
+            finally:
+                self._close(server)
+            self.assertEqual(len(set(browser.call_threads)), 1)
+
+    def test_browser_owner_facade_preserves_session_capability_requirements(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            server, browser = self._server(Path(tmp))
+            try:
+                adapter = server.resident.managed_browser
+                session = adapter.open_session_for_requirements(
+                    permission=BrowserPermissionContext(
+                        allow_navigation=True,
+                        allow_page_interaction=True,
+                    ),
+                    headless=True,
+                    required_target_queries=(BrowserTargetQueryKind.DOM_ID,),
+                )
+                self.assertEqual(
+                    browser.last_required_target_queries,
+                    (BrowserTargetQueryKind.DOM_ID,),
+                )
+                adapter.close_session(session.session_id)
             finally:
                 self._close(server)
             self.assertEqual(len(set(browser.call_threads)), 1)
