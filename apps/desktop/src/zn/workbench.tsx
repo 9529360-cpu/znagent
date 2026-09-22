@@ -49,6 +49,7 @@ import {
 import type { ZnLocalePreference } from '../../localization/zn-localization'
 import { ZnMissingRestoreControls } from './restore-controls'
 import { ZnSlidesWorkstation } from './slides-workstation'
+import { ZnDocumentWorkstation } from './document-workstation'
 import {
   addZnThreadMessage,
   loadZnThreadCache,
@@ -264,10 +265,18 @@ export function ZnWorkbench() {
   )
   const activeWorkspace = activeThread?.workspace || null
   const activeArtifacts = useMemo(() => activeThread?.artifacts || [], [activeThread])
-  const activePresentation = useMemo(
-    () => activeArtifacts.find(artifact => artifact.kind === 'presentation') || null,
+  const activeWorkstationArtifact = useMemo(
+    () => activeArtifacts.find(
+      artifact => artifact.kind === 'presentation' || artifact.kind === 'document'
+    ) || null,
     [activeArtifacts]
   )
+  const activePresentation = activeWorkstationArtifact?.kind === 'presentation'
+    ? activeWorkstationArtifact
+    : null
+  const activeDocument = activeWorkstationArtifact?.kind === 'document'
+    ? activeWorkstationArtifact
+    : null
   const activeRestorePoints = activeThread?.restorePoints
   const selectedArtifact = useMemo(
     () => activeArtifacts.find(artifact => artifact.id === selectedArtifactId) || activeArtifacts[0] || null,
@@ -664,8 +673,8 @@ export function ZnWorkbench() {
   }, [])
 
   useEffect(() => {
-    if (activePresentation && view === 'work') requestWindowMode('expanded')
-  }, [activePresentation?.id, activeThreadId, requestWindowMode, view])
+    if (activeWorkstationArtifact && view === 'work') requestWindowMode('expanded')
+  }, [activeWorkstationArtifact?.id, activeThreadId, requestWindowMode, view])
 
   const openSettings = useCallback(() => {
     setView('settings')
@@ -691,7 +700,7 @@ export function ZnWorkbench() {
   const firstResult = activeArtifacts[0] || null
 
   return (
-    <div className={'zn-app ' + windowMode + (contextOpen ? ' details-open' : '') + (activePresentation && view === 'work' ? ' slides-open' : '')}>
+    <div className={'zn-app ' + windowMode + (contextOpen ? ' details-open' : '') + (activePresentation && view === 'work' ? ' slides-open' : '') + (activeDocument && view === 'work' ? ' document-open' : '')}>
       <aside className="zn-sidebar">
         <div className="zn-brand-row">
           <div className="zn-mark" aria-hidden="true">ZN</div>
@@ -782,7 +791,7 @@ export function ZnWorkbench() {
           </div>
 
           <div className="zn-topbar-copy">
-            <div className="zn-topbar-title">{view === 'settings' ? t('settings.title') : activePresentation ? activePresentation.name : activeThread ? threadDisplayTitle(activeThread.title, t) : t('sidebar.newWork')}</div>
+            <div className="zn-topbar-title">{view === 'settings' ? t('settings.title') : activeWorkstationArtifact ? activeWorkstationArtifact.name : activeThread ? threadDisplayTitle(activeThread.title, t) : t('sidebar.newWork')}</div>
             <div className="zn-muted zn-small">{view === 'settings' ? `ZN · ${t('topbar.thisComputer')}` : activeWorkspace?.name || t('topbar.thisComputer')}</div>
           </div>
 
@@ -904,7 +913,9 @@ export function ZnWorkbench() {
           </main>
         ) : (
           <>
-            {activePresentation ? (
+            {activeDocument ? (
+              <ZnDocumentWorkstation artifact={activeDocument} />
+            ) : activePresentation ? (
               <ZnSlidesWorkstation artifact={activePresentation} artifacts={activeArtifacts} />
             ) : (
             <main className="zn-thread-surface">
