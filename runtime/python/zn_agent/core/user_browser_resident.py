@@ -10,9 +10,9 @@ from .action import NativeActionIntent
 from .body import BodyActionResult
 from .browser import BrowserPermissionContext, BrowserPlane
 from .browser_goal_understanding_resident import BrowserGoalUnderstandingResidentRuntime
+from .browser_provider_registry import build_managed_browser_adapter
 from .browser_named_goal import browser_named_text_request
 from .models import utc_now
-from .semantic_managed_browser import SemanticPlaywrightManagedBrowser
 from .user_browser import AuthorizedCDPUserBrowser
 
 
@@ -47,7 +47,7 @@ class UserBrowserBridgeResidentRuntime(BrowserGoalUnderstandingResidentRuntime):
             close = getattr(current, "close", None)
             if callable(close):
                 close()
-            self.managed_browser = SemanticPlaywrightManagedBrowser()
+            self.managed_browser = build_managed_browser_adapter()
         return {
             "authorized": False,
             "revoked": bool(was_user),

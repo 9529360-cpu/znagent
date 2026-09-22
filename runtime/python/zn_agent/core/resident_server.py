@@ -368,18 +368,23 @@ class ResidentSocketService:
         return 0
 
     def _close_managed_browser(self) -> None:
-        """Release resident-owned browser processes before resident lease/store teardown."""
+        """Release every Resident-owned browser resource before store teardown."""
 
-        browser = getattr(self.rpc.resident, "managed_browser", None)
-        close = getattr(browser, "close", None)
-        if not callable(close):
-            return
-        try:
-            close()
-        except Exception:
-            # Browser cleanup failure must not strand the resident lease or
-            # endpoint. Process shutdown remains the final resource boundary.
-            pass
+        seen: set[int] = set()
+        for attribute in ("managed_browser", "research_browser"):
+            browser = getattr(self.rpc.resident, attribute, None)
+            if browser is None or id(browser) in seen:
+                continue
+            seen.add(id(browser))
+            close = getattr(browser, "close", None)
+            if not callable(close):
+                continue
+            try:
+                close()
+            except Exception:
+                # Browser cleanup failure must not strand the resident lease or
+                # endpoint. Process shutdown remains the final resource boundary.
+                pass
 
     def _start_visual_loop(self) -> None:
         self._visual_stop.clear()

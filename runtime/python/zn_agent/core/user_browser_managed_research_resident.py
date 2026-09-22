@@ -10,8 +10,8 @@ from urllib.parse import urlsplit
 from .action import NativeActionIntent
 from .body import BodyActionResult
 from .browser import BrowserAction, BrowserActionAuthority, BrowserActionKind, BrowserPermissionContext
+from .browser_provider_registry import build_managed_browser_adapter, build_readable_managed_browser_adapter
 from .goal_resident import ResidentGoalRuntime
-from .research_managed_browser import ResearchSemanticPlaywrightManagedBrowser
 from .user_browser_extension_relay import UserBrowserExtensionRelayError
 from .user_browser_extension_resident import UserBrowserExtensionResidentRuntime
 
@@ -67,7 +67,8 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
-        self.managed_browser = ResearchSemanticPlaywrightManagedBrowser()
+        self.managed_browser = build_managed_browser_adapter()
+        self.research_browser = build_readable_managed_browser_adapter()
 
     @classmethod
     def _natural_managed_reference_search(cls, event) -> bool:
@@ -905,8 +906,8 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
         }
 
     def _research_managed_return_policy(self, reference: dict[str, str]) -> dict[str, Any]:
-        browser = self.managed_browser
-        if not isinstance(browser, ResearchSemanticPlaywrightManagedBrowser):
+        browser = self.research_browser
+        if not callable(getattr(browser, "read_page", None)):
             raise RuntimeError("readable managed browser adapter is unavailable")
         source_url = str(reference.get("href") or "").strip()
         permission = BrowserPermissionContext(
@@ -934,8 +935,8 @@ class UserBrowserManagedResearchResidentRuntime(UserBrowserExtensionResidentRunt
             browser.close_session(session.session_id)
 
     def _research_managed_references(self, references: list[dict[str, str]]) -> dict[str, Any]:
-        browser = self.managed_browser
-        if not isinstance(browser, ResearchSemanticPlaywrightManagedBrowser):
+        browser = self.research_browser
+        if not callable(getattr(browser, "read_page", None)):
             raise RuntimeError("readable managed browser adapter is unavailable")
         allowed_origins = tuple(dict.fromkeys(self._origin_url(str(item["href"])) for item in references))
         permission = BrowserPermissionContext(

@@ -5,9 +5,8 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from zn_agent.core.browser import BrowserPermissionContext
+from zn_agent.core.browser import BrowserPermissionContext, BrowserPlane
 from zn_agent.core.provider_bridge import build_resident_runtime
-from zn_agent.core.research_managed_browser import ResearchSemanticPlaywrightManagedBrowser
 from zn_agent.core.user_browser_managed_research_resident import (
     UserBrowserManagedResearchResidentRuntime,
 )
@@ -104,10 +103,10 @@ class UserBrowserManagedResearchResidentTests(unittest.TestCase):
                     resident,
                     UserBrowserManagedResearchResidentRuntime,
                 )
-                self.assertIsInstance(
-                    resident.managed_browser,
-                    ResearchSemanticPlaywrightManagedBrowser,
-                )
+                self.assertIs(resident.managed_browser.plane, BrowserPlane.MANAGED)
+                self.assertIs(resident.research_browser.plane, BrowserPlane.MANAGED)
+                self.assertIsNot(resident.managed_browser, resident.research_browser)
+                self.assertTrue(callable(getattr(resident.research_browser, "read_page", None)))
             finally:
                 resident.store.close()
 
