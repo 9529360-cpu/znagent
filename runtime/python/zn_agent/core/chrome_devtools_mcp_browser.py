@@ -1,21 +1,19 @@
 from __future__ import annotations
 
-"""Managed browser adapter backed by Google's Chrome DevTools MCP runtime.
+"""ZN BrowserAdapter over Google's Chrome DevTools MCP.
 
-The upstream project owns Chrome automation mechanics. ZN keeps the durable
-session/action/authority/effect contracts and independently re-observes browser
-state before accepting side effects. Provider success is never Root completion.
+Chrome DevTools MCP owns browser mechanics. ZN owns permission, action authority,
+fresh target binding, URL safety, postcondition verification, and durable Work
+acceptance. Provider success is never treated as Root completion.
 """
 
 import hashlib
 import json
 import os
 import shutil
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
-from urllib.parse import urlsplit
 
 from .browser import (
     BrowserAction,
@@ -38,7 +36,7 @@ from .url_safety import is_safe_url
 
 CHROME_DEVTOOLS_MCP_PACKAGE = "chrome-devtools-mcp"
 CHROME_DEVTOOLS_MCP_VERSION = "1.9.0"
-CHROME_DEVTOOLS_MCP_PROVIDER = f"chrome-devtools-mcp@{CHROME_DEVTOOLS_MCP_VERSION}"
+CHROME_DEVTOOLS_MCP_PROVIDER = "chrome-devtools-mcp"
 
 _REQUIRED_TOOLS = (
     "list_pages",
@@ -53,10 +51,17 @@ _REQUIRED_TOOLS = (
     "wait_for",
     "evaluate_script",
 )
-_ROLE_QUERY = {
-    BrowserTargetQueryKind.ACCESSIBLE_CHECKBOX_NAME: "checkbox",
-    BrowserTargetQueryKind.ACCESSIBLE_BUTTON_NAME: "button",
-    BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME: "textbox",
+_QUERY_ROLES = {
+    BrowserTargetQueryKind.ACCESSIBLE_CHECKBOX_NAME: frozenset({"checkbox"}),
+    BrowserTargetQueryKind.ACCESSIBLE_BUTTON_NAME: frozenset({"button"}),
+    BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME: frozenset(
+        {"textbox", "searchbox"}
+    ),
+}
+_NAVIGATION_TYPES = {
+    BrowserActionKind.BACK: "back",
+    BrowserActionKind.FORWARD: "forward",
+    BrowserActionKind.RELOAD: "reload",
 }
 _MAX_SNAPSHOT_TARGETS = 512
 _MAX_READABLE_TEXT = 8192
@@ -72,26 +77,25 @@ class ChromeDevToolsMcpBrowserUnavailable(ChromeDevToolsMcpBrowserError):
 
 
 @dataclass(slots=True)
-class _ChromeSnapshot:
+class _Snapshot:
     captured_at: str
     page_id: str
     url: str
     title: str
-    root: dict[str, Any]
     nodes: dict[str, dict[str, Any]]
 
 
 @dataclass(slots=True)
-class _ChromeSession:
+class _Session:
     identity: BrowserSessionIdentity
     permission: BrowserPermissionContext
     client: StdioMcpClient
     default_page_id: str
     last_observation: dict[str, BrowserObservation] = field(default_factory=dict)
-    snapshots: dict[str, _ChromeSnapshot] = field(default_factory=dict)
+    snapshots: dict[str, _Snapshot] = field(default_factory=dict)
 
 
-def _candidate_server_roots() -> tuple[Path, ...]:
+def _candidate_roots() -> tuple[Path, ...]:
     rows: list[Path] = []
     explicit = str(os.getenv("ZN_CHROME_DEVTOOLS_MCP_ROOT") or "").strip()
     if explicit:
@@ -99,8 +103,8 @@ def _candidate_server_roots() -> tuple[Path, ...]:
     for ancestor in Path(__file__).resolve().parents:
         rows.extend(
             (
-                ancestor / "chrome-devtools-mcp",
-                ancestor / "browser-runtimes" / "chrome-devtools-mcp",
+                ancestor / "browser-runtimes" / CHROME_DEVTOOLS_MCP_PACKAGE,
+                ancestor / CHROME_DEVTOOLS_MCP_PACKAGE,
                 ancestor / "node_modules",
             )
         )
@@ -122,39 +126,9 @@ def _server_entry(root: Path) -> Path | None:
         / "src"
         / "bin"
         / "chrome-devtools-mcp.js",
-        root
-        / "build"
-        / "src"
-        / "bin"
-        / "chrome-devtools-mcp.js",
+        root / "build" / "src" / "bin" / "chrome-devtools-mcp.js",
     )
     return next((path for path in candidates if path.is_file()), None)
-
-
-def _chrome_executable() -> Path | None:
-    explicit = str(os.getenv("ZN_CHROME_EXECUTABLE") or "").strip()
-    if explicit:
-        candidate = Path(explicit).expanduser().resolve()
-        return candidate if candidate.is_file() else None
-
-    candidates: list[Path] = []
-    if os.name == "nt":
-        for name in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
-            root = str(os.getenv(name) or "").strip()
-            if root:
-                candidates.append(
-                    Path(root) / "Google" / "Chrome" / "Application" / "chrome.exe"
-                )
-    elif sys.platform == "darwin":
-        candidates.append(
-            Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
-        )
-    else:
-        for command in ("google-chrome", "google-chrome-stable", "chrome"):
-            found = shutil.which(command)
-            if found:
-                candidates.append(Path(found))
-    return next((path.resolve() for path in candidates if path.is_file()), None)
 
 
 def resolve_chrome_devtools_mcp_command(
@@ -162,24 +136,18 @@ def resolve_chrome_devtools_mcp_command(
     headless: bool,
     permission: BrowserPermissionContext,
 ) -> StdioMcpCommand:
-    entry = None
-    root = None
-    for candidate in _candidate_server_roots():
+    root = entry = None
+    for candidate in _candidate_roots():
         found = _server_entry(candidate)
         if found is not None:
-            root = candidate
-            entry = found
+            root, entry = candidate, found
             break
-    if entry is None or root is None:
+    if root is None or entry is None:
         raise ChromeDevToolsMcpBrowserUnavailable(
             "pinned chrome-devtools-mcp runtime is not installed"
         )
 
-    node = (
-        str(os.getenv("ZN_NODE_EXECUTABLE") or "").strip()
-        or str(os.getenv("ZN_BROWSER_NODE") or "").strip()
-        or shutil.which("node")
-    )
+    node = str(os.getenv("ZN_BROWSER_NODE") or "").strip() or shutil.which("node")
     env: dict[str, str] = {
         "CI": "true",
         "CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS": "1",
@@ -201,7 +169,6 @@ def resolve_chrome_devtools_mcp_command(
         str(entry),
         "--isolated=true",
         "--page-id-routing=true",
-        "--experimental-structured-content=true",
         "--no-usage-statistics",
         "--no-performance-crux",
         "--category-performance=false",
@@ -209,21 +176,18 @@ def resolve_chrome_devtools_mcp_command(
         "--category-extensions=false",
         "--redact-network-headers=true",
     ]
-    chrome = _chrome_executable()
-    if chrome is None:
-        raise ChromeDevToolsMcpBrowserUnavailable(
-            "chrome-devtools-mcp needs Google Chrome or ZN_CHROME_EXECUTABLE"
-        )
-    args.append(f"--executable-path={chrome}")
     if headless:
         args.append("--headless=true")
+    browser_executable = str(os.getenv("ZN_BROWSER_EXECUTABLE") or "").strip()
+    if browser_executable:
+        if not Path(browser_executable).is_file():
+            raise ChromeDevToolsMcpBrowserUnavailable(
+                "ZN_BROWSER_EXECUTABLE does not identify a browser executable"
+            )
+        args.extend(("--executable-path", browser_executable))
     for origin in permission.allowed_origins:
         args.append(f"--allowed-url-pattern={origin.rstrip('/')}/*")
-    return StdioMcpCommand(
-        argv=tuple(args),
-        cwd=root,
-        env=env,
-    )
+    return StdioMcpCommand(argv=tuple(args), cwd=root, env=env)
 
 
 def chrome_devtools_mcp_available() -> bool:
@@ -238,7 +202,7 @@ def chrome_devtools_mcp_available() -> bool:
 
 
 class ChromeDevToolsMcpManagedBrowser:
-    """ZN BrowserAdapter over a pinned, replaceable Chrome DevTools MCP sidecar."""
+    """Thin provider adapter; all browser mechanics stay upstream."""
 
     name = CHROME_DEVTOOLS_MCP_PROVIDER
     plane = BrowserPlane.MANAGED
@@ -253,7 +217,7 @@ class ChromeDevToolsMcpManagedBrowser:
         self._client_factory = client_factory
         self._command_factory = command_factory
         self._url_checker = url_checker
-        self._sessions: dict[str, _ChromeSession] = {}
+        self._sessions: dict[str, _Session] = {}
 
     def open_session(
         self,
@@ -262,13 +226,8 @@ class ChromeDevToolsMcpManagedBrowser:
         headless: bool = True,
     ) -> BrowserSessionIdentity:
         policy = permission or BrowserPermissionContext()
-        command = self._command_factory(
-            headless=headless,
-            permission=policy,
-        )
         client = self._client_factory(
-            command=command,
-            expected_server_names=(),
+            command=self._command_factory(headless=headless, permission=policy),
             required_tools=_REQUIRED_TOOLS,
             timeout_seconds=45.0,
         )
@@ -279,26 +238,21 @@ class ChromeDevToolsMcpManagedBrowser:
                 raise ChromeDevToolsMcpBrowserError(
                     "Chrome DevTools MCP returned no browser page"
                 )
-            selected = next(
-                (item for item in pages if bool(item.get("selected"))),
-                pages[0],
-            )
-            page_id = str(int(selected["id"]))
+            selected = next((row for row in pages if row["selected"]), pages[0])
             identity = BrowserSessionIdentity.create(
                 plane=BrowserPlane.MANAGED,
                 provider=self.name,
                 browser_name="chrome",
-                browser_version="",
                 profile_scope="ephemeral",
             )
-            session = _ChromeSession(
+            session = _Session(
                 identity=identity,
                 permission=policy,
                 client=client,
-                default_page_id=page_id,
+                default_page_id=str(selected["id"]),
             )
             self._sessions[identity.session_id] = session
-            self._capture(session, page_id)
+            self._capture(session, session.default_page_id)
             return identity
         except BaseException:
             client.close()
@@ -306,9 +260,8 @@ class ChromeDevToolsMcpManagedBrowser:
 
     def close_session(self, session_id: str) -> None:
         session = self._sessions.pop(str(session_id or "").strip(), None)
-        if session is None:
-            return
-        session.client.close()
+        if session is not None:
+            session.client.close()
 
     def close(self) -> None:
         for session_id in tuple(self._sessions):
@@ -325,34 +278,31 @@ class ChromeDevToolsMcpManagedBrowser:
         *,
         page_id: str = "",
     ) -> BrowserObservation:
+        if query.kind is BrowserTargetQueryKind.DOM_ID:
+            raise ChromeDevToolsMcpBrowserError(
+                "legacy DOM-id authority is not part of the mature browser provider; "
+                "use a fresh semantic target"
+            )
+        roles = _QUERY_ROLES.get(query.kind)
+        if roles is None:
+            raise ChromeDevToolsMcpBrowserError(
+                f"unsupported semantic query: {query.kind.value}"
+            )
         session = self._session(session_id)
         resolved = page_id or session.default_page_id
-        if query.kind is BrowserTargetQueryKind.DOM_ID:
-            return self._observe_dom_id(session, resolved, query)
-        expected_role = _ROLE_QUERY.get(query.kind)
-        if expected_role is None:
-            raise ChromeDevToolsMcpBrowserError(
-                f"unsupported Chrome MCP target query: {query.kind.value}"
-            )
-        snapshot = self._fresh_snapshot(session, resolved)
+        snapshot = self._snapshot(session, resolved)
         matches = [
             node
             for node in snapshot.nodes.values()
-            if str(node.get("role") or "").casefold() == expected_role
+            if str(node.get("role") or "").casefold() in roles
             and str(node.get("name") or "").strip() == query.value
         ]
         if len(matches) != 1:
             raise ChromeDevToolsMcpBrowserError(
-                "semantic browser target must resolve to exactly one current node; "
-                f"got {len(matches)} for {expected_role} {query.value!r}"
+                "semantic target must resolve to exactly one fresh node; "
+                f"observed {len(matches)}"
             )
-        node = matches[0]
-        target = self._target_from_node(
-            session,
-            snapshot,
-            node,
-            selector_hint=f"ax:{expected_role}:{query.value}",
-        )
+        target = self._target(session, snapshot, matches[0], query)
         observation = BrowserObservation(
             session=session.identity,
             page_id=resolved,
@@ -361,63 +311,15 @@ class ChromeDevToolsMcpManagedBrowser:
             title=snapshot.title,
             load_state="observed",
             target=target,
-            metadata={"provider": self.name, "snapshot_uid": target.target_id},
+            metadata={"provider": self.name},
         )
         session.last_observation[resolved] = observation
         return observation
 
-    def act(
-        self,
-        action: BrowserAction,
-        authority: BrowserActionAuthority,
-    ) -> BrowserEffectEvidence:
-        session = self._session(action.session_id)
-        try:
-            self._validate_authority(session, action, authority)
-            if action.kind in {
-                BrowserActionKind.NAVIGATE,
-                BrowserActionKind.BACK,
-                BrowserActionKind.FORWARD,
-                BrowserActionKind.RELOAD,
-            }:
-                return self._navigate(session, action)
-            if action.kind is BrowserActionKind.OPEN_TAB:
-                return self._open_tab(session, action)
-            if action.kind is BrowserActionKind.SWITCH_TAB:
-                return self._switch_tab(session, action)
-            if action.kind is BrowserActionKind.CLOSE_TAB:
-                return self._close_tab(session, action)
-            if action.kind is BrowserActionKind.FOCUS:
-                return self._focus(session, action)
-            if action.kind is BrowserActionKind.CLICK:
-                return self._click(session, action)
-            if action.kind is BrowserActionKind.TYPE_TEXT:
-                return self._fill(session, action)
-            if action.kind is BrowserActionKind.PRESS:
-                return self._press(session, action)
-            if action.kind in {
-                BrowserActionKind.CHECK,
-                BrowserActionKind.UNCHECK,
-            }:
-                return self._check(session, action)
-            if action.kind is BrowserActionKind.SELECT_OPTION:
-                return self._select(session, action)
-            if action.kind is BrowserActionKind.WAIT:
-                return self._wait(session, action)
-            return self._failure(
-                action,
-                f"Chrome DevTools MCP action is not admitted yet: {action.kind.value}",
-            )
-        except Exception as exc:
-            return self._failure(action, f"{type(exc).__name__}: {exc}")
-
     def read_page(self, session_id: str, *, page_id: str = "") -> dict[str, Any]:
-        """Return bounded semantic page evidence without provider-specific DOM code."""
-
         session = self._session(session_id)
-        resolved = page_id or session.default_page_id
-        snapshot = self._fresh_snapshot(session, resolved)
-        text_parts: list[str] = []
+        snapshot = self._snapshot(session, page_id or session.default_page_id)
+        text: list[str] = []
         links: list[dict[str, str]] = []
         for node in snapshot.nodes.values():
             role = str(node.get("role") or "").casefold()
@@ -431,424 +333,373 @@ class ChromeDevToolsMcpManagedBrowser:
                 "listitem",
                 "cell",
             }:
-                text_parts.append(name)
+                text.append(name)
             if role == "link" and name and len(links) < _MAX_READABLE_LINKS:
-                url = str(node.get("url") or "").strip()
-                if url.startswith(("http://", "https://")):
-                    links.append({"href": url[:2048], "text": name[:240]})
-        text = "\n".join(text_parts)[:_MAX_READABLE_TEXT]
+                href = str(node.get("url") or "").strip()
+                if href.startswith(("http://", "https://")):
+                    links.append({"href": href[:2048], "text": name[:240]})
         return {
             "url": snapshot.url,
             "title": snapshot.title,
             "captured_at": snapshot.captured_at,
-            "page_id": resolved,
-            "text": text,
+            "page_id": snapshot.page_id,
+            "text": "\n".join(text)[:_MAX_READABLE_TEXT],
             "links": links,
             "provider": self.name,
             "profile_scope": session.identity.profile_scope,
         }
 
-    def _navigate(
+    def act(
         self,
-        session: _ChromeSession,
         action: BrowserAction,
+        authority: BrowserActionAuthority,
     ) -> BrowserEffectEvidence:
+        session = self._session(action.session_id)
+        try:
+            self._validate_authority(session, action, authority)
+            if action.kind is BrowserActionKind.NAVIGATE or action.kind in _NAVIGATION_TYPES:
+                return self._navigate(session, action)
+            if action.kind in {
+                BrowserActionKind.OPEN_TAB,
+                BrowserActionKind.SWITCH_TAB,
+                BrowserActionKind.CLOSE_TAB,
+            }:
+                return self._tab_action(session, action)
+            if action.kind in {
+                BrowserActionKind.CLICK,
+                BrowserActionKind.FOCUS,
+                BrowserActionKind.TYPE_TEXT,
+                BrowserActionKind.CHECK,
+                BrowserActionKind.UNCHECK,
+                BrowserActionKind.SELECT_OPTION,
+            }:
+                return self._target_action(session, action)
+            if action.kind is BrowserActionKind.PRESS:
+                return self._press(session, action)
+            if action.kind is BrowserActionKind.WAIT:
+                return self._wait(session, action)
+            return self._failure(
+                action,
+                f"browser action is not admitted by the mature provider: {action.kind.value}",
+            )
+        except Exception as exc:
+            return self._failure(action, f"{type(exc).__name__}: {exc}")
+
+    def _navigate(self, session: _Session, action: BrowserAction) -> BrowserEffectEvidence:
         page_id = action.page_id or session.default_page_id
         before = self._capture(session, page_id)
-        args: dict[str, Any] = {"pageId": int(page_id)}
         if action.kind is BrowserActionKind.NAVIGATE:
             url = str(action.args.get("url") or "").strip()
             if not url:
-                raise ChromeDevToolsMcpBrowserError("browser navigation requires url")
-            self._require_url_allowed(url, session.permission)
-            args.update({"type": "url", "url": url})
-        elif action.kind is BrowserActionKind.BACK:
-            args["type"] = "back"
-        elif action.kind is BrowserActionKind.FORWARD:
-            args["type"] = "forward"
+                raise ChromeDevToolsMcpBrowserError("navigate requires url")
+            self._require_url(url, session.permission)
+            arguments = {"pageId": int(page_id), "type": "url", "url": url}
         else:
-            args["type"] = "reload"
-        session.client.call_tool("navigate_page", args)
+            arguments = {
+                "pageId": int(page_id),
+                "type": _NAVIGATION_TYPES[action.kind],
+            }
+        session.client.call_tool("navigate_page", arguments)
         after = self._capture(session, page_id)
-        self._require_url_allowed(after.url, session.permission)
         expected = str(action.expected.get("url_equals") or "").strip()
         success = not expected or after.url == expected
-        return BrowserEffectEvidence(
-            action_id=action.action_id,
-            session_id=action.session_id,
-            observed_at=after.captured_at,
+        return self._effect(
+            action,
+            after,
             success=success,
-            page_id=page_id,
             url_before=before.url,
-            url_after=after.url,
             postcondition="url_equals" if expected else "fresh_page_observed",
-            data={"provider": self.name, "title": after.title, "load_state": after.load_state},
-            error=None if success else "browser navigation postcondition did not match observed URL",
+            error=None if success else "navigation URL postcondition was not observed",
         )
 
-    def _open_tab(self, session: _ChromeSession, action: BrowserAction) -> BrowserEffectEvidence:
-        url = str(action.args.get("url") or "").strip()
-        if not url:
-            raise ChromeDevToolsMcpBrowserError("browser open_tab requires url")
-        self._require_url_allowed(url, session.permission)
+    def _tab_action(self, session: _Session, action: BrowserAction) -> BrowserEffectEvidence:
         before = self._capture(session, session.default_page_id)
-        result = self._structured(
-            session.client.call_tool("new_page", {"url": url, "background": False})
-        )
-        pages = result.get("pages")
-        page_id = ""
-        if isinstance(pages, list):
-            selected = next(
-                (item for item in pages if isinstance(item, dict) and item.get("selected")),
-                None,
+        if action.kind is BrowserActionKind.OPEN_TAB:
+            url = str(action.args.get("url") or "").strip()
+            if not url:
+                raise ChromeDevToolsMcpBrowserError("open_tab requires url")
+            self._require_url(url, session.permission)
+            session.client.call_tool(
+                "new_page",
+                {"url": url, "background": False},
             )
-            if isinstance(selected, dict):
-                page_id = str(int(selected["id"]))
-        if not page_id:
-            current = self._pages(session.client)
-            selected = next((item for item in current if item.get("selected")), current[-1])
-            page_id = str(int(selected["id"]))
-        session.default_page_id = page_id
-        after = self._capture(session, page_id)
-        self._require_url_allowed(after.url, session.permission)
-        return BrowserEffectEvidence(
-            action_id=action.action_id,
-            session_id=action.session_id,
-            observed_at=after.captured_at,
-            success=True,
-            page_id=page_id,
-            url_before=before.url,
-            url_after=after.url,
-            postcondition="fresh_new_page_observed",
-            data={"provider": self.name},
-        )
+        elif action.kind is BrowserActionKind.SWITCH_TAB:
+            page_id = self._requested_page_id(action)
+            session.client.call_tool(
+                "select_page",
+                {"pageId": int(page_id), "bringToFront": True},
+            )
+        else:
+            page_id = self._requested_page_id(action)
+            session.client.call_tool("close_page", {"pageId": int(page_id)})
 
-    def _switch_tab(self, session: _ChromeSession, action: BrowserAction) -> BrowserEffectEvidence:
-        page_id = str(action.args.get("page_id") or action.page_id or "").strip()
-        if not page_id.isdigit():
-            raise ChromeDevToolsMcpBrowserError("browser switch_tab requires numeric page_id")
-        before = self._capture(session, session.default_page_id)
-        session.client.call_tool(
-            "select_page",
-            {"pageId": int(page_id), "bringToFront": True},
-        )
-        session.default_page_id = page_id
-        after = self._capture(session, page_id)
-        self._require_url_allowed(after.url, session.permission)
-        return BrowserEffectEvidence(
-            action_id=action.action_id,
-            session_id=action.session_id,
-            observed_at=after.captured_at,
-            success=True,
-            page_id=page_id,
-            url_before=before.url,
-            url_after=after.url,
-            postcondition="fresh_selected_page_observed",
-            data={"provider": self.name},
-        )
-
-    def _close_tab(self, session: _ChromeSession, action: BrowserAction) -> BrowserEffectEvidence:
-        page_id = str(action.args.get("page_id") or action.page_id or "").strip()
-        if not page_id.isdigit():
-            raise ChromeDevToolsMcpBrowserError("browser close_tab requires numeric page_id")
-        before = self._capture(session, page_id)
-        session.client.call_tool("close_page", {"pageId": int(page_id)})
         pages = self._pages(session.client)
         if not pages:
-            raise ChromeDevToolsMcpBrowserError("browser close_tab left no observable page")
-        selected = next((item for item in pages if item.get("selected")), pages[0])
-        session.default_page_id = str(int(selected["id"]))
+            raise ChromeDevToolsMcpBrowserError("browser has no observable page")
+        selected = next((row for row in pages if row["selected"]), pages[0])
+        session.default_page_id = str(selected["id"])
         after = self._capture(session, session.default_page_id)
-        return BrowserEffectEvidence(
-            action_id=action.action_id,
-            session_id=action.session_id,
-            observed_at=after.captured_at,
+        return self._effect(
+            action,
+            after,
             success=True,
-            page_id=after.page_id,
             url_before=before.url,
-            url_after=after.url,
-            postcondition="closed_page_absent_from_fresh_page_list",
-            data={"provider": self.name, "closed_page_id": page_id},
+            postcondition="fresh_page_topology_observed",
         )
 
-    def _focus(self, session: _ChromeSession, action: BrowserAction) -> BrowserEffectEvidence:
+    def _target_action(self, session: _Session, action: BrowserAction) -> BrowserEffectEvidence:
         target = self._require_target(action)
         page_id = action.page_id or target.page_id
         before = self._capture(session, page_id)
-        self._revalidate_target(session, target)
-        result = self._evaluate_uid(
-            session,
-            page_id,
-            target.target_id,
-            "(el) => { el.focus(); return document.activeElement === el; }",
-        )
+        node = self._revalidate(session, target)
+        state_before = self._target_state(session, page_id, target.target_id)
+
+        expected: dict[str, Any] = {}
+        if action.kind is BrowserActionKind.FOCUS:
+            self._evaluate_uid(
+                session,
+                page_id,
+                target.target_id,
+                "(el) => { el.focus(); return document.activeElement === el; }",
+            )
+            expected["focused"] = True
+        elif action.kind is BrowserActionKind.CLICK:
+            session.client.call_tool(
+                "click",
+                {
+                    "pageId": int(page_id),
+                    "uid": target.target_id,
+                    "includeSnapshot": True,
+                },
+            )
+        elif action.kind is BrowserActionKind.TYPE_TEXT:
+            text = str(action.args.get("text") or "")
+            self._require_safe_text_target(state_before, text)
+            expected.update(self._text_fingerprint(text))
+            session.client.call_tool(
+                "fill",
+                {
+                    "pageId": int(page_id),
+                    "uid": target.target_id,
+                    "value": text,
+                    "includeSnapshot": True,
+                },
+            )
+            text = ""
+        elif action.kind in {BrowserActionKind.CHECK, BrowserActionKind.UNCHECK}:
+            wanted = action.kind is BrowserActionKind.CHECK
+            expected["checked"] = wanted
+            if state_before.get("checked") is not wanted:
+                session.client.call_tool(
+                    "fill",
+                    {
+                        "pageId": int(page_id),
+                        "uid": target.target_id,
+                        "value": "true" if wanted else "false",
+                        "includeSnapshot": True,
+                    },
+                )
+        else:
+            value = str(action.args.get("value") or "")
+            if not value:
+                raise ChromeDevToolsMcpBrowserError(
+                    "select_option requires one explicit value"
+                )
+            expected["selected_text"] = value
+            session.client.call_tool(
+                "fill",
+                {
+                    "pageId": int(page_id),
+                    "uid": target.target_id,
+                    "value": value,
+                    "includeSnapshot": True,
+                },
+            )
+
         after = self._capture(session, page_id)
-        current = self._snapshot_node(session, page_id, target.target_id)
-        success = bool(result) and current is not None
-        return BrowserEffectEvidence(
-            action_id=action.action_id,
-            session_id=action.session_id,
-            observed_at=after.captured_at,
+        fresh_node = self._snapshot_node(session, page_id, target.target_id)
+        fresh_state = (
+            self._target_state(session, page_id, target.target_id)
+            if fresh_node is not None
+            else {}
+        )
+        success, postcondition, data, error = self._verify_target_postcondition(
+            action,
+            node_before=node,
+            state_before=state_before,
+            fresh_node=fresh_node,
+            fresh_state=fresh_state,
+            expected=expected,
+            after=after,
+        )
+        return self._effect(
+            action,
+            after,
             success=success,
-            page_id=page_id,
             url_before=before.url,
-            url_after=after.url,
             target_id=target.target_id,
-            postcondition="same_exact_target_focused",
-            data={"provider": self.name, "exact_node_continuity": current is not None, "focused": bool(result)},
-            error=None if success else "browser focus postcondition was not observed",
+            postcondition=postcondition,
+            data=data,
+            error=error,
         )
 
-    def _click(self, session: _ChromeSession, action: BrowserAction) -> BrowserEffectEvidence:
-        target = self._require_target(action)
-        page_id = action.page_id or target.page_id
-        before = self._capture(session, page_id)
-        self._revalidate_target(session, target)
-        session.client.call_tool(
-            "click",
-            {"pageId": int(page_id), "uid": target.target_id, "includeSnapshot": True},
-        )
-        after = self._capture(session, page_id)
+    def _verify_target_postcondition(
+        self,
+        action: BrowserAction,
+        *,
+        node_before: Mapping[str, Any],
+        state_before: Mapping[str, Any],
+        fresh_node: Mapping[str, Any] | None,
+        fresh_state: Mapping[str, Any],
+        expected: Mapping[str, Any],
+        after: BrowserObservation,
+    ) -> tuple[bool, str, dict[str, Any], str | None]:
+        continuity = fresh_node is not None
+        data: dict[str, Any] = {
+            "target_revalidated_before_dispatch": True,
+            "exact_node_continuity": continuity,
+        }
+        if action.kind is BrowserActionKind.TYPE_TEXT:
+            value = str(fresh_state.get("value") or "")
+            actual = self._text_fingerprint(value)
+            data.update(
+                {
+                    "input_sent": True,
+                    "expected_text_length": expected["length"],
+                    "expected_text_sha256": expected["sha256"],
+                    "expected_utf16_units": expected["utf16_units"],
+                    "text_length_after": actual["length"],
+                    "text_sha256_after": actual["sha256"],
+                }
+            )
+            success = continuity and all(
+                actual[key] == expected[key] for key in ("length", "sha256")
+            )
+            return (
+                success,
+                "same_exact_target_text_equals_requested",
+                data,
+                None if success else "text postcondition was not independently observed",
+            )
+        if action.kind in {BrowserActionKind.CHECK, BrowserActionKind.UNCHECK}:
+            observed = fresh_state.get("checked")
+            data.update(
+                {
+                    "checked_before": state_before.get("checked"),
+                    "checked_after": observed,
+                }
+            )
+            success = continuity and observed is expected["checked"]
+            return (
+                success,
+                "same_exact_target_checked_state",
+                data,
+                None if success else "checked-state postcondition was not observed",
+            )
+        if action.kind is BrowserActionKind.SELECT_OPTION:
+            observed = str(fresh_state.get("selected_text") or "")
+            success = continuity and observed == expected["selected_text"]
+            data["selected_text_matches"] = success
+            return (
+                success,
+                "same_exact_target_selected_value",
+                data,
+                None if success else "selected-value postcondition was not observed",
+            )
+        if action.kind is BrowserActionKind.FOCUS:
+            focused = bool(fresh_state.get("focused"))
+            data["focused"] = focused
+            success = continuity and focused
+            return (
+                success,
+                "same_exact_target_focused",
+                data,
+                None if success else "focus postcondition was not observed",
+            )
+
         expected_url = str(action.expected.get("url_equals") or "").strip()
         expected_pressed = action.expected.get("aria_pressed")
-        node = self._snapshot_node(session, page_id, target.target_id)
         success = True
-        reason = ""
+        error = None
         if expected_url and after.url != expected_url:
-            success = False
-            reason = "browser click URL postcondition was not observed"
+            success, error = False, "click URL postcondition was not observed"
         if type(expected_pressed) is bool:
-            observed_pressed = None if node is None else node.get("pressed")
-            if observed_pressed is not expected_pressed:
-                success = False
-                reason = "browser click pressed-state postcondition was not observed"
-        return BrowserEffectEvidence(
-            action_id=action.action_id,
-            session_id=action.session_id,
-            observed_at=after.captured_at,
-            success=success,
-            page_id=page_id,
-            url_before=before.url,
-            url_after=after.url,
-            target_id=target.target_id,
-            postcondition=(
-                "url_equals"
-                if expected_url
-                else "same_exact_target_aria_pressed"
-                if type(expected_pressed) is bool
-                else "fresh_post_click_observation"
-            ),
-            data={
-                "provider": self.name,
-                "target_revalidated_before_dispatch": True,
-                "exact_node_continuity": node is not None,
-                "aria_pressed_after": None if node is None else node.get("pressed"),
-            },
-            error=None if success else reason,
+            pressed = self._as_bool(
+                None if fresh_node is None else fresh_node.get("pressed")
+            )
+            data["aria_pressed_after"] = pressed
+            if pressed is not expected_pressed:
+                success, error = False, "pressed-state postcondition was not observed"
+        return (
+            success,
+            "url_equals"
+            if expected_url
+            else "same_exact_target_aria_pressed"
+            if type(expected_pressed) is bool
+            else "fresh_post_click_observation",
+            data,
+            error,
         )
 
-    def _fill(self, session: _ChromeSession, action: BrowserAction) -> BrowserEffectEvidence:
-        target = self._require_target(action)
-        if target.role not in {"textbox", "searchbox", "combobox"}:
-            raise ChromeDevToolsMcpBrowserError("browser type_text requires editable target")
-        text = str(action.args.get("text") or "")
-        units = len(text.encode("utf-16-le")) // 2
-        if units > 512:
-            raise ChromeDevToolsMcpBrowserError("browser text exceeds 512 UTF-16 units")
-        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        length = len(text)
-        page_id = action.page_id or target.page_id
-        before = self._capture(session, page_id)
-        self._revalidate_target(session, target)
-        session.client.call_tool(
-            "fill",
-            {
-                "pageId": int(page_id),
-                "uid": target.target_id,
-                "value": text,
-                "includeSnapshot": True,
-            },
-        )
-        text = ""
-        after = self._capture(session, page_id)
-        node = self._snapshot_node(session, page_id, target.target_id)
-        value = "" if node is None else str(node.get("value") or "")
-        after_digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
-        success = node is not None and len(value) == length and after_digest == digest
-        data = {
-            "provider": self.name,
-            "target_revalidated_before_dispatch": True,
-            "exact_node_continuity": node is not None,
-            "input_sent": True,
-            "expected_text_length": length,
-            "expected_text_sha256": digest,
-            "expected_utf16_units": units,
-            "text_length_after": len(value),
-            "text_sha256_after": after_digest,
-        }
-        return BrowserEffectEvidence(
-            action_id=action.action_id,
-            session_id=action.session_id,
-            observed_at=after.captured_at,
-            success=success,
-            page_id=page_id,
-            url_before=before.url,
-            url_after=after.url,
-            target_id=target.target_id,
-            postcondition="same_exact_target_text_equals_requested",
-            data=data,
-            error=None if success else "browser text postcondition was not independently proven",
-        )
-
-    def _press(self, session: _ChromeSession, action: BrowserAction) -> BrowserEffectEvidence:
+    def _press(self, session: _Session, action: BrowserAction) -> BrowserEffectEvidence:
         page_id = action.page_id or session.default_page_id
         key = str(action.args.get("key") or "").strip()
         if not key:
-            raise ChromeDevToolsMcpBrowserError("browser press requires key")
+            raise ChromeDevToolsMcpBrowserError("press requires key")
         before = self._capture(session, page_id)
         if action.target is not None:
-            self._revalidate_target(session, action.target)
+            self._revalidate(session, action.target)
             self._evaluate_uid(
                 session,
                 page_id,
                 action.target.target_id,
                 "(el) => { el.focus(); return document.activeElement === el; }",
             )
-        session.client.call_tool("press_key", {"pageId": int(page_id), "key": key})
+        session.client.call_tool(
+            "press_key",
+            {"pageId": int(page_id), "key": key, "includeSnapshot": True},
+        )
         after = self._capture(session, page_id)
         expected_url = str(action.expected.get("url_equals") or "").strip()
         success = not expected_url or after.url == expected_url
-        return BrowserEffectEvidence(
-            action_id=action.action_id,
-            session_id=action.session_id,
-            observed_at=after.captured_at,
+        return self._effect(
+            action,
+            after,
             success=success,
-            page_id=page_id,
             url_before=before.url,
-            url_after=after.url,
             target_id=action.target.target_id if action.target else "",
             postcondition="fresh_post_key_observation",
-            data={"provider": self.name, "key": key, "target_revalidated_before_dispatch": action.target is not None},
-            error=None if success else "browser key postcondition was not observed",
+            data={"key": key},
+            error=None if success else "key postcondition was not observed",
         )
 
-    def _check(self, session: _ChromeSession, action: BrowserAction) -> BrowserEffectEvidence:
-        target = self._require_target(action)
-        if target.role != "checkbox":
-            raise ChromeDevToolsMcpBrowserError("browser check requires checkbox target")
-        wanted = action.kind is BrowserActionKind.CHECK
-        page_id = action.page_id or target.page_id
-        before = self._capture(session, page_id)
-        node_before = self._revalidate_target(session, target)
-        if node_before.get("checked") is wanted:
-            raise ChromeDevToolsMcpBrowserError("checkbox already has requested state")
-        session.client.call_tool(
-            "fill",
-            {
-                "pageId": int(page_id),
-                "uid": target.target_id,
-                "value": "true" if wanted else "false",
-                "includeSnapshot": True,
-            },
-        )
-        after = self._capture(session, page_id)
-        node = self._snapshot_node(session, page_id, target.target_id)
-        observed = None if node is None else node.get("checked")
-        success = node is not None and observed is wanted
-        return BrowserEffectEvidence(
-            action_id=action.action_id,
-            session_id=action.session_id,
-            observed_at=after.captured_at,
-            success=success,
-            page_id=page_id,
-            url_before=before.url,
-            url_after=after.url,
-            target_id=target.target_id,
-            postcondition="same_exact_target_checked_state",
-            data={
-                "provider": self.name,
-                "exact_node_continuity": node is not None,
-                "checked_before": node_before.get("checked"),
-                "checked_after": observed,
-            },
-            error=None if success else "browser checkbox postcondition was not observed",
-        )
-
-    def _select(self, session: _ChromeSession, action: BrowserAction) -> BrowserEffectEvidence:
-        target = self._require_target(action)
-        value = str(action.args.get("value") or "")
-        page_id = action.page_id or target.page_id
-        before = self._capture(session, page_id)
-        self._revalidate_target(session, target)
-        session.client.call_tool(
-            "fill",
-            {
-                "pageId": int(page_id),
-                "uid": target.target_id,
-                "value": value,
-                "includeSnapshot": True,
-            },
-        )
-        after = self._capture(session, page_id)
-        node = self._snapshot_node(session, page_id, target.target_id)
-        actual = "" if node is None else str(node.get("value") or "")
-        expected_digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
-        actual_digest = hashlib.sha256(actual.encode("utf-8")).hexdigest()
-        success = node is not None and actual == value
-        return BrowserEffectEvidence(
-            action_id=action.action_id,
-            session_id=action.session_id,
-            observed_at=after.captured_at,
-            success=success,
-            page_id=page_id,
-            url_before=before.url,
-            url_after=after.url,
-            target_id=target.target_id,
-            postcondition="same_exact_target_selected_value",
-            data={
-                "provider": self.name,
-                "exact_node_continuity": node is not None,
-                "selection_dispatched": True,
-                "expected_value_length": len(value),
-                "expected_value_sha256": expected_digest,
-                "expected_utf16_units": len(value.encode("utf-16-le")) // 2,
-                "selected_value_length_after": len(actual),
-                "selected_value_sha256_after": actual_digest,
-            },
-            error=None if success else "browser selected value postcondition was not observed",
-        )
-
-    def _wait(self, session: _ChromeSession, action: BrowserAction) -> BrowserEffectEvidence:
+    def _wait(self, session: _Session, action: BrowserAction) -> BrowserEffectEvidence:
         page_id = action.page_id or session.default_page_id
-        texts = action.args.get("text")
-        if isinstance(texts, str):
-            values = [texts]
-        elif isinstance(texts, list):
-            values = [str(item) for item in texts if str(item)]
-        else:
-            values = []
+        raw = action.args.get("text")
+        texts = [raw] if isinstance(raw, str) else raw if isinstance(raw, list) else []
+        values = [str(item) for item in texts if str(item)]
         if not values:
-            raise ChromeDevToolsMcpBrowserError("browser wait requires text")
+            raise ChromeDevToolsMcpBrowserError("wait requires text")
         before = self._capture(session, page_id)
         session.client.call_tool(
             "wait_for",
-            {"pageId": int(page_id), "text": values, "timeout": int(action.args.get("timeout_ms") or 15000)},
+            {
+                "pageId": int(page_id),
+                "text": values,
+                "timeout": int(action.args.get("timeout_ms") or 15_000),
+            },
         )
         after = self._capture(session, page_id)
-        return BrowserEffectEvidence(
-            action_id=action.action_id,
-            session_id=action.session_id,
-            observed_at=after.captured_at,
+        return self._effect(
+            action,
+            after,
             success=True,
-            page_id=page_id,
             url_before=before.url,
-            url_after=after.url,
             postcondition="fresh_wait_condition_observed",
-            data={"provider": self.name, "texts": values[:8]},
         )
 
-    def _capture(self, session: _ChromeSession, page_id: str) -> BrowserObservation:
-        snapshot = self._fresh_snapshot(session, page_id)
+    def _capture(self, session: _Session, page_id: str) -> BrowserObservation:
+        snapshot = self._snapshot(session, page_id)
         observation = BrowserObservation(
             session=session.identity,
             page_id=page_id,
@@ -861,195 +712,99 @@ class ChromeDevToolsMcpManagedBrowser:
         session.last_observation[page_id] = observation
         return observation
 
-    def _fresh_snapshot(self, session: _ChromeSession, page_id: str) -> _ChromeSnapshot:
-        pages = self._pages(session.client)
-        row = next((item for item in pages if str(item.get("id")) == page_id), None)
-        if row is None:
-            raise ChromeDevToolsMcpBrowserError(f"browser page no longer exists: {page_id}")
-        url = str(row.get("url") or "")
-        title = str(row.get("title") or "")
-        if url not in {"", "about:blank"}:
-            self._require_url_allowed(url, session.permission)
-        result = self._structured(
-            session.client.call_tool("take_snapshot", {"pageId": int(page_id)})
+    def _snapshot(self, session: _Session, page_id: str) -> _Snapshot:
+        page = next(
+            (row for row in self._pages(session.client) if str(row["id"]) == page_id),
+            None,
         )
-        root = result.get("snapshot")
+        if page is None:
+            raise ChromeDevToolsMcpBrowserError(f"browser page no longer exists: {page_id}")
+        url = str(page["url"])
+        if url not in {"", "about:blank"}:
+            self._require_url(url, session.permission)
+        result = session.client.call_tool(
+            "take_snapshot",
+            {"pageId": int(page_id)},
+        )
+        root = self._structured(result).get("snapshot")
         if not isinstance(root, dict):
-            raise ChromeDevToolsMcpBrowserError("Chrome MCP returned no structured snapshot")
+            raise ChromeDevToolsMcpBrowserError("provider returned no structured snapshot")
+
         nodes: dict[str, dict[str, Any]] = {}
         stack = [root]
-        while stack and len(nodes) < _MAX_SNAPSHOT_TARGETS:
+        while stack:
             node = stack.pop()
             if not isinstance(node, dict):
                 continue
             uid = str(node.get("id") or "").strip()
             if uid:
+                if len(nodes) >= _MAX_SNAPSHOT_TARGETS:
+                    raise ChromeDevToolsMcpBrowserError(
+                        "browser snapshot exceeded bounded target inventory"
+                    )
                 nodes[uid] = dict(node)
             children = node.get("children")
             if isinstance(children, list):
                 stack.extend(reversed(children))
-        snapshot = _ChromeSnapshot(
+        snapshot = _Snapshot(
             captured_at=utc_now(),
             page_id=page_id,
             url=url,
-            title=title,
-            root=dict(root),
+            title=str(page["title"]),
             nodes=nodes,
         )
         session.snapshots[page_id] = snapshot
         return snapshot
 
-    def _observe_dom_id(
-        self,
-        session: _ChromeSession,
-        page_id: str,
-        query: BrowserTargetQuery,
-    ) -> BrowserObservation:
-        dom_id = query.value
-        token = hashlib.sha256(
-            f"{session.identity.session_id}:{page_id}:{dom_id}:{utc_now()}".encode()
-        ).hexdigest()[:20]
-        expression = json.dumps(dom_id)
-        marker = json.dumps(token)
-        fn = f"""() => {{
-          const matches = Array.from(document.querySelectorAll('[id]')).filter(
-            el => el.id === {expression}
-          );
-          if (matches.length !== 1) return {{count: matches.length}};
-          const el = matches[0];
-          globalThis.__znBrowserRefs ??= new Map();
-          globalThis.__znBrowserRefs.set({marker}, el);
-          const tag = String(el.tagName || '').toLowerCase();
-          const type = String(el.getAttribute('type') || '').toLowerCase();
-          let role = String(el.getAttribute('role') || '').toLowerCase();
-          if (!role) {{
-            if (tag === 'button') role = 'button';
-            else if (tag === 'select') role = 'combobox';
-            else if (tag === 'textarea') role = 'textbox';
-            else if (tag === 'input' && type === 'checkbox') role = 'checkbox';
-            else if (tag === 'input' && type !== 'hidden') role = 'textbox';
-          }}
-          return {{
-            count: 1,
-            role,
-            name: String(el.getAttribute('aria-label') || el.getAttribute('title') || '').slice(0, 160)
-          }};
-        }}"""
-        raw = self._evaluate(session, page_id, fn)
-        if not isinstance(raw, dict) or int(raw.get("count") or 0) != 1:
-            count = raw.get("count") if isinstance(raw, dict) else "invalid"
-            raise ChromeDevToolsMcpBrowserError(
-                f"DOM id target must resolve to exactly one current node; got {count}"
-            )
-        base = self._fresh_snapshot(session, page_id)
-        target = BrowserTarget(
-            session_id=session.identity.session_id,
-            page_id=page_id,
-            kind=BrowserTargetKind.ELEMENT,
-            target_id=f"domref:{token}:{dom_id}",
-            observed_at=base.captured_at,
-            url=base.url,
-            frame_id=query.frame_id,
-            role=str(raw.get("role") or "")[:128],
-            name=str(raw.get("name") or "")[:256],
-            selector_hint=f"dom_id:{dom_id}",
-        )
-        observation = BrowserObservation(
-            session=session.identity,
-            page_id=page_id,
-            captured_at=base.captured_at,
-            url=base.url,
-            title=base.title,
-            load_state="observed",
-            target=target,
-            metadata={"provider": self.name, "legacy_dom_id_compat": True},
-        )
-        session.last_observation[page_id] = observation
-        return observation
-
-    def _revalidate_target(
-        self,
-        session: _ChromeSession,
-        target: BrowserTarget,
-    ) -> dict[str, Any]:
-        if target.target_id.startswith("domref:"):
-            _, token, dom_id = target.target_id.split(":", 2)
-            token_js = json.dumps(token)
-            dom_js = json.dumps(dom_id)
-            result = self._evaluate(
-                session,
-                target.page_id,
-                f"""() => {{
-                  const prior = globalThis.__znBrowserRefs?.get({token_js});
-                  const current = document.getElementById({dom_js});
-                  return Boolean(prior && current && prior === current && current.isConnected);
-                }}""",
-            )
-            if result is not True:
-                raise ChromeDevToolsMcpBrowserError(
-                    "legacy DOM target changed before dispatch"
-                )
-            return {"id": target.target_id, "role": target.role, "name": target.name}
-        snapshot = self._fresh_snapshot(session, target.page_id)
-        node = snapshot.nodes.get(target.target_id)
+    def _revalidate(self, session: _Session, target: BrowserTarget) -> dict[str, Any]:
+        node = self._snapshot(session, target.page_id).nodes.get(target.target_id)
         if node is None:
             raise ChromeDevToolsMcpBrowserError("browser target is stale")
         if str(node.get("role") or "").casefold() != target.role.casefold():
-            raise ChromeDevToolsMcpBrowserError("browser target role changed before dispatch")
+            raise ChromeDevToolsMcpBrowserError("browser target role changed")
         if str(node.get("name") or "").strip() != target.name:
-            raise ChromeDevToolsMcpBrowserError("browser target name changed before dispatch")
+            raise ChromeDevToolsMcpBrowserError("browser target name changed")
         return node
 
-    def _validate_authority(
+    def _target_state(
         self,
-        session: _ChromeSession,
-        action: BrowserAction,
-        authority: BrowserActionAuthority,
-    ) -> None:
-        page_id = action.page_id or authority.page_id or session.default_page_id
-        observed = session.last_observation.get(page_id)
-        if observed is None:
-            raise ChromeDevToolsMcpBrowserError("browser action has no resident observation")
-        authority.validate_current(action, observed, session.permission)
-
-    def _target_from_node(
-        self,
-        session: _ChromeSession,
-        snapshot: _ChromeSnapshot,
-        node: Mapping[str, Any],
-        *,
-        selector_hint: str,
-    ) -> BrowserTarget:
-        uid = str(node.get("id") or "").strip()
-        if not uid:
-            raise ChromeDevToolsMcpBrowserError("snapshot target has no uid")
-        return BrowserTarget(
-            session_id=session.identity.session_id,
-            page_id=snapshot.page_id,
-            kind=BrowserTargetKind.ACCESSIBILITY_NODE,
-            target_id=uid,
-            observed_at=snapshot.captured_at,
-            url=snapshot.url,
-            frame_id="main",
-            role=str(node.get("role") or "")[:128].casefold(),
-            name=str(node.get("name") or "")[:256],
-            selector_hint=selector_hint[:512],
-        )
-
-    def _snapshot_node(
-        self,
-        session: _ChromeSession,
+        session: _Session,
         page_id: str,
-        target_id: str,
-    ) -> dict[str, Any] | None:
-        snapshot = session.snapshots.get(page_id)
-        if snapshot is None:
-            return None
-        return snapshot.nodes.get(target_id)
+        uid: str,
+    ) -> dict[str, Any]:
+        value = self._evaluate_uid(
+            session,
+            page_id,
+            uid,
+            """(el) => {
+              const tag = String(el.tagName || '').toLowerCase();
+              const type = String(el.getAttribute?.('type') || '').toLowerCase();
+              const autocomplete = String(el.getAttribute?.('autocomplete') || '').toLowerCase();
+              const sensitive = type === 'password' ||
+                /(^|\\s)(current-password|new-password|one-time-code|cc-[^\\s]*)(\\s|$)/.test(autocomplete);
+              const rawValue = !sensitive && typeof el.value === 'string' ? el.value : '';
+              const selectedText = tag === 'select' && el.selectedOptions?.length === 1
+                ? String(el.selectedOptions[0].textContent || '').trim()
+                : '';
+              return {
+                connected: Boolean(el.isConnected),
+                sensitive,
+                disabled: Boolean(el.disabled),
+                read_only: Boolean(el.readOnly),
+                checked: typeof el.checked === 'boolean' ? el.checked : null,
+                focused: document.activeElement === el,
+                value: rawValue,
+                selected_text: selectedText,
+              };
+            }""",
+        )
+        if not isinstance(value, dict) or not bool(value.get("connected")):
+            raise ChromeDevToolsMcpBrowserError("target is no longer connected")
+        return value
 
     def _evaluate_uid(
         self,
-        session: _ChromeSession,
+        session: _Session,
         page_id: str,
         uid: str,
         function: str,
@@ -1063,33 +818,17 @@ class ChromeDevToolsMcpManagedBrowser:
                 "waitForStableDom": False,
             },
         )
-        return self._parse_evaluate_result(result)
-
-    def _evaluate(self, session: _ChromeSession, page_id: str, function: str) -> Any:
-        result = session.client.call_tool(
-            "evaluate_script",
-            {
-                "pageId": int(page_id),
-                "function": function,
-                "waitForStableDom": False,
-            },
-        )
-        return self._parse_evaluate_result(result)
-
-    @staticmethod
-    def _parse_evaluate_result(result: Mapping[str, Any]) -> Any:
-        content = result.get("content")
-        if not isinstance(content, list):
-            raise ChromeDevToolsMcpBrowserError("evaluate_script returned no text content")
         text = "\n".join(
             str(item.get("text") or "")
-            for item in content
+            for item in result.get("content", [])
             if isinstance(item, dict) and item.get("type") == "text"
         )
         marker = "Script ran on page and returned:"
         index = text.find(marker)
         if index < 0:
-            raise ChromeDevToolsMcpBrowserError("evaluate_script returned no JSON result")
+            raise ChromeDevToolsMcpBrowserError(
+                "evaluate_script returned no structured value"
+            )
         payload = text[index + len(marker) :].strip()
         fence = chr(96) * 3
         if payload.startswith(fence + "json"):
@@ -1100,8 +839,132 @@ class ChromeDevToolsMcpManagedBrowser:
             return json.loads(payload)
         except json.JSONDecodeError as exc:
             raise ChromeDevToolsMcpBrowserError(
-                "evaluate_script returned invalid JSON result"
+                "evaluate_script returned invalid JSON"
             ) from exc
+
+    def _validate_authority(
+        self,
+        session: _Session,
+        action: BrowserAction,
+        authority: BrowserActionAuthority,
+    ) -> None:
+        page_id = action.page_id or authority.page_id or session.default_page_id
+        observed = session.last_observation.get(page_id)
+        if observed is None:
+            raise ChromeDevToolsMcpBrowserError(
+                "browser action has no Resident-owned observation"
+            )
+        authority.validate_current(action, observed, session.permission)
+
+    def _require_url(
+        self,
+        url: str,
+        permission: BrowserPermissionContext,
+    ) -> None:
+        value = str(url or "").strip()
+        if value == "about:blank":
+            return
+        if not permission.allows_origin(value):
+            raise ChromeDevToolsMcpBrowserError(
+                "browser URL left Resident-authorized origin scope"
+            )
+        try:
+            safe = bool(
+                self._url_checker(
+                    value,
+                    allow_private=permission.allow_private_network,
+                )
+            )
+        except Exception:
+            safe = False
+        if not safe:
+            raise ChromeDevToolsMcpBrowserError(
+                "browser URL failed Resident URL safety checks"
+            )
+
+    def _effect(
+        self,
+        action: BrowserAction,
+        observation: BrowserObservation,
+        *,
+        success: bool,
+        url_before: str,
+        postcondition: str,
+        target_id: str = "",
+        data: Mapping[str, Any] | None = None,
+        error: str | None = None,
+    ) -> BrowserEffectEvidence:
+        return BrowserEffectEvidence(
+            action_id=action.action_id,
+            session_id=action.session_id,
+            observed_at=observation.captured_at,
+            success=success,
+            page_id=observation.page_id,
+            url_before=url_before,
+            url_after=observation.url,
+            target_id=target_id,
+            postcondition=postcondition,
+            data={"provider": self.name, **dict(data or {})},
+            error=error,
+        )
+
+    @staticmethod
+    def _target(
+        session: _Session,
+        snapshot: _Snapshot,
+        node: Mapping[str, Any],
+        query: BrowserTargetQuery,
+    ) -> BrowserTarget:
+        return BrowserTarget(
+            session_id=session.identity.session_id,
+            page_id=snapshot.page_id,
+            kind=BrowserTargetKind.ACCESSIBILITY_NODE,
+            target_id=str(node["id"]),
+            observed_at=snapshot.captured_at,
+            url=snapshot.url,
+            frame_id=query.frame_id,
+            role=str(node.get("role") or "").casefold()[:128],
+            name=str(node.get("name") or "")[:256],
+            selector_hint=f"ax:{query.kind.value}:{query.value}"[:512],
+        )
+
+    @staticmethod
+    def _require_target(action: BrowserAction) -> BrowserTarget:
+        if action.target is None:
+            raise ChromeDevToolsMcpBrowserError(
+                f"{action.kind.value} requires one fresh semantic target"
+            )
+        return action.target
+
+    @staticmethod
+    def _require_safe_text_target(state: Mapping[str, Any], text: str) -> None:
+        if bool(state.get("sensitive")):
+            raise ChromeDevToolsMcpBrowserError(
+                "sensitive browser fields require user presence"
+            )
+        if bool(state.get("disabled")) or bool(state.get("read_only")):
+            raise ChromeDevToolsMcpBrowserError("browser text target is not writable")
+        if len(text.encode("utf-16-le")) // 2 > 512:
+            raise ChromeDevToolsMcpBrowserError(
+                "browser text exceeds 512 UTF-16 units"
+            )
+
+    @staticmethod
+    def _text_fingerprint(value: str) -> dict[str, Any]:
+        return {
+            "length": len(value),
+            "sha256": hashlib.sha256(value.encode("utf-8")).hexdigest(),
+            "utf16_units": len(value.encode("utf-16-le")) // 2,
+        }
+
+    @staticmethod
+    def _snapshot_node(
+        session: _Session,
+        page_id: str,
+        target_id: str,
+    ) -> dict[str, Any] | None:
+        snapshot = session.snapshots.get(page_id)
+        return None if snapshot is None else snapshot.nodes.get(target_id)
 
     @staticmethod
     def _structured(result: Mapping[str, Any]) -> dict[str, Any]:
@@ -1110,11 +973,12 @@ class ChromeDevToolsMcpManagedBrowser:
 
     @classmethod
     def _pages(cls, client: StdioMcpClient) -> list[dict[str, Any]]:
-        result = cls._structured(client.call_tool("list_pages", {}))
-        pages = result.get("pages")
+        pages = cls._structured(client.call_tool("list_pages", {})).get("pages")
         if not isinstance(pages, list):
-            raise ChromeDevToolsMcpBrowserError("Chrome MCP returned no structured page list")
-        rows = []
+            raise ChromeDevToolsMcpBrowserError(
+                "provider returned no structured page list"
+            )
+        rows: list[dict[str, Any]] = []
         for item in pages:
             if not isinstance(item, dict):
                 continue
@@ -1132,19 +996,29 @@ class ChromeDevToolsMcpManagedBrowser:
             )
         return rows
 
-    def _session(self, session_id: str) -> _ChromeSession:
+    def _session(self, session_id: str) -> _Session:
         session = self._sessions.get(str(session_id or "").strip())
         if session is None:
             raise ChromeDevToolsMcpBrowserError("unknown managed-browser session")
         return session
 
     @staticmethod
-    def _require_target(action: BrowserAction) -> BrowserTarget:
-        if action.target is None:
-            raise ChromeDevToolsMcpBrowserError(
-                f"browser {action.kind.value} requires a current target"
-            )
-        return action.target
+    def _requested_page_id(action: BrowserAction) -> str:
+        value = str(action.args.get("page_id") or action.page_id or "").strip()
+        if not value.isdigit():
+            raise ChromeDevToolsMcpBrowserError("browser tab action requires numeric page_id")
+        return value
+
+    @staticmethod
+    def _as_bool(value: Any) -> bool | None:
+        if type(value) is bool:
+            return value
+        normalized = str(value or "").strip().lower()
+        if normalized == "true":
+            return True
+        if normalized == "false":
+            return False
+        return None
 
     @staticmethod
     def _failure(action: BrowserAction, error: str) -> BrowserEffectEvidence:
@@ -1157,29 +1031,3 @@ class ChromeDevToolsMcpManagedBrowser:
             target_id=action.target.target_id if action.target else "",
             error=error,
         )
-
-    def _require_url_allowed(
-        self,
-        url: str,
-        permission: BrowserPermissionContext,
-    ) -> None:
-        value = str(url or "").strip()
-        if value == "about:blank":
-            return
-        if not permission.allows_origin(value):
-            raise ChromeDevToolsMcpBrowserError(
-                "browser URL left the resident-authorized origin scope"
-            )
-        try:
-            safe = bool(
-                self._url_checker(
-                    value,
-                    allow_private=permission.allow_private_network,
-                )
-            )
-        except Exception:
-            safe = False
-        if not safe:
-            raise ChromeDevToolsMcpBrowserError(
-                "browser URL failed resident URL safety checks"
-            )
