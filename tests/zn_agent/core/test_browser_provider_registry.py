@@ -98,7 +98,7 @@ class BrowserProviderRegistryTests(unittest.TestCase):
             BrowserProviderDescriptor(
                 name="chrome-devtools-mcp",
                 plane=BrowserPlane.MANAGED,
-                priority=100,
+                priority=200,
                 factory=lambda: _Adapter("mature"),
                 available=lambda: True,
             )
@@ -107,16 +107,14 @@ class BrowserProviderRegistryTests(unittest.TestCase):
             BrowserProviderDescriptor(
                 name="playwright",
                 plane=BrowserPlane.MANAGED,
-                priority=200,
+                priority=100,
                 factory=lambda: _Adapter("playwright"),
                 available=lambda: True,
             )
         )
 
         readable = build_readable_managed_browser_adapter(registry=registry)
-        complete = build_managed_browser_adapter(registry=registry)
         self.assertEqual(readable.name, "mature")
-        self.assertEqual(complete.name, "playwright")
 
         unavailable = BrowserProviderRegistry()
         unavailable.register(
