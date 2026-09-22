@@ -34,7 +34,7 @@ PR verification is split by stability and ownership rather than by historical ta
 
 A numbered representative E2E is evidence about a capability composition; it is never the owner of product routing and must not become a normal PR merge gate. `tests/zn_agent/core/test_ci_scenario_gate_policy.py` enforces that workflows which execute numbered `test_e2eNN` scenarios cannot declare `pull_request`.
 
-Hosted does not mean synthetic-only. The primary Windows Interactive Desktop lane proves a usable interactive Windows desktop before running generic Win32/UIA/browser/desktop capability acceptance, and Windows Clean Install builds and installs the real NSIS candidate in isolated disposable state.
+Hosted does not mean synthetic-only. The primary Windows Interactive Desktop Contract proves a usable interactive Windows desktop before running generic Win32/UIA/browser/desktop capability acceptance, and Windows Clean Install builds and installs the real NSIS candidate in isolated disposable state.
 
 `dev/zn-agent` remains a historical compatibility branch only. It is not a CI integration target for new product development.
 
