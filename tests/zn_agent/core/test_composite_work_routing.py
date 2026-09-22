@@ -54,8 +54,19 @@ class CompositeWorkRoutingTests(unittest.TestCase):
         )
 
         self.assertFalse(decision.preempt_narrow_browser)
-        self.assertIn("browser_reference", decision.surfaces)
+        self.assertNotIn("browser_reference", decision.surfaces)
         self.assertNotIn("workspace_mutation", decision.surfaces)
+
+    def test_browser_mutation_of_repository_named_object_stays_on_browser_route(self) -> None:
+        decision = classify_composite_work_route(
+            _event(
+                "On this website, update the repository setting and confirm the change."
+            )
+        )
+
+        self.assertFalse(decision.preempt_narrow_browser)
+        self.assertNotIn("browser_reference", decision.surfaces)
+        self.assertIn("workspace_mutation", decision.surfaces)
 
     def test_business_website_update_is_not_mistaken_for_workspace_code_work(self) -> None:
         decision = classify_composite_work_route(
