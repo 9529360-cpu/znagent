@@ -1,0 +1,90 @@
+name: ZN Windows Explorer Selection E2E
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/zn-windows-explorer-selection-e2e.yml
+      - .github/scripts/test-zn-interactive-desktop-readiness.ps1
+      - .github/scripts/run-zn-interactive-python.ps1
+      - .github/scripts/zn-interactive-python-entry.py
+      - runtime/python/pyproject.toml
+      - runtime/python/zn_agent/core/device_capability_graph.py
+      - runtime/python/zn_agent/core/windows_explorer_selection.py
+      - runtime/python/zn_agent/core/explorer_selected_file_behavior.py
+      - runtime/python/zn_agent/core/research_information_product_resident.py
+      - tests/zn_agent/e2e/test_windows_interactive_explorer_selected_file.py
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/zn-windows-explorer-selection-e2e.yml
+      - .github/scripts/test-zn-interactive-desktop-readiness.ps1
+      - .github/scripts/run-zn-interactive-python.ps1
+      - .github/scripts/zn-interactive-python-entry.py
+      - runtime/python/pyproject.toml
+      - runtime/python/zn_agent/core/device_capability_graph.py
+      - runtime/python/zn_agent/core/windows_explorer_selection.py
+      - runtime/python/zn_agent/core/explorer_selected_file_behavior.py
+      - runtime/python/zn_agent/core/research_information_product_resident.py
+      - tests/zn_agent/e2e/test_windows_interactive_explorer_selected_file.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zn-windows-explorer-selection-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  explorer-selection-e2e:
+    name: Real foreground Explorer selection
+    runs-on: windows-latest
+    timeout-minutes: 10
+    env:
+      CI: 'true'
+      TZ: UTC
+      PYTHONUTF8: '1'
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - name: Verify GitHub-hosted Windows x64 runner
+        shell: powershell
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "ZN Explorer selection E2E requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Prove interactive desktop readiness
+        shell: powershell
+        run: |
+          & "$env:GITHUB_WORKSPACE\.github\scripts\test-zn-interactive-desktop-readiness.ps1" -ExpectedRunnerName $env:RUNNER_NAME
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare isolated runtime
+        shell: powershell
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/explorer-selection-venv -ErrorAction SilentlyContinue
+          uv venv .ci/explorer-selection-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\explorer-selection-venv\Scripts\python.exe'
+          uv pip install --python $python "runtime/python"
+      - name: Run real Explorer selected-file acceptance
+        shell: powershell
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\explorer-selection-venv\Scripts\python.exe'
+          $launcher = Join-Path $env:GITHUB_WORKSPACE '.github\scripts\run-zn-interactive-python.ps1'
+          $testFile = 'tests/zn_agent/e2e/test_windows_interactive_explorer_selected_file.py'
+          & $launcher -Python $python -CommandArgs @($testFile, '-v')
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Real Explorer selected-file acceptance failed'
+          }

@@ -19,6 +19,7 @@ from .document_research_completion_behavior import (
 from .document_research_completion_safety import (
     install_document_research_completion_safety,
 )
+from .explorer_selected_file_behavior import install_explorer_selected_file_behavior
 from .local_file_discovery import build_local_file_discovery_capability
 from .local_inference_runtime import LocalInferenceRuntimeDiscovery
 from .local_office_behavior import install_local_office_behavior
@@ -165,6 +166,7 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
         install_document_work_behavior(self)
         install_long_running_terminal_behavior(self)
         install_local_service_recovery_behavior(self)
+        install_explorer_selected_file_behavior(self)
         install_browser_spreadsheet_behavior(self)
         install_document_research_completion_behavior(self)
         install_document_research_completion_safety(self)
