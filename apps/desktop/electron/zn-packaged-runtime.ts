@@ -76,6 +76,9 @@ function readManifest(runtimeRoot: string): ZnRuntimeManifest {
   ) {
     throw new Error(`ZN runtime manifest has an invalid browser_executable at ${manifestPath}`)
   }
+  if ((manifest.browser_root === undefined) !== (manifest.browser_executable === undefined)) {
+    throw new Error(`ZN runtime manifest must declare browser_root and browser_executable together at ${manifestPath}`)
+  }
   if (manifest.veteran_runtime !== undefined && (typeof manifest.veteran_runtime !== 'string' || !manifest.veteran_runtime.trim())) {
     throw new Error(`ZN runtime manifest has an invalid veteran_runtime at ${manifestPath}`)
   }
