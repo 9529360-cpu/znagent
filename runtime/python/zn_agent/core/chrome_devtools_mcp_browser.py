@@ -287,6 +287,11 @@ class ChromeDevToolsMcpManagedBrowser:
         headless: bool = True,
     ) -> BrowserSessionIdentity:
         policy = permission or BrowserPermissionContext()
+        if policy.allow_uploads or policy.allow_downloads:
+            raise ChromeDevToolsMcpBrowserUnavailable(
+                "Chrome DevTools MCP does not own ZN's causal file-transfer contract; "
+                "use the Playwright managed-browser provider for this session"
+            )
         client = self._client_factory(
             command=self._command_factory(headless=headless, permission=policy),
             required_tools=_REQUIRED_TOOLS,
