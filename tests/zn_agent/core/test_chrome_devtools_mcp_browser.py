@@ -264,6 +264,19 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
             self.assertTrue(os.path.samefile(chrome_arg, chrome))
             self.assertNotIn("chrome-devtools-mcp@latest", " ".join(command.argv))
 
+    def test_file_transfer_permission_fails_before_provider_start(self):
+        browser = ChromeDevToolsMcpManagedBrowser()
+        with self.assertRaisesRegex(
+            ChromeDevToolsMcpBrowserUnavailable,
+            "causal file-transfer contract",
+        ):
+            browser.open_session(
+                permission=BrowserPermissionContext(
+                    allow_page_interaction=True,
+                    allow_downloads=True,
+                )
+            )
+
     def test_command_rejects_unpinned_runtime_version(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
