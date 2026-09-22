@@ -298,6 +298,11 @@ User:
 
 Must research current external docs, edit the actual repo, test/run locally and verify final behavior.
 
+Architecture rule: E2E-25 is a representative regression scenario, not a product
+route owner. Browser-reference + workspace-change requests must be admitted by
+generic composite Work routing/capabilities. Product code must not special-case
+the E2E number or one exact E2E-25 phrase merely to make this acceptance pass.
+
 ## 9. Long-running product development and delegated Work
 
 ### E2E-26 — Build a small product from a broad goal
