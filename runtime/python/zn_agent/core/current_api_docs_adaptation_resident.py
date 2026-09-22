@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-"""Bounded current-page API-doc adaptation for one existing ZN Resident.
+"""Bounded browser-reference + workspace adaptation for the existing ZN Resident.
 
 This composes existing User Browser, managed research, Work, File, Terminal and
 WorkerRun capabilities. It owns no second agent, router, Body, store or Root
-completion authority.
+completion authority. Scenario E2Es may exercise this layer, but they do not own
+its routing or execution semantics.
 """
 
 import hashlib
@@ -16,6 +17,7 @@ from urllib.parse import urlsplit
 from .action_authority import ActionAuthorityContext, bind_worker_authority_arg
 from .application_resident import ApplicationAwareResidentRuntime
 from .cognition import CognitiveIncrement
+from .composite_work_routing import classify_composite_work_text
 from .delegated_work_coordinator import DelegatedWorkCoordinator
 from .models import utc_now
 from .path_context import resolved_within
@@ -25,11 +27,11 @@ from .worker_context_boundary import WorkerContextPack
 from .work import title_for_work_task
 
 
-class CurrentApiDocsDelegatedWorkCoordinator(DelegatedWorkCoordinator):
-    """Use the Resident's E2E-25 phase order without owning new truth."""
+class BrowserWorkspaceAdaptationDelegatedWorkCoordinator(DelegatedWorkCoordinator):
+    """Coordinate one bounded browser-reference + workspace adaptation sequence."""
 
     def next_worker_phase(self, root: WorkItem, items, runs):
-        if self.resident._is_current_api_docs_adaptation_root(root):
+        if self.resident._is_browser_workspace_adaptation_root(root):
             return self.resident._next_worker_phase(root, items, runs)
         return super().next_worker_phase(root, items, runs)
 
@@ -87,60 +89,44 @@ class CurrentApiDocsDelegatedWorkCoordinator(DelegatedWorkCoordinator):
         return request
 
 
-class CurrentApiDocsAdaptationResidentRuntime(ApplicationAwareResidentRuntime):
-    """Close one representative current-docs -> existing-code -> real-result path."""
+class BrowserWorkspaceAdaptationResidentRuntime(ApplicationAwareResidentRuntime):
+    """Compose current browser evidence with bounded workspace change and verification."""
 
-    _CURRENT_SOURCE_KEY = "e2e25_current_page_source"
-    _WORKSPACE_READ_KEY = "e2e25_workspace_read"
-    _PREVERIFY_EVIDENCE_KEY = "e2e25_preverification_evidence"
+    _CURRENT_SOURCE_KEY = "browser_workspace_current_page_source_v1"
+    _WORKSPACE_READ_KEY = "browser_workspace_read_v1"
+    _PREVERIFY_EVIDENCE_KEY = "browser_workspace_preverification_evidence_v1"
     _MAX_WORKSPACE_READ_CHARS = 1200
     _MAX_WORKSPACE_INVENTORY = 24
 
     @staticmethod
-    def _is_current_api_docs_adaptation_text(text: str) -> bool:
-        normalized = " ".join(str(text or "").casefold().split())
-        current_page = any(
-            value in normalized
-            for value in ("这个网站", "当前网站", "this website", "current page")
+    def _is_browser_workspace_adaptation_text(text: str) -> bool:
+        decision = classify_composite_work_text(text)
+        return bool(
+            decision.preempt_narrow_browser
+            and "local_verification" in decision.surfaces
         )
-        api_docs = "api" in normalized and any(
-            value in normalized for value in ("文档", "docs", "documentation")
-        )
-        adapt = any(
-            value in normalized
-            for value in ("适配", "升级", "adapt", "update the project", "upgrade")
-        )
-        run = any(
-            value in normalized
-            for value in ("跑起来", "运行", "run it", "run the project")
-        )
-        verify = any(
-            value in normalized
-            for value in ("确认能用", "确认", "验证", "verify", "confirm")
-        )
-        return current_page and api_docs and adapt and run and verify
 
     @classmethod
-    def _is_current_api_docs_adaptation_root(cls, root: WorkItem) -> bool:
-        return cls._is_current_api_docs_adaptation_text(str(root.objective or ""))
+    def _is_browser_workspace_adaptation_root(cls, root: WorkItem) -> bool:
+        return cls._is_browser_workspace_adaptation_text(str(root.objective or ""))
 
     @staticmethod
     def _root_requests_delegated_worker_sequence(root: WorkItem) -> bool:
-        if CurrentApiDocsAdaptationResidentRuntime._is_current_api_docs_adaptation_root(root):
+        if BrowserWorkspaceAdaptationResidentRuntime._is_browser_workspace_adaptation_root(root):
             return True
         return ApplicationAwareResidentRuntime._root_requests_delegated_worker_sequence(root)
 
     def _delegated_work_coordinator(self) -> DelegatedWorkCoordinator:
         coordinator = getattr(self, "_delegated_work_coordinator_instance", None)
         if coordinator is None or not isinstance(
-            coordinator, CurrentApiDocsDelegatedWorkCoordinator
+            coordinator, BrowserWorkspaceAdaptationDelegatedWorkCoordinator
         ):
-            coordinator = CurrentApiDocsDelegatedWorkCoordinator(self)
+            coordinator = BrowserWorkspaceAdaptationDelegatedWorkCoordinator(self)
             self._delegated_work_coordinator_instance = coordinator
         return coordinator
 
     def _next_worker_phase(self, root, items, runs):
-        if not self._is_current_api_docs_adaptation_root(root):
+        if not self._is_browser_workspace_adaptation_root(root):
             return super()._next_worker_phase(root, items, runs)
         current_children = [
             item
@@ -175,7 +161,7 @@ class CurrentApiDocsAdaptationResidentRuntime(ApplicationAwareResidentRuntime):
             return "coding", "read_workspace_file"
         return super()._next_worker_phase(root, items, runs)
 
-    def _e2e25_required_phase_evidence(self, root: WorkItem) -> tuple[bool, str]:
+    def _required_adaptation_phase_evidence(self, root: WorkItem) -> tuple[bool, str]:
         """Require every current-plan delegated phase and its real Body effect.
 
         Retry exhaustion is supervision evidence, not permission to skip a phase.
@@ -254,7 +240,7 @@ class CurrentApiDocsAdaptationResidentRuntime(ApplicationAwareResidentRuntime):
     ) -> tuple[dict[str, Any] | None, str | None]:
         workspace_raw = str(event.payload.get("workspace_path") or "").strip()
         if not workspace_raw:
-            return None, "E2E-25 final verification requires the attached workspace"
+            return None, "browser+workspace adaptation final verification requires the attached workspace"
         try:
             workspace = Path(workspace_raw).expanduser().resolve(strict=True)
         except (OSError, RuntimeError) as exc:
@@ -269,7 +255,7 @@ class CurrentApiDocsAdaptationResidentRuntime(ApplicationAwareResidentRuntime):
             and any(str(c).startswith("text_equals:") for c in item.acceptance_criteria)
         ]
         if not writes:
-            return None, "E2E-25 final verification requires a completed workspace write"
+            return None, "browser+workspace adaptation final verification requires a completed workspace write"
         criterion = next(
             str(c)
             for c in reversed(writes[-1].acceptance_criteria)
@@ -312,23 +298,23 @@ class CurrentApiDocsAdaptationResidentRuntime(ApplicationAwareResidentRuntime):
 
     def _parse_verify_python_step(self, event, root: WorkItem, content: str):
         proposal = super()._parse_verify_python_step(event, root, content)
-        if proposal is None or not self._is_current_api_docs_adaptation_root(root):
+        if proposal is None or not self._is_browser_workspace_adaptation_root(root):
             return proposal
-        complete, _reason = self._e2e25_required_phase_evidence(root)
+        complete, _reason = self._required_adaptation_phase_evidence(root)
         if not complete:
             return None
         return proposal
 
     def _begin_root_verification(self, event, state, root, increment, proposal):
-        if not self._is_current_api_docs_adaptation_root(root):
+        if not self._is_browser_workspace_adaptation_root(root):
             return super()._begin_root_verification(event, state, root, increment, proposal)
-        complete, reason = self._e2e25_required_phase_evidence(root)
+        complete, reason = self._required_adaptation_phase_evidence(root)
         if not complete:
             self._accept_borrowed_increment(event, state, increment)
             return self._return_to_investigation_after_rejection(
                 event,
                 state,
-                "E2E-25 Root verification rejected: " + reason,
+                "browser+workspace adaptation Root verification rejected: " + reason,
             )
         evidence, failure = self._fresh_workspace_preverification_evidence(event, root)
         if failure is not None or evidence is None:
@@ -336,7 +322,7 @@ class CurrentApiDocsAdaptationResidentRuntime(ApplicationAwareResidentRuntime):
             return self._return_to_investigation_after_rejection(
                 event,
                 state,
-                "E2E-25 Root verification rejected: " + str(failure or "missing fresh workspace evidence"),
+                "browser+workspace adaptation Root verification rejected: " + str(failure or "missing fresh workspace evidence"),
             )
         state.data[self._PREVERIFY_EVIDENCE_KEY] = evidence
         return super()._begin_root_verification(event, state, root, increment, proposal)
@@ -383,9 +369,9 @@ class CurrentApiDocsAdaptationResidentRuntime(ApplicationAwareResidentRuntime):
     @staticmethod
     def _worker_objective(executor_kind: str, expected_action: str) -> str:
         if expected_action == "research_current_page":
-            return "Read the API documentation currently referenced by the authorized USER Browser page"
+            return "Read the current reference explicitly authorized in the USER Browser"
         if expected_action == "read_workspace_file":
-            return "Read the existing workspace source relevant to the documented API before changing it"
+            return "Read the existing workspace source relevant to the requested change before modifying it"
         return ApplicationAwareResidentRuntime._worker_objective(
             executor_kind, expected_action
         )
@@ -817,3 +803,10 @@ class CurrentApiDocsAdaptationResidentRuntime(ApplicationAwareResidentRuntime):
         self._sync_execution_context(event, state)
         self.store.save_working_state(state)
         return None
+
+
+# Compatibility aliases for the historical import path. Product composition
+# should use the generic BrowserWorkspace* names; the old symbols remain only so
+# downstream imports do not break during migration.
+CurrentApiDocsDelegatedWorkCoordinator = BrowserWorkspaceAdaptationDelegatedWorkCoordinator
+CurrentApiDocsAdaptationResidentRuntime = BrowserWorkspaceAdaptationResidentRuntime
