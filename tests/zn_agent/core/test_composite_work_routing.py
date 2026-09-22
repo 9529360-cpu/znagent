@@ -57,6 +57,26 @@ class CompositeWorkRoutingTests(unittest.TestCase):
         self.assertIn("browser_reference", decision.surfaces)
         self.assertNotIn("workspace_mutation", decision.surfaces)
 
+    def test_business_website_update_is_not_mistaken_for_workspace_code_work(self) -> None:
+        decision = classify_composite_work_route(
+            _event("Update this client's package status on this website and confirm it.")
+        )
+
+        self.assertFalse(decision.preempt_narrow_browser)
+        self.assertIn("browser_reference", decision.surfaces)
+        self.assertNotIn("workspace_mutation", decision.surfaces)
+
+    def test_missing_durable_work_binding_never_preempts_browser(self) -> None:
+        decision = classify_composite_work_route(
+            _event(
+                "Use this website documentation to update the repository.",
+                work_item_id="",
+            )
+        )
+
+        self.assertFalse(decision.preempt_narrow_browser)
+        self.assertEqual(decision.surfaces, ())
+
     def test_workspace_only_change_does_not_claim_browser_precedence(self) -> None:
         decision = classify_composite_work_route(
             _event("修改这个项目的客户端代码并运行测试。")
