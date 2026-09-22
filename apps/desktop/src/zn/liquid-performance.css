@@ -1,8 +1,11 @@
-/* Keep the ambient liquid fields on compositor-friendly properties only.
-   The base visual system still owns shape, blur, gradients and reduced-motion. */
+/* Compositor-focused overrides for ZN's long-lived ambient material.
+   Keep the identity of the liquid field, but make the resident surface calm
+   and cheap when motion, contrast, or compact-window constraints ask for it. */
+
 body::before,
 body::after {
   will-change: transform;
+  backface-visibility: hidden;
 }
 
 @keyframes zn-liquid-a {
@@ -15,4 +18,84 @@ body::after {
   0% { transform: translate3d(2%, 3%, 0) scale(.98) rotate(2deg); }
   50% { transform: translate3d(-7%, -8%, 0) scale(1.08) rotate(-5deg); }
   100% { transform: translate3d(-3%, -13%, 0) scale(1.02) rotate(-9deg); }
+}
+
+/* A compact assistant window should feel focused, not like a full-screen
+   animated wallpaper. Reduce ambient field area and glass cost as the window
+   collapses into the <=720px resident mode. */
+@media (max-width: 720px) {
+  body::before {
+    opacity: .38;
+    filter: blur(44px) saturate(112%);
+  }
+
+  body::after {
+    opacity: .28;
+    filter: blur(42px) saturate(110%);
+  }
+
+  .zn-topbar,
+  .zn-composer {
+    backdrop-filter: blur(20px) saturate(126%);
+    -webkit-backdrop-filter: blur(20px) saturate(126%);
+  }
+}
+
+@media (max-width: 520px) {
+  body::before { opacity: .28; }
+  body::after { opacity: .18; }
+
+  .zn-topbar,
+  .zn-composer {
+    backdrop-filter: blur(16px) saturate(118%);
+    -webkit-backdrop-filter: blur(16px) saturate(118%);
+  }
+}
+
+/* Match Windows' inactive/fallback material philosophy when users request less
+   motion: freeze the decorative fields and release compositor reservation. */
+@media (prefers-reduced-motion: reduce) {
+  body::before,
+  body::after {
+    animation: none !important;
+    transform: none !important;
+    will-change: auto;
+    filter: blur(42px) saturate(108%);
+  }
+}
+
+/* High-contrast users need structure from the system palette, not translucent
+   decoration. Suppress ambient layers and expensive glass so native contrast
+   colors remain authoritative. */
+@media (forced-colors: active) {
+  body::before,
+  body::after {
+    display: none;
+  }
+
+  .zn-sidebar,
+  .zn-context-panel,
+  .zn-topbar,
+  .zn-composer {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
+/* Chromium support varies by host version; unsupported media queries are
+   harmless. Where available, honor the OS request to reduce transparency. */
+@media (prefers-reduced-transparency: reduce) {
+  body::before,
+  body::after {
+    opacity: .12;
+    filter: none;
+  }
+
+  .zn-sidebar,
+  .zn-context-panel,
+  .zn-topbar,
+  .zn-composer {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 }

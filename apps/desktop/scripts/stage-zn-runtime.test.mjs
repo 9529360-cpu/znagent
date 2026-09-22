@@ -31,3 +31,19 @@ test('runtime staging packages Playwright and Chromium inside the versioned ZN r
   assert.match(source, /browser_root:\s*portableRelative\(runtimeRoot, browserInstallDir\)/)
   assert.doesNotMatch(source, /PLAYWRIGHT_BROWSERS_PATH\s*:\s*(?:os\.|process\.env\.LOCALAPPDATA|process\.env\.USERPROFILE)/)
 })
+
+
+test('runtime staging packages the pinned Veteran engineering sidecar', () => {
+  assert.match(source, /const veteranSourceRoot = path\.join\(repoRoot, ['"]vendor['"], ['"]veteran-engineer['"]\)/)
+  assert.match(source, /const veteranRuntimeDir = path\.join\(runtimeRoot, ['"]veteran-engineer['"]\)/)
+  assert.match(source, /Vendored Veteran runtime is incomplete/)
+  assert.match(source, /fs\.cpSync\(veteranSourceRoot, veteranRuntimeDir/)
+  assert.match(source, /veteran_runtime:\s*portableRelative\(runtimeRoot, veteranRuntimeDir\)/)
+})
+
+
+test('runtime staging transports the installed backend path as ASCII-safe JSON', () => {
+  assert.match(source, /const backendRoot = JSON\.parse\(capture\(pythonPath/)
+  assert.match(source, /import importlib\.util, json/)
+  assert.match(source, /json\.dumps\(str\(Path\(spec\.origin\)\.resolve\(\)\.parent\.parent\)\)/)
+})

@@ -10,7 +10,7 @@ from .action_authority import install_worker_authority_gate
 from .application_goal import application_open_goal
 from .broad_goal_autonomous_resident import BroadGoalAutonomousResidentRuntime
 from .device_capability_graph import DeviceCapabilityGraph
-from .machine_capability_body import MachineCapabilityBody
+from .office_com_body import OfficeComAwareBody
 from .models import utc_now
 
 
@@ -28,7 +28,7 @@ class ApplicationAwareResidentRuntime(BroadGoalAutonomousResidentRuntime):
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
         self.device_capabilities = DeviceCapabilityGraph()
-        self.body = MachineCapabilityBody(resident=self, device_capabilities=self.device_capabilities)
+        self.body = OfficeComAwareBody(resident=self, device_capabilities=self.device_capabilities)
         installer = getattr(self, "_install_body_dispatch_health_observer", None)
         if callable(installer):
             installer()

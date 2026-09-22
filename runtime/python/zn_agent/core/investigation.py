@@ -826,7 +826,10 @@ class NativeInvestigator:
             changed = git.get("changed_paths") or []
             return "\n".join(str(item) for item in changed) if changed else "no changed files"
 
-        if paths and any(phrase in text for phrase in ("exist", "exists", "存在", "有没有")):
+        path_existence_query = bool(
+            re.search(r"\b(?:exist|exists|existed|existence)\b", text)
+        ) or any(phrase in text for phrase in ("存在", "有没有"))
+        if paths and path_existence_query:
             if len(paths) == 1:
                 item = paths[0]
                 return f"{item['path']}: {'exists' if item['exists'] else 'does not exist'}"

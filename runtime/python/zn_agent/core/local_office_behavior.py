@@ -11,6 +11,7 @@ from typing import Any, Mapping
 from .file_identity import compare_file_identities
 from .models import ExecutionPath, ResidentRunResult, utc_now
 from .office_document import inspect_docx, write_docx_copy
+from .presentation_document import create_pptx_from_outline, inspect_pptx
 from .spreadsheet_work import AMOUNT_NUMBER_FORMAT, inspect_xlsx, write_xlsx_copy
 
 _STATE_KEY = "local_office_work_v1"
@@ -465,6 +466,17 @@ def install_local_office_behavior(resident) -> None:
                 action.args.get("destination_path"),
                 replacement_date=str(action.args.get("replacement_date") or ""),
                 precondition_identity=dict(action.args.get("precondition_identity") or {}),
+            )
+            return body._ok(action, started, output=str(action.args.get("destination_path") or ""), data=data)
+        if kind == "inspect_pptx":
+            data = inspect_pptx(action.args.get("path") or action.args.get("source_path"))
+            return body._ok(action, started, output=str(action.args.get("path") or ""), data=data)
+        if kind == "create_pptx_from_outline":
+            data = create_pptx_from_outline(
+                action.args.get("destination_path"),
+                title=str(action.args.get("title") or ""),
+                subtitle=str(action.args.get("subtitle") or ""),
+                slides=action.args.get("slides") or (),
             )
             return body._ok(action, started, output=str(action.args.get("destination_path") or ""), data=data)
         if kind == "inspect_xlsx":

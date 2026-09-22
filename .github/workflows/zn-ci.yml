@@ -83,7 +83,7 @@ jobs:
   kernel:
     name: ZN Kernel / Python / Windows
     runs-on: windows-latest
-    timeout-minutes: 35
+    timeout-minutes: 60
     env:
       UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
     steps:
